@@ -50,6 +50,12 @@ export function ShortLinksAdminSettings() {
   // 多个 load 并发飞，只有最新一次的响应允许写状态，旧响应静默丢弃。
   const loadEpochRef = useRef(0);
 
+  // reloadKey bump 触发 useEffect 重新跑最新的 load，避免 handler closure 抓
+  // 到旧 load 引用 (旧 targetType/search/skip)。改 filter 时不用 bump，
+  // 因为 setSearch/setSkip 自身会让 load 重建并跑。
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = useCallback(() => setReloadKey(k => k + 1), []);
+
   const load = useCallback(async () => {
     const myEpoch = ++loadEpochRef.current;
     setLoading(true);
@@ -70,7 +76,7 @@ export function ShortLinksAdminSettings() {
     }
   }, [targetType, search, skip]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, reloadKey]);
 
   // toast 2.5s 后自动消失（原先依赖 onAnimationEnd 但元素没动画，永远不触发）
   useEffect(() => {
@@ -96,7 +102,7 @@ export function ShortLinksAdminSettings() {
     setBusy(null);
     if (res.success) {
       setToast(`已吊销 /s/${item.seq}`);
-      await load();
+      reload(); // 触发 useEffect 用最新的 filter / skip 重新加载
     } else {
       setToast(res.error?.message || '吊销失败');
     }
@@ -137,7 +143,7 @@ export function ShortLinksAdminSettings() {
             跨用户管理所有 /s/&#123;seq&#125; 数字短链。
           </span>
           <div className="ml-auto flex items-center gap-2">
-            <Button size="xs" variant="ghost" onClick={() => void load()} title="刷新">
+            <Button size="xs" variant="ghost" onClick={reload} title="刷新">
               <RefreshCw size={12} />
             </Button>
             <Button size="xs" variant="secondary" onClick={() => void handleRepair()} title="把全局 counter 同步到 max(seq)">
