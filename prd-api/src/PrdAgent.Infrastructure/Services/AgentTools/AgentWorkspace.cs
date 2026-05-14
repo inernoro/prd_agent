@@ -39,7 +39,8 @@ public sealed class AgentWorkspace
         }
         var repo = Environment.GetEnvironmentVariable("AGENT_WORKSPACE_GITHUB_REPOSITORY")
             ?? configuration["AgentWorkspace:GitHubRepository"]
-            ?? Environment.GetEnvironmentVariable("GITHUB_REPOSITORY");
+            ?? Environment.GetEnvironmentVariable("GITHUB_REPOSITORY")
+            ?? "inernoro/prd_agent";
         var gitRef = Environment.GetEnvironmentVariable("AGENT_WORKSPACE_GIT_REF")
             ?? configuration["AgentWorkspace:GitRef"]
             ?? Environment.GetEnvironmentVariable("VITE_GIT_BRANCH")
