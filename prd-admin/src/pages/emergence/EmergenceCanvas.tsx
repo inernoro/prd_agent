@@ -393,6 +393,12 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       onDone: (data) => {
         placeholdersRef.current = [];
         relayout();
+        // 流式期间 centerOnNode 把视口对准了最后到达的涌现子节点,
+        // 父节点(depth=0, y=0)此时可能在视口上方已不可见。
+        // 等 React 提交本次 setNodes 后再 fitView 把所有节点(含父节点)收回屏幕。
+        setTimeout(() => {
+          try { reactFlow.fitView({ padding: 0.25, duration: 600 }); } catch { /* ignore */ }
+        }, 50);
         const d = data as { totalNew?: number; error?: string };
         if (d.error) {
           toast.error('涌现失败', d.error);
@@ -405,6 +411,10 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       onError: (msg) => {
         placeholdersRef.current = [];
         relayout();
+        // 同上：流式中断后也需要 fitView 恢复视口
+        setTimeout(() => {
+          try { reactFlow.fitView({ padding: 0.25, duration: 600 }); } catch { /* ignore */ }
+        }, 50);
         toast.error('涌现失败', msg);
       },
     });
