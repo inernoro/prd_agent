@@ -87,14 +87,32 @@ public class ShortLinkService : IShortLinkService
             },
             ct);
         var finalSeq = finalCounter?.Seq > 0 ? finalCounter.Seq : 1;
-        await _links.InsertOneAsync(new ShortLink
+        try
         {
-            Seq = finalSeq,
-            TargetType = tt,
-            TargetId = tid,
-        }, cancellationToken: ct);
-        _logger.LogWarning("ShortLink 经 counter 修复后分配 seq={Seq}", finalSeq);
-        return finalSeq;
+            await _links.InsertOneAsync(new ShortLink
+            {
+                Seq = finalSeq,
+                TargetType = tt,
+                TargetId = tid,
+            }, cancellationToken: ct);
+            _logger.LogWarning("ShortLink 经 counter 修复后分配 seq={Seq}", finalSeq);
+            return finalSeq;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 极端并发：两个 caller 同时为同一 (tt, tid) 走到 repair 末端，先到的赢，
+            // 后到的撞 (TargetType, TargetId) 唯一索引 → 直接返回赢家的 seq 保持幂等。
+            // 若 seq 维度撞（更罕见），说明仍有 counter 落后于真实 max，但此处不再
+            // 二次 repair（避免无限循环），让异常往上抛由调用方观察告警。
+            var winner = await _links.Find(x => x.TargetType == tt && x.TargetId == tid).FirstOrDefaultAsync(ct);
+            if (winner != null)
+            {
+                _logger.LogWarning("ShortLink repair 末端并发命中 {Type}/{Id}，复用 winner seq={Seq}",
+                    tt, tid, winner.Seq);
+                return winner.Seq;
+            }
+            throw;
+        }
     }
 
     /// <summary>

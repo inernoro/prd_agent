@@ -36,27 +36,38 @@ export default function ShortLinkRouter() {
 
     let cancelled = false;
     setState({ kind: 'loading' });
-    resolveShortLink(slug).then(res => {
-      if (cancelled) return;
-      if (!res.success) {
+    resolveShortLink(slug)
+      .then(res => {
+        if (cancelled) return;
+        if (!res.success || !res.data) {
+          setState({
+            kind: 'error',
+            title: '链接不存在',
+            detail: res.error?.message,
+          });
+          return;
+        }
+        const { targetType, token } = res.data;
+        if (!SUPPORTED_TARGETS.includes(targetType)) {
+          setState({
+            kind: 'error',
+            title: '暂不支持的分享类型',
+            detail: `targetType=${targetType}`,
+          });
+          return;
+        }
+        setState({ kind: 'resolved', targetType, token });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // 防御性兜底：res.data 形态异常导致回调抛 / 网络层意外抛
+        // 都让组件离开 loading，避免黑屏永驻
         setState({
           kind: 'error',
-          title: '链接不存在',
-          detail: res.error?.message,
+          title: '链接解析失败',
+          detail: err instanceof Error ? err.message : String(err),
         });
-        return;
-      }
-      const { targetType, token } = res.data;
-      if (!SUPPORTED_TARGETS.includes(targetType)) {
-        setState({
-          kind: 'error',
-          title: '暂不支持的分享类型',
-          detail: `targetType=${targetType}`,
-        });
-        return;
-      }
-      setState({ kind: 'resolved', targetType, token });
-    });
+      });
 
     return () => {
       cancelled = true;
