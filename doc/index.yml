@@ -41,6 +41,7 @@ docs:
   spec.cds-lifecycle: CDS 服务生命周期与缓存范围规格
   spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
   spec.cds-project-model: CDS 多项目数据字典
+  spec.short-links: 统一短链系统规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
