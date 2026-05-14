@@ -4,3 +4,4 @@
 | feat | prd-api | CDS Agent 会话新增只读检查接口，固定运行 git status 与 diff stat 并记录命令结果 |
 | feat | prd-admin | CDS Agent 产物面板新增运行只读检查按钮，展示命令退出码和输出 |
 | fix | prd-admin | CDS Agent 产物动作改为独立按钮区，避免窄面板隐藏只读检查入口 |
+| feat | prd-admin | 工作流舱目录补齐 CDS Agent 节点入口，并清理工作流页面可见 emoji |

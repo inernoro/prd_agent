@@ -194,6 +194,7 @@ export const NodeTypeLabels: Record<string, string> = {
   'file-exporter': '文件导出',
   'webhook-sender': 'Webhook 发送',
   'notification-sender': '站内通知',
+  'cds-agent': 'CDS Agent',
 };
 
 export const ExecutionStatus = {

@@ -216,7 +216,7 @@ function CapsuleSidebar({ capsuleTypes, categories, onAddCapsule }: {
                 const Icon = getIconForCapsule(meta.icon);
                 const emoji = getEmojiForCapsule(meta.typeKey);
                 const frontDef = getCapsuleType(meta.typeKey);
-                const disabledReason = (meta as any).disabledReason || frontDef?.disabledReason;
+                const disabledReason = meta.disabledReason || frontDef?.disabledReason;
                 const isDisabled = !!disabledReason;
 
                 return (
@@ -329,7 +329,7 @@ function CurlImportPanel({ onImport, disabled }: {
         disabled={!raw.trim()}
         className="surface-action surface-action-accent w-full h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 disabled:opacity-40"
       >
-        ⚡ 解析并填入
+        解析并填入
       </button>
     </div>
   );
@@ -363,7 +363,7 @@ function CurlExportButton({ values }: { values: Record<string, string> }) {
       disabled={!hasUrl}
       className={`surface-action w-full flex items-center justify-center gap-1.5 h-7 rounded-[8px] text-[11px] font-medium transition-all duration-150 disabled:opacity-30 border-dashed ${copied ? 'surface-action-success' : 'surface-action-accent'}`}
     >
-      {copied ? '✓ 已复制到剪贴板' : '⬆ 导出为 cURL 命令'}
+      {copied ? '已复制到剪贴板' : '导出为 cURL 命令'}
     </button>
   );
 }
@@ -545,7 +545,7 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
             {field.label}
             {field.key === 'curlCommand' && curlParsed && (
               <span className="text-[10px] font-medium text-token-success">
-                ✓ 已解析并填入下方字段
+                已解析并填入下方字段
               </span>
             )}
           </label>
@@ -664,7 +664,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   const status = nodeExec?.status || 'idle';
   const accentHue = typeDef?.accentHue ?? capsuleMeta?.accentHue ?? 210;
   const CIcon = typeDef?.Icon;
-  const emoji = typeDef?.emoji ?? '📦';
+  const fallbackBadge = typeDef?.emoji ?? 'BOX';
   const [curlCopied, setCurlCopied] = useState(false);
 
   // 配置值直接从 node.config 读取（由父组件管理状态）
@@ -757,7 +757,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
             <span
               className={`workflow-step-index ${stepIndexClass} w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0`}
             >
-              {status === 'completed' ? '✓' : index + 1}
+              {status === 'completed' ? '完成' : index + 1}
             </span>
 
             {/* 断点红点 */}
@@ -777,7 +777,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                 color: `hsla(${accentHue}, 60%, 65%, 0.9)`,
               }}
             >
-              {CIcon ? <CIcon className="w-4 h-4" /> : <span>{emoji}</span>}
+              {CIcon ? <CIcon className="w-4 h-4" /> : <span>{fallbackBadge}</span>}
             </div>
 
             {/* 名称 + 类型 + 插槽 */}
@@ -920,15 +920,15 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                     key={i}
                     className="surface-state-warning flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded-[8px] mb-1"
                   >
-                    ⚠ {w.message}
+                    警告：{w.message}
                   </div>
                 ))}
               </div>
             )}
 
-            {/* ──── 📥 输入区 ──── */}
+            {/* ──── 输入区 ──── */}
             {hasAnyInputSlot && capsuleMeta?.testable && (
-              <SectionBox title="📥 输入" type="input">
+              <SectionBox title="输入" type="input">
                 {/* 有历史执行数据时显示真实上游输入（只读） */}
                 {nodeExec && nodeExec.inputArtifacts && nodeExec.inputArtifacts.length > 0 ? (
                   <div className="space-y-2">
@@ -977,7 +977,7 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
                       <label
                         className="surface-action hover-bg-soft text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer transition-colors"
                       >
-                        📎 上传
+                        上传
                         <input
                           type="file"
                           className="hidden"
@@ -1006,9 +1006,9 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
               </SectionBox>
             )}
 
-            {/* ──── ⚙ 配置区 ──── */}
+            {/* ──── 配置区 ──── */}
             {(isHttpType || (capsuleMeta && capsuleMeta.configSchema.length > 0)) && (
-              <SectionBox title="⚙ 配置" type="config" action={
+              <SectionBox title="配置" type="config" action={
                 onAiFill ? (
                   <button
                     className="surface-action surface-action-accent flex cursor-pointer items-center gap-1 text-[10px] px-2 py-0.5 rounded-[6px] transition-all"
@@ -1156,9 +1156,9 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
               </Button>
             </div>
 
-            {/* ──── 📤 输出 / 结果 ──── */}
+            {/* ──── 输出 / 结果 ──── */}
             {unifiedResult && (
-              <SectionBox title="📤 输出" type="output">
+              <SectionBox title="输出" type="output">
                 <UnifiedResultPanel
                   result={unifiedResult}
                   source={resultSource!}
@@ -1202,7 +1202,7 @@ function UnifiedResultPanel({ result, source, expandedArtifacts, toggleArtifact,
     >
       {/* 结果头部 */}
       <div className="surface-panel-header bg-token-nested flex items-center gap-2 px-3 py-2">
-        <span className="text-[12px]">{isOk ? '✅' : '❌'}</span>
+        <span className="text-[12px]">{isOk ? '通过' : '失败'}</span>
         <span className={`text-[11px] font-semibold flex-1 ${isOk ? 'text-token-success' : 'text-token-error'}`}>
           {label}
         </span>
@@ -1646,9 +1646,9 @@ export function WorkflowEditorPage() {
           addLog('info', t, { nodeId, nodeName });
         }
         // 错误/警告
-        else if (t.includes('❌')) {
+        else if (t.includes('失败')) {
           addLog('error', t, { nodeId, nodeName });
-        } else if (t.includes('⚠️') || t.includes('警告')) {
+        } else if (t.includes('警告')) {
           addLog('warn', t, { nodeId, nodeName });
         }
         // 其他行全部跳过（prompt 内容、LLM 响应、JSON 数据等留在节点详情里查看）
