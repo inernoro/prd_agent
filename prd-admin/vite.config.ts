@@ -12,6 +12,19 @@ function getGitBranch(): string {
   }
 }
 
+function getBuildId(): string {
+  const raw = process.env.VITE_BUILD_ID || process.env.GITHUB_SHA || (() => {
+    try {
+      return execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+    } catch {
+      return 'local';
+    }
+  })();
+  return raw.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'local';
+}
+
+const buildId = getBuildId();
+
 export default defineConfig({
   plugins: [tailwindcss(), react()],
   define: {
@@ -42,7 +55,7 @@ export default defineConfig({
               proxyReq.setHeader('X-Accel-Buffering', 'no');
             }
           });
-          proxy.on('proxyRes', (proxyRes, req, _res) => {
+          proxy.on('proxyRes', (proxyRes, _req, _res) => {
             // 如果是 SSE 响应，禁用缓冲
             if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
               proxyRes.headers['x-accel-buffering'] = 'no';
@@ -56,6 +69,15 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: `assets/[name]-[hash]-${buildId}.js`,
+        chunkFileNames: `assets/[name]-[hash]-${buildId}.js`,
+        assetFileNames: `assets/[name]-[hash]-${buildId}[extname]`,
+      },
     },
   },
 });
