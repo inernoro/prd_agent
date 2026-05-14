@@ -84,7 +84,6 @@ services:
     volumes:
       - .:/repo
       - ./.cds-data/api-nuget-cache:/root/.nuget/packages
-      - prd-agent-api-dataprotection-keys:/data/dataprotection-keys
     ports:
       - "5000"
     command: >-
@@ -115,7 +114,6 @@ services:
       ClaudeSdkExecutor__Sidecars__0__Tags__0: "default"
       CLAUDE_SIDECAR_TOKEN: "dev-skip"
       AGENT_WORKSPACE_ROOT: /repo
-      DataProtection__KeyRingPath: /data/dataprotection-keys
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
@@ -178,6 +176,5 @@ services:
       retries: 3
 
 volumes:
-  prd-agent-api-dataprotection-keys:
   mongodb-data:
   redis-data:

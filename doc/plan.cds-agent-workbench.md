@@ -566,6 +566,7 @@ Agent runtime
 | 智能体 | MAP 智能体可把任务委托给 CDS Agent | 未接入 | 缺 Executor/Run-Worker 适配 |
 | 可观测性 | 每个 run 有 trace、日志、事件、工具审批、产物和耗时指标 | 有事件和日志基础 | 缺统一 run trace、指标、回放和错误诊断 |
 | 权限安全 | 危险工具、网络、凭据、文件写入都有策略和审计 | 有审批 UI 原型 | 缺策略引擎、作用域隔离、审计报表 |
+| runtime 归属 | Claude/Codex sidecar 属于 CDS 系统级自托管能力，不侵入业务项目 app profile | 当前 `prd-agent-main` 仍有过渡期 `claude-sidecar-prd-agent` | 必须迁移到 CDS 系统侧 sidecar pool，业务项目最终只保留 api/admin |
 | 验收 | 真实预览域名从入口完整跑通 | P8 跑通过首版测试台 | 缺覆盖真实 runtime、工作流、智能体和远程浏览器 |
 
 硬性补充：
@@ -573,6 +574,7 @@ Agent runtime
 - CDS 授权是系统级长期授权，一次授权长期可用，除非管理员显式删除或撤销；10 分钟只允许用于一次性授权 code / pairing token，不允许用于已建立连接的 long token。
 - 智能体大模型配置必须允许任意 OpenAI-compatible `baseUrl`、`model` 和 API key，不允许写死 demo model。
 - 最终用户必须看到一个独立、简易、可长期使用的 CDS Agent 页面，而不是只在设置页里操作测试台。
+- sidecar / sandbox runtime 属于 CDS 自托管基础设施能力，不属于每个业务项目的 app profile；当前 `api/admin/claude-sidecar` 三容器形态只允许作为过渡验证链路，最终验收时 `prd-agent` 业务项目不应携带 `claude-sidecar-prd-agent`。
 - 最终验收必须让远程 Claude Code / Codex SDK sandbox 巡检 `prd_agent` 自己，并提交一个巡检 PR。
 
 ## 14. 市面能力基线
@@ -650,6 +652,7 @@ Agent runtime
 | P10.4 工作目录挂载 | [x] | [x] | [x] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；真实入口视觉已在会话事件中看到 `repo_git_status` 返回分支和 commit，证明远程工具读取的是仓库工作目录 |
 | P10.5 资源限制 | [x] | [x] | [x] | runtime profile 新增 CPU、内存、超时、网络策略、自动清理配置；启动时固化到 MAP 会话并下发 CDS/sidecar，CDS 事件、日志和会话视图返回资源策略；远端 profile API 冒烟和真实入口视觉均通过 |
 | P10.6 runtime 状态机 | [x] | [x] | [x] | MAP 启动已有 creating，停止新增 stopping 中间态和状态事件；停止失败会转 failed 并写入 error，避免卡在中间态；CDS 停止接口同步输出 stopping -> stopped，状态映射覆盖 creating/running/idle/stopping/stopped/failed；线上真实入口视觉已验证 failed、stopping 事件、授权撤销错误和部署 commit 可见 |
+| P10.7 迁移到 CDS 系统级 sidecar pool | [ ] | [ ] | [ ] | 最终形态必须由 CDS 系统侧提供 Claude/Codex runtime pool；`prd-agent` 业务项目 app profile 不再包含 `claude-sidecar-prd-agent`，主分支部署只应看到 `api-prd-agent` 与 `admin-prd-agent` |
 
 冒烟测试：
 
@@ -658,7 +661,7 @@ Agent runtime
 - 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py self update --branch main`，CDS 主服务更新到 `eca5e342`，`/healthz` 返回 `ok`。
 - 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
 - 2026-05-14 本地工具冒烟：新增 `AgentToolsTests`，覆盖 `/repo` 工作目录读文件、搜索、写文件、运行命令、路径逃逸拦截与危险命令拦截，`dotnet test ... --filter AgentToolsTests --no-restore` 通过 3 个测试。
-- 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace，且 DataProtection key ring 通过 `DataProtection__KeyRingPath=/repo/.cds-data/api-dataprotection-keys` 写入仓库工作区，避开 CDS 附加 volume 被映射到只读 cache 目录；同时确认 MAP API profile 带 `cds.readiness-path: /health`，避免 CDS 用根路径 `/` 探测时因 404 误判 API 一直 starting。
+- 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace；DataProtection key ring 改由 MongoDB `data_protection_keys` 集合保存，避免业务容器 volume 被 CDS 映射成只读 cache 目录，也避免容器重建后系统级长期授权无法解密；同时确认 MAP API profile 带 `cds.readiness-path: /health`，避免 CDS 用根路径 `/` 探测时因 404 误判 API 一直 starting。
 - 2026-05-14 本地冒烟：新增 `POST /api/infra-agent-runtime-profiles/{id}/test`，使用已保存密钥按协议测试上游；`anthropic` 走 `/v1/messages` + `x-api-key`，`openai-compatible` 走 `/v1/chat/completions` + Bearer token；`dotnet build --no-restore` 无新增 CS error，前端 `tsc` 与目标 eslint 通过。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。
@@ -685,6 +688,7 @@ Agent runtime
 P10 当前结论：
 
 - 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
+- 架构纠偏：当前 `prd-agent-main` 出现 `api/admin/claude-sidecar` 三容器，只能算链路过渡态；如果 sidecar 是 CDS 自托管能力，长期必须从业务项目 app profile 移到 CDS 系统侧 runtime pool。完全可用验收不得把三容器业务部署当作最终架构完成。
 - 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_git_status`、`repo_git_diff`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
 - 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
 - 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
@@ -962,6 +966,7 @@ P10 当前结论：
 | A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
 | A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
 | A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
+| A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [ ] | [ ] | [ ] | CDS 提供系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，真实入口仍能创建远程 Agent 会话 |
 
 ### 17.4 当前阻塞与不可混用凭据
 
