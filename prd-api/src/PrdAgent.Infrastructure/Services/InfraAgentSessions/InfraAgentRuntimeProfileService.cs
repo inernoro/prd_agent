@@ -101,6 +101,67 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return ToView(item);
     }
 
+    public async Task<InfraAgentRuntimeProfileView> UpdateAsync(
+        string id,
+        string userId,
+        UpsertInfraAgentRuntimeProfileRequest request,
+        CancellationToken ct)
+    {
+        var item = await _db.InfraAgentRuntimeProfiles.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (item == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ProfileNotFound,
+                "运行配置不存在",
+                StatusCodes.Status404NotFound);
+        }
+
+        var name = NormalizeOptional(request.Name);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.NameRequired,
+                "配置名称不能为空");
+        }
+
+        var baseUrl = NormalizeBaseUrl(request.BaseUrl);
+        var model = NormalizeOptional(request.Model);
+        var apiKey = NormalizeOptional(request.ApiKey);
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ModelRequired,
+                "模型名称不能为空");
+        }
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
+                "更新配置时必须重新输入 API key");
+        }
+
+        item.Name = name;
+        item.Runtime = NormalizeRuntime(request.Runtime);
+        item.Protocol = NormalizeProtocol(request.Protocol);
+        item.BaseUrl = baseUrl;
+        item.Model = model;
+        item.ApiKeyEncrypted = _protector.Protect(apiKey);
+        item.IsDefault = request.IsDefault ?? item.IsDefault;
+        item.CreatedByUserId = string.IsNullOrWhiteSpace(item.CreatedByUserId) ? userId : item.CreatedByUserId;
+        item.UpdatedAt = DateTime.UtcNow;
+
+        if (item.IsDefault)
+        {
+            await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
+                x => x.Id != item.Id,
+                Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
+                cancellationToken: ct);
+        }
+
+        await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == item.Id, item, cancellationToken: ct);
+        return ToView(item);
+    }
+
     public async Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct)
     {
         var model = await _db.LLMModels

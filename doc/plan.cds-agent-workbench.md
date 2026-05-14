@@ -646,7 +646,7 @@ Agent runtime
 |----|----------|--------------|--------------|------|
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
 | P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
-| P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
+| P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存和覆盖更新，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
 | P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
 | P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
 | P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
@@ -672,6 +672,7 @@ Agent runtime
 - 2026-05-14 真实入口视觉：发送只读连通性 prompt 后，事件时间线出现 `sidecar_runtime_started` 与 `error anthropic_stream_error`，会话状态显示 `失败`；这是正确的真实失败展示，不是成功验收。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services` 进入基础设施服务，再点击“打开 CDS Agent”进入 `/cds-agent`；页面显示 commit `9a0894f2`、当前模型 `claude-opus-4-5 @ https://api.anthropic.com` 和“测试模型”按钮。
 - 2026-05-14 真实入口视觉：点击“测试模型”后，页面内联显示 `失败 · HTTP 401 · 416ms · invalid x-api-key`，右上 toast 同步显示模型测试失败。该结果证明当前配置仍不是可用 provider key，不能进入 P17 巡检 PR 正向验收。
+- 2026-05-14 增量开发：新增 `PUT /api/infra-agent-runtime-profiles/{id}`，允许覆盖当前系统级模型配置。CDS Agent 页面会用当前配置填充表单，重新输入 API key 后可点击“更新当前配置”，避免每次保存都创建一条新配置。
 - 2026-05-14 真实入口视觉：部署到 commit `8026ac9e` 后，`/cds-agent` 展开“保存新模型配置”可见配置名称、runtime、baseUrl、model、API key、设为默认与保存按钮；页面布局未遮挡会话区。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过，断言仓库只读状态工具能返回 `git status`，diff 工具能返回具体新增行。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与目标文件 eslint 通过，断言 Agent 页面可以编译渲染 git status/diff/命令结果卡片。

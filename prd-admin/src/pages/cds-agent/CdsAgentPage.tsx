@@ -21,6 +21,7 @@ import {
   startInfraAgentSession,
   stopInfraAgentSession,
   testInfraAgentRuntimeProfile,
+  updateInfraAgentRuntimeProfile,
   type InfraAgentEventView,
   type InfraAgentMessageView,
   type InfraAgentRuntimeProfileView,
@@ -396,6 +397,7 @@ export default function CdsAgentPage() {
     : activeProfile;
   const activeProfileBlockReason = profileBlockReason(activeProfile);
   const activeSessionProfileBlockReason = activeSession ? profileBlockReason(activeSessionProfile) : '';
+  const canUpdateActiveProfile = Boolean(activeProfile && profileDraft.apiKey.trim());
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason);
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
   const canStartActiveSession = Boolean(activeSession && canRunActiveSession && canStartFromStatus(activeSession.status));
@@ -432,6 +434,19 @@ export default function CdsAgentPage() {
     }
     setEventReplayIndex((prev) => Math.max(1, Math.min(prev, events.length)));
   }, [events.length]);
+
+  useEffect(() => {
+    if (!activeProfile || profileDraft.apiKey.trim()) return;
+    setProfileDraft((prev) => ({
+      ...prev,
+      name: activeProfile.name,
+      runtime: activeProfile.runtime,
+      protocol: activeProfile.protocol,
+      baseUrl: activeProfile.baseUrl,
+      model: activeProfile.model,
+      isDefault: activeProfile.isDefault,
+    }));
+  }, [activeProfile, profileDraft.apiKey]);
 
   async function loadAll() {
     const [connRes, profileRes, sessionRes] = await Promise.all([
@@ -699,6 +714,29 @@ export default function CdsAgentPage() {
     toast.success('模型配置已保存', '可以立即点击测试模型');
   }
 
+  async function updateProfile() {
+    if (!activeProfile) {
+      toast.warning('没有可更新的模型配置');
+      return;
+    }
+    if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
+      toast.warning('模型配置不完整', '更新当前配置需要重新输入 baseUrl、model 和 API key');
+      return;
+    }
+    setBusy(true);
+    const res = await updateInfraAgentRuntimeProfile(activeProfile.id, profileDraft);
+    setBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('更新模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+      return;
+    }
+    setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
+    setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
+    setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+    setProfileTest('');
+    toast.success('模型配置已更新', '这是一条系统级长期配置，后续会话会继续复用');
+  }
+
   async function importDefaultProfile() {
     setBusy(true);
     const res = await importDefaultInfraAgentRuntimeProfile();
@@ -892,6 +930,18 @@ export default function CdsAgentPage() {
                   >
                     {busy ? <MapSpinner size={13} /> : <Plus size={13} />} 保存配置
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => void updateProfile()}
+                    disabled={busy || !canUpdateActiveProfile}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  >
+                    {busy ? <MapSpinner size={13} /> : <RefreshCw size={13} />} 更新当前配置
+                  </button>
+                  <div className="text-xs leading-relaxed text-white/42">
+                    更新会覆盖当前选中的系统级配置。API key 只保存加密值，不会回显；重新保存后长期复用。
+                  </div>
                 </div>
               </details>
               <input

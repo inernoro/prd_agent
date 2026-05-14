@@ -8,6 +8,8 @@ public interface IInfraAgentRuntimeProfileService
 
     Task<InfraAgentRuntimeProfileView> CreateAsync(string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
+    Task<InfraAgentRuntimeProfileView> UpdateAsync(string id, string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
+
     Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct);
 
     Task<bool> DeleteAsync(string id, CancellationToken ct);
