@@ -465,6 +465,7 @@ Agent runtime
 | `/api/infra-agent-sessions/{id}/stream` | GET | P3 | [x] |
 | `/api/infra-agent-sessions/{id}/tool-approvals/{approvalId}` | POST | P4 | [x] |
 | `/api/infra-agent-sessions/{id}/stop` | POST | P2 | [x] |
+| `/api/infra-agent-sessions/{id}/collect-artifacts` | POST | P13 | [x] |
 | `/api/infra-agent-sessions/{id}/logs` | GET | P7 | [x] |
 | `/api/infra-agent-hook-profiles` | GET/POST | P6 | [x] |
 
@@ -750,10 +751,10 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P13.1 文件树 | [x] | [x] | [ ] | `repo_list_files` 的 `files` 结果已在事件卡片和产物面板渲染为文件树，待部署后从真实入口视觉验收 |
-| P13.2 diff 查看 | [x] | [x] | [ ] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；待部署后从真实入口视觉验收 |
-| P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；前端事件卡片已渲染命令、status、diff 结果，待真实入口视觉验收 |
-| P13.4 产物下载/引用 | [x] | [x] | [ ] | CDS Agent 对话页右侧产物面板自动汇总文件树、diff、命令输出、浏览器快照和日志，支持复制与文本下载，待部署后真实入口视觉验收 |
+| P13.1 文件树 | [x] | [x] | [x] | `repo_list_files` 的 `files` 结果已在事件卡片和产物面板渲染为文件树，真实入口视觉已验收 |
+| P13.2 diff 查看 | [x] | [x] | [x] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；真实入口视觉已验收 |
+| P13.3 命令与测试结果 | [x] | [x] | [ ] | 后端工具已能运行命令并返回退出码、stdout、stderr；前端事件卡片已渲染命令结果，但仍需真实 Agent 或专门命令动作触发后做视觉验收 |
+| P13.4 产物下载/引用 | [x] | [x] | [x] | CDS Agent 对话页右侧产物面板自动汇总仓库状态、文件树、diff、浏览器快照和日志，支持复制与文本下载，真实入口视觉已验收 |
 | P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
 
 冒烟测试：
@@ -765,12 +766,18 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 3 个测试，覆盖仓库读、搜、写、命令和危险命令拦截。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过，命令结果专属渲染类型与 lint 通过。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过，产物面板的文件树、diff、命令、浏览器快照和下载交互类型与 lint 通过。
+- 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 5 个测试，覆盖 `collect-artifacts` controller；`dotnet build --no-restore` 无新增 `error CS`，仅仓库既有 warning。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/components/MobileSafeBoundary.tsx src/pages/cds-agent/CdsAgentPage.tsx src/services/real/infraAgentSessions.ts src/services/api.ts`、`git diff --check` 通过。
+- 2026-05-14 远端冒烟：通过 `https://main-prd-agent.miduo.org/api/infra-agent-sessions` 创建会话 `86bc3353f6f24dd2854fc8c189a3f6cc`，调用 `/collect-artifacts` 后事件流返回 8 条事件，包含 `repo_git_status`、`repo_git_diff`、`repo_list_files` 三个只读工具调用与 3 个 `tool_result`。
 
 视觉测试：
 
+- 2026-05-14 真实入口视觉：push 到 commit `3499a940` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从 `https://main-prd-agent.miduo.org/ai-toolbox` 点击 `CDS Agent` 卡片进入工作台，页脚显示 `3499a940`。
+- 2026-05-14 真实入口视觉：点击 `生成只读产物` 后，事件时间线出现 `map-artifact-collector`、`repo_git_status`、`repo_git_diff`、`repo_list_files`，右侧产物面板显示 `仓库状态 HEAD · 3499a940`、`代码 diff`、`文件树 120 个文件，已截断`、`运行日志`，并显示复制与下载按钮。
+- 2026-05-14 真实入口视觉发现并修复：部署后旧 SPA runtime 切到百宝箱时曾触发动态 chunk 失效错误边界；已在 `MobileSafeBoundary` 增加 chunk 加载失败自动刷新一次，重新从真实入口进入后页面恢复正常。
 - diff 长文本可滚动，不撑爆布局。
 - 文件树、对话、日志之间切换清晰。
-- 仍待主分支部署后从真实入口验证：工具调用卡展示等待审批，允许后才出现命令结果卡，卡片展示 `exitCode`、`stdout`、`stderr`。
+- 仍待真实 Agent 或专门命令动作触发后从真实入口验证：工具调用卡展示等待审批，允许后才出现命令结果卡，卡片展示 `exitCode`、`stdout`、`stderr`。
 
 ### P14 工作流节点接入
 
