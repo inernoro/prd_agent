@@ -33,3 +33,4 @@
 | fix | cds | 为 MAP API profile 增加 `/health` readiness probe，避免根路径 404 导致 CDS 误判 api 一直 starting |
 | feat | prd-admin | 将 CDS Agent 注册到百宝箱内置智能体入口，用户可从智能体页进入远程 sandbox 工作台 |
 | fix | prd-admin | 打磨 CDS Agent 模型配置和会话列表显示，明确长期系统级授权、任意 baseUrl/model 配置和失败原因 |
+| fix | prd-admin | 修复百宝箱点击 CDS Agent 后地址变化但页面仍停留在百宝箱的问题，入口跳转改为强制到工作台 |

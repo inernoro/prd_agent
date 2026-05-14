@@ -274,6 +274,10 @@ function RecentChip({ item }: { item: ToolboxItem }) {
   const handleClick = () => {
     trackRecentlyUsed(item.id);
     if (item.routePath) {
+      if (item.agentKey === 'cds-agent') {
+        window.location.assign(item.routePath);
+        return;
+      }
       navigate(item.routePath);
     } else {
       selectItem(item);
