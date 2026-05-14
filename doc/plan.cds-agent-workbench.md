@@ -673,6 +673,8 @@ Agent runtime
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services` 进入基础设施服务，再点击“打开 CDS Agent”进入 `/cds-agent`；页面显示 commit `9a0894f2`、当前模型 `claude-opus-4-5 @ https://api.anthropic.com` 和“测试模型”按钮。
 - 2026-05-14 真实入口视觉：点击“测试模型”后，页面内联显示 `失败 · HTTP 401 · 416ms · invalid x-api-key`，右上 toast 同步显示模型测试失败。该结果证明当前配置仍不是可用 provider key，不能进入 P17 巡检 PR 正向验收。
 - 2026-05-14 增量开发：新增 `PUT /api/infra-agent-runtime-profiles/{id}`，允许覆盖当前系统级模型配置。CDS Agent 页面会用当前配置填充表单，重新输入 API key 后可点击“更新当前配置”，避免每次保存都创建一条新配置。
+- 2026-05-14 远端 API 冒烟：登录 `https://main-prd-agent.miduo.org/` 后创建临时 runtime profile，调用 `PUT /api/infra-agent-runtime-profiles/{id}` 覆盖为新名称、`codex` runtime 和新 model，断言返回 `hasApiKey=true`，最后删除临时配置成功。
+- 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `d90a9ce9`。模型配置表单可见“更新当前配置”和“重新保存后长期复用”说明，确认用户可覆盖当前系统级模型配置而不是反复创建新授权。
 - 2026-05-14 真实入口视觉：部署到 commit `8026ac9e` 后，`/cds-agent` 展开“保存新模型配置”可见配置名称、runtime、baseUrl、model、API key、设为默认与保存按钮；页面布局未遮挡会话区。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过，断言仓库只读状态工具能返回 `git status`，diff 工具能返回具体新增行。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 与目标文件 eslint 通过，断言 Agent 页面可以编译渲染 git status/diff/命令结果卡片。
@@ -874,7 +876,7 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `6fc623d9`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `d90a9ce9`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
