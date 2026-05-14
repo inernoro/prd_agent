@@ -811,7 +811,7 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P16.1 统一 traceId | [ ] | [ ] | [ ] | MAP session、CDS session、workflow run、agent run 贯通 |
+| P16.1 统一 traceId | [x] | [x] | [ ] | MAP session 与事件已统一 `traceId` 并在 CDS Agent 页、基础设施操作台展示；CDS session、workflow run、agent run 贯通仍待 P14/P15 接入后补齐 |
 | P16.2 事件 schema 稳定化 | [ ] | [ ] | [ ] | status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser |
 | P16.3 指标面板 | [ ] | [ ] | [ ] | 运行数、失败率、耗时、token、成本、资源 |
 | P16.4 审计报表 | [ ] | [ ] | [ ] | 谁启动、审批了什么、访问了哪些凭据 |
@@ -821,6 +821,7 @@ P10 当前结论：
 
 - 任意一次任务能用 traceId 查到 MAP/CDS/Workflow/Agent 四段记录。
 - 审计日志包含工具审批人和审批结果。
+- 2026-05-14 本地冒烟：`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS" | head -30` 无输出；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 3 个测试；`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx src/pages/infra-services/InfraServicesPage.tsx src/services/real/infraAgentSessions.ts` 通过。
 
 视觉测试：
 

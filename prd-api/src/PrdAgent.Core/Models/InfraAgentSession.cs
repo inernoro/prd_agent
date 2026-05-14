@@ -22,6 +22,8 @@ public class InfraAgentSession
 
     public string? CdsContainerName { get; set; }
 
+    public string TraceId { get; set; } = string.Empty;
+
     public string? RuntimeProfileId { get; set; }
 
     public string? ModelBaseUrl { get; set; }

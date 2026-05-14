@@ -11,6 +11,7 @@ export interface InfraAgentSessionView {
   cdsSessionId?: string | null;
   cdsWorkerId?: string | null;
   cdsContainerName?: string | null;
+  traceId: string;
   runtimeProfileId?: string | null;
   modelBaseUrl?: string | null;
   runtime: string;
@@ -30,6 +31,7 @@ export interface InfraAgentEventView {
   id: string;
   sessionId: string;
   seq: number;
+  traceId: string;
   type: string;
   payloadJson: string;
   createdAt: string;

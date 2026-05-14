@@ -601,6 +601,7 @@ export default function InfraServicesPage() {
               <div>当前 worker：{activeSession?.cdsWorkerId ?? '未启动'}</div>
               <div>当前容器：{activeSession?.cdsContainerName ?? '未分配'}</div>
               <div>会话状态：{activeSession ? agentStatusLabel(activeSession.status) : '未选择'}</div>
+              <div>traceId：{activeSession?.traceId ?? '未生成'}</div>
             </div>
           </div>
         </div>

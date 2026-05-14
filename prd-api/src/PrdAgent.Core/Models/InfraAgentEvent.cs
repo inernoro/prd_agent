@@ -11,6 +11,8 @@ public class InfraAgentEvent
 
     public long Seq { get; set; }
 
+    public string TraceId { get; set; } = string.Empty;
+
     public string Type { get; set; } = InfraAgentEventTypes.Status;
 
     public string PayloadJson { get; set; } = "{}";

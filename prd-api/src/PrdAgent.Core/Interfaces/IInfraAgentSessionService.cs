@@ -55,6 +55,7 @@ public record InfraAgentSessionView(
     string? CdsSessionId,
     string? CdsWorkerId,
     string? CdsContainerName,
+    string TraceId,
     string Runtime,
     string? Model,
     string ToolPolicy,
@@ -74,6 +75,7 @@ public record InfraAgentEventView(
     string Id,
     string SessionId,
     long Seq,
+    string TraceId,
     string Type,
     string PayloadJson,
     DateTime CreatedAt

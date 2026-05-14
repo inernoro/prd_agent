@@ -87,12 +87,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         var now = DateTime.UtcNow;
+        var sessionId = Guid.NewGuid().ToString("N");
         var session = new InfraAgentSession
         {
+            Id = sessionId,
             UserId = userId,
             ConnectionId = connection.Id,
             Partner = connection.Partner,
             CdsProjectId = connection.ProjectId,
+            TraceId = BuildEventTraceId(sessionId),
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
@@ -794,6 +797,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             SessionId = sessionId,
             Seq = seq,
+            TraceId = BuildEventTraceId(sessionId),
             Type = InfraAgentEventTypes.Status,
             PayloadJson = payload,
             CreatedAt = DateTime.UtcNow
@@ -812,6 +816,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             SessionId = sessionId,
             Seq = seq,
+            TraceId = BuildEventTraceId(sessionId),
             Type = type,
             PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
             CreatedAt = DateTime.UtcNow
@@ -1057,6 +1062,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.CdsSessionId,
         session.CdsWorkerId,
         session.CdsContainerName,
+        string.IsNullOrWhiteSpace(session.TraceId) ? BuildEventTraceId(session.Id) : session.TraceId,
         session.Runtime,
         session.Model,
         session.ToolPolicy,
@@ -1075,9 +1081,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         evt.Id,
         evt.SessionId,
         evt.Seq,
+        string.IsNullOrWhiteSpace(evt.TraceId) ? BuildEventTraceId(evt.SessionId) : evt.TraceId,
         evt.Type,
         evt.PayloadJson,
         evt.CreatedAt);
+
+    private static string BuildEventTraceId(string sessionId) => $"infra-agent-session-{sessionId}";
 
     private static string MapCdsStatus(string? status)
     {

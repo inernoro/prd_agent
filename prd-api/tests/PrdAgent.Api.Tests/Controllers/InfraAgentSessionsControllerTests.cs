@@ -103,6 +103,7 @@ public class InfraAgentSessionsControllerTests
             null,
             null,
             null,
+            "infra-agent-session-test",
             InfraAgentRuntimes.ClaudeSdk,
             null,
             "confirm-dangerous",
