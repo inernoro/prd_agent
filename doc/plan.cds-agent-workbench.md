@@ -649,7 +649,7 @@ Agent runtime
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存和覆盖更新，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
 | P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
 | P10.5 资源限制 | [x] | [x] | [x] | runtime profile 新增 CPU、内存、超时、网络策略、自动清理配置；启动时固化到 MAP 会话并下发 CDS/sidecar，CDS 事件、日志和会话视图返回资源策略；远端 profile API 冒烟和真实入口视觉均通过 |
-| P10.6 runtime 状态机 | [x] | [x] | [ ] | MAP 启动已有 creating，停止新增 stopping 中间态和状态事件；停止失败会转 failed 并写入 error，避免卡在中间态；CDS 停止接口同步输出 stopping -> stopped，状态映射覆盖 creating/running/idle/stopping/stopped/failed；待部署后做真实入口视觉验证 |
+| P10.6 runtime 状态机 | [x] | [x] | [x] | MAP 启动已有 creating，停止新增 stopping 中间态和状态事件；停止失败会转 failed 并写入 error，避免卡在中间态；CDS 停止接口同步输出 stopping -> stopped，状态映射覆盖 creating/running/idle/stopping/stopped/failed；线上真实入口视觉已验证 failed、stopping 事件、授权撤销错误和部署 commit 可见 |
 
 冒烟测试：
 
