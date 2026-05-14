@@ -10,3 +10,4 @@
 | feat | prd-admin | CDS Agent 事件时间线新增回放模式，支持按步骤复盘远程执行事件 |
 | feat | prd-api | CDS Agent 系统级模型配置支持覆盖更新，避免重复创建临时配置 |
 | feat | prd-admin | CDS Agent 页面新增更新当前模型配置入口，重新保存 API key 后长期复用 |
+| feat | prd-admin | CDS Agent 工作台新增会话、失败、事件、工具和产物指标条，提升运行可观测性 |

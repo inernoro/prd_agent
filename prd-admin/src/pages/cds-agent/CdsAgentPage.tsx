@@ -407,6 +407,21 @@ export default function CdsAgentPage() {
     [eventReplayIndex, eventReplayMode, events],
   );
   const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
+  const metrics = useMemo(() => {
+    const running = sessions.filter((item) => item.status === 'running' || item.status === 'creating').length;
+    const failed = sessions.filter((item) => item.status === 'failed').length;
+    const stopped = sessions.filter((item) => item.status === 'stopped').length;
+    const toolEvents = events.filter((item) => item.type === 'tool_call' || item.type === 'tool_result').length;
+    return {
+      totalSessions: sessions.length,
+      running,
+      failed,
+      stopped,
+      eventCount: events.length,
+      toolEvents,
+      artifactCount: artifacts.length,
+    };
+  }, [artifacts.length, events, sessions]);
 
   useEffect(() => {
     void loadAll();
@@ -795,6 +810,26 @@ export default function CdsAgentPage() {
             <RefreshCw size={14} /> 刷新
           </button>
         </header>
+
+        <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {[
+            { label: '会话总数', value: metrics.totalSessions, hint: `${metrics.running} 运行中 / ${metrics.stopped} 已停止` },
+            { label: '失败会话', value: metrics.failed, hint: metrics.failed > 0 ? '需要重试或检查模型配置' : '当前无失败会话' },
+            { label: '当前事件', value: metrics.eventCount, hint: activeSession ? `trace ${activeSession.traceId.slice(0, 12)}` : '未选择会话' },
+            { label: '工具事件', value: metrics.toolEvents, hint: 'tool_call / tool_result' },
+            { label: '可见产物', value: metrics.artifactCount, hint: '文件、diff、日志和快照' },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="min-h-[76px] rounded-xl px-4 py-3"
+              style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <div className="text-xs text-white/45">{item.label}</div>
+              <div className="mt-1 text-2xl font-semibold leading-none text-white/88">{item.value}</div>
+              <div className="mt-2 truncate text-xs text-white/42">{item.hint}</div>
+            </div>
+          ))}
+        </section>
 
         <section className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
