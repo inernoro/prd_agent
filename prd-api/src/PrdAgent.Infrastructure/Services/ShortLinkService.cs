@@ -116,8 +116,12 @@ public class ShortLinkService : IShortLinkService
     }
 
     /// <summary>
-    /// 把全局 counter.seq 同步到当前 short_links 集合的 max(seq)；
+    /// 把全局 counter.seq 单调对齐到当前 short_links 集合的 max(seq)；
     /// 用于运维误删 / 误改 counter 后的快速恢复。
+    ///
+    /// 用 Mongo $max 而不是 $set —— AllocateAsync 走兜底路径时会并发调本方法，
+    /// $set 可能把 counter 倒退到读 max 之后被别的 caller inc 出的 seq 之前，
+    /// 后续 inc+insert 撞已占用的 seq；$max 保证 counter 只升不降。
     /// </summary>
     public async Task<long> RepairCounterAsync(CancellationToken ct = default)
     {
@@ -130,10 +134,10 @@ public class ShortLinkService : IShortLinkService
 
         await _counters.FindOneAndUpdateAsync(
             Builders<ShortLinkCounter>.Filter.Eq(x => x.Id, GlobalCounterKey),
-            Builders<ShortLinkCounter>.Update.Set(x => x.Seq, maxSeq),
+            Builders<ShortLinkCounter>.Update.Max(x => x.Seq, maxSeq),
             new FindOneAndUpdateOptions<ShortLinkCounter> { IsUpsert = true },
             ct);
-        _logger.LogWarning("ShortLinkCounter 已修复同步到 seq={MaxSeq}", maxSeq);
+        _logger.LogWarning("ShortLinkCounter 单调对齐到 seq>={MaxSeq}", maxSeq);
         return maxSeq;
     }
 
@@ -174,11 +178,5 @@ public class ShortLinkService : IShortLinkService
     {
         if (seq <= 0) return null;
         return await _links.Find(x => x.Seq == seq).FirstOrDefaultAsync(ct);
-    }
-
-    public async Task<long?> FindSeqAsync(string targetType, string targetId, CancellationToken ct = default)
-    {
-        var doc = await _links.Find(x => x.TargetType == targetType && x.TargetId == targetId).FirstOrDefaultAsync(ct);
-        return doc?.Seq;
     }
 }
