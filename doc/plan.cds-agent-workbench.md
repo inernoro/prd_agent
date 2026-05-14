@@ -647,18 +647,21 @@ Agent runtime
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P10.1 定义 runtime adapter 接口 | [x] | [x] | [x] | MAP 会话发送已接入 `IClaudeSidecarRouter`，有真实 sidecar 时转写 text/tool/log/done/error 事件，fake 仅作为明确标识的 fallback |
-| P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
+| P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | 过渡期曾在 `prd-agent` app profile 内置 `claude-sidecar`；P10.7 后已迁移为 CDS 系统级 `shared-sidecar-pool-mp4anabh`，业务 compose 不再声明 sidecar |
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存和覆盖更新，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
 | P10.4 工作目录挂载 | [x] | [x] | [x] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；真实入口视觉已在会话事件中看到 `repo_git_status` 返回分支和 commit，证明远程工具读取的是仓库工作目录 |
 | P10.5 资源限制 | [x] | [x] | [x] | runtime profile 新增 CPU、内存、超时、网络策略、自动清理配置；启动时固化到 MAP 会话并下发 CDS/sidecar，CDS 事件、日志和会话视图返回资源策略；远端 profile API 冒烟和真实入口视觉均通过 |
 | P10.6 runtime 状态机 | [x] | [x] | [x] | MAP 启动已有 creating，停止新增 stopping 中间态和状态事件；停止失败会转 failed 并写入 error，避免卡在中间态；CDS 停止接口同步输出 stopping -> stopped，状态映射覆盖 creating/running/idle/stopping/stopped/failed；线上真实入口视觉已验证 failed、stopping 事件、授权撤销错误和部署 commit 可见 |
-| P10.7 迁移到 CDS 系统级 sidecar pool | [ ] | [ ] | [ ] | 最终形态必须由 CDS 系统侧提供 Claude/Codex runtime pool；`prd-agent` 业务项目 app profile 不再包含 `claude-sidecar-prd-agent`，主分支部署只应看到 `api-prd-agent` 与 `admin-prd-agent` |
+| P10.7 迁移到 CDS 系统级 sidecar pool | [x] | [x] | [x] | CDS 已部署 `shared-sidecar-pool-mp4anabh` 系统级 sidecar pool；`prd-agent-main` 业务部署只剩 `api-prd-agent` 与 `admin-prd-agent`，MAP 通过长期 CDS connection 动态发现系统 pool |
 
 冒烟测试：
 
 - 2026-05-14 本地 CDS 全量测试通过：`pnpm --prefix cds test -- --run tests/services/compose-parser.test.ts` 实际执行 83 个测试文件、1423 个用例全绿；`pnpm --prefix cds build` 通过。
 - 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py branch deploy prd-agent-main --timeout 600`，`api-prd-agent`、`admin-prd-agent`、`claude-sidecar-prd-agent` 均为 `running`，部署 commit 为 `eca5e342`。
 - 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py self update --branch main`，CDS 主服务更新到 `eca5e342`，`/healthz` 返回 `ok`。
+- 2026-05-14 P10.7 系统级 sidecar 迁移：`prd-agent-main` 重新导入并应用 app profile 后只剩 `api-prd-agent`、`admin-prd-agent` 两个服务；旧 `claude-sidecar-prd-agent` build profile 已删除。独立 CDS 系统项目 `shared-sidecar-pool-mp4anabh-main` 部署 `claude-sidecar-shared-sidecar-pool-mp4anabh`，`https://main-shared-sidecar-pool-mp4anabh.miduo.org/healthz` 返回 `{"status":"ok","version":"cds-system"}`。
+- 2026-05-14 P10.7 discovery 冒烟：修复 CDS 实例发现未读取 `CDS_PREVIEW_DOMAIN/CDS_ROOT_DOMAINS` 导致 MAP 回退到容器名的问题；`pnpm --prefix cds build` 通过，`pnpm --prefix cds test -- cds/tests/routes/remote-hosts-helpers.test.ts` 实际执行 83 个测试文件、1425 个用例全绿，新增 `resolvePreviewRootDomain` 覆盖 CDS 前缀域名变量。
+- 2026-05-14 P10.7 远端智能体冒烟：CDS self update 到 `b3c391be` 后，`prd-agent-main` api/admin 均 running 且 commit 为 `b3c391be`；AI 百宝箱指定 `preferredAgents=["cds-agent"]` 后，MAP 创建 infra session，事件出现 `sidecar_runtime_started`、`runtime-router sidecar tools exposed count=12`，错误推进为 OpenAI-compatible 上游 `401 invalid_api_key`，不再是 `no_healthy_sidecar`。
 - 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
 - 2026-05-14 本地工具冒烟：新增 `AgentToolsTests`，覆盖 `/repo` 工作目录读文件、搜索、写文件、运行命令、路径逃逸拦截与危险命令拦截，`dotnet test ... --filter AgentToolsTests --no-restore` 通过 3 个测试。
 - 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace；DataProtection key ring 改由 MongoDB `data_protection_keys` 集合保存，避免业务容器 volume 被 CDS 映射成只读 cache 目录，也避免容器重建后系统级长期授权无法解密；同时确认 MAP API profile 带 `cds.readiness-path: /health`，避免 CDS 用根路径 `/` 探测时因 404 误判 API 一直 starting。
@@ -684,11 +687,12 @@ Agent runtime
 - 2026-05-14 真实入口视觉：push 到 commit `cc9bed7a` 后，CDS Waiting Room 显示 `admin` 与 `claude-sidecar` 先就绪、`api` 启动中，随后真实页面可访问；从左侧“设置”进入 `settings?tab=infra-services`，再点击“打开 CDS Agent”进入独立页，页面显示 active CDS 连接、模型配置、测试模型、新建远程会话、会话列表、事件时间线和日志区。
 - 2026-05-14 部署流水线阻塞：`cdscli auth check` 使用当前环境和已知 `AI_ACCESS_KEY` 返回 CDS 401，无法通过 CDS 管理 API 查询分支状态；本次部署状态改由预览 Waiting Room 与真实页面底栏 commit `cc9bed7a` 验证。
 - 2026-05-14 真实入口视觉：push 到 commit `e623ed25` 后，Waiting Room 先显示 `admin` 与 `claude-sidecar` 已就绪、`api` 启动中，随后真实页面可访问；从左侧“设置”进入 `settings?tab=infra-services`，可见 active CDS 长期连接，再点击“打开 CDS Agent”进入独立页，展开“保存新模型配置”后可见协议选择；切换到 `OpenAI-compatible Chat Completions` 后，baseUrl 自动回填为 `https://api.openai.com/v1`，footer commit 为 `e623ed25`。
+- 2026-05-14 P10.7 真实入口视觉：`prd-agent-main` 状态接口显示业务部署只包含 `api-prd-agent` 与 `admin-prd-agent`，没有 `claude-sidecar-prd-agent`；AI 百宝箱真实入口调用产生 `CDS Agent 事件时间线` 与 `CDS Agent 运行日志` 产物，产物中 `sidecar` 字段为 `cds-pairing:b32e0594e26144a5bf37037d3bef94b3:shared-sidecar-pool-mp4anabh-main`，证明页面链路仍由系统级 sidecar pool 提供 runtime。
 
 P10 当前结论：
 
 - 已证明 MAP 能通过 CDS 真实调起 sidecar runtime，并且上游模型失败会在页面可见。
-- 架构纠偏：当前 `prd-agent-main` 出现 `api/admin/claude-sidecar` 三容器，只能算链路过渡态；如果 sidecar 是 CDS 自托管能力，长期必须从业务项目 app profile 移到 CDS 系统侧 runtime pool。完全可用验收不得把三容器业务部署当作最终架构完成。
+- 架构纠偏已落地：`prd-agent-main` 不再携带 `claude-sidecar` 业务 app profile，系统级 runtime 由 CDS 项目 `shared-sidecar-pool-mp4anabh` 提供；MAP 通过长期 CDS connection 的 instance discovery 拿到公开 `baseUrl` 并路由到系统 sidecar pool。
 - 已补上第一批仓库工具：`repo_list_files`、`repo_read_file`、`repo_search`、`repo_git_status`、`repo_git_diff`、`repo_write_file`、`repo_run_command`。这让远程 sidecar 不再只有 smoke 工具，开始具备代码巡检和最小改动能力。
 - 已补上真实 sidecar 工具审批等待：sidecar 在收到 `tool_use` 后会先调用 MAP approval wait 接口；只读工具可自动放行，`repo_write_file` / `repo_run_command` 必须等 MAP 用户允许后才会真正执行。
 - 已补上 runtime profile 测试接口和页面按钮：用户保存任意 `baseUrl/model/API key` 后可以先验证上游可用性，失败会显示 HTTP 状态与原始错误摘要。
@@ -696,7 +700,7 @@ P10 当前结论：
 - 已补上 runtime profile 的协议字段：Anthropic Messages 与 OpenAI-compatible Chat Completions 在后端测试、MAP -> CDS 请求、MAP -> sidecar 请求、sidecar 流式循环里分流，避免“页面说任意 baseUrl，实际只按 Anthropic 调”的假可用。
 - 已补上从 MAP 系统主模型同步 runtime profile：CDS Agent 不再只能手填一套新密钥，可从模型设置里已有的启用主模型生成默认配置，继承其 `baseUrl`、`model` 和 API key。
 - 真实入口视觉发现 `f39bdeb6` 主分支预览主体黑屏，根因是 admin 默认跑 Vite HMR，`/@vite/client` 在 CDS 预览代理下被回退为 HTML；已将 admin 默认命令切到静态 build+serve，避免最终用户页面依赖 dev server 特殊路径。
-- 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
+- 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key；P10.7 只证明系统级 sidecar pool 架构和路由已通。
 - 下一步必须部署并从真实入口视觉验证“从系统主模型同步”按钮、审批暂停、仓库工具和命令结果渲染，完成有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
 ### P11 CDS Agent 对话页
@@ -889,7 +893,7 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `8c7d251f`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已对齐到 `b3c391be`，业务部署只包含 api/admin；CDS 系统级 sidecar pool 独立 running，真实入口调用仍能进入远程 runtime |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
@@ -966,7 +970,7 @@ P10 当前结论：
 | A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
 | A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
 | A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
-| A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [ ] | [ ] | [ ] | CDS 提供系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，真实入口仍能创建远程 Agent 会话 |
+| A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [x] | [x] | [x] | CDS 提供 `shared-sidecar-pool-mp4anabh` 系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，AI 百宝箱真实入口仍能创建远程 Agent 会话并进入 `sidecar_runtime_started` |
 
 ### 17.4 当前阻塞与不可混用凭据
 
@@ -1002,6 +1006,7 @@ P10 当前结论：
 - 2026-05-14 P10.5 资源限制：rebase 远端 `127bd613` 后提交并部署到 `8c7d251f`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟创建临时 runtime profile，返回并列表确认 `1.5/2048/120/egress-only/15`，随后删除成功。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“资源边界: 2 CPU / 4096 MB / 900s / 受限网络 / 30m 清理”，审计摘要显示资源限制，footer commit 为 `8c7d251f`。
 - 2026-05-14 系统级长期授权复测：`c8b78bf8` 部署后新建 CDS connection `b32e0594e26144a5bf37037d3bef94b3` 为 `active`，`longTokenExpiresAt=2099-12-31T23:59:59Z`；再次部署重建后同一连接 `probe` 仍为 `active` 且 `lastProbeOk=true`，证明 DataProtection key ring 已由 MongoDB 持久化，授权不再因容器重建变为“已撤销”。
 - 2026-05-14 百宝箱执行器复测：`8a7ef405` 部署后，AI 百宝箱指定 `preferredAgents=["cds-agent"]`，SSE 出现 `正在调度智能体适配器：CdsAgentAdapter`、创建 CDS session、启动 `claude-sdk / gpt-4.1-mini`、产出 `CDS Agent 事件时间线` 与 `CDS Agent 运行日志`。当前失败为 OpenAI-compatible 上游返回 `401 invalid_api_key`，证明 MAP/CDS 授权、队列隔离、runtime 启动和事件产物链路已通，正向生成仍需有效模型 provider key。
+- 2026-05-14 系统级 sidecar pool 复测：`b3c391be` 部署后，`prd-agent-main` 状态显示仅 `api-prd-agent` 与 `admin-prd-agent` running；系统 sidecar pool `main-shared-sidecar-pool-mp4anabh` `/healthz` 为 200。AI 百宝箱真实调用 `preferredAgents=["cds-agent"]` 产出 timeline/log artifacts，事件包含 `sidecar_runtime_started` 和 `runtime-router sidecar tools exposed count=12`，错误为 provider `openai_http_401 invalid_api_key`，证明已越过系统 sidecar discovery 与健康路由。
 - 2026-05-14 真实入口视觉：Playwright 从 `https://main-prd-agent.miduo.org/` 走 `登录 / 注册 -> 进入 MAP -> 百宝箱 -> CDS Agent`，未直达 `/cds-agent`；页面可见长期 CDS 连接 `miduo.org`、默认 OpenAI-compatible 模型 `gpt-4.1-mini @ https://api.openai.com/v1`、资源边界、会话列表、事件时间线、产物日志和 OpenAI `401 invalid_api_key` 失败；截图保存到 `.Codex/tmp/cds-agent-real-entry-visual-2026-05-14.png`。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
