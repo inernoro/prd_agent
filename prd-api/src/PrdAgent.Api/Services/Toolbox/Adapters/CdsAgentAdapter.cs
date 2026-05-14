@@ -16,15 +16,18 @@ public class CdsAgentAdapter : IAgentAdapter
 {
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
+    private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly ILogger<CdsAgentAdapter> _logger;
 
     public CdsAgentAdapter(
         MongoDbContext db,
         IInfraAgentSessionService sessions,
+        IInfraAgentRuntimeProfileService runtimeProfiles,
         ILogger<CdsAgentAdapter> logger)
     {
         _db = db;
         _sessions = sessions;
+        _runtimeProfiles = runtimeProfiles;
         _logger = logger;
     }
 
@@ -75,13 +78,10 @@ public class CdsAgentAdapter : IAgentAdapter
             yield break;
         }
 
-        var runtimeProfile = await _db.InfraAgentRuntimeProfiles
-            .Find(x => x.IsDefault)
-            .FirstOrDefaultAsync(ct)
-            ?? await _db.InfraAgentRuntimeProfiles
-                .Find(_ => true)
-                .SortByDescending(x => x.UpdatedAt)
-                .FirstOrDefaultAsync(ct);
+        var runtimeProfile = (await _runtimeProfiles.ListAsync(ct))
+            .OrderByDescending(x => x.IsDefault)
+            .ThenByDescending(x => x.UpdatedAt)
+            .FirstOrDefault();
         if (runtimeProfile == null)
         {
             yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
