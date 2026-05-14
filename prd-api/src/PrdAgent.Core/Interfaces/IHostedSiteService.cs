@@ -16,10 +16,11 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         CancellationToken ct = default);
 
-    /// <summary>从 ZIP 文件字节创建站点</summary>
+    /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
     Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
         CancellationToken ct = default);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>

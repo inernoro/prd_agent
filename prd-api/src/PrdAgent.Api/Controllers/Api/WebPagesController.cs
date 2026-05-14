@@ -101,7 +101,12 @@ public class WebPagesController : ControllerBase
                     ? Path.GetFileNameWithoutExtension(file.FileName)
                     : title!.Trim();
                 var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
-                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList);
+                // 写 marker，下游靠它判定包装站，避免"用户上传的 index.html + report.pdf"被误判
+                var assetType = ext == ".pdf" ? "pdf"
+                    : VideoExtensions.Contains(ext) ? "video"
+                    : MarkdownExtensions.Contains(ext) ? "markdown"
+                    : null;
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType);
             }
             else
             {

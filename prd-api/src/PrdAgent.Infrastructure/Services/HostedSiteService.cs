@@ -108,7 +108,8 @@ public class HostedSiteService : IHostedSiteService
     public async Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
-        CancellationToken ct)
+        string? wrappedAssetType = null,
+        CancellationToken ct = default)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var result = await ExtractAndUploadZip(siteId, zipBytes);
@@ -132,6 +133,7 @@ public class HostedSiteService : IHostedSiteService
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
+            WrappedAssetType = string.IsNullOrWhiteSpace(wrappedAssetType) ? null : wrappedAssetType.Trim().ToLowerInvariant(),
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -581,27 +583,21 @@ public class HostedSiteService : IHostedSiteService
     }
 
     // PDF 包装站识别：上传 .pdf 时控制器会把它打包成「index.html 壳子 + 原 PDF」
-    // 的 ZIP（见 WebPagesController.BuildWrapperZip / BuildPdfWrapper）。壳子里的
-    // `<iframe src="xxx.pdf">` 在被 ShareViewPage 的 sandbox iframe 二次嵌套时，
+    // 的 ZIP，并在 site.WrappedAssetType 写入 "pdf" marker（见 WebPagesController.Upload）。
+    // 壳子里的 `<iframe src="xxx.pdf">` 在被 ShareViewPage 的 sandbox iframe 二次嵌套时，
     // Chrome PDF Viewer 会被屏蔽（"此页面已被 Chrome 屏蔽"）。这里把真实 PDF 文件
     // 的 URL 暴露给前端，前端检测到后绕过壳子直接 iframe，让浏览器原生 PDF Viewer 接管。
     //
-    // 严格匹配 wrapper 形状，避免把"含 PDF 子文件的正常 ZIP 站"误判（Codex P2 反馈）：
-    //   - EntryFile == "index.html"
-    //   - 恰好 2 个文件
-    //   - 一个是 "index.html"，另一个在根目录（path 不含 '/'）且 .pdf 结尾
+    // 只看 marker，不依赖 ZIP 文件形状——避免把"用户上传的 custom landing.html + report.pdf"
+    // 这种 2 文件普通 ZIP 误判为包装站（Codex P2 反复抓到，PR #612）。
     private string? TryBuildPdfAssetUrl(HostedSite site)
         => IsPdfWrapperSite(site, out var pdf) ? _storage.BuildUrlForKey(pdf!.CosKey) : null;
 
     public static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
     {
         pdf = null;
-        if (site.Files == null || site.Files.Count != 2) return false;
-        if (!string.Equals(site.EntryFile, "index.html", StringComparison.OrdinalIgnoreCase)) return false;
-
-        var hasIndex = site.Files.Any(f =>
-            string.Equals(f.Path, "index.html", StringComparison.OrdinalIgnoreCase));
-        if (!hasIndex) return false;
+        if (!string.Equals(site.WrappedAssetType, "pdf", StringComparison.OrdinalIgnoreCase)) return false;
+        if (site.Files == null) return false;
 
         var candidate = site.Files.FirstOrDefault(f =>
             !string.IsNullOrEmpty(f.Path) &&

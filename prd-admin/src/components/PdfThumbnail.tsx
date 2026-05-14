@@ -1,19 +1,10 @@
 import { FileText } from 'lucide-react';
 import type { HostedSite } from '@/services/real/webPages';
 
-// 严格匹配后端 BuildWrapperZip 生成的 wrapper 形状，避免把"含 PDF 子文件的
-// 正常 ZIP 站"误判（Codex P2 反馈 #612）：
-//   - entryFile == "index.html"
-//   - 恰好 2 个文件
-//   - 一个 index.html + 另一个在根目录的 .pdf
-export function isPdfSite(site: Pick<HostedSite, 'files' | 'entryFile'>): boolean {
-  if (!site.files || site.files.length !== 2) return false;
-  if (site.entryFile?.toLowerCase() !== 'index.html') return false;
-  const hasIndex = site.files.some(f => f.path?.toLowerCase() === 'index.html');
-  const hasRootPdf = site.files.some(f =>
-    !!f.path && !f.path.includes('/') && f.path.toLowerCase().endsWith('.pdf'),
-  );
-  return hasIndex && hasRootPdf;
+// 只看后端 marker 字段，不靠 ZIP 文件形状——避免把"用户上传的 index.html + report.pdf"
+// 这种 2 文件普通 ZIP 误判为系统自动包装的 PDF 站（Codex P2 反复抓到，PR #612）。
+export function isPdfSite(site: Pick<HostedSite, 'wrappedAssetType'>): boolean {
+  return site.wrappedAssetType?.toLowerCase() === 'pdf';
 }
 
 export function PdfThumbnail({
