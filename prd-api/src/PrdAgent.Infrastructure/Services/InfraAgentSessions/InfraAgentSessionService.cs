@@ -630,6 +630,94 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> CaptureBrowserSnapshotAsync(
+        string userId,
+        string id,
+        BrowserSnapshotRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(session.ConnectionId, ct);
+        var branchId = string.IsNullOrWhiteSpace(request.BranchId)
+            ? "prd-agent-main"
+            : request.BranchId.Trim();
+        var description = string.IsNullOrWhiteSpace(request.Description)
+            ? "从 MAP 工作台读取远程浏览器快照"
+            : request.Description.Trim();
+
+        var context = new AgentToolInvocationContext
+        {
+            RunId = $"infra-agent-browser-snapshot-{session.Id}-{Guid.NewGuid():N}",
+            AppCallerCode = "infra-agent-session::browser-snapshot",
+            SidecarName = "map-browser-snapshot",
+            InfraAgentSessionId = session.Id,
+            CdsBaseUrl = connection.PartnerBaseUrl,
+            CdsProjectId = connection.ProjectId,
+            CdsLongToken = token
+        };
+
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+        {
+            level = "info",
+            source = "map-browser-snapshot",
+            message = $"capturing remote browser snapshot for {branchId}"
+        }), ct);
+
+        var input = JsonSerializer.SerializeToElement(new
+        {
+            branchId,
+            description
+        });
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-snapshot-{seq}",
+            toolName = "cds_bridge_snapshot",
+            argsSummary = input.GetRawText(),
+            risk = "readonly",
+            status = "auto_allowed",
+            source = "map-browser-snapshot"
+        }), ct);
+
+        var result = await _toolRegistry.InvokeAsync("cds_bridge_snapshot", input, context, ct);
+        await AppendRawEventAsync(session.Id, seq + 1, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+        {
+            approvalId = $"browser-snapshot-{seq}",
+            decision = result.Success ? "completed" : "failed",
+            toolName = "cds_bridge_snapshot",
+            resultSummary = result.Success
+                ? result.Content
+                : JsonSerializer.Serialize(new
+                {
+                    errorCode = result.ErrorCode,
+                    message = result.Message
+                }),
+            source = "map-browser-snapshot"
+        }), ct);
+
+        if (result.Success && !string.IsNullOrWhiteSpace(result.Content))
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                seq + 2,
+                InfraAgentEventTypes.Browser,
+                BuildBrowserSnapshotPayload(branchId, result.Content),
+                ct);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
     public async Task<List<InfraAgentEventView>> ListEventsAsync(
         string userId,
         string sessionId,
@@ -1332,6 +1420,34 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     };
 
     private sealed record ReadonlyCheckToolRequest(JsonElement Input);
+
+    private static string BuildBrowserSnapshotPayload(string branchId, string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-snapshot",
+                branchId,
+                capturedAt = DateTime.UtcNow,
+                result = doc.RootElement.Clone(),
+                state = doc.RootElement.TryGetProperty("state", out var state)
+                    ? state.Clone()
+                    : default(JsonElement?)
+            });
+        }
+        catch (JsonException)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                source = "map-browser-snapshot",
+                branchId,
+                capturedAt = DateTime.UtcNow,
+                data = content
+            });
+        }
+    }
 
     private async Task<string> BuildLogFallbackAsync(InfraAgentSession session, string reason, CancellationToken ct)
     {

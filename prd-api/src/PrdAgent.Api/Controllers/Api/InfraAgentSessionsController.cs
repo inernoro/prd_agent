@@ -213,6 +213,32 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/capture-browser-snapshot")]
+    public async Task<IActionResult> CaptureBrowserSnapshot(string id, [FromBody] BrowserSnapshotRequest? req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.CaptureBrowserSnapshotAsync(
+                userId,
+                id,
+                req ?? new BrowserSnapshotRequest(null, null),
+                ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/manual-takeover")]
     public async Task<IActionResult> ManualTakeover(string id, [FromBody] ManualTakeoverRequest? req, CancellationToken ct)
     {

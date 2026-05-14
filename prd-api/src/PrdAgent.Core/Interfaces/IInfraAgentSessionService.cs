@@ -22,6 +22,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> RunReadonlyChecksAsync(string userId, string id, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> CaptureBrowserSnapshotAsync(string userId, string id, BrowserSnapshotRequest request, CancellationToken ct);
+
     Task<InfraAgentSessionView?> SetManualTakeoverAsync(string userId, string id, ManualTakeoverRequest request, CancellationToken ct);
 
     Task<InfraAgentSessionView?> AddManualInputAsync(string userId, string id, ManualInputRequest request, CancellationToken ct);
@@ -61,6 +63,11 @@ public record ManualTakeoverRequest(
 
 public record ManualInputRequest(
     string Content
+);
+
+public record BrowserSnapshotRequest(
+    string? BranchId,
+    string? Description
 );
 
 public record ToolApprovalRequest(

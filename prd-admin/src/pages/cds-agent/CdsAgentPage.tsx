@@ -8,6 +8,7 @@ import {
   approveInfraAgentTool,
   archiveInfraAgentSession,
   addInfraAgentManualInput,
+  captureInfraAgentBrowserSnapshot,
   collectInfraAgentArtifacts,
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
@@ -408,6 +409,7 @@ export default function CdsAgentPage() {
     notes: '',
   });
   const [manualReason, setManualReason] = useState('人工检查远程页面或审批危险工具');
+  const [browserBranchId, setBrowserBranchId] = useState('prd-agent-main');
   const [draft, setDraft] = useState({
     title: '远程巡检任务',
     connectionId: '',
@@ -787,6 +789,32 @@ export default function CdsAgentPage() {
       toast.success('只读检查已完成');
     } catch (err) {
       toast.error('只读检查失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function captureBrowserSnapshot() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    const branchId = browserBranchId.trim() || 'prd-agent-main';
+    setBusy(true);
+    try {
+      const res = await captureInfraAgentBrowserSnapshot(sessionId, {
+        branchId,
+        description: `从 MAP 工作台读取 ${branchId} 的远程页面快照`,
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('远程页面快照失败', res.error?.message ?? '请确认预览页 Bridge 已连接');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('远程页面快照已生成');
+    } catch (err) {
+      toast.error('远程页面快照失败', err instanceof Error ? err.message : '请确认预览页 Bridge 已连接');
       await refreshDetail(sessionId);
     } finally {
       setBusy(false);
@@ -1516,14 +1544,26 @@ export default function CdsAgentPage() {
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
                     <span className="text-xs text-white/35">{artifacts.length}</span>
                   </div>
-                  <div className="mb-2 grid grid-cols-1 gap-2 xl:grid-cols-2">
+                  <div className="mb-2 grid grid-cols-1 gap-2 xl:grid-cols-3">
                     <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                       {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
                     </button>
                     <button type="button" onClick={() => void runReadonlyChecks()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                       {busy ? <MapSpinner size={12} /> : <Terminal size={12} />} 运行只读检查
                     </button>
+                    <button type="button" onClick={() => void captureBrowserSnapshot()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {busy ? <MapSpinner size={12} /> : <Globe2 size={12} />} 读取页面快照
+                    </button>
                   </div>
+                  <label className="mb-2 flex items-center gap-2 rounded px-2 py-1.5" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    <Globe2 size={12} className="text-white/35" />
+                    <input
+                      value={browserBranchId}
+                      onChange={(e) => setBrowserBranchId(e.target.value)}
+                      className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                      placeholder="CDS 分支 ID，例如 prd-agent-main"
+                    />
+                  </label>
                   <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
                     {artifacts.length === 0 ? (
                       <div className="rounded-lg px-3 py-8 text-center text-sm text-white/38" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.06)' }}>

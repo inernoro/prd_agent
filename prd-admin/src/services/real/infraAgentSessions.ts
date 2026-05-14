@@ -229,6 +229,16 @@ export async function runInfraAgentReadonlyChecks(id: string): Promise<ApiRespon
   });
 }
 
+export async function captureInfraAgentBrowserSnapshot(
+  id: string,
+  input: { branchId?: string; description?: string },
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.captureBrowserSnapshot(encodeURIComponent(id)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export async function setInfraAgentManualTakeover(
   id: string,
   enabled: boolean,
