@@ -84,10 +84,10 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 - **启动 reaper**（每轮 sweep 第一步，扫死锁；同 `issues-visual-run` §2，三路分别处理崩溃位置）：
   1. 列出所有挂 `agent-processing` 的 open issue 后**必须再过滤**为非视觉测试领地：剔除标题以 `[visual-test]` 开头的 + 剔除含任一 `visual-test:*` label 的 issue（`agent-processing` 与 `/issues-visual-run` 共用，不过滤会侵犯 visual-run 领地 —— visual-run owned issue 被本 reaper 路径 C 强删 lock 不加回 `visual-test:pending`，visual-run reaper 再也找不到，永久卡死）
-  2. 找最新 `agent-handled:*:claim:*` 指纹时间戳，以及该 run_id 的 `:terminal:` 指纹
-  3. **路径 A**（终态前崩溃，claim 距今 > 30 分钟必须 > `max_minutes_per_issue` 且无 `:terminal:`）：删 `agent-processing` + 评论"reaper 重置（A 路径，终态前崩溃）"，下一轮重新接单
-  4. **路径 B**（终态后崩溃，已有 `:terminal:` 指纹但 `agent-processing` 仍在）：删 `agent-processing` + 评论"reaper 清理孤儿锁（B 路径，终态后崩溃）"，**不**重新接单（终态已落定）
-  5. **路径 C**（claim 写入前崩溃，无指纹孤儿锁）：有 `agent-processing` 但完全无 `agent-handled:*:claim:*` 指纹（claim 评论根本没发出），且 lock 添加时间（issue updated_at 或 label timeline）> 30 分钟 → 删 `agent-processing` + 评论"reaper 重置（C 路径，claim 写入前崩溃）"，下一轮重新接单
+  2. 扫所有 `agent-handled:*:claim:*` / `*:terminal:*` / `*:withdrawn:*` 指纹，按**状态优先级**判定（不按"最新 claim"，否则 withdrawn loser 的晚 claim 会把已 terminal 的 issue 误判）
+  3. **路径 B 优先**（任一 run_id 写过 `:terminal:` 且 lock 仍在）：删 `agent-processing` + 评论"reaper 清理孤儿锁（B 路径，终态后崩溃）"，**不**重新接单（终态已落定）
+  4. **路径 A**（B 不命中 + 存在活跃 claim：同 run_id 既无 `:terminal:` 也无 `:withdrawn:`，距今 > 30 分钟必须 > `max_minutes_per_issue`）：删 `agent-processing` + 评论"reaper 重置（A 路径，终态前崩溃）"，下一轮重新接单
+  5. **路径 C**（B/A 不命中 + 有 `agent-processing` 但完全无 `agent-handled:*:claim:*` 指纹，且 lock 添加时间 > 30 分钟）：删 `agent-processing` + 评论"reaper 重置（C 路径，claim 写入前崩溃）"，下一轮重新接单
 - **接单**：
   1. 预检（**必须重新跑完整 §2 跳过条件**，不只查 lock）：list issue 后到 claim 前存在窗口，期间别的 worker 可能加了 `agent-replied` / `agent-fixed` / `proposed-fix` / `needs-human` / `duplicate` 等终态 label，或加了 `agent-processing` 锁。必须重读 issue 当前所有 label + body 指纹 + 关联 PR 状态，逐条比对 §2 各项跳过条件,任一命中 → 跳过
   2. 加 `agent-processing` + 发 claim 评论，末尾含 `<!-- agent-handled:{run_id}:claim:{iso8601-ts} -->`
