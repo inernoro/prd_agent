@@ -150,7 +150,7 @@ gh label create "on-hold"      --color FBCA04 --description "暂缓处理"      
    - 自 Agent 最近一次终态评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过
    - 有用户新评论 → 加 `needs-human` + 评论"已转人工"，保留原终态 label，本轮跳过
 7. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
-8. **issue body 含同日幂等指纹** `<!-- agent-handled:{run_id}:{今日日期} -->`：本日已处理过，下次重跑直接跳（跨日不算）
+8. **issue 任一 Agent 评论末尾含同日幂等指纹** `<!-- agent-handled:*:{今日日期 YYYY-MM-DD} -->`（指纹写在评论里，不是 issue body）：扫所有评论发现今日已处理过 → 跳过；跨日不算
 9. **issue 已有未关闭的关联 PR**
 10. **作者是 maintainer** 且无 `please-fix`/`bug` 类 label
 11. **草稿/template 占位**：正文 < 20 字 或 仅含模板未填项
