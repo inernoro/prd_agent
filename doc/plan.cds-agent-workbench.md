@@ -864,7 +864,7 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P16.1 统一 traceId | [x] | [x] | [ ] | MAP session 与事件已统一 `traceId` 并在 CDS Agent 页、基础设施操作台展示；CDS session、workflow run、agent run 贯通仍待 P14/P15 接入后补齐 |
+| P16.1 统一 traceId | [x] | [x] | [x] | MAP session、CDS session、workflow run、toolbox run 与 tool approval 已统一 `traceId`；工作流执行历史和详情页已真实入口视觉验收 |
 | P16.2 事件 schema 稳定化 | [x] | [x] | [x] | 新增 `GET /api/infra-agent-sessions/event-schema`，后端集中声明 status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser；主分支真实入口视觉已验收 |
 | P16.3 指标面板 | [x] | [x] | [x] | CDS Agent 工作台新增会话总数、失败会话、当前事件、工具事件和可见产物指标条；主分支真实入口视觉已验收 |
 | P16.4 审计报表 | [x] | [x] | [x] | CDS Agent 工作台新增审计摘要，展示会话用户、连接、模型配置、工具策略、审批相关事件和凭据暴露状态；主分支真实入口视觉已验收 |
@@ -880,6 +880,8 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认审计摘要可编译且无新增 lint 问题。
 - 2026-05-14 本地冒烟：`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -60` 无本次新增错误；`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx src/services/real/infraAgentSessions.ts src/services/api.ts` 与 `git diff --check` 通过，确认事件 schema 接口和前端类型可编译。
 - 2026-05-14 远端 API 冒烟：登录 `https://main-prd-agent.miduo.org/` 后请求 `GET /api/infra-agent-sessions/event-schema`，返回 11 个事件类型并覆盖 `status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser`。
+- 2026-05-14 A3 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter "ToolboxOrchestratorTests|InfraAgentSessionsControllerTests" --no-restore` 通过 14 个测试；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter WorkflowAgentTests --no-restore` 通过 56 个测试；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter "WorkflowAgentTests|ToolboxOrchestratorTests" --no-restore` 通过 59 个测试；`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无本次新增错误；`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin lint` 为 0 error、321 个既有 warning。
+- 2026-05-14 A3 远端冒烟：`prd-agent-main` 部署到 `a9103a50` 且 `api-prd-agent/admin-prd-agent` 均 running；真实 API 创建 `A3 traceId 视觉验收工作流 3`，执行 `7a4a8101f0cd431984acb78b2676b551` completed，返回 `traceId=workflow-execution-7a4a8101f0cd431984acb78b2676b551` 和 1 个最终产物。首次滚动部署冒烟发现旧 worker 反序列化 `TraceId` 失败，已在 `a9103a50` 增加 WorkflowExecution BSON ignore-extra 后复测通过。
 
 视觉测试：
 
@@ -888,6 +890,7 @@ P10 当前结论：
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `c5bb472c`。审计摘要可见“事件类型”，当前会话显示 `log / status / tool_call / tool_result`，验证页面消费稳定事件类型。
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `0104809e`。首屏可见“会话总数 / 失败会话 / 当前事件 / 工具事件 / 可见产物”五个指标卡，当前会话显示 21 条事件、16 条工具事件和 9 个可见产物。
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `dd9aa48b`。硬刷新后首屏可见“审计摘要”，包含会话用户、CDS 连接、模型配置、工具策略、审批相关事件和“凭据暴露：不向前端显示 long token / API key”。
+- 2026-05-14 A3 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“工作流” -> `A3 traceId 视觉验收工作流 3` -> 点击卡片“执行” -> 执行历史 -> 查看详情。页面在执行历史与详情页均显示 `trace workflow-execution-7a4a8101f0cd431984acb78b2676b551`，执行状态为已完成并展示最终产物；截图：`.Codex/tmp/cds-agent-a3-traceid-workflow-ui-execute-2026-05-14.png`、`.Codex/tmp/cds-agent-a3-traceid-workflow-detail-2026-05-14.png`。
 
 ### P17 真实端到端验收
 
@@ -972,7 +975,7 @@ P10 当前结论：
 |------|------|------|------|------|------|----------|
 | A1 | P14 | 工作流危险工具暂停审批 | [x] | [x] | [x] | 工作流 CDS Agent 节点遇到危险工具时进入 paused，继续执行后写入审批并恢复 completed；真实入口视觉已验证暂停和完成状态 |
 | A2 | P15 | 智能体执行器链路 | [x] | [x] | [x] | AI 百宝箱 run 已能委托 CDS Agent，实时显示 session、事件、产物和错误；正向生成仍等待有效模型 provider key |
-| A3 | P16 | Agent run 贯通 traceId | [ ] | [ ] | [ ] | 一个 traceId 能串起 toolbox run、workflow run、MAP session、CDS session 和 tool approval |
+| A3 | P16 | Agent run 贯通 traceId | [x] | [x] | [x] | workflow run、toolbox run、MAP session、CDS session 和 tool approval 已支持同一 traceId；主分支真实入口完成执行历史和详情页视觉验收 |
 | A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
 | A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
 | A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
