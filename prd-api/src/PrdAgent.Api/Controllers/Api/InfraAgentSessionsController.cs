@@ -129,15 +129,22 @@ public class InfraAgentSessionsController : ControllerBase
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
-        var item = await _service.StopAsync(userId, id, ct);
-        if (item == null)
+        try
         {
-            return NotFound(ApiResponse<object>.Fail(
-                InfraAgentSessionErrorCodes.SessionNotFound,
-                "会话不存在"));
-        }
+            var item = await _service.StopAsync(userId, id, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
 
-        return Ok(ApiResponse<object>.Ok(new { item }));
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
     }
 
     [HttpPost("{id}/archive")]
