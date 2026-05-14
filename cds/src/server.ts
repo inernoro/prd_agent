@@ -654,6 +654,24 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
     }
+    // MAP/CDS system connection long token: only allow it on Bridge routes.
+    // This token is the user-approved, long-lived authorization used by MAP
+    // after /api/cds-system/connections/authorize, so it must be able to drive
+    // Page Agent Bridge without granting broad CDS admin access.
+    if (stateService && req.path.startsWith('/api/bridge/')) {
+      const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
+      const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
+      if (connection && connection.scopes.includes('instance:read')) {
+        stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
+        return {
+          id: `cds-connection:${connection.id}`,
+          agentName: `MAP (${connection.partnerName || connection.partnerId || connection.id})`,
+          token: headerKey,
+          approvedAt: connection.activatedAt || connection.createdAt,
+          expiresAt: connection.longTokenExpiresAt || '',
+        };
+      }
+    }
     // Project-scoped Agent Key (cdsp_<slugHead>_<suffix>). Matches the
     // per-project store seeded via POST /api/projects/:id/agent-keys;
     // returns a synthetic session AND stamps req.cdsProjectKey so the

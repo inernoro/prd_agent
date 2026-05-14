@@ -45,3 +45,4 @@
 | fix | prd-admin | 模型平台 API key 输入框按真实密钥状态显示重新保存提示 |
 | feat | prd-api | CDS Agent 会话新增远程页面快照动作，可用长期 CDS 授权调用 Bridge 并写入浏览器产物事件 |
 | feat | prd-admin | CDS Agent 产物面板新增读取页面快照按钮和 CDS 分支输入，便于无模型 key 时验证远程 Web 操作 |
+| fix | cds | Bridge API 接受 MAP/CDS 系统连接 long token 的 instance:read 授权，避免远程页面快照被 401 阻断 |
