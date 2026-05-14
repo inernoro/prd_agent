@@ -7,7 +7,11 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { deriveContainerSlug, resolvePreviewRootDomain } from '../../src/routes/remote-hosts.js';
+import {
+  deriveContainerSlug,
+  resolvePreviewRootDomain,
+  shouldIncludeBranchServicesInInstanceDiscovery,
+} from '../../src/routes/remote-hosts.js';
 import { isSafeContainerSlug } from '../../src/services/sidecar/sidecar-deployer.js';
 
 const previewEnvKeys = [
@@ -120,5 +124,15 @@ describe('deriveContainerSlug', () => {
       expect(slug.endsWith('-')).toBe(false);
       expect(isSafeContainerSlug(slug)).toBe(true);
     }
+  });
+});
+
+describe('shouldIncludeBranchServicesInInstanceDiscovery', () => {
+  it('普通 git 项目保留分支服务兼容路径', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'git' })).toBe(true);
+  });
+
+  it('shared-service 项目只暴露系统级 ServiceDeployment', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'shared-service' })).toBe(false);
   });
 });

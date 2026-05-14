@@ -27,7 +27,7 @@ import crypto from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
-import type { ServiceDeployment } from '../types.js';
+import type { Project, ServiceDeployment } from '../types.js';
 import {
   RemoteHostService,
   type RemoteHostInput,
@@ -470,27 +470,29 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
     }
 
-    const projectSlug = project.slug || project.id;
-    const previewRoot = resolvePreviewRootDomain();
-    for (const branch of deps.stateService.getBranchesForProject(projectId)) {
-      if (branch.status !== 'running') continue;
-      for (const serviceState of Object.values(branch.services || {})) {
-        if (serviceState.status !== 'running') continue;
-        const profile = deps.stateService.getBuildProfile(serviceState.profileId);
-        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
-        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
-        instances.push({
-          deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
-          host: serviceState.containerName,
-          port: serviceState.hostPort,
-          baseUrl,
-          healthy: true,
-          version: branch.githubCommitSha,
-          deployedAt: branch.lastDeployAt || branch.createdAt,
-          tags: ['system', 'default', 'cds-sidecar'],
-          hostName: profile?.name || serviceState.profileId,
-          hostId: branch.id,
-        });
+    if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
+      const projectSlug = project.slug || project.id;
+      const previewRoot = resolvePreviewRootDomain();
+      for (const branch of deps.stateService.getBranchesForProject(projectId)) {
+        if (branch.status !== 'running') continue;
+        for (const serviceState of Object.values(branch.services || {})) {
+          if (serviceState.status !== 'running') continue;
+          const profile = deps.stateService.getBuildProfile(serviceState.profileId);
+          const previewSlug = computePreviewSlug(branch.branch, projectSlug);
+          const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+          instances.push({
+            deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
+            host: serviceState.containerName,
+            port: serviceState.hostPort,
+            baseUrl,
+            healthy: true,
+            version: branch.githubCommitSha,
+            deployedAt: branch.lastDeployAt || branch.createdAt,
+            tags: ['system', 'default', 'cds-sidecar'],
+            hostName: profile?.name || serviceState.profileId,
+            hostId: branch.id,
+          });
+        }
       }
     }
 
@@ -758,6 +760,12 @@ export function resolvePreviewRootDomain(): string {
     .map(s => s.trim())
     .filter(Boolean);
   return roots[0] || '';
+}
+
+export function shouldIncludeBranchServicesInInstanceDiscovery(
+  project: Pick<Project, 'kind'> | null | undefined,
+): boolean {
+  return project?.kind !== 'shared-service';
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';

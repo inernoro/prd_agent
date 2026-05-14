@@ -342,6 +342,7 @@ function formatRelativeTime(value?: string | null): string {
 }
 
 function projectHref(project: ProjectSummary): string {
+  if (project.kind === 'shared-service') return '/cds-settings#remote-hosts';
   return `/branches/${encodeURIComponent(project.id)}`;
 }
 
