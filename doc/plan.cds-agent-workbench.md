@@ -759,7 +759,7 @@ P10 当前结论：
 | P13.2 diff 查看 | [x] | [x] | [x] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；真实入口视觉已验收 |
 | P13.3 命令与测试结果 | [x] | [x] | [x] | 新增 `run-readonly-checks` 专门动作，真实入口可触发 `repo_run_command` 并在事件与产物面板展示 `exitCode/stdout/stderr` |
 | P13.4 产物下载/引用 | [x] | [x] | [x] | CDS Agent 对话页右侧产物面板自动汇总仓库状态、文件树、diff、浏览器快照和日志，支持复制与文本下载，真实入口视觉已验收 |
-| P13.5 Git 集成 | [ ] | [ ] | [ ] | 可选 commit/branch/PR，默认不擅自提交 |
+| P13.5 Git 集成 | [x] | [x] | [ ] | 新增 `repo_create_pull_request` 危险工具，可 commit、push branch 并创建 GitHub PR；线上工具列表已冒烟，真实 Agent 触发 PR 仍归 P17.10 验收 |
 
 冒烟测试：
 
@@ -775,6 +775,8 @@ P10 当前结论：
 - 2026-05-14 远端冒烟：通过 `https://main-prd-agent.miduo.org/api/infra-agent-sessions` 创建会话 `86bc3353f6f24dd2854fc8c189a3f6cc`，调用 `/collect-artifacts` 后事件流返回 8 条事件，包含 `repo_git_status`、`repo_git_diff`、`repo_list_files` 三个只读工具调用与 3 个 `tool_result`。
 - 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 6 个测试，覆盖 `/run-readonly-checks` 固定命令动作；`pnpm --prefix prd-admin tsc --noEmit`、目标文件 eslint 与 `git diff --check` 通过。
 - 2026-05-14 远端冒烟：通过主分支 API 创建管理员会话后调用 `/run-readonly-checks`，事件流返回 `status/log/tool_call/tool_result/tool_call/tool_result`，两个命令 `git status --short` 与 `git diff --stat` 均返回 `exitCode=0`。
+- 2026-05-14 本地冒烟：新增 `RepoCreatePullRequestTool`，`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 6 个测试，覆盖缺少 GitHub token 时返回 `github_token_missing`。
+- 2026-05-14 远端冒烟：push 到 commit `6fc623d9` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；请求 `https://main-prd-agent.miduo.org/api/agent-tools/list` 返回 `repo_create_pull_request`，schema 包含 `branch/title/body/base/commitMessage/draft`。
 
 视觉测试：
 
@@ -786,6 +788,7 @@ P10 当前结论：
 - diff 长文本可滚动，不撑爆布局。
 - 文件树、对话、日志之间切换清晰。
 - 仍待有效模型 key 后验证真实 Agent 触发危险命令审批流；当前专门只读命令动作已覆盖命令结果可视化。
+- 2026-05-14 真实入口视觉：push 到 commit `6fc623d9` 后，从 `https://main-prd-agent.miduo.org/` 点击 `登录 / 注册`，登录后走 `百宝箱 -> CDS Agent` 进入工作台；页面显示 CDS 连接、系统级模型配置、`保存新模型配置`、`新建远程会话`、`对话`、`事件时间线`、产物面板和 footer commit `6fc623d9`。页面同时明确提示 `API key 需重新保存`，因此未进入真实 PR 正向验收。
 
 ### P14 工作流节点接入
 
@@ -865,8 +868,8 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [ ] | [ ] | [ ] | main 预览域名 api/admin running，commit 对齐 |
-| P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 Agent 使用配置的模型巡检 `prd_agent`，生成分支并提交一个巡检 PR |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `6fc623d9`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
 
@@ -900,6 +903,9 @@ P10 当前结论：
 - 进一步打磨：模型配置列表不再只看是否有密文，而是实际尝试解密；无法读取的配置在下拉框和当前模型摘要里显示“需重新保存 API key”，避免用户选到坏配置后才在启动阶段失败。
 - 进一步打磨：CDS Agent 独立页会在模型配置不可用时直接展开“保存新模型配置”，禁用测试模型、新建会话、启动和发送入口，并在当前模型区和会话事件区展示阻断原因，避免用户反复点击后才收到启动失败。
 - 2026-05-14 真实入口视觉：push 到 commit `7a187de1` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从 `https://main-prd-agent.miduo.org/ai-toolbox` 点击 `CDS Agent` 卡片进入工作台，页面显示“当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话”，测试模型、新建远程会话、启动和发送按钮均为禁用态，保存新模型配置区自动展开。
+- 2026-05-14 Git/PR 工具进展：新增 `repo_create_pull_request`，危险工具审批后可在远端 sandbox 内提交当前工作区改动、推送分支并调用 GitHub API 创建 PR；本地单测通过，主分支部署到 `6fc623d9`，线上 `/api/agent-tools/list` 已返回该工具。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 的 `登录 / 注册 -> 百宝箱 -> CDS Agent` 进入工作台，页面可见 `CDS Agent`、长期系统级模型配置说明、`保存新模型配置`、`新建远程会话`、`对话`、`事件时间线`、产物面板和 footer commit `6fc623d9`。
+- 当前 P17 正向验收仍阻塞在模型 provider key：页面显示当前默认配置 `https://api.anthropic.com / claude-opus-4-5` 的 API key 不可读或不可用，测试/新建/启动/发送被正确禁用。`AI_ACCESS_KEY=shenmemima` 是 MAP/CDS 管理访问凭据，不是 Anthropic 或 OpenAI-compatible 模型供应商密钥，不能用来完成远程 Agent 生成与巡检 PR。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
@@ -919,5 +925,5 @@ P10 当前结论：
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
 | 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |
-| 16 | 完成真实端到端验收 | P17 | [ ] | main 预览真实入口与部署状态已通过；真实模型执行、日志读取、停止释放和刷新恢复仍待完成 |
-| 17 | 完成远程巡检 PR 验收 | P17 | [ ] | 远程 Agent 对 `prd_agent` 完成巡检并提交 PR |
+| 16 | 完成真实端到端验收 | P17 | [ ] | main 预览真实入口与部署状态已通过；仍待有效模型 key 后跑通真实生成、工具审批、日志读取、停止释放和刷新恢复 |
+| 17 | 完成远程巡检 PR 验收 | P17 | [ ] | PR 创建工具已上线；仍待远程 Agent 对 `prd_agent` 完成巡检并提交 PR |
