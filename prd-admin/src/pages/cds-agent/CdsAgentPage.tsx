@@ -975,7 +975,7 @@ export default function CdsAgentPage() {
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/48 hover:text-white/82 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
                         {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
                       </button>
