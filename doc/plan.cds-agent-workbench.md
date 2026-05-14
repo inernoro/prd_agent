@@ -767,7 +767,7 @@ P10 当前结论：
 | P13.2 diff 查看 | [x] | [x] | [x] | 新增只读 `repo_git_status` 与 `repo_git_diff`，可返回分支、commit、status、diff stat 与文本 diff；真实入口视觉已验收 |
 | P13.3 命令与测试结果 | [x] | [x] | [x] | 新增 `run-readonly-checks` 专门动作，真实入口可触发 `repo_run_command` 并在事件与产物面板展示 `exitCode/stdout/stderr` |
 | P13.4 产物下载/引用 | [x] | [x] | [x] | CDS Agent 对话页右侧产物面板自动汇总仓库状态、文件树、diff、浏览器快照和日志，支持复制与文本下载，真实入口视觉已验收 |
-| P13.5 Git 集成 | [x] | [x] | [ ] | 新增 `repo_create_pull_request` 危险工具，可 commit、push branch 并创建 GitHub PR；线上工具列表已冒烟，真实 Agent 触发 PR 仍归 P17.10 验收 |
+| P13.5 Git 集成 | [x] | [x] | [x] | 新增 `repo_create_pull_request` 危险工具，可 commit、push branch 并创建 GitHub PR；真实入口视觉已验证 `repo_git_status`、`repo_git_diff`、`repo_create_pull_request` 和人工审批说明可见，真实 Agent 触发 PR 仍归 P17.10 验收 |
 
 冒烟测试：
 
