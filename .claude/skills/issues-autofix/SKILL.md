@@ -82,6 +82,10 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 > GitHub "Add labels" API 对**已存在** label 不返回失败，只返回当前 label 集合。"加 label 失败"不是 CAS 信号——两个并行 worker 都会"成功"。必须 claim 评论 + 再读 verify。详细模式参照 `issues-visual-run` §2，本节摘要要点：
 
+- **启动 reaper**（每轮 sweep 第一步，扫死锁；同 `issues-visual-run` §2）：
+  1. 列出所有挂 `agent-processing` 的 open issue
+  2. 找最新 `agent-handled:*:claim:*` 指纹时间戳
+  3. 距今 > **reaper 阈值**（默认 30 分钟，必须 > `max_minutes_per_issue`）且无对应 `:terminal:` → 删 `agent-processing` + 评论"reaper 重置（崩溃残留）"，下一轮按常规流程重新接单
 - **接单**：
   1. 预检：当前 labels 含 `agent-processing` → 跳过
   2. 加 `agent-processing` + 发 claim 评论，末尾含 `<!-- agent-handled:{run_id}:claim:{iso8601-ts} -->`
