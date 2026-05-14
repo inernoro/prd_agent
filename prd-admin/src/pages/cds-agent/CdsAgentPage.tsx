@@ -975,15 +975,15 @@ export default function CdsAgentPage() {
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/48 hover:text-white/82 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
-                      </button>
-                      <button type="button" onClick={() => void runReadonlyChecks()} disabled={!activeSession || busy} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/48 hover:text-white/82 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        {busy ? <MapSpinner size={12} /> : <Terminal size={12} />} 运行只读检查
-                      </button>
-                      <span className="text-xs text-white/35">{artifacts.length}</span>
-                    </div>
+                    <span className="text-xs text-white/35">{artifacts.length}</span>
+                  </div>
+                  <div className="mb-2 grid grid-cols-1 gap-2 xl:grid-cols-2">
+                    <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
+                    </button>
+                    <button type="button" onClick={() => void runReadonlyChecks()} disabled={!activeSession || busy} className="inline-flex min-h-8 items-center justify-center gap-1 rounded px-2 py-1 text-xs text-white/56 hover:text-white/86 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {busy ? <MapSpinner size={12} /> : <Terminal size={12} />} 运行只读检查
+                    </button>
                   </div>
                   <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
                     {artifacts.length === 0 ? (
