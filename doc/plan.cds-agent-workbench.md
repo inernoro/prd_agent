@@ -656,7 +656,7 @@ Agent runtime
 - 2026-05-14 已执行：`AI_ACCESS_KEY=... CDS_HOST=https://cds.miduo.org python3 .agents/skills/cds/cli/cdscli.py self update --branch main`，CDS 主服务更新到 `eca5e342`，`/healthz` 返回 `ok`。
 - 2026-05-14 真实 sidecar 负向冒烟：从 MAP 会话发送只读连通性 prompt，sidecar 调用 `https://api.anthropic.com` 返回 `401 invalid x-api-key`；MAP 将错误持久化为 `error` 事件并把会话置为 `failed`，证明链路不是 fake runtime。
 - 2026-05-14 本地工具冒烟：新增 `AgentToolsTests`，覆盖 `/repo` 工作目录读文件、搜索、写文件、运行命令、路径逃逸拦截与危险命令拦截，`dotnet test ... --filter AgentToolsTests --no-restore` 通过 3 个测试。
-- 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace，且 DataProtection volume 保留。
+- 2026-05-14 compose 冒烟：`docker compose -f cds-compose.yml config` 通过，确认 `/repo` 为可写 workspace，且 DataProtection key ring 挂载在项目相对 `.cds-data/api-dataprotection-keys`，避开 CDS 只读 cache 目录。
 - 2026-05-14 本地冒烟：新增 `POST /api/infra-agent-runtime-profiles/{id}/test`，使用已保存密钥按协议测试上游；`anthropic` 走 `/v1/messages` + `x-api-key`，`openai-compatible` 走 `/v1/chat/completions` + Bearer token；`dotnet build --no-restore` 无新增 CS error，前端 `tsc` 与目标 eslint 通过。
 - 真实 runtime 执行 `pwd && ls`，日志能回到 MAP。
 - 发送一个只读任务，runtime 返回真实输出而不是 fake 文案。

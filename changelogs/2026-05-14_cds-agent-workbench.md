@@ -29,3 +29,4 @@
 | feat | prd-admin | CDS Agent 对话页增加产物面板，自动汇总文件树、diff、命令输出、浏览器快照和运行日志，并支持复制与下载 |
 | feat | prd-api | CDS Agent 会话和事件增加统一 traceId，支持按同一次远程执行串联排查 |
 | feat | prd-admin | CDS Agent 页面和基础设施操作台展示 traceId，便于定位远程会话事件链路 |
+| fix | cds | 将 DataProtection key ring 挂载改为项目相对可写目录，修复 main 分支 API 容器只读缓存目录导致部署失败 |
