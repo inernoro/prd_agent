@@ -881,6 +881,7 @@ P10 当前结论：
 - 远端部署 `09e46c6f` 后 API 冒烟：使用 active CDS connection 创建会话成功；启动返回 `runtime_profile_invalid`；再次查询会话得到 `status=failed` 且 `lastError` 为模型配置 API key 无法解密，证明失败态已回写。当前 P17 阻塞收敛为：需要在 MAP 系统配置中重新保存一组有效的 `baseUrl/model/API key`，之后才能进入真实远程执行和巡检 PR。
 - 进一步打磨：模型配置列表不再只看是否有密文，而是实际尝试解密；无法读取的配置在下拉框和当前模型摘要里显示“需重新保存 API key”，避免用户选到坏配置后才在启动阶段失败。
 - 进一步打磨：CDS Agent 独立页会在模型配置不可用时直接展开“保存新模型配置”，禁用测试模型、新建会话、启动和发送入口，并在当前模型区和会话事件区展示阻断原因，避免用户反复点击后才收到启动失败。
+- 2026-05-14 真实入口视觉：push 到 commit `7a187de1` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从 `https://main-prd-agent.miduo.org/ai-toolbox` 点击 `CDS Agent` 卡片进入工作台，页面显示“当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话”，测试模型、新建远程会话、启动和发送按钮均为禁用态，保存新模型配置区自动展开。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
