@@ -72,6 +72,70 @@ public class ReviewWebhookService
         }
     }
 
+    /// <summary>申诉相关 webhook 通知（提交 / 通过 / 驳回）</summary>
+    public async Task NotifyAppealEventAsync(string eventType, ReviewSubmission submission, ReviewAppeal appeal)
+    {
+        try
+        {
+            var configs = await _db.ReviewWebhookConfigs
+                .Find(w => w.IsEnabled && w.TriggerEvents.Contains(eventType))
+                .ToListAsync(CancellationToken.None);
+
+            if (configs.Count == 0) return;
+
+            string title = eventType switch
+            {
+                ReviewEventType.AppealSubmitted => "评审申诉已提交（待审理）",
+                ReviewEventType.AppealApproved => "评审申诉已通过",
+                ReviewEventType.AppealRejected => "评审申诉已驳回",
+                _ => "评审申诉状态变更",
+            };
+
+            // 富文本 reasonHtml 转纯文本预览（去 HTML 标签，截 80 字）
+            var reasonPlain = StripHtml(appeal.ReasonHtml);
+            if (reasonPlain.Length > 80) reasonPlain = reasonPlain[..80] + "…";
+
+            var lines = new List<string>
+            {
+                $"方案：《{submission.Title}》",
+                $"提交人：{submission.SubmitterName}",
+                $"申诉理由：{reasonPlain}",
+            };
+            if (!string.IsNullOrWhiteSpace(appeal.ResolverComment))
+                lines.Add($"受理意见：{appeal.ResolverComment}");
+            if (!string.IsNullOrWhiteSpace(appeal.ResolverName))
+                lines.Add($"受理人：{appeal.ResolverName}");
+            var plainBody = string.Join('\n', lines);
+
+            string? linkPath = null;
+            if (!string.IsNullOrEmpty(_frontendBaseUrl))
+                linkPath = $"{_frontendBaseUrl}/review-agent/submissions/{submission.Id}";
+
+            var client = _httpClientFactory.CreateClient("webhook");
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            foreach (var config in configs)
+            {
+                await SendWebhookAsync(client, config, title, plainBody, linkPath, config.MentionAll);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[review-agent] Appeal webhook notify failed for submission {Id} event {Event}",
+                submission.Id, eventType);
+        }
+    }
+
+    private static string StripHtml(string html)
+    {
+        if (string.IsNullOrEmpty(html)) return string.Empty;
+        // 简单去标签：替换 <img> 为「[图片]」，其他标签直接删除
+        var withImg = System.Text.RegularExpressions.Regex.Replace(html, @"<img\b[^>]*>", "[图片]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var noTags = System.Text.RegularExpressions.Regex.Replace(withImg, @"<[^>]+>", "");
+        // 解码常见 HTML 实体
+        return System.Net.WebUtility.HtmlDecode(noTags).Trim();
+    }
+
     /// <summary>发送测试消息</summary>
     public async Task<(bool Success, string? Error)> SendTestAsync(string webhookUrl, string channel, bool mentionAll = false)
     {

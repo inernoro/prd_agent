@@ -1,0 +1,3 @@
+| feat | prd-api | 产品评审员 Agent 新增「申诉」工作流：评审完成后 3 小时窗口内可发起申诉（富文本理由 + 图片粘贴上传），由持 `ReviewAgentAppealReview` 权限的管理员审理（通过/驳回 均需附 ≥5 字意见）。通过后允许提交人重新上传 md 触发新评审；排行榜通过率公式调整为「有效通过 / (有效通过 + 有效未通过)」，申诉成功的评审不计入分子分母 |
+| feat | prd-api | `ReviewSubmission` 加 `AppealStatus / LatestAppealId / AppealResolvedAt` 三字段；新增 `review_appeals` 集合 + `ReviewAppeal` Model；新增权限 `review-agent.appeal-review`（默认所有角色不持有，需管理员显式分配） |
+| feat | prd-api | `ReviewWebhookService` 新增 `NotifyAppealEventAsync` 支持 `appeal_submitted / appeal_approved / appeal_rejected` 三事件；新增图片上传端点 `POST /api/review-agent/appeals/upload-image`（5MB 上限，复用 `IAssetStorage`） |
