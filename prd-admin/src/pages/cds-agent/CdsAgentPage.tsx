@@ -18,6 +18,7 @@ import {
   listInfraAgentMessages,
   listInfraAgentRuntimeProfiles,
   listInfraAgentSessions,
+  requestInfraAgentToolApproval,
   runInfraAgentBrowserAction,
   runInfraAgentReadonlyChecks,
   sendInfraAgentMessage,
@@ -994,6 +995,32 @@ export default function CdsAgentPage() {
     await refreshDetail(activeSession.id);
   }
 
+  async function createApprovalCard() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await requestInfraAgentToolApproval(sessionId, {
+        toolName: 'repo_run_command',
+        argsSummary: '{"command":"git status --short","cwd":"."}',
+        risk: 'dangerous',
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('审批卡创建失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('危险工具审批卡已生成', '刷新页面后仍会保留，允许或拒绝都会写入审计事件');
+    } catch (err) {
+      toast.error('审批卡创建失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyText(label: string, value: string) {
     await navigator.clipboard.writeText(value);
     toast.success(`${label}已复制`);
@@ -1457,14 +1484,24 @@ export default function CdsAgentPage() {
 
                 <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
-                      <span className="text-xs text-white/35">
-                        {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
-                      </span>
-                    </div>
-                    {events.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
+                        <span className="text-xs text-white/35">
+                          {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
+                        </span>
+                      </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void createApprovalCard()}
+                        disabled={!activeSession || busy}
+                        className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/55 hover:text-white/85 disabled:opacity-40"
+                        style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      >
+                        <ShieldCheck size={12} /> 生成审批卡
+                      </button>
+                      {events.length > 0 && (
+                        <>
                         {eventReplayMode && (
                           <>
                             <button
@@ -1505,8 +1542,9 @@ export default function CdsAgentPage() {
                         >
                           {eventReplayMode ? '退出回放' : '回放'}
                         </button>
-                      </div>
-                    )}
+                        </>
+                      )}
+                    </div>
                   </div>
                   {events.length === 0 ? (
                     <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>

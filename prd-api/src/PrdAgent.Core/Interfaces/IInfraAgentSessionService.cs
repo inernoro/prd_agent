@@ -26,6 +26,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> RunBrowserActionAsync(string userId, string id, BrowserActionRequest request, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> RequestToolApprovalAsync(string userId, string id, CreateToolApprovalRequest request, CancellationToken ct);
+
     Task<InfraAgentSessionView?> SetManualTakeoverAsync(string userId, string id, ManualTakeoverRequest request, CancellationToken ct);
 
     Task<InfraAgentSessionView?> AddManualInputAsync(string userId, string id, ManualInputRequest request, CancellationToken ct);
@@ -77,6 +79,12 @@ public record BrowserActionRequest(
     string Action,
     System.Text.Json.JsonElement? Params,
     string? Description
+);
+
+public record CreateToolApprovalRequest(
+    string ToolName,
+    string? ArgsSummary,
+    string? Risk
 );
 
 public record ToolApprovalRequest(

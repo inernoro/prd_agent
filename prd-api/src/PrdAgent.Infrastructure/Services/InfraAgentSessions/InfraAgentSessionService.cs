@@ -818,6 +818,48 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> RequestToolApprovalAsync(
+        string userId,
+        string id,
+        CreateToolApprovalRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        if (string.IsNullOrWhiteSpace(request.ToolName))
+        {
+            throw new InfraAgentSessionException(
+                "tool_name_required",
+                "工具名称不能为空",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var seq = await NextEventSeqAsync(session.Id, ct);
+        var approvalId = $"map-approval-{seq}";
+        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+        {
+            approvalId,
+            toolName = request.ToolName.Trim(),
+            argsSummary = string.IsNullOrWhiteSpace(request.ArgsSummary)
+                ? "{\"command\":\"git status --short\"}"
+                : request.ArgsSummary.Trim(),
+            risk = string.IsNullOrWhiteSpace(request.Risk) ? "dangerous" : request.Risk.Trim(),
+            status = "waiting",
+            source = "map-approval-test",
+            createdBy = "map-user"
+        }), ct);
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
     public async Task<List<InfraAgentEventView>> ListEventsAsync(
         string userId,
         string sessionId,
@@ -965,7 +1007,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 }
 
                 if (root.TryGetProperty("source", out var sourceElement)
-                    && string.Equals(sourceElement.GetString(), "claude-sdk-sidecar", StringComparison.OrdinalIgnoreCase))
+                    && IsLocalToolApprovalSource(sourceElement.GetString()))
                 {
                     return true;
                 }
@@ -977,6 +1019,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         return false;
+    }
+
+    private static bool IsLocalToolApprovalSource(string? source)
+    {
+        return string.Equals(source, "claude-sdk-sidecar", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(source, "map-approval-test", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<InfraAgentSession?> FindOwnedSessionAsync(string userId, string id, CancellationToken ct)

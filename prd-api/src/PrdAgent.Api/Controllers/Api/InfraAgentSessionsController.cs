@@ -268,6 +268,35 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/tool-approval-requests")]
+    public async Task<IActionResult> RequestToolApproval(string id, [FromBody] CreateToolApprovalRequest? req, CancellationToken ct)
+    {
+        if (req == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "tool_approval_request_required",
+                "请求体不能为空"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.RequestToolApprovalAsync(userId, id, req, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/manual-takeover")]
     public async Task<IActionResult> ManualTakeover(string id, [FromBody] ManualTakeoverRequest? req, CancellationToken ct)
     {

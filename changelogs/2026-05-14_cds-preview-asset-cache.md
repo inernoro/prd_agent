@@ -48,3 +48,5 @@
 | fix | cds | Bridge API 接受 MAP/CDS 系统连接 long token 的 instance:read 授权，避免远程页面快照被 401 阻断 |
 | feat | prd-api | CDS Agent 会话新增远程页面动作接口，可从 MAP 触发 Bridge click/type/scroll/navigate/evaluate 并沉淀 browser 事件 |
 | feat | prd-admin | CDS Agent 产物面板新增远程页面动作控件，支持最终用户从页面执行 Bridge 操作并观察结果 |
+| feat | prd-api | CDS Agent 会话新增危险工具审批卡创建接口，用于验证审批刷新恢复和审计结果 |
+| feat | prd-admin | CDS Agent 事件时间线新增生成审批卡按钮，便于最终用户测试允许/拒绝流程 |

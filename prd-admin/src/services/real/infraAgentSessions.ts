@@ -249,6 +249,16 @@ export async function runInfraAgentBrowserAction(
   });
 }
 
+export async function requestInfraAgentToolApproval(
+  id: string,
+  input: { toolName: string; argsSummary?: string; risk?: string },
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.requestToolApproval(encodeURIComponent(id)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export async function setInfraAgentManualTakeover(
   id: string,
   enabled: boolean,

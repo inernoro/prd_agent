@@ -785,6 +785,7 @@ export const api = {
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
     captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
     runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,
+    requestToolApproval: (id: string) => `/api/infra-agent-sessions/${id}/tool-approval-requests`,
     manualTakeover: (id: string) => `/api/infra-agent-sessions/${id}/manual-takeover`,
     manualInputs: (id: string) => `/api/infra-agent-sessions/${id}/manual-inputs`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
