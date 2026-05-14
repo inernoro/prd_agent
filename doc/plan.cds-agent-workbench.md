@@ -980,7 +980,7 @@ P10 当前结论：
 | A5 | P17 | 有效模型配置正向生成 | [x] | [x] | [x] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
 | A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
 | A7 | P17 | 工具审批恢复验收 | [x] | [x] | [x] | 主分支真实入口生成 `repo_run_command` 危险审批卡，刷新后仍在，允许后写入 `tool_result` 且结果可审计 |
-| A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
+| A8 | P17 | 工作流用户验收 | [x] | [x] | [x] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
 | A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
 | A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
 | A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [x] | [x] | [x] | CDS 提供 `shared-sidecar-pool-mp4anabh` 系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，AI 百宝箱真实入口仍能创建远程 Agent 会话并进入 `sidecar_runtime_started` |
@@ -1002,6 +1002,15 @@ P10 当前结论：
 - 最终工具会话：`61d931ff9a4448fba44f3aaa1e355e49`，trace `a5-openrouter-git-tool-final`；事件 seq 10 为 `tool_call repo_git_status`，seq 11 为 `tool_result auto_allowed`，seq 12 返回 `commit=ff17f81` 且工作区干净，seq 28 为 `done`。
 - 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，选中 `A5 OpenRouter Git 工具最终验收` 会话；页面可见 OpenRouter 配置、`repo_git_status`、trace、commit 和完成输出。
 - 截图证据：`.Codex/tmp/cds-agent-a5-openrouter-git-tool-final-2026-05-14.png`。
+
+2026-05-14 A8 验收记录：
+
+- 部署确认：`prd-agent-main` 已更新到 `5822483`，`api-prd-agent` 与 `admin-prd-agent` 均为 running。
+- API 冒烟：创建工作流 `559730365f0241be93a2a0699707105b`，名称 `A8 CDS Agent 输出映射验收工作流`，包含 `CDS Agent` 与 `数据合并` 两个节点，边 `cds-agent-out -> merge-in-1`。
+- 执行冒烟：执行 `95360bb870b54d0b8ad51f1b9f49e064` 完成，trace `workflow-execution-95360bb870b54d0b8ad51f1b9f49e064`；`cds-a8-agent` 输出 3 个产物，`a8-merge-result` 输出 1 个产物。
+- 下游映射断言：最终产物 `merge-out / 合并结果.txt` 内容为包含 `A8 工作流映射验收通过` 的数组，证明 CDS Agent 输出进入下游节点并生成最终产物。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 左侧 `工作流` -> 点击 `A8 CDS Agent 输出映射验收工作流`；详情页可见两个节点均 `已完成`，上游产物 `CDS Agent 输出/事件/日志` 与下游最终产物 `合并结果.txt`。
+- 截图证据：`.Codex/tmp/cds-agent-a8-workflow-output-mapping-ui-2026-05-14.png`。
 
 ### 17.4 当前阻塞与不可混用凭据
 
