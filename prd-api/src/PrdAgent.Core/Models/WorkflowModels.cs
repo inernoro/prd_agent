@@ -177,6 +177,7 @@ public class WorkflowExecution
 
     public string WorkflowId { get; set; } = string.Empty;
     public string WorkflowName { get; set; } = string.Empty;
+    public string TraceId { get; set; } = string.Empty;
 
     // 触发信息
     public string TriggerType { get; set; } = "manual";

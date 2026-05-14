@@ -101,7 +101,12 @@ public class WebPagesController : ControllerBase
                     ? Path.GetFileNameWithoutExtension(file.FileName)
                     : title!.Trim();
                 var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
-                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList);
+                // 写 marker，下游靠它判定包装站，避免"用户上传的 index.html + report.pdf"被误判
+                var assetType = ext == ".pdf" ? "pdf"
+                    : VideoExtensions.Contains(ext) ? "video"
+                    : MarkdownExtensions.Contains(ext) ? "markdown"
+                    : null;
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType);
             }
             else
             {
@@ -372,15 +377,22 @@ public class WebPagesController : ControllerBase
         var uploadName = file.FileName;
 
         // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
+        string? wrappedAssetType = null;
         if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
         {
             fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
             uploadName = Path.ChangeExtension(file.FileName, ".zip");
+            wrappedAssetType = ext == ".pdf" ? "pdf"
+                : VideoExtensions.Contains(ext) ? "video"
+                : MarkdownExtensions.Contains(ext) ? "markdown"
+                : null;
         }
 
         try
         {
-            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName);
+            // 显式传 wrappedAssetType，普通 HTML/ZIP 传 null 会清空旧 marker（避免站点
+            // 从 PDF 包装改成 HTML 后前端还在渲染 PDF 占位，Codex P2 #612 抓到）
+            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName, wrappedAssetType);
             return Ok(ApiResponse<object>.Ok(updated));
         }
         catch (KeyNotFoundException)

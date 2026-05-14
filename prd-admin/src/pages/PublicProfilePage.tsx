@@ -28,6 +28,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { SitePreview } from '@/components/SitePreview';
+import { PdfThumbnail } from '@/components/PdfThumbnail';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveBackgroundTheme } from './public-profile/profileBackgrounds';
 import { OwnerDecorator } from './public-profile/OwnerDecorator';
@@ -379,6 +380,8 @@ function SitesGrid({
                 alt={s.title}
                 className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
+            ) : s.isPdfWrapper ? (
+              <PdfThumbnail sizeBytes={s.totalSize} className="absolute inset-0 h-full w-full" />
             ) : (
               <SitePreview url={s.siteUrl} className="h-full w-full" />
             )}

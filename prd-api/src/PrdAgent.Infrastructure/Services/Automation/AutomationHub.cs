@@ -400,6 +400,7 @@ public class AutomationHub : IAutomationHub
                 Status = NodeExecutionStatus.Pending,
             }).ToList(),
         };
+        execution.TraceId = $"workflow-execution-{execution.Id}";
 
         await _db.WorkflowExecutions.InsertOneAsync(execution);
 

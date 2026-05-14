@@ -6,9 +6,10 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 托管站点 — 用户上传 HTML/ZIP 或工作流自动生成的可运行网页
 ///
-/// BsonIgnoreExtraElements: 历史 schema 演进 / 外部脚本写入会让 DB 文档里
-/// 出现 model 类没有的字段（已知一例：WrappedAssetType，无任何 commit 来源
-/// 但 prod DB 里存在），不忽略则反序列化抛 FormatException 让整个 List 端点 500。
+/// BsonIgnoreExtraElements: schema 演进期间 DB 文档可能出现 model 类还没
+/// 同步过来的字段（例如 WrappedAssetType 历史上一度只在脏数据里、最近才在
+/// main 正式补回 model），不忽略则反序列化抛 FormatException 让 List 端点 500。
+/// 保留这个 attribute 当作未来 schema drift 的常态防御。
 /// </summary>
 [BsonIgnoreExtraElements]
 public class HostedSite
@@ -36,6 +37,15 @@ public class HostedSite
 
     /// <summary>入口文件名 (默认 index.html)</summary>
     public string EntryFile { get; set; } = "index.html";
+
+    /// <summary>
+    /// 自动包装的资产类型（"pdf" / "video" / "markdown" / null=非包装站）。
+    /// 当用户上传单个 PDF/视频/Markdown 时，Controller 会现场生成 index.html
+    /// 壳子 + 原文件，打包成 ZIP 走托管路径；此字段标记原始资产类型，下游
+    /// 据此选直接打开原始文件 URL（避免 sandbox iframe 嵌套被屏蔽）或走
+    /// 专用缩略图占位。值由 BuildWrapperZip 调用方写入。
+    /// </summary>
+    public string? WrappedAssetType { get; set; }
 
     /// <summary>完整入口 URL (COS public URL + cosPrefix + entryFile)</summary>
     public string SiteUrl { get; set; } = string.Empty;

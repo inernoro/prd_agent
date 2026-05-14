@@ -122,7 +122,8 @@ public class CdsAgentAdapter : IAgentAdapter
                 title,
                 "confirm-dangerous",
                 null,
-                runtimeProfile.Id),
+                runtimeProfile.Id,
+                context.TraceId),
             ct);
         yield return AgentStreamChunk.Text($"已创建 CDS 远程会话：{session.Id}\n");
 

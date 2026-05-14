@@ -11,6 +11,7 @@ const statusColors: Record<string, string> = {
   completed: 'bg-green-500/10 text-green-600',
   failed: 'bg-red-500/10 text-red-600',
   cancelled: 'bg-gray-500/10 text-gray-500',
+  paused: 'bg-amber-500/10 text-amber-600',
 };
 
 export function ExecutionListPanel() {
@@ -90,7 +91,7 @@ export function ExecutionListPanel() {
 
       {/* Status filter */}
       <div className="flex gap-2">
-        {['', 'queued', 'running', 'completed', 'failed', 'cancelled'].map((s) => (
+        {['', 'queued', 'running', 'paused', 'completed', 'failed', 'cancelled'].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -151,6 +152,7 @@ export function ExecutionListPanel() {
                   ne.status === 'completed' ? 'bg-green-500' :
                   ne.status === 'running' ? 'bg-blue-500 animate-pulse' :
                   ne.status === 'failed' ? 'bg-red-500' :
+                  ne.status === 'paused' ? 'bg-amber-500' :
                   'bg-gray-300';
                 return (
                   <div
@@ -166,6 +168,7 @@ export function ExecutionListPanel() {
             <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
               <span>触发: {exec.triggerType === 'manual' ? '手动' : exec.triggerType}</span>
               {exec.triggeredByName && <span>操作人: {exec.triggeredByName}</span>}
+              {exec.traceId && <span className="font-mono">trace {exec.traceId}</span>}
               <span>{new Date(exec.createdAt).toLocaleString('zh-CN')}</span>
               {exec.completedAt && exec.startedAt && (
                 <span>

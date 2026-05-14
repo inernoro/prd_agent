@@ -44,6 +44,13 @@ const nodeStatusIcons: Record<string, React.ReactNode> = {
   paused: <PauseCircle className="w-4 h-4 text-amber-500" />,
 };
 
+const FINAL_STATUS_LOG: Record<string, { level: LogEntry['level']; label: string }> = {
+  completed: { level: 'success', label: '完成' },
+  failed: { level: 'error', label: '失败' },
+  cancelled: { level: 'warn', label: '取消' },
+  paused: { level: 'warn', label: '暂停' },
+};
+
 // ═══════════════════════════════════════════════════════════════
 // 主面板
 // ═══════════════════════════════════════════════════════════════
@@ -211,7 +218,6 @@ export function ExecutionDetailPanel() {
       setSsePhaseMessage(status === 'completed' ? '执行完成' : '执行失败');
       useWorkflowStore.getState().loadExecution(execId);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Start SSE via connectSse ──
@@ -286,7 +292,7 @@ export function ExecutionDetailPanel() {
     }
     return () => stopLogSse();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exec?.id]);
+  }, [exec?.id, exec?.status, exec?.completedAt]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -367,11 +373,12 @@ export function ExecutionDetailPanel() {
 
     // Final status
     if (['completed', 'failed', 'cancelled', 'paused'].includes(execution.status)) {
+      const finalStatus = FINAL_STATUS_LOG[execution.status] ?? { level: 'info' as const, label: execution.status };
       entries.push({
         id: `hist-${id++}`,
         timestamp: new Date(execution.completedAt || execution.createdAt),
-        level: execution.status === 'completed' ? 'success' : 'error',
-        message: `执行${execution.status === 'completed' ? '完成' : execution.status === 'failed' ? '失败' : '取消'}${execution.errorMessage ? ': ' + execution.errorMessage : ''}`,
+        level: finalStatus.level,
+        message: `执行${finalStatus.label}${execution.errorMessage ? ': ' + execution.errorMessage : ''}`,
       });
     }
 
@@ -430,6 +437,9 @@ export function ExecutionDetailPanel() {
     const res = await continueExecution(exec.id);
     if (res.success && res.data) {
       setSelectedExecution(res.data.execution);
+      if (['completed', 'failed', 'cancelled', 'paused'].includes(res.data.execution.status)) {
+        void loadHistoricalLogs(res.data.execution);
+      }
     }
   };
 
@@ -460,6 +470,9 @@ export function ExecutionDetailPanel() {
           <div>
             <h1 className="text-lg font-semibold">{exec.workflowName}</h1>
             <p className="text-xs text-muted-foreground font-mono">{exec.id}</p>
+            {exec.traceId && (
+              <p className="text-[11px] text-muted-foreground font-mono">trace {exec.traceId}</p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -511,6 +524,9 @@ export function ExecutionDetailPanel() {
           </span>
           {exec.triggeredByName && (
             <span className="text-xs text-muted-foreground">操作人: {exec.triggeredByName}</span>
+          )}
+          {exec.traceId && (
+            <span className="text-xs text-muted-foreground font-mono">trace {exec.traceId}</span>
           )}
           <span className="text-xs text-muted-foreground">
             {new Date(exec.createdAt).toLocaleString('zh-CN')}

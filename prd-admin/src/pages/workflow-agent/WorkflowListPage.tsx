@@ -6,10 +6,13 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
+import { useWorkflowStore } from '@/stores/workflowStore';
 import { getEmojiForCapsule, getCapsuleType } from './capsuleRegistry';
 import { NodeTypeLabels } from '@/services/contracts/workflowAgent';
 import { TemplatePickerDialog } from './TemplatePickerDialog';
 import type { WorkflowTemplate } from './workflowTemplates';
+import { ExecutionListPanel } from './ExecutionListPanel';
+import { ExecutionDetailPanel } from './ExecutionDetailPanel';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流列表页 — 卡片网格 + 统计总览 + Mini DAG 预览
@@ -210,10 +213,11 @@ function NodeChips({ nodes }: { nodes: WorkflowNode[] }) {
 
 // ── 工作流卡片 ───────────────────────────────────────────────
 
-function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
+function WorkflowCard({ workflow, onEdit, onCanvas, onExecutions, onDelete }: {
   workflow: Workflow;
   onEdit: () => void;
   onCanvas: () => void;
+  onExecutions: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -294,6 +298,12 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
           onClick={(e) => { e.stopPropagation(); onCanvas(); }}
         >
           画布
+        </button>
+        <button
+          className="surface-action flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
+          onClick={(e) => { e.stopPropagation(); onExecutions(); }}
+        >
+          执行
         </button>
         <button
           className="surface-action surface-action-danger w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
@@ -587,6 +597,7 @@ function buildTestWorkflowTemplate(): {
 
 export function WorkflowListPage() {
   const navigate = useNavigate();
+  const { viewMode, setViewMode, setSelectedWorkflow, setSelectedExecution } = useWorkflowStore();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -675,6 +686,15 @@ export function WorkflowListPage() {
     setTemplateImporting(false);
   }
 
+  function handleOpenExecutions(wf: Workflow) {
+    setSelectedWorkflow(wf);
+    setSelectedExecution(null);
+    setViewMode('execution-list');
+  }
+
+  if (viewMode === 'execution-list') return <ExecutionListPanel />;
+  if (viewMode === 'execution-detail') return <ExecutionDetailPanel />;
+
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-4">
       <TabBar
@@ -731,6 +751,7 @@ export function WorkflowListPage() {
                 workflow={wf}
                 onEdit={() => navigate(`/workflow-agent/${wf.id}`)}
                 onCanvas={() => navigate(`/workflow-agent/${wf.id}/canvas`)}
+                onExecutions={() => handleOpenExecutions(wf)}
                 onDelete={() => handleDelete(wf)}
               />
             ))}

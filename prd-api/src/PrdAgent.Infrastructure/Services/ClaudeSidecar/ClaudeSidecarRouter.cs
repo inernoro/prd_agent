@@ -3,9 +3,12 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.Services.AgentTools;
 
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
@@ -29,18 +32,24 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly ILogger<ClaudeSidecarRouter> _logger;
     private readonly InstanceStateRegistry _state;
     private readonly IDynamicSidecarRegistry _registry;
+    private readonly IConfiguration _configuration;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
         IOptionsMonitor<ClaudeSidecarOptions> options,
         InstanceStateRegistry state,
         IDynamicSidecarRegistry registry,
+        IConfiguration configuration,
+        IHttpContextAccessor httpContextAccessor,
         ILogger<ClaudeSidecarRouter> logger)
     {
         _httpFactory = httpFactory;
         _options = options;
         _state = state;
         _registry = registry;
+        _configuration = configuration;
+        _httpContextAccessor = httpContextAccessor;
         _logger = logger;
     }
 
@@ -98,9 +107,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         // 自动注入 callbackBaseUrl / 反向调用 token：调用方不传时由 options + 实例 token 兜底。
         // 这是"无脑配置"的关键 —— 节点配置只关心 model / prompt / tools，不用管反向回调链路。
         var opts = _options.CurrentValue;
-        var effectiveCallbackUrl = string.IsNullOrWhiteSpace(request.CallbackBaseUrl)
-            ? opts.CallbackBaseUrl
-            : request.CallbackBaseUrl;
+        var effectiveCallbackUrl = ResolveCallbackBaseUrl(request, instance, opts);
         var effectiveCallbackToken = string.IsNullOrWhiteSpace(request.AgentApiKey)
             ? token
             : request.AgentApiKey;
@@ -254,6 +261,169 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private static string ResolveToken(DynamicSidecarInstance instance)
     {
         return instance.Token ?? string.Empty;
+    }
+
+    private string ResolveCallbackBaseUrl(
+        SidecarRunRequest request,
+        DynamicSidecarInstance instance,
+        ClaudeSidecarOptions opts)
+    {
+        if (!string.IsNullOrWhiteSpace(request.CallbackBaseUrl))
+            return request.CallbackBaseUrl.TrimEnd('/');
+
+        if (string.Equals(instance.Source, PairedCdsSource, StringComparison.OrdinalIgnoreCase))
+        {
+            var publicBaseUrl = ResolvePublicMapBaseUrl();
+            if (!string.IsNullOrWhiteSpace(publicBaseUrl))
+                return publicBaseUrl;
+        }
+
+        return opts.CallbackBaseUrl.TrimEnd('/');
+    }
+
+    private string? ResolvePublicMapBaseUrl()
+    {
+        var configured = _configuration["ServerUrl"];
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured.TrimEnd('/');
+
+        configured = _configuration["App:FrontendBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured.TrimEnd('/');
+
+        var derivedPreviewUrl = ResolveDerivedPreviewBaseUrl();
+        if (!string.IsNullOrWhiteSpace(derivedPreviewUrl))
+            return derivedPreviewUrl;
+
+        var req = _httpContextAccessor.HttpContext?.Request;
+        if (req == null) return null;
+
+        var clientBaseUrl = req.Headers["X-Client-Base-Url"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(clientBaseUrl))
+            return clientBaseUrl.TrimEnd('/');
+
+        var forwardedHost = req.Headers["X-Forwarded-Host"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedHost))
+        {
+            var forwardedProto = req.Headers["X-Forwarded-Proto"].FirstOrDefault();
+            var scheme = string.IsNullOrWhiteSpace(forwardedProto) ? "https" : forwardedProto.Split(',')[0].Trim();
+            return $"{scheme}://{forwardedHost.Split(',')[0].Trim()}".TrimEnd('/');
+        }
+
+        var origin = req.Headers.Origin.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(origin))
+            return origin.TrimEnd('/');
+
+        if (req.Host.HasValue)
+        {
+            var scheme = string.IsNullOrWhiteSpace(req.Scheme) ? "https" : req.Scheme;
+            return $"{scheme}://{req.Host.Value}".TrimEnd('/');
+        }
+
+        return null;
+    }
+
+    private string? ResolveDerivedPreviewBaseUrl()
+    {
+        var workspace = AgentWorkspace.Resolve(_configuration);
+        var branch = FirstConfigValue(
+                "MAP_PREVIEW_BRANCH",
+                "VITE_GIT_BRANCH",
+                "AGENT_WORKSPACE_GIT_REF",
+                "GIT_BRANCH",
+                "AgentWorkspace:GitRef")
+            ?? workspace.GitRef;
+        var project = FirstConfigValue(
+            "MAP_PROJECT_SLUG",
+            "AGENT_WORKSPACE_PROJECT_SLUG",
+            "AgentWorkspace:ProjectSlug");
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            var repo = FirstConfigValue(
+                    "AGENT_WORKSPACE_GITHUB_REPOSITORY",
+                    "GITHUB_REPOSITORY",
+                    "AgentWorkspace:GitHubRepository")
+                ?? workspace.GitHubRepository;
+            if (!string.IsNullOrWhiteSpace(repo))
+                project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        }
+
+        var domain = FirstConfigValue("MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain");
+        if (string.IsNullOrWhiteSpace(domain))
+            domain = "miduo.org";
+
+        var slug = ComputePreviewSlug(branch, project);
+        if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
+            return null;
+
+        return $"https://{slug}.{domain.Trim().Trim('.')}";
+    }
+
+    private string? FirstConfigValue(params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = _configuration[key];
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+        return null;
+    }
+
+    private static string? ComputePreviewSlug(string? branch, string? project)
+    {
+        var projectSlug = Slugify(project);
+        var branchValue = (branch ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(branchValue) || string.IsNullOrWhiteSpace(projectSlug))
+            return null;
+
+        var slash = branchValue.IndexOf('/');
+        if (slash > 0 && slash < branchValue.Length - 1)
+        {
+            var prefix = Slugify(branchValue[..slash]);
+            var tail = Slugify(branchValue[(slash + 1)..].Replace('/', '-'));
+            if (!string.IsNullOrWhiteSpace(prefix) && !string.IsNullOrWhiteSpace(tail))
+                return $"{tail}-{prefix}-{projectSlug}";
+        }
+
+        var branchSlug = Slugify(branchValue.Replace('/', '-'));
+        return string.IsNullOrWhiteSpace(branchSlug) ? null : $"{branchSlug}-{projectSlug}";
+    }
+
+    private static string Slugify(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        var sb = new StringBuilder(value.Length);
+        var lastDash = false;
+        foreach (var ch in value.Trim().ToLowerInvariant())
+        {
+            var ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+            if (ok)
+            {
+                sb.Append(ch);
+                lastDash = false;
+                continue;
+            }
+
+            if (ch == '-' || ch == '_' || ch == '/' || ch == '.')
+            {
+                if (!lastDash && sb.Length > 0)
+                {
+                    sb.Append('-');
+                    lastDash = true;
+                }
+                continue;
+            }
+
+            if (!lastDash && sb.Length > 0)
+            {
+                sb.Append('-');
+                lastDash = true;
+            }
+        }
+
+        return sb.ToString().Trim('-');
     }
 
     private static StringContent SerializeBody(

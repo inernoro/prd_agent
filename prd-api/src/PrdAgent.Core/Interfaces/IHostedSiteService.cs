@@ -16,10 +16,11 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         CancellationToken ct = default);
 
-    /// <summary>从 ZIP 文件字节创建站点</summary>
+    /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
     Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
         CancellationToken ct = default);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
@@ -32,11 +33,15 @@ public interface IHostedSiteService
 
     // ── 替换内容 ──
 
-    /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容</summary>
+    /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
+        string? wrappedAssetType = null,
         CancellationToken ct = default);
+
+    /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
+    Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
 
     // ── 查询 ──
 
@@ -134,4 +139,11 @@ public class SharedSiteInfo
     public long TotalSize { get; set; }
     public int FileCount { get; set; }
     public string? CoverImageUrl { get; set; }
+
+    /// <summary>
+    /// 仅当本站点是「PDF 包装站」（index.html 壳子 + 单个 .pdf 资产）时填充，
+    /// 指向真实 PDF 文件的直链。前端拿到后应直接 iframe 这个 URL，让浏览器原生
+    /// PDF Viewer 接管；否则嵌套 iframe + sandbox 会被 Chrome 屏蔽。
+    /// </summary>
+    public string? PdfAssetUrl { get; set; }
 }

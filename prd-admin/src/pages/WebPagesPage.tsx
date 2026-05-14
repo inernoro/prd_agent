@@ -4,6 +4,7 @@ import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
 import { SitePreview } from '@/components/SitePreview';
+import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   uploadSite,
@@ -839,6 +840,11 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
               alt=""
               className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.035]"
             />
+          ) : isPdfSite(site) ? (
+            <PdfThumbnail
+              sizeBytes={site.files.find(f => f.path?.toLowerCase().endsWith('.pdf'))?.size ?? site.totalSize}
+              className="absolute inset-0 h-full w-full"
+            />
           ) : (
             <SitePreview url={site.siteUrl} className="h-full w-full transition-transform duration-700 group-hover:scale-[1.035]" />
           )}
@@ -1035,6 +1041,8 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
 
       {site.coverImageUrl ? (
         <img src={site.coverImageUrl} alt="" className="shrink-0 w-10 h-10 rounded object-cover" />
+      ) : isPdfSite(site) ? (
+        <PdfThumbnail className="shrink-0 w-10 h-10 rounded overflow-hidden" compact />
       ) : (
         <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
           <SitePreview url={site.siteUrl} className="w-full h-full" />

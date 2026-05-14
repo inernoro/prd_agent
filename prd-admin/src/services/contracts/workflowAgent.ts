@@ -117,6 +117,7 @@ export interface WorkflowExecution {
   id: string;
   workflowId: string;
   workflowName: string;
+  traceId?: string;
   triggerType: string;
   triggeredBy: string;
   triggeredByName?: string;

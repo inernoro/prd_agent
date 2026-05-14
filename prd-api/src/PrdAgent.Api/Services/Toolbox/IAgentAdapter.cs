@@ -49,6 +49,11 @@ public class AgentExecutionContext
     public string RunId { get; set; } = string.Empty;
 
     /// <summary>
+    /// 链路追踪 ID
+    /// </summary>
+    public string TraceId { get; set; } = string.Empty;
+
+    /// <summary>
     /// 步骤 ID
     /// </summary>
     public string StepId { get; set; } = string.Empty;

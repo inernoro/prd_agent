@@ -16,6 +16,8 @@ public class InfraAgentSessionsControllerTests
     [Fact]
     public void HasRecentHealthyProbe_ShouldTreatRecentlyProbedConnectionAsUsable()
     {
+        // 871ab45 把判定改成看 LongTokenExpiresAt 是否在未来，原测试只塞 LastProbedAt
+        // 已经过时（PR #612 在合并 main 后修）。LastProbeOk + 未过期 token = "可用"。
         var connection = new InfraConnection
         {
             Status = "revoked",

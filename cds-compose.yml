@@ -97,6 +97,8 @@ services:
       ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__RefreshIntervalSeconds: "10"
       AGENT_WORKSPACE_ROOT: /repo
+      AGENT_WORKSPACE_GITHUB_REPOSITORY: "inernoro/prd_agent"
+      AGENT_WORKSPACE_GIT_REF: "${VITE_GIT_BRANCH}"
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
@@ -106,6 +108,10 @@ services:
     working_dir: /app
     volumes:
       - ./prd-admin:/app
+      # public/thirdparty/ref 是符号链接指向仓库根 thirdparty/ref（22+ 个 HTML 素材）。
+      # 单挂 ./prd-admin 时 symlink 解析到 /thirdparty/ref 找不到目录，
+      # vite build (static 模式) 的 copyPublicDir 步骤会报 ENOENT。
+      - ./thirdparty:/thirdparty:ro
     ports:
       - "8000"
     command: >-

@@ -1822,6 +1822,16 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.Sections, updatedSections)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
 
+        // 已提交状态下被再次编辑，记入版本记录
+        if (report.Status == WeeklyReportStatus.Submitted)
+        {
+            update = update.Push(r => r.VersionHistory, new ReportVersionEntry
+            {
+                Event = ReportVersionEvent.Edited,
+                At = DateTime.UtcNow,
+            });
+        }
+
         var updateFilter = Builders<WeeklyReport>.Filter.Eq(r => r.Id, id)
                          & Builders<WeeklyReport>.Filter.Eq(r => r.UserId, userId)
                          & Builders<WeeklyReport>.Filter.In(r => r.Status, editableStatuses);
@@ -1902,7 +1912,12 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.ReturnedBy, null as string)
             .Set(r => r.ReturnedByName, null as string)
             .Set(r => r.ReturnedAt, null as DateTime?)
-            .Set(r => r.UpdatedAt, DateTime.UtcNow);
+            .Set(r => r.UpdatedAt, DateTime.UtcNow)
+            .Push(r => r.VersionHistory, new ReportVersionEntry
+            {
+                Event = ReportVersionEvent.Submitted,
+                At = DateTime.UtcNow,
+            });
 
         if (snapshot.Count > 0)
             update = update.Set(r => r.StatsSnapshot, snapshot);
@@ -1950,7 +1965,12 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.ReviewedAt, DateTime.UtcNow)
             .Set(r => r.ReviewedBy, userId)
             .Set(r => r.ReviewedByName, username)
-            .Set(r => r.UpdatedAt, DateTime.UtcNow);
+            .Set(r => r.UpdatedAt, DateTime.UtcNow)
+            .Push(r => r.VersionHistory, new ReportVersionEntry
+            {
+                Event = ReportVersionEvent.Reviewed,
+                At = DateTime.UtcNow,
+            });
 
         await _db.WeeklyReports.UpdateOneAsync(r => r.Id == id, update);
 
@@ -1996,7 +2016,12 @@ public class ReportAgentController : ControllerBase
             .Set(r => r.ReviewedAt, null as DateTime?)
             .Set(r => r.ReviewedBy, null as string)
             .Set(r => r.ReviewedByName, null as string)
-            .Set(r => r.UpdatedAt, DateTime.UtcNow);
+            .Set(r => r.UpdatedAt, DateTime.UtcNow)
+            .Push(r => r.VersionHistory, new ReportVersionEntry
+            {
+                Event = ReportVersionEvent.Returned,
+                At = DateTime.UtcNow,
+            });
 
         var updateFilter = Builders<WeeklyReport>.Filter.Eq(r => r.Id, id)
                          & Builders<WeeklyReport>.Filter.In(r => r.Status, returnableStatuses);

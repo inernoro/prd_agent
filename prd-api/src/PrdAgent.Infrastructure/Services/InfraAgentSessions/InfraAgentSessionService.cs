@@ -88,7 +88,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ConnectionId = connection.Id,
             Partner = connection.Partner,
             CdsProjectId = connection.ProjectId,
-            TraceId = BuildEventTraceId(sessionId),
+            TraceId = NormalizeOptional(request.TraceId) ?? BuildEventTraceId(sessionId),
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
@@ -1219,7 +1219,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             },
             Tools = BuildSidecarToolDefs(),
             MaxTokens = 4096,
-            MaxTurns = 12,
+            MaxTurns = ResolveMaxTurns(content),
             TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
             AppCallerCode = "infra-agent-session::agent",
             StickyKey = session.CdsSessionId ?? session.Id,
@@ -1248,11 +1248,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 case SidecarEventType.TextDelta:
                     if (!string.IsNullOrEmpty(ev.Text))
                     {
-                        finalText.Append(ev.Text);
+                        var text = SanitizeAgentText(ev.Text);
+                        if (string.IsNullOrEmpty(text)) break;
+                        finalText.Append(text);
                         await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.TextDelta, JsonSerializer.Serialize(new
                         {
                             messageId = runId,
-                            text = ev.Text,
+                            text,
                             source = "claude-sdk-sidecar",
                             sidecar = ev.SidecarName
                         }), ct);
@@ -1291,7 +1293,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     }), ct);
                     break;
                 case SidecarEventType.Done:
-                    var doneText = ev.FinalText ?? finalText.ToString();
+                    var doneText = SanitizeAgentText(ev.FinalText ?? finalText.ToString());
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Done, JsonSerializer.Serialize(new
                     {
                         messageId = runId,
@@ -1339,6 +1341,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             """;
     }
 
+    private static int ResolveMaxTurns(string content)
+    {
+        var text = content ?? string.Empty;
+        var looksLikeLongRunningCodeTask =
+            text.Contains("创建 PR", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("提交 PR", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("create pr", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("pull request", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("巡检", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("修复", StringComparison.OrdinalIgnoreCase);
+
+        return looksLikeLongRunningCodeTask ? 40 : 18;
+    }
+
     private async Task<long> NextEventSeqAsync(string sessionId, CancellationToken ct)
     {
         var latest = await _db.InfraAgentEvents
@@ -1366,7 +1382,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             SessionId = sessionId,
             Seq = seq,
-            TraceId = BuildEventTraceId(sessionId),
+            TraceId = await ResolveTraceIdAsync(sessionId, ct),
             Type = InfraAgentEventTypes.Status,
             PayloadJson = payload,
             CreatedAt = DateTime.UtcNow
@@ -1385,7 +1401,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             SessionId = sessionId,
             Seq = seq,
-            TraceId = BuildEventTraceId(sessionId),
+            TraceId = await ResolveTraceIdAsync(sessionId, ct),
             Type = InfraAgentEventTypes.IsKnown(type) ? type : InfraAgentEventTypes.Log,
             PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
             CreatedAt = DateTime.UtcNow
@@ -1448,6 +1464,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 $"{stage} Hook 执行失败：{output}",
                 StatusCodes.Status409Conflict);
         }
+    }
+
+    private static string SanitizeAgentText(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        var sb = new StringBuilder(text.Length);
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (rune.Value is 0x200D or 0xFE0F) continue;
+            if (Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.OtherSymbol) continue;
+            sb.Append(rune.ToString());
+        }
+        return sb.ToString();
     }
 
     private async Task AppendHookEventAsync(
@@ -1787,6 +1817,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         msg.CreatedAt);
 
     private static string BuildEventTraceId(string sessionId) => $"infra-agent-session-{sessionId}";
+
+    private async Task<string> ResolveTraceIdAsync(string sessionId, CancellationToken ct)
+    {
+        var traceId = await _db.InfraAgentSessions
+            .Find(x => x.Id == sessionId)
+            .Project(x => x.TraceId)
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(traceId) ? BuildEventTraceId(sessionId) : traceId;
+    }
 
     private static string MapCdsStatus(string? status)
     {
