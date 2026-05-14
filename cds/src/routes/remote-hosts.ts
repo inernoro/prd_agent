@@ -745,10 +745,15 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 
 // ── 工具 ──────────────────────────────────────────
 
-function resolvePreviewRootDomain(): string {
-  const direct = process.env.PREVIEW_DOMAIN || process.env.MAIN_DOMAIN || process.env.DASHBOARD_DOMAIN;
+export function resolvePreviewRootDomain(): string {
+  const direct = process.env.CDS_PREVIEW_DOMAIN
+    || process.env.PREVIEW_DOMAIN
+    || process.env.CDS_MAIN_DOMAIN
+    || process.env.MAIN_DOMAIN
+    || process.env.CDS_DASHBOARD_DOMAIN
+    || process.env.DASHBOARD_DOMAIN;
   if (direct?.trim()) return direct.trim();
-  const roots = (process.env.ROOT_DOMAINS || '')
+  const roots = (process.env.CDS_ROOT_DOMAINS || process.env.ROOT_DOMAINS || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
