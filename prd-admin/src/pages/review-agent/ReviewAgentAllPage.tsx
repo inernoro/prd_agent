@@ -239,9 +239,25 @@ export function ReviewAgentAllPage() {
                             <span>{new Date(item.submittedAt).toLocaleDateString('zh-CN')}</span>
                           </div>
                         </div>
-                        <div className={`flex items-center gap-1.5 text-xs flex-shrink-0 ${statusInfo.color}`}>
-                          {statusInfo.icon}
-                          {statusInfo.label}
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {item.appealStatus && (
+                            <span
+                              className={
+                                'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ' +
+                                (item.appealStatus === 'Pending'
+                                  ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                                  : item.appealStatus === 'Approved'
+                                    ? 'bg-violet-500/15 text-violet-300 border-violet-500/30'
+                                    : 'bg-rose-900/30 text-rose-300 border-rose-700/40')
+                              }
+                            >
+                              {item.appealStatus === 'Pending' ? '申诉中' : item.appealStatus === 'Approved' ? '申诉成功' : '申诉驳回'}
+                            </span>
+                          )}
+                          <div className={`flex items-center gap-1.5 text-xs ${statusInfo.color}`}>
+                            {statusInfo.icon}
+                            {statusInfo.label}
+                          </div>
                         </div>
                       </button>
                     );

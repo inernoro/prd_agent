@@ -42,6 +42,15 @@ public class ReviewSubmission
 
     /// <summary>该提交被「重新评审」的次数；0 表示从未 rerun。用于一次性通过率统计。</summary>
     public int RerunCount { get; set; } = 0;
+
+    /// <summary>申诉状态：null（未申诉）/ Pending / Approved / Rejected</summary>
+    public string? AppealStatus { get; set; }
+
+    /// <summary>最新一条申诉的 Id（ReviewAppeal.Id）</summary>
+    public string? LatestAppealId { get; set; }
+
+    /// <summary>最新申诉被受理的时间（通过 或 驳回）</summary>
+    public DateTime? AppealResolvedAt { get; set; }
 }
 
 public static class ReviewStatuses

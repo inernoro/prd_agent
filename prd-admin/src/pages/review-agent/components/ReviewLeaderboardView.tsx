@@ -229,7 +229,11 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
             label="评审通过率"
             value={formatPct(summary.totalPassRate)}
             progress={summary.totalPassRate}
-            hint={`${summary.totalPassedCount} / ${summary.totalCount} 通过`}
+            hint={
+              summary.totalAppealApprovedCount && summary.totalAppealApprovedCount > 0
+                ? `${summary.totalPassedCount} 通过 / ${summary.totalCount} 总评审（${summary.totalAppealApprovedCount} 条申诉成功不参与统计）`
+                : `${summary.totalPassedCount} / ${summary.totalCount} 通过`
+            }
           />
           <StatCard
             label="一次性通过率"

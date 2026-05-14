@@ -68,6 +68,11 @@ export interface ReviewSubmission {
   submittedAt: string;
   startedAt?: string;
   completedAt?: string;
+  rerunCount?: number;
+  /** 申诉状态：未申诉 / 审理中 / 已通过 / 已驳回 */
+  appealStatus?: 'Pending' | 'Approved' | 'Rejected' | null;
+  latestAppealId?: string;
+  appealResolvedAt?: string;
 }
 
 export interface ReviewResult {
@@ -157,6 +162,8 @@ export interface LeaderboardItem {
   submitterName: string;
   totalCount: number;
   passedCount: number;
+  /** 申诉成功并视为"待重审"的评审数（不计入通过/未通过） */
+  appealApprovedCount?: number;
   passRate: number;
   firstTimePassedCount: number;
   firstTimePassRate: number | null;
@@ -165,6 +172,8 @@ export interface LeaderboardItem {
 export interface LeaderboardSummary {
   totalCount: number;
   totalPassedCount: number;
+  /** 整个时段内申诉成功的评审总数（不计入通过率分子分母） */
+  totalAppealApprovedCount?: number;
   totalPassRate: number;
   totalFirstTimePassedCount: number;
   totalFirstTimePassRate: number | null;
@@ -188,6 +197,110 @@ export async function getLeaderboard(params: {
     groupBy: params.groupBy,
   });
   return apiRequest(`/api/review-agent/leaderboard?${qs}`);
+}
+
+// ── 申诉相关 ──
+
+export type AppealStatus = 'Pending' | 'Approved' | 'Rejected';
+
+export interface ReviewAppeal {
+  id: string;
+  submissionId: string;
+  submitterId: string;
+  submitterName: string;
+  reasonHtml: string;
+  imageAttachmentIds: string[];
+  status: AppealStatus;
+  resolverId?: string;
+  resolverName?: string;
+  resolverComment?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export async function createAppeal(
+  submissionId: string,
+  body: { reasonHtml: string; imageAttachmentIds: string[] }
+): Promise<ApiResponse<{ appeal: ReviewAppeal }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(submissionId)}/appeal`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export async function listAppeals(
+  submissionId: string
+): Promise<ApiResponse<{ items: ReviewAppeal[] }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(submissionId)}/appeals`);
+}
+
+export async function approveAppeal(
+  appealId: string,
+  body: { comment: string }
+): Promise<ApiResponse<{ appeal: ReviewAppeal }>> {
+  return apiRequest(`/api/review-agent/appeals/${encodeURIComponent(appealId)}/approve`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export async function rejectAppeal(
+  appealId: string,
+  body: { comment: string }
+): Promise<ApiResponse<{ appeal: ReviewAppeal }>> {
+  return apiRequest(`/api/review-agent/appeals/${encodeURIComponent(appealId)}/reject`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export async function reuploadReviewSubmission(
+  submissionId: string,
+  attachmentId: string
+): Promise<ApiResponse<{ message: string }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(submissionId)}/reupload`, {
+    method: 'POST',
+    body: { attachmentId },
+  });
+}
+
+/**
+ * 上传申诉富文本里粘贴/拖拽的图片，返回可内嵌 <img src> 用的 URL。
+ * 不走 apiRequest（避免 JSON.stringify FormData），直接 fetch + Authorization header。
+ */
+export async function uploadAppealImage(
+  file: File
+): Promise<ApiResponse<{ attachmentId: string; url: string }>> {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch('/api/review-agent/appeals/upload-image', {
+      method: 'POST',
+      headers,
+      body: fd,
+      credentials: 'same-origin',
+    });
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as ApiResponse<{ attachmentId: string; url: string }>;
+    } catch {
+      return {
+        success: false,
+        data: null,
+        error: { code: 'UPLOAD_FAILED', message: text || `上传失败 (HTTP ${res.status})` },
+      };
+    }
+  } catch (e) {
+    return {
+      success: false,
+      data: null,
+      error: { code: 'NETWORK_ERROR', message: (e as Error).message },
+    };
+  }
 }
 
 // SSE 流式接口 URL（供 useSseStream 使用）

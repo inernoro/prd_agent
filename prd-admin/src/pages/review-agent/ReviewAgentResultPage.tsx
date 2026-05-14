@@ -1,12 +1,52 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw } from 'lucide-react';
+import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw, Megaphone, History, Upload, Clock as ClockIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
+import { reuploadReviewSubmission } from '@/services/real/reviewAgent';
+import { uploadAttachment } from '@/services/real/aiToolbox';
+import { useAuthStore } from '@/stores/authStore';
+import { AppealSubmitDialog } from './components/AppealSubmitDialog';
+import { AppealHistoryDrawer } from './components/AppealHistoryDrawer';
+
+const APPEAL_WINDOW_HOURS = 3;
+
+function canAppealLocal(s: ReviewSubmission | null): boolean {
+  if (!s) return false;
+  if (s.status !== 'Done') return false;
+  if (s.isPassed === true) return false;
+  if (s.appealStatus === 'Pending' || s.appealStatus === 'Approved' || s.appealStatus === 'Rejected') return false;
+  if (!s.completedAt) return false;
+  const deadline = new Date(s.completedAt).getTime() + APPEAL_WINDOW_HOURS * 3600_000;
+  return Date.now() < deadline;
+}
+
+function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejected' | null }) {
+  if (!status) return null;
+  if (status === 'Pending') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+        <ClockIcon className="w-2.5 h-2.5" /> 申诉中
+      </span>
+    );
+  }
+  if (status === 'Approved') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30">
+        <CheckCircle className="w-2.5 h-2.5" /> 申诉成功
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-900/30 text-rose-300 border border-rose-700/40">
+      <XCircle className="w-2.5 h-2.5" /> 申诉驳回
+    </span>
+  );
+}
 
 function CheckboxBadge({ state }: { state: 'yes' | 'no' | 'none' }) {
   if (state === 'yes') {
@@ -140,6 +180,23 @@ export function ReviewAgentResultPage() {
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
   const [streaming, setStreaming] = useState(false);
   const [rerunning, setRerunning] = useState(false);
+  const [showAppealDialog, setShowAppealDialog] = useState(false);
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
+  const [reuploading, setReuploading] = useState(false);
+  const [reuploadError, setReuploadError] = useState<string | null>(null);
+  const reuploadInputRef = useRef<HTMLInputElement>(null);
+
+  const authUser = useAuthStore(s => s.user);
+  const permissions = useAuthStore(s => s.permissions);
+  const currentUserId = authUser?.userId;
+  const isOwner = !!(submission && currentUserId && submission.submitterId === currentUserId);
+  const canResolveAppeal = useMemo(
+    () => permissions.includes('review-agent.appeal-review') || permissions.includes('super'),
+    [permissions]
+  );
+  const canAppeal = isOwner && canAppealLocal(submission);
+  const canReupload = isOwner && submission?.appealStatus === 'Approved';
+  const hasAppealRecord = !!submission?.latestAppealId;
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -228,6 +285,49 @@ export function ReviewAgentResultPage() {
     }
   }
 
+  async function handleReuploadFile(file: File) {
+    if (!id || reuploading) return;
+    setReuploading(true);
+    setReuploadError(null);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        setReuploadError(up.error?.message ?? '文件上传失败');
+        return;
+      }
+      const res = await reuploadReviewSubmission(id, up.data.attachmentId);
+      if (!res.success) {
+        setReuploadError(res.error?.message ?? '替换失败');
+        return;
+      }
+      // 重置本地状态并触发重新评审 SSE
+      setResult(null);
+      setDimensionScores([]);
+      setSummary('');
+      setTotalScore(null);
+      setIsPassed(null);
+      setExpandedDims(new Set());
+      setStreaming(true);
+      setSubmission(prev => prev ? {
+        ...prev,
+        status: 'Queued',
+        resultId: undefined,
+        isPassed: undefined,
+        completedAt: undefined,
+        appealStatus: null,
+        latestAppealId: undefined,
+        appealResolvedAt: undefined,
+        rerunCount: 0,
+        attachmentId: up.data!.attachmentId,
+        fileName: file.name,
+      } : prev);
+      sse.start({ url: getReviewResultStreamUrl(id!) });
+    } finally {
+      setReuploading(false);
+      if (reuploadInputRef.current) reuploadInputRef.current.value = '';
+    }
+  }
+
   function toggleDim(key: string) {
     setExpandedDims(prev => {
       const next = new Set(prev);
@@ -296,6 +396,11 @@ export function ReviewAgentResultPage() {
                 {isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                 {isPassed ? '已通过' : '未通过'}
               </div>
+              {submission.appealStatus && (
+                <div className="mt-1.5 flex justify-end">
+                  <AppealMiniChip status={submission.appealStatus} />
+                </div>
+              )}
             </div>
           )}
           {isRunning && (
@@ -316,6 +421,57 @@ export function ReviewAgentResultPage() {
           )}
         </div>
       </div>
+
+      {/* 申诉操作行（仅在相关状态下展示） */}
+      {(canAppeal || canReupload || hasAppealRecord) && (
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          {canAppeal && (
+            <button
+              onClick={() => setShowAppealDialog(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+            >
+              <Megaphone className="w-3.5 h-3.5" /> 我要申诉
+              {submission.completedAt && (
+                <span className="text-[10px] text-indigo-200/80 ml-1">
+                  ({Math.max(0, Math.floor((new Date(submission.completedAt).getTime() + APPEAL_WINDOW_HOURS * 3600_000 - Date.now()) / 60_000))} 分钟内)
+                </span>
+              )}
+            </button>
+          )}
+          {canReupload && (
+            <>
+              <input
+                ref={reuploadInputRef}
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReuploadFile(f);
+                }}
+              />
+              <button
+                onClick={() => reuploadInputRef.current?.click()}
+                disabled={reuploading}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5" /> {reuploading ? '上传中...' : '重新上传方案'}
+              </button>
+            </>
+          )}
+          {hasAppealRecord && (
+            <button
+              onClick={() => setShowHistoryDrawer(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 transition-colors"
+            >
+              <History className="w-3.5 h-3.5" /> 申诉历史
+            </button>
+          )}
+          {reuploadError && (
+            <span className="text-xs text-red-400/90">{reuploadError}</span>
+          )}
+        </div>
+      )}
 
       {/* 评审进行中：SSE 实时状态 */}
       {isRunning && (
@@ -425,6 +581,26 @@ export function ReviewAgentResultPage() {
           )}
         </div>
       )}
+
+      {showAppealDialog && (
+        <AppealSubmitDialog
+          submission={submission}
+          onClose={() => setShowAppealDialog(false)}
+          onSuccess={() => {
+            // 申诉提交成功后刷新本地状态（appealStatus 变为 Pending）
+            setSubmission(prev => prev ? { ...prev, appealStatus: 'Pending' } : prev);
+            setShowHistoryDrawer(true);
+          }}
+        />
+      )}
+
+      <AppealHistoryDrawer
+        open={showHistoryDrawer}
+        onClose={() => setShowHistoryDrawer(false)}
+        submissionId={submission.id}
+        canResolve={canResolveAppeal}
+        onChange={() => loadData()}
+      />
     </div>
   );
 }

@@ -185,6 +185,12 @@ public static class AdminPermissionCatalog
     public const string ReviewAgentManage = "review-agent.manage";
 
     /// <summary>
+    /// 产品评审员申诉受理权限：审理用户对评审结果的申诉（通过/驳回）。
+    /// 默认所有角色不持有此权限，需管理员在「系统设置 → 角色权限」显式分配。
+    /// </summary>
+    public const string ReviewAgentAppealReview = "review-agent.appeal-review";
+
+    /// <summary>
     /// PR Review 权限：基于每用户 GitHub OAuth 的 PR 审查工作台（pr-review）
     /// </summary>
     public const string PrReviewUse = "pr-review.use";
@@ -303,6 +309,7 @@ public static class AdminPermissionCatalog
         new(ReviewAgentUse, "产品评审智能体", "提交方案并查看自己的评审结果"),
         new(ReviewAgentViewAll, "产品评审智能体-查看全部", "查看所有提交记录和评审结果"),
         new(ReviewAgentManage, "产品评审智能体-管理", "自定义评审维度配置"),
+        new(ReviewAgentAppealReview, "产品评审智能体-申诉受理", "审理用户对评审结果的申诉（通过 / 驳回）"),
 
         new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
 

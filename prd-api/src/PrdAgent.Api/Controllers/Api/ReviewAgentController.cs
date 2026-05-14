@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -24,21 +25,33 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ReviewAgentController : ControllerBase
 {
     private const string AppKey = "review-agent";
+    // 申诉富文本图片上限 + 允许的 mime 类型（参考 ReportAgentController 同款配置）
+    private const long MaxAppealImageBytes = 5 * 1024 * 1024;
+    private static readonly HashSet<string> AllowedAppealImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"
+    };
+    // 申诉窗口（评审完成后多长时间内可申诉）
+    private static readonly TimeSpan AppealWindow = TimeSpan.FromHours(3);
+
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<ReviewAgentController> _logger;
     private readonly Services.ReviewAgent.ReviewWebhookService _webhookService;
+    private readonly IAssetStorage _assetStorage;
 
     public ReviewAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
         ILogger<ReviewAgentController> logger,
-        Services.ReviewAgent.ReviewWebhookService webhookService)
+        Services.ReviewAgent.ReviewWebhookService webhookService,
+        IAssetStorage assetStorage)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
         _webhookService = webhookService;
+        _assetStorage = assetStorage;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -60,6 +73,25 @@ public class ReviewAgentController : ControllerBase
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
         return permissions.Contains(AdminPermissionCatalog.ReviewAgentManage)
                || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    private bool HasAppealReviewPermission()
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.ReviewAgentAppealReview)
+               || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    /// <summary>判断某条 submission 当前是否允许新发起申诉（已通过/已申诉过/已过期 均不允许）</summary>
+    private static bool CanAppeal(ReviewSubmission s)
+    {
+        return s.Status == ReviewStatuses.Done
+            && s.IsPassed == false                     // 已通过不允许申诉
+            && s.AppealStatus != AppealStatuses.Pending // 没在审中
+            && s.AppealStatus != AppealStatuses.Approved // 已成功未消费的不允许重复申诉
+            && s.AppealStatus != AppealStatuses.Rejected // 被驳回的不允许再次申诉（一次性）
+            && s.CompletedAt.HasValue
+            && DateTime.UtcNow < s.CompletedAt.Value + AppealWindow;
     }
 
     // ──────────────────────────────────────────────
@@ -304,6 +336,7 @@ public class ReviewAgentController : ControllerBase
                 Title = x.Title,
                 IsPassed = x.IsPassed,
                 RerunCount = x.RerunCount,
+                AppealStatus = x.AppealStatus,
             })
             .ToListAsync(ct);
 
@@ -311,13 +344,18 @@ public class ReviewAgentController : ControllerBase
             ? docs.GroupBy(x => $"{x.SubmitterId}|{x.Title}")
             : docs.GroupBy(x => x.SubmitterId);
 
+        // 申诉成功语义：该条评审「不计入通过、不计入未通过」（视为待重审），但仍计入总评审数。
+        // 通过率公式 = 有效通过 / (有效通过 + 有效未通过)，分母排除申诉成功的。
         var items = grouped
             .Select(g =>
             {
                 var first = g.First();
                 var totalCount = g.Count();
-                var passedCount = g.Count(x => x.IsPassed == true);
-                var firstTimePassedCount = g.Count(x => x.IsPassed == true && x.RerunCount == 0);
+                var appealApprovedCount = g.Count(x => x.AppealStatus == AppealStatuses.Approved);
+                var effectivelyPassed = g.Count(x => x.IsPassed == true && x.AppealStatus != AppealStatuses.Approved);
+                var effectivelyFailed = g.Count(x => x.IsPassed == false && x.AppealStatus != AppealStatuses.Approved);
+                var ratedTotal = effectivelyPassed + effectivelyFailed; // 已落定（不含申诉成功）
+                var firstTimePassedCount = g.Count(x => x.IsPassed == true && x.RerunCount == 0 && x.AppealStatus != AppealStatuses.Approved);
                 return new
                 {
                     key = g.Key,
@@ -325,11 +363,12 @@ public class ReviewAgentController : ControllerBase
                     submitterId = first.SubmitterId,
                     submitterName = first.SubmitterName,
                     totalCount,
-                    passedCount,
-                    passRate = totalCount > 0 ? (double)passedCount / totalCount : 0d,
+                    passedCount = effectivelyPassed,
+                    appealApprovedCount,
+                    passRate = ratedTotal > 0 ? (double)effectivelyPassed / ratedTotal : 0d,
                     firstTimePassedCount,
                     // passedCount=0 时 N/A（前端显示「— 无通过」），避免 NaN
-                    firstTimePassRate = passedCount > 0 ? (double?)firstTimePassedCount / passedCount : null,
+                    firstTimePassRate = effectivelyPassed > 0 ? (double?)firstTimePassedCount / effectivelyPassed : null,
                 };
             })
             .OrderByDescending(x => x.totalCount)
@@ -343,6 +382,7 @@ public class ReviewAgentController : ControllerBase
                 x.submitterName,
                 x.totalCount,
                 x.passedCount,
+                x.appealApprovedCount,
                 x.passRate,
                 x.firstTimePassedCount,
                 x.firstTimePassRate,
@@ -350,15 +390,19 @@ public class ReviewAgentController : ControllerBase
             .ToList();
 
         var summaryTotal = docs.Count;
-        var summaryPassed = docs.Count(x => x.IsPassed == true);
-        var summaryFirstTimePassed = docs.Count(x => x.IsPassed == true && x.RerunCount == 0);
+        var summaryAppealApproved = docs.Count(x => x.AppealStatus == AppealStatuses.Approved);
+        var summaryEffectivePassed = docs.Count(x => x.IsPassed == true && x.AppealStatus != AppealStatuses.Approved);
+        var summaryEffectiveFailed = docs.Count(x => x.IsPassed == false && x.AppealStatus != AppealStatuses.Approved);
+        var summaryRatedTotal = summaryEffectivePassed + summaryEffectiveFailed;
+        var summaryFirstTimePassed = docs.Count(x => x.IsPassed == true && x.RerunCount == 0 && x.AppealStatus != AppealStatuses.Approved);
         var summary = new
         {
             totalCount = summaryTotal,
-            totalPassedCount = summaryPassed,
-            totalPassRate = summaryTotal > 0 ? (double)summaryPassed / summaryTotal : 0d,
+            totalPassedCount = summaryEffectivePassed,
+            totalAppealApprovedCount = summaryAppealApproved,
+            totalPassRate = summaryRatedTotal > 0 ? (double)summaryEffectivePassed / summaryRatedTotal : 0d,
             totalFirstTimePassedCount = summaryFirstTimePassed,
-            totalFirstTimePassRate = summaryPassed > 0 ? (double?)summaryFirstTimePassed / summaryPassed : null,
+            totalFirstTimePassRate = summaryEffectivePassed > 0 ? (double?)summaryFirstTimePassed / summaryEffectivePassed : null,
         };
 
         return Ok(ApiResponse<object>.Ok(new
@@ -399,6 +443,7 @@ public class ReviewAgentController : ControllerBase
         public string Title { get; set; } = string.Empty;
         public bool? IsPassed { get; set; }
         public int RerunCount { get; set; }
+        public string? AppealStatus { get; set; }
     }
 
     /// <summary>
@@ -464,6 +509,318 @@ public class ReviewAgentController : ControllerBase
             cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { message = "已重置，请刷新页面重新评审" }));
+    }
+
+    // ──────────────────────────────────────────────
+    // 申诉
+    // ──────────────────────────────────────────────
+
+    public class CreateAppealRequest
+    {
+        public string ReasonHtml { get; set; } = string.Empty;
+        public List<string>? ImageAttachmentIds { get; set; }
+    }
+
+    public class ResolveAppealRequest
+    {
+        public string Comment { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// 提交申诉（仅提交人本人；评审完成后 3 小时内；未通过且无在审申诉）
+    /// </summary>
+    [HttpPost("submissions/{id}/appeal")]
+    public async Task<IActionResult> CreateAppeal(string id, [FromBody] CreateAppealRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可对自己的评审发起申诉"));
+
+        if (!CanAppeal(submission))
+        {
+            string reason;
+            if (submission.Status != ReviewStatuses.Done)
+                reason = "评审尚未完成，无法申诉";
+            else if (submission.IsPassed == true)
+                reason = "已通过的评审无法申诉";
+            else if (submission.AppealStatus == AppealStatuses.Pending)
+                reason = "已有申诉在审理中，请勿重复提交";
+            else if (submission.AppealStatus == AppealStatuses.Approved)
+                reason = "申诉已通过，请上传新方案重新评审";
+            else if (submission.AppealStatus == AppealStatuses.Rejected)
+                reason = "申诉已被驳回，不可再次申诉";
+            else if (submission.CompletedAt.HasValue && DateTime.UtcNow >= submission.CompletedAt.Value + AppealWindow)
+                reason = $"已超过 {AppealWindow.TotalHours} 小时申诉窗口";
+            else
+                reason = "当前状态不允许申诉";
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, reason));
+        }
+
+        var reasonHtml = (req.ReasonHtml ?? string.Empty).Trim();
+        // 简单纯文字长度校验：去 HTML 标签后须 ≥10 字（图片不算字数）
+        var plainLen = System.Text.RegularExpressions.Regex.Replace(reasonHtml, @"<[^>]+>", "").Trim().Length;
+        if (plainLen < 10)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "申诉理由过短，请至少填写 10 个字"));
+
+        var appeal = new ReviewAppeal
+        {
+            SubmissionId = id,
+            SubmitterId = userId,
+            SubmitterName = submission.SubmitterName,
+            ReasonHtml = reasonHtml,
+            ImageAttachmentIds = req.ImageAttachmentIds ?? new List<string>(),
+            Status = AppealStatuses.Pending,
+        };
+        await _db.ReviewAppeals.InsertOneAsync(appeal, cancellationToken: CancellationToken.None);
+
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AppealStatus, AppealStatuses.Pending)
+                .Set(x => x.LatestAppealId, appeal.Id),
+            cancellationToken: CancellationToken.None);
+
+        // 申诉提交时通过企微/钉钉/飞书 webhook 通知受理员群（AdminNotification 暂无按权限广播能力，
+        // 管理员可订阅 AppealSubmitted 事件配置 webhook 接收即时提醒）
+        await _webhookService.NotifyAppealEventAsync(ReviewEventType.AppealSubmitted, submission, appeal);
+
+        return Ok(ApiResponse<object>.Ok(new { appeal }));
+    }
+
+    /// <summary>
+    /// 列出某条 submission 的所有申诉记录（最新在前）
+    /// </summary>
+    [HttpGet("submissions/{id}/appeals")]
+    public async Task<IActionResult> ListAppeals(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        // 本人 / 持有 ViewAll / 持有 AppealReview 均可查看
+        if (submission.SubmitterId != userId
+            && !HasViewAllPermission()
+            && !HasAppealReviewPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看该申诉记录"));
+
+        var appeals = await _db.ReviewAppeals
+            .Find(x => x.SubmissionId == id)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = appeals }));
+    }
+
+    /// <summary>
+    /// 受理 — 通过申诉（需 ReviewAgentAppealReview 权限）
+    /// </summary>
+    [HttpPost("appeals/{appealId}/approve")]
+    public async Task<IActionResult> ApproveAppeal(string appealId, [FromBody] ResolveAppealRequest req, CancellationToken ct)
+    {
+        return await ResolveAppealAsync(appealId, req, AppealStatuses.Approved, ct);
+    }
+
+    /// <summary>
+    /// 受理 — 驳回申诉（需 ReviewAgentAppealReview 权限）
+    /// </summary>
+    [HttpPost("appeals/{appealId}/reject")]
+    public async Task<IActionResult> RejectAppeal(string appealId, [FromBody] ResolveAppealRequest req, CancellationToken ct)
+    {
+        return await ResolveAppealAsync(appealId, req, AppealStatuses.Rejected, ct);
+    }
+
+    private async Task<IActionResult> ResolveAppealAsync(string appealId, ResolveAppealRequest req, string targetStatus, CancellationToken ct)
+    {
+        if (!HasAppealReviewPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无申诉受理权限"));
+
+        var comment = (req?.Comment ?? string.Empty).Trim();
+        if (comment.Length < 5)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "受理意见过短，请至少填写 5 个字"));
+
+        var appeal = await _db.ReviewAppeals.Find(x => x.Id == appealId).FirstOrDefaultAsync(ct);
+        if (appeal == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "申诉记录不存在"));
+
+        if (appeal.Status != AppealStatuses.Pending)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"该申诉已是「{appeal.Status}」状态，无法再次受理"));
+
+        var resolverId = GetUserId();
+        var resolverName = GetDisplayName() ?? resolverId;
+        var now = DateTime.UtcNow;
+
+        // 乐观锁：以 Status==Pending 作为更新条件，防止并发受理
+        var updateResult = await _db.ReviewAppeals.UpdateOneAsync(
+            x => x.Id == appealId && x.Status == AppealStatuses.Pending,
+            Builders<ReviewAppeal>.Update
+                .Set(x => x.Status, targetStatus)
+                .Set(x => x.ResolverId, resolverId)
+                .Set(x => x.ResolverName, resolverName)
+                .Set(x => x.ResolverComment, comment)
+                .Set(x => x.ResolvedAt, now),
+            cancellationToken: CancellationToken.None);
+
+        if (updateResult.ModifiedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该申诉已被其他人受理"));
+
+        // 同步更新 submission.AppealStatus
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == appeal.SubmissionId,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AppealStatus, targetStatus)
+                .Set(x => x.AppealResolvedAt, now),
+            cancellationToken: CancellationToken.None);
+
+        // 重新读出最新 appeal + submission 推 webhook
+        appeal.Status = targetStatus;
+        appeal.ResolverId = resolverId;
+        appeal.ResolverName = resolverName;
+        appeal.ResolverComment = comment;
+        appeal.ResolvedAt = now;
+
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == appeal.SubmissionId).FirstOrDefaultAsync(CancellationToken.None);
+        if (submission != null)
+        {
+            // 给提交人发 AdminNotification
+            var notification = new AdminNotification
+            {
+                TargetUserId = submission.SubmitterId,
+                Title = targetStatus == AppealStatuses.Approved
+                    ? $"申诉通过：{submission.Title}"
+                    : $"申诉驳回：{submission.Title}",
+                Message = targetStatus == AppealStatuses.Approved
+                    ? $"您的申诉已通过，受理意见：{comment}。可重新上传方案进行评审。"
+                    : $"您的申诉已被驳回，受理意见：{comment}。",
+                Level = targetStatus == AppealStatuses.Approved ? "success" : "warning",
+                Source = AppKey,
+                ActionLabel = "查看详情",
+                ActionUrl = $"/review-agent/submissions/{submission.Id}",
+                ActionKind = "navigate",
+            };
+            await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+
+            await _webhookService.NotifyAppealEventAsync(
+                targetStatus == AppealStatuses.Approved ? ReviewEventType.AppealApproved : ReviewEventType.AppealRejected,
+                submission, appeal);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { appeal }));
+    }
+
+    /// <summary>
+    /// 申诉成功后重新上传 md：替换原 submission 的附件并重置为 Queued 触发新评审。
+    /// RerunCount 清零 —— 等同于"新方案的首次评审"，便于一次性通过率正确计算。
+    /// </summary>
+    [HttpPost("submissions/{id}/reupload")]
+    public async Task<IActionResult> ReuploadSubmission(string id, [FromBody] ReuploadRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可重新上传方案"));
+
+        if (submission.AppealStatus != AppealStatuses.Approved)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在「申诉成功」状态下可重新上传方案"));
+
+        if (string.IsNullOrWhiteSpace(req?.AttachmentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
+
+        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
+
+        // 删除旧 ReviewResult（如有）
+        if (!string.IsNullOrEmpty(submission.ResultId))
+            await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
+
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AttachmentId, req.AttachmentId)
+                .Set(x => x.FileName, attachment.FileName)
+                .Set(x => x.ExtractedContent, attachment.ExtractedText)
+                .Set(x => x.Status, ReviewStatuses.Queued)
+                .Set(x => x.RerunCount, 0)  // 重新上传 = 新一次方案的「首次评审」，RerunCount 清零
+                .Unset(x => x.ResultId)
+                .Unset(x => x.IsPassed)
+                .Unset(x => x.CompletedAt)
+                .Unset(x => x.StartedAt)
+                .Unset(x => x.ErrorMessage)
+                .Unset(x => x.AppealStatus)
+                .Unset(x => x.LatestAppealId)
+                .Unset(x => x.AppealResolvedAt),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { message = "已替换附件，请刷新页面重新评审" }));
+    }
+
+    public class ReuploadRequest
+    {
+        public string AttachmentId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// 申诉富文本图片上传（粘贴/拖拽即用）
+    /// </summary>
+    [HttpPost("appeals/upload-image")]
+    [RequestSizeLimit(MaxAppealImageBytes)]
+    public async Task<IActionResult> UploadAppealImage([FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择图片文件"));
+        if (file.Length > MaxAppealImageBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "图片大小不能超过 5MB"));
+
+        var mimeType = file.ContentType?.Trim().ToLowerInvariant() ?? "application/octet-stream";
+        if (!AllowedAppealImageMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的图片类型：{mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mimeType,
+            ct,
+            domain: AppDomainPaths.DomainPrdAgent,
+            type: AppDomainPaths.TypeImg);
+
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mimeType,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Image,
+            UploadedAt = DateTime.UtcNow,
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            attachmentId = attachment.AttachmentId,
+            url = attachment.Url,
+            fileName = attachment.FileName,
+            mimeType = attachment.MimeType,
+            size = attachment.Size,
+        }));
     }
 
     // ──────────────────────────────────────────────
