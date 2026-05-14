@@ -174,6 +174,7 @@ docs:
   rule.skill-system: 技能系统规则与创建指南
   rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
   rule.ai-model-visibility: AI 模型可见性原则
+  rule.issues-system: Issues 体系协议规则（autofix + 视觉验收 + 元 issue #605）
   rule.streaming-text: 流式文本动效统一规范 (Blur focus 默认)
   rule.cds-mongo-migration: CDS state.json → MongoDB 迁移与回滚规则
   rule.cds-project-isolation-audit: CDS 多项目隔离审计规则
