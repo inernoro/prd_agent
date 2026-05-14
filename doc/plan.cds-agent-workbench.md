@@ -704,7 +704,7 @@ P10 当前结论：
 | P11.1 新增对话页路由与导航 | [x] | [x] | [x] | `/cds-agent` 已接入路由、设置入口和百宝箱内置智能体入口；真实百宝箱卡片点击已进入工作台 |
 | P11.2 会话列表产品化 | [x] | [x] | [x] | 已按可继续优先排序并展示失败原因；新增搜索与归档，运行中会话需先停止；真实入口视觉已验证搜索框、过滤结果和归档按钮状态 |
 | P11.3 多轮消息模型 | [x] | [x] | [x] | 新增 `GET /api/infra-agent-sessions/{id}/messages`，CDS Agent 页独立展示 user/assistant/tool/system transcript；真实入口视觉已验证“对话”和“事件时间线”分区 |
-| P11.4 附件和上下文选择 | [ ] | [ ] | [ ] | 文件、网页、知识库、项目文档 |
+| P11.4 附件和上下文选择 | [x] | [x] | [ ] | 对话输入区新增文件路径、网页地址、项目文档和知识库上下文入口，发送时结构化拼入 prompt；待真实入口视觉 |
 | P11.5 停止/重试/继续 | [x] | [x] | [x] | 运行中可停止；失败会话显示“重试”，已停止会话显示“继续”，发送按钮避免误打旧 runtime；主分支真实入口视觉已通过 |
 | P11.6 空状态与错误态 | [x] | [x] | [x] | 已补充模型配置引导、长期系统级授权说明和 lastError 展示；真实页面可见 401 失败原因和开始引导 |
 
@@ -719,6 +719,7 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 7 个测试，覆盖消息列表 API 使用当前用户隔离；`pnpm --prefix prd-admin tsc --noEmit` 与目标 eslint 通过。
 - 2026-05-14 远端冒烟：部署到 commit `cc8d772f` 后，`GET /api/infra-agent-sessions/{id}/messages?limit=20` 返回 `success=true`，证明 transcript API 上线可访问。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认停止/重试/继续按钮状态可编译且无新增 lint 问题。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认文件/网页/项目文档/知识库上下文入口可编译且无新增 lint 问题。
 
 视觉测试：
 

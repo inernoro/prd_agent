@@ -117,6 +117,23 @@ function renderPayload(event: InfraAgentEventView): string {
   return JSON.stringify(payload, null, 2);
 }
 
+function buildPromptWithContext(
+  task: string,
+  context: { files: string; urls: string; notes: string },
+): string {
+  const sections: string[] = [];
+  if (context.files.trim()) sections.push(`文件路径:\n${context.files.trim()}`);
+  if (context.urls.trim()) sections.push(`网页地址:\n${context.urls.trim()}`);
+  if (context.notes.trim()) sections.push(`项目文档/知识库:\n${context.notes.trim()}`);
+  if (sections.length === 0) return task.trim();
+  return [
+    '附加上下文',
+    sections.join('\n\n'),
+    '任务',
+    task.trim(),
+  ].join('\n\n');
+}
+
 function messageRoleLabel(role: string): string {
   if (role === 'user') return '用户';
   if (role === 'assistant') return 'Agent';
@@ -355,6 +372,11 @@ export default function CdsAgentPage() {
   const [testingProfile, setTestingProfile] = useState(false);
   const [profileTest, setProfileTest] = useState<string>('');
   const [prompt, setPrompt] = useState('巡检当前仓库，找出最值得修复的一个小问题，并说明准备如何提交 PR');
+  const [contextDraft, setContextDraft] = useState({
+    files: '',
+    urls: '',
+    notes: '',
+  });
   const [draft, setDraft] = useState({
     title: '远程巡检任务',
     connectionId: '',
@@ -444,6 +466,12 @@ export default function CdsAgentPage() {
       ['凭据暴露', '不向前端显示 long token / API key'],
     ];
   }, [activeConnection, activeSession, activeSessionProfile, events]);
+
+  const hasContextDraft = Boolean(
+    contextDraft.files.trim()
+    || contextDraft.urls.trim()
+    || contextDraft.notes.trim(),
+  );
 
   useEffect(() => {
     void loadAll();
@@ -592,7 +620,7 @@ export default function CdsAgentPage() {
     const sessionId = activeSession.id;
     setBusy(true);
     try {
-      const res = await sendInfraAgentMessage(sessionId, prompt.trim());
+      const res = await sendInfraAgentMessage(sessionId, buildPromptWithContext(prompt, contextDraft));
       if (!res.success || !res.data?.item) {
         toast.error('发送失败', res.error?.message ?? '请稍后重试');
         await refreshDetail(sessionId);
@@ -1232,6 +1260,46 @@ export default function CdsAgentPage() {
                       );
                     })
                   )}
+                </div>
+                <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-xs font-semibold text-white/62">上下文</div>
+                    {hasContextDraft && (
+                      <button
+                        type="button"
+                        onClick={() => setContextDraft({ files: '', urls: '', notes: '' })}
+                        className="rounded px-2 py-1 text-xs text-white/42 hover:text-white/72"
+                      >
+                        清空
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <textarea
+                      value={contextDraft.files}
+                      onChange={(e) => setContextDraft((prev) => ({ ...prev, files: e.target.value }))}
+                      rows={2}
+                      className="min-h-[58px] resize-none rounded-md px-3 py-2 text-xs text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                      placeholder="文件路径"
+                    />
+                    <textarea
+                      value={contextDraft.urls}
+                      onChange={(e) => setContextDraft((prev) => ({ ...prev, urls: e.target.value }))}
+                      rows={2}
+                      className="min-h-[58px] resize-none rounded-md px-3 py-2 text-xs text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                      placeholder="网页地址"
+                    />
+                    <textarea
+                      value={contextDraft.notes}
+                      onChange={(e) => setContextDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                      rows={2}
+                      className="min-h-[58px] resize-none rounded-md px-3 py-2 text-xs text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                      placeholder="项目文档 / 知识库"
+                    />
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <textarea
