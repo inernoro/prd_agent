@@ -448,7 +448,7 @@ public class PaAgentController : ControllerBase
                 if (!streamSucceeded && streamError == null)
                 {
                     streamError = $"LLM 流式枚举结束但未收到 done/error chunk (chunks={chunkCount})。"
-                                  + "通常是模型组未绑定、Gateway 早退或上游空响应；请检查 AppCaller 「pa-agent.chat::chat」 的 ModelGroupIds 与模型组健康度。";
+                                  + "通常是 chat 模型组未绑定或已失效、Gateway 早退或上游空响应；请检查「pa-agent.chat::chat」的 ModelGroupIds 与模型组健康度。";
                     _logger.LogWarning(
                         "[pa-agent] silent gateway exit (attempt {Attempt}): chunks={Chunks}, AppCaller={AppCaller}",
                         attempt, chunkCount, AppCallerCode);
@@ -468,10 +468,11 @@ public class PaAgentController : ControllerBase
                 if (raw.Contains("User not found"))
                     userMsg2 = "AI 模型服务暂时不可用：网关找不到用户上下文，请联系管理员检查 LlmRequestContext 配置。";
                 else if (raw.Contains("ModelGroup", StringComparison.OrdinalIgnoreCase)
+                         || raw.Contains("ModelGroupIds", StringComparison.OrdinalIgnoreCase)
                          || raw.Contains("无可用模型")
-                         || raw.Contains("no model")
-                         || raw.Contains("AppCaller", StringComparison.OrdinalIgnoreCase))
-                    userMsg2 = "AI 模型未绑定：管理后台「AI 配置 → 应用调度」给「毒舌秘书-对话」绑定一个 chat 模型组后再试。";
+                         || raw.Contains("no model", StringComparison.OrdinalIgnoreCase))
+                    userMsg2 = "AI 模型未绑定：管理后台「AI 配置 → 应用调度」给「毒舌秘书-对话」绑定一个 chat 模型组后再试。"
+                               + " 若已绑定仍失败，请确认该模型组类型为 chat 且组内至少有一个模型；保存后重启 API 或等待下次启动同步。";
                 else if (raw.Contains("401") || raw.Contains("Unauthorized") || raw.Contains("API key", StringComparison.OrdinalIgnoreCase))
                     userMsg2 = "AI 服务认证失败：请检查模型组的 API Key 是否填写且有效。";
                 else if (raw.Contains("429") || raw.Contains("rate limit", StringComparison.OrdinalIgnoreCase))
