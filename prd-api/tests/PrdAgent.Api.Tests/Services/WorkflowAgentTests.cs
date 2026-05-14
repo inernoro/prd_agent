@@ -117,6 +117,7 @@ public class WorkflowAgentTests
         Assert.Contains(meta.ConfigSchema, f => f.Key == "runtime");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "runtimeProfileId");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "toolPolicy");
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "workflowApprovalMode");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "stopAfterRun");
         Assert.Contains(meta.DefaultInputSlots, s => s.Name == "taskContext");
         Assert.Contains(meta.DefaultOutputSlots, s => s.Name == "agentResult" && s.DataType == "text");

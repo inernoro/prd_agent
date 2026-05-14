@@ -51,3 +51,4 @@
 | feat | prd-api | CDS Agent 会话新增危险工具审批卡创建接口，用于验证审批刷新恢复和审计结果 |
 | feat | prd-admin | CDS Agent 事件时间线新增生成审批卡按钮，便于最终用户测试允许/拒绝流程 |
 | fix | prd-api | CDS 长期授权连接的有效性改按 long token 生命周期判断，避免成功探活后超过 10 分钟又显示已撤销 |
+| feat | prd-api | 工作流 CDS Agent 节点新增危险工具审批暂停模式，继续执行时自动写入审批结果并恢复下游节点 |
