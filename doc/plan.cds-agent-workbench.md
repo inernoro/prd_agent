@@ -702,7 +702,7 @@ P10 当前结论：
 | P11.2 会话列表产品化 | [x] | [x] | [x] | 已按可继续优先排序并展示失败原因；新增搜索与归档，运行中会话需先停止；真实入口视觉已验证搜索框、过滤结果和归档按钮状态 |
 | P11.3 多轮消息模型 | [x] | [x] | [x] | 新增 `GET /api/infra-agent-sessions/{id}/messages`，CDS Agent 页独立展示 user/assistant/tool/system transcript；真实入口视觉已验证“对话”和“事件时间线”分区 |
 | P11.4 附件和上下文选择 | [ ] | [ ] | [ ] | 文件、网页、知识库、项目文档 |
-| P11.5 停止/重试/继续 | [x] | [x] | [ ] | 运行中可停止；失败会话显示“重试”，已停止会话显示“继续”，发送按钮避免误打旧 runtime；待主分支视觉复测 |
+| P11.5 停止/重试/继续 | [x] | [x] | [x] | 运行中可停止；失败会话显示“重试”，已停止会话显示“继续”，发送按钮避免误打旧 runtime；主分支真实入口视觉已通过 |
 | P11.6 空状态与错误态 | [x] | [x] | [x] | 已补充模型配置引导、长期系统级授权说明和 lastError 展示；真实页面可见 401 失败原因和开始引导 |
 
 冒烟测试：
@@ -725,6 +725,7 @@ P10 当前结论：
 - 2026-05-14 真实入口视觉：`https://main-prd-agent.miduo.org/` 左侧百宝箱显示 `CDS Agent` 内置智能体卡片；点击卡片后页面级跳转到 `/cds-agent`，工作台显示连接、模型配置、长期授权说明、会话列表、事件、产物、日志和 footer commit `3e913070`。
 - 2026-05-14 真实入口视觉：push 到 commit `1abae314` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从百宝箱点击 `CDS Agent` 进入工作台，页面可见会话搜索框；输入 `失败` 后列表只显示失败会话；选中失败会话后 `归档` 按钮可用，选中运行中会话时 `归档` 按钮禁用。
 - 2026-05-14 真实入口视觉：push 到 commit `cc8d772f` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从登录页进入 `百宝箱 -> CDS Agent`，页面可见新增 `对话` transcript 区、`事件时间线` 区、产物和日志区，footer commit 为 `cc8d772f`。
+- 2026-05-14 真实入口视觉：push 到 commit `871d6810` 后，从 `https://main-prd-agent.miduo.org/` 登录进入 `百宝箱 -> CDS Agent`，选择失败会话后主按钮显示 `重试`，说明文字显示“保留历史对话和事件，重新创建远程 runtime 后继续执行”，footer commit 为 `871d6810`；发送按钮在模型 key 不可用时保持禁用。
 
 ### P12 远程 web 操作能力
 
