@@ -37,6 +37,12 @@ function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(diff / 86400_000)} 天前`;
 }
 
+function displayWorkflowIcon(icon: string | null | undefined): string {
+  const value = String(icon ?? '').trim();
+  if (!value || /[\u2600-\u27BF\u{1F300}-\u{1FAFF}]/u.test(value)) return 'AUTO';
+  return value;
+}
+
 /** 节点类型 → 分类色相 */
 const CATEGORY_HUE: Record<string, number> = {
   'timer': 30, 'webhook-receiver': 200, 'manual-trigger': 280, 'file-upload': 170,
@@ -220,7 +226,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
     >
       {/* 主体内容 — flex-1 撑满剩余高度 */}
       <div className="p-4 pb-3 flex-1 flex flex-col">
-        {/* 头部：emoji + 名称 + 状态 */}
+        {/* 头部：图标 + 名称 + 状态 */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div
@@ -228,7 +234,7 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
             >
               {workflow.avatarUrl
                 ? <img src={workflow.avatarUrl} alt="" className="w-full h-full object-cover" />
-                : (workflow.icon || '⚡')
+                : displayWorkflowIcon(workflow.icon)
               }
             </div>
             <div className="min-w-0 flex-1">
@@ -281,20 +287,20 @@ function WorkflowCard({ workflow, onEdit, onCanvas, onDelete }: {
           className="surface-action surface-action-accent flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onEdit(); }}
         >
-          ✎ 编辑
+          编辑
         </button>
         <button
           className="surface-action flex-1 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150"
           onClick={(e) => { e.stopPropagation(); onCanvas(); }}
         >
-          ◇ 画布
+          画布
         </button>
         <button
           className="surface-action surface-action-danger w-7 h-7 rounded-[8px] text-[11px] font-semibold transition-all duration-150 flex items-center justify-center flex-shrink-0"
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="删除"
         >
-          ✕
+          关闭
         </button>
       </div>
     </GlassCard>
@@ -310,7 +316,7 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
         <div
           className="surface-inset w-20 h-20 rounded-[20px] flex items-center justify-center text-[36px]"
         >
-          ⚡
+          AUTO
         </div>
         <div className="text-center">
           <h3 className="text-[15px] font-semibold text-token-primary">
@@ -323,7 +329,7 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
 
         {/* 示意 DAG */}
         <div className="flex items-center gap-2 my-1">
-          {['🐛', '→', '🧠', '→', '📝'].map((item, i) => (
+          {['TAPD', '→', 'LLM', '→', 'TEXT'].map((item, i) => (
             <span
               key={i}
               className={item === '→'
@@ -337,7 +343,7 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
         </div>
 
         <Button variant="primary" size="sm" onClick={onCreate} disabled={creating}>
-          {creating ? '⏳' : '＋'} 新建工作流
+          {creating ? 'WAIT' : '新建'} 新建工作流
         </Button>
       </div>
     </GlassCard>
@@ -347,17 +353,17 @@ function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: bo
 // ── 全套测试工作流模板 ─────────────────────────────────────
 //
 // 拓扑图：
-//   👆 manual-trigger
-//     ├─→ 🌐 http-request → 🔍 data-extractor → 💻 script-executor ──→ 🔀 data-merger(in1)
-//     └─→ 🐛 tapd-collector → 🤖 smart-http ─────────────────────────→ 🔀 data-merger(in2)
+//   MANUAL manual-trigger
+//     ├─→ HTTP http-request → SEARCH data-extractor → JS script-executor ──→ BRANCH data-merger(in1)
+//     └─→ TAPD tapd-collector → AI smart-http ─────────────────────────→ BRANCH data-merger(in2)
 //                                                                          ↓
-//                                                                    🔄 format-converter
+//                                                                    FORMAT format-converter
 //                                                                          ↓
-//                                                                    🧠 llm-analyzer
+//                                                                    LLM llm-analyzer
 //                                                                          ↓
-//                                                                    📝 report-generator
+//                                                                    TEXT report-generator
 //                                                                    ↓     ↓     ↓
-//                                                              💾 export  📡 webhook  🔔 notify
+//                                                              EXPORT export  WEBHOOK webhook  NOTICE notify
 //
 // 共 13 节点 = 1 trigger + 8 processor + 4 output，覆盖全部可用舱类型
 
@@ -609,7 +615,7 @@ export function WorkflowListPage() {
       const res = await createWorkflow({
         name: '新建工作流',
         description: '',
-        icon: '⚡',
+        icon: 'AUTO',
         tags: [],
       });
       if (res.success && res.data) {
@@ -626,7 +632,7 @@ export function WorkflowListPage() {
       const res = await createWorkflow({
         name: '全链路测试工作流',
         description: '覆盖全部 13 种舱类型的端到端测试工作流 (手动触发 → HTTP/TAPD → 提取/脚本/智能HTTP → 合并 → 转换 → LLM → 报告 → 导出/Webhook/通知)',
-        icon: '🧪',
+        icon: 'TEST',
         tags: ['test', 'full-chain'],
         nodes,
         edges,
@@ -673,7 +679,7 @@ export function WorkflowListPage() {
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-4">
       <TabBar
         title="TAPD 数据自动化"
-        icon={<span className="text-[14px]">⚡</span>}
+        icon={<span className="text-[14px]">AUTO</span>}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -683,7 +689,7 @@ export function WorkflowListPage() {
               disabled={creating || creatingTest}
               title="从预定义模板一键创建工作流"
             >
-              📋 从模板创建
+              TPL 从模板创建
             </Button>
             <Button
               variant="ghost"
@@ -692,7 +698,7 @@ export function WorkflowListPage() {
               disabled={creatingTest || creating}
               title="一键创建包含全部 13 种舱类型的测试工作流"
             >
-              {creatingTest ? '⏳' : '🧪'} 创建全套测试
+              {creatingTest ? 'WAIT' : 'TEST'} 创建全套测试
             </Button>
             <Button
               variant="primary"
@@ -700,7 +706,7 @@ export function WorkflowListPage() {
               onClick={handleCreate}
               disabled={creating || creatingTest}
             >
-              {creating ? '⏳' : '＋'} 新建工作流
+              {creating ? 'WAIT' : '新建'} 新建工作流
             </Button>
           </div>
         }

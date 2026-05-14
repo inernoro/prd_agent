@@ -168,7 +168,7 @@ export function TemplatePickerDialog({ open, onClose, onImport, importing }: Tem
             onClick={onClose}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-[12px] text-token-muted transition-colors hover-bg-soft"
           >
-            ✕
+            关闭
           </button>
         </div>
 

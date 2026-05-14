@@ -53,22 +53,22 @@ function edge(src: string, srcSlot: string, tgt: string, tgtSlot: string): Workf
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   🐛 TAPD 数据采集（含 common_get_info 详情）
+//   TAPD TAPD 数据采集（含 common_get_info 详情）
 //     ↓
-//   📊 数据统计（JS → 结构化 JSON）
+//   STAT 数据统计（JS → 结构化 JSON）
 //     ↓
-//   🌐 HTML 渲染（JS 确定性生成，无 LLM 依赖）
+//   HTTP HTML 渲染（JS 确定性生成，无 LLM 依赖）
 //     ↓      ↓
-//   💾 导出  🔔 通知
+//   EXPORT 导出  NOTICE 通知
 //
 
 const tapdBugCollectionTemplate: WorkflowTemplate = {
   id: 'tapd-bug-collection',
   name: 'TAPD 缺陷采集与分析',
   description: '从 TAPD 拉取缺陷数据 → 统计分析 → AI 趋势解读 → 生成质量报告 → 文件导出 + 站内通知',
-  icon: '🐛',
+  icon: 'TAPD',
   tags: ['tapd', 'quality', 'report'],
   requiredInputs: [
     {
@@ -425,7 +425,7 @@ const smartHttpTemplate: WorkflowTemplate = {
   id: 'smart-http-collector',
   name: '通用 API 采集',
   description: '粘贴 cURL 命令 → AI 自动分页拉取全量数据 → 格式转换 → 文件导出',
-  icon: '🌐',
+  icon: 'HTTP',
   tags: ['api', 'http', 'curl'],
   requiredInputs: [
     {
@@ -510,20 +510,20 @@ const smartHttpTemplate: WorkflowTemplate = {
 // 前置：node scripts/mock-paginated-api.js
 //
 // 拓扑图：
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   🤖 智能 HTTP（cursor 分页 + dataPath + delay + retry）
+//   AI 智能 HTTP（cursor 分页 + dataPath + delay + retry）
 //     ↓
-//   💻 JS 校验（总数/去重/分布/PASS|FAIL）
+//   JS JS 校验（总数/去重/分布/PASS|FAIL）
 //     ↓      ↓
-//   💾 导出  🔔 通知
+//   EXPORT 导出  NOTICE 通知
 //
 
 const smartHttpAcceptanceTemplate: WorkflowTemplate = {
   id: 'smart-http-acceptance',
   name: 'Smart-HTTP 增强验收',
   description: '一键验收：导入此模板 → 点运行。自动测试 cursor 分页 + 自定义 dataPath + 请求延迟 + 失败重试，校验 50 条数据完整性（使用系统内置 Mock）',
-  icon: '🧪',
+  icon: 'TEST',
   tags: ['test', 'smart-http', 'acceptance', 'mock'],
   requiredInputs: [],  // 零表单，直接跑
   build: () => {
@@ -652,22 +652,22 @@ result = L.join("\\n");`,
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   🤖 智能 HTTP（全配置：分页/路径/重试/延迟）
+//   AI 智能 HTTP（全配置：分页/路径/重试/延迟）
 //     ↓
-//   💻 JS 数据预处理（统计摘要 + 字段分布）
+//   JS JS 数据预处理（统计摘要 + 字段分布）
 //     ↓
-//   📝 LLM 报告生成（基于分析指令生成可读报告）
+//   TEXT LLM 报告生成（基于分析指令生成可读报告）
 //     ↓      ↓
-//   💾 导出  🔔 通知
+//   EXPORT 导出  NOTICE 通知
 //
 
 const apiReviewWorkflowTemplate: WorkflowTemplate = {
   id: 'api-review-workflow',
   name: 'API 数据采集与审查',
   description: '配置外部 API → 数据预处理 → LLM 分析报告 → 文件导出 + 站内通知。支持 cursor/offset/page 分页、自定义数据路径、失败重试',
-  icon: '🔍',
+  icon: 'SEARCH',
   tags: ['api', 'review', 'smart-http', 'report', 'llm'],
   requiredInputs: [
     {
@@ -875,23 +875,23 @@ result = {
 // 模板 5: 大全套验收（并行执行 + 条件分支 + 合并 + 延时 + 重试 + 自验证）
 // ═══════════════════════════════════════════════════════════════
 //
-// 拓扑图（★ = 并行层）：
+// 拓扑图（* = 并行层）：
 //
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   ★ 并行层 ────────────────────────────────────
-//   │  ├── 🌐 Echo (1s delay)                   │
-//   │  ├── 📊 Random Data (1s delay)             │
-//   │  └── 🔢 Counter (1s delay)                │
+//   * 并行层 ────────────────────────────────────
+//   │  ├── HTTP Echo (1s delay)                   │
+//   │  ├── STAT Random Data (1s delay)             │
+//   │  └── COUNT Counter (1s delay)                │
 //   ──────────────────────────────────────────────
 //     ↓        ↓        ↓
-//   🔀 数据合并（3 路 fan-in）
+//   BRANCH 数据合并（3 路 fan-in）
 //     ↓
-//   💻 JS 验证脚本（校验并行时间 + 数据完整性 + 计数器）
+//   JS JS 验证脚本（校验并行时间 + 数据完整性 + 计数器）
 //     ↓
-//   🔀 条件判断（pass/fail）
+//   BRANCH 条件判断（pass/fail）
 //    ↓true       ↓false
-//   💾 导出      🔔 失败通知
+//   EXPORT 导出      NOTICE 失败通知
 //
 
 const fullTestSuiteTemplate: WorkflowTemplate = {
@@ -899,7 +899,7 @@ const fullTestSuiteTemplate: WorkflowTemplate = {
   name: '大全套验收（并行+条件+合并+重试）',
   description:
     '一键验收工作流引擎全部核心能力：并行执行（3 路 fan-out → fan-in）、条件分支、数据合并、延时、自验证。使用系统内置 Mock，零配置直接跑',
-  icon: '🏗️',
+  icon: 'BUILD',
   tags: ['test', 'parallel', 'condition', 'merge', 'mock', 'acceptance'],
   requiredInputs: [], // 零表单，直接跑
   build: () => {
@@ -1028,13 +1028,13 @@ if (!dataFlowOk) pass = false;
 var report = [];
 report.push("# 大全套验收报告");
 report.push("");
-report.push("## 结论: " + (pass ? "PASS ✅" : "FAIL ❌"));
+report.push("## 结论: " + (pass ? "PASS PASS" : "FAIL FAIL"));
 report.push("");
 report.push("## 测试项");
 report.push("| # | 测试项 | 期望 | 实际 | 结果 |");
 report.push("|---|--------|------|------|------|");
 for (var c = 0; c < checks.length; c++) {
-  report.push("| " + (c+1) + " | " + checks[c].name + " | " + checks[c].expected + " | " + checks[c].actual + " | " + (checks[c].pass ? "✅" : "❌") + " |");
+  report.push("| " + (c+1) + " | " + checks[c].name + " | " + checks[c].expected + " | " + checks[c].actual + " | " + (checks[c].pass ? "PASS" : "FAIL") + " |");
 }
 report.push("");
 report.push("## 并行时间分析");
@@ -1142,26 +1142,26 @@ result = { status: pass ? "pass" : "fail", pass: pass, report: report.join("\\n"
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
-//   👆 手动触发（输入视频链接）
+//   MANUAL 手动触发（输入视频链接）
 //     ↓
-//   🔀 链接特征检测（条件判断：是否为抖音/TikTok 链接）
+//   BRANCH 链接特征检测（条件判断：是否为抖音/TikTok 链接）
 //     ↓ true                         ↓ false
-//   🎬 抖音解析                    🌐 HTTP 请求（通用）
+//   VIDEO 抖音解析                    HTTP HTTP 请求（通用）
 //     ↓                               ↓
-//   📥 视频下载到 COS ←───────────────┘
+//   DOWNLOAD 视频下载到 COS ←───────────────┘
 //     ↓
-//   📝 视频内容转文本
+//   TEXT 视频内容转文本
 //     ↓
-//   ✍️ 文本转文案
+//   COPY 文本转文案
 //     ↓
-//   📧 邮件发送
+//   MAIL 邮件发送
 //
 
 const videoWorkflowTemplate: WorkflowTemplate = {
   id: 'video-link-pipeline',
   name: '短视频一键解析工作流',
   description: '输入短视频链接 → 自动识别平台 → 解析视频信息 → 下载到 COS → 提取文本 → 生成文案 → 邮件发送。支持抖音/TikTok/快手/B站等链接自动检测',
-  icon: '🎬',
+  icon: 'VIDEO',
   tags: ['video', 'douyin', 'tiktok', 'pipeline', 'email'],
   requiredInputs: [
     {
@@ -1445,11 +1445,11 @@ result = {
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   📺 拉取博主最新作品列表（TikHub app/v3 或抖音 web，默认 4 条 = 海报 4 页）
+//   MEDIA 拉取博主最新作品列表（TikHub app/v3 或抖音 web，默认 4 条 = 海报 4 页）
 //     ↓
-//   🪟 发布到首页广告海报弹窗（4:3 ad-mode，全 bleed 视频 + 中央 Play）
+//   WINDOW 发布到首页广告海报弹窗（4:3 ad-mode，全 bleed 视频 + 中央 Play）
 //
 // 用户登录后看到借鉴 Apple 产品发布会 / Netflix 预告的视频广告弹窗，
 // 中央 Play 按钮主动点击播放，不打扰用户（autoplay 容易吓跑）。
@@ -1611,31 +1611,31 @@ const tiktokCreatorToHomepageTemplate: WorkflowTemplate = {
 // 模板: 产品专业委员会月报（4 章节合一）
 // ═══════════════════════════════════════════════════════════════
 //
-// 拓扑图（★ = 并行层）：
+// 拓扑图（* = 并行层）：
 //
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   ★ 并行层 ─────────────────────────────────────────────────
-//   │  ├── 🔗 TAPD 需求采集 (stories) → 📊 需求统计        │
-//   │  ├── 🔗 TAPD 缺陷采集 (bugs)    → 📊 缺陷统计        │
-//   │  ├── 📊 巡检数据解析                                  │
-//   │  └── 📊 整改数据解析                                  │
+//   * 并行层 ─────────────────────────────────────────────────
+//   │  ├── LINK TAPD 需求采集 (stories) → STAT 需求统计        │
+//   │  ├── LINK TAPD 缺陷采集 (bugs)    → STAT 缺陷统计        │
+//   │  ├── STAT 巡检数据解析                                  │
+//   │  └── STAT 整改数据解析                                  │
 //   ────────────────────────────────────────────────────────────
 //     ↓
-//   🔀 数据合并（4 路 fan-in）
-//     ├──→ 🤖 LLM 分析 ────→ 🔀 最终合并（2 路）
+//   BRANCH 数据合并（4 路 fan-in）
+//     ├──→ AI LLM 分析 ────→ BRANCH 最终合并（2 路）
 //     └──────────────────────→ ↑
 //                              ↓
-//                         🌐 HTML 渲染
+//                         HTTP HTML 渲染
 //                          ↓       ↓
-//                        💾 导出  🔔 通知
+//                        EXPORT 导出  NOTICE 通知
 //
 
 const committeeMonthlyTemplate: WorkflowTemplate = {
   id: 'committee-monthly-report',
   name: '产品专业委员会月报',
   description: '一键生成产品质量月报：TAPD 需求分析 + 产品缺陷分析 + 月度巡检 + 专项整改，4 章节合一，AI 自动生成分析与启发',
-  icon: '📋',
+  icon: 'TPL',
   tags: ['quality', 'monthly', 'tapd', 'committee', 'report'],
   requiredInputs: [
     {
@@ -2102,7 +2102,7 @@ result = {total:items.length, closed:closed, open:items.length-closed, items:ite
 //
 // 拓扑图：
 //
-//   👆 手动触发 → 📦 拉取博主视频列表 → 📝 视频转文字 (ASR + hook) → 🪧 发布图文混排海报
+//   MANUAL 手动触发 → BOX 拉取博主视频列表 → TEXT 视频转文字 (ASR + hook) → POSTER 发布图文混排海报
 //
 // vs ad-4-3 模板（仅 3 节点，body 是 @author+#aweme+desc）:
 //   多了 video-to-text(asr) 节点，下载视频 → ffmpeg 抽音 → 流式 ASR → LLM 提炼出
