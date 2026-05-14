@@ -1,9 +1,9 @@
 # Issues 体系 · 协议规则
 
-> 创建日期：2026-05-14
-> 状态：活跃
-> 维护人：协议演化讨论在 [#605](https://github.com/inernoro/prd_agent/issues/605)
-> 配套技能：`/issues-autofix`、`/issues-visual-create`、`/issues-visual-run`
+> **版本**：v1.0 | **日期**：2026-05-14 | **状态**：已落地
+
+- **维护入口**：协议演化讨论在 [#605](https://github.com/inernoro/prd_agent/issues/605)
+- **配套技能**：`/issues-autofix`、`/issues-visual-create`、`/issues-visual-run`
 
 GitHub issue 在本项目同时承载三类工作：日常 bug/feature 维护、视觉验收的开单与执行、协议本身的演化讨论。本文件做一次系统性解释，让三类工作可机器化协同、不互相打架、不需要每次重新沟通。
 
