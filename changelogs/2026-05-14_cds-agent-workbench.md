@@ -47,3 +47,4 @@
 | fix | cds | MAP API 容器注入 Agent workspace 仓库名和分支，供远程仓库工具按部署分支恢复 Git 上下文 |
 | fix | prd-api | CDS Agent 后台 worker 无请求上下文时按 CDS 分支和仓库推导公网回调地址，修复智能体链路工具回调失败 |
 | fix | prd-api | CDS Agent 对巡检和 PR 类长任务提高 sidecar 最大回合数，避免真实巡检在提交 PR 前提前中断 |
+| fix | prd-api | AI 百宝箱队列按项目和分支隔离，避免旧预览 worker 抢消费 CDS Agent 长任务 |
