@@ -130,8 +130,19 @@ export interface WeeklyReport {
   workflowExecutionId?: string;
   /** v2.0 提交时快照的统计数据 */
   statsSnapshot?: Record<string, unknown>;
+  /** 状态变更版本记录（仅时间和事件类型） */
+  versionHistory?: ReportVersionEntry[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** 周报版本记录事件类型 */
+export type ReportVersionEventType = 'submitted' | 'reviewed' | 'returned' | 'edited';
+
+/** 周报版本记录单条 */
+export interface ReportVersionEntry {
+  event: ReportVersionEventType;
+  at: string;
 }
 
 export interface WeeklyReportSection {

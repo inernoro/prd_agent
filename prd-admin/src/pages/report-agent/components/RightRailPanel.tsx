@@ -1,11 +1,17 @@
-import { Heart, Eye } from 'lucide-react';
+import { Heart, Eye, History } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
-import type { ReportViewSummary } from '@/services/contracts/reportAgent';
+import type { ReportViewSummary, ReportVersionEntry, ReportVersionEventType } from '@/services/contracts/reportAgent';
 import { ReportLikeBar } from './ReportLikeBar';
 
 export interface RightRailPanelProps {
   reportId: string;
   viewSummary: ReportViewSummary;
+  versionHistory?: ReportVersionEntry[];
+  fallbackTimestamps?: {
+    submittedAt?: string;
+    reviewedAt?: string;
+    returnedAt?: string;
+  };
 }
 
 function formatViewTime(iso: string): string {
@@ -22,7 +28,51 @@ function formatViewTime(iso: string): string {
   }
 }
 
-export function RightRailPanel({ reportId, viewSummary }: RightRailPanelProps) {
+const EVENT_LABEL: Record<ReportVersionEventType, string> = {
+  submitted: '提交',
+  reviewed: '审阅通过',
+  returned: '退回',
+  edited: '编辑',
+};
+
+const EVENT_COLOR: Record<ReportVersionEventType, string> = {
+  submitted: 'rgba(99,102,241,.95)',
+  reviewed: 'rgba(16,185,129,.95)',
+  returned: 'rgba(245,158,11,.95)',
+  edited: 'rgba(100,116,139,.92)',
+};
+
+const EVENT_BG: Record<ReportVersionEventType, string> = {
+  submitted: 'rgba(99,102,241,.14)',
+  reviewed: 'rgba(16,185,129,.14)',
+  returned: 'rgba(245,158,11,.14)',
+  edited: 'rgba(100,116,139,.14)',
+};
+
+/**
+ * 旧周报无 versionHistory 字段时，从单值时间戳推导出最近一次事件序列作为兜底。
+ * 这只能覆盖"最近一次"，无法还原多次提交/退回循环。
+ */
+function buildFallbackHistory(ts?: RightRailPanelProps['fallbackTimestamps']): ReportVersionEntry[] {
+  if (!ts) return [];
+  const out: ReportVersionEntry[] = [];
+  if (ts.submittedAt) out.push({ event: 'submitted', at: ts.submittedAt });
+  if (ts.returnedAt) out.push({ event: 'returned', at: ts.returnedAt });
+  if (ts.reviewedAt) out.push({ event: 'reviewed', at: ts.reviewedAt });
+  return out;
+}
+
+export function RightRailPanel({ reportId, viewSummary, versionHistory, fallbackTimestamps }: RightRailPanelProps) {
+  const rawEntries = versionHistory && versionHistory.length > 0
+    ? versionHistory
+    : buildFallbackHistory(fallbackTimestamps);
+  // 倒序：最新事件在最上
+  const sortedEntries = [...rawEntries].sort((a, b) => {
+    const ta = new Date(a.at).getTime();
+    const tb = new Date(b.at).getTime();
+    return tb - ta;
+  });
+
   return (
     <aside
       className="flex-none flex flex-col min-h-0 gap-3"
@@ -93,6 +143,45 @@ export function RightRailPanel({ reportId, viewSummary }: RightRailPanelProps) {
             </div>
           )}
         </div>
+      </GlassCard>
+
+      {/* 版本记录段 */}
+      <GlassCard variant="subtle" className="px-4 py-3 flex flex-col gap-2 shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <History size={13} style={{ color: 'rgba(168,85,247,.92)' }} />
+            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>版本记录</span>
+          </div>
+          {sortedEntries.length > 0 && (
+            <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+              {sortedEntries.length} 条
+            </span>
+          )}
+        </div>
+        {sortedEntries.length === 0 ? (
+          <div className="text-[11px] py-3 text-center" style={{ color: 'var(--text-muted)' }}>
+            暂无版本记录
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {sortedEntries.map((entry, idx) => (
+              <div
+                key={`${entry.event}-${entry.at}-${idx}`}
+                className="surface-inset rounded-lg px-2.5 py-2 flex items-center justify-between gap-2"
+              >
+                <span
+                  className="shrink-0 text-[10.5px] px-1.5 py-0.5 rounded"
+                  style={{ color: EVENT_COLOR[entry.event], background: EVENT_BG[entry.event] }}
+                >
+                  {EVENT_LABEL[entry.event] ?? entry.event}
+                </span>
+                <span className="text-[10.5px]" style={{ color: 'var(--text-secondary)' }}>
+                  {formatViewTime(entry.at)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </GlassCard>
     </aside>
   );
