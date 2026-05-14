@@ -36,9 +36,9 @@ description: 手动触发创建一个视觉验收子 issue。输入"要测什么
 
 ## 2. 自动从环境推导
 
-- **预览地址**：按 CLAUDE.md 规则 #11 v3 公式自动拼接 `{tail}-{prefix}-{project-slug}.miduo.org`
-- **分支**：`git branch --show-current`
-- **项目 slug**：`basename $(git rev-parse --show-toplevel)`
+- **预览地址**：按 CLAUDE.md 规则 #11 v3 公式自动拼接 `{tail}-{prefix}-{project-slug}.miduo.org`，三段都必须过 slugify（小写 + 非 `[a-z0-9-]` 替换为 `-` + 合并连续 `-` + 去头尾 `-`）
+- **分支**：`git branch --show-current`，对 `/` 切分前缀/尾部后各自 slugify
+- **项目 slug**：`basename $(git rev-parse --show-toplevel)` 后**必须 slugify**（本仓库 `prd_agent` → `prd-agent`，下划线必须变连字符）。直接复用 CLAUDE.md §11 给出的 bash slugify 函数，不要自己造
 - **commit**：默认取 `git rev-parse --short HEAD`
 
 ## 3. 执行步骤
