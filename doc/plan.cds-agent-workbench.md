@@ -873,6 +873,9 @@ P10 当前结论：
 - 已将 admin profile 切到静态发布模式，并在 `cds-compose.yml` 固化静态 `vite build + serve` 启动方式。
 - static 首次部署失败暴露出 `prd-admin/public/thirdparty/ref` 是指向仓库根目录 `thirdparty/ref` 的 symlink；CDS admin 容器只挂载 `prd-admin`，该 symlink 在远端断链，Vite 复制 public 目录时失败。已移除 public symlink，保留根目录参考资料。
 - static 二次部署已完成 Vite build，但 `serve` 不接受 `--listen 0.0.0.0` 参数；已改为 `-l tcp://0.0.0.0:8000`。
+- static 三次部署通过，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 running，预览首页返回 `/assets/index-BA6CL4oR.js` 且 JS content-type 为 `application/javascript`。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`。页面可见 CDS 连接、系统级模型配置、测试模型、从系统主模型同步、新建远程会话、会话事件、产物日志和停止按钮。当前阻塞转入 P17：模型 key 返回 Anthropic 401，日志面板提示 CDS 连接不可用，需要继续修到真实远程执行和 PR 验收。
+- 已修正 MAP 会话服务对 CDS 连接状态的判断：`revoked` 才代表系统级授权失效，`unreachable` 只代表上一次探活失败，不再因为 10 分钟探活窗口过期而阻断会话、消息、日志和停止动作。冒烟命令 `cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无新增编译错误；输出为既有 warning。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
@@ -891,5 +894,5 @@ P10 当前结论：
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
 | 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |
-| 16 | 完成真实端到端验收 | P17 | [ ] | 从 main 预览真实入口跑完整链路并记录证据 |
+| 16 | 完成真实端到端验收 | P17 | [ ] | main 预览真实入口与部署状态已通过；真实模型执行、日志读取、停止释放和刷新恢复仍待完成 |
 | 17 | 完成远程巡检 PR 验收 | P17 | [ ] | 远程 Agent 对 `prd_agent` 完成巡检并提交 PR |

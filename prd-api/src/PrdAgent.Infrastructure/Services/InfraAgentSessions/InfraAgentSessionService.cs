@@ -77,14 +77,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 StatusCodes.Status404NotFound);
         }
 
-        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase)
-            && !InfraConnectionService.HasRecentHealthyProbe(connection))
-        {
-            throw new InfraAgentSessionException(
-                InfraAgentSessionErrorCodes.ConnectionNotActive,
-                "CDS 连接不可用，请先探活或重新授权",
-                StatusCodes.Status409Conflict);
-        }
+        EnsureConnectionNotRevoked(connection);
 
         var now = DateTime.UtcNow;
         var sessionId = Guid.NewGuid().ToString("N");
@@ -486,15 +479,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "CDS 连接不存在",
                 StatusCodes.Status404NotFound);
         }
-        if (!string.Equals(connection.Status, "active", StringComparison.OrdinalIgnoreCase)
-            && !InfraConnectionService.HasRecentHealthyProbe(connection))
+        EnsureConnectionNotRevoked(connection);
+        return connection;
+    }
+
+    private static void EnsureConnectionNotRevoked(InfraConnection connection)
+    {
+        if (string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase))
         {
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.ConnectionNotActive,
-                "CDS 连接不可用，请先探活或重新授权",
+                "CDS 系统级授权已撤销，请删除后重新授权",
                 StatusCodes.Status409Conflict);
         }
-        return connection;
     }
 
     private async Task<string> GetLongTokenAsync(string connectionId, CancellationToken ct)
