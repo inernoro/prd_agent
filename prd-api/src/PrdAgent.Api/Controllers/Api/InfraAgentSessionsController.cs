@@ -156,6 +156,28 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/collect-artifacts")]
+    public async Task<IActionResult> CollectArtifacts(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.CollectArtifactsAsync(userId, id, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpGet("{id}/events")]
     public async Task<IActionResult> ListEvents(
         string id,

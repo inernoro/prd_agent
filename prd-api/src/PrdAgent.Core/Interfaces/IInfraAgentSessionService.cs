@@ -18,6 +18,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> ArchiveAsync(string userId, string id, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> CollectArtifactsAsync(string userId, string id, CancellationToken ct);
+
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
     Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct);

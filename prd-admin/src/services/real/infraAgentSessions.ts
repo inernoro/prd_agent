@@ -160,6 +160,13 @@ export async function archiveInfraAgentSession(id: string): Promise<ApiResponse<
   });
 }
 
+export async function collectInfraAgentArtifacts(id: string): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.collectArtifacts(encodeURIComponent(id)), {
+    method: 'POST',
+    body: {},
+  });
+}
+
 export async function listInfraAgentEvents(
   id: string,
   afterSeq = 0,

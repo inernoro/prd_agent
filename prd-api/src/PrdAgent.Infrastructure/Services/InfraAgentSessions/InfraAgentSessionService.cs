@@ -353,6 +353,66 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentSessionView?> CollectArtifactsAsync(string userId, string id, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        var context = new AgentToolInvocationContext
+        {
+            RunId = $"infra-agent-artifacts-{session.Id}-{Guid.NewGuid():N}",
+            AppCallerCode = "infra-agent-session::artifact-collector",
+            SidecarName = "map-artifact-collector",
+            InfraAgentSessionId = session.Id,
+            CdsProjectId = session.CdsProjectId
+        };
+
+        await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+        {
+            level = "info",
+            source = "map-artifact-collector",
+            message = "collecting readonly repository artifacts"
+        }), ct);
+
+        foreach (var request in BuildReadonlyArtifactRequests())
+        {
+            var seq = await NextEventSeqAsync(session.Id, ct);
+            await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
+            {
+                approvalId = $"artifact-{request.ToolName}-{seq}",
+                toolName = request.ToolName,
+                argsSummary = request.Input.GetRawText(),
+                risk = "readonly",
+                status = "auto_allowed",
+                source = "map-artifact-collector"
+            }), ct);
+
+            var result = await _toolRegistry.InvokeAsync(request.ToolName, request.Input, context, ct);
+            await AppendRawEventAsync(session.Id, seq + 1, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
+            {
+                approvalId = $"artifact-{request.ToolName}-{seq}",
+                decision = result.Success ? "completed" : "failed",
+                resultSummary = result.Success
+                    ? result.Content
+                    : JsonSerializer.Serialize(new
+                    {
+                        errorCode = result.ErrorCode,
+                        message = result.Message
+                    }),
+                source = "map-artifact-collector"
+            }), ct);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
+
+        return ToView(session);
+    }
+
     public async Task<List<InfraAgentEventView>> ListEventsAsync(
         string userId,
         string sessionId,
@@ -989,6 +1049,21 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
         return tools;
     }
+
+    private static IReadOnlyList<ReadonlyArtifactToolRequest> BuildReadonlyArtifactRequests() => new[]
+    {
+        new ReadonlyArtifactToolRequest(
+            "repo_git_status",
+            JsonSerializer.SerializeToElement(new { cwd = "." })),
+        new ReadonlyArtifactToolRequest(
+            "repo_git_diff",
+            JsonSerializer.SerializeToElement(new { cwd = ".", maxBytes = 40000 })),
+        new ReadonlyArtifactToolRequest(
+            "repo_list_files",
+            JsonSerializer.SerializeToElement(new { path = ".", maxFiles = 120 }))
+    };
+
+    private sealed record ReadonlyArtifactToolRequest(string ToolName, JsonElement Input);
 
     private async Task<string> BuildLogFallbackAsync(InfraAgentSession session, string reason, CancellationToken ct)
     {

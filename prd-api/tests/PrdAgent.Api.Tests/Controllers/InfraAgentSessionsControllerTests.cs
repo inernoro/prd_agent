@@ -87,6 +87,24 @@ public class InfraAgentSessionsControllerTests
         objectResult.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
     }
 
+    [Fact]
+    public async Task CollectArtifacts_ShouldReturnSession()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var expected = BuildSessionView("session-1", "user-1");
+        service
+            .Setup(x => x.CollectArtifactsAsync("user-1", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.CollectArtifacts("session-1", CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.CollectArtifactsAsync("user-1", "session-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId)

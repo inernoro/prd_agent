@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Copy, Download, FileText, GitCompare, Globe2, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
+import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -7,6 +7,7 @@ import { listInfraConnections, type InfraConnectionPublicView } from '@/services
 import {
   approveInfraAgentTool,
   archiveInfraAgentSession,
+  collectInfraAgentArtifacts,
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
@@ -530,6 +531,28 @@ export default function CdsAgentPage() {
     }
   }
 
+  async function collectArtifacts() {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await collectInfraAgentArtifacts(sessionId);
+      if (!res.success || !res.data?.item) {
+        toast.error('产物采集失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success('只读产物已生成');
+    } catch (err) {
+      toast.error('产物采集失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function testProfile() {
     if (!activeProfile) {
       toast.warning('没有可测试的模型配置');
@@ -910,7 +933,12 @@ export default function CdsAgentPage() {
                 <section>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
-                    <span className="text-xs text-white/35">{artifacts.length}</span>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => void collectArtifacts()} disabled={!activeSession || busy} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-white/48 hover:text-white/82 disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        {busy ? <MapSpinner size={12} /> : <FileSearch size={12} />} 生成只读产物
+                      </button>
+                      <span className="text-xs text-white/35">{artifacts.length}</span>
+                    </div>
                   </div>
                   <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
                     {artifacts.length === 0 ? (
