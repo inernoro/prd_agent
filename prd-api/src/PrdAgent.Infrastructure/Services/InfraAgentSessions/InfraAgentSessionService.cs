@@ -137,12 +137,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.LastError, null),
             cancellationToken: ct);
 
-        var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
-        var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
-        var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
-        var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
         try
         {
+            var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
+            var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
+            var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
+            var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
