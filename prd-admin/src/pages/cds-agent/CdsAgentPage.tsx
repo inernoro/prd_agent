@@ -89,6 +89,34 @@ function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
   return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
 }
 
+function networkPolicyLabel(policy?: string | null): string {
+  if (policy === 'open') return '开放网络';
+  if (policy === 'egress-only') return '仅出站';
+  return '受限网络';
+}
+
+function formatResourcePolicy(profile?: InfraAgentRuntimeProfileView | null): string {
+  if (!profile) return '默认 2 CPU / 4096 MB / 900s / 受限网络 / 30m 清理';
+  return [
+    `${profile.resourceCpuCores ?? 2} CPU`,
+    `${profile.resourceMemoryMb ?? 4096} MB`,
+    `${profile.timeoutSeconds ?? 900}s`,
+    networkPolicyLabel(profile.networkPolicy),
+    `${profile.autoCleanupMinutes ?? 30}m 清理`,
+  ].join(' / ');
+}
+
+function formatSessionResourcePolicy(session?: InfraAgentSessionView | null): string {
+  if (!session) return '未固化';
+  return [
+    `${session.resourceCpuCores ?? 2} CPU`,
+    `${session.resourceMemoryMb ?? 4096} MB`,
+    `${session.timeoutSeconds ?? 900}s`,
+    networkPolicyLabel(session.networkPolicy),
+    `${session.autoCleanupMinutes ?? 30}m 清理`,
+  ].join(' / ');
+}
+
 function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): string {
   if (!profile) return '请先保存一个模型配置。';
   if (!profile.hasApiKey) return '当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话。';
@@ -393,6 +421,11 @@ export default function CdsAgentPage() {
     baseUrl: 'https://api.anthropic.com',
     model: 'claude-opus-4-5',
     apiKey: '',
+    resourceCpuCores: 2,
+    resourceMemoryMb: 4096,
+    timeoutSeconds: 900,
+    networkPolicy: 'restricted',
+    autoCleanupMinutes: 30,
     isDefault: true,
   });
 
@@ -464,6 +497,7 @@ export default function CdsAgentPage() {
       ['会话用户', activeSession.userId],
       ['CDS 连接', activeConnection?.partnerName || activeConnection?.partnerId || activeSession.partner],
       ['模型配置', activeSessionProfile?.name ?? activeSession.runtimeProfileId ?? '未绑定'],
+      ['资源限制', formatSessionResourcePolicy(activeSession)],
       ['工具策略', activeSession.toolPolicy],
       ['人工接管', activeSession.manualTakeoverEnabled ? `已接管 · ${activeSession.manualTakeoverReason ?? '未填写原因'}` : '未接管'],
       ['事件类型', eventTypes.length > 0 ? eventTypes.join(' / ') : '暂无事件'],
@@ -514,6 +548,11 @@ export default function CdsAgentPage() {
       protocol: activeProfile.protocol,
       baseUrl: activeProfile.baseUrl,
       model: activeProfile.model,
+      resourceCpuCores: activeProfile.resourceCpuCores ?? 2,
+      resourceMemoryMb: activeProfile.resourceMemoryMb ?? 4096,
+      timeoutSeconds: activeProfile.timeoutSeconds ?? 900,
+      networkPolicy: activeProfile.networkPolicy ?? 'restricted',
+      autoCleanupMinutes: activeProfile.autoCleanupMinutes ?? 30,
       isDefault: activeProfile.isDefault,
     }));
   }, [activeProfile, profileDraft.apiKey]);
@@ -988,6 +1027,7 @@ export default function CdsAgentPage() {
               <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="text-xs text-white/45">当前模型</div>
                 <div className="mt-1 break-words text-sm text-white/75">{profileSummary(activeProfile)}</div>
+                <div className="mt-1 break-words text-xs text-white/50">资源边界: {formatResourcePolicy(activeProfile)}</div>
                 <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/45" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   支持任意兼容服务：填入 baseUrl、model 和 API key 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
                 </div>
@@ -1071,6 +1111,62 @@ export default function CdsAgentPage() {
                     placeholder="API key"
                     type="password"
                   />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={profileDraft.resourceCpuCores}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, resourceCpuCores: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="CPU cores"
+                      type="number"
+                      min={0.25}
+                      max={8}
+                      step={0.25}
+                    />
+                    <input
+                      value={profileDraft.resourceMemoryMb}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, resourceMemoryMb: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="Memory MB"
+                      type="number"
+                      min={512}
+                      max={32768}
+                      step={256}
+                    />
+                    <input
+                      value={profileDraft.timeoutSeconds}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, timeoutSeconds: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="Timeout seconds"
+                      type="number"
+                      min={30}
+                      max={7200}
+                      step={30}
+                    />
+                    <input
+                      value={profileDraft.autoCleanupMinutes}
+                      onChange={(e) => setProfileDraft((prev) => ({ ...prev, autoCleanupMinutes: Number(e.target.value) }))}
+                      className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                      style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                      placeholder="Cleanup minutes"
+                      type="number"
+                      min={5}
+                      max={1440}
+                      step={5}
+                    />
+                  </div>
+                  <select
+                    value={profileDraft.networkPolicy}
+                    onChange={(e) => setProfileDraft((prev) => ({ ...prev, networkPolicy: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                  >
+                    <option value="restricted">受限网络</option>
+                    <option value="egress-only">仅出站</option>
+                    <option value="open">开放网络</option>
+                  </select>
                   <label className="inline-flex items-center gap-2 text-xs text-white/55">
                     <input
                       type="checkbox"

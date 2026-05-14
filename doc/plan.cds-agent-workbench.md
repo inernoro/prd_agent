@@ -648,7 +648,7 @@ Agent runtime
 | P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存和覆盖更新，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
 | P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
-| P10.5 资源限制 | [ ] | [ ] | [ ] | CPU、内存、超时、网络策略、自动清理 |
+| P10.5 资源限制 | [x] | [x] | [ ] | runtime profile 新增 CPU、内存、超时、网络策略、自动清理配置；启动时固化到 MAP 会话并下发 CDS/sidecar，CDS 事件、日志和会话视图返回资源策略；本地 build、CDS build、前端 tsc/eslint 和 controller 冒烟通过，待部署后真实入口视觉验证 |
 | P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
 
 冒烟测试：

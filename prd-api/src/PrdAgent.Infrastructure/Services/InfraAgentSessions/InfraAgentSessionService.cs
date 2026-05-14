@@ -92,6 +92,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
+            ResourceCpuCores = 2,
+            ResourceMemoryMb = 4096,
+            TimeoutSeconds = 900,
+            NetworkPolicy = InfraAgentRuntimeNetworkPolicies.Restricted,
+            AutoCleanupMinutes = 30,
             ToolPolicy = NormalizeToolPolicy(request.ToolPolicy),
             HookProfileId = NormalizeOptional(request.HookProfileId),
             Title = NormalizeTitle(request.Title),
@@ -143,6 +148,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
             var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
             var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
+            var resourceCpuCores = runtimeProfile?.ResourceCpuCores ?? session.ResourceCpuCores;
+            var resourceMemoryMb = runtimeProfile?.ResourceMemoryMb ?? session.ResourceMemoryMb;
+            var timeoutSeconds = runtimeProfile?.TimeoutSeconds ?? session.TimeoutSeconds;
+            var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
+            var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
@@ -152,6 +162,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 modelProtocol = runtimeProfile?.Protocol,
                 modelApiKey = runtimeProfile?.ApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
+                resourcePolicy = new
+                {
+                    cpuCores = resourceCpuCores,
+                    memoryMb = resourceMemoryMb,
+                    timeoutSeconds,
+                    networkPolicy,
+                    autoCleanupMinutes
+                },
                 toolPolicy = session.ToolPolicy,
                 hookProfileId = session.HookProfileId
             };
@@ -177,6 +195,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 .Set(x => x.ModelBaseUrl, modelBaseUrl)
                 .Set(x => x.Runtime, runtime)
                 .Set(x => x.Model, model)
+                .Set(x => x.ResourceCpuCores, resourceCpuCores)
+                .Set(x => x.ResourceMemoryMb, resourceMemoryMb)
+                .Set(x => x.TimeoutSeconds, timeoutSeconds)
+                .Set(x => x.NetworkPolicy, networkPolicy)
+                .Set(x => x.AutoCleanupMinutes, autoCleanupMinutes)
                 .Set(x => x.Status, status)
                 .Set(x => x.StartedAt, now)
                 .Set(x => x.UpdatedAt, now)
@@ -190,6 +213,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             session.ModelBaseUrl = modelBaseUrl;
             session.Runtime = runtime;
             session.Model = model;
+            session.ResourceCpuCores = resourceCpuCores;
+            session.ResourceMemoryMb = resourceMemoryMb;
+            session.TimeoutSeconds = timeoutSeconds;
+            session.NetworkPolicy = networkPolicy;
+            session.AutoCleanupMinutes = autoCleanupMinutes;
             session.Status = status;
             session.StartedAt = now;
             session.UpdatedAt = now;
@@ -909,7 +937,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 runtime = session.Runtime,
                 model,
                 baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
-                protocol = runtimeProfile?.Protocol
+                protocol = runtimeProfile?.Protocol,
+                resourcePolicy = BuildResourcePolicy(session)
             }),
             ct);
 
@@ -925,7 +954,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Tools = BuildSidecarToolDefs(),
             MaxTokens = 4096,
             MaxTurns = 12,
-            TimeoutSeconds = 900,
+            TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
             AppCallerCode = "infra-agent-session::agent",
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
@@ -941,7 +970,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 level = "info",
                 source = "runtime-router",
-                message = $"sidecar tools exposed count={request.Tools.Count}"
+                message = $"sidecar tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
             }),
             ct);
 
@@ -1324,6 +1353,29 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             : "confirm-dangerous";
     }
 
+    private static object BuildResourcePolicy(InfraAgentSession session) => new
+    {
+        cpuCores = session.ResourceCpuCores,
+        memoryMb = session.ResourceMemoryMb,
+        timeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
+        networkPolicy = NormalizeNetworkPolicy(session.NetworkPolicy),
+        autoCleanupMinutes = NormalizeAutoCleanupMinutes(session.AutoCleanupMinutes)
+    };
+
+    private static int NormalizeRuntimeTimeout(int value) => Math.Clamp(value <= 0 ? 900 : value, 30, 7200);
+
+    private static int NormalizeAutoCleanupMinutes(int value) => Math.Clamp(value <= 0 ? 30 : value, 5, 1440);
+
+    private static string NormalizeNetworkPolicy(string? policy)
+    {
+        var normalized = NormalizeOptional(policy);
+        return normalized is InfraAgentRuntimeNetworkPolicies.Restricted
+            or InfraAgentRuntimeNetworkPolicies.EgressOnly
+            or InfraAgentRuntimeNetworkPolicies.Open
+            ? normalized
+            : InfraAgentRuntimeNetworkPolicies.Restricted;
+    }
+
     private static string NormalizeApprovalDecision(string? decision)
     {
         return string.Equals(decision?.Trim(), "allow", StringComparison.OrdinalIgnoreCase)
@@ -1372,6 +1424,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         string.IsNullOrWhiteSpace(session.TraceId) ? BuildEventTraceId(session.Id) : session.TraceId,
         session.Runtime,
         session.Model,
+        session.ResourceCpuCores,
+        session.ResourceMemoryMb,
+        NormalizeRuntimeTimeout(session.TimeoutSeconds),
+        NormalizeNetworkPolicy(session.NetworkPolicy),
+        NormalizeAutoCleanupMinutes(session.AutoCleanupMinutes),
         session.ToolPolicy,
         session.HookProfileId,
         session.Title,
@@ -1441,6 +1498,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ModelBaseUrl = view.ModelBaseUrl,
             Runtime = view.Runtime,
             Model = view.Model,
+            ResourceCpuCores = view.ResourceCpuCores,
+            ResourceMemoryMb = view.ResourceMemoryMb,
+            TimeoutSeconds = view.TimeoutSeconds,
+            NetworkPolicy = view.NetworkPolicy,
+            AutoCleanupMinutes = view.AutoCleanupMinutes,
             ToolPolicy = view.ToolPolicy,
             HookProfileId = view.HookProfileId,
             Title = view.Title,

@@ -16,6 +16,11 @@ export interface InfraAgentSessionView {
   modelBaseUrl?: string | null;
   runtime: string;
   model?: string | null;
+  resourceCpuCores: number;
+  resourceMemoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: string;
+  autoCleanupMinutes: number;
   toolPolicy: string;
   hookProfileId?: string | null;
   title: string;
@@ -92,6 +97,11 @@ export interface InfraAgentRuntimeProfileView {
   protocol: string;
   baseUrl: string;
   model: string;
+  resourceCpuCores: number;
+  resourceMemoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: string;
+  autoCleanupMinutes: number;
   hasApiKey: boolean;
   isDefault: boolean;
   createdAt: string;
@@ -306,6 +316,11 @@ export async function createInfraAgentRuntimeProfile(input: {
   baseUrl?: string;
   model?: string;
   apiKey?: string;
+  resourceCpuCores?: number;
+  resourceMemoryMb?: number;
+  timeoutSeconds?: number;
+  networkPolicy?: string;
+  autoCleanupMinutes?: number;
   isDefault?: boolean;
 }): Promise<ApiResponse<RuntimeProfileResp>> {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.create(), {
@@ -321,6 +336,11 @@ export async function updateInfraAgentRuntimeProfile(id: string, input: {
   baseUrl?: string;
   model?: string;
   apiKey?: string;
+  resourceCpuCores?: number;
+  resourceMemoryMb?: number;
+  timeoutSeconds?: number;
+  networkPolicy?: string;
+  autoCleanupMinutes?: number;
   isDefault?: boolean;
 }): Promise<ApiResponse<RuntimeProfileResp>> {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.byId(encodeURIComponent(id)), {

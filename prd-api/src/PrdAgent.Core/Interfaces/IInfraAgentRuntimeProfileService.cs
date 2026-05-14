@@ -26,7 +26,12 @@ public record UpsertInfraAgentRuntimeProfileRequest(
     string? BaseUrl,
     string? Model,
     string? ApiKey,
-    bool? IsDefault
+    double? ResourceCpuCores = null,
+    int? ResourceMemoryMb = null,
+    int? TimeoutSeconds = null,
+    string? NetworkPolicy = null,
+    int? AutoCleanupMinutes = null,
+    bool? IsDefault = null
 );
 
 public record InfraAgentRuntimeProfileView(
@@ -36,6 +41,11 @@ public record InfraAgentRuntimeProfileView(
     string Protocol,
     string BaseUrl,
     string Model,
+    double ResourceCpuCores,
+    int ResourceMemoryMb,
+    int TimeoutSeconds,
+    string NetworkPolicy,
+    int AutoCleanupMinutes,
     bool HasApiKey,
     bool IsDefault,
     DateTime CreatedAt,
@@ -49,6 +59,11 @@ public record InfraAgentRuntimeProfileSecretView(
     string Protocol,
     string BaseUrl,
     string Model,
+    double ResourceCpuCores,
+    int ResourceMemoryMb,
+    int TimeoutSeconds,
+    string NetworkPolicy,
+    int AutoCleanupMinutes,
     string ApiKey
 );
 
