@@ -700,7 +700,7 @@ P10 当前结论：
 |----|----------|--------------|--------------|------|
 | P11.1 新增对话页路由与导航 | [x] | [x] | [x] | `/cds-agent` 已接入路由、设置入口和百宝箱内置智能体入口；真实百宝箱卡片点击已进入工作台 |
 | P11.2 会话列表产品化 | [x] | [x] | [x] | 已按可继续优先排序并展示失败原因；新增搜索与归档，运行中会话需先停止；真实入口视觉已验证搜索框、过滤结果和归档按钮状态 |
-| P11.3 多轮消息模型 | [ ] | [ ] | [ ] | user/assistant/tool/system 分块渲染 |
+| P11.3 多轮消息模型 | [x] | [x] | [x] | 新增 `GET /api/infra-agent-sessions/{id}/messages`，CDS Agent 页独立展示 user/assistant/tool/system transcript；真实入口视觉已验证“对话”和“事件时间线”分区 |
 | P11.4 附件和上下文选择 | [ ] | [ ] | [ ] | 文件、网页、知识库、项目文档 |
 | P11.5 停止/重试/继续 | [ ] | [ ] | [ ] | 运行中可取消，失败可重试，历史可继续 |
 | P11.6 空状态与错误态 | [x] | [x] | [x] | 已补充模型配置引导、长期系统级授权说明和 lastError 展示；真实页面可见 401 失败原因和开始引导 |
@@ -713,6 +713,8 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 4 个测试，覆盖归档运行中会话返回 409；`pnpm --prefix prd-admin tsc --noEmit`、目标 eslint、`dotnet build --no-restore` 均通过，确认搜索、归档接口和前端渲染可编译。
 - 2026-05-14 远端冒烟：通过 `https://main-prd-agent.miduo.org/api/infra-agent-sessions` 创建 `idle` 会话后调用 `/archive`，返回 `isArchived=true`，再次列表查询确认该会话已隐藏。
 - 2026-05-14 真实入口视觉发现：点击百宝箱中的 CDS Agent 卡片后 URL 变为 `/cds-agent`，但页面仍停在百宝箱；已补强入口为页面级跳转，待下一次部署复测。
+- 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 7 个测试，覆盖消息列表 API 使用当前用户隔离；`pnpm --prefix prd-admin tsc --noEmit` 与目标 eslint 通过。
+- 2026-05-14 远端冒烟：部署到 commit `cc8d772f` 后，`GET /api/infra-agent-sessions/{id}/messages?limit=20` 返回 `success=true`，证明 transcript API 上线可访问。
 
 视觉测试：
 
@@ -721,6 +723,7 @@ P10 当前结论：
 - 待部署后必须从 `https://main-prd-agent.miduo.org/` 进入百宝箱或设置入口验证，不能用 `/cds-agent` 直达替代。
 - 2026-05-14 真实入口视觉：`https://main-prd-agent.miduo.org/` 左侧百宝箱显示 `CDS Agent` 内置智能体卡片；点击卡片后页面级跳转到 `/cds-agent`，工作台显示连接、模型配置、长期授权说明、会话列表、事件、产物、日志和 footer commit `3e913070`。
 - 2026-05-14 真实入口视觉：push 到 commit `1abae314` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从百宝箱点击 `CDS Agent` 进入工作台，页面可见会话搜索框；输入 `失败` 后列表只显示失败会话；选中失败会话后 `归档` 按钮可用，选中运行中会话时 `归档` 按钮禁用。
+- 2026-05-14 真实入口视觉：push 到 commit `cc8d772f` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从登录页进入 `百宝箱 -> CDS Agent`，页面可见新增 `对话` transcript 区、`事件时间线` 区、产物和日志区，footer commit 为 `cc8d772f`。
 
 ### P12 远程 web 操作能力
 
