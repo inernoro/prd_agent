@@ -977,7 +977,7 @@ P10 当前结论：
 | A2 | P15 | 智能体执行器链路 | [x] | [x] | [x] | AI 百宝箱 run 已能委托 CDS Agent，实时显示 session、事件、产物和错误；正向生成仍等待有效模型 provider key |
 | A3 | P16 | Agent run 贯通 traceId | [x] | [x] | [x] | workflow run、toolbox run、MAP session、CDS session 和 tool approval 已支持同一 traceId；主分支真实入口完成执行历史和详情页视觉验收 |
 | A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
-| A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
+| A5 | P17 | 有效模型配置正向生成 | [x] | [x] | [x] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
 | A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
 | A7 | P17 | 工具审批恢复验收 | [x] | [x] | [x] | 主分支真实入口生成 `repo_run_command` 危险审批卡，刷新后仍在，允许后写入 `tool_result` 且结果可审计 |
 | A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
@@ -993,6 +993,16 @@ P10 当前结论：
 - 断言：页面显示 `tool_call #3 repo_run_command dangerous waiting`，刷新后 `允许/拒绝` 仍存在；点击 `允许` 后新增 `tool_result #4`，包含 `approvalId=map-approval-3`、`decision=allow`、`source=map-tool-approval`。
 - 截图证据：`.Codex/tmp/cds-agent-a7-approval-recovery-ui-2026-05-14.png`。
 
+2026-05-14 A5 验收记录：
+
+- 系统级模型配置已切换为 OpenAI-compatible runtime，`baseUrl=https://openrouter.ai/api/v1`，`model=deepseek/deepseek-v4-pro`；API key 仅保存在系统配置密文中，计划文档不记录明文。
+- 模型配置冒烟：`/api/infra-agent-runtime-profiles/{id}/test` 返回 200 OK，证明 provider key、baseUrl、model 三者可用。
+- 文本生成冒烟：会话 `73fd245f7ebe462cb8461524a522390f`，trace `a5-openrouter-positive-generation`，事件出现 `text_delta` 与 `done`。
+- 远程工具冒烟：修复 sidecar 回调地址和 release 容器 Git 元数据后，主分支部署到 `ff17f816`，CDS 显示 `prd-agent-main` 的 `api/admin` 均为 running，短提交为 `ff17f81`。
+- 最终工具会话：`61d931ff9a4448fba44f3aaa1e355e49`，trace `a5-openrouter-git-tool-final`；事件 seq 10 为 `tool_call repo_git_status`，seq 11 为 `tool_result auto_allowed`，seq 12 返回 `commit=ff17f81` 且工作区干净，seq 28 为 `done`。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，选中 `A5 OpenRouter Git 工具最终验收` 会话；页面可见 OpenRouter 配置、`repo_git_status`、trace、commit 和完成输出。
+- 截图证据：`.Codex/tmp/cds-agent-a5-openrouter-git-tool-final-2026-05-14.png`。
+
 ### 17.4 当前阻塞与不可混用凭据
 
 当前 MAP/CDS 链路已能创建长期 CDS connection、启动 CDS session、调用 sidecar、回传事件和产物；但最终 PR 验收仍取决于两类独立凭据：
@@ -1000,10 +1010,10 @@ P10 当前结论：
 | 凭据 | 用途 | 当前判断 |
 |------|------|----------|
 | `AI_ACCESS_KEY` | MAP/CDS 管理 API 访问、部署和系统操作 | 已可用于 MAP/CDS 管理链路；不能用于模型生成 |
-| 模型 provider API key | OpenAI-compatible 或 Anthropic-compatible 模型调用 | 当前配置是 placeholder 或不可用 key，会导致 provider 401；未通过 P17 正向生成 |
-| GitHub token 或 App 凭据 | 推送分支、创建 PR | `repo_create_pull_request` 工具已具备缺失凭据诊断，最终 PR 仍需真实 GitHub 写权限 |
+| 模型 provider API key | OpenAI-compatible 或 Anthropic-compatible 模型调用 | 已配置可用的 OpenAI-compatible provider，用于 P17 正向生成与工具调用验收；明文不写入文档 |
+| GitHub token 或 App 凭据 | 推送分支、创建 PR | release 容器可读取 GitHub token 环境，最终仍需通过 `repo_create_pull_request` 真正创建 PR 后才能完成 A10 |
 
-因此后续实现可以继续补 UI、审批、trace 和工作流，但“远程 Agent 自己巡检并提交 PR”必须等真实模型 provider key 与 GitHub 写凭据都可用后才能打勾。
+因此后续阻塞已经从“模型不可用”推进到“最终 PR 闭环未验收”：A8/A9/A10 必须继续用真实工作流、真实智能体页面和真实 GitHub PR 验收，不能用直连 API 或历史事件替代。
 
 2026-05-14 部署修复记录：
 
