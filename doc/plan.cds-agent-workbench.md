@@ -981,7 +981,7 @@ P10 当前结论：
 | A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
 | A7 | P17 | 工具审批恢复验收 | [x] | [x] | [x] | 主分支真实入口生成 `repo_run_command` 危险审批卡，刷新后仍在，允许后写入 `tool_result` 且结果可审计 |
 | A8 | P17 | 工作流用户验收 | [x] | [x] | [x] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
-| A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
+| A9 | P17 | 智能体用户验收 | [x] | [x] | [x] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
 | A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
 | A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [x] | [x] | [x] | CDS 提供 `shared-sidecar-pool-mp4anabh` 系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，AI 百宝箱真实入口仍能创建远程 Agent 会话并进入 `sidecar_runtime_started` |
 
@@ -1011,6 +1011,16 @@ P10 当前结论：
 - 下游映射断言：最终产物 `merge-out / 合并结果.txt` 内容为包含 `A8 工作流映射验收通过` 的数组，证明 CDS Agent 输出进入下游节点并生成最终产物。
 - 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 左侧 `工作流` -> 点击 `A8 CDS Agent 输出映射验收工作流`；详情页可见两个节点均 `已完成`，上游产物 `CDS Agent 输出/事件/日志` 与下游最终产物 `合并结果.txt`。
 - 截图证据：`.Codex/tmp/cds-agent-a8-workflow-output-mapping-ui-2026-05-14.png`。
+
+2026-05-15 A9 验收记录：
+
+- 代码修复：后台 worker 没有 HTTP 请求上下文时，`ClaudeSidecarRouter` 会根据 CDS 注入的分支和仓库信息推导公网回调地址，例如主分支推导为 `https://main-prd-agent.miduo.org`，避免 paired sidecar 工具回调退回容器内 `api` 主机名。
+- 本地冒烟：`dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj --filter DynamicSidecarRegistryTests --no-restore` 通过 5 个测试；`dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无 `error CS`，仅既有 warning。
+- 部署确认：提交 `54907e31 fix(cds-agent): 修复后台智能体回调地址` 后，`prd-agent-main` 已部署到 `54907e3`，`api-prd-agent` 与 `admin-prd-agent` 均为 running。
+- 智能体冒烟：AI 百宝箱 run `6a06091f8e646c11e825c159`，trace `toolbox-run-6a06091f8e646c11e825c159`，指定 `preferredAgents=["cds-agent"]`；run 状态为 `Completed`，远程会话 `86ac628fb705426e83ed0d9c392b4ab0`，模型 `deepseek/deepseek-v4-pro`。
+- 结果断言：run 输出包含 `智能体页面远程执行验收通过`，并生成 2 个产物：`CDS Agent 事件时间线` 与 `CDS Agent 运行日志`。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> `百宝箱` 发起智能体任务；随后从首页 `CDS Agent` 卡片查看该远程会话，页面可见 A9 输出、事件/日志产物和 footer commit `54907e3`。
+- 截图证据：`.Codex/tmp/cds-agent-a9-toolbox-run-ui-2026-05-15.png`。
 
 ### 17.4 当前阻塞与不可混用凭据
 
