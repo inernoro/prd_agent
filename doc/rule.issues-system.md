@@ -264,7 +264,7 @@ gh label create "on-hold"      --color FBCA04 --description "暂缓处理"      
 1. 用户/外部贡献者开 issue
 2. 维护者跑 /issues-autofix（手动批跑）
 3. Agent 按 §3 跳过清单过滤
-4. 通过过滤的 issue 按 §5 分类（安全/架构/Bug/Feature/使用问题/重复）
+4. 通过过滤的 issue 按 §5 分类，**首个命中即停**（顺序：安全 → 架构 → 重复 → Bug → Feature → 使用问题；重复必须前置于 Bug/Feature，否则重复 bug 报告会卡在 Bug 分支永远不 dedup）
 5. 每条 issue 一条结构化答复（四要素）
 6. 满足开 PR 条件的 → 推到 agent/fix-issue-N-slug 分支 → 开 PR
 7. 终态 label
