@@ -291,6 +291,22 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-cds-agent',
+    name: 'CDS Agent',
+    description: '远程运行 Claude Code / Codex 类 sandbox 任务，支持流式对话、工具审批、日志和产物回看',
+    icon: 'Terminal',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'cds-agent',
+    routePath: '/cds-agent',
+    permission: 'access',
+    tags: ['CDS', '远程开发', '代码巡检', 'Sandbox'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
   // (海报工坊不再注册到百宝箱,改挂到资源管理 → 海报设计 tab 下 — 用户视角它是"资源产物"而非"智能体")
   // ========== 工具（缺 AI / 生命周期 / 存储 三要素之一）==========
   {
@@ -682,7 +698,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
         set({ newUnpublishedIds: nextSet });
         toast.success(
           '创建成功！默认仅你自己可见',
-          '要让同事也能使用，请在卡片右上角点 🌍「公开发布」（按钮正在闪烁）',
+          '要让同事也能使用，请在卡片右上角点击「公开发布」（按钮正在闪烁）',
           8000,
         );
       }

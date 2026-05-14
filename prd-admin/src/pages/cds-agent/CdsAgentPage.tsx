@@ -31,6 +31,39 @@ function statusLabel(status: string): string {
   return status;
 }
 
+function statusRank(status: string): number {
+  if (status === 'running') return 0;
+  if (status === 'creating') return 1;
+  if (status === 'idle') return 2;
+  if (status === 'stopping') return 3;
+  if (status === 'failed') return 4;
+  if (status === 'stopped') return 5;
+  return 6;
+}
+
+function protocolLabel(protocol: string): string {
+  if (protocol === 'anthropic') return 'Anthropic Messages';
+  if (protocol === 'openai-compatible') return 'OpenAI-compatible';
+  return protocol;
+}
+
+function profileLabel(profile: InfraAgentRuntimeProfileView): string {
+  return `${profile.name} · ${protocolLabel(profile.protocol)} · ${profile.model}`;
+}
+
+function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
+  if (!profile) return '未选择';
+  return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}`;
+}
+
+function sortSessions(items: InfraAgentSessionView[]): InfraAgentSessionView[] {
+  return [...items].sort((a, b) => {
+    const rank = statusRank(a.status) - statusRank(b.status);
+    if (rank !== 0) return rank;
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
+}
+
 function parsePayload(event: InfraAgentEventView): Record<string, unknown> {
   try {
     return JSON.parse(event.payloadJson) as Record<string, unknown>;
@@ -277,7 +310,12 @@ export default function CdsAgentPage() {
     () => profiles.find((item) => item.id === draft.runtimeProfileId) ?? profiles.find((item) => item.isDefault) ?? profiles[0] ?? null,
     [profiles, draft.runtimeProfileId],
   );
-  const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sessions[0] ?? null;
+  const sortedSessions = useMemo(() => sortSessions(sessions), [sessions]);
+  const resumableCount = useMemo(
+    () => sessions.filter((item) => item.status === 'running' || item.status === 'creating' || item.status === 'idle').length,
+    [sessions],
+  );
+  const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sortedSessions[0] ?? null;
   const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
 
   useEffect(() => {
@@ -312,7 +350,7 @@ export default function CdsAgentPage() {
       if (preferred) setDraft((prev) => ({ ...prev, runtimeProfileId: prev.runtimeProfileId || preferred.id }));
     }
     if (sessionRes.success) {
-      const items = sessionRes.data?.items ?? [];
+      const items = sortSessions(sessionRes.data?.items ?? []);
       setSessions(items);
       setActiveSessionId((prev) => prev ?? items[0]?.id ?? null);
     }
@@ -328,7 +366,7 @@ export default function CdsAgentPage() {
   }
 
   function upsertSession(session: InfraAgentSessionView) {
-    setSessions((prev) => [session, ...prev.filter((item) => item.id !== session.id)]);
+    setSessions((prev) => sortSessions([session, ...prev.filter((item) => item.id !== session.id)]));
     setActiveSessionId(session.id);
   }
 
@@ -510,13 +548,16 @@ export default function CdsAgentPage() {
                 >
                   <option value="">未选择</option>
                   {profiles.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name} · {item.protocol} · {item.model}</option>
+                    <option key={item.id} value={item.id}>{profileLabel(item)}</option>
                   ))}
                 </select>
               </label>
               <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="text-xs text-white/45">当前模型</div>
-                <div className="mt-1 break-words text-sm text-white/75">{activeProfile ? `${activeProfile.protocol} · ${activeProfile.model} @ ${activeProfile.baseUrl}` : '未选择'}</div>
+                <div className="mt-1 break-words text-sm text-white/75">{profileSummary(activeProfile)}</div>
+                <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/45" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  支持任意兼容服务：填入 baseUrl、model 和 API key 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
+                </div>
                 <button
                   type="button"
                   onClick={() => void testProfile()}
@@ -620,11 +661,16 @@ export default function CdsAgentPage() {
             </div>
 
             <div className="mt-4 space-y-2">
-              <div className="text-xs font-semibold text-white/45">会话</div>
+              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/45">
+                <span>会话</span>
+                <span>{resumableCount} 个可继续</span>
+              </div>
               {sessions.length === 0 ? (
-                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/40" style={{ background: 'rgba(0,0,0,0.16)' }}>暂无会话</div>
+                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/40" style={{ background: 'rgba(0,0,0,0.16)' }}>
+                  先保存并测试模型配置，再新建远程会话。
+                </div>
               ) : (
-                sessions.map((session) => (
+                sortedSessions.map((session) => (
                   <button
                     key={session.id}
                     type="button"
@@ -637,6 +683,7 @@ export default function CdsAgentPage() {
                   >
                     <div className="truncate text-sm font-medium text-white/85">{session.title}</div>
                     <div className="mt-1 text-xs text-white/45">{statusLabel(session.status)} · {session.model ?? '未配置模型'}</div>
+                    {session.lastError && <div className="mt-1 line-clamp-2 text-xs text-red-200/65">{session.lastError}</div>}
                   </button>
                 ))
               )}
