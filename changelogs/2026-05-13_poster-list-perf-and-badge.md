@@ -9,3 +9,4 @@
 | fix | prd-api | autopilot ParseAccumulatedContent：PageHeaderPattern 颜色值改为可选，兼容省略颜色的模型输出 |
 | fix | prd-api | autopilot max_tokens 从 2400 提升至 4000，避免 6 页内容被截断 |
 | fix | prd-api | autopilot 解析失败时日志记录模型名、text chunk 数量、完整输出前 1000 字；空输出与格式错误分开报告 |
+| fix | prd-admin | 删除 public/thirdparty/ref 断链符号（Docker 构建失败根因：../../../thirdparty/ref 在容器内超出文件系统根） |
