@@ -6,8 +6,6 @@ import type { ShortLinkTargetType } from '@/services';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import ShareViewPage from './ShareViewPage';
 
-const SUPPORTED_TARGETS: ShortLinkTargetType[] = ['web_page'];
-
 /**
  * 统一短链入口 /s/:slug
  *
@@ -48,14 +46,6 @@ export default function ShortLinkRouter() {
           return;
         }
         const { targetType, token } = res.data;
-        if (!SUPPORTED_TARGETS.includes(targetType)) {
-          setState({
-            kind: 'error',
-            title: '暂不支持的分享类型',
-            detail: `targetType=${targetType}`,
-          });
-          return;
-        }
         setState({ kind: 'resolved', targetType, token });
       })
       .catch((err: unknown) => {
@@ -116,10 +106,53 @@ export default function ShortLinkRouter() {
     );
   }
 
-  // 目前仅 web_page 接入；将来其他分享类型在此分派即可
-  if (state.targetType === 'web_page') {
-    return <ShareViewPage tokenOverride={state.token} />;
-  }
+  // 目前仅 web_page 接入；将来其他分享类型在此 switch 增加分支即可。
+  // default 显式 fallback 一个 error 页，避免新加 targetType 但忘了添加 case 时
+  // 用户看到完全空白页（bugbot low #77adffb8）。
+  return renderTarget(state.targetType, state.token);
+}
 
-  return null;
+function renderTarget(targetType: ShortLinkTargetType, token: string) {
+  switch (targetType) {
+    case 'web_page':
+      return <ShareViewPage tokenOverride={token} />;
+    default:
+      return <UnsupportedTargetError targetType={targetType} />;
+  }
+}
+
+function UnsupportedTargetError({ targetType }: { targetType: string }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#0a0a0a',
+    }}>
+      <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
+      <div style={{
+        position: 'relative',
+        padding: '40px 32px', textAlign: 'center',
+        borderRadius: 16,
+        background: 'rgba(255,255,255,0.06)',
+        backdropFilter: 'blur(20px)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        maxWidth: 360,
+      }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: '50%',
+          background: 'rgba(245, 158, 11, 0.15)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          margin: '0 auto 20px',
+        }}>
+          <AlertCircle size={32} color="rgba(245, 158, 11, 0.9)" />
+        </div>
+        <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
+          暂不支持的分享类型
+        </h2>
+        <p style={{ color: 'rgba(255,255,255,0.6)', margin: 0, fontSize: 13 }}>
+          targetType={targetType}
+        </p>
+      </div>
+    </div>
+  );
 }

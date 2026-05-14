@@ -102,6 +102,16 @@ public class AdminShortLinksController : ControllerBase
                 Builders<WebPageShareLink>.Filter.Eq(x => x.Token, link.TargetId),
                 Builders<WebPageShareLink>.Update.Set(x => x.IsRevoked, true),
                 cancellationToken: ct);
+
+            if (result.MatchedCount == 0)
+            {
+                // ShortLink 映射还在但底层 share 已被物理删除（罕见，数据不一致）。
+                // 不能报"已吊销"误导运维，明确返回 NOT_FOUND + 上下文。
+                _logger.LogWarning("Admin 吊销短链 seq={Seq}：ShortLink 存在但 WebPageShareLink token={Token} 已不在 DB",
+                    seq, link.TargetId);
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND,
+                    $"短链 #{seq} 的底层分享记录已不存在（token={link.TargetId}），无需吊销"));
+            }
             _logger.LogWarning("Admin 吊销短链 seq={Seq} target={Type}/{Token} matched={Matched}",
                 seq, link.TargetType, link.TargetId, result.MatchedCount);
             return Ok(ApiResponse<object>.Ok(new { revoked = true, seq, targetType = link.TargetType }));
