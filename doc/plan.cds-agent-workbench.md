@@ -879,6 +879,7 @@ P10 当前结论：
 - 真实入口复测发现：旧会话绑定已清理的旧 connectionId 时仍只能展示历史 fallback；使用当前 active 长期授权连接新建会话后，页面正常创建待启动会话且不再显示“连接不可用”。启动失败时前端会卡在 loading，已修复为所有创建/启动/发送/停止/测试模型动作都 `try/finally` 解锁，并在失败后刷新事件与日志。冒烟命令：`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过。
 - 继续定位启动失败：CDS 连接可用，失败来自默认模型配置 API key 无法解密。已将 runtime profile 解析纳入启动失败处理，后续启动失败会把会话标记为 failed 并在页面展示“需要重新保存模型配置”的错误，而不是停留在待启动状态。
 - 远端部署 `09e46c6f` 后 API 冒烟：使用 active CDS connection 创建会话成功；启动返回 `runtime_profile_invalid`；再次查询会话得到 `status=failed` 且 `lastError` 为模型配置 API key 无法解密，证明失败态已回写。当前 P17 阻塞收敛为：需要在 MAP 系统配置中重新保存一组有效的 `baseUrl/model/API key`，之后才能进入真实远程执行和巡检 PR。
+- 进一步打磨：模型配置列表不再只看是否有密文，而是实际尝试解密；无法读取的配置在下拉框和当前模型摘要里显示“需重新保存 API key”，避免用户选到坏配置后才在启动阶段失败。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|

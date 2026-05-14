@@ -274,17 +274,31 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
     }
 
-    private static InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item) => new(
+    private InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item) => new(
         item.Id,
         item.Name,
         item.Runtime,
         NormalizeProtocol(item.Protocol),
         item.BaseUrl,
         item.Model,
-        !string.IsNullOrWhiteSpace(item.ApiKeyEncrypted),
+        HasReadableApiKey(item),
         item.IsDefault,
         item.CreatedAt,
         item.UpdatedAt);
+
+    private bool HasReadableApiKey(InfraAgentRuntimeProfile item)
+    {
+        if (string.IsNullOrWhiteSpace(item.ApiKeyEncrypted)) return false;
+        try
+        {
+            _protector.Unprotect(item.ApiKeyEncrypted);
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            return false;
+        }
+    }
 
     private static string NormalizeRuntime(string? runtime)
     {

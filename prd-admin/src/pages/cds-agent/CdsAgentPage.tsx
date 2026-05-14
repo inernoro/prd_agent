@@ -49,12 +49,14 @@ function protocolLabel(protocol: string): string {
 }
 
 function profileLabel(profile: InfraAgentRuntimeProfileView): string {
-  return `${profile.name} · ${protocolLabel(profile.protocol)} · ${profile.model}`;
+  const keyState = profile.hasApiKey ? '' : ' · 需重新保存 API key';
+  return `${profile.name} · ${protocolLabel(profile.protocol)} · ${profile.model}${keyState}`;
 }
 
 function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
   if (!profile) return '未选择';
-  return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}`;
+  const keyState = profile.hasApiKey ? '' : ' · API key 需重新保存';
+  return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
 }
 
 function sortSessions(items: InfraAgentSessionView[]): InfraAgentSessionView[] {
