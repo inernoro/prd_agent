@@ -11,6 +11,8 @@ public class MongoIdSerializationTests
     [Fact]
     public void InfraAgentRuntimeProfile_ShouldIgnoreUnknownFields()
     {
+        BsonClassMapRegistration.Register();
+
         var doc = new BsonDocument
         {
             { "_id", "profile-1" },

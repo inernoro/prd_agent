@@ -74,6 +74,7 @@ public static class BsonClassMapRegistration
             RegisterDocumentStore();
             RegisterEmergence();
             RegisterSkillAgentSession();
+            RegisterInfraAgentRuntimeProfile();
             RegisterInfraAgentSession();
             RegisterInfraAgentMessage();
             RegisterInfraAgentEvent();
@@ -1009,6 +1010,19 @@ public static class BsonClassMapRegistration
     {
         if (BsonClassMap.IsClassMapRegistered(typeof(InfraAgentSession))) return;
         BsonClassMap.RegisterClassMap<InfraAgentSession>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
+    }
+
+    private static void RegisterInfraAgentRuntimeProfile()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(InfraAgentRuntimeProfile))) return;
+        BsonClassMap.RegisterClassMap<InfraAgentRuntimeProfile>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(x => x.Id)
