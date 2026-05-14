@@ -6,7 +6,7 @@
  * / 缺陷 / 工作流等子系统，这里是它们共同的管理面板。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link2, Eye, ExternalLink, Copy, X, RefreshCw, Wrench, Search } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -46,9 +46,15 @@ export function ShortLinksAdminSettings() {
   const [busy, setBusy] = useState<number | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  // 用 epoch 计数器抵御 stale-while-revalidate：快速切 filter 时
+  // 多个 load 并发飞，只有最新一次的响应允许写状态，旧响应静默丢弃。
+  const loadEpochRef = useRef(0);
+
   const load = useCallback(async () => {
+    const myEpoch = ++loadEpochRef.current;
     setLoading(true);
     const res = await listAdminShortLinks({ targetType: targetType || undefined, search: search || undefined, skip, limit: PAGE_SIZE });
+    if (loadEpochRef.current !== myEpoch) return; // 已被更新的请求覆盖
     setLoading(false);
     if (res.success) {
       setItems(res.data.items);
