@@ -741,7 +741,7 @@ P10 当前结论：
 | P12.1 CDS browser runtime | [x] | [x] | [x] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路待有效 CDS Bridge 授权后验证 |
 | P12.2 MAP browser stream | [x] | [x] | [x] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
 | P12.3 操作工具 | [x] | [x] | [x] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
-| P12.4 人工接管 | [x] | [x] | [ ] | 新增服务端持久 `manualTakeoverEnabled`，开启后暂停 Agent 自动发送，发送框改为人工输入记录，工具审批仍可继续；本地 controller 测试、后端 build、前端 tsc/eslint 已通过，待部署后真实入口视觉验证 |
+| P12.4 人工接管 | [x] | [x] | [x] | 新增服务端持久 `manualTakeoverEnabled`，开启后暂停 Agent 自动发送，发送框改为人工输入记录，工具审批仍可继续；远端 API 冒烟验证开启、人工输入、发送拦截、恢复，真实入口视觉验证人工接管卡片与 manual 事件 |
 | P12.5 安全边界 | [x] | [x] | [ ] | Bridge navigate/spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址；待主分支视觉/远端工具列表复测 |
 
 冒烟测试：
@@ -885,7 +885,7 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `f2464c04`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `1aa8bb3a`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
@@ -923,6 +923,7 @@ P10 当前结论：
 - 2026-05-14 Git/PR 工具进展：新增 `repo_create_pull_request`，危险工具审批后可在远端 sandbox 内提交当前工作区改动、推送分支并调用 GitHub API 创建 PR；本地单测通过，主分支部署到 `6fc623d9`，线上 `/api/agent-tools/list` 已返回该工具。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 的 `登录 / 注册 -> 百宝箱 -> CDS Agent` 进入工作台，页面可见 `CDS Agent`、长期系统级模型配置说明、`保存新模型配置`、`新建远程会话`、`对话`、`事件时间线`、产物面板和 footer commit `6fc623d9`。
 - 当前 P17 正向验收仍阻塞在模型 provider key：页面显示当前默认配置 `https://api.anthropic.com / claude-opus-4-5` 的 API key 不可读或不可用，测试/新建/启动/发送被正确禁用。`AI_ACCESS_KEY=shenmemima` 是 MAP/CDS 管理访问凭据，不是 Anthropic 或 OpenAI-compatible 模型供应商密钥，不能用来完成远程 Agent 生成与巡检 PR。
+- 2026-05-14 P12.4 人工接管：主分支部署到 `1aa8bb3a`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟使用现有会话验证 `manual-takeover -> manual-inputs -> messages 409 manual_takeover_enabled -> manual-takeover false`，manual 事件数为 3。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“人工接管中”“恢复 Agent”“发送框只记录人工输入”，审计摘要事件类型包含 `manual`，随后已恢复会话。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
