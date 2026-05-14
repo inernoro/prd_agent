@@ -648,7 +648,7 @@ Agent runtime
 | P10.2 CDS 内置默认镜像 | [x] | [x] | [x] | `cds-compose.yml` 已增加 `claude-sidecar` Python runtime 服务；main 已部署到 `eca5e342`，真实入口可见 `claude-sdk-worker-*` 与 `claude-sdk-sidecar-*` |
 | P10.3 注入凭据策略 | [x] | [x] | [x] | 新增系统级 runtime profile，支持 `anthropic` 与 `openai-compatible` 协议、任意 `baseUrl`、`model`、API key 加密保存和覆盖更新，并传入 CDS 与 sidecar；真实入口视觉已验证协议切换和 baseUrl 自动回填 |
 | P10.4 工作目录挂载 | [x] | [x] | [ ] | CDS compose 已将 `prd_agent` 挂到 MAP API 的 `/repo`，并通过 `AGENT_WORKSPACE_ROOT=/repo` 暴露给 sidecar 回调工具；待部署后做真实入口视觉验证 |
-| P10.5 资源限制 | [x] | [x] | [ ] | runtime profile 新增 CPU、内存、超时、网络策略、自动清理配置；启动时固化到 MAP 会话并下发 CDS/sidecar，CDS 事件、日志和会话视图返回资源策略；本地 build、CDS build、前端 tsc/eslint 和 controller 冒烟通过，待部署后真实入口视觉验证 |
+| P10.5 资源限制 | [x] | [x] | [x] | runtime profile 新增 CPU、内存、超时、网络策略、自动清理配置；启动时固化到 MAP 会话并下发 CDS/sidecar，CDS 事件、日志和会话视图返回资源策略；远端 profile API 冒烟和真实入口视觉均通过 |
 | P10.6 runtime 状态机 | [ ] | [ ] | [ ] | creating/running/idle/stopping/stopped/failed 与 CDS 对齐 |
 
 冒烟测试：
@@ -885,7 +885,7 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `1aa8bb3a`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `8c7d251f`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
@@ -924,6 +924,7 @@ P10 当前结论：
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 的 `登录 / 注册 -> 百宝箱 -> CDS Agent` 进入工作台，页面可见 `CDS Agent`、长期系统级模型配置说明、`保存新模型配置`、`新建远程会话`、`对话`、`事件时间线`、产物面板和 footer commit `6fc623d9`。
 - 当前 P17 正向验收仍阻塞在模型 provider key：页面显示当前默认配置 `https://api.anthropic.com / claude-opus-4-5` 的 API key 不可读或不可用，测试/新建/启动/发送被正确禁用。`AI_ACCESS_KEY=shenmemima` 是 MAP/CDS 管理访问凭据，不是 Anthropic 或 OpenAI-compatible 模型供应商密钥，不能用来完成远程 Agent 生成与巡检 PR。
 - 2026-05-14 P12.4 人工接管：主分支部署到 `1aa8bb3a`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟使用现有会话验证 `manual-takeover -> manual-inputs -> messages 409 manual_takeover_enabled -> manual-takeover false`，manual 事件数为 3。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“人工接管中”“恢复 Agent”“发送框只记录人工输入”，审计摘要事件类型包含 `manual`，随后已恢复会话。
+- 2026-05-14 P10.5 资源限制：rebase 远端 `127bd613` 后提交并部署到 `8c7d251f`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟创建临时 runtime profile，返回并列表确认 `1.5/2048/120/egress-only/15`，随后删除成功。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“资源边界: 2 CPU / 4096 MB / 900s / 受限网络 / 30m 清理”，审计摘要显示资源限制，footer commit 为 `8c7d251f`。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
