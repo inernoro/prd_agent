@@ -968,7 +968,7 @@ P10 当前结论：
 | A3 | P16 | Agent run 贯通 traceId | [ ] | [ ] | [ ] | 一个 traceId 能串起 toolbox run、workflow run、MAP session、CDS session 和 tool approval |
 | A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
 | A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
-| A6 | P17 | 远程浏览器操作验收 | [ ] | [ ] | [ ] | Agent 能打开网页、读取 DOM、执行点击或输入，并把快照回传 MAP |
+| A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
 | A7 | P17 | 工具审批恢复验收 | [ ] | [ ] | [ ] | 危险工具审批卡片刷新后仍在，允许/拒绝结果可审计 |
 | A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
 | A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
@@ -1012,6 +1012,7 @@ P10 当前结论：
 - 2026-05-14 系统级 sidecar pool 复测：`dddbd50f` 部署后，`prd-agent-main` 状态显示仅 `api-prd-agent` 与 `admin-prd-agent` running；系统 sidecar pool `main-shared-sidecar-pool-mp4anabh` `/healthz` 为 200。因旧连接被清理为 `revoked`，已重新建立长期 active connection `2338fac1cc30492da7ac5377c843061a`，discovery 恢复为 1。AI 百宝箱真实调用 `preferredAgents=["cds-agent"]` 产出 timeline/log artifacts，事件包含 `sidecar_runtime_started` 和 `runtime-router sidecar tools exposed count=12`，错误为 provider `openai_http_401 invalid_api_key`，证明已越过系统 sidecar discovery 与健康路由。
 - 2026-05-14 模型凭据审计：远端 MAP `/api/mds/platforms` 显示多个 enabled 平台但 `/api/mds/{model}/test` 对主模型 `model5`、视觉模型 `model2`、stub chat `model8` 均返回 `INVALID_CONFIG`；`POST /api/infra-agent-runtime-profiles/import-default-model` 返回 `model_config_incomplete`；当前 runtime profile 测试返回 OpenAI `401 invalid_api_key`，本地与远端容器环境均未发现 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `OPENROUTER_API_KEY`。
 - 2026-05-14 真实入口视觉：Playwright 从 `https://main-prd-agent.miduo.org/` 走 `登录 / 注册 -> 进入 MAP -> 百宝箱 -> CDS Agent`，未直达 `/cds-agent`；页面可见长期 CDS 连接 `miduo.org`、默认 OpenAI-compatible 模型 `gpt-4.1-mini @ https://api.openai.com/v1`、资源边界、会话列表、事件时间线、产物日志和 OpenAI `401 invalid_api_key` 失败；截图保存到 `.Codex/tmp/cds-agent-real-entry-visual-2026-05-14.png`。
+- 2026-05-14 A6 远程浏览器操作验收：主分支部署到 `acf51db5` 后，重新建立长期 active CDS connection `67b58464dcd847dab943a97ebd717454`，`longTokenExpiresAt=2099-12-31T23:59:59Z`。API 冒烟创建会话 `ee34b219d9394895876f32adfa938a14`，先通过 `capture-browser-snapshot` 读取 DOM，再通过 `browser-actions` 执行 `type` 到元素索引 69 与 `spa-navigate /cds-agent`，事件尾部出现 `cds_bridge_action completed` 与 `map-browser-action browser`。真实入口视觉从 `https://main-prd-agent.miduo.org/` 走 `登录 / 注册 -> 进入控制台 -> 首页 CDS Agent 卡片`，选中 `A6 Bridge click type smoke` 会话，页面显示“远程页面动作”控件并执行成功；审计摘要显示事件类型 `browser / log / status / tool_call / tool_result`，当前事件 21、工具事件 10、可见产物 5；截图保存到 `.Codex/tmp/cds-agent-a6-browser-action-ui-2026-05-14.png`。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
