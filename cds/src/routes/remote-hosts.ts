@@ -684,6 +684,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
     }
+    session.status = 'stopping';
+    session.updatedAt = new Date().toISOString();
+    pushCdsAgentEvent(session, 'status', { status: 'stopping', reason: 'session_stop_requested' });
+    session.logs.push(`[${session.updatedAt}] session stopping`);
     session.status = 'stopped';
     session.updatedAt = new Date().toISOString();
     session.stoppedAt = session.updatedAt;
@@ -716,7 +720,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 
 // ── 工具 ──────────────────────────────────────────
 
-type CdsAgentSessionStatus = 'running' | 'stopped' | 'failed';
+type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';
 type CdsAgentEventType = 'status' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook';
 
 interface CdsAgentResourcePolicy {

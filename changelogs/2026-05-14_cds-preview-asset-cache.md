@@ -20,3 +20,5 @@
 | feat | prd-api | CDS Agent 模型配置新增 CPU、内存、超时、网络策略和自动清理资源边界并固化到会话 |
 | feat | cds | CDS Agent 会话记录 MAP 下发的资源策略，并在事件、日志和会话视图中返回 |
 | feat | prd-admin | CDS Agent 模型配置表单新增资源边界设置，并在审计摘要中展示会话固化策略 |
+| feat | prd-api | CDS Agent 停止会话时新增 stopping 中间态和状态事件，便于刷新恢复与审计 |
+| feat | cds | CDS Agent 停止接口补充 stopping 状态事件和日志，与 MAP 会话状态机对齐 |

@@ -416,21 +416,44 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return ToView(session);
         }
 
-        if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
+        var stoppingAt = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.Status, InfraAgentSessionStatuses.Stopping)
+                .Set(x => x.UpdatedAt, stoppingAt),
+            cancellationToken: ct);
+        session.Status = InfraAgentSessionStatuses.Stopping;
+        session.UpdatedAt = stoppingAt;
+        await AppendStatusEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), session.Status, "session_stop_requested", ct);
+
+        try
         {
-            var hookProfile = await GetHookProfileAsync(session, ct);
-            await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
-            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
-            var token = await GetLongTokenAsync(connection.Id, ct);
-            using var response = await SendCdsJsonAsync(
-                HttpMethod.Post,
-                connection,
-                token,
-                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
-                new { },
-                ct);
-            response.EnsureSuccessStatusCode();
-            await RunHookAsync(session, hookProfile, "afterStop", hookProfile?.AfterStop, blockOnFailure: false, ct);
+            if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
+            {
+                var hookProfile = await GetHookProfileAsync(session, ct);
+                await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
+                var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+                var token = await GetLongTokenAsync(connection.Id, ct);
+                using var response = await SendCdsJsonAsync(
+                    HttpMethod.Post,
+                    connection,
+                    token,
+                    $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
+                    new { },
+                    ct);
+                response.EnsureSuccessStatusCode();
+                await RunHookAsync(session, hookProfile, "afterStop", hookProfile?.AfterStop, blockOnFailure: false, ct);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await MarkFailedAsync(session, ex.Message, ct);
+            if (ex is InfraAgentSessionException) throw;
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                $"停止 CDS Agent 会话失败：{ex.Message}",
+                StatusCodes.Status502BadGateway);
         }
 
         var now = DateTime.UtcNow;
@@ -1468,7 +1491,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         return status switch
         {
+            "creating" => InfraAgentSessionStatuses.Creating,
             "running" => InfraAgentSessionStatuses.Running,
+            "idle" => InfraAgentSessionStatuses.Idle,
+            "stopping" => InfraAgentSessionStatuses.Stopping,
             "stopped" => InfraAgentSessionStatuses.Stopped,
             "failed" => InfraAgentSessionStatuses.Failed,
             _ => InfraAgentSessionStatuses.Idle
