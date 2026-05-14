@@ -33,6 +33,7 @@ const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
+const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -216,7 +217,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
 
-  // ╔══════════════ 百宝箱（7）══════════════════════════════
+  // ╔══════════════ 百宝箱（8）══════════════════════════════
   {
     path: '/report-agent',
     permission: 'report-agent.use',
@@ -271,6 +272,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'pr-review',
       tags: ['PR', 'GitHub', '审查', 'OAuth'],
+    },
+  },
+  {
+    path: '/pa-agent',
+    permission: 'pa-agent.use',
+    element: shellGuarded('pa-agent.use', <PaAgentPage />),
+    nav: {
+      label: '毒舌秘书',
+      shortLabel: '毒舌',
+      description: 'MBB 级私人执行助理：MECE 拆解、四象限排序、毒舌幽默、不堆鸡汤',
+      icon: 'MessageSquare',
+      section: 'toolbox',
+      appKey: 'pa-agent',
+      wip: true,
+      tags: ['助理', 'PA', '任务', '四象限', 'MECE'],
     },
   },
   {

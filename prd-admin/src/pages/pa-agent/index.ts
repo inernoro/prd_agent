@@ -1,0 +1,1 @@
+export { PaAgentPage } from './PaAgentPage';
