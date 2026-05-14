@@ -38,6 +38,11 @@ function statusLabel(status: string): string {
   return status;
 }
 
+function formatTime(value?: string | null): string {
+  if (!value) return '未记录';
+  return new Date(value).toLocaleString();
+}
+
 function primaryActionLabel(status: string): string {
   if (status === 'failed') return '重试';
   if (status === 'stopped') return '继续';
@@ -422,6 +427,21 @@ export default function CdsAgentPage() {
       artifactCount: artifacts.length,
     };
   }, [artifacts.length, events, sessions]);
+  const auditRows = useMemo(() => {
+    if (!activeSession) return [];
+    const approvalEvents = events.filter((item) => {
+      if (item.type !== 'tool_call' && item.type !== 'tool_result') return false;
+      return item.payloadJson.includes('approval') || item.payloadJson.includes('dangerous') || item.payloadJson.includes('auto_allowed');
+    }).length;
+    return [
+      ['会话用户', activeSession.userId],
+      ['CDS 连接', activeConnection?.partnerName || activeConnection?.partnerId || activeSession.partner],
+      ['模型配置', activeSessionProfile?.name ?? activeSession.runtimeProfileId ?? '未绑定'],
+      ['工具策略', activeSession.toolPolicy],
+      ['审批相关事件', `${approvalEvents}`],
+      ['凭据暴露', '不向前端显示 long token / API key'],
+    ];
+  }, [activeConnection, activeSession, activeSessionProfile, events]);
 
   useEffect(() => {
     void loadAll();
@@ -830,6 +850,31 @@ export default function CdsAgentPage() {
             </div>
           ))}
         </section>
+
+        {activeSession && (
+          <section
+            className="rounded-xl px-4 py-3"
+            style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-white/78">审计摘要</div>
+                <div className="mt-1 text-xs text-white/42">trace {activeSession.traceId}</div>
+              </div>
+              <div className="text-xs text-white/42">
+                创建 {formatTime(activeSession.createdAt)} · 更新 {formatTime(activeSession.updatedAt)}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {auditRows.map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="text-xs text-white/38">{label}</div>
+                  <div className="mt-1 truncate text-xs text-white/68">{value}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>

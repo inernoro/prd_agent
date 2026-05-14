@@ -847,7 +847,7 @@ P10 当前结论：
 | P16.1 统一 traceId | [x] | [x] | [ ] | MAP session 与事件已统一 `traceId` 并在 CDS Agent 页、基础设施操作台展示；CDS session、workflow run、agent run 贯通仍待 P14/P15 接入后补齐 |
 | P16.2 事件 schema 稳定化 | [ ] | [ ] | [ ] | status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser |
 | P16.3 指标面板 | [x] | [x] | [x] | CDS Agent 工作台新增会话总数、失败会话、当前事件、工具事件和可见产物指标条；主分支真实入口视觉已验收 |
-| P16.4 审计报表 | [ ] | [ ] | [ ] | 谁启动、审批了什么、访问了哪些凭据 |
+| P16.4 审计报表 | [x] | [x] | [ ] | CDS Agent 工作台新增审计摘要，展示会话用户、连接、模型配置、工具策略、审批相关事件和凭据暴露状态；待真实入口视觉 |
 | P16.5 回放模式 | [x] | [x] | [x] | CDS Agent 事件时间线新增回放模式，可按步骤复盘远程执行事件；主分支真实入口视觉已复测 |
 
 冒烟测试：
@@ -857,6 +857,7 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS" | head -30` 无输出；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 3 个测试；`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx src/pages/infra-services/InfraServicesPage.tsx src/services/real/infraAgentSessions.ts` 通过。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认事件回放控件可编译且无新增 lint 问题。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认指标条可编译且无新增 lint 问题。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认审计摘要可编译且无新增 lint 问题。
 
 视觉测试：
 
