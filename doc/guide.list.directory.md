@@ -465,6 +465,9 @@
 - [AI 模型可见性原则](rule.ai-model-visibility) `rule.ai-model-visibility`
   > 大模型调用功能必须向用户展示当前模型名称的强制规则
 
+- [Issues 体系协议规则](rule.issues-system) `rule.issues-system`
+  > 三技能协同（autofix/visual-create/visual-run）+ label 全局体系 + #605 模板演化机制
+
 - [流式文本动效统一规范](rule.streaming-text) `rule.streaming-text`
   > prd-admin 所有 LLM 流式输出统一通过 StreamingText 组件，默认 Blur focus 动效
 

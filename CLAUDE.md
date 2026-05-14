@@ -382,6 +382,9 @@ echo "https://${SLUG}.miduo.org/"
 | **acceptance-checklist** | `/uat` | 输入功能场景 → 生成真人逐步打勾的 UAT 清单（Phase 0-7：前置 → 冷启 → 执行 → 验证 → 回归 → 回滚 → 负面），每步含预期结果 + 失败排查手册。CLI/Web 双通道支持 |
 | **task-handoff-checklist** | `/handoff` | 输入当前变更 → 扫描导航/文档/规则/工作流/测试/风险/质量/后续 8 个维度，输出交接清单 |
 | **auto-fix-issues** | `/audit` | Agent 间 issue 反馈/修复/复测协议。三档标签 (`待解决` / `已解决待验收` / `已验收`)、issue + tracker + PR 收尾 + 复测报告四套模板，PR 合并必须改 label 的强制清单，杜绝"修了忘改 label" |
+| **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.issues-system.md` §3） |
+| **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
+| **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
 | **weekly-update-summary** | `/weekly` | 输入时间范围 → 从 git 历史收集 commit/PR/贡献者数据，输出分类周报（完成项 + 下周优先级） |
 
 ### 辅助技能（按需使用）
