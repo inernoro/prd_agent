@@ -44,6 +44,13 @@ const nodeStatusIcons: Record<string, React.ReactNode> = {
   paused: <PauseCircle className="w-4 h-4 text-amber-500" />,
 };
 
+const FINAL_STATUS_LOG: Record<string, { level: LogEntry['level']; label: string }> = {
+  completed: { level: 'success', label: '完成' },
+  failed: { level: 'error', label: '失败' },
+  cancelled: { level: 'warn', label: '取消' },
+  paused: { level: 'warn', label: '暂停' },
+};
+
 // ═══════════════════════════════════════════════════════════════
 // 主面板
 // ═══════════════════════════════════════════════════════════════
@@ -367,11 +374,12 @@ export function ExecutionDetailPanel() {
 
     // Final status
     if (['completed', 'failed', 'cancelled', 'paused'].includes(execution.status)) {
+      const finalStatus = FINAL_STATUS_LOG[execution.status] ?? { level: 'info' as const, label: execution.status };
       entries.push({
         id: `hist-${id++}`,
         timestamp: new Date(execution.completedAt || execution.createdAt),
-        level: execution.status === 'completed' ? 'success' : 'error',
-        message: `执行${execution.status === 'completed' ? '完成' : execution.status === 'failed' ? '失败' : '取消'}${execution.errorMessage ? ': ' + execution.errorMessage : ''}`,
+        level: finalStatus.level,
+        message: `执行${finalStatus.label}${execution.errorMessage ? ': ' + execution.errorMessage : ''}`,
       });
     }
 
