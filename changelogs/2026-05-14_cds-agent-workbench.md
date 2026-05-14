@@ -36,3 +36,4 @@
 | fix | prd-admin | 修复百宝箱点击 CDS Agent 后地址变化但页面仍停留在百宝箱的问题，入口跳转改为强制到工作台 |
 | feat | prd-api | CDS Agent runtime profile 支持从 MAP 系统主模型同步 baseUrl、model 和加密 API key，减少重复配置 |
 | feat | prd-admin | CDS Agent 页面增加“从系统主模型同步”按钮，可一键生成默认远程 runtime 配置 |
+| fix | cds | 将 MAP Admin 主分支预览默认改为静态 build+serve，避免 Vite HMR 特殊路径在 CDS 代理下黑屏 |

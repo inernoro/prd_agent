@@ -686,6 +686,7 @@ P10 当前结论：
 - CDS Agent 独立页已增加“保存新模型配置”折叠区，用户无需离开 Agent 页面即可录入 `baseUrl`、`model` 和 API key，并设为默认后立即测试。
 - 已补上 runtime profile 的协议字段：Anthropic Messages 与 OpenAI-compatible Chat Completions 在后端测试、MAP -> CDS 请求、MAP -> sidecar 请求、sidecar 流式循环里分流，避免“页面说任意 baseUrl，实际只按 Anthropic 调”的假可用。
 - 已补上从 MAP 系统主模型同步 runtime profile：CDS Agent 不再只能手填一套新密钥，可从模型设置里已有的启用主模型生成默认配置，继承其 `baseUrl`、`model` 和 API key。
+- 真实入口视觉发现 `f39bdeb6` 主分支预览主体黑屏，根因是 admin 默认跑 Vite HMR，`/@vite/client` 在 CDS 预览代理下被回退为 HTML；已将 admin 默认命令切到静态 build+serve，避免最终用户页面依赖 dev server 特殊路径。
 - 未证明“模型可正常生成”和“远程代码任务可完成”，因为当前系统级模型配置的 API key 为平台/CDS key，不是 Anthropic 或兼容网关 provider key。
 - 下一步必须部署并从真实入口视觉验证“从系统主模型同步”按钮、审批暂停、仓库工具和命令结果渲染，完成有效模型配置后的正向生成测试，再进入 P17 巡检 PR 验收。
 
