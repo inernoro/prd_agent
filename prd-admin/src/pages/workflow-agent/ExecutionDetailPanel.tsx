@@ -293,7 +293,7 @@ export function ExecutionDetailPanel() {
     }
     return () => stopLogSse();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exec?.id]);
+  }, [exec?.id, exec?.status, exec?.completedAt]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -438,6 +438,9 @@ export function ExecutionDetailPanel() {
     const res = await continueExecution(exec.id);
     if (res.success && res.data) {
       setSelectedExecution(res.data.execution);
+      if (['completed', 'failed', 'cancelled', 'paused'].includes(res.data.execution.status)) {
+        void loadHistoricalLogs(res.data.execution);
+      }
     }
   };
 
