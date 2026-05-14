@@ -878,6 +878,7 @@ P10 当前结论：
 - 已修正 MAP 会话服务对 CDS 连接状态的判断：`revoked` 才代表系统级授权失效，`unreachable` 只代表上一次探活失败，不再因为 10 分钟探活窗口过期而阻断会话、消息、日志和停止动作。冒烟命令 `cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无新增编译错误；输出为既有 warning。
 - 真实入口复测发现：旧会话绑定已清理的旧 connectionId 时仍只能展示历史 fallback；使用当前 active 长期授权连接新建会话后，页面正常创建待启动会话且不再显示“连接不可用”。启动失败时前端会卡在 loading，已修复为所有创建/启动/发送/停止/测试模型动作都 `try/finally` 解锁，并在失败后刷新事件与日志。冒烟命令：`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过。
 - 继续定位启动失败：CDS 连接可用，失败来自默认模型配置 API key 无法解密。已将 runtime profile 解析纳入启动失败处理，后续启动失败会把会话标记为 failed 并在页面展示“需要重新保存模型配置”的错误，而不是停留在待启动状态。
+- 远端部署 `09e46c6f` 后 API 冒烟：使用 active CDS connection 创建会话成功；启动返回 `runtime_profile_invalid`；再次查询会话得到 `status=failed` 且 `lastError` 为模型配置 API key 无法解密，证明失败态已回写。当前 P17 阻塞收敛为：需要在 MAP 系统配置中重新保存一组有效的 `baseUrl/model/API key`，之后才能进入真实远程执行和巡检 PR。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
