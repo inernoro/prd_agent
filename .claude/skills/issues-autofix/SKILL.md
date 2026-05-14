@@ -88,7 +88,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
   3. **路径 A**（终态前崩溃，claim 距今 > 30 分钟必须 > `max_minutes_per_issue` 且无 `:terminal:`）：删 `agent-processing` + 评论"reaper 重置（A 路径，终态前崩溃）"，下一轮重新接单
   4. **路径 B**（终态后崩溃，已有 `:terminal:` 指纹但 `agent-processing` 仍在）：删 `agent-processing` + 评论"reaper 清理孤儿锁（B 路径，终态后崩溃）"，**不**重新接单（终态已落定）
 - **接单**：
-  1. 预检：当前 labels 含 `agent-processing` → 跳过
+  1. 预检（**必须重新跑完整 §2 跳过条件**，不只查 lock）：list issue 后到 claim 前存在窗口，期间别的 worker 可能加了 `agent-replied` / `agent-fixed` / `proposed-fix` / `needs-human` / `duplicate` 等终态 label，或加了 `agent-processing` 锁。必须重读 issue 当前所有 label + body 指纹 + 关联 PR 状态，逐条比对 §2 各项跳过条件,任一命中 → 跳过
   2. 加 `agent-processing` + 发 claim 评论，末尾含 `<!-- agent-handled:{run_id}:claim:{iso8601-ts} -->`
   3. 等 3-5s 后重读 issue 评论，**过滤掉已退出的 claim**（若同 run_id 既有 `:claim:` 又有 `:terminal:` **或** `:withdrawn:` 指纹，则属历史 round，剔除），在剩余活跃 claim 池里按时间戳升序排序，最早的 run_id 是 winner。此过滤对 `needs-info` 复活场景必不可少——否则旧 round 的最早 claim 永远赢，新 round 永远 loser 而无法处理用户补充的信息
   4. Loser 静默 back-out：发"撤回 run_id={uuid}，已被 run_id={X} 抢先"评论，**末尾必须含**指纹 `<!-- agent-handled:{run_id}:withdrawn:{ts} -->`（否则 filter 认不出已退出）；判断 winner 状态：winner 仍活跃（无 `agent-handled:{X}:terminal:*` 指纹）→ 不动 label；winner 已完成 → **必须删 `agent-processing`**（避免 loser 后加的锁残留导致 issue 永久卡死）。理由同 `issues-visual-run` §2 e
