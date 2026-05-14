@@ -214,8 +214,14 @@ public sealed class AgentWorkspace
             if (fetch.ExitCode != 0) return fetch;
 
             var branchName = IsSafeGitRef(GitRef) ? GitRef : "main";
-            var checkout = await RunProcessAsync("git", ["checkout", "-B", branchName, "FETCH_HEAD"], Root, 60, token, ct);
-            if (checkout.ExitCode != 0) return checkout;
+            var updateRef = await RunProcessAsync("git", ["update-ref", $"refs/heads/{branchName}", "FETCH_HEAD"], Root, 30, token, ct);
+            if (updateRef.ExitCode != 0) return updateRef;
+
+            var symbolicRef = await RunProcessAsync("git", ["symbolic-ref", "HEAD", $"refs/heads/{branchName}"], Root, 30, token, ct);
+            if (symbolicRef.ExitCode != 0) return symbolicRef;
+
+            var reset = await RunProcessAsync("git", ["reset", "--mixed", "HEAD"], Root, 60, token, ct);
+            if (reset.ExitCode != 0) return reset;
 
             return null;
         }
