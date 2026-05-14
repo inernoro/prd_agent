@@ -765,8 +765,8 @@ export default function InfraServicesPage() {
           </div>
         </div>
         <div className="rounded-lg p-4 md:col-span-2" style={cardStyle}>
-          <div className="text-xs font-semibold text-white/55 mb-2">内置仓库工具</div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-7">
+          <div className="text-xs font-semibold text-white/55 mb-2">内置 Agent 工具</div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-9">
             {[
               ['repo_list_files', '浏览仓库'],
               ['repo_read_file', '读取文件'],
@@ -775,6 +775,8 @@ export default function InfraServicesPage() {
               ['repo_git_diff', '查看代码 diff'],
               ['repo_write_file', '写入文件'],
               ['repo_run_command', '运行命令 / git'],
+              ['cds_bridge_snapshot', '读取远程页面'],
+              ['cds_bridge_action', '操作远程页面'],
             ].map(([name, desc]) => (
               <div key={name} className="rounded-md px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                 <div className="text-xs font-semibold text-white/80">{name}</div>
@@ -782,7 +784,7 @@ export default function InfraServicesPage() {
               </div>
             ))}
           </div>
-          <div className="mt-2 text-xs text-white/45">这些工具由 claude-sdk sidecar 通过 MAP 回调执行，默认工作目录是 CDS sandbox 内的 prd_agent 仓库。</div>
+          <div className="mt-2 text-xs text-white/45">这些工具由 claude-sdk sidecar 通过 MAP 回调执行，仓库工具默认工作目录是 CDS sandbox 内的 prd_agent 仓库，Bridge 工具通过 active CDS 长期连接操作预览页。</div>
         </div>
       </div>
     );

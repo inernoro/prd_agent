@@ -109,6 +109,28 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
         </div>
       );
     }
+    const state = detail && 'state' in detail && detail.state && typeof detail.state === 'object'
+      ? detail.state as Record<string, unknown>
+      : detail;
+    if (state && ('url' in state || 'title' in state || 'domTree' in state || 'consoleErrors' in state || 'networkErrors' in state)) {
+      return (
+        <div className="mt-2 space-y-2 text-xs">
+          <div className="flex flex-wrap gap-2">
+            {'title' in state && <span className="rounded bg-white/10 px-2 py-1 text-white/70">title: {String(state.title ?? 'unknown')}</span>}
+            {'url' in state && <span className="rounded bg-white/10 px-2 py-1 text-white/70 break-all">url: {String(state.url ?? '')}</span>}
+          </div>
+          {typeof state.domTree === 'string' && state.domTree && (
+            <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{state.domTree}</pre>
+          )}
+          {Array.isArray(state.consoleErrors) && state.consoleErrors.length > 0 && (
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
+          )}
+          {Array.isArray(state.networkErrors) && state.networkErrors.length > 0 && (
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-red-100/75">{JSON.stringify(state.networkErrors, null, 2)}</pre>
+          )}
+        </div>
+      );
+    }
   }
 
   return <pre className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-white/62">{renderPayload(event)}</pre>;

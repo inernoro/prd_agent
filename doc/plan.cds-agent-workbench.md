@@ -717,9 +717,9 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P12.1 CDS browser runtime | [ ] | [ ] | [ ] | browser/desktop sandbox 与 agent session 绑定 |
-| P12.2 MAP browser stream | [ ] | [ ] | [ ] | 截图、DOM 摘要、当前 URL、操作事件 |
-| P12.3 操作工具 | [ ] | [ ] | [ ] | navigate/click/type/scroll/screenshot |
+| P12.1 CDS browser runtime | [x] | [x] | [ ] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路待有效 CDS Bridge 授权后验证 |
+| P12.2 MAP browser stream | [x] | [x] | [ ] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
+| P12.3 操作工具 | [x] | [x] | [ ] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
 | P12.4 人工接管 | [ ] | [ ] | [ ] | 用户可暂停 agent 并手动输入/审批 |
 | P12.5 安全边界 | [ ] | [ ] | [ ] | 禁止默认访问内网敏感地址，凭据域隔离 |
 
@@ -727,6 +727,7 @@ P10 当前结论：
 
 - Agent 打开一个测试网页，完成输入、点击、读取结果。
 - MAP 页面能看到 URL、截图或 DOM 事件。
+- 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 覆盖 Bridge 工具无 session 连接时返回 `cds_connection_missing`，非法 action 返回 `bridge_action_not_allowed`。
 
 视觉测试：
 

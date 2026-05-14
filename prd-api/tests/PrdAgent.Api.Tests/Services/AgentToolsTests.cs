@@ -121,6 +121,24 @@ public class AgentToolsTests : IDisposable
         diff.ErrorCode.ShouldBe("repo_git_diff_failed");
     }
 
+    [Fact]
+    public async Task CdsBridgeToolsRequireSessionConnectionAndValidateActions()
+    {
+        var snapshot = await new CdsBridgeSnapshotTool().InvokeAsync(
+            JsonDocument.Parse("""{"branchId":"prd-agent-main"}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        snapshot.Success.ShouldBeFalse();
+        snapshot.ErrorCode.ShouldBe("cds_connection_missing");
+
+        var action = await new CdsBridgeActionTool().InvokeAsync(
+            JsonDocument.Parse("""{"branchId":"prd-agent-main","action":"unknown","description":"测试非法动作"}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        action.Success.ShouldBeFalse();
+        action.ErrorCode.ShouldBe("bridge_action_not_allowed");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

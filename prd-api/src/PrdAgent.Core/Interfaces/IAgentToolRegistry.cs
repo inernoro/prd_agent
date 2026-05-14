@@ -57,4 +57,8 @@ public sealed class AgentToolInvocationContext
     public string RunId { get; init; } = string.Empty;
     public string? AppCallerCode { get; init; }
     public string? SidecarName { get; init; }
+    public string? InfraAgentSessionId { get; init; }
+    public string? CdsBaseUrl { get; init; }
+    public string? CdsProjectId { get; init; }
+    public string? CdsLongToken { get; init; }
 }

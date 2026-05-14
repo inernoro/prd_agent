@@ -24,3 +24,5 @@
 | feat | prd-api | CDS Agent runtime profile 增加协议字段，模型测试支持 Anthropic Messages 与 OpenAI-compatible Chat Completions |
 | feat | prd-admin | CDS Agent 模型配置表单增加协议选择，保存和测试时明确显示 Anthropic 或 OpenAI-compatible |
 | feat | cds | Claude SDK sidecar 增加 OpenAI-compatible 流式 chat/completions 循环，支持工具调用与审批回调 |
+| feat | prd-api | CDS Agent 新增 Bridge 页面工具，支持远程读取预览页状态并经审批执行点击、输入、滚动和导航 |
+| feat | prd-admin | CDS Agent 对话页增加 Bridge 页面状态事件渲染，基础设施页展示远程页面操作工具 |

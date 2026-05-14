@@ -26,17 +26,20 @@ public class AgentToolsController : ControllerBase
     private readonly IOptionsMonitor<ClaudeSidecarOptions> _options;
     private readonly ILogger<AgentToolsController> _logger;
     private readonly MongoDbContext _db;
+    private readonly IInfraConnectionService _infraConnections;
 
     public AgentToolsController(
         IAgentToolRegistry registry,
         IOptionsMonitor<ClaudeSidecarOptions> options,
         ILogger<AgentToolsController> logger,
-        MongoDbContext db)
+        MongoDbContext db,
+        IInfraConnectionService infraConnections)
     {
         _registry = registry;
         _options = options;
         _logger = logger;
         _db = db;
+        _infraConnections = infraConnections;
     }
 
     [HttpGet("list")]
@@ -71,12 +74,24 @@ public class AgentToolsController : ControllerBase
         if (req == null || string.IsNullOrWhiteSpace(req.ToolName))
             return BadRequest(new { error = "toolName required" });
 
+        var session = await FindSessionByRunIdAsync(req.RunId, ct);
+        var cdsToken = session == null
+            ? null
+            : await _infraConnections.TryUnprotectLongTokenAsync(session.ConnectionId, ct, revokeOnFailure: false);
+        var connection = session == null
+            ? null
+            : await _db.InfraConnections.Find(x => x.Id == session.ConnectionId).FirstOrDefaultAsync(ct);
+
         var inputElement = req.Input ?? JsonDocument.Parse("{}").RootElement;
         var ctx = new AgentToolInvocationContext
         {
             RunId = req.RunId ?? string.Empty,
             AppCallerCode = req.AppCallerCode,
             SidecarName = Request.Headers["X-Sidecar-Name"].FirstOrDefault(),
+            InfraAgentSessionId = session?.Id,
+            CdsBaseUrl = connection?.PartnerBaseUrl,
+            CdsProjectId = connection?.ProjectId,
+            CdsLongToken = cdsToken,
         };
 
         var approval = await ResolveToolApprovalAsync(req.RunId, req.ToolName, req.ApprovalId, TimeSpan.Zero, ct);
@@ -285,7 +300,7 @@ public class AgentToolsController : ControllerBase
     {
         return toolName switch
         {
-            "repo_write_file" or "repo_run_command" => "dangerous",
+            "repo_write_file" or "repo_run_command" or "cds_bridge_action" => "dangerous",
             _ => "readonly"
         };
     }
