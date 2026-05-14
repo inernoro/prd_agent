@@ -206,6 +206,57 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/manual-takeover")]
+    public async Task<IActionResult> ManualTakeover(string id, [FromBody] ManualTakeoverRequest? req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.SetManualTakeoverAsync(userId, id, req ?? new ManualTakeoverRequest(true, null), ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    [HttpPost("{id}/manual-inputs")]
+    public async Task<IActionResult> ManualInput(string id, [FromBody] ManualInputRequest? req, CancellationToken ct)
+    {
+        if (req == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                InfraAgentSessionErrorCodes.MessageContentRequired,
+                "请求体不能为空"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.AddManualInputAsync(userId, id, req, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpGet("{id}/events")]
     public async Task<IActionResult> ListEvents(
         string id,

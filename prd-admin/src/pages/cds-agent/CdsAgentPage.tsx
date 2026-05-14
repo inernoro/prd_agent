@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
+import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, PauseCircle, Play, Plus, RefreshCw, Search, Send, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -7,6 +7,7 @@ import { listInfraConnections, type InfraConnectionPublicView } from '@/services
 import {
   approveInfraAgentTool,
   archiveInfraAgentSession,
+  addInfraAgentManualInput,
   collectInfraAgentArtifacts,
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
@@ -18,6 +19,7 @@ import {
   listInfraAgentSessions,
   runInfraAgentReadonlyChecks,
   sendInfraAgentMessage,
+  setInfraAgentManualTakeover,
   startInfraAgentSession,
   stopInfraAgentSession,
   testInfraAgentRuntimeProfile,
@@ -377,6 +379,7 @@ export default function CdsAgentPage() {
     urls: '',
     notes: '',
   });
+  const [manualReason, setManualReason] = useState('人工检查远程页面或审批危险工具');
   const [draft, setDraft] = useState({
     title: '远程巡检任务',
     connectionId: '',
@@ -427,8 +430,9 @@ export default function CdsAgentPage() {
   const canUpdateActiveProfile = Boolean(activeProfile && profileDraft.apiKey.trim());
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason);
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
-  const canStartActiveSession = Boolean(activeSession && canRunActiveSession && canStartFromStatus(activeSession.status));
-  const canSendActiveSession = Boolean(activeSession && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
+  const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
+  const canSendActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
+  const canRecordManualInput = Boolean(activeSession?.manualTakeoverEnabled && prompt.trim());
   const displayedEvents = useMemo(
     () => eventReplayMode ? events.slice(0, Math.max(0, Math.min(eventReplayIndex, events.length))) : events,
     [eventReplayIndex, eventReplayMode, events],
@@ -461,6 +465,7 @@ export default function CdsAgentPage() {
       ['CDS 连接', activeConnection?.partnerName || activeConnection?.partnerId || activeSession.partner],
       ['模型配置', activeSessionProfile?.name ?? activeSession.runtimeProfileId ?? '未绑定'],
       ['工具策略', activeSession.toolPolicy],
+      ['人工接管', activeSession.manualTakeoverEnabled ? `已接管 · ${activeSession.manualTakeoverReason ?? '未填写原因'}` : '未接管'],
       ['事件类型', eventTypes.length > 0 ? eventTypes.join(' / ') : '暂无事件'],
       ['审批相关事件', `${approvalEvents}`],
       ['凭据暴露', '不向前端显示 long token / API key'],
@@ -613,6 +618,27 @@ export default function CdsAgentPage() {
 
   async function sendPrompt() {
     if (!activeSession || !prompt.trim()) return;
+    if (activeSession.manualTakeoverEnabled) {
+      const sessionId = activeSession.id;
+      setBusy(true);
+      try {
+        const res = await addInfraAgentManualInput(sessionId, prompt);
+        if (!res.success || !res.data?.item) {
+          toast.error('人工输入记录失败', res.error?.message ?? '请稍后重试');
+          await refreshDetail(sessionId);
+          return;
+        }
+        upsertSession(res.data.item);
+        await refreshDetail(res.data.item.id);
+        toast.success('人工输入已记录', 'Agent 仍保持暂停，审批按钮可继续使用');
+      } catch (err) {
+        toast.error('人工输入记录失败', err instanceof Error ? err.message : '请稍后重试');
+        await refreshDetail(sessionId);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (activeSessionProfileBlockReason) {
       toast.warning('模型配置不可用', activeSessionProfileBlockReason);
       return;
@@ -722,6 +748,28 @@ export default function CdsAgentPage() {
       toast.success('只读检查已完成');
     } catch (err) {
       toast.error('只读检查失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleManualTakeover(enabled: boolean) {
+    if (!activeSession) return;
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await setInfraAgentManualTakeover(sessionId, enabled, enabled ? manualReason : undefined);
+      if (!res.success || !res.data?.item) {
+        toast.error(enabled ? '接管失败' : '恢复失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+      toast.success(enabled ? '已进入人工接管' : 'Agent 已恢复', enabled ? '发送框会记录人工输入，工具审批仍可继续操作' : '可以继续向远程 Agent 发送任务');
+    } catch (err) {
+      toast.error(enabled ? '接管失败' : '恢复失败', err instanceof Error ? err.message : '请稍后重试');
       await refreshDetail(sessionId);
     } finally {
       setBusy(false);
@@ -1129,6 +1177,16 @@ export default function CdsAgentPage() {
                 <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
                   <Play size={13} /> {activeSession ? primaryActionLabel(activeSession.status) : '启动'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void toggleManualTakeover(!activeSession?.manualTakeoverEnabled)}
+                  disabled={!activeSession || busy}
+                  className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45"
+                  style={{ background: activeSession?.manualTakeoverEnabled ? 'rgba(99,179,237,0.14)' : 'rgba(255,255,255,0.05)', border: activeSession?.manualTakeoverEnabled ? '1px solid rgba(99,179,237,0.35)' : '1px solid rgba(255,255,255,0.1)', color: activeSession?.manualTakeoverEnabled ? 'rgba(186,230,253,0.96)' : 'rgba(255,255,255,0.68)' }}
+                >
+                  {activeSession?.manualTakeoverEnabled ? <UserCheck size={13} /> : <PauseCircle size={13} />}
+                  {activeSession?.manualTakeoverEnabled ? '恢复 Agent' : '人工接管'}
+                </button>
                 <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
                   <Square size={13} /> 停止
                 </button>
@@ -1140,6 +1198,31 @@ export default function CdsAgentPage() {
 
             <div className="grid flex-1 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
               <section className="flex min-h-0 flex-col gap-3">
+                {activeSession && (
+                  <div className="rounded-lg p-3" style={{ background: activeSession.manualTakeoverEnabled ? 'rgba(99,179,237,0.1)' : 'rgba(0,0,0,0.14)', border: activeSession.manualTakeoverEnabled ? '1px solid rgba(99,179,237,0.28)' : '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76">
+                          {activeSession.manualTakeoverEnabled ? <UserCheck size={14} /> : <PauseCircle size={14} />}
+                          {activeSession.manualTakeoverEnabled ? '人工接管中' : 'Agent 自动执行中'}
+                        </div>
+                        <div className="mt-1 text-xs leading-relaxed text-white/45">
+                          {activeSession.manualTakeoverEnabled
+                            ? '发送框只记录人工输入，不会调用模型；工具审批、日志和事件仍可继续操作并持久化。'
+                            : '需要检查远程页面或临时暂停自动发送时，可以开启人工接管。'}
+                        </div>
+                      </div>
+                      <input
+                        value={manualReason}
+                        onChange={(e) => setManualReason(e.target.value)}
+                        disabled={activeSession.manualTakeoverEnabled}
+                        className="min-w-[220px] flex-1 rounded-md px-3 py-2 text-xs text-white outline-none disabled:opacity-60"
+                        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
+                        placeholder="接管原因"
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
@@ -1309,8 +1392,8 @@ export default function CdsAgentPage() {
                     className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
                   />
-                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || !canSendActiveSession} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
-                    {busy ? <MapSpinner size={14} /> : <Send size={14} />} 发送
+                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
+                    {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />} {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
                   </button>
                 </div>
               </section>

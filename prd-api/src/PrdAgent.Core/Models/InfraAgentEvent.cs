@@ -33,6 +33,7 @@ public static class InfraAgentEventTypes
     public const string File = "file";
     public const string Diff = "diff";
     public const string Browser = "browser";
+    public const string Manual = "manual";
 
     public static readonly IReadOnlyList<string> All = new[]
     {
@@ -46,7 +47,8 @@ public static class InfraAgentEventTypes
         Hook,
         File,
         Diff,
-        Browser
+        Browser,
+        Manual
     };
 
     public static bool IsKnown(string? type) => All.Contains(type ?? string.Empty);
@@ -73,6 +75,7 @@ public static class InfraAgentEventSchema
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Hook, "启动或停止 hook 执行记录", new[] { "stage", "status" }, new[] { "script", "message" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.File, "文件产物或文件读取摘要", new[] { "path" }, new[] { "content", "size", "sha256" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Diff, "代码 diff 产物", new[] { "diff" }, new[] { "path", "stat" }),
-        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Browser, "远程浏览器快照或操作结果", new[] { "url" }, new[] { "title", "dom", "screenshot", "consoleErrors" })
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Browser, "远程浏览器快照或操作结果", new[] { "url" }, new[] { "title", "dom", "screenshot", "consoleErrors" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Manual, "人工接管、恢复和人工输入记录", new[] { "action" }, new[] { "reason", "content", "operator" })
     };
 }

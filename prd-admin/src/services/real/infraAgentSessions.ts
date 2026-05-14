@@ -21,6 +21,9 @@ export interface InfraAgentSessionView {
   title: string;
   status: string;
   isArchived: boolean;
+  manualTakeoverEnabled: boolean;
+  manualTakeoverAt?: string | null;
+  manualTakeoverReason?: string | null;
   lastError?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -39,7 +42,8 @@ export type InfraAgentEventType =
   | 'hook'
   | 'file'
   | 'diff'
-  | 'browser';
+  | 'browser'
+  | 'manual';
 
 export interface InfraAgentEventView {
   id: string;
@@ -212,6 +216,24 @@ export async function runInfraAgentReadonlyChecks(id: string): Promise<ApiRespon
   return await apiRequest<ItemResp>(api.infraAgentSessions.runReadonlyChecks(encodeURIComponent(id)), {
     method: 'POST',
     body: {},
+  });
+}
+
+export async function setInfraAgentManualTakeover(
+  id: string,
+  enabled: boolean,
+  reason?: string,
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.manualTakeover(encodeURIComponent(id)), {
+    method: 'POST',
+    body: { enabled, reason },
+  });
+}
+
+export async function addInfraAgentManualInput(id: string, content: string): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.manualInputs(encodeURIComponent(id)), {
+    method: 'POST',
+    body: { content },
   });
 }
 

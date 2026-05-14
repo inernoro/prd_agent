@@ -783,6 +783,8 @@ export const api = {
     archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
+    manualTakeover: (id: string) => `/api/infra-agent-sessions/${id}/manual-takeover`,
+    manualInputs: (id: string) => `/api/infra-agent-sessions/${id}/manual-inputs`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
     toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
   },

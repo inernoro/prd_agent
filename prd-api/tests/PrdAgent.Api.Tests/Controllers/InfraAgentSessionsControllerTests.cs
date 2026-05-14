@@ -124,6 +124,45 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task ManualTakeover_ShouldUseCurrentUser()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var request = new ManualTakeoverRequest(true, "检查远程页面");
+        var expected = BuildSessionView("session-1", "user-1");
+        service
+            .Setup(x => x.SetManualTakeoverAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.ManualTakeover("session-1", request, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.SetManualTakeoverAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ManualInput_ShouldMapDomainError()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var request = new ManualInputRequest("人工记录");
+        service
+            .Setup(x => x.AddManualInputAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ManualTakeoverRequired,
+                "请先开启人工接管，再记录人工输入",
+                StatusCodes.Status409Conflict));
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.ManualInput("session-1", request, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
+    }
+
+    [Fact]
     public async Task ListMessages_ShouldUseCurrentUser()
     {
         var service = new Mock<IInfraAgentSessionService>();
@@ -186,6 +225,9 @@ public class InfraAgentSessionsControllerTests
             "测试会话",
             InfraAgentSessionStatuses.Idle,
             false,
+            false,
+            null,
+            null,
             null,
             now,
             now,

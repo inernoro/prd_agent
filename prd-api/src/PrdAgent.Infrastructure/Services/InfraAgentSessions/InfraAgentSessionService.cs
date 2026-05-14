@@ -230,6 +230,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return null;
+        if (session.ManualTakeoverEnabled)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ManualTakeoverEnabled,
+                "当前会话已进入人工接管，恢复 Agent 后才能发送任务",
+                StatusCodes.Status409Conflict);
+        }
+
         if (string.IsNullOrWhiteSpace(session.CdsSessionId))
         {
             var started = await StartAsync(userId, id, new StartInfraAgentSessionRequest(session.Runtime, session.Model), ct);
@@ -271,6 +279,102 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, InfraAgentSessionStatuses.Running),
             cancellationToken: ct);
         session.Status = InfraAgentSessionStatuses.Running;
+        return ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> SetManualTakeoverAsync(
+        string userId,
+        string id,
+        ManualTakeoverRequest request,
+        CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        var now = DateTime.UtcNow;
+        var reason = NormalizeOptional(request.Reason);
+        var update = Builders<InfraAgentSession>.Update
+            .Set(x => x.ManualTakeoverEnabled, request.Enabled)
+            .Set(x => x.ManualTakeoverAt, request.Enabled ? now : null)
+            .Set(x => x.ManualTakeoverReason, request.Enabled ? reason : null)
+            .Set(x => x.UpdatedAt, now);
+
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            update,
+            cancellationToken: ct);
+
+        session.ManualTakeoverEnabled = request.Enabled;
+        session.ManualTakeoverAt = request.Enabled ? now : null;
+        session.ManualTakeoverReason = request.Enabled ? reason : null;
+        session.UpdatedAt = now;
+
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Manual,
+            JsonSerializer.Serialize(new
+            {
+                action = request.Enabled ? "takeover_enabled" : "takeover_disabled",
+                reason,
+                operatorId = userId
+            }),
+            ct);
+
+        return ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> AddManualInputAsync(
+        string userId,
+        string id,
+        ManualInputRequest request,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.MessageContentRequired,
+                "人工输入内容不能为空");
+        }
+
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+        if (!session.ManualTakeoverEnabled)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ManualTakeoverRequired,
+                "请先开启人工接管，再记录人工输入",
+                StatusCodes.Status409Conflict);
+        }
+
+        var content = request.Content.Trim();
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
+        {
+            SessionId = id,
+            Role = InfraAgentMessageRoles.User,
+            Content = $"[人工接管]\n{content}",
+            Status = InfraAgentMessageStatuses.Completed,
+            CreatedAt = now
+        }, cancellationToken: ct);
+
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Manual,
+            JsonSerializer.Serialize(new
+            {
+                action = "manual_input",
+                content,
+                operatorId = userId
+            }),
+            ct);
+
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+        session.UpdatedAt = now;
         return ToView(session);
     }
 
@@ -1273,6 +1377,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.Title,
         session.Status,
         session.IsArchived,
+        session.ManualTakeoverEnabled,
+        session.ManualTakeoverAt,
+        session.ManualTakeoverReason,
         session.LastError,
         session.CreatedAt,
         session.UpdatedAt,
@@ -1338,6 +1445,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             HookProfileId = view.HookProfileId,
             Title = view.Title,
             Status = view.Status,
+            ManualTakeoverEnabled = view.ManualTakeoverEnabled,
+            ManualTakeoverAt = view.ManualTakeoverAt,
+            ManualTakeoverReason = view.ManualTakeoverReason,
             LastError = view.LastError,
             CreatedAt = view.CreatedAt,
             UpdatedAt = view.UpdatedAt,

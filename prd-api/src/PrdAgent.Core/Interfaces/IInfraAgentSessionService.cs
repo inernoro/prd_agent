@@ -22,6 +22,10 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> RunReadonlyChecksAsync(string userId, string id, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> SetManualTakeoverAsync(string userId, string id, ManualTakeoverRequest request, CancellationToken ct);
+
+    Task<InfraAgentSessionView?> AddManualInputAsync(string userId, string id, ManualInputRequest request, CancellationToken ct);
+
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
     Task<List<InfraAgentMessageView>> ListMessagesAsync(string userId, string sessionId, int limit, CancellationToken ct);
@@ -50,6 +54,15 @@ public record SendInfraAgentMessageRequest(
     string Content
 );
 
+public record ManualTakeoverRequest(
+    bool Enabled,
+    string? Reason
+);
+
+public record ManualInputRequest(
+    string Content
+);
+
 public record ToolApprovalRequest(
     string Decision
 );
@@ -71,6 +84,9 @@ public record InfraAgentSessionView(
     string Title,
     string Status,
     bool IsArchived,
+    bool ManualTakeoverEnabled,
+    DateTime? ManualTakeoverAt,
+    string? ManualTakeoverReason,
     string? LastError,
     DateTime CreatedAt,
     DateTime UpdatedAt,
@@ -111,6 +127,8 @@ public static class InfraAgentSessionErrorCodes
     public const string HookFailed = "hook_failed";
     public const string RuntimeProfileInvalid = "runtime_profile_invalid";
     public const string SessionStillRunning = "session_still_running";
+    public const string ManualTakeoverEnabled = "manual_takeover_enabled";
+    public const string ManualTakeoverRequired = "manual_takeover_required";
 }
 
 public class InfraAgentSessionException : Exception

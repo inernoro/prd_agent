@@ -42,6 +42,12 @@ public class InfraAgentSession
 
     public bool IsArchived { get; set; }
 
+    public bool ManualTakeoverEnabled { get; set; }
+
+    public DateTime? ManualTakeoverAt { get; set; }
+
+    public string? ManualTakeoverReason { get; set; }
+
     public string? LastError { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
