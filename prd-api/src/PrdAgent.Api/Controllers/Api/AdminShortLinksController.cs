@@ -112,7 +112,7 @@ public class AdminShortLinksController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND,
                     $"短链 #{seq} 的底层分享记录已不存在（token={link.TargetId}），无需吊销"));
             }
-            _logger.LogWarning("Admin 吊销短链 seq={Seq} target={Type}/{Token} matched={Matched}",
+            _logger.LogInformation("Admin 吊销短链 seq={Seq} target={Type}/{Token} matched={Matched}",
                 seq, link.TargetType, link.TargetId, result.MatchedCount);
             return Ok(ApiResponse<object>.Ok(new { revoked = true, seq, targetType = link.TargetType }));
         }

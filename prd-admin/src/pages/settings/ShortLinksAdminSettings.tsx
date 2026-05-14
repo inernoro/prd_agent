@@ -72,6 +72,10 @@ export function ShortLinksAdminSettings() {
         setSkip(lastPageSkip);
       }
     } else {
+      // 失败也清空 items / total —— 避免改 filter 后 API 挂掉但表格继续
+      // 显示旧 filter 的数据，运维误以为这些行属于当前筛选。
+      setItems([]);
+      setTotal(0);
       setToast(res.error?.message || '加载失败');
     }
   }, [targetType, search, skip]);
