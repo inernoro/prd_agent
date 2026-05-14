@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
@@ -85,6 +86,10 @@ public sealed class CdsBridgeActionTool : IAgentTool
         var parameters = input.TryGetProperty("params", out var p) && p.ValueKind == JsonValueKind.Object
             ? p
             : JsonDocument.Parse("{}").RootElement;
+        if (!CdsBridgeToolSupport.TryValidateNavigationTarget(action, parameters, out var errorCode, out var message))
+        {
+            return Task.FromResult(AgentToolInvokeResult.Fail(errorCode, message));
+        }
         return CdsBridgeToolSupport.SendCommandAsync(context, branchId, action, parameters, description, ct);
     }
 }
@@ -152,6 +157,93 @@ internal static class CdsBridgeToolSupport
     public static bool IsAllowedAction(string? action)
     {
         return action is "click" or "type" or "scroll" or "spa-navigate" or "navigate" or "evaluate";
+    }
+
+    public static bool TryValidateNavigationTarget(
+        string action,
+        JsonElement parameters,
+        out string errorCode,
+        out string message)
+    {
+        errorCode = "";
+        message = "";
+        if (action is not "navigate" and not "spa-navigate")
+        {
+            return true;
+        }
+
+        var url = GetOptionalString(parameters, "url");
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            errorCode = "bridge_url_required";
+            message = "navigate actions require params.url";
+            return false;
+        }
+
+        if (url.StartsWith("/", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            errorCode = "bridge_url_not_allowed";
+            message = "only relative, http, and https URLs are allowed";
+            return false;
+        }
+
+        if (IsBlockedHost(uri.Host))
+        {
+            errorCode = "bridge_url_blocked";
+            message = "navigation to localhost, private, link-local, or metadata hosts is blocked by default";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsBlockedHost(string host)
+    {
+        var normalized = host.Trim().TrimEnd('.').ToLowerInvariant();
+        if (normalized is "localhost" or "metadata.google.internal")
+        {
+            return true;
+        }
+        if (normalized.EndsWith(".localhost", StringComparison.Ordinal))
+        {
+            return true;
+        }
+        if (!IPAddress.TryParse(normalized, out var address))
+        {
+            return false;
+        }
+
+        if (IPAddress.IsLoopback(address))
+        {
+            return true;
+        }
+        if (address.Equals(IPAddress.Parse("169.254.169.254")))
+        {
+            return true;
+        }
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            return bytes[0] == 10
+                || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+                || (bytes[0] == 192 && bytes[1] == 168)
+                || (bytes[0] == 169 && bytes[1] == 254);
+        }
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            var bytes = address.GetAddressBytes();
+            return address.IsIPv6LinkLocal
+                || address.IsIPv6SiteLocal
+                || (bytes[0] & 0xfe) == 0xfc;
+        }
+
+        return false;
     }
 
     private static string Truncate(string value, int max)

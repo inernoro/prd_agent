@@ -137,6 +137,24 @@ public class AgentToolsTests : IDisposable
             CancellationToken.None);
         action.Success.ShouldBeFalse();
         action.ErrorCode.ShouldBe("bridge_action_not_allowed");
+
+        var privateNavigate = await new CdsBridgeActionTool().InvokeAsync(
+            JsonDocument.Parse("""{"branchId":"prd-agent-main","action":"navigate","description":"测试内网拦截","params":{"url":"http://127.0.0.1:5000"}}""").RootElement,
+            new AgentToolInvocationContext
+            {
+                CdsBaseUrl = "https://cds.miduo.org",
+                CdsLongToken = "test-token"
+            },
+            CancellationToken.None);
+        privateNavigate.Success.ShouldBeFalse();
+        privateNavigate.ErrorCode.ShouldBe("bridge_url_blocked");
+
+        var relativeNavigate = await new CdsBridgeActionTool().InvokeAsync(
+            JsonDocument.Parse("""{"branchId":"prd-agent-main","action":"spa-navigate","description":"测试相对路径","params":{"url":"/settings"}}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+        relativeNavigate.Success.ShouldBeFalse();
+        relativeNavigate.ErrorCode.ShouldBe("cds_connection_missing");
     }
 
     [Fact]

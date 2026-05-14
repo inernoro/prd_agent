@@ -737,13 +737,14 @@ P10 当前结论：
 | P12.2 MAP browser stream | [x] | [x] | [x] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
 | P12.3 操作工具 | [x] | [x] | [x] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
 | P12.4 人工接管 | [ ] | [ ] | [ ] | 用户可暂停 agent 并手动输入/审批 |
-| P12.5 安全边界 | [ ] | [ ] | [ ] | 禁止默认访问内网敏感地址，凭据域隔离 |
+| P12.5 安全边界 | [x] | [x] | [ ] | Bridge navigate/spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址；待主分支视觉/远端工具列表复测 |
 
 冒烟测试：
 
 - Agent 打开一个测试网页，完成输入、点击、读取结果。
 - MAP 页面能看到 URL、截图或 DOM 事件。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 覆盖 Bridge 工具无 session 连接时返回 `cds_connection_missing`，非法 action 返回 `bridge_action_not_allowed`。
+- 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 6 个测试，覆盖 Bridge 导航到 `127.0.0.1` 返回 `bridge_url_blocked`，相对路径继续通过 URL 校验；`dotnet build --no-restore` 无新增 CS error。
 
 视觉测试：
 
