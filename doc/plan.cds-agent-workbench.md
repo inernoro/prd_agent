@@ -891,12 +891,12 @@ P10 当前结论：
 | P17.1 管理员从零配置 CDS | [ ] | [ ] | [ ] | 填 CDS 地址、授权、配置 runtime、探活通过 |
 | P17.2 用户创建真实任务 | [ ] | [ ] | [ ] | 从对话页提交一个代码/网页操作任务 |
 | P17.3 Agent 执行真实工具 | [ ] | [ ] | [ ] | 读文件、改文件、跑命令或操作网页 |
-| P17.4 工具审批与恢复 | [ ] | [ ] | [ ] | 危险工具审批、刷新后恢复 |
+| P17.4 工具审批与恢复 | [x] | [x] | [x] | 真实入口生成危险工具审批卡，刷新后仍可恢复，允许后写入 `tool_result` 审计事件 |
 | P17.5 产物验收 | [ ] | [ ] | [ ] | diff/日志/测试结果/浏览器结果可见 |
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已对齐到 `b3c391be`，业务部署只包含 api/admin；CDS 系统级 sidecar pool 独立 running，真实入口调用仍能进入远程 runtime |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已对齐到 `871ab453`，业务部署只包含 api/admin；CDS 系统级 sidecar pool 独立 running，真实入口调用仍能进入远程 runtime |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
@@ -969,11 +969,19 @@ P10 当前结论：
 | A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
 | A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
 | A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
-| A7 | P17 | 工具审批恢复验收 | [ ] | [ ] | [ ] | 危险工具审批卡片刷新后仍在，允许/拒绝结果可审计 |
+| A7 | P17 | 工具审批恢复验收 | [x] | [x] | [x] | 主分支真实入口生成 `repo_run_command` 危险审批卡，刷新后仍在，允许后写入 `tool_result` 且结果可审计 |
 | A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
 | A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
 | A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
 | A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [x] | [x] | [x] | CDS 提供 `shared-sidecar-pool-mp4anabh` 系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，AI 百宝箱真实入口仍能创建远程 Agent 会话并进入 `sidecar_runtime_started` |
+
+2026-05-14 A7 验收记录：
+
+- 代码提交：`871ab453 fix(cds-agent): 修正长期授权连接状态`，`prd-agent-main` 已部署到 `api/admin running`。
+- 长期授权冒烟：`/api/infra-connections` 使用 root JWT 查询，多个 CDS 连接显示 `status=active`、`lastProbeOk=true`、`longTokenExpiresAt=2099-12-31T23:59:59Z`，证明状态不再受 10 分钟最近探活窗口误杀。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` -> 生成审批卡 -> 刷新页面 -> 点击 `允许`。
+- 断言：页面显示 `tool_call #3 repo_run_command dangerous waiting`，刷新后 `允许/拒绝` 仍存在；点击 `允许` 后新增 `tool_result #4`，包含 `approvalId=map-approval-3`、`decision=allow`、`source=map-tool-approval`。
+- 截图证据：`.Codex/tmp/cds-agent-a7-approval-recovery-ui-2026-05-14.png`。
 
 ### 17.4 当前阻塞与不可混用凭据
 
