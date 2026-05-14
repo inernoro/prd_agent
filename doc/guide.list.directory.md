@@ -337,6 +337,12 @@
 - [CDS Agent 工作台用户指南](guide.cds-agent-workbench) `guide.cds-agent-workbench`
   > 普通用户从 CDS Agent 页面创建远程会话、发送任务、审批工具、查看事件和日志的操作指南
 
+- [CDS Agent 工作台复现操作指南](guide.cds-agent-workbench-reproduce) `guide.cds-agent-workbench-reproduce`
+  > 从真实入口复现 CDS Agent 创建会话、审批工具、查看产物、远程浏览器和 PR 闭环的操作教程
+
+- [CDS Agent 下一代测试与涌现建议](guide.cds-agent-next-agent-testing) `guide.cds-agent-next-agent-testing`
+  > 给下一个智能体的分层测试矩阵、视觉验收标准、涌现分析和下一代路线建议
+
 - [CDS Agent 管理员指南](guide.cds-agent-admin) `guide.cds-agent-admin`
   > 管理员配置系统级 CDS 长期授权、模型运行配置、Hook profile 和安全边界的操作指南
 
@@ -619,6 +625,9 @@
 
 ### 七、周报
 
+- [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
+  > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
 - [周报 2026-W19 (05-04 ~ 05-10)](report.2026-W19) `report.2026-W19`
   > 2026 年第 19 周工作总结（310 commits / 15 PRs，CDS 蓝绿/Forwarder 架构落地、自更新十八轮收尾、五平台博主订阅 → 首页海报 Phase 2+3、Claude SDK 执行器 + CDS-MAP 配对协议 v1）
 
@@ -703,6 +712,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-15 | 新增 | `report.cds-agent-workbench-2026-05-15` `guide.cds-agent-workbench-reproduce` `guide.cds-agent-next-agent-testing` | CDS Agent A10 完成复盘、复现教程、下一代测试与涌现建议 |
 | 2026-05-14 | 新增 | `guide.cds-agent-workbench` `guide.cds-agent-admin` `design.cds-agent-api` `guide.cds-agent-runbook` | CDS Agent 完全可用文档闭环 |
 | 2026-05-11 | 补齐 | 批量 | 补齐 57 个长期未登记文档（spec×4 / design×17 / guide×16 / rule×6 / plan×6 / debt×2 / report×5 + 文件重命名 2 个 + index.yml 同步 53 条） |
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |

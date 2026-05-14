@@ -133,6 +133,8 @@ docs:
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
   guide.ai-toolbox-ops: AI 百宝箱运维指南
   guide.cds-agent-workbench: CDS Agent 工作台用户指南
+  guide.cds-agent-workbench-reproduce: CDS Agent 工作台复现操作指南
+  guide.cds-agent-next-agent-testing: CDS Agent 下一代测试与涌现建议
   guide.cds-agent-admin: CDS Agent 管理员指南
   guide.cds-agent-runbook: CDS Agent 运行手册
   guide.cds-env: CDS 环境变量配置指南
@@ -236,6 +238,7 @@ docs:
   debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
 
   # ── 七、周报（降序：最新在前）──
+  report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
   report.2026-W19: 周报 2026-W19 (05-04 ~ 05-10)
   report.2026-W18: 周报 2026-W18 (04-27 ~ 05-03)
   report.2026-W17: 周报 2026-W17 (04-20 ~ 04-26)
