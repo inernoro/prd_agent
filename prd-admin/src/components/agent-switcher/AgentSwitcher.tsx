@@ -134,11 +134,13 @@ function LauncherCard({
           {item.description}
         </div>
 
-        {/* 置顶按钮（hover 或已置顶时显示） */}
-        <button
-          type="button"
+        {/* 置顶按钮（hover 或已置顶时显示）— 用 div+role 避免 button 嵌套 button */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={onTogglePin}
-          className="absolute top-1.5 right-1.5 w-5 h-5 rounded-[5px] flex items-center justify-center transition-opacity"
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTogglePin(e as unknown as React.MouseEvent); } }}
+          className="absolute top-1.5 right-1.5 w-5 h-5 rounded-[5px] flex items-center justify-center transition-opacity cursor-pointer"
           style={{
             opacity: isPinned ? 1 : isActive ? 0.85 : 0,
             background: isPinned ? `${accent}30` : 'rgba(255,255,255,0.05)',
@@ -149,7 +151,7 @@ function LauncherCard({
           aria-label={isPinned ? '取消置顶' : '置顶'}
         >
           {isPinned ? <Pin size={10} /> : <PinOff size={10} />}
-        </button>
+        </div>
       </div>
     </button>
   );

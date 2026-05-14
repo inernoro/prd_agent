@@ -77,14 +77,17 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var next = new List<DynamicSidecarInstance>();
         var errors = new List<string>();
 
-        try
+        if (opts.CdsDiscovery.EnablePairedInfraConnections)
         {
-            next.AddRange(await DiscoverPairedConnectionsAsync(opts, ct));
-        }
-        catch (Exception ex)
-        {
-            errors.Add($"paired-connections: {ex.Message}");
-            _logger.LogWarning(ex, "[CdsDiscovery] paired infra connection refresh failed");
+            try
+            {
+                next.AddRange(await DiscoverPairedConnectionsAsync(opts, ct));
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"paired-connections: {ex.Message}");
+                _logger.LogWarning(ex, "[CdsDiscovery] paired infra connection refresh failed");
+            }
         }
 
         if (opts.CdsDiscovery.Enabled && !string.IsNullOrWhiteSpace(opts.CdsDiscovery.BaseUrl))
@@ -191,7 +194,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var discovered = new List<DynamicSidecarInstance>();
         foreach (var conn in activeCds)
         {
-            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct);
+            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: false);
             if (string.IsNullOrWhiteSpace(longToken)) continue;
 
             var http = _httpFactory.CreateClient(HttpClientName);
@@ -215,19 +218,26 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             foreach (var inst in envelope.Instances)
             {
                 idx += 1;
-                if (string.IsNullOrWhiteSpace(inst.Host) || inst.Port == null) continue;
+                if (string.IsNullOrWhiteSpace(inst.BaseUrl) && (string.IsNullOrWhiteSpace(inst.Host) || inst.Port == null)) continue;
                 var stable = !string.IsNullOrWhiteSpace(inst.HostId)
                     ? inst.HostId
                     : !string.IsNullOrWhiteSpace(inst.DeploymentId)
                         ? inst.DeploymentId
                         : idx.ToString();
-                discovered.Add(ToDynamicInstance(
-                    name: $"cds-pairing:{conn.Id}:{stable}",
-                    host: inst.Host,
-                    port: inst.Port.Value,
-                    token: ResolveSharedSidecarToken(opts),
-                    tags: inst.Tags ?? new List<string>(),
-                    source: "cds-pairing"));
+                discovered.Add(string.IsNullOrWhiteSpace(inst.BaseUrl)
+                    ? ToDynamicInstance(
+                        name: $"cds-pairing:{conn.Id}:{stable}",
+                        host: inst.Host!,
+                        port: inst.Port!.Value,
+                        token: ResolveSharedSidecarToken(opts),
+                        tags: inst.Tags ?? new List<string>(),
+                        source: "cds-pairing")
+                    : ToDynamicInstance(
+                        name: $"cds-pairing:{conn.Id}:{stable}",
+                        baseUrl: inst.BaseUrl!,
+                        token: ResolveSharedSidecarToken(opts),
+                        tags: inst.Tags ?? new List<string>(),
+                        source: "cds-pairing"));
             }
         }
 
@@ -246,6 +256,24 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         {
             Name = name,
             BaseUrl = $"http://{host}:{port}",
+            Token = token,
+            Weight = 1,
+            Tags = tags,
+            Source = source,
+        };
+    }
+
+    private static DynamicSidecarInstance ToDynamicInstance(
+        string name,
+        string baseUrl,
+        string token,
+        IReadOnlyList<string> tags,
+        string source)
+    {
+        return new DynamicSidecarInstance
+        {
+            Name = name,
+            BaseUrl = baseUrl.TrimEnd('/'),
             Token = token,
             Weight = 1,
             Tags = tags,
@@ -312,6 +340,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
     private sealed class InstanceDto
     {
         public string? DeploymentId { get; set; }
+        public string? BaseUrl { get; set; }
         public string? Host { get; set; }
         public int? Port { get; set; }
         public bool? Healthy { get; set; }

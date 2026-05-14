@@ -825,10 +825,15 @@ public class WorkflowAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("NOT_PAUSED", "仅暂停状态的执行可以继续"));
 
         // 将暂停的节点改回 completed，将 execution 改回 queued 重新入队
+        var infraAgentSessions = HttpContext.RequestServices.GetRequiredService<IInfraAgentSessionService>();
+        var userId = GetUserId();
         foreach (var ne in execution.NodeExecutions)
         {
             if (ne.Status == NodeExecutionStatus.Paused)
+            {
+                await ApprovePausedCdsAgentToolIfNeededAsync(infraAgentSessions, userId, ne, ct);
                 ne.Status = NodeExecutionStatus.Completed;
+            }
         }
 
         await _db.WorkflowExecutions.UpdateOneAsync(
@@ -845,6 +850,33 @@ public class WorkflowAgentController : ControllerBase
         // 重新加载返回最新状态
         execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { execution }));
+    }
+
+    private static async Task ApprovePausedCdsAgentToolIfNeededAsync(
+        IInfraAgentSessionService infraAgentSessions,
+        string userId,
+        NodeExecution nodeExecution,
+        CancellationToken ct)
+    {
+        var approvalArtifact = nodeExecution.OutputArtifacts.FirstOrDefault(x => x.SlotId == "cds-agent-approval");
+        if (approvalArtifact == null || string.IsNullOrWhiteSpace(approvalArtifact.InlineContent)) return;
+
+        using var doc = JsonDocument.Parse(approvalArtifact.InlineContent);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("sessionId", out var sessionIdElement)
+            || !root.TryGetProperty("approvalId", out var approvalIdElement))
+            return;
+
+        var sessionId = sessionIdElement.GetString();
+        var approvalId = approvalIdElement.GetString();
+        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(approvalId)) return;
+
+        await infraAgentSessions.ApproveToolAsync(
+            userId,
+            sessionId,
+            approvalId,
+            new ToolApprovalRequest("allow"),
+            ct);
     }
 
     /// <summary>取消执行</summary>

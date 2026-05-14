@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services;
 
@@ -19,6 +20,19 @@ namespace PrdAgent.Api.Services;
 public static class CapsuleExecutor
 {
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
+
+    public sealed class CapsulePauseException : Exception
+    {
+        public CapsulePauseException(string message, List<ExecutionArtifact> artifacts, string logs)
+            : base(message)
+        {
+            Artifacts = artifacts;
+            Logs = logs;
+        }
+
+        public List<ExecutionArtifact> Artifacts { get; }
+        public string Logs { get; }
+    }
 
     /// <summary>共享序列化选项：不转义中文、美化输出</summary>
     private static readonly JsonSerializerOptions JsonPretty = new()
@@ -95,8 +109,9 @@ public static class CapsuleExecutor
             CapsuleTypes.HomepagePublisher => await ExecuteHomepagePublisherAsync(sp, node, variables, inputArtifacts),
             CapsuleTypes.WeeklyPosterPublisher => await ExecuteWeeklyPosterPublisherAsync(sp, node, variables, inputArtifacts),
 
-            // ── CLI Agent 执行器 ──
+            // ── CLI Agent / 远程 Agent 执行器 ──
             CapsuleTypes.CliAgentExecutor => await ExecuteCliAgentAsync(sp, node, variables, inputArtifacts, emitEvent),
+            CapsuleTypes.CdsAgent => await ExecuteCdsAgentAsync(sp, node, variables, inputArtifacts, emitEvent),
 
             // ── 异步任务类 ──
             CapsuleTypes.VideoGeneration => await ExecuteVideoGenerationAsync(sp, node, variables, inputArtifacts, emitEvent),
@@ -4586,6 +4601,219 @@ function safeChart(canvasId, config) {
         var outputJson = JsonSerializer.Serialize(result, JsonPretty);
         var artifact = MakeTextArtifact(node, "email-out", "邮件发送结果", outputJson, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    // ── CDS Agent 远程执行器 ────────────────────────
+
+    public static async Task<CapsuleResult> ExecuteCdsAgentAsync(
+        IServiceProvider sp,
+        WorkflowNode node,
+        Dictionary<string, string> variables,
+        List<ExecutionArtifact> inputArtifacts,
+        EmitEventDelegate? emitEvent = null)
+    {
+        var db = sp.GetRequiredService<MongoDbContext>();
+        var sessions = sp.GetRequiredService<IInfraAgentSessionService>();
+        var sb = new StringBuilder();
+        sb.AppendLine($"[CDS Agent] 节点: {node.Name}");
+
+        var userId = ReplaceVariables(GetConfigString(node, "userId") ?? "", variables).Trim();
+        if (string.IsNullOrWhiteSpace(userId) && variables.TryGetValue("__triggeredBy", out var triggeredBy))
+            userId = triggeredBy;
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new InvalidOperationException("CDS Agent 需要执行用户上下文，请从工作流运行或配置 userId 后再执行");
+
+        var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
+        var now = DateTime.UtcNow;
+        var connection = string.IsNullOrWhiteSpace(connectionId)
+            ? await db.InfraConnections
+                .Find(x => x.Partner == "cds"
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(CancellationToken.None)
+            : await db.InfraConnections
+                .Find(x => x.Id == connectionId
+                    && x.Partner == "cds"
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
+                .FirstOrDefaultAsync(CancellationToken.None);
+        if (connection == null)
+            throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+
+        var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
+        var runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
+            ? await db.InfraAgentRuntimeProfiles
+                .Find(x => x.IsDefault)
+                .FirstOrDefaultAsync(CancellationToken.None)
+                ?? await db.InfraAgentRuntimeProfiles
+                    .Find(_ => true)
+                    .SortByDescending(x => x.UpdatedAt)
+                    .FirstOrDefaultAsync(CancellationToken.None)
+            : await db.InfraAgentRuntimeProfiles
+                .Find(x => x.Id == runtimeProfileId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+        if (runtimeProfile == null)
+            throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
+
+        var runtime = ReplaceVariables(GetConfigString(node, "runtime") ?? runtimeProfile.Runtime, variables).Trim();
+        if (string.IsNullOrWhiteSpace(runtime))
+            runtime = runtimeProfile.Runtime;
+        var model = ReplaceVariables(GetConfigString(node, "model") ?? runtimeProfile.Model, variables).Trim();
+        if (string.IsNullOrWhiteSpace(model))
+            model = runtimeProfile.Model;
+        var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "confirm-dangerous", variables).Trim();
+        var hookProfileId = ReplaceVariables(GetConfigString(node, "hookProfileId") ?? "", variables).Trim();
+        var workflowApprovalMode = ReplaceVariables(GetConfigString(node, "workflowApprovalMode") ?? "none", variables).Trim();
+
+        var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables).Trim();
+        var upstream = string.Join("\n\n", inputArtifacts
+            .Where(x => !string.IsNullOrWhiteSpace(x.InlineContent))
+            .Select(x => $"## {x.Name}\n{x.InlineContent}"));
+        if (!string.IsNullOrWhiteSpace(upstream))
+            prompt = $"{prompt}\n\n# 上游输入\n{upstream}".Trim();
+        if (string.IsNullOrWhiteSpace(prompt))
+            throw new InvalidOperationException("CDS Agent 任务提示词不能为空");
+
+        if (emitEvent != null)
+            await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection.Id, runtime, model });
+        var session = await sessions.CreateAsync(
+            userId,
+            new CreateInfraAgentSessionRequest(
+                connection.Id,
+                runtime,
+                model,
+                node.Name,
+                toolPolicy,
+                string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
+                runtimeProfile.Id),
+            CancellationToken.None);
+        sb.AppendLine($"会话: {session.Id}");
+
+        if (emitEvent != null)
+            await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id });
+        session = await sessions.StartAsync(userId, session.Id, new StartInfraAgentSessionRequest(runtime, model), CancellationToken.None) ?? session;
+        sb.AppendLine($"状态: {session.Status}");
+
+        if (emitEvent != null)
+            await emitEvent("cds-agent-phase", new { phase = "running", sessionId = session.Id });
+
+        if (string.Equals(workflowApprovalMode, "request-dangerous", StringComparison.OrdinalIgnoreCase))
+        {
+            await sessions.RequestToolApprovalAsync(
+                userId,
+                session.Id,
+                new CreateToolApprovalRequest(
+                    "repo_run_command",
+                    "{\"command\":\"git status --short\",\"cwd\":\".\"}",
+                    "dangerous"),
+                CancellationToken.None);
+
+            var approvalEvents = await sessions.ListEventsAsync(userId, session.Id, 0, 1000, CancellationToken.None);
+            var pendingApproval = FindFirstPendingApproval(approvalEvents);
+            var approvalLogs = $"[CDS Agent] 工作流等待危险工具审批\n会话: {session.Id}\n审批: {pendingApproval?.ApprovalId ?? "(unknown)"}\n工具: {pendingApproval?.ToolName ?? "repo_run_command"}";
+            var approvalRendered = RenderCdsAgentEvents(approvalEvents);
+            var approvalEventsJson = JsonSerializer.Serialize(approvalEvents, JsonPretty);
+            throw new CapsulePauseException(
+                "CDS Agent 工作流等待危险工具审批",
+                new List<ExecutionArtifact>
+                {
+                    MakeTextArtifact(node, "cds-agent-out", "CDS Agent 输出", approvalRendered),
+                    MakeTextArtifact(node, "cds-agent-events", "CDS Agent 事件", approvalEventsJson, "application/json"),
+                    MakeTextArtifact(node, "cds-agent-log", "CDS Agent 日志", approvalLogs),
+                    MakeTextArtifact(node, "cds-agent-approval", "CDS Agent 待审批工具", JsonSerializer.Serialize(new
+                    {
+                        sessionId = session.Id,
+                        approvalId = pendingApproval?.ApprovalId,
+                        toolName = pendingApproval?.ToolName ?? "repo_run_command",
+                        risk = pendingApproval?.Risk ?? "dangerous",
+                        status = "waiting"
+                    }, JsonPretty), "application/json"),
+                },
+                approvalLogs);
+        }
+
+        session = await sessions.SendMessageAsync(userId, session.Id, new SendInfraAgentMessageRequest(prompt), CancellationToken.None) ?? session;
+
+        var events = await sessions.ListEventsAsync(userId, session.Id, 0, 1000, CancellationToken.None);
+        var logs = await sessions.GetLogsAsync(userId, session.Id, CancellationToken.None) ?? "";
+        var rendered = RenderCdsAgentEvents(events);
+        sb.AppendLine($"事件数: {events.Count()}");
+        sb.AppendLine($"日志长度: {logs.Length}");
+
+        var stopAfterRun = !string.Equals(
+            ReplaceVariables(GetConfigString(node, "stopAfterRun") ?? "true", variables).Trim(),
+            "false",
+            StringComparison.OrdinalIgnoreCase);
+        if (stopAfterRun)
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "stopping", sessionId = session.Id });
+            session = await sessions.StopAsync(userId, session.Id, CancellationToken.None) ?? session;
+            sb.AppendLine($"停止后状态: {session.Status}");
+        }
+
+        if (emitEvent != null)
+            await emitEvent("cds-agent-phase", new { phase = "completed", sessionId = session.Id, status = session.Status });
+
+        var eventsJson = JsonSerializer.Serialize(events, JsonPretty);
+        return new CapsuleResult(new List<ExecutionArtifact>
+        {
+            MakeTextArtifact(node, "cds-agent-out", "CDS Agent 输出", rendered),
+            MakeTextArtifact(node, "cds-agent-events", "CDS Agent 事件", eventsJson, "application/json"),
+            MakeTextArtifact(node, "cds-agent-log", "CDS Agent 日志", logs),
+        }, sb.ToString());
+    }
+
+    private static string RenderCdsAgentEvents(List<InfraAgentEventView> events)
+    {
+        var sb = new StringBuilder();
+        foreach (var evt in events.OrderBy(x => x.Seq))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.PayloadJson);
+                var root = doc.RootElement;
+                if (evt.Type == InfraAgentEventTypes.TextDelta && root.TryGetProperty("text", out var text))
+                    sb.Append(text.GetString());
+                else if (evt.Type == InfraAgentEventTypes.Done && root.TryGetProperty("finalText", out var finalText))
+                    sb.AppendLine(finalText.GetString());
+                else if (evt.Type is InfraAgentEventTypes.ToolCall or InfraAgentEventTypes.ToolResult or InfraAgentEventTypes.Error or InfraAgentEventTypes.Hook)
+                    sb.AppendLine($"[{evt.Seq}] {evt.Type}: {root}");
+            }
+            catch
+            {
+                sb.AppendLine($"[{evt.Seq}] {evt.Type}: {evt.PayloadJson}");
+            }
+        }
+        return sb.ToString().Trim();
+    }
+
+    private static (string? ApprovalId, string? ToolName, string? Risk)? FindFirstPendingApproval(List<InfraAgentEventView> events)
+    {
+        foreach (var evt in events.OrderByDescending(x => x.Seq))
+        {
+            if (evt.Type != InfraAgentEventTypes.ToolCall) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.PayloadJson);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("status", out var status)
+                    || !string.Equals(status.GetString(), "waiting", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                return (
+                    root.TryGetProperty("approvalId", out var approvalId) ? approvalId.GetString() : null,
+                    root.TryGetProperty("toolName", out var toolName) ? toolName.GetString() : null,
+                    root.TryGetProperty("risk", out var risk) ? risk.GetString() : null);
+            }
+            catch
+            {
+                // Ignore malformed historical payloads.
+            }
+        }
+
+        return null;
     }
 
     // ── CLI Agent 执行器（多执行器分发） ────────────────────────

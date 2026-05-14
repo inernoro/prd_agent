@@ -461,7 +461,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
                 disabled={!curlRaw.trim() || disabled}
                 className="surface-action-primary h-7 px-4 rounded-[8px] text-[11px] font-semibold transition-colors disabled:opacity-40"
               >
-                ⚡ 解析并填入
+                AUTO 解析并填入
               </button>
             </div>
 
@@ -481,7 +481,7 @@ export function HttpConfigPanel({ values, onBatchChange, disabled }: {
                   curlCopied ? 'surface-state-success' : 'surface-inset text-token-accent'
                 )}
               >
-                {curlCopied ? '✓ 已复制' : '⬆ 复制 cURL'}
+                {curlCopied ? '已完成 已复制' : '复制 复制 cURL'}
               </button>
             </div>
           </div>

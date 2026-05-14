@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using MongoDB.Driver;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.IdentityModel.Tokens;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
@@ -215,6 +216,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.VisualAgentAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.LiteraryAgentAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.DefectAgentAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IAgentAdapter, PrdAgent.Api.Services.Toolbox.Adapters.CdsAgentAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.Toolbox.IToolboxOrchestrator, PrdAgent.Api.Services.Toolbox.SimpleOrchestrator>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.Toolbox.IToolboxEventStore>(sp =>
 {
@@ -1044,6 +1046,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService.HttpClientName);
+builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IInfraAgentSessionService,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentSessionService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentHookProfileService,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentHookProfileService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileService,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InfraAgentRuntimeProfileService>();
 
 // 注册 Claude Agent SDK Sidecar 路由（CLI Agent claude-sdk 执行器使用）
 // 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
@@ -1098,15 +1106,14 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
     PrdAgent.Infrastructure.Services.AgentTools.AgentToolRegistry>();
 
 // 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
-// Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）
-// 密钥环持久化到 /data/dataprotection-keys（Docker 挂载 volume 后重启不丢失）
+// Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）。
+// 系统级外部授权必须跨容器重建长期有效，因此 key ring 存入 MongoDB，而不是临时文件系统。
+builder.Services.AddDataProtection()
+    .SetApplicationName("PrdAgent");
+builder.Services.AddOptions<KeyManagementOptions>().Configure<MongoDbContext>((options, db) =>
 {
-    var keyRingPath = builder.Configuration["DataProtection:KeyRingPath"] ?? "/data/dataprotection-keys";
-    try { System.IO.Directory.CreateDirectory(keyRingPath); } catch { /* best effort */ }
-    builder.Services.AddDataProtection()
-        .PersistKeysToFileSystem(new System.IO.DirectoryInfo(keyRingPath))
-        .SetApplicationName("PrdAgent");
-}
+    options.XmlRepository = new MongoDataProtectionXmlRepository(db);
+});
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IExternalAuthorizationService,
     PrdAgent.Infrastructure.Services.Authorization.ExternalAuthorizationService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,

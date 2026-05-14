@@ -35,10 +35,14 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
         var requestMethod = Request.Method;
         var clientIp = Context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        // 从 Authorization header 提取 API Key
+        // 从 Authorization header 提取 API Key；缺陷分享提示词历史上使用 X-AI-Access-Key，
+        // 这里兼容 sk-ak 临时密钥，避免外部 Agent 拿到分享文本后无法发表评论。
         if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
-            return AuthenticateResult.NoResult();
+            if (!Request.Headers.TryGetValue("X-AI-Access-Key", out authHeader))
+            {
+                return AuthenticateResult.NoResult();
+            }
         }
 
         var authHeaderValue = authHeader.ToString();

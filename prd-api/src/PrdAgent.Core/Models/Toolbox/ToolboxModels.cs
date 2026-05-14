@@ -61,6 +61,9 @@ public static class IntentTypes
 
     /// <summary>通用对话（无法识别具体意图）</summary>
     public const string General = "general";
+
+    /// <summary>远程 CDS sandbox 执行、代码巡检、PR 操作</summary>
+    public const string RemoteSandbox = "remote_sandbox";
 }
 
 /// <summary>
@@ -144,13 +147,23 @@ public static class AgentRegistry
         SupportedActions = new() { "create_report", "generate_report", "team_summary", "review" }
     };
 
+    public static readonly AgentDefinition CdsAgent = new()
+    {
+        AgentKey = "cds-agent",
+        DisplayName = "CDS Agent",
+        Description = "远程 Claude Code / Codex 类 sandbox 智能体，支持代码巡检、命令执行、工具审批和 PR 流程",
+        SupportedIntents = new() { IntentTypes.RemoteSandbox, IntentTypes.General },
+        SupportedActions = new() { "remote_task", "code_audit", "create_pr" }
+    };
+
     public static readonly List<AgentDefinition> All = new()
     {
         PrdAgent,
         VisualAgent,
         LiteraryAgent,
         DefectAgent,
-        ReportAgent
+        ReportAgent,
+        CdsAgent
     };
 
     /// <summary>
@@ -570,4 +583,3 @@ public class ToolboxItem
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
-

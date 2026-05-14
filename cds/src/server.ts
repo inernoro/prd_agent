@@ -654,6 +654,24 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
     }
+    // MAP/CDS system connection long token: only allow it on Bridge routes.
+    // This token is the user-approved, long-lived authorization used by MAP
+    // after /api/cds-system/connections/authorize, so it must be able to drive
+    // Page Agent Bridge without granting broad CDS admin access.
+    if (stateService && req.path.startsWith('/api/bridge/')) {
+      const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
+      const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
+      if (connection && connection.scopes.includes('instance:read')) {
+        stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
+        return {
+          id: `cds-connection:${connection.id}`,
+          agentName: `MAP (${connection.partnerName || connection.partnerId || connection.id})`,
+          token: headerKey,
+          approvedAt: connection.activatedAt || connection.createdAt,
+          expiresAt: connection.longTokenExpiresAt || '',
+        };
+      }
+    }
     // Project-scoped Agent Key (cdsp_<slugHead>_<suffix>). Matches the
     // per-project store seeded via POST /api/projects/:id/agent-keys;
     // returns a synthetic session AND stamps req.cdsProjectKey so the
@@ -1090,6 +1108,9 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
+      if (req.path === '/api/cds-system/connections/authorize'
+        || req.path === '/api/cds-system/connections/token'
+        || req.path === '/api/cds-system/connections/accept') return next();
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
@@ -1520,6 +1541,22 @@ export function createServer(deps: ServerDeps): express.Express {
         if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/drain$/.test(reqPath)) return next();
       }
 
+      // MAP/CDS pairing long-token endpoint. The route itself validates that
+      // the Bearer ct_ token belongs to the requested shared-service project.
+      if (
+        reqMethod === 'GET' &&
+        /^\/api\/projects\/[^/]+\/instances$/.test(reqPath) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+      if (
+        /^\/api\/projects\/[^/]+\/agent-sessions(?:\/.*)?$/.test(reqPath) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
@@ -1575,7 +1612,7 @@ export function createServer(deps: ServerDeps): express.Express {
     console.log(`  Auth: enabled (user: ${cdsUser})`);
   } else if (authMode === 'disabled') {
     console.warn(
-      '  ⚠ Auth: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
+      '  Auth warning: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
     );
   }
 
@@ -1912,7 +1949,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // ── Proxy log (全局转发日志) ──
   //
-  // 顶部 🔍 面板用。排查「页面正常但 API 502 没日志」时：
+  // 顶部诊断面板用。排查「页面正常但 API 502 没日志」时：
   //   GET /api/proxy-log        一次性拿最近 500 条环形缓冲
   //   GET /api/proxy-log/stream SSE 实时订阅
   //

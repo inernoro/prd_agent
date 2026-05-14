@@ -54,7 +54,7 @@ interface StepMeta {
 
 const STEPS: StepMeta[] = [
   {
-    nodeId: 'n1', step: 1, icon: '🌐', accentHue: 210,
+    nodeId: 'n1', step: 1, icon: 'HTTP', accentHue: 210,
     capsuleType: 'http-request',
     name: '获取测试数据',
     desc: '从公共 API 获取 JSON 测试数据',
@@ -64,7 +64,7 @@ const STEPS: StepMeta[] = [
     feedsToLabel: '传递给步骤 ②「延时等待」',
   },
   {
-    nodeId: 'n2', step: 2, icon: '⏳', accentHue: 200,
+    nodeId: 'n2', step: 2, icon: 'WAIT', accentHue: 200,
     capsuleType: 'delay',
     name: '延时等待',
     desc: '等待 3 秒模拟数据处理耗时',
@@ -74,7 +74,7 @@ const STEPS: StepMeta[] = [
     feedsToLabel: '传递给步骤 ③「条件判断」',
   },
   {
-    nodeId: 'n3', step: 3, icon: '🔀', accentHue: 45,
+    nodeId: 'n3', step: 3, icon: 'IF', accentHue: 45,
     capsuleType: 'condition',
     name: '条件判断',
     desc: '判断数据量是否大于 0，决定走哪个分支',
@@ -84,7 +84,7 @@ const STEPS: StepMeta[] = [
     feedsToLabel: 'TRUE → 步骤 ④ / FALSE → 步骤 ⑤',
   },
   {
-    nodeId: 'n4', step: 4, icon: '🔄', accentHue: 45,
+    nodeId: 'n4', step: 4, icon: 'FMT', accentHue: 45,
     capsuleType: 'format-converter',
     name: '格式转换',
     desc: '将 JSON 数据转换为 CSV 格式',
@@ -93,7 +93,7 @@ const STEPS: StepMeta[] = [
     outputLabel: 'CSV 格式数据',
   },
   {
-    nodeId: 'n5', step: 5, icon: '🔔', accentHue: 340,
+    nodeId: 'n5', step: 5, icon: 'NTF', accentHue: 340,
     capsuleType: 'notification-sender',
     name: '空数据通知',
     desc: 'FALSE 分支 — 数据为空时发送告警通知',
@@ -134,7 +134,7 @@ const VAR_CONFIGS: VarConfig[] = [
 const DEMO_TEMPLATE = {
   name: '数据采集 + 条件分支 Demo',
   description: '获取测试数据 → 延时等待 → 条件判断 → 格式转换(TRUE) / 通知(FALSE)',
-  icon: '🧪',
+  icon: 'TEST',
   tags: ['demo', 'test'],
   variables: [
     { key: 'API_URL', label: '测试 API 地址', type: 'string', required: false, isSecret: false, defaultValue: 'https://jsonplaceholder.typicode.com/users' },
@@ -498,7 +498,7 @@ function StepCard({ meta, nodeExec, output, expandedArtifacts, onToggleArtifact,
           <span
             className={`workflow-step-index ${indexClass} w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 mt-0.5`}
           >
-            {status === 'completed' ? '✓' : meta.step}
+            {status === 'completed' ? 'OK' : meta.step}
           </span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">

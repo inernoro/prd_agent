@@ -283,6 +283,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             profile = string.IsNullOrWhiteSpace(req.Profile) ? null : req.Profile,
             baseUrl = string.IsNullOrWhiteSpace(req.BaseUrl) ? null : req.BaseUrl,
             apiKey = string.IsNullOrWhiteSpace(req.ApiKey) ? null : req.ApiKey,
+            protocol = string.IsNullOrWhiteSpace(req.Protocol) ? null : req.Protocol,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");

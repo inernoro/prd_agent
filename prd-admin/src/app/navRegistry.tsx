@@ -40,6 +40,7 @@ const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
+const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 
 // ── 类型定义 ──────────────────────────────────────────────
@@ -473,6 +474,29 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'BookOpenText',
       section: 'infra',
       tags: ['智识', '殿堂', '知识', 'library', '社区'],
+    },
+  },
+  {
+    path: '/cds-agent',
+    permission: 'access',
+    element: shellGuarded('access', <CdsAgentPage />),
+    nav: {
+      label: 'CDS Agent',
+      shortLabel: 'CDS',
+      description: '远程 Claude Code / Codex 类 sandbox 智能体',
+      icon: 'Terminal',
+      section: 'agent',
+      appKey: 'cds-agent',
+      accentColor: '#38BDF8',
+      agentColor: {
+        bg: 'rgba(14, 165, 233, 0.08)',
+        border: 'rgba(14, 165, 233, 0.2)',
+        iconBg: 'rgba(14, 165, 233, 0.15)',
+        text: '#7DD3FC',
+      },
+      statLabel: '远程',
+      tags: ['cds', 'agent', 'claude code', 'codex', 'sandbox', '远程智能体'],
+      wip: true,
     },
   },
   {

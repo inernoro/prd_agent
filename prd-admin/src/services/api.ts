@@ -762,8 +762,47 @@ export const api = {
   infraConnections: {
     list: () => '/api/infra-connections',
     paste: () => '/api/infra-connections/paste',
+    cdsAuthorizeStart: () => '/api/infra-connections/cds/authorize/start',
+    cdsAuthorizeComplete: () => '/api/infra-connections/cds/authorize/complete',
     byId: (id: string) => `/api/infra-connections/${id}`,
     probe: (id: string) => `/api/infra-connections/${id}/probe`,
+  },
+
+  // ============ Infra Agent Sessions CDS Agent 工作台 ============
+  infraAgentSessions: {
+    eventSchema: () => '/api/infra-agent-sessions/event-schema',
+    list: () => '/api/infra-agent-sessions',
+    create: () => '/api/infra-agent-sessions',
+    byId: (id: string) => `/api/infra-agent-sessions/${id}`,
+    start: (id: string) => `/api/infra-agent-sessions/${id}/start`,
+    messages: (id: string) => `/api/infra-agent-sessions/${id}/messages`,
+    messageList: (id: string) => `/api/infra-agent-sessions/${id}/messages`,
+    events: (id: string) => `/api/infra-agent-sessions/${id}/events`,
+    stream: (id: string) => `/api/infra-agent-sessions/${id}/stream`,
+    stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
+    archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
+    collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
+    runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
+    captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
+    runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,
+    requestToolApproval: (id: string) => `/api/infra-agent-sessions/${id}/tool-approval-requests`,
+    manualTakeover: (id: string) => `/api/infra-agent-sessions/${id}/manual-takeover`,
+    manualInputs: (id: string) => `/api/infra-agent-sessions/${id}/manual-inputs`,
+    logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
+    toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
+  },
+
+  infraAgentHookProfiles: {
+    list: () => '/api/infra-agent-hook-profiles',
+    create: () => '/api/infra-agent-hook-profiles',
+  },
+
+  infraAgentRuntimeProfiles: {
+    list: () => '/api/infra-agent-runtime-profiles',
+    create: () => '/api/infra-agent-runtime-profiles',
+    importDefaultModel: () => '/api/infra-agent-runtime-profiles/import-default-model',
+    byId: (id: string) => `/api/infra-agent-runtime-profiles/${id}`,
+    test: (id: string) => `/api/infra-agent-runtime-profiles/${id}/test`,
   },
 
   // ============ External Authorizations 外部授权中心 ============

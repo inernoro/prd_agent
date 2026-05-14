@@ -625,7 +625,9 @@ function buildClipboardText(
   context: { username: string; baseUrl: string; apiKey?: string; expiresAt?: string | null },
 ): string {
   const { username, baseUrl, apiKey, expiresAt } = context;
-  const accessKey = apiKey || '$AI_ACCESS_KEY';
+  const authHeaderLines = apiKey
+    ? [`Authorization: Bearer ${apiKey}`]
+    : [`X-AI-Access-Key: $AI_ACCESS_KEY`, `X-AI-Impersonate: ${username}`];
   const lines: string[] = [
     `# 缺陷修复任务`,
     ``,
@@ -653,8 +655,7 @@ function buildClipboardText(
     '```http',
     `POST ${baseUrl}/api/defect-agent/defects/{defectId}/messages`,
     `Content-Type: application/json`,
-    `X-AI-Access-Key: ${accessKey}`,
-    `X-AI-Impersonate: ${username}`,
+    ...authHeaderLines,
     ``,
     `{`,
     `  "content": "评论内容（支持 Markdown）",`,
@@ -675,8 +676,7 @@ function buildClipboardText(
     '```http',
     `POST ${baseUrl}/api/defect-agent/defects/{defectId}/resolve`,
     `Content-Type: application/json`,
-    `X-AI-Access-Key: ${accessKey}`,
-    `X-AI-Impersonate: ${username}`,
+    ...authHeaderLines,
     ``,
     `{`,
     `  "resolution": "修复说明（必须包含验收方式）"`,
@@ -693,7 +693,7 @@ function buildClipboardText(
     `4. **说明验收方式**：标记完成时必须告诉提交者如何验证修复效果`,
     ``,
     apiKey
-      ? `> **认证说明**：已随本提示词提供 1 天临时密钥，过期时间：${formatExpiry(expiresAt)}。Header 名称区分大小写：\`X-AI-Access-Key\`。`
+      ? `> **认证说明**：已随本提示词提供 1 天临时密钥，过期时间：${formatExpiry(expiresAt)}。请使用 \`Authorization: Bearer <临时密钥>\`，权限以创建密钥的用户为准。`
       : `> **认证说明**：\`AI_ACCESS_KEY\` 从环境变量读取（Header 名称区分大小写：\`X-AI-Access-Key\`）。\`X-AI-Impersonate\` 是要"代理操作"的用户名。`,
     ``,
     `---`,

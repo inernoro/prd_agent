@@ -172,6 +172,112 @@ export function createCdsSystemConnectionsRouter(
     }
   });
 
+  // ── authorize / token（MAP 端输入 CDS 地址后跳转授权） ─────────────
+  router.get('/cds-system/connections/authorize', (req, res) => {
+    const redirectUri = String(req.query.redirectUri || '');
+    const state = String(req.query.state || '');
+    const mapBaseUrl = String(req.query.mapBaseUrl || '');
+    const mapId = String(req.query.mapId || '');
+    const mapName = String(req.query.mapName || 'MAP');
+    const approved = String(req.query.approve || '') === '1';
+
+    if (!redirectUri || !state || !mapBaseUrl || !mapId) {
+      res.status(400).type('html').send(renderAuthorizeError('授权参数不完整，请回到 MAP 重新发起连接。'));
+      return;
+    }
+
+    let redirectUrl: URL;
+    try {
+      redirectUrl = new URL(redirectUri);
+    } catch {
+      res.status(400).type('html').send(renderAuthorizeError('MAP 回跳地址无效，请检查 MAP 配置。'));
+      return;
+    }
+
+    if (!approved) {
+      const approveUrl = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
+      approveUrl.searchParams.set('approve', '1');
+      res.type('html').send(renderAuthorizePage({
+        mapName,
+        mapBaseUrl,
+        redirectHost: redirectUrl.origin,
+        approveUrl: approveUrl.toString(),
+      }));
+      return;
+    }
+
+    try {
+      const result = pairing.issue({
+        name: `authorize ${mapName}`,
+        scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'],
+        ttlMinutes: 10,
+        hint: { supportsSidecar: true, defaultSidecarPort: 7400 },
+      });
+      redirectUrl.searchParams.set('cds_code', result.pairingToken);
+      redirectUrl.searchParams.set('state', state);
+      redirectUrl.searchParams.set('cds_base_url', cdsBaseUrlGetter());
+      res.redirect(302, redirectUrl.toString());
+    } catch (err) {
+      res.status(500).type('html').send(renderAuthorizeError(
+        err instanceof Error ? err.message : String(err),
+      ));
+    }
+  });
+
+  router.post('/cds-system/connections/token', (req, res) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const projectIntent = (body.projectIntent || {}) as Record<string, unknown>;
+    if (projectIntent.kind !== 'shared-service') {
+      res.status(400).json({
+        error: { code: 'project_intent_unsupported', message: 'projectIntent.kind must be shared-service in v1' },
+      });
+      return;
+    }
+
+    try {
+      const partnerId = String(body.mapId || body.partnerId || '');
+      const partnerName = String(body.mapName || body.partnerName || '');
+      const partnerBaseUrl = String(body.mapBaseUrl || body.partnerBaseUrl || '');
+      const result = pairing.accept(
+        {
+          pairingToken: String(body.code || ''),
+          partnerKind: 'map',
+          partnerId,
+          partnerName,
+          partnerBaseUrl,
+          projectIntent: {
+            kind: 'shared-service',
+            name: String(projectIntent.name || 'shared-service'),
+            displayName:
+              typeof projectIntent.displayName === 'string'
+                ? (projectIntent.displayName as string)
+                : undefined,
+          },
+        },
+        intent => createSharedServiceProject(stateService, intent, partnerName),
+      );
+      res.status(200).json({
+        ...result,
+        cdsId: cdsIdGetter(),
+        cdsName: cdsNameGetter(),
+        scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'],
+      });
+    } catch (err) {
+      if (err instanceof PairingError) {
+        res.status(err.httpStatus).json({
+          error: { code: err.errorCode, message: err.message },
+        });
+        return;
+      }
+      res.status(500).json({
+        error: {
+          code: 'internal_error',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      });
+    }
+  });
+
   // ── list / get / delete ──────────────────────
   router.get('/cds-system/connections', (_req, res) => {
     stateService.gcExpiredPairingConnections();
@@ -290,4 +396,77 @@ function createSharedServiceProject(
   };
   stateService.addProject(project);
   return project;
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderAuthorizePage(input: {
+  mapName: string;
+  mapBaseUrl: string;
+  redirectHost: string;
+  approveUrl: string;
+}): string {
+  const mapName = escapeHtml(input.mapName || 'MAP');
+  const mapBaseUrl = escapeHtml(input.mapBaseUrl);
+  const redirectHost = escapeHtml(input.redirectHost);
+  const approveUrl = escapeHtml(input.approveUrl);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>授权 MAP 连接 CDS</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(560px, calc(100vw - 32px)); border: 1px solid rgba(148,163,184,.28); background: rgba(15,23,42,.96); border-radius: 12px; padding: 28px; box-shadow: 0 24px 80px rgba(0,0,0,.32); }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    p { color: #94a3b8; line-height: 1.7; }
+    dl { display: grid; gap: 10px; margin: 20px 0; }
+    div.row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; font-size: 14px; }
+    dt { color: #94a3b8; }
+    dd { margin: 0; word-break: break-all; }
+    .scopes { border: 1px solid rgba(148,163,184,.18); border-radius: 10px; padding: 12px; color: #cbd5e1; background: rgba(255,255,255,.03); }
+    a.button { display: inline-flex; margin-top: 18px; padding: 10px 14px; border-radius: 8px; background: #38bdf8; color: #082f49; text-decoration: none; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>授权 MAP 连接 CDS</h1>
+    <p>授权后，MAP 将创建一个 shared-service 项目，用于发现并调用 Claude SDK sidecar 等远程执行实例。</p>
+    <dl>
+      <div class="row"><dt>MAP 名称</dt><dd>${mapName}</dd></div>
+      <div class="row"><dt>MAP 地址</dt><dd>${mapBaseUrl}</dd></div>
+      <div class="row"><dt>回跳地址</dt><dd>${redirectHost}</dd></div>
+    </dl>
+    <div class="scopes">授权范围：shared-service:deploy, instance:read, deployment:stream</div>
+    <a class="button" href="${approveUrl}">授权并返回 MAP</a>
+  </main>
+</body>
+</html>`;
+}
+
+function renderAuthorizeError(message: string): string {
+  const safe = escapeHtml(message);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CDS 授权失败</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(520px, calc(100vw - 32px)); border: 1px solid rgba(248,113,113,.35); background: rgba(15,23,42,.96); border-radius: 12px; padding: 28px; }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    p { color: #fecaca; line-height: 1.7; }
+  </style>
+</head>
+<body><main><h1>授权失败</h1><p>${safe}</p></main></body>
+</html>`;
 }

@@ -4,12 +4,14 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Services.Poster;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -31,24 +33,35 @@ public sealed class WeeklyPosterController : ControllerBase
 {
     private static readonly string ImageGenAppCallerCode = AppCallerRegistry.ReportAgent.WeeklyPoster.Image;
 
+    // SSE 帧 JSON 序列化必须用 camelCase，与全局 Program.cs 配置和前端期望一致；
+    // 默认 JsonSerializer.Serialize 是 PascalCase（Id/WeekKey/Pages），前端读 .id/.weekKey 会拿到 undefined
+    private static readonly JsonSerializerOptions SseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+    };
+
     private readonly MongoDbContext _db;
     private readonly ILogger<WeeklyPosterController> _logger;
     private readonly IPosterAutopilotService _autopilot;
     private readonly OpenAIImageClient _imageClient;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IAssetStorage _assetStorage;
 
     public WeeklyPosterController(
         MongoDbContext db,
         ILogger<WeeklyPosterController> logger,
         IPosterAutopilotService autopilot,
         OpenAIImageClient imageClient,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IAssetStorage assetStorage)
     {
         _db = db;
         _logger = logger;
         _autopilot = autopilot;
         _imageClient = imageClient;
         _llmRequestContext = llmRequestContext;
+        _assetStorage = assetStorage;
     }
 
     // ────────────────────────────────────────────────────────────
@@ -116,6 +129,10 @@ public sealed class WeeklyPosterController : ControllerBase
         [FromQuery] int pageSize = 30,
         CancellationToken ct = default)
     {
+        var userId = this.GetUserIdOrNull();
+        _logger.LogInformation("[WeeklyPosters.List] userId={UserId} page={Page} pageSize={PageSize} status={Status}",
+            userId, page, pageSize, status);
+
         if (page < 1) page = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 30;
 
@@ -126,19 +143,69 @@ public sealed class WeeklyPosterController : ControllerBase
         }
 
         var total = await _db.WeeklyPosters.CountDocumentsAsync(filter, cancellationToken: ct);
-        var items = await _db.WeeklyPosters
-            .Find(filter)
-            .SortByDescending(x => x.UpdatedAt)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
-            .ToListAsync(ct);
 
+        List<WeeklyPosterListItemDto> items;
+        try
+        {
+            // 列表只需最小字段：id/title/weekKey/status/updatedAt/publishedAt/pages 页数
+            // 详情由 GET /:id 单独加载，任何内容字段（pages 内容/sourceRef/cta 等）不在此返回
+            // 注意：Project<WeeklyPosterAnnouncement> 使用 Include-only 投影，Pages 只含 _id
+            // 用于计数。若投影导致 BsonSerializationException，下方 catch 会回退到全量查询。
+            var projection = Builders<WeeklyPosterAnnouncement>.Projection
+                .Include(x => x.Id)
+                .Include(x => x.Title)
+                .Include(x => x.WeekKey)
+                .Include(x => x.Status)
+                .Include(x => x.UpdatedAt)
+                .Include(x => x.PublishedAt)
+                .Include("Pages._id");
+            var rawItems = await _db.WeeklyPosters
+                .Find(filter)
+                .Project<WeeklyPosterAnnouncement>(projection)
+                .SortByDescending(x => x.UpdatedAt)
+                .Skip((page - 1) * pageSize)
+                .Limit(pageSize)
+                .ToListAsync(ct);
+            items = rawItems.Select(p => new WeeklyPosterListItemDto
+            {
+                Id = p.Id,
+                Title = p.Title,
+                WeekKey = p.WeekKey,
+                Status = p.Status,
+                PageCount = p.Pages?.Count ?? 0,
+                UpdatedAt = p.UpdatedAt,
+                PublishedAt = p.PublishedAt,
+            }).ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 投影反序列化失败时回退到全量字段查询（性能较差但保证可用）
+            _logger.LogWarning(ex, "[WeeklyPosters.List] projection failed, falling back to full query. userId={UserId}", userId);
+            var fullItems = await _db.WeeklyPosters
+                .Find(filter)
+                .SortByDescending(x => x.UpdatedAt)
+                .Skip((page - 1) * pageSize)
+                .Limit(pageSize)
+                .ToListAsync(ct);
+            items = fullItems.Select(p => new WeeklyPosterListItemDto
+            {
+                Id = p.Id,
+                Title = p.Title,
+                WeekKey = p.WeekKey,
+                Status = p.Status,
+                PageCount = p.Pages?.Count ?? 0,
+                UpdatedAt = p.UpdatedAt,
+                PublishedAt = p.PublishedAt,
+            }).ToList();
+        }
+
+        _logger.LogInformation("[WeeklyPosters.List] returning {Count}/{Total} items", items.Count, total);
         return Ok(ApiResponse<object>.Ok(new
         {
             total,
             page,
             pageSize,
-            items = items.Select(ToDto).ToList(),
+            items,
         }));
     }
 
@@ -450,12 +517,13 @@ public sealed class WeeklyPosterController : ControllerBase
     {
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
+        // Connection: close — SSE 流结束后关闭 TCP 连接，避免代理以 keep-alive 复用脏连接导致后续请求 400
+        Response.Headers.Connection = "close";
         Response.Headers["X-Accel-Buffering"] = "no"; // 关闭 nginx 缓冲
 
         async Task Emit(string evt, object data)
         {
-            var json = JsonSerializer.Serialize(data);
+            var json = JsonSerializer.Serialize(data, SseJsonOptions);
             var frame = $"event: {evt}\ndata: {json}\n\n";
             await Response.WriteAsync(frame, Encoding.UTF8, ct);
             await Response.Body.FlushAsync(ct);
@@ -505,6 +573,7 @@ public sealed class WeeklyPosterController : ControllerBase
             string? model = null;
             string? platform = null;
             var emittedOrders = new HashSet<int>();
+            int textChunkCount = 0;
             try
             {
                 await foreach (var chunk in _autopilot.StreamLlmChunksAsync(
@@ -522,6 +591,7 @@ public sealed class WeeklyPosterController : ControllerBase
                     }
                     else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                     {
+                        textChunkCount++;
                         accumulator.Append(chunk.Content);
                         await Emit("chunk", new { delta = chunk.Content, length = accumulator.Length });
 
@@ -564,10 +634,17 @@ public sealed class WeeklyPosterController : ControllerBase
                 accumulator.ToString(), templateKey, req.PageCount, src.summary, model, platform);
             if (result == null)
             {
-                _logger.LogWarning("AutopilotStream: failed to parse accumulated LLM output ({Len} chars): {Head}",
-                    accumulator.Length,
-                    accumulator.Length > 400 ? accumulator.ToString()[..400] : accumulator.ToString());
-                await EmitError("模型输出无法解析为海报,换个数据源或重试一次");
+                var rawContent = accumulator.ToString();
+                _logger.LogWarning(
+                    "AutopilotStream: parse failed — model={Model} textChunks={Chunks} len={Len} head={Head}",
+                    model ?? "unknown",
+                    textChunkCount,
+                    rawContent.Length,
+                    rawContent.Length > 1000 ? rawContent[..1000] : rawContent);
+                var errMsg = rawContent.Length == 0
+                    ? "模型未生成任何文字内容，请切换至其他模型后重试"
+                    : "模型输出无法解析为海报格式，换个数据源或切换模型后重试";
+                await EmitError(errMsg);
                 return;
             }
 
@@ -620,6 +697,8 @@ public sealed class WeeklyPosterController : ControllerBase
             }
 
             await Emit("done", new { poster = dto });
+            // 显式完成响应，确保所有 chunk 都已 flush 并关闭流
+            await Response.CompleteAsync();
         }
         catch (OperationCanceledException)
         {
@@ -691,12 +770,20 @@ public sealed class WeeklyPosterController : ControllerBase
                 res.Error?.Message ?? "生图未返回结果"));
         }
         var img = res.Data.Images[0];
-        var url = !string.IsNullOrWhiteSpace(img.Url)
-            ? img.Url!
-            : !string.IsNullOrWhiteSpace(img.Base64)
-                ? $"data:image/png;base64,{img.Base64}"
-                : null;
-        if (string.IsNullOrWhiteSpace(url))
+        string? url;
+        if (!string.IsNullOrWhiteSpace(img.Url))
+        {
+            url = img.Url!;
+        }
+        else if (!string.IsNullOrWhiteSpace(img.Base64))
+        {
+            // 生图 API 返回 base64 时，上传到对象存储并存 URL，避免在 MongoDB 存几 MB 的 base64
+            var bytes = Convert.FromBase64String(img.Base64);
+            var stored = await _assetStorage.SaveAsync(bytes, "image/png", ct,
+                domain: AppDomainPaths.DomainReportAgent, type: AppDomainPaths.TypeImg);
+            url = stored.Url;
+        }
+        else
         {
             return StatusCode(502, ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, "生图结果无 url/base64"));
         }
@@ -728,9 +815,145 @@ public sealed class WeeklyPosterController : ControllerBase
         return Ok(ApiResponse<WeeklyPosterDto>.Ok(ToDto(updated)));
     }
 
+    /// <summary>
+    /// 为当前海报创建后台批量生图任务。任务由 ImageGenRunWorker 执行，浏览器断开后仍会继续回填页面 ImageUrl。
+    /// 默认只生成未配置主图的页面；regenerate=true 时重生全部有 prompt 的页面。
+    /// </summary>
+    [HttpPost("{id}/generate-images")]
+    public async Task<IActionResult> GenerateImagesRun(
+        [FromRoute] string id,
+        [FromBody] GenerateImagesRunRequest? req,
+        CancellationToken ct)
+    {
+        var poster = await _db.WeeklyPosters.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (poster == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "海报不存在"));
+        }
+
+        var regenerate = req?.Regenerate == true;
+        var targets = (poster.Pages ?? new List<WeeklyPosterPage>())
+            .Where(p => !string.IsNullOrWhiteSpace(p.ImagePrompt)
+                && (regenerate || string.IsNullOrWhiteSpace(p.ImageUrl)))
+            .OrderBy(p => p.Order)
+            .Take(20)
+            .ToList();
+        if (targets.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "没有需要生成的页面"));
+        }
+
+        var running = await _db.ImageGenRuns
+            .Find(x => x.WeeklyPosterId == id
+                && x.OwnerAdminId == this.GetRequiredUserId()
+                && (x.Status == ImageGenRunStatus.Queued || x.Status == ImageGenRunStatus.Running))
+            .SortByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (running != null)
+        {
+            return Ok(ApiResponse<GenerateImagesRunResponse>.Ok(new GenerateImagesRunResponse
+            {
+                RunId = running.Id,
+                Status = running.Status.ToString(),
+                Total = running.Total,
+                Reused = true
+            }));
+        }
+
+        var userId = this.GetRequiredUserId();
+        var run = new ImageGenRun
+        {
+            OwnerAdminId = userId,
+            Status = ImageGenRunStatus.Queued,
+            Size = "1024x1024",
+            ResponseFormat = "url",
+            MaxConcurrency = Math.Clamp(req?.MaxConcurrency ?? 3, 1, 5),
+            Items = targets.Select(p => new ImageGenRunPlanItem
+            {
+                Prompt = p.ImagePrompt.Trim(),
+                Count = 1,
+                Size = "1024x1024",
+                TargetPageOrder = p.Order,
+                DisplayPrompt = p.ImagePrompt.Trim()
+            }).ToList(),
+            Total = targets.Count,
+            Done = 0,
+            Failed = 0,
+            CancelRequested = false,
+            LastSeq = 0,
+            AppCallerCode = ImageGenAppCallerCode,
+            AppKey = AppNames.ReportAgent,
+            WeeklyPosterId = id,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: ct);
+        return Ok(ApiResponse<GenerateImagesRunResponse>.Ok(new GenerateImagesRunResponse
+        {
+            RunId = run.Id,
+            Status = run.Status.ToString(),
+            Total = run.Total,
+            Reused = false
+        }));
+    }
+
+    [HttpGet("image-runs/{runId}")]
+    public async Task<IActionResult> GetImageRun([FromRoute] string runId, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        runId = (runId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+        }
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId && x.OwnerAdminId == userId).FirstOrDefaultAsync(ct);
+        if (run == null || string.IsNullOrWhiteSpace(run.WeeklyPosterId))
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, "生图任务不存在"));
+        }
+
+        var poster = await _db.WeeklyPosters.Find(x => x.Id == run.WeeklyPosterId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<GenerateImagesRunStatusResponse>.Ok(new GenerateImagesRunStatusResponse
+        {
+            RunId = run.Id,
+            PosterId = run.WeeklyPosterId,
+            Status = run.Status.ToString(),
+            Total = run.Total,
+            Done = run.Done,
+            Failed = run.Failed,
+            Poster = poster == null ? null : ToDto(poster)
+        }));
+    }
+
     public sealed class GenerateImageRequest
     {
         public string? OverridePrompt { get; set; }
+    }
+
+    public sealed class GenerateImagesRunRequest
+    {
+        public bool? Regenerate { get; set; }
+        public int? MaxConcurrency { get; set; }
+    }
+
+    public sealed class GenerateImagesRunResponse
+    {
+        public string RunId { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public bool Reused { get; set; }
+    }
+
+    public sealed class GenerateImagesRunStatusResponse
+    {
+        public string RunId { get; set; } = string.Empty;
+        public string PosterId { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public int Done { get; set; }
+        public int Failed { get; set; }
+        public WeeklyPosterDto? Poster { get; set; }
     }
 
     private static string IsoWeekKey(DateTime dt)
@@ -848,6 +1071,17 @@ public sealed class WeeklyPosterController : ControllerBase
         PublishedAt = poster.PublishedAt,
         UpdatedAt = poster.UpdatedAt,
     };
+
+    public sealed class WeeklyPosterListItemDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string WeekKey { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int PageCount { get; set; }
+        public DateTime UpdatedAt { get; set; }
+        public DateTime? PublishedAt { get; set; }
+    }
 
     public sealed class WeeklyPosterUpsert
     {

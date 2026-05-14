@@ -171,58 +171,68 @@ public class SimpleOrchestrator : IToolboxOrchestrator
             var stepArtifacts = new List<ToolboxArtifact>();
             var stepSuccess = true;
             string? stepError = null;
-            var pendingEvents = new List<ToolboxRunEvent>();
-
-            try
+            yield return ToolboxRunEvent.StepProgress(
+                step.StepId,
+                $"正在调度智能体适配器：{adapter.GetType().Name}\n",
+                ++seq);
+            await using var chunks = adapter.StreamExecuteAsync(context, ct).GetAsyncEnumerator(ct);
+            while (true)
             {
-                await foreach (var chunk in adapter.StreamExecuteAsync(context, ct))
+                AgentStreamChunk? chunk;
+                try
                 {
-                    switch (chunk.Type)
+                    if (!await chunks.MoveNextAsync())
                     {
-                        case AgentChunkType.Text:
-                            if (!string.IsNullOrEmpty(chunk.Content))
-                            {
-                                stepContent.Append(chunk.Content);
-                                pendingEvents.Add(ToolboxRunEvent.StepProgress(step.StepId, chunk.Content, ++seq));
-                            }
-                            break;
-
-                        case AgentChunkType.Artifact:
-                            if (chunk.Artifact != null)
-                            {
-                                stepArtifacts.Add(chunk.Artifact);
-                                allArtifacts.Add(chunk.Artifact);
-                                pendingEvents.Add(ToolboxRunEvent.StepArtifact(step.StepId, chunk.Artifact, ++seq));
-                            }
-                            break;
-
-                        case AgentChunkType.Error:
-                            stepSuccess = false;
-                            stepError = chunk.Content;
-                            break;
-
-                        case AgentChunkType.Done:
-                            // 如果 Done 携带了最终内容，更新
-                            if (!string.IsNullOrEmpty(chunk.Content))
-                            {
-                                stepContent.Clear();
-                                stepContent.Append(chunk.Content);
-                            }
-                            break;
+                        break;
                     }
+                    chunk = chunks.Current;
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Agent 执行异常: {AgentKey}, Step: {StepId}", step.AgentKey, step.StepId);
-                stepSuccess = false;
-                stepError = ex.Message;
-            }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Agent 执行异常: {AgentKey}, Step: {StepId}", step.AgentKey, step.StepId);
+                    stepSuccess = false;
+                    stepError = ex.Message;
+                    break;
+                }
 
-            // 在 try-catch 外部 yield 事件
-            foreach (var evt in pendingEvents)
-            {
-                yield return evt;
+                switch (chunk.Type)
+                {
+                    case AgentChunkType.Text:
+                        if (!string.IsNullOrEmpty(chunk.Content))
+                        {
+                            stepContent.Append(chunk.Content);
+                            yield return ToolboxRunEvent.StepProgress(step.StepId, chunk.Content, ++seq);
+                        }
+                        break;
+
+                    case AgentChunkType.Artifact:
+                        if (chunk.Artifact != null)
+                        {
+                            stepArtifacts.Add(chunk.Artifact);
+                            allArtifacts.Add(chunk.Artifact);
+                            yield return ToolboxRunEvent.StepArtifact(step.StepId, chunk.Artifact, ++seq);
+                        }
+                        break;
+
+                    case AgentChunkType.Error:
+                        stepSuccess = false;
+                        stepError = chunk.Content;
+                        break;
+
+                    case AgentChunkType.Done:
+                        // 如果 Done 携带了最终内容，更新
+                        if (!string.IsNullOrEmpty(chunk.Content))
+                        {
+                            stepContent.Clear();
+                            stepContent.Append(chunk.Content);
+                        }
+                        break;
+                }
+
+                if (!stepSuccess)
+                {
+                    break;
+                }
             }
 
             if (stepSuccess)
@@ -243,11 +253,16 @@ public class SimpleOrchestrator : IToolboxOrchestrator
                 step.Status = ToolboxStepStatus.Failed;
                 step.ErrorMessage = stepError;
                 step.CompletedAt = DateTime.UtcNow;
+                run.Artifacts = allArtifacts;
 
                 yield return ToolboxRunEvent.StepFailed(step.StepId, stepError ?? "未知错误", ++seq);
                 _logger.LogWarning("步骤失败: {StepId}, Error: {Error}", step.StepId, stepError);
 
                 // 步骤失败，整个 Run 失败
+                run.Status = ToolboxRunStatus.Failed;
+                run.ErrorMessage = $"步骤 {step.Index + 1} 执行失败: {stepError}";
+                run.CompletedAt = DateTime.UtcNow;
+                run.LastSeq = seq + 1;
                 yield return ToolboxRunEvent.RunFailed($"步骤 {step.Index + 1} 执行失败: {stepError}", ++seq);
                 yield break;
             }

@@ -831,7 +831,6 @@ function CanvasInner({
   // 清理轮询
   useEffect(() => {
     return () => stopPolling();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 如果加载时有正在运行的执行，自动开始轮询
@@ -989,7 +988,7 @@ function CanvasInner({
       {/* 顶部标题栏 */}
       <TabBar
         title={workflow.name || '编排画布'}
-        icon={<span>{workflow.icon || '🔧'}</span>}
+        icon={<span>{workflow.icon || 'WF'}</span>}
         actions={
           <div className="flex items-center gap-2">
             {hasSelected && (
@@ -2232,7 +2231,7 @@ function ConfigFieldInput({
           <div
             className="workflow-boolean-field-box w-3.5 h-3.5 rounded border-2 flex items-center justify-center"
           >
-            {!!value && <span className="workflow-boolean-field-check text-[8px]">✓</span>}
+            {!!value && <span className="workflow-boolean-field-check text-[8px]">ON</span>}
           </div>
           <span className="text-token-secondary">{value ? '启用' : '关闭'}</span>
         </button>

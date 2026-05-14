@@ -61,6 +61,7 @@ docs:
   design.apple-shortcuts: 苹果快捷指令集成设计方案
   design.executive-dashboard: 总裁面板与周报 Agent 设计文档
   design.defect-agent: 缺陷管理 Agent 功能设计
+  design.defect-labels: 缺陷管理标签体系设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
   design.literary-agent: 文学创作 Agent 文章配图功能设计
   design.multi-doc-knowledge: 多文档知识库与文档类型系统设计文档
@@ -79,6 +80,7 @@ docs:
   design.toast: Toast 通知系统实现
   design.network-diagnostics: 网络诊断功能
   design.cds: CDS (Cloud Development Suite) 设计文档
+  design.cds-agent-api: CDS Agent API 契约设计
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
@@ -130,6 +132,9 @@ docs:
   guide.weekly-report: 周报功能完整操作指南
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
   guide.ai-toolbox-ops: AI 百宝箱运维指南
+  guide.cds-agent-workbench: CDS Agent 工作台用户指南
+  guide.cds-agent-admin: CDS Agent 管理员指南
+  guide.cds-agent-runbook: CDS Agent 运行手册
   guide.cds-env: CDS 环境变量配置指南
   guide.troubleshooting: 疑难杂症排查手册
   guide.prd-agent-operations: PRD Agent 全平台操作手册
@@ -154,6 +159,7 @@ docs:
   guide.cds-web-migration-runbook: CDS Web 迁移运行手册
   guide.cds-blue-green-handoff: CDS 蓝绿改造交接（已废弃，留档备查）
   guide.claude-sdk-quickstart: Claude SDK 三步接入指南
+  guide.claude-sdk-cds-map-mvp: Claude SDK + CDS MAP 配对 MVP 指南
   guide.e2e-tests: Playwright E2E 测试指南
   guide.infra-sandbox-agent: 基础设施沙箱 Agent 完整手册
   guide.skill-catalog: 技能百科全书指南
@@ -174,6 +180,7 @@ docs:
   rule.skill-system: 技能系统规则与创建指南
   rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
   rule.ai-model-visibility: AI 模型可见性原则
+  rule.issues-system: Issues 体系协议规则（autofix + 视觉验收 + 元 issue #605）
   rule.streaming-text: 流式文本动效统一规范 (Blur focus 默认)
   rule.cds-mongo-migration: CDS state.json → MongoDB 迁移与回滚规则
   rule.cds-project-isolation-audit: CDS 多项目隔离审计规则
@@ -206,6 +213,7 @@ docs:
   plan.skill-installation: Claude Code Skill 安装计划
   plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
   plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
+  plan.cds-agent-workbench: CDS Agent 工作台完全可用路线
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划

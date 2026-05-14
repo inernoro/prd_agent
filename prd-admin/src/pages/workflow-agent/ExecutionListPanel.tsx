@@ -64,7 +64,7 @@ export function ExecutionListPanel() {
           </button>
           <div>
             <h1 className="text-lg font-semibold">
-              {selectedWorkflow?.icon || '🔄'} {selectedWorkflow?.name} - 执行历史
+              {selectedWorkflow?.icon || 'RUN'} {selectedWorkflow?.name} - 执行历史
             </h1>
             <p className="text-xs text-muted-foreground">共 {executionsTotal} 条记录</p>
           </div>

@@ -137,6 +137,14 @@ public class AiToolboxController : ControllerBase
         _logger.LogInformation("意图识别完成: PrimaryIntent={Intent}, Confidence={Confidence}, Agents={Agents}",
             intent.PrimaryIntent, intent.Confidence, string.Join(",", intent.SuggestedAgents));
 
+        if (request.Options?.PreferredAgents is { Count: > 0 } preferredAgents)
+        {
+            intent.SuggestedAgents = preferredAgents
+                .Where(key => AgentRegistry.GetByKey(key) != null)
+                .Distinct()
+                .ToList();
+        }
+
         // Step 2: 创建运行记录
         var run = new ToolboxRun
         {
@@ -1684,6 +1692,7 @@ public class AiToolboxController : ControllerBase
         return agentKey switch
         {
             "prd-agent" => "analyze_prd",
+            "cds-agent" => "remote_task",
             "visual-agent" => "text2img",
             "literary-agent" => intent.PrimaryIntent == IntentTypes.ImageGen ? "generate_illustration" : "write_content",
             "defect-agent" => "extract_defect",

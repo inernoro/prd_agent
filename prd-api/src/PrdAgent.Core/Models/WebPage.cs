@@ -1,10 +1,16 @@
 using System.Security.Cryptography;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 托管站点 — 用户上传 HTML/ZIP 或工作流自动生成的可运行网页
+///
+/// BsonIgnoreExtraElements: 历史 schema 演进 / 外部脚本写入会让 DB 文档里
+/// 出现 model 类没有的字段（已知一例：WrappedAssetType，无任何 commit 来源
+/// 但 prod DB 里存在），不忽略则反序列化抛 FormatException 让整个 List 端点 500。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class HostedSite
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -90,6 +96,7 @@ public class HostedSiteFile
 /// <summary>
 /// 网页分享链接 — 基于 Token 的分享机制（密码保护 + 过期时间）
 /// </summary>
+[BsonIgnoreExtraElements]
 public class WebPageShareLink
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

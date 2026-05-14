@@ -14,6 +14,17 @@ interface State {
   expanded: boolean;
 }
 
+const CHUNK_RELOAD_KEY = 'prd-admin:chunk-load-reload-once';
+
+function isChunkLoadError(error: Error): boolean {
+  const message = error.message || '';
+  return message.includes('Failed to fetch dynamically imported module')
+    || message.includes('Importing a module script failed')
+    || message.includes('error loading dynamically imported module')
+    || message.includes('Loading chunk')
+    || message.includes('ChunkLoadError');
+}
+
 /**
  * 全局错误边界 —— 专门防止「某个页面渲染抛错 → 整个 App 卸载 → 黑屏」。
  *
@@ -38,6 +49,14 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
       userAgent: navigator.userAgent,
       viewport: `${window.innerWidth}x${window.innerHeight}`,
     });
+
+    if (isChunkLoadError(error)) {
+      const reloadKey = `${CHUNK_RELOAD_KEY}:${window.location.origin}`;
+      if (sessionStorage.getItem(reloadKey) !== '1') {
+        sessionStorage.setItem(reloadKey, '1');
+        window.location.reload();
+      }
+    }
   }
 
   componentDidUpdate(prevProps: Props): void {
@@ -47,6 +66,10 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
   }
 
   reset = () => {
+    if (this.state.error && isChunkLoadError(this.state.error)) {
+      window.location.reload();
+      return;
+    }
     this.setState({ error: null, errorInfo: null, expanded: false });
   };
 

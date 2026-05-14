@@ -280,6 +280,45 @@ describe('CdsPairingService.accept', () => {
     })();
     expect(err?.errorCode).toBe('project_intent_unsupported');
   });
+
+  it('同一 MAP 重新授权：撤销旧 active 连接并签发新 longToken', () => {
+    const first = env.pairing.issue({});
+    const firstResult = env.pairing.accept(
+      {
+        pairingToken: first.pairingToken,
+        partnerKind: 'map',
+        partnerId: 'map-uuid',
+        partnerName: 'prd-agent prod',
+        partnerBaseUrl: 'https://prd-agent.test',
+        projectIntent: { kind: 'shared-service', name: 'sidecar-pool' },
+      },
+      intent => {
+        const p = makeProject(`proj-${intent.name}`);
+        env.state.addProject(p);
+        return p;
+      },
+    );
+
+    const second = env.pairing.issue({});
+    const secondResult = env.pairing.accept(
+      {
+        pairingToken: second.pairingToken,
+        partnerKind: 'map',
+        partnerId: 'map-uuid',
+        partnerName: 'prd-agent prod',
+        partnerBaseUrl: 'https://prd-agent.test',
+        projectIntent: { kind: 'shared-service', name: 'sidecar-pool' },
+      },
+      intent => env.state.getProjects().find(p => p.id === `proj-${intent.name}`) ?? makeProject(`proj-${intent.name}`),
+    );
+
+    expect(secondResult.connectionId).toBe(second.connectionId);
+    expect(secondResult.cdsLongToken).toMatch(/^ct_/);
+    expect(secondResult.cdsLongToken).not.toBe(firstResult.cdsLongToken);
+    expect(env.state.getCdsConnection(first.connectionId)?.status).toBe('revoked');
+    expect(env.state.getCdsConnection(second.connectionId)?.status).toBe('active');
+    expect(env.state.getActiveCdsConnections().filter(c => c.partnerId === 'map-uuid')).toHaveLength(1);
+  });
 });
 
 describe('CdsPairingService.authenticateLongToken', () => {

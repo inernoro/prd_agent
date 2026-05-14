@@ -96,6 +96,7 @@ services:
     tmpfs:
       - /tmp
     volumes:
+      - dataprotection_keys:/data/dataprotection-keys
       - ./deploy/assets/fonts:/app/Assets/Fonts
       # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换用）
       # 安装：curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /opt/ffmpeg-static --strip-components=1
@@ -111,11 +112,11 @@ services:
 volumes:
   mongodb_data:
   redis_data:
+  dataprotection_keys:
 
 networks:
   prdagent-network:
     external: true
-
 
 
 

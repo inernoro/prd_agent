@@ -12,7 +12,7 @@
  * 安全：
  *   - 所有 token 仅存 SHA256 hash
  *   - pairing token TTL 默认 10 分钟，可配置 1-60
- *   - long token TTL 默认 365 天
+ *   - long token 为系统级长期授权；除非显式 revoke / delete，不因时间自动失效
  *   - issue/accept 里手动用 crypto.randomBytes(32) 生成强随机
  */
 
@@ -57,7 +57,7 @@ export interface AcceptRequest {
 export interface AcceptResult {
   connectionId: string;
   cdsLongToken: string;
-  cdsLongTokenExpiresAt: string;
+  cdsLongTokenExpiresAt: string | null;
   projectId: string;
   instanceDiscoveryUrl: string;
   deployStreamUrlTemplate: string;
@@ -78,7 +78,6 @@ const DEFAULT_SCOPES = ['shared-service:deploy', 'instance:read', 'deployment:st
 const PAIRING_TTL_DEFAULT_MIN = 10;
 const PAIRING_TTL_MIN = 1;
 const PAIRING_TTL_MAX = 60;
-const LONG_TOKEN_TTL_DAYS = 365;
 
 export class CdsPairingService {
   constructor(
@@ -167,26 +166,24 @@ export class CdsPairingService {
       throw new PairingError('pairing_token_expired', 410, 'pairing token expired');
     }
 
-    // 防重：同 partnerKind+partnerId 已有 active connection（exclude self）
+    // 同一个 partner 重新授权时，旋转 long token 并撤销旧连接。
+    // MAP 端的 DataProtection key 丢失后旧 long token 无法解密，但 CDS 侧仍有 active
+    // connection；如果这里继续返回 duplicate，用户会卡在“旧连接已失效但无法重连”。
     const dup = this.stateService
       .getActiveCdsConnections()
       .find(c => c.partnerKind === req.partnerKind && c.partnerId === req.partnerId && c.id !== conn.id);
     if (dup) {
-      throw new PairingError(
-        'connection_duplicate',
-        409,
-        `partner '${req.partnerName}' already connected (id=${dup.id})`,
-      );
+      this.stateService.updateCdsConnection(dup.id, {
+        status: 'revoked',
+      });
     }
 
     // 创建 shared-service Project
     const project = createProject(req.projectIntent);
 
-    // 签发长效 token
+    // 签发系统级长期 token。10 分钟只属于一次性 pairing token；
+    // long token 不设置时间过期，除非管理员显式撤销连接。
     const longToken = `ct_${crypto.randomBytes(32).toString('hex')}`;
-    const longTokenExpiresAt = new Date(
-      Date.now() + LONG_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
-    );
 
     const updated = this.stateService.updateCdsConnection(conn.id, {
       status: 'active',
@@ -194,7 +191,7 @@ export class CdsPairingService {
       pairingExpiresAt: undefined,
       longTokenHash: sha256Hex(longToken),
       longTokenIssuedAt: new Date().toISOString(),
-      longTokenExpiresAt: longTokenExpiresAt.toISOString(),
+      longTokenExpiresAt: undefined,
       partnerKind: req.partnerKind,
       partnerId: req.partnerId,
       partnerName: req.partnerName,
@@ -208,7 +205,7 @@ export class CdsPairingService {
     return {
       connectionId: updated.id,
       cdsLongToken: longToken,
-      cdsLongTokenExpiresAt: longTokenExpiresAt.toISOString(),
+      cdsLongTokenExpiresAt: null,
       projectId: project.id,
       instanceDiscoveryUrl: `/api/projects/${project.id}/instances`,
       deployStreamUrlTemplate: '/api/service-deployments/{id}/stream',
@@ -222,12 +219,6 @@ export class CdsPairingService {
     const hash = sha256Hex(rawToken);
     const conn = this.stateService.findActiveCdsConnectionByLongTokenHash(hash);
     if (!conn) return null;
-    if (
-      conn.longTokenExpiresAt &&
-      new Date(conn.longTokenExpiresAt).getTime() < Date.now()
-    ) {
-      return null;
-    }
     // 异步刷 lastUsedAt（不 await，写盘失败不阻塞鉴权）
     this.stateService
       .updateCdsConnection(conn.id, { lastUsedAt: new Date().toISOString() });

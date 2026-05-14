@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-11
+> 最后更新：2026-05-13
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -113,6 +113,9 @@
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
 
+- [缺陷管理标签体系设计](design.defect-labels) `design.defect-labels`
+  > 缺陷协作标签的枚举、权限、展示和桌面端同步设计
+
 - [缺陷截图 VLM 预解析设计文档](design.defect-image-analysis) `design.defect-image-analysis`
   > 使用视觉语言模型自动解析缺陷截图的设计
 
@@ -169,6 +172,9 @@
 
 - [CDS (Cloud Development Suite) 设计文档](design.cds) `design.cds`
   > 云开发套件的架构设计
+
+- [CDS Agent API 契约设计](design.cds-agent-api) `design.cds-agent-api`
+  > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
@@ -328,6 +334,15 @@
 - [多平台博主订阅 → 首页海报弹窗](guide.poster-feed-card) `guide.poster-feed-card`
   > 涌现 1 系列：TikTok / 抖音 / B 站 / 小红书 / YouTube 任一博主作品自动拉到首页海报弹窗。含 4 种版式（feed-card / ad-4-3 / ad-rich-text / static）+ media-rehost 防盗链 + ASR 字幕浮层
 
+- [CDS Agent 工作台用户指南](guide.cds-agent-workbench) `guide.cds-agent-workbench`
+  > 普通用户从 CDS Agent 页面创建远程会话、发送任务、审批工具、查看事件和日志的操作指南
+
+- [CDS Agent 管理员指南](guide.cds-agent-admin) `guide.cds-agent-admin`
+  > 管理员配置系统级 CDS 长期授权、模型运行配置、Hook profile 和安全边界的操作指南
+
+- [CDS Agent 运行手册](guide.cds-agent-runbook) `guide.cds-agent-runbook`
+  > CDS Agent 部署检查、401、撤销、runtime、事件恢复、PR 验收失败的排障手册
+
 - [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
   > CDS 环境变量的配置与使用说明
 
@@ -397,6 +412,9 @@
 - [Claude SDK 三步接入指南](guide.claude-sdk-quickstart) `guide.claude-sdk-quickstart`
   > 三步把 Claude Agent SDK 接进本系统，零代码改动、零专业知识
 
+- [Claude SDK + CDS MAP 配对 MVP 指南](guide.claude-sdk-cds-map-mvp) `guide.claude-sdk-cds-map-mvp`
+  > CDS 调度外部 Anthropic Agent SDK sidecar，MAP 通过 CDS-MAP 配对发现并路由到该 sidecar
+
 - [Playwright E2E 测试指南](guide.e2e-tests) `guide.e2e-tests`
   > 端到端测试的编写、运行与调试操作指南
 
@@ -449,6 +467,9 @@
 
 - [AI 模型可见性原则](rule.ai-model-visibility) `rule.ai-model-visibility`
   > 大模型调用功能必须向用户展示当前模型名称的强制规则
+
+- [Issues 体系协议规则](rule.issues-system) `rule.issues-system`
+  > 三技能协同（autofix/visual-create/visual-run）+ label 全局体系 + #605 模板演化机制
 
 - [流式文本动效统一规范](rule.streaming-text) `rule.streaming-text`
   > prd-admin 所有 LLM 流式输出统一通过 StreamingText 组件，默认 Blur focus 动效
@@ -537,6 +558,9 @@
 
 - [CDS 当前状态看板](plan.cds-status) `plan.cds-status`
   > CDS 唯一"我在哪"入口（每次 handoff 必更新）— 大期完成度 + F1-F18 状态 + 子文档分层链接
+
+- [CDS Agent 工作台完全可用路线](plan.cds-agent-workbench) `plan.cds-agent-workbench`
+  > MAP 通过 CDS 操作 Claude SDK / Codex 类 Agent 干活的完全可用路线，覆盖对话页、工作流、智能体、远程浏览器、可观测性和逐项验收
 
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
   > Phase 0-3 长期路线图
@@ -634,6 +658,9 @@
 - [周报 2026-W06 (02-03 ~ 02-08)](report.2026-W06) `report.2026-W06`
   > 2026 年第 6 周工作总结
 
+- [CDS Self-Update 耗时观察记录（2026-05-13）](report.cds-self-update-timing-observation-2026-05-13) `report.cds-self-update-timing-observation-2026-05-13`
+  > CDS 自更新流程各阶段耗时的实测观察与数据记录（2026-05-13）
+
 - [CDS 项目卡片基础设施误读审计报告（2026-05-12）](report.cds-project-card-infra-audit-2026-05-12) `report.cds-project-card-infra-audit-2026-05-12`
   > CDS 项目卡片基础设施节点误读问题的审计与修复报告
 
@@ -676,6 +703,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-14 | 新增 | `guide.cds-agent-workbench` `guide.cds-agent-admin` `design.cds-agent-api` `guide.cds-agent-runbook` | CDS Agent 完全可用文档闭环 |
 | 2026-05-11 | 补齐 | 批量 | 补齐 57 个长期未登记文档（spec×4 / design×17 / guide×16 / rule×6 / plan×6 / debt×2 / report×5 + 文件重命名 2 个 + index.yml 同步 53 条） |
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |

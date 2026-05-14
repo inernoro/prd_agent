@@ -36,6 +36,13 @@ interface DeleteResp {
   deleted: boolean;
 }
 
+interface CdsAuthorizeStartResp {
+  authorizeUrl: string;
+  state: string;
+  cdsBaseUrl: string;
+  expiresAt: string;
+}
+
 export async function listInfraConnections(): Promise<ApiResponse<ListResp>> {
   return await apiRequest<ListResp>(api.infraConnections.list(), { method: 'GET' });
 }
@@ -46,6 +53,26 @@ export async function pasteInfraConnection(
   return await apiRequest<ItemResp>(api.infraConnections.paste(), {
     method: 'POST',
     body: { clipboardText },
+  });
+}
+
+export async function startCdsAuthorization(
+  cdsBaseUrl: string,
+  mapBaseUrl: string,
+): Promise<ApiResponse<CdsAuthorizeStartResp>> {
+  return await apiRequest<CdsAuthorizeStartResp>(api.infraConnections.cdsAuthorizeStart(), {
+    method: 'POST',
+    body: { cdsBaseUrl, mapBaseUrl },
+  });
+}
+
+export async function completeCdsAuthorization(
+  code: string,
+  state: string,
+): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraConnections.cdsAuthorizeComplete(), {
+    method: 'POST',
+    body: { code, state },
   });
 }
 

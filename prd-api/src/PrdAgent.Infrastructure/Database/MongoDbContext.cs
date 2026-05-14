@@ -88,6 +88,13 @@ public class MongoDbContext
     // 详见 spec.cds-map-pairing-protocol）
     public IMongoCollection<InfraConnection> InfraConnections => _database.GetCollection<InfraConnection>("infra_connections");
 
+    // 基础设施 Agent 工作台会话（MAP 端 —— 每条会话绑定一个基础设施连接，后续再绑定 CDS 运行实例）
+    public IMongoCollection<InfraAgentSession> InfraAgentSessions => _database.GetCollection<InfraAgentSession>("infra_agent_sessions");
+    public IMongoCollection<InfraAgentMessage> InfraAgentMessages => _database.GetCollection<InfraAgentMessage>("infra_agent_messages");
+    public IMongoCollection<InfraAgentEvent> InfraAgentEvents => _database.GetCollection<InfraAgentEvent>("infra_agent_events");
+    public IMongoCollection<InfraAgentHookProfile> InfraAgentHookProfiles => _database.GetCollection<InfraAgentHookProfile>("infra_agent_hook_profiles");
+    public IMongoCollection<InfraAgentRuntimeProfile> InfraAgentRuntimeProfiles => _database.GetCollection<InfraAgentRuntimeProfile>("infra_agent_runtime_profiles");
+
     // 外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
     public IMongoCollection<ExternalAuthorization> ExternalAuthorizations => _database.GetCollection<ExternalAuthorization>("external_authorizations");
 

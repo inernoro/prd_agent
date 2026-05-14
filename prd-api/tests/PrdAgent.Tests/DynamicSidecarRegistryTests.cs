@@ -20,6 +20,7 @@ public class DynamicSidecarRegistryTests
             CdsDiscovery = new CdsDiscoveryConfig
             {
                 Enabled = false,
+                EnablePairedInfraConnections = true,
                 SharedSidecarToken = "shared-sidecar-token",
             },
         };
@@ -125,6 +126,12 @@ public class DynamicSidecarRegistryTests
         public Task<InfraConnectionPublicView> PasteAsync(string clipboardText, string userId, CancellationToken ct) =>
             throw new NotImplementedException();
 
+        public Task<CdsAuthorizationStartView> StartCdsAuthorizationAsync(string cdsBaseUrl, string mapBaseUrl, string userId, CancellationToken ct) =>
+            throw new NotImplementedException();
+
+        public Task<InfraConnectionPublicView> CompleteCdsAuthorizationAsync(string code, string state, string userId, CancellationToken ct) =>
+            throw new NotImplementedException();
+
         public Task<List<InfraConnectionPublicView>> ListAsync(CancellationToken ct) =>
             Task.FromResult(_items);
 
@@ -134,7 +141,7 @@ public class DynamicSidecarRegistryTests
         public Task<PrdAgent.Core.Models.InfraConnection?> GetRawAsync(string id, CancellationToken ct) =>
             Task.FromResult<PrdAgent.Core.Models.InfraConnection?>(null);
 
-        public Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct) =>
+        public Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct, bool revokeOnFailure = true) =>
             Task.FromResult<string?>(_items.Any(x => x.Id == id) ? _token : null);
 
         public Task<bool> DeleteAsync(string id, CancellationToken ct) =>

@@ -5,11 +5,11 @@ import type { WorkflowNode, WorkflowEdge, WorkflowVariable } from '@/services/co
 // ═══════════════════════════════════════════════════════════════
 //
 // 拓扑图：
-//   👆 手动触发
+//   MANUAL 手动触发
 //     ↓
-//   🌐 HTML 网页渲染（JS 确定性生成，所有数据内嵌）
+//   HTML HTML 网页渲染（JS 确定性生成，所有数据内嵌）
 //     ↓
-//   💾 导出 HTML
+//   EXPORT 导出 HTML
 //
 
 let _eid = 0;
@@ -530,7 +530,7 @@ export const qualityMonthlyTemplate = {
   id: 'quality-monthly-report',
   name: '技术质量月报看板',
   description: '米多技术专业委员会 · 线上质量月报（多月切换 + ECharts 图表 + 缺陷分析 + 改进计划）',
-  icon: '📊',
+  icon: 'STAT',
   tags: ['quality', 'report', 'monthly', 'dashboard'],
   requiredInputs: [] as { key: string; label: string; type: 'text' | 'password' | 'select' | 'textarea' | 'month'; placeholder?: string; helpTip?: string; required: boolean; defaultValue?: string; options?: { value: string; label: string }[] }[],
   build: () => {

@@ -280,6 +280,10 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     }
     trackRecentlyUsed(item.id);
     if (isCustomized && item.routePath) {
+      if (item.agentKey === 'cds-agent') {
+        window.location.assign(item.routePath);
+        return;
+      }
       navigate(item.routePath);
     } else {
       selectItem(item);
@@ -510,7 +514,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   item.isPublic
                     ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
                     : needsPublishHint
-                    ? '👈 点我公开发布！让同事也能看到这个智能体（否则只有你自己可见）'
+                    ? '点击公开发布，让同事也能看到这个智能体（否则只有你自己可见）'
                     : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
                 }
                 data-active={item.isPublic}
@@ -630,7 +634,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       color: '#fcd34d',
                       border: '1px solid rgba(245, 158, 11, 0.45)',
                     }}
-                    title="未公开 — 仅自己可见；点卡片右上角 🌍 即可公开发布"
+                    title="未公开 — 仅自己可见；点卡片右上角公开发布即可让同事看到"
                   >
                     <HardHat size={10} />
                     施工中

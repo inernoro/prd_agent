@@ -9,7 +9,7 @@ import { computePreviewSlug } from './preview-slug.js';
 
 /**
  * 代理转发事件 —— 每一次经过 worker port 的请求都会生成一条。
- * 用户通过顶部「🔍 转发日志」面板查看，专门用于排查：
+ * 用户通过顶部「转发日志」面板查看，专门用于排查：
  *   - 502 但服务器日志为空 → outcome=upstream-error + code=ECONNREFUSED
  *   - 接口无法启动报 502 但页面正常 → branchSlug/profileId 帮定位是哪个服务
  *   - 路由未命中（某个域名没配 routing rule）→ outcome=no-branch-match
@@ -65,7 +65,7 @@ export class ProxyService {
   private worktreeService: WorktreeService | null = null;
   /** Optional scheduler for warm-pool touch tracking */
   private scheduler: SchedulerService | null = null;
-  /** Ring buffer of recent proxy events for the global log panel (顶部 🔍). */
+  /** Ring buffer of recent proxy events for the global log panel. */
   private proxyLogBuffer: ProxyLogEvent[] = [];
   private proxyLogSeq = 0;
   private onProxyLog: ((evt: ProxyLogEvent) => void) | null = null;
@@ -853,7 +853,7 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
 .desc{font-size:13px;color:#8b949e;line-height:1.6}
 </style></head><body>
 <div class="card">
-  <div class="emoji">🪦</div>
+  <div class="emoji">OFF</div>
   <h2>预览已下线</h2>
   <div class="branch">${safe}</div>
   <div class="desc">该分支在此 CDS 实例上未注册。<br>请确认分支名称或联系管理员。</div>
@@ -1140,6 +1140,9 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
       if (clientReq.headers.cookie?.includes('cds_branch')) {
         headers['cache-control'] = 'no-store, must-revalidate';
         headers['vary'] = 'Cookie';
+      }
+      if (branchCtx && this.isStaticAssetRequest(clientReq.url || '/')) {
+        headers['cache-control'] = 'no-cache, must-revalidate';
       }
 
       // ── Widget injection: only for HTML 200 responses with branch context ──

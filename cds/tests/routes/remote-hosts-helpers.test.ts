@@ -5,10 +5,41 @@
  *     的容器 slug。规则演化记录在 PR #529 Bugbot MEDIUM 修复中。
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { deriveContainerSlug } from '../../src/routes/remote-hosts.js';
+import { deriveContainerSlug, resolvePreviewRootDomain } from '../../src/routes/remote-hosts.js';
 import { isSafeContainerSlug } from '../../src/services/sidecar/sidecar-deployer.js';
+
+const previewEnvKeys = [
+  'CDS_PREVIEW_DOMAIN',
+  'PREVIEW_DOMAIN',
+  'CDS_MAIN_DOMAIN',
+  'MAIN_DOMAIN',
+  'CDS_DASHBOARD_DOMAIN',
+  'DASHBOARD_DOMAIN',
+  'CDS_ROOT_DOMAINS',
+  'ROOT_DOMAINS',
+];
+
+afterEach(() => {
+  for (const key of previewEnvKeys) delete process.env[key];
+});
+
+describe('resolvePreviewRootDomain', () => {
+  it('优先读取 CDS 前缀预览域名', () => {
+    process.env.CDS_PREVIEW_DOMAIN = 'preview.miduo.org';
+    process.env.PREVIEW_DOMAIN = 'legacy.miduo.org';
+
+    expect(resolvePreviewRootDomain()).toBe('preview.miduo.org');
+  });
+
+  it('在 direct 域名缺省时读取 CDS_ROOT_DOMAINS 第一项', () => {
+    process.env.CDS_ROOT_DOMAINS = 'miduo.org, example.com';
+    process.env.ROOT_DOMAINS = 'legacy.miduo.org';
+
+    expect(resolvePreviewRootDomain()).toBe('miduo.org');
+  });
+});
 
 describe('deriveContainerSlug', () => {
   it('普通名字 + id 后缀', () => {

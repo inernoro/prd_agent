@@ -40,6 +40,7 @@ class SidecarRunRequest(BaseModel):
     profile: Optional[str] = Field(None, alias="profile")
     base_url: Optional[str] = Field(None, alias="baseUrl")
     api_key: Optional[str] = Field(None, alias="apiKey")
+    protocol: Optional[str] = Field(None, alias="protocol")
 
     class Config:
         populate_by_name = True

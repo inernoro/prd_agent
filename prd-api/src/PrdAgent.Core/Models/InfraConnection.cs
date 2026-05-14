@@ -9,8 +9,8 @@ namespace PrdAgent.Core.Models;
 ///
 /// - 明文 LongToken 不出库；只存 IDataProtector 密文
 /// - PartnerId / PartnerBaseUrl 由对端在 accept 阶段返回，配对后即固定
-/// - Status 仅 active / revoked / unreachable 三态；不联动对端 revoke，
-///   由对端自身过期机制兜底
+/// - Status 仅 active / revoked / unreachable 三态；系统级长期授权不按时间自动过期，
+///   只有显式删除、撤销或本地密钥无法解密才会失效
 /// </summary>
 public class InfraConnection
 {
@@ -31,7 +31,7 @@ public class InfraConnection
     /// <summary>IDataProtector 加密的长效 token，明文不出库。</summary>
     public string LongTokenEncrypted { get; set; } = string.Empty;
 
-    /// <summary>长效 token 过期时间（来自 accept 响应）</summary>
+    /// <summary>长效 token 过期时间。系统级长期授权使用远未来时间，仅用于 UI 展示。</summary>
     public DateTime LongTokenExpiresAt { get; set; }
 
     /// <summary>对端给本 MAP 创建的 shared-service 项目 ID</summary>
