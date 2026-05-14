@@ -377,60 +377,89 @@ export default function CdsAgentPage() {
       return;
     }
     setBusy(true);
-    const res = await createInfraAgentSession({
-      connectionId: activeConnection.id,
-      runtime: activeProfile?.runtime ?? 'claude-sdk',
-      model: activeProfile?.model,
-      runtimeProfileId: activeProfile?.id,
-      title: draft.title,
-      toolPolicy: draft.toolPolicy,
-    });
-    setBusy(false);
-    if (!res.success || !res.data?.item) {
-      toast.error('新建会话失败', res.error?.message ?? '请检查 CDS 连接和模型配置');
-      return;
+    try {
+      const res = await createInfraAgentSession({
+        connectionId: activeConnection.id,
+        runtime: activeProfile?.runtime ?? 'claude-sdk',
+        model: activeProfile?.model,
+        runtimeProfileId: activeProfile?.id,
+        title: draft.title,
+        toolPolicy: draft.toolPolicy,
+      });
+      if (!res.success || !res.data?.item) {
+        toast.error('新建会话失败', res.error?.message ?? '请检查 CDS 连接和模型配置');
+        return;
+      }
+      upsertSession(res.data.item);
+      toast.success('远程会话已创建');
+    } catch (err) {
+      toast.error('新建会话失败', err instanceof Error ? err.message : '请检查 CDS 连接和模型配置');
+    } finally {
+      setBusy(false);
     }
-    upsertSession(res.data.item);
-    toast.success('远程会话已创建');
   }
 
   async function startSession() {
     if (!activeSession) return;
+    const sessionId = activeSession.id;
     setBusy(true);
-    const res = await startInfraAgentSession(activeSession.id);
-    setBusy(false);
-    if (!res.success || !res.data?.item) {
-      toast.error('启动失败', res.error?.message ?? '请检查 CDS runtime');
-      return;
+    try {
+      const res = await startInfraAgentSession(sessionId);
+      if (!res.success || !res.data?.item) {
+        toast.error('启动失败', res.error?.message ?? '请检查 CDS runtime');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+    } catch (err) {
+      toast.error('启动失败', err instanceof Error ? err.message : '请检查 CDS runtime');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
     }
-    upsertSession(res.data.item);
-    await refreshDetail(res.data.item.id);
   }
 
   async function sendPrompt() {
     if (!activeSession || !prompt.trim()) return;
+    const sessionId = activeSession.id;
     setBusy(true);
-    const res = await sendInfraAgentMessage(activeSession.id, prompt.trim());
-    setBusy(false);
-    if (!res.success || !res.data?.item) {
-      toast.error('发送失败', res.error?.message ?? '请稍后重试');
-      return;
+    try {
+      const res = await sendInfraAgentMessage(sessionId, prompt.trim());
+      if (!res.success || !res.data?.item) {
+        toast.error('发送失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+    } catch (err) {
+      toast.error('发送失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
     }
-    upsertSession(res.data.item);
-    await refreshDetail(res.data.item.id);
   }
 
   async function stopSession() {
     if (!activeSession) return;
+    const sessionId = activeSession.id;
     setBusy(true);
-    const res = await stopInfraAgentSession(activeSession.id);
-    setBusy(false);
-    if (!res.success || !res.data?.item) {
-      toast.error('停止失败', res.error?.message ?? '请稍后重试');
-      return;
+    try {
+      const res = await stopInfraAgentSession(sessionId);
+      if (!res.success || !res.data?.item) {
+        toast.error('停止失败', res.error?.message ?? '请稍后重试');
+        await refreshDetail(sessionId);
+        return;
+      }
+      upsertSession(res.data.item);
+      await refreshDetail(res.data.item.id);
+    } catch (err) {
+      toast.error('停止失败', err instanceof Error ? err.message : '请稍后重试');
+      await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
     }
-    upsertSession(res.data.item);
-    await refreshDetail(res.data.item.id);
   }
 
   async function testProfile() {
@@ -440,21 +469,28 @@ export default function CdsAgentPage() {
     }
     setTestingProfile(true);
     setProfileTest('');
-    const res = await testInfraAgentRuntimeProfile(activeProfile.id);
-    setTestingProfile(false);
-    if (!res.success || !res.data?.result) {
-      const message = res.error?.message ?? '模型配置测试失败';
+    try {
+      const res = await testInfraAgentRuntimeProfile(activeProfile.id);
+      if (!res.success || !res.data?.result) {
+        const message = res.error?.message ?? '模型配置测试失败';
+        setProfileTest(message);
+        toast.error('模型测试失败', message);
+        return;
+      }
+      const result = res.data.result;
+      const message = `${result.success ? '可用' : '失败'} · ${result.protocol} · HTTP ${result.httpStatus ?? 'n/a'} · ${result.elapsedMs}ms · ${result.message}`;
+      setProfileTest(message);
+      if (result.success) {
+        toast.success('模型配置可用', `${result.protocol} · ${result.model} @ ${result.baseUrl}`);
+      } else {
+        toast.error('模型测试失败', result.message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '模型配置测试失败';
       setProfileTest(message);
       toast.error('模型测试失败', message);
-      return;
-    }
-    const result = res.data.result;
-    const message = `${result.success ? '可用' : '失败'} · ${result.protocol} · HTTP ${result.httpStatus ?? 'n/a'} · ${result.elapsedMs}ms · ${result.message}`;
-    setProfileTest(message);
-    if (result.success) {
-      toast.success('模型配置可用', `${result.protocol} · ${result.model} @ ${result.baseUrl}`);
-    } else {
-      toast.error('模型测试失败', result.message);
+    } finally {
+      setTestingProfile(false);
     }
   }
 

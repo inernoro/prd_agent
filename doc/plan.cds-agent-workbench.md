@@ -876,6 +876,7 @@ P10 当前结论：
 - static 三次部署通过，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 running，预览首页返回 `/assets/index-BA6CL4oR.js` 且 JS content-type 为 `application/javascript`。
 - 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`。页面可见 CDS 连接、系统级模型配置、测试模型、从系统主模型同步、新建远程会话、会话事件、产物日志和停止按钮。当前阻塞转入 P17：模型 key 返回 Anthropic 401，日志面板提示 CDS 连接不可用，需要继续修到真实远程执行和 PR 验收。
 - 已修正 MAP 会话服务对 CDS 连接状态的判断：`revoked` 才代表系统级授权失效，`unreachable` 只代表上一次探活失败，不再因为 10 分钟探活窗口过期而阻断会话、消息、日志和停止动作。冒烟命令 `cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无新增编译错误；输出为既有 warning。
+- 真实入口复测发现：旧会话绑定已清理的旧 connectionId 时仍只能展示历史 fallback；使用当前 active 长期授权连接新建会话后，页面正常创建待启动会话且不再显示“连接不可用”。启动失败时前端会卡在 loading，已修复为所有创建/启动/发送/停止/测试模型动作都 `try/finally` 解锁，并在失败后刷新事件与日志。冒烟命令：`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 通过。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
