@@ -139,7 +139,26 @@ function buildArtifacts(events: InfraAgentEventView[], logs: string): AgentArtif
       });
     }
 
-    if (typeof detail.diff === 'string' || typeof detail.diffStat === 'string') {
+    if (typeof detail.branch === 'string' || typeof detail.status === 'string') {
+      artifacts.push({
+        id: `${event.id}-status`,
+        title: '仓库状态',
+        kind: 'log',
+        summary: `${String(detail.branch ?? 'workspace')} · ${String(detail.commit ?? 'unknown')}`,
+        body: [
+          `branch: ${String(detail.branch ?? 'unknown')}`,
+          `commit: ${String(detail.commit ?? 'unknown')}`,
+          '',
+          'status:',
+          typeof detail.status === 'string' ? detail.status : '',
+          '',
+          'diffStat:',
+          typeof detail.diffStat === 'string' ? detail.diffStat : '',
+        ].join('\n'),
+      });
+    }
+
+    if (typeof detail.diff === 'string' || (typeof detail.diffStat === 'string' && typeof detail.branch !== 'string')) {
       const diffStat = typeof detail.diffStat === 'string' ? detail.diffStat : '';
       const diff = typeof detail.diff === 'string' ? detail.diff : '';
       artifacts.push({
@@ -151,7 +170,7 @@ function buildArtifacts(events: InfraAgentEventView[], logs: string): AgentArtif
       });
     }
 
-    if (typeof detail.stdout === 'string' || typeof detail.stderr === 'string') {
+    if (typeof detail.command === 'string' && (typeof detail.stdout === 'string' || typeof detail.stderr === 'string')) {
       artifacts.push({
         id: `${event.id}-command`,
         title: '命令结果',
