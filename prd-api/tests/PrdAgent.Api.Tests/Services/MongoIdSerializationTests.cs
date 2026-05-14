@@ -9,6 +9,28 @@ namespace PrdAgent.Api.Tests.Services;
 public class MongoIdSerializationTests
 {
     [Fact]
+    public void InfraAgentRuntimeProfile_ShouldIgnoreUnknownFields()
+    {
+        var doc = new BsonDocument
+        {
+            { "_id", "profile-1" },
+            { "Name", "默认配置" },
+            { "Runtime", "claude-sdk" },
+            { "Protocol", "openai-compatible" },
+            { "BaseUrl", "https://api.example.com/v1" },
+            { "Model", "example-model" },
+            { "ApiKeyEncrypted", "protected" },
+            { "IsDefault", true },
+            { "UnknownFutureField", "ignored" },
+        };
+
+        var profile = BsonSerializer.Deserialize<InfraAgentRuntimeProfile>(doc);
+
+        Assert.Equal("profile-1", profile.Id);
+        Assert.True(profile.IsDefault);
+    }
+
+    [Fact]
     public void GroupMember_Id_CanDeserialize_FromLegacyObjectId()
     {
         BsonClassMapRegistration.Register();
@@ -52,5 +74,3 @@ public class MongoIdSerializationTests
         Assert.Equal("507f1f77bcf86cd799439011", doc["_id"].AsString);
     }
 }
-
-

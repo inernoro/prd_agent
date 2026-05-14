@@ -1,9 +1,12 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// CDS Agent runtime 的系统级模型配置。
 /// API key 使用 IDataProtector 加密落库，列表接口只暴露是否已配置。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class InfraAgentRuntimeProfile
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
