@@ -12,3 +12,5 @@
 | fix | prd-admin | 删除 public/thirdparty/ref 断链符号（Docker 构建失败根因：../../../thirdparty/ref 在容器内超出文件系统根） |
 | fix | prd-api | resolve-models 接口不再对空/未注册 appCallerCode 整批 400，改为跳过并返回 null |
 | fix | prd-admin | ModelAppGroupPage resolveItems 构建跳过 appCode 为空的 caller，避免传 '' 触发后端 400 |
+| fix | prd-admin | 海报侧边栏页面状态 badge 全部改为 icon-only 20px 圆形（pending/generating-image/failed），消除中文换行 |
+| fix | prd-admin | autopilot 预览卡片网格从 auto-fit 改为固定 3 列，避免卡片数量少时出现忽大忽小跳变 |

@@ -1810,7 +1810,6 @@ function PageListItem({
   dimensionLabel: string;
   onClick: () => void;
 }) {
-  const stateLabel = pageProgressLabel(progress ?? pageQualityState(page));
   const stateColor = pageProgressColor(progress ?? pageQualityState(page));
 
   return (
@@ -1845,14 +1844,13 @@ function PageListItem({
               <div className="mt-1 text-[10.5px] text-white/44">{dimensionLabel}</div>
             </div>
             <span
-              className="rounded-full inline-flex items-center justify-center text-[10px] font-medium"
-              style={
-                (progress ?? pageQualityState(page)) === 'done'
-                  ? { width: 20, height: 20, background: `${stateColor}33`, border: `1px solid ${stateColor}66`, color: stateColor }
-                  : { padding: '2px 8px', background: `${stateColor}22`, border: `1px solid ${stateColor}55`, color: stateColor }
-              }
+              className="rounded-full inline-flex shrink-0 items-center justify-center"
+              style={{ width: 20, height: 20, background: `${stateColor}33`, border: `1px solid ${stateColor}66`, color: stateColor }}
             >
-              {(progress ?? pageQualityState(page)) === 'done' ? <Check size={11} strokeWidth={3} /> : stateLabel}
+              {(progress ?? pageQualityState(page)) === 'done' && <Check size={11} strokeWidth={3} />}
+              {(progress ?? pageQualityState(page)) === 'pending' && <ImagePlus size={11} />}
+              {(progress ?? pageQualityState(page)) === 'generating-image' && <Loader2 size={11} className="animate-spin" />}
+              {(progress ?? pageQualityState(page)) === 'failed' && <X size={11} strokeWidth={2.5} />}
             </span>
           </div>
           <div className="mt-2 text-[10.5px] text-white/45 line-clamp-2">
@@ -2733,7 +2731,7 @@ function CreatePosterModal({
             <div className="flex-1 min-h-0 overflow-y-auto p-5">
               {typingText && phase === 'llm' && <TypingPanel text={typingText} />}
               {generatedPoster ? (
-                <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                   {[...(generatedPoster.pages ?? [])].sort((a, b) => a.order - b.order).map((page, i) => (
                     <GeneratedPageCard
                       key={`${page.order ?? `idx-${i}`}`}
