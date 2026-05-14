@@ -42,3 +42,4 @@
 | feat | prd-api | 工作流执行、百宝箱运行和 CDS Agent 会话贯通 traceId，审批事件可按同一链路审计 |
 | feat | prd-admin | 工作流执行历史和详情页展示 traceId，便于从页面定位远程 Agent 会话 |
 | fix | prd-api | 工作流执行 BSON 映射忽略额外字段，避免滚动部署期间新增 traceId 被旧 worker 反序列化失败 |
+| fix | prd-api | CDS Agent paired sidecar 工具回调改用 MAP 公网地址，并净化远程模型输出中的符号内容 |

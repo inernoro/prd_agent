@@ -1248,11 +1248,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 case SidecarEventType.TextDelta:
                     if (!string.IsNullOrEmpty(ev.Text))
                     {
-                        finalText.Append(ev.Text);
+                        var text = SanitizeAgentText(ev.Text);
+                        if (string.IsNullOrEmpty(text)) break;
+                        finalText.Append(text);
                         await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.TextDelta, JsonSerializer.Serialize(new
                         {
                             messageId = runId,
-                            text = ev.Text,
+                            text,
                             source = "claude-sdk-sidecar",
                             sidecar = ev.SidecarName
                         }), ct);
@@ -1291,7 +1293,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     }), ct);
                     break;
                 case SidecarEventType.Done:
-                    var doneText = ev.FinalText ?? finalText.ToString();
+                    var doneText = SanitizeAgentText(ev.FinalText ?? finalText.ToString());
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Done, JsonSerializer.Serialize(new
                     {
                         messageId = runId,
@@ -1448,6 +1450,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 $"{stage} Hook 执行失败：{output}",
                 StatusCodes.Status409Conflict);
         }
+    }
+
+    private static string SanitizeAgentText(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        var sb = new StringBuilder(text.Length);
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (rune.Value is 0x200D or 0xFE0F) continue;
+            if (Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.OtherSymbol) continue;
+            sb.Append(rune.ToString());
+        }
+        return sb.ToString();
     }
 
     private async Task AppendHookEventAsync(

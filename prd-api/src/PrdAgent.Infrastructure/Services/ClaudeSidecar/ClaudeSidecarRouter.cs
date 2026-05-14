@@ -3,6 +3,8 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PrdAgent.Core.Interfaces;
@@ -29,18 +31,24 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private readonly ILogger<ClaudeSidecarRouter> _logger;
     private readonly InstanceStateRegistry _state;
     private readonly IDynamicSidecarRegistry _registry;
+    private readonly IConfiguration _configuration;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public ClaudeSidecarRouter(
         IHttpClientFactory httpFactory,
         IOptionsMonitor<ClaudeSidecarOptions> options,
         InstanceStateRegistry state,
         IDynamicSidecarRegistry registry,
+        IConfiguration configuration,
+        IHttpContextAccessor httpContextAccessor,
         ILogger<ClaudeSidecarRouter> logger)
     {
         _httpFactory = httpFactory;
         _options = options;
         _state = state;
         _registry = registry;
+        _configuration = configuration;
+        _httpContextAccessor = httpContextAccessor;
         _logger = logger;
     }
 
@@ -98,9 +106,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         // 自动注入 callbackBaseUrl / 反向调用 token：调用方不传时由 options + 实例 token 兜底。
         // 这是"无脑配置"的关键 —— 节点配置只关心 model / prompt / tools，不用管反向回调链路。
         var opts = _options.CurrentValue;
-        var effectiveCallbackUrl = string.IsNullOrWhiteSpace(request.CallbackBaseUrl)
-            ? opts.CallbackBaseUrl
-            : request.CallbackBaseUrl;
+        var effectiveCallbackUrl = ResolveCallbackBaseUrl(request, instance, opts);
         var effectiveCallbackToken = string.IsNullOrWhiteSpace(request.AgentApiKey)
             ? token
             : request.AgentApiKey;
@@ -254,6 +260,62 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private static string ResolveToken(DynamicSidecarInstance instance)
     {
         return instance.Token ?? string.Empty;
+    }
+
+    private string ResolveCallbackBaseUrl(
+        SidecarRunRequest request,
+        DynamicSidecarInstance instance,
+        ClaudeSidecarOptions opts)
+    {
+        if (!string.IsNullOrWhiteSpace(request.CallbackBaseUrl))
+            return request.CallbackBaseUrl.TrimEnd('/');
+
+        if (string.Equals(instance.Source, PairedCdsSource, StringComparison.OrdinalIgnoreCase))
+        {
+            var publicBaseUrl = ResolvePublicMapBaseUrl();
+            if (!string.IsNullOrWhiteSpace(publicBaseUrl))
+                return publicBaseUrl;
+        }
+
+        return opts.CallbackBaseUrl.TrimEnd('/');
+    }
+
+    private string? ResolvePublicMapBaseUrl()
+    {
+        var configured = _configuration["ServerUrl"];
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured.TrimEnd('/');
+
+        configured = _configuration["App:FrontendBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured.TrimEnd('/');
+
+        var req = _httpContextAccessor.HttpContext?.Request;
+        if (req == null) return null;
+
+        var clientBaseUrl = req.Headers["X-Client-Base-Url"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(clientBaseUrl))
+            return clientBaseUrl.TrimEnd('/');
+
+        var forwardedHost = req.Headers["X-Forwarded-Host"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedHost))
+        {
+            var forwardedProto = req.Headers["X-Forwarded-Proto"].FirstOrDefault();
+            var scheme = string.IsNullOrWhiteSpace(forwardedProto) ? "https" : forwardedProto.Split(',')[0].Trim();
+            return $"{scheme}://{forwardedHost.Split(',')[0].Trim()}".TrimEnd('/');
+        }
+
+        var origin = req.Headers.Origin.FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(origin))
+            return origin.TrimEnd('/');
+
+        if (req.Host.HasValue)
+        {
+            var scheme = string.IsNullOrWhiteSpace(req.Scheme) ? "https" : req.Scheme;
+            return $"{scheme}://{req.Host.Value}".TrimEnd('/');
+        }
+
+        return null;
     }
 
     private static StringContent SerializeBody(

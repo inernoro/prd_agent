@@ -5587,9 +5587,11 @@ function safeChart(canvasId, config) {
                     case SidecarEventType.TextDelta:
                         if (!string.IsNullOrEmpty(ev.Text))
                         {
-                            collected.Append(ev.Text);
+                            var text = SanitizeAgentText(ev.Text);
+                            if (string.IsNullOrEmpty(text)) break;
+                            collected.Append(text);
                             if (emitEvent != null)
-                                await emitEvent("cli-agent-chunk", new { text = ev.Text, turn = ev.Turn });
+                                await emitEvent("cli-agent-chunk", new { text, turn = ev.Turn });
                         }
                         break;
 
@@ -5624,7 +5626,7 @@ function safeChart(canvasId, config) {
                         break;
 
                     case SidecarEventType.Done:
-                        if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(ev.FinalText);
+                        if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(SanitizeAgentText(ev.FinalText));
                         if (ev.InputTokens.HasValue) inTokens = ev.InputTokens.Value;
                         if (ev.OutputTokens.HasValue) outTokens = ev.OutputTokens.Value;
                         break;
@@ -8350,5 +8352,19 @@ function safeChart(canvasId, config) {
             cur = next;
         }
         return cur;
+    }
+
+    private static string SanitizeAgentText(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        var sb = new StringBuilder(text.Length);
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (rune.Value is 0x200D or 0xFE0F) continue;
+            if (Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.OtherSymbol) continue;
+            sb.Append(rune.ToString());
+        }
+        return sb.ToString();
     }
 }
