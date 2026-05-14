@@ -57,14 +57,14 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
    - `wip` / `wontfix` / `invalid` / `on-hold`
    - `agent-timeout` / `needs-human` / `cannot-reproduce` / `duplicate`
    - `human-only`
-3. **`needs-info` 条件跳过**（SSOT §2.1 规定"下轮清"）：
-   - 自 Agent 最近一次"请求补充信息"评论以来，**没有**非 Agent / 非机器人用户的新评论 → 跳过本轮
-   - 有用户新评论 → **移除** `needs-info` label，按 §5 重新分类、再走一遍处理流程（信息可能已补足）
-4. **`agent-replied` / `agent-fixed` / `proposed-fix` 条件升级**（§13 承诺"答复后追问转 needs-human"，必须真正实现）：
-   - 自 Agent 最近一次 `agent-handled:*:terminal:*` 指纹以来，**没有**非 Agent / 非机器人用户的新评论 → 跳过本轮
-   - 有用户新评论 → 加 `needs-human` label + 发"已转人工处理"评论，**不**移除原终态 label（保留追溯），本轮跳过
+3. **`needs-info` 条件跳过**：
+   - 自 Agent 最近一次"请求补充信息"评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过
+   - 有用户新评论 → 移除 `needs-info`，按 §5 重新分类
+4. **`agent-replied` / `agent-fixed` / `proposed-fix` 条件升级**：
+   - 自 Agent 最近一次终态评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过
+   - 有用户新评论 → 加 `needs-human` + 评论"已转人工"，保留原终态 label，本轮跳过
 5. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
-6. **issue body 含** `<!-- agent-handled:` HTML 注释指纹
+6. **issue body 含同日幂等指纹** `<!-- agent-handled:{run_id}:{今日日期} -->` —— 本日已处理过，跨日不算
 7. **issue 已有未关闭的关联 PR**
 8. **作者是 maintainer 且无 `please-fix`/`bug` 类 label**
 9. **草稿 / template 占位**：正文 < 20 字 或 仅含模板未填项
@@ -78,24 +78,26 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 - 单轮上限：`single_run_max`
 - 排序：`created_at desc`，超出排队下轮
 
-## 4. 并发与幂等（claim-then-verify）
+## 4. 处理流程（单实例假设，无锁无 verify）
 
-> GitHub "Add labels" API 对**已存在** label 不返回失败，只返回当前 label 集合。"加 label 失败"不是 CAS 信号——两个并行 worker 都会"成功"。必须 claim 评论 + 再读 verify。详细模式参照 `issues-visual-run` §2，本节摘要要点：
+> **前置假设**：本技能由用户**手动触发**，每天最多一次，同时刻只有一个实例运行。在这个假设下不需要分布式锁、claim-verify、reaper 等机制。详见 `doc/rule.issues-system.md` §0。
+>
+> 如果未来扩展为自动 cron / 多实例并发，需要重新设计协议（git history 里有一版 v1.0 的完整并发协议可参考）。
 
-- **启动 reaper**（每轮 sweep 第一步，扫死锁；同 `issues-visual-run` §2，三路分别处理崩溃位置）：
-  1. 列出所有挂 `agent-processing` 的 open issue 后**必须再过滤**为非视觉测试领地：剔除标题以 `[visual-test]` 开头的 + 剔除含任一 `visual-test:*` label 的 issue（`agent-processing` 与 `/issues-visual-run` 共用，不过滤会侵犯 visual-run 领地 —— visual-run owned issue 被本 reaper 路径 C 强删 lock 不加回 `visual-test:pending`，visual-run reaper 再也找不到，永久卡死）
-  2. 扫所有 `agent-handled:*:claim:*` / `*:terminal:*` / `*:withdrawn:*` 指纹，**锁定当前活跃 run_id**：过滤掉所有 `*:withdrawn:*` 对应的 run_id，剩余 claim 按时间戳取最新，记为 `currentRunId`（避免被"已答复后用户追问→重新分类"等复活路径里历史 run_id 的旧 terminal 误判）
-  3. **路径 B**（当前周期已 terminal + lock 仍在）：`currentRunId` 已有对应 `:terminal:` 指纹 → 删 `agent-processing` + 评论"reaper 清理孤儿锁（B 路径，终态后崩溃）"，**不**重新接单（本周期终态已落定）
-  4. **路径 A**（B 不命中 + `currentRunId` 既无 `:terminal:` 也无 `:withdrawn:`，距今 > 30 分钟必须 > `max_minutes_per_issue`）：删 `agent-processing` + 评论"reaper 重置（A 路径，终态前崩溃）"，下一轮重新接单
-  5. **路径 C**（B/A 不命中 + 完全无 `agent-handled:*:claim:*` 指纹 + lock 添加时间 > 30 分钟）：删 `agent-processing` + 评论"reaper 重置（C 路径，claim 写入前崩溃）"，下一轮重新接单
-- **接单**：
-  1. 预检（**必须重新跑完整 §2 跳过条件**，不只查 lock）：list issue 后到 claim 前存在窗口，期间别的 worker 可能加了 `agent-replied` / `agent-fixed` / `proposed-fix` / `needs-human` / `duplicate` 等终态 label，或加了 `agent-processing` 锁。必须重读 issue 当前所有 label + body 指纹 + 关联 PR 状态，逐条比对 §2 各项跳过条件,任一命中 → 跳过
-  2. 加 `agent-processing` + 发 claim 评论，末尾含 `<!-- agent-handled:{run_id}:claim:{iso8601-ts} -->`
-  3. 等 3-5s 后重读 issue 评论，**过滤掉已退出的 claim**（若同 run_id 既有 `:claim:` 又有 `:terminal:` **或** `:withdrawn:` 指纹，则属历史 round，剔除），在剩余活跃 claim 池里按时间戳升序排序，最早的 run_id 是 winner。此过滤对 `needs-info` 复活场景必不可少——否则旧 round 的最早 claim 永远赢，新 round 永远 loser 而无法处理用户补充的信息
-  4. Loser 静默 back-out：发"撤回 run_id={uuid}，已被 run_id={X} 抢先"评论，**末尾必须含**指纹 `<!-- agent-handled:{run_id}:withdrawn:{ts} -->`（否则 filter 认不出已退出）；判断 winner 状态：winner 仍活跃（无 `agent-handled:{X}:terminal:*` 指纹）→ 不动 label；winner 已完成 → **必须删 `agent-processing`**（避免 loser 后加的锁残留导致 issue 永久卡死）。理由同 `issues-visual-run` §2 e
-- **指纹评论**：终态评论末尾必须含 `<!-- agent-handled:{run_id}:terminal:{ts} -->`，用于幂等去重 + §2 #5 跳过检测
-- **处理结束（仅 winner，顺序严格）**：(1) 加终态 label → (2) **先发**终态评论含 `<!-- agent-handled:{run_id}:terminal:{ts} -->` 指纹 → (3) **最后**删 `agent-processing`。理由同 `issues-visual-run` 处理结束节：若先删 lock 再发指纹，中间窗口延迟 loser 看不到 terminal 会按 active 分支不清自己加的锁,issue 卡死
-- **超时回滚**：超 `max_minutes_per_issue` 分钟 → 删 `agent-processing` + 加 `agent-timeout`
+**单 issue 的完整处理流程**：
+
+1. 按 §2 跳过清单过滤，命中即 next
+2. 按 §5 分类，进入对应处理路径
+3. 处理完成后：
+   - 加对应终态 label（`agent-replied` / `agent-fixed` / `proposed-fix` / `needs-info` / `needs-human` / `duplicate` / `cannot-reproduce`）
+   - 发评论描述结果（首次答复见 §6 四要素；PR 提交见 §9 描述模板）
+   - 评论末尾追加幂等指纹 `<!-- agent-handled:{run_id}:{今日日期 YYYY-MM-DD} -->`（同日内被重复触发时，§2 #6 会跳过；跨日不算）
+
+**失败处理**（per issue）：
+- 单 issue 处理超 `max_minutes_per_issue` 分钟 → 加 `agent-timeout` + 评论"超时跳过"
+- 工具调用连续失败 ≥ 2 次 → 跳过（不写终态 label，下次手动跑会再试）
+- 复现失败 ≥ `max_reproduce_retries` 次 → 加 `cannot-reproduce` + 评论
+- 所有失败都加幂等指纹避免同日重试
 
 ## 5. 分类判定（按顺序匹配，首个命中即停）
 
@@ -117,7 +119,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 - 语言按 `reply_language`
 - 禁止 emoji（CLAUDE.md §0）
 - 不写"希望对您有所帮助"等客套
-- 终态评论末尾**必须**追加 `<!-- agent-handled:{run_id}:terminal:{iso8601-ts} -->`（与 §4 verify 检测的 `agent-handled:*:terminal:*` 模式对齐；缺 `:terminal:` 段会让延迟 loser 检测不到 winner 完成态，残留 `agent-processing` 卡死后续接单）
+- 终态评论末尾**必须**追加幂等指纹 `<!-- agent-handled:{run_id}:{今日日期 YYYY-MM-DD} -->`（同日重跑时 §2 #6 跳过；跨日不算）
 
 ## 7. 自动修复边界（全部满足才允许开 PR）
 

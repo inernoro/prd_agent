@@ -1,11 +1,28 @@
 # Issues 体系 · 协议规则
 
-> **版本**：v1.0 | **日期**：2026-05-14 | **状态**：已落地
+> **版本**：v2.0 | **日期**：2026-05-14 | **状态**：已落地
 
 - **维护入口**：协议演化讨论在 [#605](https://github.com/inernoro/prd_agent/issues/605)
 - **配套技能**：`/issues-autofix`、`/issues-visual-create`、`/issues-visual-run`
 
 GitHub issue 在本项目同时承载三类工作：日常 bug/feature 维护、视觉验收的开单与执行、协议本身的演化讨论。本文件做一次系统性解释，让三类工作可机器化协同、不互相打架、不需要每次重新沟通。
+
+---
+
+## 0. 运行假设（先看这条，决定后面所有设计的复杂度上限）
+
+**本协议假设以下三件事**，整套设计是为这三个前提优化的：
+
+1. **单实例**：同一时刻只有一个技能实例运行（用户手动触发，不挂 cron 也不并发）
+2. **日级别频率**：每天最多手动跑一次（足够长的间隔，没有 race 风险）
+3. **信任 GitHub API 最终一致性**：写完 label / 发完评论后，下一次读能看到
+
+**因此本协议故意不实现**：
+- 分布式锁 / claim-then-verify / 多 worker 协调
+- 崩溃恢复 reaper（万一上次中途挂了，下次手动跑时人会看见，自然处理）
+- 跨周期指纹去污 / 时间戳排序选 winner / loser back-out
+
+**如果未来扩展到 N 实例并发或自动 cron**：上面这套必须重新设计。git history 里有一版 v1.0 包含完整并发协议（13 层洞，约 30 条 Codex 评审堵住），可作参考。
 
 ---
 
@@ -48,9 +65,10 @@ GitHub issue 在本项目同时承载三类工作：日常 bug/feature 维护、
 
 ### 2.1 日常 Agent 处理标签
 
+> **§0 假设下不需要 `agent-processing` lock**：单实例 + 日级别频率，没有多 worker 抢同一 issue 的风险。终态 label（下表）就是状态机的全部，不需要额外的"持锁中"状态。万一上次中途挂了，下次手动跑时人会看到没有终态 label 的 issue，自然继续处理。
+
 | Label | 颜色 hex | 含义 | 谁加 | 谁清 |
 |---|---|---|---|---|
-| `agent-processing` | `9CA3AF` 灰 | 本 Agent 正在处理（乐观锁） | `/issues-autofix` 进入时 | 同一 Agent 处理结束时 |
 | `agent-replied` | `94A3B8` 浅灰 | 已答复无修复 | `/issues-autofix` | — |
 | `agent-fixed` | `10B981` 绿 | 已答复且提了 PR | `/issues-autofix` | — |
 | `proposed-fix` | `60A5FA` 浅蓝 | 给了思路未提 PR | `/issues-autofix` | — |
@@ -85,8 +103,7 @@ GitHub issue 在本项目同时承载三类工作：日常 bug/feature 维护、
 
 ```bash
 REPO=inernoro/prd_agent
-# 日常 Agent
-gh label create "agent-processing"   --color 9CA3AF --description "本 Agent 正在处理（乐观锁）" --repo $REPO
+# 日常 Agent（v2.0 起删除 agent-processing — 单实例假设下不需要 lock）
 gh label create "agent-replied"      --color 94A3B8 --description "已答复无修复"             --repo $REPO
 gh label create "agent-fixed"        --color 10B981 --description "已答复且提了 PR"          --repo $REPO
 gh label create "proposed-fix"       --color 60A5FA --description "给了思路未提 PR"          --repo $REPO
@@ -118,22 +135,22 @@ gh label create "on-hold"      --color FBCA04 --description "暂缓处理"      
 
 ---
 
-## 3. `/issues-autofix` 完全跳过清单
+## 3. `/issues-autofix` 跳过清单
 
-为防止通用 Agent 误入"其他 Agent 领地"，跳过条件按顺序判定，命中即静默 next：
+跳过条件按顺序判定，命中即 next：
 
-1. **作者是机器人**：用户名匹配 `*[bot]` / `dependabot` / `renovate` / `github-actions` / `claude-code-app`，或 GitHub API `user.type == "Bot"`
+1. **作者是机器人**：用户名匹配 `*[bot]` / `dependabot` / `renovate` / `github-actions` / `claude-code-app`
 2. **issue 含 §2.2 任一 `visual-test:*` label**（视觉测试 Agent 领地）
 3. **issue 含 §2.3 任一豁免 label**
-4. **issue 含永久终态 label**（无条件跳过）：`agent-timeout` / `needs-human` / `cannot-reproduce` / `duplicate`
+4. **issue 含永久终态 label**：`agent-timeout` / `needs-human` / `cannot-reproduce` / `duplicate`
 5. **`needs-info` 条件跳过**（§2.1 规定"下轮清"）：
-   - 自 Agent 最近一次"请求补充信息"评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过本轮
-   - 有用户新评论 → 移除 `needs-info` label，按 §5 重新分类
-6. **`agent-replied` / `agent-fixed` / `proposed-fix` 条件升级**（§13 承诺"答复后追问转 needs-human"必须真正实现）：
-   - 自 Agent 最近一次 `agent-handled:*:terminal:*` 指纹以来，没有非 Agent / 非机器人用户的新评论 → 跳过本轮
-   - 有用户新评论 → 加 `needs-human` label + 发"已转人工"评论，保留原终态 label 追溯，本轮跳过
+   - 自 Agent 最近一次"请求补充信息"评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过
+   - 有用户新评论 → 移除 `needs-info`，按 §5 重新分类
+6. **`agent-replied` / `agent-fixed` / `proposed-fix` 条件升级**：
+   - 自 Agent 最近一次终态评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过
+   - 有用户新评论 → 加 `needs-human` + 评论"已转人工"，保留原终态 label，本轮跳过
 7. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
-8. **issue body 含** `<!-- agent-handled:` HTML 注释指纹（已处理过）
+8. **issue body 含同日幂等指纹** `<!-- agent-handled:{run_id}:{今日日期} -->`：本日已处理过，下次重跑直接跳（跨日不算）
 9. **issue 已有未关闭的关联 PR**
 10. **作者是 maintainer** 且无 `please-fix`/`bug` 类 label
 11. **草稿/template 占位**：正文 < 20 字 或 仅含模板未填项
@@ -223,11 +240,11 @@ gh label create "on-hold"      --color FBCA04 --description "暂缓处理"      
    ├─ 必要输入：标的(PR#/commit/页面) + 业务用例
    └─ 自动推导：预览地址(规则 #11 v3) + 分支 + commit
 3. 子 issue 创建 → label: visual-test:pending
-4. 视觉测试 Agent 跑 /issues-visual-run
-   ├─ 加 agent-processing 乐观锁
+4. 用户跑 /issues-visual-run（手动触发，单实例）
    ├─ 评论"已接单 · 预计 N 分钟"
    ├─ 按 §3 矩阵跑（双主题强制）
-   └─ 按 §7 格式回评论
+   ├─ 按 §7 格式回评论
+   └─ 终态评论末尾追加 `<!-- visual-run:{run_id}:{今日日期} -->` 幂等指纹
 5. 分两种终态：
    ├─ 有 P0/P1 → label: visual-test:reviewing
    │     │
