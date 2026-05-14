@@ -100,7 +100,8 @@ flowchart LR
 ### 修正
 
 1. `shared-service` 项目的 instance discovery 只返回系统级 `ServiceDeployment`。
-2. CDS 项目列表里 shared-service 项目不再跳到 `/branches/:projectId`，而是跳到 `/cds-settings#remote-hosts`。
+2. `shared-service` 项目的项目统计不再汇总 branch preview，所以不会继续显示 `br=1 run=1` 这类分支语义。
+3. CDS 项目列表里 shared-service 项目不再跳到 `/branches/:projectId`，而是跳到 `/cds-settings#remote-hosts`。
 
 ### 为什么这是正确方向
 
@@ -162,7 +163,7 @@ sequenceDiagram
 
 | 问题 | 影响 | 当前处理 | 后续动作 |
 |---|---|---|---|
-| shared-service 项目被 UI 当成普通分支项目 | 用户误以为 sidecar pool 有 `main` 分支 | 已修正项目入口和实例发现混入问题 | 继续把 shared-service 从普通项目导航中拆出去 |
+| shared-service 项目被 UI 当成普通分支项目 | 用户误以为 sidecar pool 有 `main` 分支 | 已修正项目入口、项目统计和实例发现混入问题 | 继续把 shared-service 从普通项目导航中拆出去 |
 | runtime worker 还没有完整资源池模型 | 用户看不到“创建容器 / 复用容器 / 清理容器”的真实状态 | 页面展示 workerId / containerName / resource policy | 增加 Runtime Pool 页面和会话级容器状态 |
 | sidecar 长期应该是 CDS 系统能力 | 若侵入业务项目 profile，会污染每个项目配置 | 当前已把 shared-service 作为系统项目 | 中期抽象为 SystemService，不再叫业务 Project |
 | 长命令 callback 还不够完整 | 远程命令长时间运行时可观测性不足 | A10 已能看到工具事件和日志 | 补命令级 stdout/stderr 增量事件与取消 |
@@ -197,4 +198,3 @@ sequenceDiagram
 3. 给每个会话补“容器生命周期时间线”：创建、启动、接收任务、工具审批、停止、清理。
 4. 给文档和页面都标明“长期授权”和“一次性 pairing token”的区别，避免再以为只有 10 分钟。
 5. 把已知问题固定成页面内可见的“限制与下一步”，不要只藏在计划文档里。
-

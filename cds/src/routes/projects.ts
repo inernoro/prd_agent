@@ -415,7 +415,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // helper treats branches without a projectId as belonging to the
     // legacy 'default' project, which preserves the pre-P4 rollup
     // behaviour for the legacy project.
-    const branches = stateService.getBranchesForProject(project.id);
+    const isSharedService = project.kind === 'shared-service';
+    const branches = isSharedService ? [] : stateService.getBranchesForProject(project.id);
     let runningBranchCount = 0;
     let appServiceCount = 0;
     let runningServiceCount = 0;
