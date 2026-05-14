@@ -59,6 +59,13 @@ function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
   return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
 }
 
+function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): string {
+  if (!profile) return '请先保存一个模型配置。';
+  if (!profile.hasApiKey) return '当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话。';
+  if (!profile.baseUrl || !profile.model) return '当前模型配置缺少 baseUrl 或 model，请补全后再启动远程会话。';
+  return '';
+}
+
 function sortSessions(items: InfraAgentSessionView[]): InfraAgentSessionView[] {
   return [...items].sort((a, b) => {
     const rank = statusRank(a.status) - statusRank(b.status);
@@ -319,6 +326,13 @@ export default function CdsAgentPage() {
     [sessions],
   );
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sortedSessions[0] ?? null;
+  const activeSessionProfile = activeSession?.runtimeProfileId
+    ? profiles.find((item) => item.id === activeSession.runtimeProfileId) ?? null
+    : activeProfile;
+  const activeProfileBlockReason = profileBlockReason(activeProfile);
+  const activeSessionProfileBlockReason = activeSession ? profileBlockReason(activeSessionProfile) : '';
+  const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason);
+  const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
   const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
 
   useEffect(() => {
@@ -378,6 +392,10 @@ export default function CdsAgentPage() {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
       return;
     }
+    if (activeProfileBlockReason) {
+      toast.warning('模型配置不可用', activeProfileBlockReason);
+      return;
+    }
     setBusy(true);
     try {
       const res = await createInfraAgentSession({
@@ -403,6 +421,10 @@ export default function CdsAgentPage() {
 
   async function startSession() {
     if (!activeSession) return;
+    if (activeSessionProfileBlockReason) {
+      toast.warning('模型配置不可用', activeSessionProfileBlockReason);
+      return;
+    }
     const sessionId = activeSession.id;
     setBusy(true);
     try {
@@ -424,6 +446,10 @@ export default function CdsAgentPage() {
 
   async function sendPrompt() {
     if (!activeSession || !prompt.trim()) return;
+    if (activeSessionProfileBlockReason) {
+      toast.warning('模型配置不可用', activeSessionProfileBlockReason);
+      return;
+    }
     const sessionId = activeSession.id;
     setBusy(true);
     try {
@@ -611,10 +637,15 @@ export default function CdsAgentPage() {
                 <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/45" style={{ background: 'rgba(255,255,255,0.04)' }}>
                   支持任意兼容服务：填入 baseUrl、model 和 API key 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
                 </div>
+                {activeProfileBlockReason && (
+                  <div className="mt-2 rounded-md px-2 py-2 text-xs leading-relaxed text-amber-100/85" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.26)' }}>
+                    {activeProfileBlockReason}
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => void testProfile()}
-                  disabled={!activeProfile || testingProfile}
+                  disabled={!activeProfile || testingProfile || !activeProfile.hasApiKey}
                   className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs disabled:opacity-45"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
                 >
@@ -631,7 +662,7 @@ export default function CdsAgentPage() {
                 </button>
                 {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
               </div>
-              <details className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <details open={Boolean(activeProfileBlockReason)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
                 <div className="mt-3 grid gap-2">
                   <input
@@ -714,7 +745,7 @@ export default function CdsAgentPage() {
               <button
                 type="button"
                 onClick={() => void createSession()}
-                disabled={busy || !activeConnection || !activeProfile}
+                disabled={busy || !canCreateSession}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-45"
                 style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}
               >
@@ -761,7 +792,7 @@ export default function CdsAgentPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
+                <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canRunActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
                   <Play size={13} /> 启动
                 </button>
                 <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
@@ -773,6 +804,11 @@ export default function CdsAgentPage() {
             <div className="grid flex-1 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
               <section className="flex min-h-0 flex-col gap-3">
                 <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  {activeSessionProfileBlockReason && (
+                    <div className="mb-3 rounded-lg px-3 py-2 text-sm leading-relaxed text-amber-100/85" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.26)' }}>
+                      {activeSessionProfileBlockReason}
+                    </div>
+                  )}
                   {events.length === 0 ? (
                     <div className="flex h-full min-h-[360px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
                   ) : (
@@ -808,7 +844,7 @@ export default function CdsAgentPage() {
                     className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
                   />
-                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim()} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
+                  <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || !canRunActiveSession} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
                     {busy ? <MapSpinner size={14} /> : <Send size={14} />} 发送
                   </button>
                 </div>
