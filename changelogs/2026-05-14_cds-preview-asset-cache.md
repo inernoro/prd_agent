@@ -25,3 +25,4 @@
 | fix | prd-api | CDS Agent 停止会话接口补齐业务异常映射，避免授权撤销等失败被包装成 500 |
 | feat | prd-admin | CDS Agent 工作台展示远程页面安全边界和 Bridge 工具拦截规则 |
 | feat | prd-admin | CDS Agent 工作台展示 Git 状态、diff 和创建 PR 工具的审批规则 |
+| feat | prd-api | 工作流运行器将 CDS Agent 节点纳入长任务事件透传，运行页可收到远程会话阶段事件 |

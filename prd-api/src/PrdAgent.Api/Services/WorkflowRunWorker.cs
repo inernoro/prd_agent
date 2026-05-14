@@ -525,7 +525,8 @@ public sealed class WorkflowRunWorker : BackgroundService
             or CapsuleTypes.ReportGenerator
             or CapsuleTypes.WebpageGenerator
             or CapsuleTypes.MediaRehost
-            or CapsuleTypes.VideoToText)
+            or CapsuleTypes.VideoToText
+            or CapsuleTypes.CdsAgent)
         {
             emitEvent = (eventName, payload) => EmitEventAsync(executionId, eventName, payload);
         }
