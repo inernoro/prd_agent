@@ -845,13 +845,14 @@ P10 当前结论：
 | P16.2 事件 schema 稳定化 | [ ] | [ ] | [ ] | status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser |
 | P16.3 指标面板 | [ ] | [ ] | [ ] | 运行数、失败率、耗时、token、成本、资源 |
 | P16.4 审计报表 | [ ] | [ ] | [ ] | 谁启动、审批了什么、访问了哪些凭据 |
-| P16.5 回放模式 | [ ] | [ ] | [ ] | 按事件序列复盘一次远程执行 |
+| P16.5 回放模式 | [x] | [x] | [ ] | CDS Agent 事件时间线新增回放模式，可按步骤复盘远程执行事件；待主分支真实入口视觉复测 |
 
 冒烟测试：
 
 - 任意一次任务能用 traceId 查到 MAP/CDS/Workflow/Agent 四段记录。
 - 审计日志包含工具审批人和审批结果。
 - 2026-05-14 本地冒烟：`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS" | head -30` 无输出；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 3 个测试；`pnpm --prefix prd-admin tsc --noEmit` 与 `pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx src/pages/infra-services/InfraServicesPage.tsx src/services/real/infraAgentSessions.ts` 通过。
+- 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认事件回放控件可编译且无新增 lint 问题。
 
 视觉测试：
 

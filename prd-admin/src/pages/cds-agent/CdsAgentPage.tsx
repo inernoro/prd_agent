@@ -343,6 +343,8 @@ export default function CdsAgentPage() {
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
   const [sessionQuery, setSessionQuery] = useState('');
+  const [eventReplayMode, setEventReplayMode] = useState(false);
+  const [eventReplayIndex, setEventReplayIndex] = useState(1);
   const [busy, setBusy] = useState(false);
   const [testingProfile, setTestingProfile] = useState(false);
   const [profileTest, setProfileTest] = useState<string>('');
@@ -398,6 +400,10 @@ export default function CdsAgentPage() {
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
   const canStartActiveSession = Boolean(activeSession && canRunActiveSession && canStartFromStatus(activeSession.status));
   const canSendActiveSession = Boolean(activeSession && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
+  const displayedEvents = useMemo(
+    () => eventReplayMode ? events.slice(0, Math.max(0, Math.min(eventReplayIndex, events.length))) : events,
+    [eventReplayIndex, eventReplayMode, events],
+  );
   const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
 
   useEffect(() => {
@@ -409,10 +415,23 @@ export default function CdsAgentPage() {
       setMessages([]);
       setEvents([]);
       setLogs('');
+      setEventReplayMode(false);
+      setEventReplayIndex(1);
       return;
     }
+    setEventReplayMode(false);
+    setEventReplayIndex(1);
     void refreshDetail(activeSession.id);
   }, [activeSession?.id]);
+
+  useEffect(() => {
+    if (events.length === 0) {
+      setEventReplayMode(false);
+      setEventReplayIndex(1);
+      return;
+    }
+    setEventReplayIndex((prev) => Math.max(1, Math.min(prev, events.length)));
+  }, [events.length]);
 
   async function loadAll() {
     const [connRes, profileRes, sessionRes] = await Promise.all([
@@ -1003,14 +1022,62 @@ export default function CdsAgentPage() {
                 </div>
 
                 <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
-                    <span className="text-xs text-white/35">{events.length} 条</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
+                      <span className="text-xs text-white/35">
+                        {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
+                      </span>
+                    </div>
+                    {events.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {eventReplayMode && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setEventReplayIndex((prev) => Math.max(1, prev - 1))}
+                              className="rounded px-2 py-1 text-xs text-white/55 hover:text-white/85 disabled:opacity-40"
+                              disabled={eventReplayIndex <= 1}
+                            >
+                              上一步
+                            </button>
+                            <input
+                              type="range"
+                              min={1}
+                              max={events.length}
+                              value={eventReplayIndex}
+                              onChange={(e) => setEventReplayIndex(Number(e.target.value))}
+                              className="h-1 w-28 accent-sky-300"
+                              aria-label="事件回放进度"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEventReplayIndex((prev) => Math.min(events.length, prev + 1))}
+                              className="rounded px-2 py-1 text-xs text-white/55 hover:text-white/85 disabled:opacity-40"
+                              disabled={eventReplayIndex >= events.length}
+                            >
+                              下一步
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEventReplayMode((prev) => !prev);
+                            setEventReplayIndex(1);
+                          }}
+                          className="rounded px-2 py-1 text-xs text-white/55 hover:text-white/85"
+                          style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        >
+                          {eventReplayMode ? '退出回放' : '回放'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {events.length === 0 ? (
                     <div className="flex h-full min-h-[220px] items-center justify-center text-sm text-white/40">启动并发送任务后，这里会显示状态、流式输出、工具调用和审批结果。</div>
                   ) : (
-                    events.map((event) => {
+                    displayedEvents.map((event) => {
                       const payload = parsePayload(event);
                       const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
                       const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
