@@ -39,6 +39,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
+import { computePreviewSlug } from '../services/preview-slug.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -469,6 +470,30 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       });
     }
 
+    const projectSlug = project.slug || project.id;
+    const previewRoot = resolvePreviewRootDomain();
+    for (const branch of deps.stateService.getBranchesForProject(projectId)) {
+      if (branch.status !== 'running') continue;
+      for (const serviceState of Object.values(branch.services || {})) {
+        if (serviceState.status !== 'running') continue;
+        const profile = deps.stateService.getBuildProfile(serviceState.profileId);
+        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
+        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        instances.push({
+          deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
+          host: serviceState.containerName,
+          port: serviceState.hostPort,
+          baseUrl,
+          healthy: true,
+          version: branch.githubCommitSha,
+          deployedAt: branch.lastDeployAt || branch.createdAt,
+          tags: ['system', 'default', 'cds-sidecar'],
+          hostName: profile?.name || serviceState.profileId,
+          hostId: branch.id,
+        });
+      }
+    }
+
     res.json({ projectId, instances });
   });
 
@@ -719,6 +744,16 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
 }
 
 // ── 工具 ──────────────────────────────────────────
+
+function resolvePreviewRootDomain(): string {
+  const direct = process.env.PREVIEW_DOMAIN || process.env.MAIN_DOMAIN || process.env.DASHBOARD_DOMAIN;
+  if (direct?.trim()) return direct.trim();
+  const roots = (process.env.ROOT_DOMAINS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  return roots[0] || '';
+}
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';
 type CdsAgentEventType = 'status' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook';

@@ -37,3 +37,5 @@
 | fix | prd-api | PRD Agent API 的 DataProtection key ring 改存 MongoDB，避免系统级 CDS 长期授权在容器重建后失效 |
 | fix | cds | CDS 连接 accept 回调改为一次性 pairing token 鉴权路径，避免 MAP 粘贴授权被 CDS 登录态拦截 |
 | fix | prd-api | 百宝箱 CDS Agent 执行队列切到 v2，避免旧预览 worker 抢消费后提示未找到 cds-agent |
+| feat | cds | CDS shared-service 实例发现支持返回分支服务 baseUrl，用于系统级 sidecar pool |
+| feat | prd-api | CDS Agent sidecar 改为通过长期授权连接动态发现系统级 sidecar pool |
