@@ -847,7 +847,7 @@ P10 当前结论：
 | P16.1 统一 traceId | [x] | [x] | [ ] | MAP session 与事件已统一 `traceId` 并在 CDS Agent 页、基础设施操作台展示；CDS session、workflow run、agent run 贯通仍待 P14/P15 接入后补齐 |
 | P16.2 事件 schema 稳定化 | [ ] | [ ] | [ ] | status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser |
 | P16.3 指标面板 | [x] | [x] | [x] | CDS Agent 工作台新增会话总数、失败会话、当前事件、工具事件和可见产物指标条；主分支真实入口视觉已验收 |
-| P16.4 审计报表 | [x] | [x] | [ ] | CDS Agent 工作台新增审计摘要，展示会话用户、连接、模型配置、工具策略、审批相关事件和凭据暴露状态；待真实入口视觉 |
+| P16.4 审计报表 | [x] | [x] | [x] | CDS Agent 工作台新增审计摘要，展示会话用户、连接、模型配置、工具策略、审批相关事件和凭据暴露状态；主分支真实入口视觉已验收 |
 | P16.5 回放模式 | [x] | [x] | [x] | CDS Agent 事件时间线新增回放模式，可按步骤复盘远程执行事件；主分支真实入口视觉已复测 |
 
 冒烟测试：
@@ -864,6 +864,7 @@ P10 当前结论：
 - 观测面板从会话页可进入，关键错误能定位到具体阶段。
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `418591d1`。选择已有 21 条事件会话，点击“回放”后出现“退出回放 / 上一步 / 下一步 / 事件回放进度”控件，事件计数从“21 条”切换为“1 / 21”，首条事件内容稳定渲染。
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `0104809e`。首屏可见“会话总数 / 失败会话 / 当前事件 / 工具事件 / 可见产物”五个指标卡，当前会话显示 21 条事件、16 条工具事件和 9 个可见产物。
+- 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `dd9aa48b`。硬刷新后首屏可见“审计摘要”，包含会话用户、CDS 连接、模型配置、工具策略、审批相关事件和“凭据暴露：不向前端显示 long token / API key”。
 
 ### P17 真实端到端验收
 
@@ -879,7 +880,7 @@ P10 当前结论：
 | P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
 | P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
 | P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `0104809e`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到 `dd9aa48b`，api/admin/claude-sidecar 均 running，真实入口视觉 footer commit 对齐 |
 | P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
 
 冒烟测试：
