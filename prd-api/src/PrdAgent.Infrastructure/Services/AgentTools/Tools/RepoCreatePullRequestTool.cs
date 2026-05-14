@@ -65,6 +65,12 @@ public sealed class RepoCreatePullRequestTool : IAgentTool
                 return AgentToolInvokeResult.Fail("github_token_missing", "GITHUB_PAT, GH_TOKEN or GITHUB_TOKEN is not configured in the runtime");
             }
 
+            var repair = await _workspace.EnsureGitRepositoryAsync(ct);
+            if (repair != null)
+            {
+                return AgentToolInvokeResult.Fail("git_workspace_unavailable", repair.Stderr);
+            }
+
             var remote = await RunGitAsync("remote", ["get-url", "origin"], token, ct);
             if (remote.ExitCode != 0) return AgentToolInvokeResult.Fail("git_remote_failed", remote.Stderr);
             var repo = ParseGitHubRepo(remote.Stdout.Trim());

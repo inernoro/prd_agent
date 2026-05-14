@@ -97,6 +97,8 @@ services:
       ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__RefreshIntervalSeconds: "10"
       AGENT_WORKSPACE_ROOT: /repo
+      AGENT_WORKSPACE_GITHUB_REPOSITORY: "inernoro/prd_agent"
+      AGENT_WORKSPACE_GIT_REF: "${VITE_GIT_BRANCH}"
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"

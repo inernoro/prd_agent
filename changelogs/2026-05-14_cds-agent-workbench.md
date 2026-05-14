@@ -43,3 +43,5 @@
 | feat | prd-admin | 工作流执行历史和详情页展示 traceId，便于从页面定位远程 Agent 会话 |
 | fix | prd-api | 工作流执行 BSON 映射忽略额外字段，避免滚动部署期间新增 traceId 被旧 worker 反序列化失败 |
 | fix | prd-api | CDS Agent paired sidecar 工具回调改用 MAP 公网地址，并净化远程模型输出中的符号内容 |
+| fix | prd-api | CDS Agent 仓库工具在 release 容器中自动修复断开的 Git worktree 元数据，确保 status/diff/PR 工具可用 |
+| fix | cds | MAP API 容器注入 Agent workspace 仓库名和分支，供远程仓库工具按部署分支恢复 Git 上下文 |

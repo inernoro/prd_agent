@@ -6,6 +6,7 @@ namespace PrdAgent.Infrastructure.Services.AgentTools;
 
 public sealed class AgentWorkspace
 {
+    private static readonly SemaphoreSlim GitRepairLock = new(1, 1);
     private static readonly string[] SecretKeyHints =
     [
         "TOKEN",
@@ -16,12 +17,16 @@ public sealed class AgentWorkspace
         "PRIVATE_KEY"
     ];
 
-    public AgentWorkspace(string root)
+    public AgentWorkspace(string root, string? githubRepository = null, string? gitRef = null)
     {
         Root = Path.GetFullPath(root);
+        GitHubRepository = string.IsNullOrWhiteSpace(githubRepository) ? null : githubRepository.Trim();
+        GitRef = string.IsNullOrWhiteSpace(gitRef) ? "main" : gitRef.Trim();
     }
 
     public string Root { get; }
+    public string? GitHubRepository { get; }
+    public string GitRef { get; }
 
     public static AgentWorkspace Resolve(IConfiguration configuration)
     {
@@ -32,7 +37,14 @@ public sealed class AgentWorkspace
         {
             configured = Directory.GetCurrentDirectory();
         }
-        return new AgentWorkspace(configured);
+        var repo = Environment.GetEnvironmentVariable("AGENT_WORKSPACE_GITHUB_REPOSITORY")
+            ?? configuration["AgentWorkspace:GitHubRepository"]
+            ?? Environment.GetEnvironmentVariable("GITHUB_REPOSITORY");
+        var gitRef = Environment.GetEnvironmentVariable("AGENT_WORKSPACE_GIT_REF")
+            ?? configuration["AgentWorkspace:GitRef"]
+            ?? Environment.GetEnvironmentVariable("VITE_GIT_BRANCH")
+            ?? "main";
+        return new AgentWorkspace(configured, repo, gitRef);
     }
 
     public string ResolvePath(string? relativePath, bool allowDirectory = false)
@@ -148,6 +160,162 @@ public sealed class AgentWorkspace
         {
             return new CommandResult(1, Truncate(stdout.ToString()), ex.Message);
         }
+    }
+
+    public async Task<CommandResult?> EnsureGitRepositoryAsync(CancellationToken ct)
+    {
+        if (await IsGitUsableAsync(ct))
+        {
+            return null;
+        }
+
+        await GitRepairLock.WaitAsync(ct);
+        try
+        {
+            if (await IsGitUsableAsync(ct))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(GitHubRepository))
+            {
+                return new CommandResult(
+                    128,
+                    string.Empty,
+                    "workspace git metadata is unavailable and AgentWorkspace:GitHubRepository is not configured");
+            }
+
+            var repo = GitHubRepository.Trim().Trim('/');
+            if (!IsSafeGitHubRepository(repo))
+            {
+                return new CommandResult(128, string.Empty, $"invalid GitHub repository: {repo}");
+            }
+
+            var gitFile = Path.Combine(Root, ".git");
+            if (File.Exists(gitFile))
+            {
+                File.Delete(gitFile);
+            }
+
+            var init = await RunProcessAsync("git", ["init"], Root, 30, null, ct);
+            if (init.ExitCode != 0) return init;
+
+            await RunProcessAsync("git", ["remote", "remove", "origin"], Root, 10, null, ct);
+            var remoteUrl = $"https://github.com/{repo}.git";
+            var remote = await RunProcessAsync("git", ["remote", "add", "origin", remoteUrl], Root, 10, null, ct);
+            if (remote.ExitCode != 0) return remote;
+
+            var token = ResolveGitHubToken();
+            var fetchUrl = string.IsNullOrWhiteSpace(token)
+                ? remoteUrl
+                : $"https://x-access-token:{token}@github.com/{repo}.git";
+            var fetch = await RunProcessAsync("git", ["fetch", "--depth=1", fetchUrl, GitRef], Root, 120, token, ct);
+            if (fetch.ExitCode != 0) return fetch;
+
+            var branchName = IsSafeGitRef(GitRef) ? GitRef : "main";
+            var checkout = await RunProcessAsync("git", ["checkout", "-B", branchName, "FETCH_HEAD"], Root, 60, token, ct);
+            if (checkout.ExitCode != 0) return checkout;
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return new CommandResult(128, string.Empty, ex.Message);
+        }
+        finally
+        {
+            GitRepairLock.Release();
+        }
+    }
+
+    private async Task<bool> IsGitUsableAsync(CancellationToken ct)
+    {
+        var result = await RunProcessAsync("git", ["rev-parse", "--is-inside-work-tree"], Root, 10, null, ct);
+        return result.ExitCode == 0 && result.Stdout.Contains("true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<CommandResult> RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        int timeoutSeconds,
+        string? secret,
+        CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 1, 180)));
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        foreach (var arg in args) psi.ArgumentList.Add(arg);
+
+        using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data != null) stdout.AppendLine(e.Data);
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data != null) stderr.AppendLine(e.Data);
+        };
+
+        try
+        {
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            await process.WaitForExitAsync(timeoutCts.Token);
+            return new CommandResult(
+                process.ExitCode,
+                Mask(Truncate(stdout.ToString()), secret),
+                Mask(Truncate(stderr.ToString()), secret));
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            return new CommandResult(124, Mask(Truncate(stdout.ToString()), secret), "command timed out");
+        }
+        catch (Exception ex)
+        {
+            return new CommandResult(1, Mask(Truncate(stdout.ToString()), secret), ex.Message);
+        }
+    }
+
+    private static string? ResolveGitHubToken()
+    {
+        return Environment.GetEnvironmentVariable("GITHUB_PAT")
+            ?? Environment.GetEnvironmentVariable("GH_TOKEN")
+            ?? Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+    }
+
+    private static bool IsSafeGitHubRepository(string repo)
+    {
+        var parts = repo.Split('/');
+        return parts.Length == 2
+            && parts.All(p => p.Length > 0 && p.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.'));
+    }
+
+    private static bool IsSafeGitRef(string value)
+    {
+        return value.Length > 0
+            && !value.StartsWith("-", StringComparison.Ordinal)
+            && !value.Contains("..", StringComparison.Ordinal)
+            && value.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '/' or '.');
+    }
+
+    private static string Mask(string text, string? secret)
+    {
+        return string.IsNullOrWhiteSpace(secret)
+            ? text
+            : text.Replace(secret, "***", StringComparison.Ordinal);
     }
 
     private static string? FindDeniedCommand(string command)
