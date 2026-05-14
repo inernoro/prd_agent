@@ -27,3 +27,4 @@
 | feat | prd-admin | CDS Agent 工作台展示 Git 状态、diff 和创建 PR 工具的审批规则 |
 | feat | prd-api | 工作流运行器将 CDS Agent 节点纳入长任务事件透传，运行页可收到远程会话阶段事件 |
 | feat | prd-api | CDS Agent 智能体执行器改为边执行边输出阶段事件，并回填事件时间线与运行日志产物 |
+| fix | prd-api | 统一 CDS 连接有效状态判断，避免列表显示可用但会话创建仍按已撤销拒绝 |

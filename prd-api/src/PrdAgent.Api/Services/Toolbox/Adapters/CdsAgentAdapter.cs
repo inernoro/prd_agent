@@ -60,9 +60,13 @@ public class CdsAgentAdapter : IAgentAdapter
         AgentExecutionContext context,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        var recentHealthyCutoff = DateTime.UtcNow.Subtract(TimeSpan.FromMinutes(10));
         var connection = await _db.InfraConnections
             .Find(x => x.Partner == "cds"
-                && x.Status == "active")
+                && (x.Status == "active"
+                    || (x.LastProbeOk == true
+                        && x.LastProbedAt != null
+                        && x.LastProbedAt >= recentHealthyCutoff)))
             .SortByDescending(x => x.UpdatedAt)
             .FirstOrDefaultAsync(ct);
         if (connection == null)

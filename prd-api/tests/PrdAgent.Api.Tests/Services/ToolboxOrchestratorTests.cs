@@ -42,11 +42,14 @@ public class ToolboxOrchestratorTests
         (await events.MoveNextAsync()).ShouldBeTrue();
         events.Current.Type.ShouldBe(ToolboxRunEventType.StepProgress);
         events.Current.Content.ShouldBe("first chunk\n");
-        adapter.HasReachedGate.ShouldBeTrue();
 
+        var blockedNext = events.MoveNextAsync().AsTask();
+        await Task.Delay(100);
+        adapter.HasReachedGate.ShouldBeTrue();
+        blockedNext.IsCompleted.ShouldBeFalse();
         adapter.Release();
 
-        (await events.MoveNextAsync()).ShouldBeTrue();
+        (await blockedNext).ShouldBeTrue();
         events.Current.Type.ShouldBe(ToolboxRunEventType.StepProgress);
         events.Current.Content.ShouldBe("second chunk\n");
     }

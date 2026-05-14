@@ -5,6 +5,7 @@ using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
 using Xunit;
 
@@ -12,6 +13,19 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public class InfraAgentSessionsControllerTests
 {
+    [Fact]
+    public void HasRecentHealthyProbe_ShouldTreatRecentlyProbedConnectionAsUsable()
+    {
+        var connection = new InfraConnection
+        {
+            Status = "revoked",
+            LastProbeOk = true,
+            LastProbedAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+
+        InfraAgentSessionService.HasRecentHealthyProbe(connection).ShouldBeTrue();
+    }
+
     [Fact]
     public async Task Create_ShouldReturnCreated_AndUseCurrentUser()
     {
