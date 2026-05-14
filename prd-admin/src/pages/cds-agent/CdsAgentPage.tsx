@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, PauseCircle, Play, Plus, RefreshCw, Search, Send, Square, Terminal, UserCheck } from 'lucide-react';
+import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -1055,6 +1055,14 @@ export default function CdsAgentPage() {
                   {busy ? <MapSpinner size={13} /> : <Download size={13} />} 从系统主模型同步
                 </button>
                 {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/65">
+                  <ShieldCheck size={13} /> 远程页面安全边界
+                </div>
+                <div className="mt-2 text-xs leading-relaxed text-white/45">
+                  `cds_bridge_snapshot` 只读查看远程浏览器，`cds_bridge_action` 统一走危险工具审批；navigate / spa-navigate 默认拦截 localhost、内网、链路本地和 metadata 地址，命中时返回 `bridge_url_blocked`。
+                </div>
               </div>
               <details open={Boolean(activeProfileBlockReason)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
