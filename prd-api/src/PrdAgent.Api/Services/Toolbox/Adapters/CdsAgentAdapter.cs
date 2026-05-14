@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -78,10 +79,7 @@ public class CdsAgentAdapter : IAgentAdapter
             yield break;
         }
 
-        var runtimeProfile = (await _runtimeProfiles.ListAsync(ct))
-            .OrderByDescending(x => x.IsDefault)
-            .ThenByDescending(x => x.UpdatedAt)
-            .FirstOrDefault();
+        var runtimeProfile = await LoadRuntimeProfileChoiceAsync(ct);
         if (runtimeProfile == null)
         {
             yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
@@ -166,6 +164,79 @@ public class CdsAgentAdapter : IAgentAdapter
         yield return AgentStreamChunk.Done();
     }
 
+    private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(CancellationToken ct)
+    {
+        try
+        {
+            return (await _runtimeProfiles.ListAsync(ct))
+                .OrderByDescending(x => x.IsDefault)
+                .ThenByDescending(x => x.UpdatedAt)
+                .Select(x => new RuntimeProfileChoice(x.Id, x.Runtime, x.Model, x.IsDefault, x.UpdatedAt))
+                .FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "CDS Agent runtime profile service failed, falling back to raw BSON profile read");
+        }
+
+        var collection = _db.Database.GetCollection<BsonDocument>("infra_agent_runtime_profiles");
+        var sort = Builders<BsonDocument>.Sort
+            .Descending("IsDefault")
+            .Descending("UpdatedAt");
+        var doc = await collection.Find(Builders<BsonDocument>.Filter.Empty)
+            .Sort(sort)
+            .FirstOrDefaultAsync(ct);
+        if (doc == null) return null;
+
+        var id = ReadString(doc, "_id", "Id", "id");
+        var runtime = ReadString(doc, "Runtime", "runtime");
+        var model = ReadString(doc, "Model", "model");
+        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(runtime) || string.IsNullOrWhiteSpace(model))
+        {
+            return null;
+        }
+
+        return new RuntimeProfileChoice(
+            id,
+            runtime,
+            model,
+            ReadBool(doc, "IsDefault", "isDefault"),
+            ReadDateTime(doc, "UpdatedAt", "updatedAt"));
+    }
+
+    private static string ReadString(BsonDocument doc, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!doc.TryGetValue(name, out var value) || value.IsBsonNull) continue;
+            if (value.IsObjectId) return value.AsObjectId.ToString();
+            return value.ToString() ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    private static bool ReadBool(BsonDocument doc, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!doc.TryGetValue(name, out var value) || value.IsBsonNull) continue;
+            if (value.IsBoolean) return value.AsBoolean;
+            if (bool.TryParse(value.ToString(), out var parsed)) return parsed;
+        }
+        return false;
+    }
+
+    private static DateTime ReadDateTime(BsonDocument doc, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!doc.TryGetValue(name, out var value) || value.IsBsonNull) continue;
+            if (value.IsValidDateTime) return value.ToUniversalTime();
+            if (DateTime.TryParse(value.ToString(), out var parsed)) return parsed.ToUniversalTime();
+        }
+        return DateTime.MinValue;
+    }
+
     private static string BuildRemotePrompt(AgentExecutionContext context)
     {
         var userMessage = string.IsNullOrWhiteSpace(context.UserMessage)
@@ -192,6 +263,13 @@ public class CdsAgentAdapter : IAgentAdapter
 
         return userMessage;
     }
+
+    private sealed record RuntimeProfileChoice(
+        string Id,
+        string Runtime,
+        string Model,
+        bool IsDefault,
+        DateTime UpdatedAt);
 
     private static string RenderEvent(InfraAgentEventView evt)
     {
