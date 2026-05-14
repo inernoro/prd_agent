@@ -83,7 +83,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 > GitHub "Add labels" API 对**已存在** label 不返回失败，只返回当前 label 集合。"加 label 失败"不是 CAS 信号——两个并行 worker 都会"成功"。必须 claim 评论 + 再读 verify。详细模式参照 `issues-visual-run` §2，本节摘要要点：
 
 - **启动 reaper**（每轮 sweep 第一步，扫死锁；同 `issues-visual-run` §2，三路分别处理崩溃位置）：
-  1. 列出所有挂 `agent-processing` 的 open issue
+  1. 列出所有挂 `agent-processing` 的 open issue 后**必须再过滤**为非视觉测试领地：剔除标题以 `[visual-test]` 开头的 + 剔除含任一 `visual-test:*` label 的 issue（`agent-processing` 与 `/issues-visual-run` 共用，不过滤会侵犯 visual-run 领地 —— visual-run owned issue 被本 reaper 路径 C 强删 lock 不加回 `visual-test:pending`，visual-run reaper 再也找不到，永久卡死）
   2. 找最新 `agent-handled:*:claim:*` 指纹时间戳，以及该 run_id 的 `:terminal:` 指纹
   3. **路径 A**（终态前崩溃，claim 距今 > 30 分钟必须 > `max_minutes_per_issue` 且无 `:terminal:`）：删 `agent-processing` + 评论"reaper 重置（A 路径，终态前崩溃）"，下一轮重新接单
   4. **路径 B**（终态后崩溃，已有 `:terminal:` 指纹但 `agent-processing` 仍在）：删 `agent-processing` + 评论"reaper 清理孤儿锁（B 路径，终态后崩溃）"，**不**重新接单（终态已落定）
