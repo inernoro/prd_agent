@@ -99,7 +99,7 @@ gh label create "visual-test:pending"   --color FBBF24 --description "执行者�
 gh label create "visual-test:reviewing" --color 3B82F6 --description "已接单，等待开发者回应"        --repo $REPO
 gh label create "visual-test:passed"    --color 10B981 --description "全部 P0/P1 通过，可关闭"      --repo $REPO
 gh label create "visual-test:blocked"   --color EF4444 --description "环境/需求阻塞，需澄清"        --repo $REPO
-gh label edit   "visual-test:protocol"  --color 8B5CF6 --description "元 issue 独占，演化讨论"      --repo $REPO
+gh label create "visual-test:protocol"  --color 8B5CF6 --description "元 issue 独占，演化讨论"      --repo $REPO --force
 # 豁免
 gh label create "human-only"   --color 1F2937 --description "显式禁止 Agent 介入"  --repo $REPO
 gh label create "discussion"   --color 6B7280 --description "长期讨论，不是请求"   --repo $REPO
