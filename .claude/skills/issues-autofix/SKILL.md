@@ -88,10 +88,10 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 1. 按 §2 跳过清单过滤，命中即 next
 2. 按 §5 分类，进入对应处理路径
-3. 处理完成后：
-   - 加对应终态 label（`agent-replied` / `agent-fixed` / `proposed-fix` / `needs-info` / `needs-human` / `duplicate` / `cannot-reproduce`）
-   - 发评论描述结果（首次答复见 §6 四要素；PR 提交见 §9 描述模板）
-   - 评论末尾追加幂等指纹 `<!-- agent-handled:{run_id}:{今日日期 YYYY-MM-DD} -->`（同日内被重复触发时，§2 #6 会跳过；跨日不算）
+3. 处理完成后（**顺序严格：评论先于 label**）：
+   - **先发**评论描述结果（首次答复见 §6 四要素；PR 提交见 §9 描述模板），评论末尾追加幂等指纹 `<!-- agent-handled:{run_id}:{今日日期 YYYY-MM-DD} -->`
+   - **后加**对应终态 label（`agent-replied` / `agent-fixed` / `proposed-fix` / `needs-info` / `needs-human` / `duplicate` / `cannot-reproduce`）
+   - 顺序原因：若先 label 后评论，崩在中间会让 issue 顶着终态 label 但没回复，未来 sweep §2 跳过 → reporter 永远收不到反馈。反过来则最坏情况是"评论已写但 label 漏标"，下次 sweep 重新处理（最多一次重复回复，可接受）
 
 **失败处理**（per issue）：
 - 单 issue 处理超 `max_minutes_per_issue` 分钟 → 加 `agent-timeout` + 评论"超时跳过"
