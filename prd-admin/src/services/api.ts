@@ -778,6 +778,7 @@ export const api = {
     events: (id: string) => `/api/infra-agent-sessions/${id}/events`,
     stream: (id: string) => `/api/infra-agent-sessions/${id}/stream`,
     stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
+    archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
     toolApproval: (id: string, approvalId: string) => `/api/infra-agent-sessions/${id}/tool-approvals/${approvalId}`,
   },

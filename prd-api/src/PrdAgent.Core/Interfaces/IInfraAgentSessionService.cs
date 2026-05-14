@@ -16,6 +16,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
 
+    Task<InfraAgentSessionView?> ArchiveAsync(string userId, string id, CancellationToken ct);
+
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
     Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct);
@@ -62,6 +64,7 @@ public record InfraAgentSessionView(
     string? HookProfileId,
     string Title,
     string Status,
+    bool IsArchived,
     string? LastError,
     DateTime CreatedAt,
     DateTime UpdatedAt,
@@ -92,6 +95,7 @@ public static class InfraAgentSessionErrorCodes
     public const string MessageContentRequired = "message_content_required";
     public const string HookFailed = "hook_failed";
     public const string RuntimeProfileInvalid = "runtime_profile_invalid";
+    public const string SessionStillRunning = "session_still_running";
 }
 
 public class InfraAgentSessionException : Exception

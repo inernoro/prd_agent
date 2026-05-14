@@ -697,7 +697,7 @@ P10 当前结论：
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
 | P11.1 新增对话页路由与导航 | [x] | [x] | [x] | `/cds-agent` 已接入路由、设置入口和百宝箱内置智能体入口；真实百宝箱卡片点击已进入工作台 |
-| P11.2 会话列表产品化 | [ ] | [x] | [ ] | 已按可继续优先排序并展示失败原因；搜索、归档、恢复仍待补齐 |
+| P11.2 会话列表产品化 | [x] | [x] | [ ] | 已按可继续优先排序并展示失败原因；新增搜索与归档，运行中会话需先停止；待部署后真实入口视觉验证 |
 | P11.3 多轮消息模型 | [ ] | [ ] | [ ] | user/assistant/tool/system 分块渲染 |
 | P11.4 附件和上下文选择 | [ ] | [ ] | [ ] | 文件、网页、知识库、项目文档 |
 | P11.5 停止/重试/继续 | [ ] | [ ] | [ ] | 运行中可取消，失败可重试，历史可继续 |
@@ -708,6 +708,7 @@ P10 当前结论：
 - 新建会话、发多轮消息、刷新恢复、停止、继续。
 - 断线后使用 `afterSeq` 恢复事件，不重复渲染。
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit` 通过；目标文件 `eslint src/pages/cds-agent/CdsAgentPage.tsx src/stores/toolboxStore.ts` 通过，确认百宝箱入口、模型配置文案和会话排序可编译。
+- 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore` 通过 4 个测试，覆盖归档运行中会话返回 409；`pnpm --prefix prd-admin tsc --noEmit`、目标 eslint、`dotnet build --no-restore` 均通过，确认搜索、归档接口和前端渲染可编译。
 - 2026-05-14 真实入口视觉发现：点击百宝箱中的 CDS Agent 卡片后 URL 变为 `/cds-agent`，但页面仍停在百宝箱；已补强入口为页面级跳转，待下一次部署复测。
 
 视觉测试：

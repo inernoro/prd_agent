@@ -40,6 +40,8 @@ public class InfraAgentSession
 
     public string Status { get; set; } = InfraAgentSessionStatuses.Idle;
 
+    public bool IsArchived { get; set; }
+
     public string? LastError { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

@@ -68,6 +68,25 @@ public class InfraAgentSessionsControllerTests
         result.ShouldBeOfType<NotFoundObjectResult>();
     }
 
+    [Fact]
+    public async Task Archive_ShouldMapRunningSessionError()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        service
+            .Setup(x => x.ArchiveAsync("user-1", "session-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.SessionStillRunning,
+                "运行中的远程会话需要先停止，再归档",
+                StatusCodes.Status409Conflict));
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.Archive("session-1", CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status409Conflict);
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId)
@@ -110,6 +129,7 @@ public class InfraAgentSessionsControllerTests
             null,
             "测试会话",
             InfraAgentSessionStatuses.Idle,
+            false,
             null,
             now,
             now,

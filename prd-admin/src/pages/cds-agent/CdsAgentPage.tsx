@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, Download, FileText, GitCompare, Globe2, Play, Plus, RefreshCw, Send, Square, Terminal } from 'lucide-react';
+import { Archive, Copy, Download, FileText, GitCompare, Globe2, Play, Plus, RefreshCw, Search, Send, Square, Terminal } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { listInfraConnections, type InfraConnectionPublicView } from '@/services/real/infraConnections';
 import {
   approveInfraAgentTool,
+  archiveInfraAgentSession,
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
@@ -292,6 +293,7 @@ export default function CdsAgentPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
+  const [sessionQuery, setSessionQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [testingProfile, setTestingProfile] = useState(false);
   const [profileTest, setProfileTest] = useState<string>('');
@@ -321,6 +323,18 @@ export default function CdsAgentPage() {
     [profiles, draft.runtimeProfileId],
   );
   const sortedSessions = useMemo(() => sortSessions(sessions), [sessions]);
+  const visibleSessions = useMemo(() => {
+    const query = sessionQuery.trim().toLowerCase();
+    if (!query) return sortedSessions;
+    return sortedSessions.filter((session) => [
+      session.title,
+      session.model ?? '',
+      session.runtime,
+      session.status,
+      session.lastError ?? '',
+      session.traceId,
+    ].some((value) => value.toLowerCase().includes(query)));
+  }, [sessionQuery, sortedSessions]);
   const resumableCount = useMemo(
     () => sessions.filter((item) => item.status === 'running' || item.status === 'creating' || item.status === 'idle').length,
     [sessions],
@@ -485,6 +499,32 @@ export default function CdsAgentPage() {
     } catch (err) {
       toast.error('停止失败', err instanceof Error ? err.message : '请稍后重试');
       await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function archiveSession() {
+    if (!activeSession) return;
+    if (activeSession.status === 'running' || activeSession.status === 'creating' || activeSession.status === 'stopping') {
+      toast.warning('先停止会话', '运行中的远程会话需要先停止，再归档');
+      return;
+    }
+    const sessionId = activeSession.id;
+    setBusy(true);
+    try {
+      const res = await archiveInfraAgentSession(sessionId);
+      if (!res.success || !res.data?.item) {
+        toast.error('归档失败', res.error?.message ?? '请稍后重试');
+        return;
+      }
+      setSessions((prev) => sortSessions(prev.filter((item) => item.id !== sessionId)));
+      setActiveSessionId((prev) => (prev === sessionId ? null : prev));
+      setEvents([]);
+      setLogs('');
+      toast.success('会话已归档');
+    } catch (err) {
+      toast.error('归档失败', err instanceof Error ? err.message : '请稍后重试');
     } finally {
       setBusy(false);
     }
@@ -753,17 +793,30 @@ export default function CdsAgentPage() {
               </button>
             </div>
 
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/45">
-                <span>会话</span>
-                <span>{resumableCount} 个可继续</span>
-              </div>
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between gap-2 text-xs font-semibold text-white/45">
+                  <span>会话</span>
+                  <span>{resumableCount} 个可继续</span>
+                </div>
+                <label className="flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <Search size={13} className="text-white/35" />
+                  <input
+                    value={sessionQuery}
+                    onChange={(e) => setSessionQuery(e.target.value)}
+                    className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                    placeholder="搜索标题、模型、状态或错误"
+                  />
+                </label>
               {sessions.length === 0 ? (
                 <div className="rounded-lg px-3 py-8 text-center text-sm text-white/40" style={{ background: 'rgba(0,0,0,0.16)' }}>
                   先保存并测试模型配置，再新建远程会话。
                 </div>
+              ) : visibleSessions.length === 0 ? (
+                <div className="rounded-lg px-3 py-8 text-center text-sm text-white/40" style={{ background: 'rgba(0,0,0,0.16)' }}>
+                  没有匹配的会话。
+                </div>
               ) : (
-                sortedSessions.map((session) => (
+                visibleSessions.map((session) => (
                   <button
                     key={session.id}
                     type="button"
@@ -797,6 +850,9 @@ export default function CdsAgentPage() {
                 </button>
                 <button type="button" onClick={() => void stopSession()} disabled={!activeSession || busy} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>
                   <Square size={13} /> 停止
+                </button>
+                <button type="button" onClick={() => void archiveSession()} disabled={!activeSession || busy || activeSession.status === 'running' || activeSession.status === 'creating' || activeSession.status === 'stopping'} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.68)' }}>
+                  <Archive size={13} /> 归档
                 </button>
               </div>
             </div>

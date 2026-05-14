@@ -20,6 +20,7 @@ export interface InfraAgentSessionView {
   hookProfileId?: string | null;
   title: string;
   status: string;
+  isArchived: boolean;
   lastError?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -147,6 +148,13 @@ export async function sendInfraAgentMessage(id: string, content: string): Promis
 
 export async function stopInfraAgentSession(id: string): Promise<ApiResponse<ItemResp>> {
   return await apiRequest<ItemResp>(api.infraAgentSessions.stop(encodeURIComponent(id)), {
+    method: 'POST',
+    body: {},
+  });
+}
+
+export async function archiveInfraAgentSession(id: string): Promise<ApiResponse<ItemResp>> {
+  return await apiRequest<ItemResp>(api.infraAgentSessions.archive(encodeURIComponent(id)), {
     method: 'POST',
     body: {},
   });

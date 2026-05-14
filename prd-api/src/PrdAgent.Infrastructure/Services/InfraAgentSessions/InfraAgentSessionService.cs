@@ -47,7 +47,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var take = Math.Clamp(limit <= 0 ? 50 : limit, 1, 200);
         var items = await _db.InfraAgentSessions
-            .Find(x => x.UserId == userId)
+            .Find(x => x.UserId == userId && !x.IsArchived)
             .SortByDescending(x => x.UpdatedAt)
             .Limit(take)
             .ToListAsync(ct);
@@ -321,6 +321,35 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var nextSeq = await NextEventSeqAsync(session.Id, ct);
         await AppendStatusEventAsync(session.Id, nextSeq, session.Status, "session_stopped", ct);
 
+        return ToView(session);
+    }
+
+    public async Task<InfraAgentSessionView?> ArchiveAsync(string userId, string id, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        if (session.Status is InfraAgentSessionStatuses.Running
+            or InfraAgentSessionStatuses.Creating
+            or InfraAgentSessionStatuses.Stopping)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.SessionStillRunning,
+                "运行中的远程会话需要先停止，再归档",
+                StatusCodes.Status409Conflict);
+        }
+
+        var now = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.IsArchived, true)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        session.IsArchived = true;
+        session.UpdatedAt = now;
+        await AppendStatusEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), session.Status, "session_archived", ct);
         return ToView(session);
     }
 
@@ -1066,6 +1095,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.HookProfileId,
         session.Title,
         session.Status,
+        session.IsArchived,
         session.LastError,
         session.CreatedAt,
         session.UpdatedAt,

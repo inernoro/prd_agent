@@ -134,6 +134,28 @@ public class InfraAgentSessionsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { item }));
     }
 
+    [HttpPost("{id}/archive")]
+    public async Task<IActionResult> Archive(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.ArchiveAsync(userId, id, ct);
+            if (item == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpGet("{id}/events")]
     public async Task<IActionResult> ListEvents(
         string id,
