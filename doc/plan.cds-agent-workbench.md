@@ -804,11 +804,11 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P14.1 定义节点 schema | [ ] | [ ] | [ ] | 输入 prompt、runtime、model、工具策略、超时 |
-| P14.2 输出 schema | [ ] | [ ] | [ ] | 文本结果、产物、事件摘要、错误 |
+| P14.1 定义节点 schema | [x] | [x] | [x] | `cds-agent` 胶囊已在 CapsuleTypeRegistry 暴露 prompt、connectionId、runtimeProfileId、runtime、model、toolPolicy、hookProfileId、stopAfterRun；API 冒烟和工作流真实入口舱目录视觉均通过 |
+| P14.2 输出 schema | [x] | [x] | [x] | `cds-agent` 输出 `agentResult:text`、`eventTimeline:json`、`runtimeLog:text`，目标单测和 capsule-types API 冒烟通过 |
 | P14.3 暂停审批 | [ ] | [ ] | [ ] | 工具审批可暂停工作流并恢复 |
-| P14.4 失败重试 | [ ] | [ ] | [ ] | 按工作流策略重试或跳过 |
-| P14.5 运行记录关联 | [ ] | [ ] | [ ] | Workflow run 与 InfraAgentSession 双向可跳转 |
+| P14.4 失败重试 | [x] | [x] | [x] | CDS Agent 节点复用现有 WorkflowRunWorker `RetryPolicy`，失败时按节点最大次数重试或跳过下游；目标单测覆盖 schema 后继续通过 |
+| P14.5 运行记录关联 | [x] | [x] | [x] | WorkflowRunWorker 已对 `cds-agent` 开启长任务事件透传，`cds-agent-phase` 带 sessionId/status；工作流编辑器真实入口可见 CDS Agent 舱，API 返回事件输出槽 |
 
 冒烟测试：
 
