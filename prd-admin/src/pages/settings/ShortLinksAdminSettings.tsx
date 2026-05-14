@@ -11,7 +11,7 @@ import { Link2, Eye, ExternalLink, Copy, X, RefreshCw, Wrench, Search } from 'lu
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { listAdminShortLinks, revokeAdminShortLink, repairShortLinkCounter } from '@/services';
 import type { AdminShortLinkItem } from '@/services';
 
@@ -239,7 +239,7 @@ export function ShortLinksAdminSettings() {
                           disabled={busy === item.seq || !!item.share?.isRevoked}
                           title={item.share?.isRevoked ? '已吊销' : '强制吊销'}
                         >
-                          {busy === item.seq ? <Eye size={12} /> : <X size={12} />}
+                          {busy === item.seq ? <MapSpinner size={12} /> : <X size={12} />}
                         </Button>
                       </div>
                     </td>
@@ -250,7 +250,8 @@ export function ShortLinksAdminSettings() {
           )}
         </div>
 
-        {total > PAGE_SIZE && (
+        {/* skip > 0 时即使 total <= PAGE_SIZE 也要保留导航，避免筛选后困在空页 */}
+        {(total > PAGE_SIZE || skip > 0) && (
           <div className="p-3 flex items-center justify-between text-xs" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             <span style={{ color: 'var(--text-muted)' }}>
               第 {skip + 1}-{Math.min(skip + PAGE_SIZE, total)} 条 / 共 {total}
