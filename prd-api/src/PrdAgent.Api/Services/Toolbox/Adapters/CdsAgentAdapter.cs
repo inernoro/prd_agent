@@ -71,13 +71,11 @@ public class CdsAgentAdapter : IAgentAdapter
         string? configError = null;
         try
         {
-            var recentHealthyCutoff = DateTime.UtcNow.Subtract(TimeSpan.FromMinutes(10));
             connection = await _db.InfraConnections
                 .Find(x => x.Partner == "cds"
                     && (x.Status == "active"
                         || (x.LastProbeOk == true
-                            && x.LastProbedAt != null
-                            && x.LastProbedAt >= recentHealthyCutoff)))
+                            && x.LongTokenExpiresAt > DateTime.UtcNow)))
                 .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct);
 

@@ -17,8 +17,6 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
-    private static readonly TimeSpan RecentHealthyConnectionWindow = TimeSpan.FromMinutes(10);
-
     private readonly MongoDbContext _db;
     private readonly ILogger<InfraAgentSessionService> _logger;
     private readonly IInfraConnectionService _connections;
@@ -1064,8 +1062,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     public static bool HasRecentHealthyProbe(InfraConnection connection)
     {
         return connection.LastProbeOk == true
-            && connection.LastProbedAt.HasValue
-            && connection.LastProbedAt.Value >= DateTime.UtcNow.Subtract(RecentHealthyConnectionWindow);
+            && connection.LongTokenExpiresAt > DateTime.UtcNow;
     }
 
     private async Task<string> GetLongTokenAsync(string connectionId, CancellationToken ct)
