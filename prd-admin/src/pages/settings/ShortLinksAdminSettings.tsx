@@ -59,6 +59,12 @@ export function ShortLinksAdminSettings() {
     if (res.success) {
       setItems(res.data.items);
       setTotal(res.data.total);
+      // 外部删除让 skip 越界（例如别处删了几条，刷新后 total 缩水到 skip 之前）
+      // → 回退到最后一页，避免分页文案显示 "第 51-0 条" 这种荒谬范围。
+      if (skip > 0 && skip >= res.data.total) {
+        const lastPageSkip = Math.max(0, Math.floor(Math.max(0, res.data.total - 1) / PAGE_SIZE) * PAGE_SIZE);
+        setSkip(lastPageSkip);
+      }
     } else {
       setToast(res.error?.message || '加载失败');
     }
@@ -254,7 +260,9 @@ export function ShortLinksAdminSettings() {
         {(total > PAGE_SIZE || skip > 0) && (
           <div className="p-3 flex items-center justify-between text-xs" style={{ borderTop: '1px solid var(--border-subtle)' }}>
             <span style={{ color: 'var(--text-muted)' }}>
-              第 {skip + 1}-{Math.min(skip + PAGE_SIZE, total)} 条 / 共 {total}
+              {total === 0
+                ? `共 0 条`
+                : `第 ${Math.min(skip + 1, total)}-${Math.min(skip + PAGE_SIZE, total)} 条 / 共 ${total}`}
             </span>
             <div className="flex gap-2">
               <Button size="xs" variant="ghost" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}>上一页</Button>
