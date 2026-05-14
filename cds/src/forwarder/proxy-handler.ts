@@ -277,6 +277,9 @@ export class ProxyHandler {
             respHeaders['cache-control'] = 'no-store, must-revalidate';
             respHeaders['vary'] = 'Cookie';
           }
+          if (route.branchId && this.isStaticAssetRequest(req.url || '/')) {
+            respHeaders['cache-control'] = 'no-cache, must-revalidate';
+          }
 
           // Widget injection 条件:HTML 200 + route 带 branchId+branchName(对齐
           // master ProxyService.proxyRequest 行为,2026-05-08 用户反馈预览左下角
