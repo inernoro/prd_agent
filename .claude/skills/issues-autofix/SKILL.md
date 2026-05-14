@@ -123,7 +123,7 @@ known_bots: ["*[bot]", "dependabot", "renovate", "github-actions", "claude-code-
 
 ## 8. 去重规则
 
-- 候选：标题编辑距离 > 0.8 **或** 错误信息 token 重合 ≥ 70%
+- 候选：**标题相似度 > 0.8**（如归一化 Levenshtein 相似度 = `1 - editDistance/maxLen`，越大越像；用 distance 度量则要求 `< 0.2`）**或** 错误信息 token 重合 ≥ 70%
 - 二次校验：复现路径 + 症状 + 受影响版本 三者中至少两条一致
 - 硬否决：任一 issue 已关联 PR → 不判重
 - 命中：保留最早 issue，其余评论"已合并到 #XXX"，加 `duplicate` + 关闭
