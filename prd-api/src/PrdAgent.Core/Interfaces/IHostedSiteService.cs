@@ -33,11 +33,15 @@ public interface IHostedSiteService
 
     // ── 替换内容 ──
 
-    /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容</summary>
+    /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
+        string? wrappedAssetType = null,
         CancellationToken ct = default);
+
+    /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
+    Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
 
     // ── 查询 ──
 

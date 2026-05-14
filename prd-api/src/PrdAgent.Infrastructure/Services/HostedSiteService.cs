@@ -191,7 +191,8 @@ public class HostedSiteService : IHostedSiteService
     public async Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
-        CancellationToken ct)
+        string? wrappedAssetType = null,
+        CancellationToken ct = default)
     {
         var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
         if (site == null)
@@ -237,6 +238,12 @@ public class HostedSiteService : IHostedSiteService
 
         var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile));
 
+        // wrappedAssetType 必须显式覆盖（包括清空）：
+        // - 用户把 PDF 重传到原 HTML 站，应写入 "pdf" 让分享/缩略走 PDF 路径
+        // - 用户把 HTML 重传覆盖原 PDF 包装站，应清空 marker，避免前端继续渲染 PDF 占位
+        var normalizedType = string.IsNullOrWhiteSpace(wrappedAssetType)
+            ? null : wrappedAssetType.Trim().ToLowerInvariant();
+
         await _db.HostedSites.UpdateOneAsync(
             x => x.Id == siteId,
             Builders<HostedSite>.Update
@@ -244,6 +251,7 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.SiteUrl, siteUrl)
                 .Set(x => x.Files, siteFiles)
                 .Set(x => x.TotalSize, totalSize)
+                .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 
@@ -609,6 +617,68 @@ public class HostedSiteService : IHostedSiteService
         return true;
     }
 
+    // 老数据回填：本 PR 引入 WrappedAssetType marker 之前，所有 PDF 包装站
+    // marker 都是 null。这里扫描"形状疑似 PDF 包装站"的存量数据：
+    //   - WrappedAssetType is null
+    //   - EntryFile == "index.html"
+    //   - 恰好 2 个文件，一个 index.html、一个根目录 .pdf
+    // 然后下载 index.html，匹配 BuildPdfWrapper 模板独有的特征字符串，命中
+    // 才回填 marker。特征字符串选了"浏览器不支持内嵌 PDF"——只有该模板会有，
+    // 用户自己写的 landing.html 几乎不会撞。返回成功回填的站点数。
+    private const string PdfWrapperSignature = "浏览器不支持内嵌 PDF";
+
+    public async Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        // Mongo 的 {field: null} 同时匹配 null 与字段缺失，覆盖未升级的存量数据
+        var filter = fb.And(
+            fb.Eq(x => x.WrappedAssetType, (string?)null),
+            fb.Eq(x => x.EntryFile, "index.html"),
+            fb.Size(x => x.Files, 2));
+
+        var candidates = await _db.HostedSites.Find(filter).ToListAsync(ct);
+        var backfilled = 0;
+
+        foreach (var site in candidates)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            var pdf = site.Files.FirstOrDefault(f =>
+                !string.IsNullOrEmpty(f.Path) &&
+                !f.Path.Contains('/') &&
+                f.Path.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase));
+            var index = site.Files.FirstOrDefault(f =>
+                string.Equals(f.Path, "index.html", StringComparison.OrdinalIgnoreCase));
+            if (pdf == null || index == null || string.IsNullOrEmpty(index.CosKey)) continue;
+
+            try
+            {
+                var bytes = await _storage.TryDownloadBytesAsync(index.CosKey, ct);
+                if (bytes == null || bytes.Length == 0) continue;
+                var html = System.Text.Encoding.UTF8.GetString(bytes);
+                if (!html.Contains(PdfWrapperSignature, StringComparison.Ordinal)) continue;
+
+                await _db.HostedSites.UpdateOneAsync(
+                    x => x.Id == site.Id,
+                    Builders<HostedSite>.Update
+                        .Set(x => x.WrappedAssetType, "pdf"),
+                    cancellationToken: ct);
+                backfilled++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PDF wrapper marker 回填失败: site={SiteId}", site.Id);
+            }
+        }
+
+        if (backfilled > 0 || candidates.Count > 0)
+        {
+            _logger.LogInformation("PDF wrapper marker 回填完成: candidates={Candidates} backfilled={Backfilled}",
+                candidates.Count, backfilled);
+        }
+        return backfilled;
+    }
+
     // ─────────────────────────────────────────────
     // 观看记录
     // ─────────────────────────────────────────────
@@ -703,6 +773,7 @@ public class HostedSiteService : IHostedSiteService
                 Tags = original.Tags.ToList(),
                 Folder = original.Folder,
                 CoverImageUrl = original.CoverImageUrl,
+                WrappedAssetType = original.WrappedAssetType,
                 OwnerUserId = userId,
             };
             savedSites.Add(saved);
