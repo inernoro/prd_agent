@@ -249,11 +249,16 @@ public class SimpleOrchestrator : IToolboxOrchestrator
                 step.Status = ToolboxStepStatus.Failed;
                 step.ErrorMessage = stepError;
                 step.CompletedAt = DateTime.UtcNow;
+                run.Artifacts = allArtifacts;
 
                 yield return ToolboxRunEvent.StepFailed(step.StepId, stepError ?? "未知错误", ++seq);
                 _logger.LogWarning("步骤失败: {StepId}, Error: {Error}", step.StepId, stepError);
 
                 // 步骤失败，整个 Run 失败
+                run.Status = ToolboxRunStatus.Failed;
+                run.ErrorMessage = $"步骤 {step.Index + 1} 执行失败: {stepError}";
+                run.CompletedAt = DateTime.UtcNow;
+                run.LastSeq = seq + 1;
                 yield return ToolboxRunEvent.RunFailed($"步骤 {step.Index + 1} 执行失败: {stepError}", ++seq);
                 yield break;
             }

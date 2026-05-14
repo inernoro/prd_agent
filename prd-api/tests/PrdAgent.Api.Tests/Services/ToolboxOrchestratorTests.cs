@@ -54,6 +54,41 @@ public class ToolboxOrchestratorTests
         events.Current.Content.ShouldBe("second chunk\n");
     }
 
+    [Fact]
+    public async Task ExecuteRunAsync_ShouldKeepArtifactsWhenStreamingStepFails()
+    {
+        var orchestrator = new SimpleOrchestrator(new IAgentAdapter[] { new ArtifactThenErrorAdapter() }, NullLogger<SimpleOrchestrator>.Instance);
+        var run = new ToolboxRun
+        {
+            Id = "run-artifact-fail-test",
+            UserId = "user-1",
+            UserMessage = "run remotely",
+            PlannedAgents = ["artifact-error-agent"],
+            Steps =
+            {
+                new ToolboxRunStep
+                {
+                    AgentKey = "artifact-error-agent",
+                    AgentDisplayName = "Artifact Error Agent",
+                    Action = "execute",
+                    Index = 0,
+                }
+            }
+        };
+
+        var events = new List<ToolboxRunEvent>();
+        await foreach (var evt in orchestrator.ExecuteRunAsync(run, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        events.Select(e => e.Type).ShouldContain(ToolboxRunEventType.StepArtifact);
+        events.Last().Type.ShouldBe(ToolboxRunEventType.RunFailed);
+        run.Artifacts.Count.ShouldBe(1);
+        run.Steps[0].Status.ShouldBe(ToolboxStepStatus.Failed);
+        run.Steps[0].ErrorMessage.ShouldBe("provider returned 401");
+    }
+
     private sealed class GatedStreamingAdapter : IAgentAdapter
     {
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -81,5 +116,32 @@ public class ToolboxOrchestratorTests
         }
 
         public void Release() => _release.TrySetResult();
+    }
+
+    private sealed class ArtifactThenErrorAdapter : IAgentAdapter
+    {
+        public string AgentKey => "artifact-error-agent";
+
+        public string DisplayName => "Artifact Error Agent";
+
+        public bool CanHandle(string action) => true;
+
+        public Task<AgentExecutionResult> ExecuteAsync(AgentExecutionContext context, CancellationToken ct = default)
+            => Task.FromResult(AgentExecutionResult.Fail("provider returned 401"));
+
+        public async IAsyncEnumerable<AgentStreamChunk> StreamExecuteAsync(
+            AgentExecutionContext context,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
+            {
+                Type = ToolboxArtifactType.Text,
+                Name = "diagnostic log",
+                Content = "provider returned 401",
+                SourceStepId = context.StepId
+            });
+            yield return AgentStreamChunk.Error("provider returned 401");
+        }
     }
 }

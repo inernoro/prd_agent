@@ -905,6 +905,76 @@ P10 当前结论：
 
 当前已进入 P10-P17 完全可用阶段。P9 文档闭环已完成；后续每一项仍必须同步勾选“开发完成 / 冒烟测试完成 / 视觉测试完成”，并且最终验收只能以真实远程 Agent 巡检 `prd_agent` 并提交 PR 为准。
 
+### 17.1 完全可用的唯一验收路径
+
+完全可用只接受一条用户级路径，不再把设置页探活、接口直达、fake runtime 或容器内命令当作最终验收：
+
+1. 管理员进入 MAP。
+2. 打开 `设置 -> 基础设施服务`。
+3. 填写 CDS 地址并完成一次系统级授权。
+4. MAP 保存长期 CDS connection，`longTokenExpiresAt` 必须是长期值；10 分钟只允许出现在一次性配对 code 或临时跳转 state 上。
+5. 管理员进入 `CDS Agent` 独立页。
+6. 配置模型运行档案：协议、任意 `baseUrl`、任意 `model`、API key、资源限制、网络策略和默认开关。
+7. 点击测试模型，页面必须显示成功或具体 provider 错误；`AI_ACCESS_KEY` 只能作为 MAP/CDS 管理访问 key，不能伪装成模型 provider key。
+8. 用户从首页智能体区或百宝箱进入 `CDS Agent`。
+9. 用户新建远程会话，CDS 创建或复用隔离 runtime。
+10. 用户发送真实任务，页面流式展示文本、阶段、工具调用、审批、日志和产物。
+11. Agent 执行只读仓库工具，产出文件树、状态、diff 和命令结果。
+12. Agent 请求危险工具时页面暂停并等待人工审批；刷新后仍能恢复审批状态。
+13. 审批通过后 Agent 修改仓库、运行测试、提交分支、推送并创建 PR。
+14. 用户在 MAP 看到 PR 链接、变更文件、测试输出、事件时间线和停止释放结果。
+15. 关闭或停止会话后 CDS runtime 释放，刷新页面仍能回放完整记录。
+
+这条路径同时覆盖 P17.1-P17.10。任意一步只要不能从真实页面看到，就不得勾选视觉测试完成。
+
+### 17.2 对标后的产品底线
+
+对标对象不是为了照抄界面，而是为了确定产品底线：
+
+| 对标对象 | 稳定底线 | MAP/CDS 必须做到 |
+|----------|----------|------------------|
+| OpenAI Codex 云端任务 | 远程环境执行代码任务，能改代码、跑命令、提交变更 | CDS 会话必须绑定隔离工作区，MAP 必须显示 diff、命令、测试和 PR |
+| Claude Code GitHub Actions | 仓库事件触发、密钥注入、权限收敛、执行过程可审计 | MAP 必须有系统级凭据、工具审批、审计事件和 PR 产物 |
+| Vercel Sandbox | 短生命周期隔离运行环境，适合运行不可信代码 | CDS runtime 必须可停止、可限额、可清理、可观测 |
+| E2B Sandbox | 为 AI Agent 提供文件、终端、网络和桌面/浏览器环境 | CDS 需要 terminal、文件、浏览器和日志四类能力 |
+| Daytona / OpenHands 类远程 Agent | 长任务可恢复，Web 能看到 agent 轨迹和 workspace 状态 | MAP 对话页必须支持多轮、恢复、人工接管、日志、文件和浏览器面板 |
+
+参考资料：
+
+- OpenAI Codex documentation: `https://platform.openai.com/docs/codex`
+- Claude Code GitHub Actions documentation: `https://docs.anthropic.com/en/docs/claude-code/github-actions`
+- Vercel Sandbox documentation: `https://vercel.com/docs/vercel-sandbox`
+- E2B documentation: `https://e2b.dev/docs`
+- Daytona documentation: `https://www.daytona.io/docs`
+- OpenHands project: `https://github.com/All-Hands-AI/OpenHands`
+
+### 17.3 剩余工程拆解
+
+| 顺序 | 阶段 | 子项 | 开发 | 冒烟 | 视觉 | 完成条件 |
+|------|------|------|------|------|------|----------|
+| A1 | P14 | 工作流危险工具暂停审批 | [ ] | [ ] | [ ] | CDS Agent 工作流节点遇到危险工具时进入 waiting approval，审批后恢复运行 |
+| A2 | P15 | 智能体执行器正向链路 | [ ] | [ ] | [ ] | AI 百宝箱/智能体 run 能委托 CDS Agent，并实时显示 session、事件、产物和错误 |
+| A3 | P16 | Agent run 贯通 traceId | [ ] | [ ] | [ ] | 一个 traceId 能串起 toolbox run、workflow run、MAP session、CDS session 和 tool approval |
+| A4 | P17 | 系统级长期授权复测 | [ ] | [ ] | [ ] | 删除旧失效连接后，从设置页授权一次并长期可用，不再反复跳转授权 |
+| A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
+| A6 | P17 | 远程浏览器操作验收 | [ ] | [ ] | [ ] | Agent 能打开网页、读取 DOM、执行点击或输入，并把快照回传 MAP |
+| A7 | P17 | 工具审批恢复验收 | [ ] | [ ] | [ ] | 危险工具审批卡片刷新后仍在，允许/拒绝结果可审计 |
+| A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
+| A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
+| A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
+
+### 17.4 当前阻塞与不可混用凭据
+
+当前 MAP/CDS 链路已能创建长期 CDS connection、启动 CDS session、调用 sidecar、回传事件和产物；但最终 PR 验收仍取决于两类独立凭据：
+
+| 凭据 | 用途 | 当前判断 |
+|------|------|----------|
+| `AI_ACCESS_KEY` | MAP/CDS 管理 API 访问、部署和系统操作 | 已可用于 MAP/CDS 管理链路；不能用于模型生成 |
+| 模型 provider API key | OpenAI-compatible 或 Anthropic-compatible 模型调用 | 当前配置是 placeholder 或不可用 key，会导致 provider 401；未通过 P17 正向生成 |
+| GitHub token 或 App 凭据 | 推送分支、创建 PR | `repo_create_pull_request` 工具已具备缺失凭据诊断，最终 PR 仍需真实 GitHub 写权限 |
+
+因此后续实现可以继续补 UI、审批、trace 和工作流，但“远程 Agent 自己巡检并提交 PR”必须等真实模型 provider key 与 GitHub 写凭据都可用后才能打勾。
+
 2026-05-14 部署修复记录：
 
 - 主分支预览黑屏根因不是 CDS Agent 页面本身，而是 admin 服务仍以 Vite HMR 源码模式运行，预览代理访问 `/@vite/client` 等特殊路径时返回 HTML，浏览器无法加载模块。

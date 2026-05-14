@@ -153,6 +153,16 @@ public class CdsAgentAdapter : IAgentAdapter
             SourceStepId = context.StepId
         });
         yield return AgentStreamChunk.Text($"CDS 会话状态：{session.Status}\n");
+
+        if (string.Equals(session.Status, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            var reason = string.IsNullOrWhiteSpace(session.LastError)
+                ? "远程 CDS Agent 会话执行失败，请查看事件时间线和运行日志"
+                : session.LastError;
+            yield return AgentStreamChunk.Error(reason);
+            yield break;
+        }
+
         yield return AgentStreamChunk.Done();
     }
 
