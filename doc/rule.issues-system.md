@@ -125,15 +125,18 @@ gh label create "on-hold"      --color FBCA04 --description "暂缓处理"      
 1. **作者是机器人**：用户名匹配 `*[bot]` / `dependabot` / `renovate` / `github-actions` / `claude-code-app`，或 GitHub API `user.type == "Bot"`
 2. **issue 含 §2.2 任一 `visual-test:*` label**（视觉测试 Agent 领地）
 3. **issue 含 §2.3 任一豁免 label**
-4. **issue 含 §2.1 终态 label 且不需复活**：`agent-replied` / `agent-fixed` / `agent-timeout` / `proposed-fix` / `needs-human` / `cannot-reproduce` / `duplicate`（这些谁清字段为 "—"，永久终态）
-5. **`needs-info` 条件跳过**（不是终态，§2.1 规定"下轮清"）：
+4. **issue 含永久终态 label**（无条件跳过）：`agent-timeout` / `needs-human` / `cannot-reproduce` / `duplicate`
+5. **`needs-info` 条件跳过**（§2.1 规定"下轮清"）：
    - 自 Agent 最近一次"请求补充信息"评论以来，没有非 Agent / 非机器人用户的新评论 → 跳过本轮
    - 有用户新评论 → 移除 `needs-info` label，按 §5 重新分类
-6. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
-7. **issue body 含** `<!-- agent-handled:` HTML 注释指纹（已处理过）
-8. **issue 已有未关闭的关联 PR**
-9. **作者是 maintainer** 且无 `please-fix`/`bug` 类 label
-10. **草稿/template 占位**：正文 < 20 字 或 仅含模板未填项
+6. **`agent-replied` / `agent-fixed` / `proposed-fix` 条件升级**（§13 承诺"答复后追问转 needs-human"必须真正实现）：
+   - 自 Agent 最近一次 `agent-handled:*:terminal:*` 指纹以来，没有非 Agent / 非机器人用户的新评论 → 跳过本轮
+   - 有用户新评论 → 加 `needs-human` label + 发"已转人工"评论，保留原终态 label 追溯，本轮跳过
+7. **标题前缀属于元类**：`[visual-test*]` / `[protocol]` / `[rfc]` / `[tracking]` / `[meta]`
+8. **issue body 含** `<!-- agent-handled:` HTML 注释指纹（已处理过）
+9. **issue 已有未关闭的关联 PR**
+10. **作者是 maintainer** 且无 `please-fix`/`bug` 类 label
+11. **草稿/template 占位**：正文 < 20 字 或 仅含模板未填项
 
 **设计意图**：本节是兜底防火墙。label 是主防线，body 指纹是次防线，标题前缀是第三防线。任何一道触发都跳过。`needs-info` 是唯一允许"下轮复活"的状态，所有其他 Agent 处理过的 label 都视作永久终态。
 
