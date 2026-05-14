@@ -39,3 +39,4 @@
 | fix | prd-api | 百宝箱 CDS Agent 执行队列切到 v2，避免旧预览 worker 抢消费后提示未找到 cds-agent |
 | feat | cds | CDS shared-service 实例发现支持返回分支服务 baseUrl，用于系统级 sidecar pool |
 | feat | prd-api | CDS Agent sidecar 改为通过长期授权连接动态发现系统级 sidecar pool |
+| fix | prd-api | Agent 工具回调鉴权接受 CDS 系统级 sidecar pool 的共享 token |

@@ -325,6 +325,12 @@ public class AgentToolsController : ControllerBase
             .Cast<string>()
             .ToList();
 
+        var sharedDiscoveryToken = _options.CurrentValue.CdsDiscovery.SharedSidecarToken;
+        if (!string.IsNullOrWhiteSpace(sharedDiscoveryToken)) configured.Add(sharedDiscoveryToken);
+
+        var defaultSidecarToken = _options.CurrentValue.DefaultSidecarToken;
+        if (!string.IsNullOrWhiteSpace(defaultSidecarToken)) configured.Add(defaultSidecarToken);
+
         // 兜底：环境变量 CLAUDE_SIDECAR_TOKEN 也作为合法凭据（与 PostConfigure 自动注入对齐）
         var envToken = Environment.GetEnvironmentVariable("CLAUDE_SIDECAR_TOKEN");
         if (!string.IsNullOrWhiteSpace(envToken)) configured.Add(envToken);
