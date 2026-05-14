@@ -41,3 +41,4 @@
 | fix | cds | 修正 MAP Admin 静态服务监听参数，兼容 `serve` 的 TCP endpoint 写法 |
 | feat | prd-api | 工作流执行、百宝箱运行和 CDS Agent 会话贯通 traceId，审批事件可按同一链路审计 |
 | feat | prd-admin | 工作流执行历史和详情页展示 traceId，便于从页面定位远程 Agent 会话 |
+| fix | prd-api | 工作流执行 BSON 映射忽略额外字段，避免滚动部署期间新增 traceId 被旧 worker 反序列化失败 |

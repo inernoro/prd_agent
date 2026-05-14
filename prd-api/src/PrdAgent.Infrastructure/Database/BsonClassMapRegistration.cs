@@ -69,6 +69,7 @@ public static class BsonClassMapRegistration
             RegisterWatermarkFontAsset();
             RegisterWatermarkConfig();
             RegisterToolboxRun();
+            RegisterWorkflowModels();
             RegisterVideoGenRun();
             RegisterReportAgent();
             RegisterDocumentStore();
@@ -853,6 +854,36 @@ public static class BsonClassMapRegistration
         if (!BsonClassMap.IsClassMapRegistered(typeof(IntentResult)))
         {
             BsonClassMap.RegisterClassMap<IntentResult>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+    }
+
+    private static void RegisterWorkflowModels()
+    {
+        if (!BsonClassMap.IsClassMapRegistered(typeof(WorkflowExecution)))
+        {
+            BsonClassMap.RegisterClassMap<WorkflowExecution>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(NodeExecution)))
+        {
+            BsonClassMap.RegisterClassMap<NodeExecution>(cm =>
+            {
+                cm.AutoMap();
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(ExecutionArtifact)))
+        {
+            BsonClassMap.RegisterClassMap<ExecutionArtifact>(cm =>
             {
                 cm.AutoMap();
                 cm.SetIgnoreExtraElements(true);
