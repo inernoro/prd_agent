@@ -407,6 +407,7 @@ echo "https://${SLUG}.miduo.org/"
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
 | **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
 | **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
+| **daily-entropy-plan** | `/daily-entropy` | 仅手动触发 → 一条命令跑完整日例行：合并历史熵减 PR → 切新分支 → 六维双向扫描 → 自动修复 → diff 核验 → 提交 + 推送 + 创建 PR + squash 合并。全程不中断，不需要人工确认 |
 
 ### 专项修复技能
 
