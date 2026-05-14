@@ -84,7 +84,6 @@ services:
     volumes:
       - .:/repo
       - ./.cds-data/api-nuget-cache:/root/.nuget/packages
-      - ./.cds-data/api-dataprotection-keys:/data/dataprotection-keys
     ports:
       - "5000"
     command: >-
@@ -115,6 +114,7 @@ services:
       ClaudeSdkExecutor__Sidecars__0__Tags__0: "default"
       CLAUDE_SIDECAR_TOKEN: "dev-skip"
       AGENT_WORKSPACE_ROOT: /repo
+      DataProtection__KeyRingPath: /repo/.cds-data/api-dataprotection-keys
     labels:
       cds.path-prefix: "/api/"
 
