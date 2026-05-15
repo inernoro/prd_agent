@@ -283,7 +283,21 @@ export class ExecutorRegistry {
         existing.executorId = node.id;
         existing.status = (bStatus.status as import('../types.js').BranchEntry['status']) || existing.status;
         if (bStatus.services && typeof bStatus.services === 'object') {
-          existing.services = bStatus.services as Record<string, import('../types.js').ServiceState>;
+          // 2026-05-14 Codex review P2 "Persist deployedMode on the executor
+          // side"：心跳整体替换 services 会抹掉 proxyDeployToExecutor 写在
+          // 协调端的 deployedMode 真相戳（执行器 /exec/deploy 不上报该字段）。
+          // 协调端是"派发了哪个模式"的权威，这里做合并：incoming 缺
+          // deployedMode 时保留旧值；未来执行器若上报则以 incoming 为准。
+          // 否则下一次心跳后徽章/branchAutoPublishConverged 在 cluster 下
+          // 退回信任配置，真实态收敛失效。
+          const incoming = bStatus.services as Record<string, import('../types.js').ServiceState>;
+          const prev = existing.services || {};
+          for (const [pid, svc] of Object.entries(incoming)) {
+            if (svc && svc.deployedMode === undefined && prev[pid]?.deployedMode !== undefined) {
+              svc.deployedMode = prev[pid].deployedMode;
+            }
+          }
+          existing.services = incoming;
         }
       }
     }
