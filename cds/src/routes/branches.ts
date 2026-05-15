@@ -4060,6 +4060,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.lastStoppedAt = new Date().toISOString();
         entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
         entry.lastStopSource = 'executor';
+        // 2026-05-14 Cursor Bugbot Medium 修复：远端执行器停止路径与本地
+        // 手动停止 / scheduler coolFn / AutoLifecycle 一致，也要 +1 stopCount
+        // 并写活动日志，否则 UI「停止次数」对远端停止漏计、活动时间线缺这条。
+        stateService.incrementBranchStat(id, 'stopCount');
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'stop',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+        });
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {

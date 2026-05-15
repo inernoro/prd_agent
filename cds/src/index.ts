@@ -597,6 +597,16 @@ const autoLifecycleService = new AutoLifecycleService(
         branch.executorId && registry
           ? registry.getAll().find(n => n.id === branch.executorId && n.role !== 'embedded')
           : null;
+      // 2026-05-14 Codex review P2 "Retry when the owning executor is not
+      // registered"：分支有 executorId 但 registry 里查不到（coordinator
+      // 重启 / 漏 heartbeat）时，容器其实还在远端跑，本地 stop 是 no-op。
+      // 此时**不能**走下面的本地 stop 把分支标 idle/cold（会让 auto-lifecycle
+      // 误以为停成功、不再重试）。当作远端停止失败：回滚 + throw，下一拍
+      // 等执行器重新注册后重试。
+      if (branch.executorId && !remoteExecutor) {
+        restoreRunning();
+        throw new Error(`分支 ${slug} 归属执行器 ${branch.executorId} 当前未注册（可能 coordinator 刚重启或漏 heartbeat），稍后重试`);
+      }
       if (remoteExecutor) {
         for (const svc of Object.values(branch.services)) {
           if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
@@ -654,6 +664,35 @@ const autoLifecycleService = new AutoLifecycleService(
       branch.heatState = 'cold';
       stateService.incrementBranchStat(slug, 'stopCount');
       stateService.save();
+    },
+    // 2026-05-14 用户决策：auto-publish 必须全自动「停源码 → 重建发布版」，
+    // 不靠懒唤醒（懒唤醒路径 index.ts 用 raw profile 不 resolve override）。
+    // 复用 webhook dispatcher 同款"内部 HTTP 自调 /deploy"机制：deploy 路由
+    // 会走 resolveEffectiveProfile，override 已是 release → 重建成发布版。
+    // 不动核心热路径。X-CDS-Trigger=auto-lifecycle 让活动日志能区分来源。
+    redeployBranch: async (slug: string) => {
+      const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(slug)}/deploy`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CDS-Internal': '1',
+          'X-CDS-Trigger': 'auto-lifecycle',
+        },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`auto-publish 重部署 ${slug} 失败: HTTP ${res.status} ${body.slice(0, 160)}`);
+      }
+      // deploy 路由返回 SSE 流；排空 body 避免 Node 未处理 socket 警告。
+      // 部署日志由路由侧自行持久化，这里不消费事件。
+      if (res.body && typeof (res.body as { getReader?: unknown }).getReader === 'function') {
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        void (async () => {
+          try { for (;;) { const { done } = await reader.read(); if (done) break; } } catch { /* ignore */ }
+        })();
+      }
     },
   },
   { tickIntervalSeconds: 30, enabled: true },

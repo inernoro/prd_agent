@@ -34,6 +34,13 @@ export interface AutoLifecycleDeps {
   stateService: StateService;
   /** 真正执行容器停止。注入而非直接 import ContainerService 是为了方便测试。 */
   stopBranch: (branchId: string) => Promise<void>;
+  /**
+   * 全自动重部署分支（停旧 + 按当前 profileOverrides 重建）。auto-publish 用：
+   * 写完 release override 后调它，走会 resolveEffectiveProfile 的部署路径，
+   * 分支以发布版重新起来。注入便于测试；缺省时 auto-publish 退化为只设
+   * override + stop（不推荐，仅测试/降级）。
+   */
+  redeployBranch?: (branchId: string) => Promise<void>;
   /** 注入时钟，方便测试。生产用 Date.now()。 */
   clock?: { now(): number };
 }
@@ -231,25 +238,38 @@ export class AutoLifecycleService {
   }
 
   /**
-   * 把分支的所有 profile override 翻到 release 模式，然后停止容器。
-   * 不直接重新拉起 —— 用户下一次访问会被 auto-build 路径以新模式构建。
-   * 这样实现避免和 deploy SSE 路由耦合，复用 wake 机制。
+   * 2026-05-14 用户决策的最终设计：全自动「停源码 → 重建发布版」（先后替换，
+   * 同一分支同一时刻只有一个容器，无需人工点击）。
+   *
+   * 流程：
+   *  1. 计算 plan —— 只挑「有 release 模式可切」且「当前生效模式还不是
+   *     release」的 profile（已是 release 的不动，避免覆盖用户自选的
+   *     release 模式 —— Cursor Bugbot Medium 修复）。
+   *  2. 写 release override（先快照旧值，失败要回滚）。
+   *  3. 调 redeployBranch —— 内部 HTTP 自调 /deploy，部署路由会
+   *     resolveEffectiveProfile（读到刚写的 release override），自动停旧
+   *     容器并以发布版重建。这是"自动切发布版"真正生效的关键，**不依赖**
+   *     懒唤醒（懒唤醒路径用 raw profile 不 resolve override）。
+   *  4. redeploy 失败 → 回滚 override + throw，caller 不 stamp 假成功，
+   *     tick 下一拍因未收敛会重试。
    */
   private async applyAutoPublish(
     branch: BranchEntry,
     profiles: BuildProfile[],
     minutes: number,
   ): Promise<void> {
-    const { stateService, stopBranch } = this.deps;
-    // 2026-05-14 Codex review P2：先只"计算"要切哪些 profile，**不写**
-    // profileOverrides。否则 stopBranch 在远端失败 throw 时，override 已被
-    // 持久化（且被 restoreRunning 的 save 落盘），分支仍跑旧容器但 state
-    // 显示已是 release → 下一拍 branchAutoPublishConverged 误判收敛、不再
-    // 重试（若 auto-stop 关着）。override 推迟到 stop 成功后再写。
+    const { stateService, stopBranch, redeployBranch } = this.deps;
+
     const plan: Array<{ profileId: string; releaseMode: string; label: string }> = [];
     for (const profile of profiles) {
       const releaseMode = findReleaseDeployMode(profile);
       if (!releaseMode) continue;
+      // 已经是 release 的 profile 跳过，别用 findReleaseDeployMode 找到的
+      // "第一个 release 模式"覆盖用户/项目已选好的另一个 release 模式。
+      const override = branch.profileOverrides?.[profile.id]?.activeDeployMode;
+      const effectiveMode = override ?? profile.activeDeployMode ?? '';
+      const effectiveLabel = effectiveMode ? profile.deployModes?.[effectiveMode]?.label : undefined;
+      if (effectiveMode && isReleaseDeployMode(effectiveMode, effectiveLabel)) continue;
       plan.push({
         profileId: profile.id,
         releaseMode,
@@ -257,7 +277,9 @@ export class AutoLifecycleService {
       });
     }
     if (plan.length === 0) {
-      // 没有任何 profile 有 release 模式可切，记录一次 reason 后跳过。
+      // 没有可切的 profile：要么全是无 release 模式的纯源码（记一次 reason
+      // 提示用户），要么全部已是 release（收敛，静默返回不打扰）。
+      if (branchAutoPublishConverged(branch, profiles)) return;
       const fresh = stateService.getBranch(branch.id);
       if (fresh) {
         fresh.lastStopReason = `项目设置：${minutes} 分钟后自动切发布版，但没有可用的发布版模式（请到「项目设置→新分支默认运行模式」检查 deployModes）`;
@@ -267,11 +289,22 @@ export class AutoLifecycleService {
       return;
     }
 
-    // 先停。stopBranch 远端失败会 throw，此时 override 尚未写入，state 保持
-    // 原样，caller 的 try/catch 接住后 tick 下一拍重试，不会误判收敛。
-    await stopBranch(branch.id);
+    // 快照旧 override，redeploy 失败时回滚（避免假收敛）。
+    const prevOverrides = new Map<string, string | undefined>();
+    for (const item of plan) {
+      prevOverrides.set(item.profileId, branch.profileOverrides?.[item.profileId]?.activeDeployMode);
+    }
+    const restoreOverrides = (): void => {
+      for (const item of plan) {
+        const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
+        stateService.setBranchProfileOverride(branch.id, item.profileId, {
+          ...(existing || {}),
+          activeDeployMode: prevOverrides.get(item.profileId),
+        });
+      }
+      stateService.save();
+    };
 
-    // 停成功后再写 override —— 下次访问 auto-build 会以 release 模式构建。
     const switchedModes: string[] = [];
     for (const item of plan) {
       const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
@@ -281,17 +314,39 @@ export class AutoLifecycleService {
       });
       switchedModes.push(item.label);
     }
+    stateService.save();
 
-    // 重新读出 branch（stopBranch 可能改了状态），打 reason。
+    if (redeployBranch) {
+      // 全自动重部署：deploy 路由 resolveEffectiveProfile 会读到上面写的
+      // release override，停旧容器 + 以发布版重建。失败回滚 override 并
+      // 抛出，tick 下一拍重试。
+      try {
+        await redeployBranch(branch.id);
+      } catch (err) {
+        restoreOverrides();
+        throw new Error(`auto-publish 重部署失败，已回滚 override: ${(err as Error).message}`);
+      }
+    } else {
+      // 降级路径（仅测试 / 未注入 redeploy）：退回"停容器"老行为。
+      try {
+        await stopBranch(branch.id);
+      } catch (err) {
+        restoreOverrides();
+        throw err;
+      }
+    }
+
     const fresh = stateService.getBranch(branch.id);
     if (fresh) {
       fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
-      fresh.lastStopReason = `项目设置：启动满 ${minutes} 分钟，自动切到发布版（${switchedModes.join(', ')}），下次访问会以发布模式重新构建`;
+      fresh.lastStopReason = redeployBranch
+        ? `项目设置：启动满 ${minutes} 分钟，已自动切到发布版并重新部署（${switchedModes.join(', ')}）`
+        : `项目设置：启动满 ${minutes} 分钟，已切发布版并停止（${switchedModes.join(', ')}），下次访问重建`;
       fresh.lastStopSource = 'system';
       stateService.save();
       try {
         stateService.appendActivityLog(fresh.projectId, {
-          type: 'stop',
+          type: 'deploy',
           branchId: fresh.id,
           branchName: fresh.branch,
           actor: 'auto-lifecycle',
