@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, MousePointerClick, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -433,6 +433,8 @@ export default function CdsAgentPage() {
   const [logs, setLogs] = useState('');
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const timelineRef = useRef<HTMLDivElement>(null);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
   const [eventReplayIndex, setEventReplayIndex] = useState(1);
@@ -565,6 +567,13 @@ export default function CdsAgentPage() {
       /* sessionStorage 不可用时忽略，仅影响刷新后记忆 */
     }
   }, [viewMode]);
+
+  // 简洁模式时间线：新内容在底部，自动滚到底，符合 IM 习惯。
+  useEffect(() => {
+    if (viewMode !== 'simple') return;
+    const el = timelineRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [viewMode, activeSessionId, messages.length, events.length]);
 
   useEffect(() => {
     if (!activeSession?.id) {
@@ -1100,11 +1109,36 @@ export default function CdsAgentPage() {
   );
 
   if (viewMode === 'simple') {
-    const simpleEvents = displayedEvents.filter((event) =>
-      event.type === 'tool_call'
-      || event.type === 'tool_result'
-      || event.type === 'error'
-      || event.type === 'status');
+    // 过程类事件折叠进「执行过程」块；text_delta / done 的最终文本已由 assistant 消息承载，不重复渲染。
+    const PROCESS_TYPES = new Set(['tool_call', 'tool_result', 'error', 'status', 'file', 'diff', 'browser', 'manual', 'hook', 'log']);
+    type TimelineItem =
+      | { kind: 'msg'; at: number; key: string; msg: InfraAgentMessageView }
+      | { kind: 'evt'; at: number; seq: number; key: string; ev: InfraAgentEventView };
+    const timelineItems: TimelineItem[] = [
+      ...messages.map((m): TimelineItem => ({ kind: 'msg', at: new Date(m.createdAt).getTime(), key: `m-${m.id}`, msg: m })),
+      ...displayedEvents
+        .filter((e) => PROCESS_TYPES.has(e.type))
+        .map((e): TimelineItem => ({ kind: 'evt', at: new Date(e.createdAt).getTime(), seq: e.seq, key: `e-${e.id}`, ev: e })),
+    ].sort((a, b) => {
+      if (a.at !== b.at) return a.at - b.at; // 旧 → 新
+      if (a.kind !== b.kind) return a.kind === 'msg' ? -1 : 1;
+      if (a.kind === 'evt' && b.kind === 'evt') return a.seq - b.seq;
+      return 0;
+    });
+    type TimelineBlock =
+      | { type: 'msg'; key: string; msg: InfraAgentMessageView }
+      | { type: 'group'; key: string; events: InfraAgentEventView[] };
+    const timelineBlocks: TimelineBlock[] = [];
+    for (const item of timelineItems) {
+      if (item.kind === 'msg') {
+        timelineBlocks.push({ type: 'msg', key: item.key, msg: item.msg });
+        continue;
+      }
+      const last = timelineBlocks[timelineBlocks.length - 1];
+      if (last && last.type === 'group') last.events.push(item.ev);
+      else timelineBlocks.push({ type: 'group', key: item.key, events: [item.ev] });
+    }
+    const hasTimeline = timelineBlocks.length > 0;
     const sendDisabled = !activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput);
     return (
       <div className="h-full min-h-0 flex flex-col px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
@@ -1207,18 +1241,18 @@ export default function CdsAgentPage() {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)', overscrollBehavior: 'contain' }}>
-              {messages.length === 0 && simpleEvents.length === 0 ? (
+            <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)', overscrollBehavior: 'contain' }}>
+              {!hasTimeline ? (
                 <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 text-center text-sm text-white/40">
                   <MessageSquare size={20} className="text-white/30" />
                   <div>在下方输入要做的事，例如<br />“读一下 README 的前 20 行”</div>
                 </div>
               ) : (
-                <>
-                  {messages.map((message) => {
-                    const isUser = message.role === 'user';
+                timelineBlocks.map((block) => {
+                  if (block.type === 'msg') {
+                    const isUser = block.msg.role === 'user';
                     return (
-                      <article key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                      <article key={block.key} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
                         <div
                           className="max-w-[82%] rounded-lg px-3 py-2"
                           style={{
@@ -1226,57 +1260,102 @@ export default function CdsAgentPage() {
                             border: isUser ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.08)',
                           }}
                         >
-                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(message.role)} · {new Date(message.createdAt).toLocaleTimeString()}</div>
-                          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{message.content}</div>
+                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
+                          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{block.msg.content}</div>
                         </div>
                       </article>
                     );
-                  })}
-                  {simpleEvents.map((event) => {
-                    const payload = parsePayload(event);
-                    const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
-                    const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
-                    const toolName = String(payload.toolName ?? '');
-                    const expanded = simpleExpandedEventId === event.id;
-                    let label: string;
-                    if (event.type === 'tool_call') label = toolActionLabel(toolName, payload);
-                    else if (event.type === 'tool_result') label = `完成：${toolActionLabel(toolName, payload)}`;
-                    else if (event.type === 'error') label = `出错：${String(payload.message ?? '未知错误')}`;
-                    else label = statusLabel(String(payload.status ?? '状态更新'));
-                    const tone = event.type === 'error'
-                      ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.24)', color: 'rgba(252,165,165,0.9)' }
-                      : event.type === 'tool_result'
-                        ? { background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(187,247,208,0.85)' }
-                        : { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.62)' };
-                    const canExpand = event.type === 'tool_call' || event.type === 'tool_result';
-                    return (
-                      <div key={event.id} className="flex justify-start">
-                        <div className="max-w-[88%] rounded-lg px-3 py-2 text-xs" style={tone}>
-                          <button
-                            type="button"
-                            disabled={!canExpand}
-                            onClick={() => setSimpleExpandedEventId((prev) => (prev === event.id ? null : event.id))}
-                            className="flex items-center gap-2 text-left disabled:cursor-default"
-                          >
-                            {event.type === 'tool_call' && <Terminal size={12} />}
-                            {event.type === 'tool_result' && <ShieldCheck size={12} />}
-                            <span className="break-words">{label}</span>
-                            {canExpand && <span className="text-white/35">{expanded ? '收起' : '详情'}</span>}
-                          </button>
-                          {expanded && canExpand && (
-                            <div className="mt-1 border-t border-white/10 pt-1"><EventBody event={event} /></div>
-                          )}
-                          {waitingApproval && (
-                            <div className="mt-2 flex gap-2">
-                              <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
-                              <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
-                            </div>
-                          )}
-                        </div>
+                  }
+                  const events = block.events;
+                  const pendingApproval = events.find((e) => {
+                    if (e.type !== 'tool_call') return false;
+                    const p = parsePayload(e);
+                    return typeof p.approvalId === 'string' && p.status === 'waiting';
+                  });
+                  const forcedOpen = Boolean(pendingApproval);
+                  const open = forcedOpen || expandedGroups.has(block.key);
+                  const firstAt = new Date(events[0].createdAt).getTime();
+                  const lastAt = new Date(events[events.length - 1].createdAt).getTime();
+                  const durationSec = Math.max(0, Math.round((lastAt - firstAt) / 1000));
+                  const lastPayload = parsePayload(events[events.length - 1]);
+                  const lastLabel = events[events.length - 1].type === 'error'
+                    ? `出错：${String(lastPayload.message ?? '未知错误')}`
+                    : toolActionLabel(String(lastPayload.toolName ?? ''), lastPayload);
+                  const hasError = events.some((e) => e.type === 'error');
+                  const headerTone = hasError
+                    ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.24)' }
+                    : pendingApproval
+                      ? { background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)' }
+                      : { background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)' };
+                  return (
+                    <div key={block.key} className="flex justify-start">
+                      <div className="w-full max-w-[92%] rounded-lg" style={headerTone}>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(block.key)) next.delete(block.key); else next.add(block.key);
+                            return next;
+                          })}
+                          disabled={forcedOpen}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-white/70 disabled:cursor-default"
+                        >
+                          <Terminal size={12} className="shrink-0" />
+                          <span className="shrink-0 font-semibold">
+                            {pendingApproval ? '等待审批' : hasError ? '执行过程（含错误）' : '执行过程'}
+                          </span>
+                          <span className="shrink-0 text-white/40">{events.length} 步 · 用时 {durationSec}s</span>
+                          <span className="min-w-0 flex-1 truncate text-white/40">{open ? '' : lastLabel}</span>
+                          {!forcedOpen && <span className="shrink-0 text-white/35">{open ? '收起' : '展开'}</span>}
+                        </button>
+                        {open && (
+                          <div className="space-y-1.5 border-t border-white/10 px-3 py-2">
+                            {events.map((event) => {
+                              const payload = parsePayload(event);
+                              const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
+                              const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
+                              const toolName = String(payload.toolName ?? '');
+                              const stepOpen = simpleExpandedEventId === event.id;
+                              let label: string;
+                              if (event.type === 'tool_call') label = toolActionLabel(toolName, payload);
+                              else if (event.type === 'tool_result') label = `完成：${toolActionLabel(toolName, payload)}`;
+                              else if (event.type === 'error') label = `出错：${String(payload.message ?? '未知错误')}`;
+                              else label = statusLabel(String(payload.status ?? event.type));
+                              const canExpand = event.type === 'tool_call' || event.type === 'tool_result';
+                              return (
+                                <div key={event.id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(0,0,0,0.2)' }}>
+                                  <button
+                                    type="button"
+                                    disabled={!canExpand}
+                                    onClick={() => setSimpleExpandedEventId((prev) => (prev === event.id ? null : event.id))}
+                                    className="flex w-full items-center gap-2 text-left text-white/62 disabled:cursor-default"
+                                  >
+                                    {event.type === 'tool_result'
+                                      ? <ShieldCheck size={12} className="shrink-0 text-emerald-300/70" />
+                                      : event.type === 'error'
+                                        ? <Square size={12} className="shrink-0 text-red-300/70" />
+                                        : <Terminal size={12} className="shrink-0" />}
+                                    <span className="min-w-0 flex-1 break-words">{label}</span>
+                                    {canExpand && <span className="shrink-0 text-white/30">{stepOpen ? '收起' : '详情'}</span>}
+                                  </button>
+                                  {stepOpen && canExpand && (
+                                    <div className="mt-1 border-t border-white/10 pt-1"><EventBody event={event} /></div>
+                                  )}
+                                  {waitingApproval && (
+                                    <div className="mt-2 flex gap-2">
+                                      <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
+                                      <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </>
+                    </div>
+                  );
+                })
               )}
             </div>
 
