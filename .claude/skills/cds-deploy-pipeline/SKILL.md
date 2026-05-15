@@ -111,7 +111,7 @@ $CLI branch status <branchId>            # 单分支详情
 
 | 分支 | 状态 | API | Admin | 最后访问 |
 |------|------|-----|-------|---------|
-| claude/fix-xxx | running | :10003 ✓ | :10004 ✓ | 5 分钟前 |
+| claude/fix-xxx | running | :10003 OK | :10004 OK | 5 分钟前 |
 ```
 
 ## 速查表
