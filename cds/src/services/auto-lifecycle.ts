@@ -78,7 +78,7 @@ function findReleaseDeployMode(profile: BuildProfile): string | null {
  *  - 所有"可切"的 profile 都已经是 release，或者根本没有可切的 profile
  *    → 收敛，不再触发 auto-publish。
  */
-function branchAutoPublishConverged(
+export function branchAutoPublishConverged(
   branch: BranchEntry,
   profiles: BuildProfile[],
 ): boolean {
