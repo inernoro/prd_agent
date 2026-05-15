@@ -677,92 +677,112 @@ const autoLifecycleService = new AutoLifecycleService(
       // /deploy 要求能解析出源 project，否则 403 source-project-unresolved。
       // 复刻 webhook dispatcher 的 sourceHeadersForBranch 逻辑。
       const srcBranch = stateService.getBranch(slug);
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CDS-Internal': '1',
-          'X-CDS-Trigger': 'auto-lifecycle',
-          'X-CDS-Source-Branch-Id': slug,
-          ...(srcBranch?.projectId ? { 'X-CDS-Source-Project-Id': srcBranch.projectId } : {}),
-        },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`auto-publish 重部署 ${slug} 失败: HTTP ${res.status} ${body.slice(0, 160)}`);
-      }
-      // 2026-05-14 Codex review P2 "Await the deploy stream"：deploy 是 SSE，
-      // fetch 在响应头就 resolve，pull/build/readiness 失败都在流后续才发。
-      // 必须把流读到终态事件再判定成败，否则 redeploy 提前返回成功、后续
-      // 部署失败无法触发 applyAutoPublish 的 override 回滚。
-      // 终态契约（branches.ts /deploy 路由）：
-      //   event: error    → 硬失败（抛异常路径）
-      //   event: complete → 跑完；services 里任一 status !== 'running' 视为失败
-      //   流结束但无 complete/error → 视为未完成（失败）
-      if (!res.body || typeof (res.body as { getReader?: unknown }).getReader !== 'function') {
-        throw new Error(`auto-publish 重部署 ${slug}：响应无 SSE body，无法确认部署结果`);
-      }
-      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      let terminal: { ok: boolean; message: string } | null = null;
-      const parseBlock = (block: string): void => {
-        let evName = 'message';
-        let dataRaw = '';
-        for (const line of block.split('\n')) {
-          if (line.startsWith('event:')) evName = line.slice(6).trim();
-          else if (line.startsWith('data:')) dataRaw += line.slice(5).trim();
-        }
-        if (evName === 'error') {
-          let msg = '部署失败';
-          try { msg = (JSON.parse(dataRaw) as { message?: string }).message || msg; } catch { /* keep default */ }
-          terminal = { ok: false, message: msg };
-        } else if (evName === 'complete') {
-          // 2026-05-14 Codex review P2：直接读路由下发的权威 ok（路由基于
-          // activeServices 算出，已剔除已删除/僵尸 profile）。不再用全量
-          // services 重新推导，避免僵尸服务误判失败。无 ok 字段（旧路由）
-          // 才回退到 services 推导兜底。
-          let parsed: { ok?: boolean; services?: Record<string, { status?: string }>; message?: string } = {};
-          try { parsed = JSON.parse(dataRaw) as typeof parsed; } catch { /* unparseable → fail below */ }
-          const msg = parsed.message || '';
-          if (typeof parsed.ok === 'boolean') {
-            terminal = parsed.ok
-              ? { ok: true, message: msg || '部署完成' }
-              : { ok: false, message: msg || '部署失败' };
-          } else {
-            const services = parsed.services || {};
-            const failed = Object.entries(services)
-              .filter(([, s]) => s?.status !== 'running')
-              .map(([pid]) => pid);
-            terminal = failed.length === 0 && Object.keys(services).length > 0
-              ? { ok: true, message: msg || '部署完成' }
-              : { ok: false, message: `部署完成但有服务未就绪: ${failed.join(', ') || '无 running 服务'}` };
-          }
-        }
-      };
+      // 2026-05-14 Cursor Bugbot Medium 修复：SSE 读循环必须有总超时。
+      // 否则 deploy 端只发进度事件、永不发 complete/error 也不关连接时，
+      // for(;;) reader.read() 永久阻塞；tick() 全程持 this.running，之后
+      // 每个 setInterval tick 都在 `if (this.running) return` 处空转，
+      // 整个 AutoLifecycleService 对所有项目永久瘫痪直到进程重启。
+      // 用 AbortController + 硬总时限兜底（真实部署 pull+build+就绪极少
+      // 超 20min；超了就回滚 override，下一拍重试，绝不卡死全局）。
+      const REDEPLOY_DEADLINE_MS = 20 * 60 * 1000;
+      const ac = new AbortController();
+      const deadline = setTimeout(() => ac.abort(), REDEPLOY_DEADLINE_MS);
       try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (value) {
-            buf += decoder.decode(value, { stream: true });
-            let idx: number;
-            while ((idx = buf.indexOf('\n\n')) !== -1) {
-              parseBlock(buf.slice(0, idx));
-              buf = buf.slice(idx + 2);
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'auto-lifecycle',
+            'X-CDS-Source-Branch-Id': slug,
+            ...(srcBranch?.projectId ? { 'X-CDS-Source-Project-Id': srcBranch.projectId } : {}),
+          },
+          body: JSON.stringify({}),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`auto-publish 重部署 ${slug} 失败: HTTP ${res.status} ${body.slice(0, 160)}`);
+        }
+        // 2026-05-14 Codex review P2 "Await the deploy stream"：deploy 是 SSE，
+        // fetch 在响应头就 resolve，pull/build/readiness 失败都在流后续才发。
+        // 必须把流读到终态事件再判定成败，否则 redeploy 提前返回成功、后续
+        // 部署失败无法触发 applyAutoPublish 的 override 回滚。
+        // 终态契约（branches.ts /deploy 路由）：
+        //   event: error    → 硬失败（抛异常路径）
+        //   event: complete → 跑完；优先读权威 ok，缺省回退 services 推导
+        //   流结束但无 complete/error → 视为未完成（失败）
+        if (!res.body || typeof (res.body as { getReader?: unknown }).getReader !== 'function') {
+          throw new Error(`auto-publish 重部署 ${slug}：响应无 SSE body，无法确认部署结果`);
+        }
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let terminal: { ok: boolean; message: string } | null = null;
+        const parseBlock = (block: string): void => {
+          let evName = 'message';
+          let dataRaw = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) evName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataRaw += line.slice(5).trim();
+          }
+          if (evName === 'error') {
+            let msg = '部署失败';
+            try { msg = (JSON.parse(dataRaw) as { message?: string }).message || msg; } catch { /* keep default */ }
+            terminal = { ok: false, message: msg };
+          } else if (evName === 'complete') {
+            // 2026-05-14 Codex review P2：直接读路由下发的权威 ok（路由基于
+            // activeServices 算出，已剔除已删除/僵尸 profile）。不再用全量
+            // services 重新推导，避免僵尸服务误判失败。无 ok 字段（旧路由）
+            // 才回退到 services 推导兜底。
+            let parsed: { ok?: boolean; services?: Record<string, { status?: string }>; message?: string } = {};
+            try { parsed = JSON.parse(dataRaw) as typeof parsed; } catch { /* unparseable → fail below */ }
+            const msg = parsed.message || '';
+            if (typeof parsed.ok === 'boolean') {
+              terminal = parsed.ok
+                ? { ok: true, message: msg || '部署完成' }
+                : { ok: false, message: msg || '部署失败' };
+            } else {
+              const services = parsed.services || {};
+              const failed = Object.entries(services)
+                .filter(([, s]) => s?.status !== 'running')
+                .map(([pid]) => pid);
+              terminal = failed.length === 0 && Object.keys(services).length > 0
+                ? { ok: true, message: msg || '部署完成' }
+                : { ok: false, message: `部署完成但有服务未就绪: ${failed.join(', ') || '无 running 服务'}` };
             }
           }
-          if (done) break;
+        };
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (value) {
+              buf += decoder.decode(value, { stream: true });
+              let idx: number;
+              while ((idx = buf.indexOf('\n\n')) !== -1) {
+                parseBlock(buf.slice(0, idx));
+                buf = buf.slice(idx + 2);
+              }
+            }
+            if (done) break;
+          }
+          if (buf.trim()) parseBlock(buf);
+        } finally {
+          try { reader.releaseLock(); } catch { /* ignore */ }
         }
-        if (buf.trim()) parseBlock(buf);
+        if (!terminal) {
+          throw new Error(`auto-publish 重部署 ${slug}：SSE 流结束但未收到 complete/error 终态事件`);
+        }
+        if (!(terminal as { ok: boolean }).ok) {
+          throw new Error(`auto-publish 重部署 ${slug} 失败: ${(terminal as { message: string }).message}`);
+        }
+      } catch (err) {
+        if (ac.signal.aborted) {
+          throw new Error(`auto-publish 重部署 ${slug} 超时（>${REDEPLOY_DEADLINE_MS / 60000}min 未出终态），已中止；override 将回滚，下一拍重试`);
+        }
+        throw err;
       } finally {
-        try { reader.releaseLock(); } catch { /* ignore */ }
-      }
-      if (!terminal) {
-        throw new Error(`auto-publish 重部署 ${slug}：SSE 流结束但未收到 complete/error 终态事件`);
-      }
-      if (!(terminal as { ok: boolean }).ok) {
-        throw new Error(`auto-publish 重部署 ${slug} 失败: ${(terminal as { message: string }).message}`);
+        clearTimeout(deadline);
       }
     },
   },
