@@ -159,16 +159,27 @@ export class AutoLifecycleService {
         // reconcileBranchStatus()，导致 lastReadyAt 永远不被打戳，本调度器
         // 过滤条件 `b.lastReadyAt` 会把这些分支永久跳过。
         //
-        // 这里做集中式防御性回填：凡是 running 但缺 lastReadyAt 的分支，
-        // 以"调度器首次观察到它 running"的时间为锚点补上，并跳过本拍
-        // （不立刻动作，保证至少跑满一个完整周期）。代价是 headless 路径的
-        // 计时最多晚一个 tick（默认 30s），对分钟级策略可接受；好处是覆盖
-        // 当前所有路径 + 未来任何新加的 running 转移路径，无需逐处埋点。
+        // 这里做集中式防御性回填，两种情况都重新打戳并跳过本拍
+        // （不立刻动作，保证至少跑满一个完整周期）：
+        //   (a) running 但缺 lastReadyAt —— headless 首次部署。
+        //   (b) running 但 lastReadyAt 早于 lastStoppedAt —— 分支被
+        //       auto-stop/手动/调度器停过又经 deploy/auto-build 重启，
+        //       旧 ready 戳是上一轮的陈旧值。若不刷新，下一拍会按上一轮
+        //       的 age 立刻把刚重启的容器又 auto-stop/auto-publish 掉。
+        //       （2026-05-14 Codex review P2 "Refresh stale ready timestamps"）
+        // 代价是 headless 路径计时最多晚一个 tick（默认 30s），对分钟级
+        // 策略可接受；好处是覆盖当前 + 未来任何 running 转移路径，无需逐处埋点。
         const runningBranches = stateService.getAllBranches()
           .filter(b => b.projectId === project.id && b.status === 'running');
         let backfilled = false;
         for (const b of runningBranches) {
-          if (!b.lastReadyAt) {
+          const readyMs = b.lastReadyAt ? Date.parse(b.lastReadyAt) : NaN;
+          const stoppedMs = b.lastStoppedAt ? Date.parse(b.lastStoppedAt) : NaN;
+          const stale =
+            !b.lastReadyAt ||
+            !Number.isFinite(readyMs) ||
+            (Number.isFinite(stoppedMs) && readyMs <= stoppedMs);
+          if (stale) {
             b.lastReadyAt = new Date(this.clock.now()).toISOString();
             backfilled = true;
           }
