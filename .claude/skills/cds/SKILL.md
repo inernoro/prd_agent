@@ -54,8 +54,9 @@ $CLI env set DB_PASS=s3cret --scope <projectId>
 # Key 管理
 $CLI global-key list                     # 全局 bootstrap key
 $CLI global-key create --label "for claude onboarding"
-$CLI key list --project <id>             # 项目级 cdsp_* key
-$CLI key create --project <id>
+$CLI key list --project <id>             # 项目级 cdsp_* key（只读列出）
+# 注：cdscli 无 key create。项目 Key 由用户在项目页「授权 Agent」按钮签发，
+#     明文只展示一次（见下方「认证」节）。CLI 不签发，避免密钥经 stdout 泄漏。
 
 # CDS 服务自更新（仅改 cds/ 代码时）
 $CLI self branches                       # 看 CDS 自身能切到哪些分支
