@@ -542,6 +542,11 @@ export function BranchDetailDrawer({
   // 导致 offset 仍是 0、第二页重复拉第一页并 append 重复 webhook 记录）。
   // 用一个 ref 同步镜像当前已加载条数，loadMore 时同步读取。
   const triggerLogsCountRef = useRef(0);
+  // 2026-05-14 Codex review P2：loadMore 的并发守卫不能只靠 setState
+  // updater 的 loadingMore（异步提交）。双击在 React commit 前两次都能
+  // 过 updater 检查 → 用同一 offset 发两次请求、同页追加两次。这个 ref
+  // 同步置位，是真正的去重闸门。
+  const triggerLogsLoadMoreInFlightRef = useRef(false);
   const [profileState, setProfileState] = useState<ProfileOverridesState>({ status: 'idle' });
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
@@ -669,6 +674,8 @@ export function BranchDetailDrawer({
     // updater 的执行时机；这才是这次 offset bug 的根因修复。
     const currentOffset = triggerLogsCountRef.current;
     if (currentOffset <= 0) return; // 还没有第一页，loadMore 无意义
+    // 同步去重闸门：双击在 React commit loadingMore 前不会两次进入。
+    if (triggerLogsLoadMoreInFlightRef.current) return;
     let proceed = true;
     setTriggerLogsState((prev) => {
       if (prev.status !== 'ok' || !prev.hasMore || prev.loadingMore) {
@@ -678,6 +685,7 @@ export function BranchDetailDrawer({
       return { ...prev, loadingMore: true };
     });
     if (!proceed) return;
+    triggerLogsLoadMoreInFlightRef.current = true;
     try {
       const params = new URLSearchParams();
       params.set('limit', String(TRIGGER_LOGS_PAGE_SIZE));
@@ -715,6 +723,8 @@ export function BranchDetailDrawer({
         return { ...prev, loadingMore: false };
       });
       console.error('[trigger-logs] loadMore failed', err);
+    } finally {
+      triggerLogsLoadMoreInFlightRef.current = false;
     }
   }, [branch?.branch, branch?.githubRepoFullName, branchId]);
 
