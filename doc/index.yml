@@ -182,6 +182,7 @@ docs:
   rule.frontend-component-reuse: 前端组件复用规则
   rule.test-organization: 测试组织规范
   rule.skill-system: 技能系统规则与创建指南
+  rule.skill-trigger-disambiguation: 同族技能触发词去重规则
   rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
   rule.ai-model-visibility: AI 模型可见性原则
   rule.issues-system: Issues 体系协议规则（autofix + 视觉验收 + 元 issue #605）
