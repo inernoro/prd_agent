@@ -891,7 +891,16 @@ janitorService.setRemoveFn(async (slug: string) => {
       schedulerService.start();
     }
     janitorService.start();
-    autoLifecycleService.start();
+    // 2026-05-14 Codex review P1 修复：auto-lifecycle 只能在协调者角色
+    // （standalone / scheduler）跑。executor 是 worker 节点，集群共享 state
+    // 时若每个 executor 都扫全部项目跑 auto-stop/publish，会把别的 executor
+    // 拥有的分支也标 idle/cold（executor 侧 registry 没有 master 条目，
+    // stopBranch 还会 fallback 到本地停）。lifecycle 决策必须集中在协调者。
+    if (config.mode !== 'executor') {
+      autoLifecycleService.start();
+    } else {
+      console.log('[auto-lifecycle] skipped on executor node (lifecycle decisions are coordinator-only)');
+    }
     startAutoRestartLoop();
   }
   function stopBackgroundServices(): void {
