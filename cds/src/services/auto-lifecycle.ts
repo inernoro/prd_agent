@@ -60,33 +60,45 @@ function findReleaseDeployMode(profile: BuildProfile): string | null {
 }
 
 /**
- * 判断当前 branch 实际跑的是不是已经是"发布版"。所有 profile 都处于 release 才算。
- * 一个 profile 仍是 source 则视为非 release（auto-publish 还有事可做）。
+ * 判断 auto-publish 是否已经"收敛"——即没有任何还能切到发布版却仍跑源码的 profile。
+ *
+ * 2026-05-14 Codex review P2 修复收敛语义：
+ * 老实现要求"所有 profile 都是 release"。但混合工程里常有纯源码 sidecar /
+ * infra profile（deployModes 里压根没有 release 模式），它永远变不成 release，
+ * 于是 branchIsAllRelease 永远 false → auto-publish 每到阈值就停一次、永不收敛。
+ *
+ * 正确语义：**只看"有 release 模式可切"的 profile**。
+ *  - profile 没有任何 release-like deployMode（findReleaseDeployMode 返回 null）
+ *    → 它本来就切不动，不算阻塞项，跳过。
+ *  - profile 有 release 模式但当前生效模式不是 release → 还有事可做，未收敛。
+ *  - 所有"可切"的 profile 都已经是 release，或者根本没有可切的 profile
+ *    → 收敛，不再触发 auto-publish。
  */
-function branchIsAllRelease(
+function branchAutoPublishConverged(
   branch: BranchEntry,
   profiles: BuildProfile[],
   projectDefaults: Record<string, string> | undefined,
 ): boolean {
-  if (profiles.length === 0) return false;
   for (const profile of profiles) {
+    // 这个 profile 压根没有 release 模式可切 —— 不是阻塞项，跳过。
+    if (!findReleaseDeployMode(profile)) continue;
+
     const override = branch.profileOverrides?.[profile.id]?.activeDeployMode;
-    // 2026-05-14 Cursor Bugbot review 修复：projectDefault 必须和
-    // container.ts 的 resolveEffectiveProfile 一样做有效性校验
-    // —— 只有 '' 或 deployModes 里真实存在的 mode 才采纳，否则视为无效、
-    // 回退到 profile.activeDeployMode。否则一个失效的项目默认会让本函数
-    // 和 resolveEffectiveProfile 对"生效模式"判断不一致，auto-publish
-    // 误触发或漏触发。
+    // projectDefault 必须和 container.ts 的 resolveEffectiveProfile 一样做
+    // 有效性校验 —— 只有 '' 或 deployModes 里真实存在的 mode 才采纳，否则
+    // 视为无效、回退到 profile.activeDeployMode，避免两处对"生效模式"判定
+    // 不一致导致 auto-publish 误触发 / 漏触发。
     const rawProjectDefault = projectDefaults?.[profile.id];
     const projectDefaultValid =
       typeof rawProjectDefault === 'string' &&
       (rawProjectDefault === '' || !!profile.deployModes?.[rawProjectDefault]);
     const projectDefault = projectDefaultValid ? rawProjectDefault : undefined;
     const effectiveMode = override ?? projectDefault ?? profile.activeDeployMode ?? '';
-    if (!effectiveMode) return false;
-    const modeLabel = profile.deployModes?.[effectiveMode]?.label;
-    if (!isReleaseMode(effectiveMode, modeLabel)) return false;
+    const modeLabel = effectiveMode ? profile.deployModes?.[effectiveMode]?.label : undefined;
+    // 可切的 profile 还没切到 release → 未收敛。
+    if (!effectiveMode || !isReleaseMode(effectiveMode, modeLabel)) return false;
   }
+  // 没有任何"可切但未切"的 profile → 收敛。
   return true;
 }
 
@@ -172,9 +184,10 @@ export class AutoLifecycleService {
           const ageSec = Math.floor((this.clock.now() - readyMs) / 1000);
 
           // ── Auto-publish ───────────────────────────────────────────
-          // 已经全部是 release 模式的分支不再触发。
+          // 已收敛（所有"可切到发布版"的 profile 都已是 release）的分支不再触发，
+          // 避免纯源码 sidecar / infra profile 让分支被反复无意义重启。
           if (autoPublishMin > 0 && ageSec >= autoPublishMin * 60) {
-            if (!branchIsAllRelease(branch, profiles, projectDefaults)) {
+            if (!branchAutoPublishConverged(branch, profiles, projectDefaults)) {
               try {
                 await this.applyAutoPublish(branch, profiles, autoPublishMin);
                 continue; // 切完发布版后停下；下次 ready 再走 auto-stop 计时
