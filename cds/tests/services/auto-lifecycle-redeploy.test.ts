@@ -96,6 +96,15 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
     expect(h.branch.lastStopSource).not.toBe('system');
   });
 
+  it('lastDeployAt == lastReadyAt（同毫秒）不判陈旧，计时正常累积 → redeploy 触发', async () => {
+    // Cursor Bugbot High：首次部署 lastReadyAt 与 lastDeployAt 常同毫秒；
+    // 若 stale 用 <= 会每拍把 lastReadyAt 重置成 now、age 永不累积、
+    // auto-publish/stop 永不触发。严格 < 后同毫秒不算陈旧。
+    const h = makeHarness(branch({ lastDeployAt: READY_AT })); // == lastReadyAt
+    await h.service.tick();
+    expect(h.redeployBranch).toHaveBeenCalledWith('b1');
+  });
+
   it('已收敛（override=prod 且容器 deployedMode=prod）→ 不重部署', async () => {
     const h = makeHarness(
       branch({
@@ -158,5 +167,17 @@ describe('AutoLifecycleService.tick — auto-stop / auto-publish 让位次序', 
     await h.service.tick();
     expect(h.redeployBranch).toHaveBeenCalledWith('b1'); // publish 先行
     expect(h.stopBranch).not.toHaveBeenCalled();         // 本拍让位，不停
+  });
+
+  it('autoPublishMin===autoStopMin 且 publish 失败 → auto-stop 兜底接管（不被永久挡）', async () => {
+    const h = makeHarness(
+      branch(),
+      { autoPublishAfterMinutes: 10, autoStopAfterMinutes: 10 },
+      at(11),
+    );
+    h.redeployBranch.mockRejectedValueOnce(new Error('publish boom'));
+    await h.service.tick();
+    expect(h.redeployBranch).toHaveBeenCalledTimes(1); // 尝试过 publish
+    expect(h.stopBranch).toHaveBeenCalledWith('b1');   // 失败后 auto-stop 兜底
   });
 });

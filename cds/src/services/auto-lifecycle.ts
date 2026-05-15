@@ -201,11 +201,18 @@ export class AutoLifecycleService {
           // 锚点（deploy worker 成功后 stampBranchTimestamp(lastDeployAt)）：
           // ready 戳早于最近一次 deploy 也视为陈旧、重新打戳。
           const deployMs = b.lastDeployAt ? Date.parse(b.lastDeployAt) : NaN;
+          // 2026-05-14 Cursor Bugbot High：deploy 比较必须用严格 `<`。
+          // 正常首次部署里 reconcileBranchStatus 在转 running 时打
+          // lastReadyAt，紧接着同一 handler 里 stampBranchTimestamp
+          // (lastDeployAt) —— 两者常落在同一毫秒。若用 `<=`，readyMs==deployMs
+          // 每拍都判陈旧 → lastReadyAt 每拍被重置成 now → age 永不累积 →
+          // auto-publish / auto-stop 永不触发。同毫秒 = 同一次部署事件，
+          // 不算陈旧。stopped 比较仍用 `<=`（ready 之后再 stop 确属陈旧）。
           const stale =
             !b.lastReadyAt ||
             !Number.isFinite(readyMs) ||
             (Number.isFinite(stoppedMs) && readyMs <= stoppedMs) ||
-            (Number.isFinite(deployMs) && readyMs <= deployMs);
+            (Number.isFinite(deployMs) && readyMs < deployMs);
           if (stale) {
             b.lastReadyAt = new Date(this.clock.now()).toISOString();
             backfilled = true;
@@ -221,6 +228,11 @@ export class AutoLifecycleService {
           if (!Number.isFinite(readyMs) || readyMs <= 0) continue;
           const ageSec = Math.floor((this.clock.now() - readyMs) / 1000);
 
+          // 本拍 auto-publish 是否"已尝试但失败"。用于 auto-stop 让位决策：
+          // 让位只在 publish 即将成功时合理；若 publish 反复失败，绝不能
+          // 因此永久挡住 auto-stop，否则分支永远停不下来。
+          let autoPublishFailedThisTick = false;
+
           // ── Auto-publish ───────────────────────────────────────────
           // 已收敛（所有"可切到发布版"的 profile 都已是 release）的分支不再触发，
           // 避免纯源码 sidecar / infra profile 让分支被反复无意义重启。
@@ -230,6 +242,7 @@ export class AutoLifecycleService {
                 await this.applyAutoPublish(branch, profiles, autoPublishMin);
                 continue; // 切完发布版后停下；下次 ready 再走 auto-stop 计时
               } catch (err) {
+                autoPublishFailedThisTick = true;
                 console.error(`[auto-lifecycle] auto-publish "${branch.id}" failed:`, (err as Error).message);
               }
             }
@@ -246,11 +259,16 @@ export class AutoLifecycleService {
             // 修正：只有当 auto-publish **本拍确实该动**（到点且未收敛）时
             // 才让位；auto-publish 阈值未到 → 没有待执行的 publish 要先行，
             // auto-stop 按自己的阈值正常生效。
+            // 2026-05-14 Cursor Bugbot Medium 二次：autoPublishMin===autoStopMin
+            // 且 publish 失败时，override 已回滚 → 仍未收敛 →
+            // autoPublishDuePending 恒为 true → auto-stop 被永久 continue 掉，
+            // 分支永远停不下来。让位只在 publish "即将成功"时合理；本拍
+            // publish 已尝试且失败，就不该再为它让位，auto-stop 兜底接管。
             const autoPublishDuePending =
               autoPublishMin > 0 &&
               ageSec >= autoPublishMin * 60 &&
               !branchAutoPublishConverged(branch, profiles);
-            if (autoPublishDuePending) {
+            if (autoPublishDuePending && !autoPublishFailedThisTick) {
               continue;
             }
             try {
