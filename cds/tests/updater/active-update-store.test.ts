@@ -317,19 +317,20 @@ describe('active-update-store + StateService 集成', () => {
       expect(list[1].dispatchAction).toBe('deploy');
     });
 
-    it('ring buffer 上限 200,超过自动丢最早', () => {
-      for (let i = 0; i < 250; i++) {
+    it('ring buffer 上限 1000,超过自动丢最早', () => {
+      // 2026-05-14: 上限从 200 提升到 1000（webhook 日志可回溯窗口扩大）。
+      for (let i = 0; i < 1050; i++) {
         service.recordGithubWebhookDelivery({
           id: `d${i}`, receivedAt: new Date(Date.parse('2026-05-07T10:00:00Z') + i * 1000).toISOString(),
           durationMs: 10, event: 'push', signatureValid: true,
           dispatchAction: 'deploy', dispatchReason: `${i}`,
         });
       }
-      const list = service.getGithubWebhookDeliveries(500);
-      expect(list).toHaveLength(200);
-      // 最早保留的应该是 d50(0..49 已被挤掉)
+      const list = service.getGithubWebhookDeliveries(2000);
+      expect(list).toHaveLength(1000);
+      // 最早保留的应该是 d50(0..49 已被挤掉,共推 1050 条)
       expect(list[list.length - 1].id).toBe('d50');
-      expect(list[0].id).toBe('d249');
+      expect(list[0].id).toBe('d1049');
     });
 
     it('limit 参数限制返回数量,默认 50', () => {

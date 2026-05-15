@@ -578,6 +578,12 @@ const autoLifecycleService = new AutoLifecycleService(
         }
       }
       branch.status = 'idle';
+      // 2026-05-14 Cursor Bugbot review 修复：必须同步把 heatState 置 cold。
+      // SchedulerService.getHotBranches() 只看 heatState==='hot'（或
+      // heatState===undefined && status==='running'）。如果这里只改 status
+      // 不改 heatState，调度器仍把这个已停的分支算进 maxHotBranches 容量，
+      // 还会在下一 tick 重复 cool 它、写一条重复的 stop reason。
+      branch.heatState = 'cold';
       stateService.incrementBranchStat(slug, 'stopCount');
       stateService.save();
     },

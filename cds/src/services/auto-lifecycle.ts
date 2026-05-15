@@ -71,7 +71,17 @@ function branchIsAllRelease(
   if (profiles.length === 0) return false;
   for (const profile of profiles) {
     const override = branch.profileOverrides?.[profile.id]?.activeDeployMode;
-    const projectDefault = projectDefaults?.[profile.id];
+    // 2026-05-14 Cursor Bugbot review 修复：projectDefault 必须和
+    // container.ts 的 resolveEffectiveProfile 一样做有效性校验
+    // —— 只有 '' 或 deployModes 里真实存在的 mode 才采纳，否则视为无效、
+    // 回退到 profile.activeDeployMode。否则一个失效的项目默认会让本函数
+    // 和 resolveEffectiveProfile 对"生效模式"判断不一致，auto-publish
+    // 误触发或漏触发。
+    const rawProjectDefault = projectDefaults?.[profile.id];
+    const projectDefaultValid =
+      typeof rawProjectDefault === 'string' &&
+      (rawProjectDefault === '' || !!profile.deployModes?.[rawProjectDefault]);
+    const projectDefault = projectDefaultValid ? rawProjectDefault : undefined;
     const effectiveMode = override ?? projectDefault ?? profile.activeDeployMode ?? '';
     if (!effectiveMode) return false;
     const modeLabel = profile.deployModes?.[effectiveMode]?.label;
@@ -131,8 +141,29 @@ export class AutoLifecycleService {
 
         const profiles = stateService.getBuildProfilesForProject(project.id);
         const projectDefaults = project.defaultDeployModes;
-        const branches = stateService.getAllBranches()
-          .filter(b => b.projectId === project.id && b.status === 'running' && b.lastReadyAt);
+
+        // 2026-05-14 Codex review P2 修复：deploy / auto-build / webhook 等
+        // headless 路径直接 `svc.status='running'` + 分支状态，**不一定**走
+        // reconcileBranchStatus()，导致 lastReadyAt 永远不被打戳，本调度器
+        // 过滤条件 `b.lastReadyAt` 会把这些分支永久跳过。
+        //
+        // 这里做集中式防御性回填：凡是 running 但缺 lastReadyAt 的分支，
+        // 以"调度器首次观察到它 running"的时间为锚点补上，并跳过本拍
+        // （不立刻动作，保证至少跑满一个完整周期）。代价是 headless 路径的
+        // 计时最多晚一个 tick（默认 30s），对分钟级策略可接受；好处是覆盖
+        // 当前所有路径 + 未来任何新加的 running 转移路径，无需逐处埋点。
+        const runningBranches = stateService.getAllBranches()
+          .filter(b => b.projectId === project.id && b.status === 'running');
+        let backfilled = false;
+        for (const b of runningBranches) {
+          if (!b.lastReadyAt) {
+            b.lastReadyAt = new Date(this.clock.now()).toISOString();
+            backfilled = true;
+          }
+        }
+        if (backfilled) stateService.save();
+
+        const branches = runningBranches.filter(b => b.lastReadyAt);
         if (branches.length === 0) continue;
 
         for (const branch of branches) {

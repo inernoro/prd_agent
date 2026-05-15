@@ -543,6 +543,11 @@ export function BranchDetailDrawer({
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
+  // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
+  // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
+  // 导致 offset 仍是 0、第二页重复拉第一页并 append 重复 webhook 记录）。
+  // 用一个 ref 同步镜像当前已加载条数，loadMore 时同步读取。
+  const triggerLogsCountRef = useRef(0);
   const [profileState, setProfileState] = useState<ProfileOverridesState>({ status: 'idle' });
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
@@ -666,16 +671,19 @@ export function BranchDetailDrawer({
    */
   const loadMoreTriggerLogs = useCallback(async () => {
     if (!branchId) return;
+    // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
+    // updater 的执行时机；这才是这次 offset bug 的根因修复。
+    const currentOffset = triggerLogsCountRef.current;
+    if (currentOffset <= 0) return; // 还没有第一页，loadMore 无意义
+    let proceed = true;
     setTriggerLogsState((prev) => {
-      if (prev.status !== 'ok' || !prev.hasMore || prev.loadingMore) return prev;
+      if (prev.status !== 'ok' || !prev.hasMore || prev.loadingMore) {
+        proceed = false;
+        return prev;
+      }
       return { ...prev, loadingMore: true };
     });
-    // 用最新 state 里的 deliveries.length 作为 offset；并发翻页时也安全（页大小固定）。
-    let currentOffset = 0;
-    setTriggerLogsState((prev) => {
-      if (prev.status === 'ok') currentOffset = prev.deliveries.length;
-      return prev;
-    });
+    if (!proceed) return;
     try {
       const params = new URLSearchParams();
       params.set('limit', String(TRIGGER_LOGS_PAGE_SIZE));
@@ -715,6 +723,13 @@ export function BranchDetailDrawer({
       console.error('[trigger-logs] loadMore failed', err);
     }
   }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+
+  // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
+  // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
+  useEffect(() => {
+    triggerLogsCountRef.current =
+      triggerLogsState.status === 'ok' ? triggerLogsState.deliveries.length : 0;
+  }, [triggerLogsState]);
 
   // 每个 drawer session 是否已经为"失败分支"自动跳过 tab。避免 branch 多次
   // load 时反复抢用户手动切的 tab。
