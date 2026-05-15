@@ -1365,6 +1365,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
         if (eventName === 'error') proxyHasError = true;
+        // 2026-05-14 Codex review P2 "Don't stamp remote deploys before
+        // checking service failures"：/exec/deploy 仅单服务失败时发
+        // complete（services 里带 status:'error'）而**不**发 error 事件，
+        // proxyHasError 一直 false → 下方把失败的 release 部署也钉成真相 +
+        // 刷 lastDeployAt。complete 必须按权威 ok / services 判失败。
+        if (eventName === 'complete') {
+          if (parsed.ok === false) {
+            proxyHasError = true;
+          } else if (parsed.services && typeof parsed.services === 'object') {
+            const svcMap = parsed.services as Record<string, { status?: string }>;
+            if (Object.values(svcMap).some((s) => s?.status === 'error')) {
+              proxyHasError = true;
+            }
+          }
+        }
         opLog.events.push({
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
           status: typeof parsed.status === 'string' ? parsed.status : eventName,
