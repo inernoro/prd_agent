@@ -2348,7 +2348,15 @@ export class StateService {
   // 调 recordGithubWebhookDelivery 写入。前端 CDS 系统设置 → GitHub Webhook
   // 日志 tab 列表展示。
 
-  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 200;
+  /**
+   * 2026-05-14: 历史上限从 200 调到 1000。
+   * 单条 delivery ~1KB（含 payloadSnippet 截断），1000 条 ~1MB，state.json 可承受。
+   * 用户反馈"webhook 只有 1 条以为没日志"——根因是上限太小，遇到一阵 push 风暴
+   * 几分钟就被旧条目挤掉。1000 条相当于一个忙项目两天的窗口，足够回溯排查。
+   * 后续若上 MongoDB 持久化，把本 ring buffer 改成 capped collection，参考
+   * doc/debt.cds-state-json.md。
+   */
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 1000;
 
   recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
     const list = this.state.githubWebhookDeliveries || [];
@@ -2363,10 +2371,15 @@ export class StateService {
     }
   }
 
-  getGithubWebhookDeliveries(limit = 50): import('../types.js').GithubWebhookDelivery[] {
+  /**
+   * 2026-05-14: 新增 `offset` 支持翻页。limit 默认 50，最大等于 buffer 上限。
+   * 倒序（最新在前），offset 跳过 N 条最新条目读后面的。
+   */
+  getGithubWebhookDeliveries(limit = 50, offset = 0): import('../types.js').GithubWebhookDelivery[] {
     const list = this.state.githubWebhookDeliveries || [];
-    // 倒序(最新在前)
-    return [...list].reverse().slice(0, Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX)));
+    const cappedLimit = Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX));
+    const cappedOffset = Math.max(0, offset);
+    return [...list].reverse().slice(cappedOffset, cappedOffset + cappedLimit);
   }
 
   getGithubAppWhitelist(): import('../types.js').GithubAppWhitelistSettings {

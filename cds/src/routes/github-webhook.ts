@@ -824,12 +824,18 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
   // 列出最近 N 条 GitHub webhook 投递日志(2026-05-07 用户反馈"需要看到")。
   // ring buffer 上限 200,默认返回 50。倒序(最新在前)。
   router.get('/cds-system/github/webhook-deliveries', (req, res) => {
+    // 2026-05-14: 支持 offset / limit 翻页 + buffer 上限提升到 1000。
+    // 默认 limit 50，最大 1000；offset 跳过 N 条最新条目读更老的。
     const rawLimit = parseInt((req.query.limit as string) || '50', 10);
-    const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 1000)) : 50;
+    const rawOffset = parseInt((req.query.offset as string) || '0', 10);
+    const offset = Number.isFinite(rawOffset) ? Math.max(0, rawOffset) : 0;
     const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : '';
     const repoFullName = typeof req.query.repoFullName === 'string' ? req.query.repoFullName : '';
     const ref = typeof req.query.ref === 'string' ? req.query.ref : '';
-    const all = stateService.getGithubWebhookDeliveries(200);
+    // 翻页 + 过滤组合下，简单稳妥的实现：把全量倒序拿出来做过滤、再切窗口；
+    // 翻页是用户偶发动作，全量也就 1000 条，O(N) 完全够用。
+    const all = stateService.getGithubWebhookDeliveries(1000);
     const filtered = all.filter((item) => {
       const refMatches = !ref || item.ref === ref || item.ref === `refs/heads/${ref}`;
       const repoMatches = !repoFullName || item.repoFullName === repoFullName;
@@ -841,10 +847,16 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       if (!refMatches) return false;
       return true;
     });
+    const window = filtered.slice(offset, offset + limit);
+    const totalAll = (stateService.getState().githubWebhookDeliveries || []).length;
     res.json({
-      deliveries: filtered.slice(0, limit),
-      total: (stateService.getState().githubWebhookDeliveries || []).length,
+      deliveries: window,
+      total: totalAll,
       filteredTotal: filtered.length,
+      hasMore: offset + window.length < filtered.length,
+      offset,
+      limit,
+      bufferMax: 1000,
     });
   });
 

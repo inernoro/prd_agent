@@ -893,11 +893,19 @@ function buildSmokeEnv(opts: {
 
 function reconcileBranchStatus(entry: BranchEntry): void {
   const statuses = Object.values(entry.services || {}).map((service) => service.status);
+  const previousStatus = entry.status;
   if (statuses.some((status) => status === 'error')) entry.status = 'error';
   else if (statuses.some((status) => status === 'building')) entry.status = 'building';
   else if (statuses.some((status) => status === 'starting' || status === 'restarting')) entry.status = 'starting';
   else if (statuses.some((status) => status === 'running')) entry.status = 'running';
   else entry.status = 'idle';
+
+  // 2026-05-14: 进入 running 时打 lastReadyAt 戳。项目级 autoPublishAfterMinutes /
+  // autoStopAfterMinutes 调度器以本字段为计时起点。从非 running 翻到 running 才更新，
+  // 内部 running→running（多次 reconcile）不刷新，避免调度器永远被推迟。
+  if (entry.status === 'running' && previousStatus !== 'running') {
+    entry.lastReadyAt = new Date().toISOString();
+  }
 
   const failedReasons = Object.entries(entry.services || {})
     .filter(([, service]) => service.status === 'error')

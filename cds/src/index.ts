@@ -15,6 +15,7 @@ import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
+import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrl } from './services/comment-template.js';
 import crypto from 'node:crypto';
@@ -555,6 +556,35 @@ const janitorService = new JanitorService(
   },
   config.worktreeBase,
 );
+// ── AutoLifecycle (2026-05-14 项目级 N 分钟自动切发布版 / 自动停止) ──
+// 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
+// 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+const autoLifecycleService = new AutoLifecycleService(
+  {
+    stateService,
+    stopBranch: async (slug: string) => {
+      const branch = stateService.getBranch(slug);
+      if (!branch) return;
+      branch.status = 'stopping';
+      stateService.save();
+      for (const svc of Object.values(branch.services)) {
+        if (svc.status === 'running' || svc.status === 'starting') {
+          try {
+            await containerService.stop(svc.containerName);
+          } catch (err) {
+            console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+          }
+          svc.status = 'stopped';
+        }
+      }
+      branch.status = 'idle';
+      stateService.incrementBranchStat(slug, 'stopCount');
+      stateService.save();
+    },
+  },
+  { tickIntervalSeconds: 30, enabled: true },
+);
+
 janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
@@ -806,11 +836,13 @@ janitorService.setRemoveFn(async (slug: string) => {
       schedulerService.start();
     }
     janitorService.start();
+    autoLifecycleService.start();
     startAutoRestartLoop();
   }
   function stopBackgroundServices(): void {
     schedulerService.stop();
     janitorService.stop();
+    autoLifecycleService.stop();
     stopAutoRestartLoop();
   }
 

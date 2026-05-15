@@ -1,10 +1,113 @@
 import { useMemo } from 'react';
-import { Clock, Copy, ExternalLink, FileText, RotateCcw, Wrench } from 'lucide-react';
+import { Clock, Copy, ExternalLink, FileText, Loader2, Maximize2, RotateCcw, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
-import { PhaseTree, type PhaseLogState } from './PhaseTree';
+import { PhaseTree, type PhaseLogState, type InlineContainerLogControls } from './PhaseTree';
+
+function lastLines(text: string, n: number): string {
+  if (!text) return '';
+  const lines = text.split('\n');
+  if (lines.length <= n) return text;
+  return lines.slice(-n).join('\n');
+}
+
+/**
+ * 2026-05-14: 部署 tab 顶部专属容器日志面板（左侧）。
+ * 多容器走 tab strip 切换；右上角"最大化"跳到完整日志 tab。
+ * 与 PhaseTree.PhaseLogDetails 视觉对齐，但作为一等公民展示在部署面板正中。
+ */
+function PrimaryContainerLogPanel({
+  containerLogsByPhase,
+  containerLogControls,
+}: {
+  containerLogsByPhase?: Partial<Record<PhaseKey, PhaseLogState>>;
+  containerLogControls?: InlineContainerLogControls;
+}): JSX.Element {
+  // 把 by-phase map 折成一个 state：优先 deploy → verify → 第一个 key。
+  const state: PhaseLogState | null = useMemo(() => {
+    if (!containerLogsByPhase) return null;
+    return (
+      containerLogsByPhase.deploy
+      || containerLogsByPhase.verify
+      || (Object.values(containerLogsByPhase)[0] as PhaseLogState | undefined)
+      || null
+    );
+  }, [containerLogsByPhase]);
+  const hasTabs = !!(containerLogControls && containerLogControls.services.length > 1);
+
+  return (
+    <section className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">容器日志</div>
+        {containerLogControls?.onMaximize ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
+            onClick={containerLogControls.onMaximize}
+            title="跳转到「日志 → 容器日志」查看完整内容"
+          >
+            <Maximize2 className="h-3 w-3" />
+            最大化
+          </button>
+        ) : null}
+      </header>
+      {hasTabs ? (
+        <div className="flex flex-wrap gap-1.5 border-b border-[hsl(var(--hairline))] px-3 py-2">
+          {containerLogControls!.services.map((svc) => {
+            const active = svc.profileId === containerLogControls!.selected;
+            const dot = svc.status === 'running'
+              ? 'bg-emerald-500'
+              : svc.status === 'error'
+                ? 'bg-destructive'
+                : 'bg-muted-foreground/40';
+            return (
+              <button
+                key={svc.profileId}
+                type="button"
+                onClick={() => containerLogControls!.onSelect(svc.profileId)}
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+                  active
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+                <span className="font-mono">{svc.profileId}</span>
+                {svc.hostPort ? <span className="font-mono opacity-70">:{svc.hostPort}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden p-2">
+        {!state ? (
+          <div className="rounded border border-dashed border-[hsl(var(--hairline))] px-3 py-6 text-center text-xs text-muted-foreground">
+            还没有容器日志。容器进入 running 后这里会显示 docker logs 的最后若干行。
+          </div>
+        ) : state.status === 'loading' ? (
+          <div className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] px-3 py-3 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            正在加载容器日志…
+          </div>
+        ) : state.status === 'error' ? (
+          <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {state.message || '容器日志加载失败'}
+          </div>
+        ) : !state.logs || !state.logs.trim() ? (
+          <div className="rounded border border-[hsl(var(--hairline))] px-3 py-3 text-xs text-muted-foreground">
+            容器尚未输出任何日志（多半是进程在监听端口前就退出了）。
+          </div>
+        ) : (
+          <pre className="max-h-[320px] min-h-[120px] overflow-auto rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
+            {lastLines(state.logs, 120)}
+          </pre>
+        )}
+      </div>
+    </section>
+  );
+}
 
 /*
  * ActiveDeployment — 部署 tab 顶部那张「当前部署」大卡。
@@ -35,6 +138,10 @@ export interface ActiveDeploymentProps {
    * build 阶段不走这条路径——构建失败的日志在另一个 build-log 面板。
    */
   containerLogsByPhase?: Partial<Record<PhaseKey, PhaseLogState>>;
+  /**
+   * 2026-05-14: 多容器 tab 切换 + 最大化控制，透传给 PhaseTree。
+   */
+  containerLogControls?: InlineContainerLogControls;
 }
 
 function statusBadgeClass(status: BranchDeploymentItem['status']): string {
@@ -104,6 +211,7 @@ export function ActiveDeployment({
   onRetryDiagnosis,
   onResetError,
   containerLogsByPhase,
+  containerLogControls,
 }: ActiveDeploymentProps): JSX.Element {
   const displayStatus = effectiveDeploymentStatus(deployment, branchErrorMessage);
   const phases = useMemo(
@@ -224,12 +332,25 @@ export function ActiveDeployment({
         </span>
       </header>
 
-      <div className="px-5 py-4" style={{ minHeight: 168 }}>
-        <PhaseTree
-          phases={phases}
-          onActionForError={renderActionForError}
-          containerLogsByPhase={containerLogsByPhase}
-        />
+      {/*
+        2026-05-14: 用户反馈"容器日志应该优先显示"——把容器日志从 PhaseTree 内部
+        提到上面专属面板（多容器 tab + 最大化），PhaseTree 退居下方只显示阶段进度。
+        宽屏 (lg) 走两列：左侧容器日志、右侧阶段树；窄屏堆叠（容器日志在上、阶段树在下）。
+      */}
+      <div className="grid gap-4 px-5 py-4 lg:grid-cols-[3fr_2fr]" style={{ minHeight: 168 }}>
+        <div className="min-w-0 lg:order-1">
+          <PrimaryContainerLogPanel
+            containerLogsByPhase={containerLogsByPhase}
+            containerLogControls={containerLogControls}
+          />
+        </div>
+        <div className="min-w-0 lg:order-2">
+          <PhaseTree
+            phases={phases}
+            onActionForError={renderActionForError}
+            // 容器日志已被提到左侧面板，PhaseTree 不再渲染内嵌日志，避免重复。
+          />
+        </div>
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-5 py-3">
