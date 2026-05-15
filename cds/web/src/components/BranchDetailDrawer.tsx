@@ -741,6 +741,11 @@ export function BranchDetailDrawer({
     setLogsMode('build');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
+    // 2026-05-14 Codex review P2：切到另一分支时必须清空内联容器日志的
+    // 用户选择，否则 drawer 复用、且新分支有同名 profileId 时，旧分支选过
+    // 的 profile 会粘住，deploymentLogProfileId 不再回退到新分支的
+    // errored/running service。
+    setSelectedDeploymentLogProfileId(null);
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
     setShowAllHistory(false);
