@@ -1,6 +1,6 @@
 import type { StateService } from './state.js';
 import type { BuildProfile, BranchEntry } from '../types.js';
-import { RELEASE_DEPLOY_MODE_PATTERN, isReleaseDeployMode } from './deploy-runtime.js';
+import { isReleaseDeployMode } from './deploy-runtime.js';
 
 /**
  * 2026-05-14 引入。
@@ -51,14 +51,20 @@ export interface AutoLifecycleDeps {
 /**
  * 给定 profile，找一个看起来像"发布版"的 deployMode id。找不到返回 null —— 跳过该 profile。
  * 优先 modeId 命中（更稳），其次 label 命中。
+ *
+ * 2026-05-14 Cursor Bugbot Low 修复：判定一律走 SSOT isReleaseDeployMode
+ * （services/deploy-runtime.ts），不再裸用 RELEASE_DEPLOY_MODE_PATTERN.test
+ * 各测一遍——避免与 summarizeBranchDeployRuntime / branchAutoPublishConverged
+ * 的"拼接后整体匹配"语义漂移。优先级仍保持：先扫一遍只看 modeId 命中，
+ * 再扫一遍带 label 命中。
  */
 function findReleaseDeployMode(profile: BuildProfile): string | null {
   const modes = profile.deployModes || {};
   for (const [modeId] of Object.entries(modes)) {
-    if (RELEASE_DEPLOY_MODE_PATTERN.test(modeId)) return modeId;
+    if (isReleaseDeployMode(modeId)) return modeId;
   }
   for (const [modeId, mode] of Object.entries(modes)) {
-    if (mode?.label && RELEASE_DEPLOY_MODE_PATTERN.test(mode.label)) return modeId;
+    if (mode?.label && isReleaseDeployMode(modeId, mode.label)) return modeId;
   }
   return null;
 }
@@ -387,11 +393,20 @@ export class AutoLifecycleService {
 
     const fresh = stateService.getBranch(branch.id);
     if (fresh) {
-      fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
-      fresh.lastStopReason = redeployBranch
+      // 2026-05-14 Cursor Bugbot Medium 修复：redeploy 路径分支**重新跑
+      // 起来了**（release 模式），不能再钉 lastStoppedAt——抽屉只要
+      // lastStoppedAt 有值就弹琥珀色"上次停止"横幅，会在一个正在运行的
+      // 分支上误报"已停止"。计时复位由 deploy 路由 stamp 的 lastDeployAt
+      // （tick 陈旧检测 readyMs<=deployMs）兜底，这里无需 lastStoppedAt。
+      // 仅降级 stopBranch 路径分支确实停了，才钉 stop 字段。
+      const note = redeployBranch
         ? `项目设置：启动满 ${minutes} 分钟，已自动切到发布版并重新部署（${switchedModes.join(', ')}）`
         : `项目设置：启动满 ${minutes} 分钟，已切发布版并停止（${switchedModes.join(', ')}），下次访问重建`;
-      fresh.lastStopSource = 'system';
+      if (!redeployBranch) {
+        fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
+        fresh.lastStopReason = note;
+        fresh.lastStopSource = 'system';
+      }
       stateService.save();
       try {
         stateService.appendActivityLog(fresh.projectId, {
@@ -399,7 +414,7 @@ export class AutoLifecycleService {
           branchId: fresh.id,
           branchName: fresh.branch,
           actor: 'auto-lifecycle',
-          note: fresh.lastStopReason,
+          note,
         });
       } catch { /* 辅助信息，失败不影响 */ }
     }

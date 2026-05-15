@@ -84,6 +84,9 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
     expect(h.redeployBranch).toHaveBeenCalledWith('b1');
     // override 已写成 release 模式（prod 命中发布版正则）
     expect(h.branch.profileOverrides?.web?.activeDeployMode).toBe('prod');
+    // Cursor Bugbot Medium：redeploy 后分支重新跑起来，不能钉"已停止"字段
+    expect(h.branch.lastStoppedAt).toBeUndefined();
+    expect(h.branch.lastStopSource).not.toBe('system');
   });
 
   it('已收敛（override=prod 且容器 deployedMode=prod）→ 不重部署', async () => {
