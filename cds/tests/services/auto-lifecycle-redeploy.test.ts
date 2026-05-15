@@ -37,10 +37,17 @@ function svc(profileId: string, status: ServiceState['status'], deployedMode?: s
 const READY_AT = '2026-05-14T00:00:00.000Z';
 const NOW_MS = Date.parse(READY_AT) + 11 * 60 * 1000; // ready 后 11 分钟
 
-function makeHarness(branch: BranchEntry) {
+function makeHarness(
+  branch: BranchEntry,
+  projectCfg: { autoPublishAfterMinutes: number; autoStopAfterMinutes: number } = {
+    autoPublishAfterMinutes: 10,
+    autoStopAfterMinutes: 0,
+  },
+  nowMs: number = NOW_MS,
+) {
   const profiles = [profile('web')];
   const stateService = {
-    getProjects: () => [{ id: 'p1', autoPublishAfterMinutes: 10, autoStopAfterMinutes: 0 }],
+    getProjects: () => [{ id: 'p1', ...projectCfg }],
     getBuildProfilesForProject: () => profiles,
     getAllBranches: () => [branch],
     getBranch: (id: string) => (id === branch.id ? branch : undefined),
@@ -56,7 +63,7 @@ function makeHarness(branch: BranchEntry) {
   const redeployBranch = vi.fn(async () => {});
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const service = new AutoLifecycleService(
-    { stateService: stateService as any, stopBranch, redeployBranch, clock: { now: () => NOW_MS } },
+    { stateService: stateService as any, stopBranch, redeployBranch, clock: { now: () => nowMs } },
     { tickIntervalSeconds: 30, enabled: true },
   );
   return { service, stateService, stopBranch, redeployBranch, branch };
@@ -125,5 +132,31 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
     // 下一拍：依然未收敛 → 会再次尝试 redeploy（证明没被误判收敛）
     await h.service.tick();
     expect(h.redeployBranch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AutoLifecycleService.tick — auto-stop / auto-publish 让位次序', () => {
+  const at = (min: number) => Date.parse(READY_AT) + min * 60 * 1000;
+
+  it('autoStop=5 < autoPublish=10，6 分钟：auto-publish 未到点 → auto-stop 正常生效', async () => {
+    const h = makeHarness(
+      branch(), // deployedMode=dev，未收敛
+      { autoPublishAfterMinutes: 10, autoStopAfterMinutes: 5 },
+      at(6),
+    );
+    await h.service.tick();
+    expect(h.stopBranch).toHaveBeenCalledWith('b1'); // auto-stop 没被无限推迟
+    expect(h.redeployBranch).not.toHaveBeenCalled(); // auto-publish 还没到点
+  });
+
+  it('autoStop=5 < autoPublish=10，11 分钟：两者都到点 → auto-publish 先行', async () => {
+    const h = makeHarness(
+      branch(),
+      { autoPublishAfterMinutes: 10, autoStopAfterMinutes: 5 },
+      at(11),
+    );
+    await h.service.tick();
+    expect(h.redeployBranch).toHaveBeenCalledWith('b1'); // publish 先行
+    expect(h.stopBranch).not.toHaveBeenCalled();         // 本拍让位，不停
   });
 });

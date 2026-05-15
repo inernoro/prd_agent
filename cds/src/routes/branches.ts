@@ -204,11 +204,21 @@ function summarizeBranchDeployRuntime(
 
     const svc = branch.services?.[profile.id];
     const running = svc?.status === 'running';
-    // 旧数据兼容：deployedMode 字段引入前启动的容器没有该值，
-    // 此时退回"信任配置"（即旧行为），避免存量分支齐刷刷误报待生效。
-    // 只有当我们**确知**运行模式（有 deployedMode 戳）才用真相判定。
     const hasTruth = running && svc?.deployedMode !== undefined;
-    const actualMode = hasTruth ? (svc!.deployedMode as string) : configMode;
+    // 真相 = "现在跑的是什么"。
+    //  - running 且有 deployedMode 戳 → 用戳（确知真相）。
+    //  - running 但无戳（旧数据）→ 退回信任配置，避免存量 running 分支
+    //    齐刷刷误报待生效。
+    //  - 没在跑 → 它**不在以任何模式运行**，actualMode 视为源码/未知。
+    //    2026-05-14 Codex review P2：之前 !running 也回退 configMode，
+    //    导致"配置 release 但已 auto-stop/手动停"的分支被算成 release、
+    //    亮绿徽章（前端 kind==='release' 先于 pendingPublish 判断），
+    //    而它其实该是「发布版·待生效」。停着就不能算真发布。
+    const actualMode = hasTruth
+      ? (svc!.deployedMode as string)
+      : running
+        ? configMode
+        : '';
     const actualLabel = actualMode
       ? effectiveProfile.deployModes?.[actualMode]?.label || actualMode
       : '源码';

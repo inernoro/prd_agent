@@ -237,14 +237,20 @@ export class AutoLifecycleService {
 
           // ── Auto-stop ───────────────────────────────────────────────
           if (autoStopMin > 0 && ageSec >= autoStopMin * 60) {
-            // 2026-05-14 Cursor Bugbot review (Medium)：types.ts / PR 描述
-            // 承诺"autoPublish 先行（先切发布版），autoStop 在新的 ready
-            // 计时上再起效"。若 autoStopMin < autoPublishMin，auto-stop 会
-            // 抢在 auto-publish 之前停掉分支，违背该承诺。这里显式让位：
-            // auto-publish 开着且尚未收敛时，跳过本次 auto-stop，等
-            // auto-publish 在 autoPublishMin 到点后先切发布版（停 + 换模式）
-            // → 重启后新 ready 计时 → 此时已收敛 → auto-stop 才接管。
-            if (autoPublishMin > 0 && !branchAutoPublishConverged(branch, profiles)) {
+            // 2026-05-14 "autoPublish 先行"让位规则。原实现只要 auto-publish
+            // 开着且未收敛就 skip auto-stop —— 但若 autoStopMin < autoPublishMin
+            // （如 stop=5 / publish=10，6 分钟时），auto-publish **还没到点**
+            // 也不会 fire，auto-stop 却被无限期推迟到 publish 最终触发为止，
+            // 违背用户"stop 阈值更小=先停"的预期（Cursor Bugbot Medium
+            // 2026-05-14 二次反馈）。
+            // 修正：只有当 auto-publish **本拍确实该动**（到点且未收敛）时
+            // 才让位；auto-publish 阈值未到 → 没有待执行的 publish 要先行，
+            // auto-stop 按自己的阈值正常生效。
+            const autoPublishDuePending =
+              autoPublishMin > 0 &&
+              ageSec >= autoPublishMin * 60 &&
+              !branchAutoPublishConverged(branch, profiles);
+            if (autoPublishDuePending) {
               continue;
             }
             try {

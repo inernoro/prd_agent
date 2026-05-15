@@ -1293,7 +1293,14 @@ export function BranchDetailPage(): JSX.Element {
                     <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
                     <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt || state.branch.lastAccessedAt)} />
                   </div>
-                  {state.branch.lastStoppedAt ? (
+                  {/*
+                    2026-05-14 Cursor Bugbot Medium：lastStoppedAt 为历史戳，
+                    stop 后又被 deploy/auto-build/调度器唤醒重新 running 时
+                    该戳仍在。只看 lastStoppedAt 会在正在运行的分支上误报
+                    "上次停止"。仅当分支当前确实非活跃时才显示。
+                  */}
+                  {state.branch.lastStoppedAt &&
+                  !['running', 'building', 'starting', 'restarting'].includes(state.branch.status) ? (
                     <div
                       className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
                       title="分支变灰 = 容器已停止。下面这条来自 lastStoppedAt / lastStopReason 字段，2026-05-14 起记录。"

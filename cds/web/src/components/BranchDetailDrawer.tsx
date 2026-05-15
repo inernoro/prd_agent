@@ -1347,7 +1347,15 @@ export function BranchDetailDrawer({
                         2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。
                         没有 lastStoppedAt 的老分支显示 - 即可，不破坏 layout。
                       */}
-                      {branch.lastStoppedAt ? (
+                      {/*
+                        2026-05-14 Cursor Bugbot Medium：lastStoppedAt 是历史
+                        戳，分支被 stop 后又经 deploy/auto-build/调度器唤醒
+                        重新 running 时该戳仍在 → 不能只看 lastStoppedAt
+                        就弹"上次停止"，否则正在运行的分支被误报已停止。
+                        只在分支当前确实非活跃（非 running/构建/启动中）时显示。
+                      */}
+                      {branch.lastStoppedAt &&
+                      !['running', 'building', 'starting', 'restarting'].includes(branch.status) ? (
                         <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">上次停止</span>
