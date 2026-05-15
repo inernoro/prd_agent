@@ -172,10 +172,18 @@ export class AutoLifecycleService {
         for (const b of runningBranches) {
           const readyMs = b.lastReadyAt ? Date.parse(b.lastReadyAt) : NaN;
           const stoppedMs = b.lastStoppedAt ? Date.parse(b.lastStoppedAt) : NaN;
+          // 2026-05-14 Codex review P2 "Refresh readiness after redeploys
+          // without stops"：未先停止就被 webhook/手动 redeploy 的 running
+          // 分支，没有新的 lastStoppedAt，旧 lastReadyAt 幸存 → 刚 redeploy
+          // 就按上一轮 age 触发 auto-stop/publish。补 lastDeployAt 作第二
+          // 锚点（deploy worker 成功后 stampBranchTimestamp(lastDeployAt)）：
+          // ready 戳早于最近一次 deploy 也视为陈旧、重新打戳。
+          const deployMs = b.lastDeployAt ? Date.parse(b.lastDeployAt) : NaN;
           const stale =
             !b.lastReadyAt ||
             !Number.isFinite(readyMs) ||
-            (Number.isFinite(stoppedMs) && readyMs <= stoppedMs);
+            (Number.isFinite(stoppedMs) && readyMs <= stoppedMs) ||
+            (Number.isFinite(deployMs) && readyMs <= deployMs);
           if (stale) {
             b.lastReadyAt = new Date(this.clock.now()).toISOString();
             backfilled = true;
