@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, MousePointerClick, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { StreamingText } from '@/components/streaming/StreamingText';
 import { toast } from '@/lib/toast';
 import { listInfraConnections, type InfraConnectionPublicView } from '@/services/real/infraConnections';
 import {
@@ -434,6 +435,7 @@ export default function CdsAgentPage() {
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
@@ -574,6 +576,21 @@ export default function CdsAgentPage() {
     const el = timelineRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [viewMode, activeSessionId, messages.length, events.length]);
+
+  // 运行中自动轮询（规则 #6 禁止空白等待）：后端 /stream 是一次性返回，纯前端用轮询兜底。
+  const activeSessionForPoll = sessions.find((item) => item.id === activeSessionId) ?? null;
+  const isLiveStatus = activeSessionForPoll?.status === 'running' || activeSessionForPoll?.status === 'creating';
+  useEffect(() => {
+    if (!isLiveStatus || !activeSessionId) return;
+    const tick = window.setInterval(() => {
+      setNowTick(Date.now());
+      void refreshDetail(activeSessionId);
+      void listInfraAgentSessions(100).then((res) => {
+        if (res.success && res.data?.items) setSessions(sortSessions(res.data.items));
+      });
+    }, 3000);
+    return () => window.clearInterval(tick);
+  }, [isLiveStatus, activeSessionId]);
 
   useEffect(() => {
     if (!activeSession?.id) {
@@ -750,6 +767,7 @@ export default function CdsAgentPage() {
         await refreshDetail(sessionId);
         return;
       }
+      setPrompt('');
       upsertSession(res.data.item);
       await refreshDetail(res.data.item.id);
     } catch (err) {
@@ -1140,6 +1158,39 @@ export default function CdsAgentPage() {
     }
     const hasTimeline = timelineBlocks.length > 0;
     const sendDisabled = !activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput);
+
+    // 左侧任务分组：运行中 vs 已完成。
+    const runningSessions = sortedSessions.filter((s) => s.status === 'running' || s.status === 'creating' || s.status === 'idle');
+    const finishedSessions = sortedSessions.filter((s) => s.status === 'stopped' || s.status === 'failed' || s.status === 'stopping');
+
+    // 右栏 Git/PR 上下文：从事件里抽分支 / 提交 / PR 链接。
+    let gitBranch = '';
+    let gitCommit = '';
+    let prUrl = '';
+    for (const ev of displayedEvents) {
+      if (ev.type !== 'tool_result') continue;
+      const p = parsePayload(ev);
+      const detail = parseJsonString(p.resultSummary) ?? parseJsonString(p.content) ?? {};
+      if (typeof detail.branch === 'string' && detail.branch) gitBranch = detail.branch;
+      if (typeof detail.commit === 'string' && detail.commit) gitCommit = detail.commit;
+      const urlCandidate = typeof detail.url === 'string' ? detail.url
+        : typeof detail.prUrl === 'string' ? detail.prUrl
+          : typeof detail.pullRequestUrl === 'string' ? detail.pullRequestUrl : '';
+      if (urlCandidate && /github\.com\/.+\/pull\/\d+/.test(urlCandidate)) prUrl = urlCandidate;
+    }
+    const hasGitContext = Boolean(gitBranch || gitCommit || prUrl);
+
+    // 运行中且最后一块不是 Agent 回复 = 还在干活，给"已等待 Xs"反馈（规则 #6）。
+    const lastBlock = timelineBlocks[timelineBlocks.length - 1];
+    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant') ?? null;
+    const awaitingAgent = isLiveStatus
+      && (!lastBlock || lastBlock.type !== 'msg' || lastBlock.msg.role !== 'assistant');
+    let waitedSec = 0;
+    if (awaitingAgent) {
+      const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+      const base = lastUser ? new Date(lastUser.createdAt).getTime() : nowTick;
+      waitedSec = Math.max(0, Math.round((nowTick - base) / 1000));
+    }
     return (
       <div className="h-full min-h-0 flex flex-col px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
         <header className="flex flex-wrap items-center justify-between gap-3">
@@ -1179,30 +1230,42 @@ export default function CdsAgentPage() {
                 {activeProfileBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
               </div>
             )}
-            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
               {sortedSessions.length === 0 ? (
                 <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
                   还没有任务，点「新任务」开始
                 </div>
               ) : (
-                sortedSessions.map((session) => {
-                  const selected = session.id === activeSession?.id;
-                  return (
-                    <button
-                      key={session.id}
-                      type="button"
-                      onClick={() => setActiveSessionId(session.id)}
-                      className="block w-full rounded-lg px-3 py-2 text-left"
-                      style={{
-                        background: selected ? 'rgba(99,179,237,0.14)' : 'rgba(0,0,0,0.16)',
-                        border: selected ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.06)',
-                      }}
-                    >
-                      <div className="truncate text-sm text-white/78">{session.title}</div>
-                      <div className="mt-1 text-xs text-white/42">{statusLabel(session.status)} · {new Date(session.updatedAt).toLocaleString()}</div>
-                    </button>
-                  );
-                })
+                ([
+                  ['运行中', runningSessions],
+                  ['已完成', finishedSessions],
+                ] as const).filter(([, list]) => list.length > 0).map(([groupLabel, list]) => (
+                  <div key={groupLabel} className="space-y-1.5">
+                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">{groupLabel} · {list.length}</div>
+                    {list.map((session) => {
+                      const selected = session.id === activeSession?.id;
+                      const live = session.status === 'running' || session.status === 'creating';
+                      return (
+                        <button
+                          key={session.id}
+                          type="button"
+                          onClick={() => setActiveSessionId(session.id)}
+                          className="block w-full rounded-lg px-3 py-2 text-left"
+                          style={{
+                            background: selected ? 'rgba(99,179,237,0.14)' : 'rgba(0,0,0,0.16)',
+                            border: selected ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.06)',
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            {live && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />}
+                            <span className="truncate text-sm text-white/78">{session.title}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-white/42">{statusLabel(session.status)} · {new Date(session.updatedAt).toLocaleString()}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
               )}
             </div>
           </aside>
@@ -1261,7 +1324,13 @@ export default function CdsAgentPage() {
                           }}
                         >
                           <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
-                          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{block.msg.content}</div>
+                          {block.msg.role === 'assistant' && lastAssistant && block.msg.id === lastAssistant.id ? (
+                            <div className="text-sm leading-relaxed text-white/78">
+                              <StreamingText text={block.msg.content} streaming={isLiveStatus} mode="blur" />
+                            </div>
+                          ) : (
+                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{block.msg.content}</div>
+                          )}
                         </div>
                       </article>
                     );
@@ -1357,6 +1426,14 @@ export default function CdsAgentPage() {
                   );
                 })
               )}
+              {awaitingAgent && (
+                <div className="flex justify-start">
+                  <div className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(99,179,237,0.1)', border: '1px solid rgba(99,179,237,0.24)' }}>
+                    <MapSpinner size={13} />
+                    <span>Agent 正在执行… 已等待 {waitedSec}s</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-3 flex gap-2">
@@ -1381,15 +1458,43 @@ export default function CdsAgentPage() {
             </div>
           </section>
 
-          <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
-            <div className="mb-2 flex items-center justify-between gap-2">
+          <aside className="min-h-0 flex flex-col gap-3 rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
+            {hasGitContext && (
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/62"><GitCompare size={13} /> 代码改动</div>
+                <div className="mt-2 space-y-1.5 text-xs">
+                  {gitBranch && (
+                    <div className="flex justify-between gap-2"><span className="text-white/40">分支</span><span className="truncate text-white/72">{gitBranch}</span></div>
+                  )}
+                  {gitCommit && (
+                    <div className="flex justify-between gap-2"><span className="text-white/40">提交</span><span className="truncate font-mono text-white/72">{gitCommit.slice(0, 12)}</span></div>
+                  )}
+                  {prUrl ? (
+                    <a href={prUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.34)', color: 'rgba(186,230,253,0.95)' }}>
+                      <Globe2 size={12} /> 打开 Pull Request
+                    </a>
+                  ) : (
+                    <div className="text-white/35">尚未创建 PR</div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
-              <span className="text-xs text-white/35">{artifacts.length}</span>
+              <button
+                type="button"
+                onClick={() => void collectArtifacts()}
+                disabled={!activeSession || busy}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-white/55 hover:text-white/85 disabled:opacity-45"
+                style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                {busy ? <MapSpinner size={11} /> : <FileSearch size={11} />} 生成产物
+              </button>
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
               {artifacts.length === 0 ? (
                 <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg px-3 text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  任务产生的文件、diff、命令结果会出现在这里
+                  任务产生的文件、diff、命令结果会出现在这里。<br />运行后点上方「生成产物」抓取。
                 </div>
               ) : (
                 artifacts.map((artifact) => (
