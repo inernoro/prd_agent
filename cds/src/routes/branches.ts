@@ -1427,6 +1427,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const svc = entry.services[rp.id];
           if (svc) svc.deployedMode = rp.activeDeployMode || '';
         }
+        // 2026-05-14 Codex review P2 "Refresh the lifecycle clock after
+        // remote redeploys"：本地部署成功会 stamp lastDeployAt（branches.ts
+        // ~3651），auto-lifecycle tick 的陈旧检测靠它把 lastReadyAt 刷新到
+        // 本次部署之后。远端 proxy 成功路径之前漏 stamp → 远端 auto-publish
+        // 重部署后，新 release 容器仍按上一轮 source run 的旧 lastReadyAt
+        // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
+        // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
+        stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
       }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
