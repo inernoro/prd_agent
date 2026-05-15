@@ -11,6 +11,7 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
+import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -170,37 +171,72 @@ type BranchDeployRuntime = {
   releaseProfiles: number;
   sourceProfiles: number;
   modes: string[];
+  /**
+   * 2026-05-14 真实态徽章：配置已切到发布版，但容器还没真正以发布版跑
+   * 起来（正在重部署 / 还停着 / 旧容器仍是源码构建）。true 时卡片应显示
+   * 「发布版·待生效」橙色，而不是绿色「发布版」——区分"配置意图"与
+   * "运行现状"，杜绝设了 override 就亮绿的虚假徽章。
+   */
+  pendingPublish: boolean;
 };
 
-function classifyDeployRuntime(modeId?: string, modeLabel?: string): 'source' | 'release' {
-  if (!modeId) return 'source';
-  const text = `${modeId} ${modeLabel || ''}`;
-  return /(prod|production|release|static|publish|published|dist|standalone|built|发布|生产|正式|构建)/i.test(text)
-    ? 'release'
-    : 'source';
-}
+// classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
+// auto-lifecycle.ts 共用同一份正则，避免两处漂移）。
 
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,
   profiles: BuildProfile[],
 ): BranchDeployRuntime {
-  let releaseProfiles = 0;
-  let sourceProfiles = 0;
+  // 真相 = "正在跑的容器实际用哪个 deploy mode"（svc.deployedMode），
+  // 不是"配置成什么"（profileOverrides）。两者分别算，再比对得出徽章。
+  let releaseProfiles = 0;   // 实际以发布版在跑的 profile 数（真相）
+  let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
+  let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
-    const activeMode = effectiveProfile.activeDeployMode;
-    const modeLabel = activeMode
-      ? effectiveProfile.deployModes?.[activeMode]?.label || activeMode
+    const configMode = effectiveProfile.activeDeployMode;
+    const configLabel = configMode
+      ? effectiveProfile.deployModes?.[configMode]?.label || configMode
       : '源码';
-    const kind = classifyDeployRuntime(activeMode, modeLabel);
-    if (kind === 'release') {
-      releaseProfiles += 1;
-    } else {
-      sourceProfiles += 1;
-    }
-    modeLabels.push(`${profile.name || profile.id}: ${modeLabel}`);
+    const configKind = classifyDeployRuntime(configMode, configLabel);
+
+    const svc = branch.services?.[profile.id];
+    const running = svc?.status === 'running';
+    const hasTruth = running && svc?.deployedMode !== undefined;
+    // 真相 = "现在跑的是什么"。
+    //  - running 且有 deployedMode 戳 → 用戳（确知真相）。
+    //  - running 但无戳（旧数据）→ 退回信任配置，避免存量 running 分支
+    //    齐刷刷误报待生效。
+    //  - 没在跑 → 它**不在以任何模式运行**，actualMode 视为源码/未知。
+    //    2026-05-14 Codex review P2：之前 !running 也回退 configMode，
+    //    导致"配置 release 但已 auto-stop/手动停"的分支被算成 release、
+    //    亮绿徽章（前端 kind==='release' 先于 pendingPublish 判断），
+    //    而它其实该是「发布版·待生效」。停着就不能算真发布。
+    const actualMode = hasTruth
+      ? (svc!.deployedMode as string)
+      : running
+        ? configMode
+        : '';
+    const actualLabel = actualMode
+      ? effectiveProfile.deployModes?.[actualMode]?.label || actualMode
+      : '源码';
+    const actualKind = classifyDeployRuntime(actualMode, actualLabel);
+
+    if (actualKind === 'release') releaseProfiles += 1;
+    else sourceProfiles += 1;
+
+    // 配置要发布版，但真相不是发布版（容器没跟上 / 还停着 / 旧源码构建）
+    // → pending。仅在"确知真相 且 真相≠release"或"配置 release 但没在跑"
+    // 时判 pending；旧数据无真相时不误报。
+    if (configKind === 'release' && actualKind !== 'release') pendingPublish = true;
+    if (configKind === 'release' && !running) pendingPublish = true;
+
+    const suffix = hasTruth && actualMode !== configMode
+      ? `${actualLabel}（配置 ${configLabel}，待生效）`
+      : actualLabel;
+    modeLabels.push(`${profile.name || profile.id}: ${suffix}`);
   }
 
   const activeProfiles = profiles.length;
@@ -219,12 +255,13 @@ function summarizeBranchDeployRuntime(
     kind,
     label,
     title: modeLabels.length > 0
-      ? `当前生效模式: ${modeLabels.join(' / ')}`
+      ? `实际运行模式: ${modeLabels.join(' / ')}${pendingPublish ? '（发布版配置已设，等待重新部署生效）' : ''}`
       : '当前没有构建配置，按源码默认模式显示',
     activeProfiles,
     releaseProfiles,
     sourceProfiles,
     modes: modeLabels,
+    pendingPublish,
   };
 }
 
@@ -892,11 +929,19 @@ function buildSmokeEnv(opts: {
 
 function reconcileBranchStatus(entry: BranchEntry): void {
   const statuses = Object.values(entry.services || {}).map((service) => service.status);
+  const previousStatus = entry.status;
   if (statuses.some((status) => status === 'error')) entry.status = 'error';
   else if (statuses.some((status) => status === 'building')) entry.status = 'building';
   else if (statuses.some((status) => status === 'starting' || status === 'restarting')) entry.status = 'starting';
   else if (statuses.some((status) => status === 'running')) entry.status = 'running';
   else entry.status = 'idle';
+
+  // 2026-05-14: 进入 running 时打 lastReadyAt 戳。项目级 autoPublishAfterMinutes /
+  // autoStopAfterMinutes 调度器以本字段为计时起点。从非 running 翻到 running 才更新，
+  // 内部 running→running（多次 reconcile）不刷新，避免调度器永远被推迟。
+  if (entry.status === 'running' && previousStatus !== 'running') {
+    entry.lastReadyAt = new Date().toISOString();
+  }
 
   const failedReasons = Object.entries(entry.services || {})
     .filter(([, service]) => service.status === 'error')
@@ -1236,7 +1281,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // merged env var map and let it handle the rest.
     // P4 Part 17 (G2 fix): scope by the branch's project so a remote
     // executor only receives profiles owned by this project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    // 2026-05-14 Codex review P2 "Propagate release overrides to remote
+    // redeploys"：执行器侧没有 master 的 branch.profileOverrides，也不会跑
+    // resolveEffectiveProfile。必须在 master 侧先 resolve，把已合并 override
+    // （含 auto-publish 刚写的 release activeDeployMode）的 effective profile
+    // 发过去——compute-then-send：master 算，executor 只管按收到的构建。
+    // 否则 cluster 场景执行器仍按源码/热加载旧模式重建，但 master state
+    // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
+    // auto-publish 表面成功实际没切容器。
+    const profiles = stateService
+      .getBuildProfilesForProject(entry.projectId || 'default')
+      .map((p) => resolveEffectiveProfile(p, entry));
     const env = getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
@@ -1310,6 +1365,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
         if (eventName === 'error') proxyHasError = true;
+        // 2026-05-14 Codex review P2 "Don't stamp remote deploys before
+        // checking service failures"：/exec/deploy 仅单服务失败时发
+        // complete（services 里带 status:'error'）而**不**发 error 事件，
+        // proxyHasError 一直 false → 下方把失败的 release 部署也钉成真相 +
+        // 刷 lastDeployAt。complete 必须按权威 ok / services 判失败。
+        if (eventName === 'complete') {
+          if (parsed.ok === false) {
+            proxyHasError = true;
+          } else if (parsed.services && typeof parsed.services === 'object') {
+            const svcMap = parsed.services as Record<string, { status?: string }>;
+            if (Object.values(svcMap).some((s) => s?.status === 'error')) {
+              proxyHasError = true;
+            }
+          }
+        }
         opLog.events.push({
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
           status: typeof parsed.status === 'string' ? parsed.status : eventName,
@@ -1363,6 +1433,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
+      // 2026-05-14 真实态徽章（远端）：proxy 成功时，钉住我们**派发给
+      // 执行器的已 resolve profile** 的 activeDeployMode。因为 Codex P2
+      // 修复后发过去的就是 resolveEffectiveProfile 结果，executor 实际
+      // 构建的就是这个模式，所以这是远端真相。失败则不动（保留旧值）。
+      if (!proxyHasError) {
+        for (const rp of profiles) {
+          const svc = entry.services[rp.id];
+          if (svc) svc.deployedMode = rp.activeDeployMode || '';
+        }
+        // 2026-05-14 Codex review P2 "Refresh the lifecycle clock after
+        // remote redeploys"：本地部署成功会 stamp lastDeployAt（branches.ts
+        // ~3651），auto-lifecycle tick 的陈旧检测靠它把 lastReadyAt 刷新到
+        // 本次部署之后。远端 proxy 成功路径之前漏 stamp → 远端 auto-publish
+        // 重部署后，新 release 容器仍按上一轮 source run 的旧 lastReadyAt
+        // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
+        // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
+        stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
+      }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
     } catch (err) {
@@ -3313,7 +3401,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
-          // Resolve baseline → branch override → deploy-mode override
+          // Resolve baseline → 项目默认 → 分支 override → mode override
           const effectiveProfile = resolveEffectiveProfile(profile, entry);
           const branchOverride = entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
@@ -3431,6 +3519,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
             if (ready) {
               svc.status = 'running';
+              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
+              // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
+              // 据此判断"真发布"还是"配置了但容器没跟上"。
+              svc.deployedMode = effectiveProfile.activeDeployMode || '';
               logDeploy(id, `${profile.name} 启动成功 ✓`);
               const elapsed = Date.now() - serviceStartTime;
               logEvent({
@@ -3589,6 +3681,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
+        // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
+        // 直接读 ok，不要再用全量 entry.services 重新推导——否则已删除/
+        // 僵尸 profile 的 stopped/error 服务会被误判成部署失败。
+        ok: !hasError,
         message: completeMsg,
         services: entry.services,
       });
@@ -3827,6 +3924,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         if (ready) {
           svc.status = 'running';
+          // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
+          svc.deployedMode = effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';
@@ -3855,6 +3954,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
       logDeploy(id, `部署完成: ${completeMsg}`);
       sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
+        // 消费方统一读 ok 而非重推导 entry.services。
+        ok: svc.status === 'running',
         message: completeMsg,
         services: entry.services,
       });
@@ -4053,6 +4155,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // plausible local state in the meantime.
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
         entry.status = 'idle';
+        entry.lastStoppedAt = new Date().toISOString();
+        entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
+        entry.lastStopSource = 'executor';
+        // 2026-05-14 Cursor Bugbot Medium 修复：远端执行器停止路径与本地
+        // 手动停止 / scheduler coolFn / AutoLifecycle 一致，也要 +1 stopCount
+        // 并写活动日志，否则 UI「停止次数」对远端停止漏计、活动时间线缺这条。
+        stateService.incrementBranchStat(id, 'stopCount');
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'stop',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+        });
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {
@@ -4077,6 +4192,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status = 'stopped';
       }
       entry.status = 'idle';
+      // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
+      entry.lastStoppedAt = new Date().toISOString();
+      entry.lastStopReason = '用户手动停止';
+      entry.lastStopSource = 'user';
       cleanupPreviewServer(id);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'stopCount');
@@ -8005,6 +8124,9 @@ cdscli project list --human
             }, mergedEnv);
 
             svc.status = 'running';
+            // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
+            // （runService 直接吃 profile.*），钉住其 activeDeployMode。
+            svc.deployedMode = profile.activeDeployMode || '';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
           } catch (err) {
             svc.status = 'error';

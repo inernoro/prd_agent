@@ -1910,6 +1910,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
       defaultDeployModes: Record<string, string>;
+      autoPublishAfterMinutes: number;
+      autoStopAfterMinutes: number;
       // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
       githubEventPolicy: {
         push?: boolean;
@@ -1992,7 +1994,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
@@ -2035,6 +2037,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         next[profileId] = mode;
       }
       patch.defaultDeployModes = next;
+    }
+    // 2026-05-14: 自动切发布版 / 自动停止 两个独立分钟数字段。
+    // 限制 [0, 1440]（24 小时）防止配错。0 = 关闭。
+    for (const field of ['autoPublishAfterMinutes', 'autoStopAfterMinutes'] as const) {
+      if (body[field] === undefined) continue;
+      const raw = body[field];
+      const num = typeof raw === 'number' ? raw : Number(raw);
+      if (!Number.isFinite(num) || num < 0 || num > 1440) {
+        res.status(400).json({ error: 'validation', field, message: `${field} 必须是 0~1440 之间的整数（0 = 关闭）` });
+        return;
+      }
+      patch[field] = Math.floor(num);
     }
     if (body.name !== undefined) patch.name = String(body.name).trim();
     // For alias fields an empty string explicitly clears them so the UI

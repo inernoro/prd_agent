@@ -15,6 +15,7 @@ import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
+import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrl } from './services/comment-template.js';
 import crypto from 'node:crypto';
@@ -511,6 +512,32 @@ schedulerService.setCoolFn(async (slug: string) => {
     }
   }
   branch.status = 'idle';
+  // 2026-05-14: 记录调度器降温原因，让用户在 UI 上看清"为什么变灰"。
+  // 区分空闲降温和容量驱逐，便于排查。
+  branch.lastStoppedAt = new Date().toISOString();
+  const idleTTLSec = config.scheduler?.idleTTLSeconds ?? 900;
+  const lastAccessMs = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
+  const idleSec = lastAccessMs > 0 ? Math.floor((Date.now() - lastAccessMs) / 1000) : 0;
+  if (lastAccessMs > 0 && idleSec >= idleTTLSec) {
+    branch.lastStopReason = `调度器：空闲 ${Math.floor(idleSec / 60)} 分钟，超过 ${Math.floor(idleTTLSec / 60)} 分钟阈值自动降温`;
+  } else {
+    branch.lastStopReason = '调度器：超出热容量上限被驱逐（LRU）';
+  }
+  branch.lastStopSource = 'scheduler';
+  // 同步追加项目活动日志，便于在分支日志面板里看到时间线。
+  try {
+    stateService.appendActivityLog(branch.projectId, {
+      type: 'stop',
+      branchId: slug,
+      branchName: branch.branch,
+      actor: 'scheduler',
+      note: branch.lastStopReason,
+    });
+  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+  // 2026-05-14 Cursor Bugbot review 修复：与另外两条停止路径
+  // （AutoLifecycleService.stopBranch / 手动 stop handler）保持一致，
+  // 调度器降温也要 +1 stopCount，否则 UI 上"停止次数"对调度器停止漏计。
+  stateService.incrementBranchStat(slug, 'stopCount');
   stateService.save();
 });
 // wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
@@ -533,6 +560,235 @@ const janitorService = new JanitorService(
   },
   config.worktreeBase,
 );
+// ── AutoLifecycle (2026-05-14 项目级 N 分钟自动切发布版 / 自动停止) ──
+// 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
+// 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+const autoLifecycleService = new AutoLifecycleService(
+  {
+    stateService,
+    stopBranch: async (slug: string) => {
+      const branch = stateService.getBranch(slug);
+      if (!branch) return;
+      // 2026-05-14 Codex review P2：远端 stop 失败时要能回滚到 running，
+      // 否则分支卡在 stopping，AutoLifecycleService.tick 的
+      // `status==='running'` 过滤会永久跳过它、不再重试。先快照原状态。
+      const prevBranchStatus = branch.status;
+      const prevSvcStatus = new Map(
+        Object.values(branch.services).map(s => [s.profileId, s.status] as const),
+      );
+      const restoreRunning = (): void => {
+        branch.status = prevBranchStatus;
+        for (const s of Object.values(branch.services)) {
+          const prev = prevSvcStatus.get(s.profileId);
+          if (prev) s.status = prev;
+        }
+        stateService.save();
+      };
+      branch.status = 'stopping';
+      stateService.save();
+
+      // 2026-05-14 Codex review P2 修复：cluster 部署下分支可能跑在远端
+      // executor 上，master 本地没有它的容器。这里复刻手动 stop 路径的
+      // /exec/stop 代理逻辑——否则 auto-stop/auto-publish 只停了 master
+      // 本地的空壳，远端容器还在跑，下一个 heartbeat 又把状态报回 running。
+      // `registry` 在模块下方构建（startup 同步执行完），tick 30s 才首次
+      // 触发本回调，引用安全。
+      const remoteExecutor =
+        branch.executorId && registry
+          ? registry.getAll().find(n => n.id === branch.executorId && n.role !== 'embedded')
+          : null;
+      // 2026-05-14 Codex review P2 "Retry when the owning executor is not
+      // registered"：分支有 executorId 但 registry 里查不到（coordinator
+      // 重启 / 漏 heartbeat）时，容器其实还在远端跑，本地 stop 是 no-op。
+      // 此时**不能**走下面的本地 stop 把分支标 idle/cold（会让 auto-lifecycle
+      // 误以为停成功、不再重试）。当作远端停止失败：回滚 + throw，下一拍
+      // 等执行器重新注册后重试。
+      if (branch.executorId && !remoteExecutor) {
+        restoreRunning();
+        throw new Error(`分支 ${slug} 归属执行器 ${branch.executorId} 当前未注册（可能 coordinator 刚重启或漏 heartbeat），稍后重试`);
+      }
+      if (remoteExecutor) {
+        for (const svc of Object.values(branch.services)) {
+          if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
+        }
+        stateService.save();
+        // 连接失败与"远端拒绝"分开处理，各自给准确错误信息，且不让
+        // !ok 的 throw 被同一个 catch 二次包装成误导性的"无法连接"。
+        let upstream: Awaited<ReturnType<typeof fetch>>;
+        try {
+          upstream = await fetch(`http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
+            },
+            body: JSON.stringify({ branchId: slug }),
+          });
+        } catch (err) {
+          // 执行器不可达：回滚到原 running 状态 + 抛出。caller
+          // (applyAutoStop/applyAutoPublish) 不会 stamp 假成功，tick 下一拍
+          // 因 status 仍是 running 会重试。
+          restoreRunning();
+          throw new Error(`无法连接远端执行器 ${remoteExecutor.id}: ${(err as Error).message}`);
+        }
+        if (!upstream.ok) {
+          const errText = await upstream.text().catch(() => '');
+          restoreRunning();
+          throw new Error(`远端执行器 ${remoteExecutor.id} 拒绝停止 (HTTP ${upstream.status}): ${errText.slice(0, 160)}`);
+        }
+        // 执行器下一次 heartbeat 会 reconcile，这里先设可信本地态。
+        for (const svc of Object.values(branch.services)) svc.status = 'stopped';
+        branch.status = 'idle';
+        branch.heatState = 'cold';
+        stateService.incrementBranchStat(slug, 'stopCount');
+        stateService.save();
+        return;
+      }
+
+      for (const svc of Object.values(branch.services)) {
+        if (svc.status === 'running' || svc.status === 'starting') {
+          try {
+            await containerService.stop(svc.containerName);
+          } catch (err) {
+            console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+          }
+          svc.status = 'stopped';
+        }
+      }
+      branch.status = 'idle';
+      // 2026-05-14 Cursor Bugbot review 修复：必须同步把 heatState 置 cold。
+      // SchedulerService.getHotBranches() 只看 heatState==='hot'（或
+      // heatState===undefined && status==='running'）。如果这里只改 status
+      // 不改 heatState，调度器仍把这个已停的分支算进 maxHotBranches 容量，
+      // 还会在下一 tick 重复 cool 它、写一条重复的 stop reason。
+      branch.heatState = 'cold';
+      stateService.incrementBranchStat(slug, 'stopCount');
+      stateService.save();
+    },
+    // 2026-05-14 用户决策：auto-publish 必须全自动「停源码 → 重建发布版」，
+    // 不靠懒唤醒（懒唤醒路径 index.ts 用 raw profile 不 resolve override）。
+    // 复用 webhook dispatcher 同款"内部 HTTP 自调 /deploy"机制：deploy 路由
+    // 会走 resolveEffectiveProfile，override 已是 release → 重建成发布版。
+    // 不动核心热路径。X-CDS-Trigger=auto-lifecycle 让活动日志能区分来源。
+    redeployBranch: async (slug: string) => {
+      const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(slug)}/deploy`;
+      // 2026-05-14 Codex review P2 "Include source project headers"：开了
+      // auth 时 X-CDS-Internal 走 loopback bypass guard，branch 级
+      // /deploy 要求能解析出源 project，否则 403 source-project-unresolved。
+      // 复刻 webhook dispatcher 的 sourceHeadersForBranch 逻辑。
+      const srcBranch = stateService.getBranch(slug);
+      // 2026-05-14 Cursor Bugbot Medium 修复：SSE 读循环必须有总超时。
+      // 否则 deploy 端只发进度事件、永不发 complete/error 也不关连接时，
+      // for(;;) reader.read() 永久阻塞；tick() 全程持 this.running，之后
+      // 每个 setInterval tick 都在 `if (this.running) return` 处空转，
+      // 整个 AutoLifecycleService 对所有项目永久瘫痪直到进程重启。
+      // 用 AbortController + 硬总时限兜底（真实部署 pull+build+就绪极少
+      // 超 20min；超了就回滚 override，下一拍重试，绝不卡死全局）。
+      const REDEPLOY_DEADLINE_MS = 20 * 60 * 1000;
+      const ac = new AbortController();
+      const deadline = setTimeout(() => ac.abort(), REDEPLOY_DEADLINE_MS);
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': 'auto-lifecycle',
+            'X-CDS-Source-Branch-Id': slug,
+            ...(srcBranch?.projectId ? { 'X-CDS-Source-Project-Id': srcBranch.projectId } : {}),
+          },
+          body: JSON.stringify({}),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`auto-publish 重部署 ${slug} 失败: HTTP ${res.status} ${body.slice(0, 160)}`);
+        }
+        // 2026-05-14 Codex review P2 "Await the deploy stream"：deploy 是 SSE，
+        // fetch 在响应头就 resolve，pull/build/readiness 失败都在流后续才发。
+        // 必须把流读到终态事件再判定成败，否则 redeploy 提前返回成功、后续
+        // 部署失败无法触发 applyAutoPublish 的 override 回滚。
+        // 终态契约（branches.ts /deploy 路由）：
+        //   event: error    → 硬失败（抛异常路径）
+        //   event: complete → 跑完；优先读权威 ok，缺省回退 services 推导
+        //   流结束但无 complete/error → 视为未完成（失败）
+        if (!res.body || typeof (res.body as { getReader?: unknown }).getReader !== 'function') {
+          throw new Error(`auto-publish 重部署 ${slug}：响应无 SSE body，无法确认部署结果`);
+        }
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let terminal: { ok: boolean; message: string } | null = null;
+        const parseBlock = (block: string): void => {
+          let evName = 'message';
+          let dataRaw = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) evName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataRaw += line.slice(5).trim();
+          }
+          if (evName === 'error') {
+            let msg = '部署失败';
+            try { msg = (JSON.parse(dataRaw) as { message?: string }).message || msg; } catch { /* keep default */ }
+            terminal = { ok: false, message: msg };
+          } else if (evName === 'complete') {
+            // 2026-05-14 Codex review P2：直接读路由下发的权威 ok（路由基于
+            // activeServices 算出，已剔除已删除/僵尸 profile）。不再用全量
+            // services 重新推导，避免僵尸服务误判失败。无 ok 字段（旧路由）
+            // 才回退到 services 推导兜底。
+            let parsed: { ok?: boolean; services?: Record<string, { status?: string }>; message?: string } = {};
+            try { parsed = JSON.parse(dataRaw) as typeof parsed; } catch { /* unparseable → fail below */ }
+            const msg = parsed.message || '';
+            if (typeof parsed.ok === 'boolean') {
+              terminal = parsed.ok
+                ? { ok: true, message: msg || '部署完成' }
+                : { ok: false, message: msg || '部署失败' };
+            } else {
+              const services = parsed.services || {};
+              const failed = Object.entries(services)
+                .filter(([, s]) => s?.status !== 'running')
+                .map(([pid]) => pid);
+              terminal = failed.length === 0 && Object.keys(services).length > 0
+                ? { ok: true, message: msg || '部署完成' }
+                : { ok: false, message: `部署完成但有服务未就绪: ${failed.join(', ') || '无 running 服务'}` };
+            }
+          }
+        };
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (value) {
+              buf += decoder.decode(value, { stream: true });
+              let idx: number;
+              while ((idx = buf.indexOf('\n\n')) !== -1) {
+                parseBlock(buf.slice(0, idx));
+                buf = buf.slice(idx + 2);
+              }
+            }
+            if (done) break;
+          }
+          if (buf.trim()) parseBlock(buf);
+        } finally {
+          try { reader.releaseLock(); } catch { /* ignore */ }
+        }
+        if (!terminal) {
+          throw new Error(`auto-publish 重部署 ${slug}：SSE 流结束但未收到 complete/error 终态事件`);
+        }
+        if (!(terminal as { ok: boolean }).ok) {
+          throw new Error(`auto-publish 重部署 ${slug} 失败: ${(terminal as { message: string }).message}`);
+        }
+      } catch (err) {
+        if (ac.signal.aborted) {
+          throw new Error(`auto-publish 重部署 ${slug} 超时（>${REDEPLOY_DEADLINE_MS / 60000}min 未出终态），已中止；override 将回滚，下一拍重试`);
+        }
+        throw err;
+      } finally {
+        clearTimeout(deadline);
+      }
+    },
+  },
+  { tickIntervalSeconds: 30, enabled: true },
+);
+
 janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
@@ -784,11 +1040,22 @@ janitorService.setRemoveFn(async (slug: string) => {
       schedulerService.start();
     }
     janitorService.start();
+    // 2026-05-14 Codex review P1 修复：auto-lifecycle 只能在协调者角色
+    // （standalone / scheduler）跑。executor 是 worker 节点，集群共享 state
+    // 时若每个 executor 都扫全部项目跑 auto-stop/publish，会把别的 executor
+    // 拥有的分支也标 idle/cold（executor 侧 registry 没有 master 条目，
+    // stopBranch 还会 fallback 到本地停）。lifecycle 决策必须集中在协调者。
+    if (config.mode !== 'executor') {
+      autoLifecycleService.start();
+    } else {
+      console.log('[auto-lifecycle] skipped on executor node (lifecycle decisions are coordinator-only)');
+    }
     startAutoRestartLoop();
   }
   function stopBackgroundServices(): void {
     schedulerService.stop();
     janitorService.stop();
+    autoLifecycleService.stop();
     stopAutoRestartLoop();
   }
 
@@ -808,6 +1075,11 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   schedulerService.stop();
   janitorService.stop();
+  // 2026-05-14 Cursor Bugbot Medium 修复：shutdown() 直接逐个 stop，
+  // 漏了 autoLifecycleService.stop()（stopBackgroundServices 里有，但
+  // 信号处理走的是本函数）。否则 graceful shutdown 期间 auto-lifecycle
+  // 的 setInterval 还在跑，可能在 mongo flush/close 时触发停容器/重部署。
+  autoLifecycleService.stop();
   try {
     const pendingWritesPath = path.join(config.repoRoot, 'cds', '.cds', 'pending-writes.json');
     const snap = await gracefulShutdownController.runShutdown({

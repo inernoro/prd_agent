@@ -314,6 +314,84 @@ describe('ExecutorRegistry', () => {
       });
       expect(ok).toBe(false);
     });
+
+    // 2026-05-14 Codex review P2：心跳整体替换 services 不能抹掉协调端
+    // proxyDeployToExecutor 写的 deployedMode 真相戳（执行器不上报该字段）。
+    it('preserves deployedMode across heartbeat when executor omits it', () => {
+      registry.register({
+        id: 'a',
+        host: 'a.local',
+        port: 9900,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+      const legacy = stateService.getLegacyProject();
+      stateService.addBranch({
+        id: 'branch-x',
+        projectId: legacy?.id ?? 'default',
+        branch: 'branch-x',
+        worktreePath: '',
+        status: 'running',
+        executorId: 'a',
+        createdAt: new Date().toISOString(),
+        services: {
+          web: {
+            profileId: 'web',
+            containerName: 'c-web',
+            hostPort: 30000,
+            status: 'running',
+            deployedMode: 'prod', // proxy 写的真相戳
+          },
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
+
+      // 执行器心跳：services 带 status 但不带 deployedMode
+      registry.heartbeat('a', {
+        load: { memoryUsedMB: 100, cpuPercent: 10 },
+        branches: {
+          'branch-x': {
+            status: 'running',
+            services: { web: { profileId: 'web', containerName: 'c-web', hostPort: 30000, status: 'running' } },
+          },
+        },
+      });
+
+      const after = stateService.getBranch('branch-x');
+      expect(after?.services.web?.deployedMode).toBe('prod');
+    });
+
+    it('lets executor-reported deployedMode win when present', () => {
+      registry.register({
+        id: 'a', host: 'a.local', port: 9900,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+      const legacy = stateService.getLegacyProject();
+      stateService.addBranch({
+        id: 'branch-y',
+        projectId: legacy?.id ?? 'default',
+        branch: 'branch-y',
+        worktreePath: '',
+        status: 'running',
+        executorId: 'a',
+        createdAt: new Date().toISOString(),
+        services: {
+          web: { profileId: 'web', containerName: 'c-web', hostPort: 30000, status: 'running', deployedMode: 'dev' },
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any);
+
+      registry.heartbeat('a', {
+        load: { memoryUsedMB: 100, cpuPercent: 10 },
+        branches: {
+          'branch-y': {
+            status: 'running',
+            services: { web: { profileId: 'web', containerName: 'c-web', hostPort: 30000, status: 'running', deployedMode: 'prod' } },
+          },
+        },
+      });
+
+      expect(stateService.getBranch('branch-y')?.services.web?.deployedMode).toBe('prod');
+    });
   });
 
   // ── checkHealth() — offline GC (regression: #8) ──

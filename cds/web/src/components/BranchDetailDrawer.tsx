@@ -47,6 +47,10 @@ interface BranchDetailData {
   githubCommitSha?: string;
   githubPrNumber?: number;
   lastDeployAt?: string;
+  /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
@@ -55,6 +59,7 @@ interface BranchDetailData {
     kind: 'source' | 'release' | 'mixed';
     label: string;
     title: string;
+    pendingPublish?: boolean;
   };
 }
 
@@ -261,7 +266,17 @@ type TriggerLogsState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; deliveries: GithubWebhookDelivery[]; total: number; filteredTotal: number };
+  | {
+      status: 'ok';
+      deliveries: GithubWebhookDelivery[];
+      total: number;
+      filteredTotal: number;
+      hasMore: boolean;
+      loadingMore?: boolean;
+    };
+
+// 2026-05-14: webhook 日志分页 — 每页 20 条，懒加载下一页，与 buffer 1000 配合。
+const TRIGGER_LOGS_PAGE_SIZE = 20;
 
 /** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
 interface MetricSeries {
@@ -522,6 +537,16 @@ export function BranchDetailDrawer({
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
+  // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
+  // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
+  // 导致 offset 仍是 0、第二页重复拉第一页并 append 重复 webhook 记录）。
+  // 用一个 ref 同步镜像当前已加载条数，loadMore 时同步读取。
+  const triggerLogsCountRef = useRef(0);
+  // 2026-05-14 Codex review P2：loadMore 的并发守卫不能只靠 setState
+  // updater 的 loadingMore（异步提交）。双击在 React commit 前两次都能
+  // 过 updater 检查 → 用同一 offset 发两次请求、同页追加两次。这个 ref
+  // 同步置位，是真正的去重闸门。
+  const triggerLogsLoadMoreInFlightRef = useRef(false);
   const [profileState, setProfileState] = useState<ProfileOverridesState>({ status: 'idle' });
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
@@ -600,7 +625,8 @@ export function BranchDetailDrawer({
     setTriggerLogsState({ status: 'loading' });
     try {
       const params = new URLSearchParams();
-      params.set('limit', '50');
+      params.set('limit', String(TRIGGER_LOGS_PAGE_SIZE));
+      params.set('offset', '0');
       params.set('branchId', branchId);
       if (branch?.githubRepoFullName) params.set('repoFullName', branch.githubRepoFullName);
       if (branch?.branch) params.set('ref', `refs/heads/${branch.branch}`);
@@ -622,17 +648,92 @@ export function BranchDetailDrawer({
         deliveries: GithubWebhookDelivery[];
         total?: number;
         filteredTotal?: number;
+        hasMore?: boolean;
       };
+      const deliveries = data.deliveries || [];
+      const filteredTotal = typeof data.filteredTotal === 'number' ? data.filteredTotal : deliveries.length;
       setTriggerLogsState({
         status: 'ok',
-        deliveries: data.deliveries || [],
-        total: typeof data.total === 'number' ? data.total : data.deliveries.length,
-        filteredTotal: typeof data.filteredTotal === 'number' ? data.filteredTotal : data.deliveries.length,
+        deliveries,
+        total: typeof data.total === 'number' ? data.total : deliveries.length,
+        filteredTotal,
+        hasMore: typeof data.hasMore === 'boolean' ? data.hasMore : deliveries.length < filteredTotal,
       });
     } catch (err) {
       setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+
+  /**
+   * 2026-05-14: 加载下一页 webhook 日志。state 必须已经是 ok，把后端返回的下一段
+   * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
+   */
+  const loadMoreTriggerLogs = useCallback(async () => {
+    if (!branchId) return;
+    // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
+    // updater 的执行时机；这才是这次 offset bug 的根因修复。
+    const currentOffset = triggerLogsCountRef.current;
+    if (currentOffset <= 0) return; // 还没有第一页，loadMore 无意义
+    // 同步去重闸门：双击在 React commit loadingMore 前不会两次进入。
+    if (triggerLogsLoadMoreInFlightRef.current) return;
+    let proceed = true;
+    setTriggerLogsState((prev) => {
+      if (prev.status !== 'ok' || !prev.hasMore || prev.loadingMore) {
+        proceed = false;
+        return prev;
+      }
+      return { ...prev, loadingMore: true };
+    });
+    if (!proceed) return;
+    triggerLogsLoadMoreInFlightRef.current = true;
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(TRIGGER_LOGS_PAGE_SIZE));
+      params.set('offset', String(currentOffset));
+      params.set('branchId', branchId);
+      if (branch?.githubRepoFullName) params.set('repoFullName', branch.githubRepoFullName);
+      if (branch?.branch) params.set('ref', `refs/heads/${branch.branch}`);
+      const raw = await apiRequest<unknown>(
+        `/api/cds-system/github/webhook-deliveries?${params.toString()}`,
+      );
+      const data = raw as {
+        deliveries?: GithubWebhookDelivery[];
+        total?: number;
+        filteredTotal?: number;
+        hasMore?: boolean;
+      };
+      const more = data.deliveries || [];
+      setTriggerLogsState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        const merged = [...prev.deliveries, ...more];
+        const filteredTotal = typeof data.filteredTotal === 'number' ? data.filteredTotal : merged.length;
+        return {
+          status: 'ok',
+          deliveries: merged,
+          total: typeof data.total === 'number' ? data.total : prev.total,
+          filteredTotal,
+          hasMore: typeof data.hasMore === 'boolean' ? data.hasMore : merged.length < filteredTotal,
+          loadingMore: false,
+        };
+      });
+    } catch (err) {
+      // 翻页失败保留前面已加载的部分，仅清掉 loading 旗，避免清掉整个列表。
+      setTriggerLogsState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        return { ...prev, loadingMore: false };
+      });
+      console.error('[trigger-logs] loadMore failed', err);
+    } finally {
+      triggerLogsLoadMoreInFlightRef.current = false;
+    }
+  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+
+  // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
+  // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
+  useEffect(() => {
+    triggerLogsCountRef.current =
+      triggerLogsState.status === 'ok' ? triggerLogsState.deliveries.length : 0;
+  }, [triggerLogsState]);
 
   // 每个 drawer session 是否已经为"失败分支"自动跳过 tab。避免 branch 多次
   // load 时反复抢用户手动切的 tab。
@@ -644,6 +745,11 @@ export function BranchDetailDrawer({
     setLogsMode('build');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
+    // 2026-05-14 Codex review P2：切到另一分支时必须清空内联容器日志的
+    // 用户选择，否则 drawer 复用、且新分支有同名 profileId 时，旧分支选过
+    // 的 profile 会粘住，deploymentLogProfileId 不再回退到新分支的
+    // errored/running service。
+    setSelectedDeploymentLogProfileId(null);
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
     setShowAllHistory(false);
@@ -992,13 +1098,25 @@ export function BranchDetailDrawer({
     return activeDeploymentPhases?.find((p) => p.status === 'error')?.key ?? null;
   }, [activeDeploymentPhases]);
 
-  const deploymentLogProfileId = useMemo(() => {
+  /**
+   * 2026-05-14: 部署 tab 内联容器日志的多容器选择。null = 让自动逻辑挑（错误/运行中/启动中）。
+   * 用户在 tab strip 上点击其他 service 后会写入这里，覆盖自动逻辑。
+   */
+  const [selectedDeploymentLogProfileId, setSelectedDeploymentLogProfileId] = useState<string | null>(null);
+  const autoDeploymentLogProfileId = useMemo(() => {
     if (!services.length) return null;
     const errored = services.find((s) => s.status === 'error');
     const running = services.find((s) => s.status === 'running');
     const starting = services.find((s) => s.status === 'starting');
     return errored?.profileId || running?.profileId || starting?.profileId || services[0].profileId;
   }, [services]);
+  const deploymentLogProfileId = useMemo(() => {
+    // 用户选过 → 校验该 service 还在；不在了 fallback 自动选择。
+    if (selectedDeploymentLogProfileId && services.some((s) => s.profileId === selectedDeploymentLogProfileId)) {
+      return selectedDeploymentLogProfileId;
+    }
+    return autoDeploymentLogProfileId;
+  }, [autoDeploymentLogProfileId, selectedDeploymentLogProfileId, services]);
 
   useEffect(() => {
     if (!open || activeTab !== 'deployments') return;
@@ -1006,7 +1124,11 @@ export function BranchDetailDrawer({
     if (!deploymentLogProfileId) return;
     if (
       serviceLogs.profileId === deploymentLogProfileId &&
-      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading')
+      // 2026-05-14 Codex review P2：error 也算"已加载"，否则容器日志拉取
+      // 失败时本 effect 每次 render 都重发请求，造成 loading/error 抖动死循环。
+      // 用户切容器 tab（deploymentLogProfileId 变）或点刷新按钮（显式调
+      // loadServiceLogs 绕过本 guard）才会重新拉。
+      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading' || serviceLogs.status === 'error')
     ) {
       return;
     }
@@ -1020,6 +1142,34 @@ export function BranchDetailDrawer({
     serviceLogs.profileId,
     serviceLogs.status,
   ]);
+
+  /**
+   * 2026-05-14: 内联容器日志的 tab strip + 最大化控制。
+   * 多于 1 个 service 时 PhaseTree 会渲染 tab 条。最大化 → 跳到 Logs tab 容器模式。
+   */
+  const inlineContainerLogControls = useMemo(() => {
+    if (services.length === 0) return undefined;
+    return {
+      services: services.map((svc) => ({
+        profileId: svc.profileId,
+        status: svc.status,
+        hostPort: svc.hostPort,
+      })),
+      selected: deploymentLogProfileId,
+      onSelect: (profileId: string) => {
+        setSelectedDeploymentLogProfileId(profileId);
+        void loadServiceLogs(profileId);
+      },
+      onMaximize: () => {
+        if (deploymentLogProfileId) {
+          // 复用 openContainerLogs 的跳转逻辑
+          setLogsMode('container');
+          setActiveTab('logs');
+          void loadServiceLogs(deploymentLogProfileId);
+        }
+      },
+    };
+  }, [deploymentLogProfileId, loadServiceLogs, services]);
 
   const containerLogsByPhase = useMemo<Partial<Record<PhaseKey, PhaseLogState>> | undefined>(() => {
     if (!activeDeployment) return undefined;
@@ -1203,6 +1353,35 @@ export function BranchDetailDrawer({
                         <span>部署次数：{branch.deployCount || 0}</span>
                         <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
+                      {/*
+                        2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。
+                        没有 lastStoppedAt 的老分支显示 - 即可，不破坏 layout。
+                      */}
+                      {/*
+                        2026-05-14 Cursor Bugbot Medium：lastStoppedAt 是历史
+                        戳，分支被 stop 后又经 deploy/auto-build/调度器唤醒
+                        重新 running 时该戳仍在 → 不能只看 lastStoppedAt
+                        就弹"上次停止"，否则正在运行的分支被误报已停止。
+                        只在分支当前确实非活跃（非 running/构建/启动中）时显示。
+                      */}
+                      {branch.lastStoppedAt &&
+                      !['running', 'building', 'starting', 'restarting'].includes(branch.status) ? (
+                        <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">上次停止</span>
+                            <span className="opacity-90">{formatDeployTimestamp(branch.lastStoppedAt)}</span>
+                            {branch.lastStopSource ? (
+                              <span className="rounded border border-amber-500/40 px-1.5 py-0.5">
+                                {branch.lastStopSource === 'user' ? '用户'
+                                  : branch.lastStopSource === 'scheduler' ? '调度器'
+                                  : branch.lastStopSource === 'executor' ? '执行器'
+                                  : '系统'}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="opacity-95">{branch.lastStopReason || '原因未记录'}</div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })()}
@@ -1319,6 +1498,7 @@ export function BranchDetailDrawer({
                         onResetError={(item) => void resetBranchError(item)}
                         onRetryDiagnosis={(item) => void retryRuntimeDiagnosis(item)}
                         containerLogsByPhase={containerLogsByPhase}
+                        containerLogControls={inlineContainerLogControls}
                       />
                     ) : null}
 
@@ -1432,7 +1612,12 @@ export function BranchDetailDrawer({
                       onQueryChange={setLogQuery}
                       onRefresh={() => void loadTriggerLogs()}
                     />
-                    <TriggerLogsPanel state={triggerLogsState} query={logQuery} branch={branch} />
+                    <TriggerLogsPanel
+                      state={triggerLogsState}
+                      query={logQuery}
+                      branch={branch}
+                      onLoadMore={() => void loadMoreTriggerLogs()}
+                    />
                   </section>
                 ) : null}
 
@@ -1868,10 +2053,12 @@ function TriggerLogsPanel({
   state,
   query,
   branch,
+  onLoadMore,
 }: {
   state: TriggerLogsState;
   query: string;
   branch: BranchDetailData;
+  onLoadMore?: () => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
     return <LoadingBlock label="加载 Webhook 日志" />;
@@ -1888,7 +2075,7 @@ function TriggerLogsPanel({
         <div>
           {query
             ? '没有匹配的 Webhook 日志。'
-            : '最近 200 条 GitHub webhook 投递里没有命中这个分支。'}
+            : '最近 1000 条 GitHub webhook 投递里没有命中这个分支。'}
         </div>
         {!query ? (
           <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5">
@@ -1977,6 +2164,29 @@ function TriggerLogsPanel({
           );
         })}
       </div>
+      {/*
+        2026-05-14: 分页加载更多。后端 buffer 上限 1000 条，每页 20。
+        用户反复反馈"webhook 看不到历史"——这里给出累计条数 + 加载更多按钮。
+      */}
+      {state.hasMore || state.loadingMore ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs text-muted-foreground">
+          <span>
+            已加载 {state.deliveries.length} / {state.filteredTotal} 条匹配（buffer 上限 1000）
+          </span>
+          <button
+            type="button"
+            className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-1 text-xs hover:border-[hsl(var(--hairline-strong))] disabled:opacity-60"
+            onClick={() => onLoadMore?.()}
+            disabled={!state.hasMore || !!state.loadingMore}
+          >
+            {state.loadingMore ? '加载中...' : '加载更早 20 条'}
+          </button>
+        </div>
+      ) : state.deliveries.length > 0 ? (
+        <div className="mt-3 border-t border-[hsl(var(--hairline))] pt-3 text-xs text-muted-foreground">
+          已展示全部 {state.deliveries.length} 条
+        </div>
+      ) : null}
     </div>
   );
 }

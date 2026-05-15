@@ -52,6 +52,9 @@ interface BranchSummary {
   createdAt: string;
   lastAccessedAt?: string;
   lastDeployAt?: string;
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
@@ -1290,6 +1293,33 @@ export function BranchDetailPage(): JSX.Element {
                     <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
                     <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt || state.branch.lastAccessedAt)} />
                   </div>
+                  {/*
+                    2026-05-14 Cursor Bugbot Medium：lastStoppedAt 为历史戳，
+                    stop 后又被 deploy/auto-build/调度器唤醒重新 running 时
+                    该戳仍在。只看 lastStoppedAt 会在正在运行的分支上误报
+                    "上次停止"。仅当分支当前确实非活跃时才显示。
+                  */}
+                  {state.branch.lastStoppedAt &&
+                  !['running', 'building', 'starting', 'restarting'].includes(state.branch.status) ? (
+                    <div
+                      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+                      title="分支变灰 = 容器已停止。下面这条来自 lastStoppedAt / lastStopReason 字段，2026-05-14 起记录。"
+                    >
+                      <div className="mb-1 flex items-center gap-2">
+                        <span className="font-medium">上次停止</span>
+                        <span className="opacity-80">{formatDate(state.branch.lastStoppedAt)}</span>
+                        {state.branch.lastStopSource ? (
+                          <span className="rounded border border-amber-500/40 px-1.5 py-0.5 opacity-90">
+                            {state.branch.lastStopSource === 'user' ? '用户'
+                              : state.branch.lastStopSource === 'scheduler' ? '调度器'
+                              : state.branch.lastStopSource === 'executor' ? '执行器'
+                              : '系统'}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="opacity-95">{state.branch.lastStopReason || '原因未记录'}</div>
+                    </div>
+                  ) : null}
                   <div className="rounded-md border border-border bg-muted/30 p-3">
                     <div className="mb-2 text-xs font-medium text-muted-foreground">提交一致性</div>
                     <div className="grid gap-2 text-xs md:grid-cols-2">

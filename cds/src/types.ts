@@ -541,6 +541,38 @@ export interface BranchEntry {
   lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
+  /**
+   * 2026-05-14: 容器最近一次进入 running 状态的 ISO 时间戳。
+   * 由 reconcileBranchStatus() 在状态机切换到 'running' 时打戳。
+   * 调度器（项目级 autoPublishAfterMinutes / autoStopAfterMinutes）
+   * 以本字段为计时锚点 —— "完全启动成功之后开始算"。
+   * 进入 running 后再回退到其他状态时**不清空**，下一次再次 running 才覆盖；
+   * 这样调度器即便错过一拍也能基于上一次有效 ready 时间继续工作。
+   */
+  lastReadyAt?: string;
+  /**
+   * 2026-05-14: 最近一次容器被停止的 ISO 时间戳。
+   * 涵盖用户主动 /stop、调度器空闲降温、远端执行器停止；不涵盖部署失败转 error
+   * 状态（那个走 errorMessage）。UI 上配合 lastStopReason / lastStopSource 展示，
+   * 解决"分支莫名变灰用户不知道为什么"的问题。
+   */
+  lastStoppedAt?: string;
+  /**
+   * 停止原因的人类可读短语，UI 直接展示。例如：
+   *   - "用户手动停止"
+   *   - "调度器：空闲超过 15 分钟自动降温"
+   *   - "调度器：超出热容量上限被驱逐"
+   *   - "远端执行器停止"
+   */
+  lastStopReason?: string;
+  /**
+   * 停止发起方分类，用于过滤与统计：
+   *   - 'user'      用户在 UI 上点了停止
+   *   - 'scheduler' 调度器自动降温/驱逐
+   *   - 'executor'  远端执行器
+   *   - 'system'    其他系统侧（垃圾回收等）
+   */
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -552,6 +584,14 @@ export interface ServiceState {
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
+  /**
+   * 2026-05-14：容器**真正启动成功那一刻**实际使用的 deploy mode id
+   * （= 当时 resolveEffectiveProfile 的 activeDeployMode）。这是"在跑的
+   * 是不是发布版"的唯一真相来源——卡片徽章据此判断真实态 vs 配置意图，
+   * 不再只看 profileOverrides。空串 = 源码/默认模式启动。
+   * undefined = 该容器在本字段引入前启动（旧数据），徽章回退到配置语义。
+   */
+  deployedMode?: string;
 }
 
 /** A build/operation log event */
@@ -1626,6 +1666,25 @@ export interface Project {
    * never mutates existing branches and never writes BuildProfile.activeDeployMode.
    */
   defaultDeployModes?: Record<string, string>;
+  /**
+   * 2026-05-14: 项目级 "运行 N 分钟后自动切发布版" 策略。
+   * - 0 / 缺省 / 未启用：禁用。
+   * - >0：从 BranchEntry.lastReadyAt（容器进入 running 状态时打戳）计时；
+   *   超过 N 分钟仍是源码 / 热加载模式且当前 running，则将所有 profileOverrides 的
+   *   activeDeployMode 翻转到 profile.deployModes 里第一个被 classifyDeployRuntime
+   *   判定为 'release' 的模式，并停止容器；用户下次访问会被 auto-build 路径以发布
+   *   模式拉起来。
+   * 时间锚点 = lastReadyAt（部署成绿色），而不是 HTTP 流量，避免长连接永远刷新。
+   */
+  autoPublishAfterMinutes?: number;
+  /**
+   * 2026-05-14: 项目级 "运行 N 分钟后自动停止" 策略。
+   * 与 autoPublishAfterMinutes 同时启用时，autoPublish 先行（先切发布版），
+   * autoStop 在新的 ready 计时上再起效。
+   * scheduler 的 idleTTLSeconds（CDS 系统级）是按"最近被访问"算，本字段是按
+   * "部署成功后的存活时间"算 —— 用于"调试完忘了关"这种场景。
+   */
+  autoStopAfterMinutes?: number;
   /**
    * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
    * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。

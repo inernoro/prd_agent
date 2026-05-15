@@ -191,12 +191,11 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
  *   2. branch-level override         — BranchEntry.profileOverrides[profileId]
  *   3. deploy-mode override          — profile.deployModes[activeDeployMode]
  *
- * The branch override can even change the active deploy mode, so it is applied
- * before `resolveProfileWithMode`.
- *
- * All call sites that previously used `resolveProfileWithMode(profile)` directly
- * should switch to `resolveEffectiveProfile(profile, branch)` so per-branch
- * overrides take effect.
+ * 2026-05-14：用户明确选择「项目默认运行模式只在创建分支时拷贝一次」
+ * （保留旧 UI 承诺「不改已有分支」）。因此这里**不再**读
+ * Project.defaultDeployModes 做实时回退——项目默认由 branches.ts 的
+ * applyProjectDefaultDeployModes() 在建分支时写进 branch.profileOverrides，
+ * 之后就是普通的分支级 override，本函数只认 branch override + baseline。
  */
 export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
