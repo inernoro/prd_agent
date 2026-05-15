@@ -235,7 +235,7 @@ export class AutoLifecycleService {
     // 重新读出 branch（stopBranch 可能改了状态），打 reason。
     const fresh = stateService.getBranch(branch.id);
     if (fresh) {
-      fresh.lastStoppedAt = new Date().toISOString();
+      fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
       fresh.lastStopReason = `项目设置：启动满 ${minutes} 分钟，自动切到发布版（${switchedModes.join(', ')}），下次访问会以发布模式重新构建`;
       fresh.lastStopSource = 'system';
       stateService.save();
@@ -256,7 +256,7 @@ export class AutoLifecycleService {
     await stopBranch(branch.id);
     const fresh = stateService.getBranch(branch.id);
     if (fresh) {
-      fresh.lastStoppedAt = new Date().toISOString();
+      fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
       fresh.lastStopReason = `项目设置：启动满 ${minutes} 分钟，自动停止（节省资源）`;
       fresh.lastStopSource = 'system';
       stateService.save();

@@ -752,7 +752,9 @@ function AutoLifecycleSection({
       };
       const result = await apiRequest<ProjectSaveResponse>(
         `/api/projects/${encodeURIComponent(projectId)}`,
-        { method: 'PATCH', body },
+        // 后端只注册 PUT /api/projects/:id（无 PATCH 路由）；与本页其他
+        // 保存（默认模式 / GitHub policy / 常规）保持一致用 PUT。
+        { method: 'PUT', body },
       );
       onSaved(result.project);
       onToast('运行生命周期策略已保存；下一次容器进入运行状态时开始计时');

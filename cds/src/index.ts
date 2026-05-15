@@ -534,6 +534,10 @@ schedulerService.setCoolFn(async (slug: string) => {
       note: branch.lastStopReason,
     });
   } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+  // 2026-05-14 Cursor Bugbot review 修复：与另外两条停止路径
+  // （AutoLifecycleService.stopBranch / 手动 stop handler）保持一致，
+  // 调度器降温也要 +1 stopCount，否则 UI 上"停止次数"对调度器停止漏计。
+  stateService.incrementBranchStat(slug, 'stopCount');
   stateService.save();
 });
 // wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
@@ -567,6 +571,51 @@ const autoLifecycleService = new AutoLifecycleService(
       if (!branch) return;
       branch.status = 'stopping';
       stateService.save();
+
+      // 2026-05-14 Codex review P2 修复：cluster 部署下分支可能跑在远端
+      // executor 上，master 本地没有它的容器。这里复刻手动 stop 路径的
+      // /exec/stop 代理逻辑——否则 auto-stop/auto-publish 只停了 master
+      // 本地的空壳，远端容器还在跑，下一个 heartbeat 又把状态报回 running。
+      // `registry` 在模块下方构建（startup 同步执行完），tick 30s 才首次
+      // 触发本回调，引用安全。
+      const remoteExecutor =
+        branch.executorId && registry
+          ? registry.getAll().find(n => n.id === branch.executorId && n.role !== 'embedded')
+          : null;
+      if (remoteExecutor) {
+        for (const svc of Object.values(branch.services)) {
+          if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
+        }
+        stateService.save();
+        try {
+          const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`;
+          const upstream = await fetch(upstreamUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
+            },
+            body: JSON.stringify({ branchId: slug }),
+          });
+          if (!upstream.ok) {
+            const errText = await upstream.text().catch(() => '');
+            console.warn(`[auto-lifecycle] 远端执行器 ${remoteExecutor.id} 拒绝停止 (HTTP ${upstream.status}): ${errText.slice(0, 160)}`);
+            // 远端拒绝：不强制把本地状态改 idle/cold（避免谎报已停），
+            // 下一拍 heartbeat reconcile 后会重试。
+            return;
+          }
+          // 执行器下一次 heartbeat 会 reconcile，这里先设可信本地态。
+          for (const svc of Object.values(branch.services)) svc.status = 'stopped';
+          branch.status = 'idle';
+          branch.heatState = 'cold';
+          stateService.incrementBranchStat(slug, 'stopCount');
+          stateService.save();
+        } catch (err) {
+          console.warn(`[auto-lifecycle] 无法连接远端执行器 ${remoteExecutor.id}: ${(err as Error).message}`);
+        }
+        return;
+      }
+
       for (const svc of Object.values(branch.services)) {
         if (svc.status === 'running' || svc.status === 'starting') {
           try {
