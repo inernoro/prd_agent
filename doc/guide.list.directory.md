@@ -474,6 +474,9 @@
 - [技能系统规则与创建指南](rule.skill-system) `rule.skill-system`
   > Claude Code Skill 的创建、注册与管理规范
 
+- [同族技能触发词去重规则](rule.skill-trigger-disambiguation) `rule.skill-trigger-disambiguation`
+  > 多个技能围绕同一中心系统拆分时的 description / slash / 触发词去重硬规则
+
 - [PRD Agent 全面代码审计报告](rule.audit-prd-desktop-codebase) `rule.audit-prd-desktop-codebase`
   > 桌面端代码库的全面审计报告与改进建议
 
