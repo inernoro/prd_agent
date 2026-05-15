@@ -1115,7 +1115,11 @@ export function BranchDetailDrawer({
     if (!deploymentLogProfileId) return;
     if (
       serviceLogs.profileId === deploymentLogProfileId &&
-      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading')
+      // 2026-05-14 Codex review P2：error 也算"已加载"，否则容器日志拉取
+      // 失败时本 effect 每次 render 都重发请求，造成 loading/error 抖动死循环。
+      // 用户切容器 tab（deploymentLogProfileId 变）或点刷新按钮（显式调
+      // loadServiceLogs 绕过本 guard）才会重新拉。
+      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading' || serviceLogs.status === 'error')
     ) {
       return;
     }

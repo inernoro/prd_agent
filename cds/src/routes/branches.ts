@@ -11,6 +11,7 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployModeSource } from '../services/container.js';
+import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -172,13 +173,8 @@ type BranchDeployRuntime = {
   modes: string[];
 };
 
-function classifyDeployRuntime(modeId?: string, modeLabel?: string): 'source' | 'release' {
-  if (!modeId) return 'source';
-  const text = `${modeId} ${modeLabel || ''}`;
-  return /(prod|production|release|static|publish|published|dist|standalone|built|发布|生产|正式|构建)/i.test(text)
-    ? 'release'
-    : 'source';
-}
+// classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
+// auto-lifecycle.ts 共用同一份正则，避免两处漂移）。
 
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,

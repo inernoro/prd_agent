@@ -1,5 +1,6 @@
 import type { StateService } from './state.js';
 import type { BuildProfile, BranchEntry } from '../types.js';
+import { RELEASE_DEPLOY_MODE_PATTERN, isReleaseDeployMode } from './deploy-runtime.js';
 
 /**
  * 2026-05-14 引入。
@@ -37,12 +38,8 @@ export interface AutoLifecycleDeps {
   clock?: { now(): number };
 }
 
-/** 与 routes/branches.ts 的 classifyDeployRuntime 等价 —— 内部重复一份避免 routes 暴露内部函数。 */
-const RELEASE_PATTERN = /(prod|production|release|static|publish|published|dist|standalone|built|发布|生产|正式|构建)/i;
-
-function isReleaseMode(modeId: string, modeLabel?: string): boolean {
-  return RELEASE_PATTERN.test(`${modeId} ${modeLabel || ''}`);
-}
+// release 模式分类走 services/deploy-runtime.ts 这个 SSOT，与
+// routes/branches.ts 的 summarizeBranchDeployRuntime 共用同一份正则。
 
 /**
  * 给定 profile，找一个看起来像"发布版"的 deployMode id。找不到返回 null —— 跳过该 profile。
@@ -50,11 +47,11 @@ function isReleaseMode(modeId: string, modeLabel?: string): boolean {
  */
 function findReleaseDeployMode(profile: BuildProfile): string | null {
   const modes = profile.deployModes || {};
-  for (const [modeId, mode] of Object.entries(modes)) {
-    if (RELEASE_PATTERN.test(modeId)) return modeId;
+  for (const [modeId] of Object.entries(modes)) {
+    if (RELEASE_DEPLOY_MODE_PATTERN.test(modeId)) return modeId;
   }
   for (const [modeId, mode] of Object.entries(modes)) {
-    if (mode?.label && RELEASE_PATTERN.test(mode.label)) return modeId;
+    if (mode?.label && RELEASE_DEPLOY_MODE_PATTERN.test(mode.label)) return modeId;
   }
   return null;
 }
@@ -96,7 +93,7 @@ function branchAutoPublishConverged(
     const effectiveMode = override ?? projectDefault ?? profile.activeDeployMode ?? '';
     const modeLabel = effectiveMode ? profile.deployModes?.[effectiveMode]?.label : undefined;
     // 可切的 profile 还没切到 release → 未收敛。
-    if (!effectiveMode || !isReleaseMode(effectiveMode, modeLabel)) return false;
+    if (!effectiveMode || !isReleaseDeployMode(effectiveMode, modeLabel)) return false;
   }
   // 没有任何"可切但未切"的 profile → 收敛。
   return true;
@@ -210,6 +207,16 @@ export class AutoLifecycleService {
 
           // ── Auto-stop ───────────────────────────────────────────────
           if (autoStopMin > 0 && ageSec >= autoStopMin * 60) {
+            // 2026-05-14 Cursor Bugbot review (Medium)：types.ts / PR 描述
+            // 承诺"autoPublish 先行（先切发布版），autoStop 在新的 ready
+            // 计时上再起效"。若 autoStopMin < autoPublishMin，auto-stop 会
+            // 抢在 auto-publish 之前停掉分支，违背该承诺。这里显式让位：
+            // auto-publish 开着且尚未收敛时，跳过本次 auto-stop，等
+            // auto-publish 在 autoPublishMin 到点后先切发布版（停 + 换模式）
+            // → 重启后新 ready 计时 → 此时已收敛 → auto-stop 才接管。
+            if (autoPublishMin > 0 && !branchAutoPublishConverged(branch, profiles, projectDefaults)) {
+              continue;
+            }
             try {
               await this.applyAutoStop(branch, autoStopMin);
             } catch (err) {
@@ -234,17 +241,22 @@ export class AutoLifecycleService {
     minutes: number,
   ): Promise<void> {
     const { stateService, stopBranch } = this.deps;
-    const switchedModes: string[] = [];
+    // 2026-05-14 Codex review P2：先只"计算"要切哪些 profile，**不写**
+    // profileOverrides。否则 stopBranch 在远端失败 throw 时，override 已被
+    // 持久化（且被 restoreRunning 的 save 落盘），分支仍跑旧容器但 state
+    // 显示已是 release → 下一拍 branchAutoPublishConverged 误判收敛、不再
+    // 重试（若 auto-stop 关着）。override 推迟到 stop 成功后再写。
+    const plan: Array<{ profileId: string; releaseMode: string; label: string }> = [];
     for (const profile of profiles) {
       const releaseMode = findReleaseDeployMode(profile);
       if (!releaseMode) continue;
-      stateService.setBranchProfileOverride(branch.id, profile.id, {
-        ...(branch.profileOverrides?.[profile.id] || {}),
-        activeDeployMode: releaseMode,
+      plan.push({
+        profileId: profile.id,
+        releaseMode,
+        label: `${profile.name || profile.id}=${releaseMode}`,
       });
-      switchedModes.push(`${profile.name || profile.id}=${releaseMode}`);
     }
-    if (switchedModes.length === 0) {
+    if (plan.length === 0) {
       // 没有任何 profile 有 release 模式可切，记录一次 reason 后跳过。
       const fresh = stateService.getBranch(branch.id);
       if (fresh) {
@@ -255,7 +267,21 @@ export class AutoLifecycleService {
       return;
     }
 
+    // 先停。stopBranch 远端失败会 throw，此时 override 尚未写入，state 保持
+    // 原样，caller 的 try/catch 接住后 tick 下一拍重试，不会误判收敛。
     await stopBranch(branch.id);
+
+    // 停成功后再写 override —— 下次访问 auto-build 会以 release 模式构建。
+    const switchedModes: string[] = [];
+    for (const item of plan) {
+      const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
+      stateService.setBranchProfileOverride(branch.id, item.profileId, {
+        ...(existing || {}),
+        activeDeployMode: item.releaseMode,
+      });
+      switchedModes.push(item.label);
+    }
+
     // 重新读出 branch（stopBranch 可能改了状态），打 reason。
     const fresh = stateService.getBranch(branch.id);
     if (fresh) {
