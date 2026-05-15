@@ -97,6 +97,20 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
     expect(h.redeployBranch).not.toHaveBeenCalled();
   });
 
+  it('配置已是 release 但容器还跑源码 → 仍重部署，且不改写 override（Codex P2）', async () => {
+    const h = makeHarness(
+      branch({
+        profileOverrides: { web: { activeDeployMode: 'prod' } },
+        services: { web: svc('web', 'running', 'dev') }, // 配置 prod，容器实际 dev
+      }),
+    );
+    await h.service.tick();
+    expect(h.redeployBranch).toHaveBeenCalledTimes(1);
+    expect(h.redeployBranch).toHaveBeenCalledWith('b1');
+    // redeploy-only：override 保持用户/项目选的 prod，不被覆盖
+    expect(h.branch.profileOverrides?.web?.activeDeployMode).toBe('prod');
+  });
+
   it('redeploy 失败 → 回滚 override（不留假收敛），下一拍仍未收敛', async () => {
     const h = makeHarness(branch());
     h.redeployBranch.mockRejectedValueOnce(new Error('deploy boom'));

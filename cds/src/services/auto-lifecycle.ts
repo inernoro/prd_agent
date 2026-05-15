@@ -277,20 +277,50 @@ export class AutoLifecycleService {
   ): Promise<void> {
     const { stateService, stopBranch, redeployBranch } = this.deps;
 
-    const plan: Array<{ profileId: string; releaseMode: string; label: string }> = [];
+    // 2026-05-14 Codex review P2 "Redeploy profiles that are already
+    // configured for release"：plan 区分两类 entry——
+    //  - switch：配置还不是 release → 写 release override 再重部署。
+    //  - redeploy-only：配置**已是** release 但容器实际还跑源码（项目
+    //    默认/手动切过 override / 之前冷启没 honor override），override
+    //    不动（保留用户/项目选的具体 release 模式，Cursor Medium 约束），
+    //    但仍要重部署让它真正生效。
+    // 若把 redeploy-only 也 continue 掉，plan 会空 → 误记"没有可用发布版
+    // 模式" + return → auto-publish 永不执行那次必要的重部署，永不收敛。
+    const plan: Array<{ profileId: string; releaseMode: string; label: string; rewriteOverride: boolean }> = [];
     for (const profile of profiles) {
       const releaseMode = findReleaseDeployMode(profile);
       if (!releaseMode) continue;
-      // 已经是 release 的 profile 跳过，别用 findReleaseDeployMode 找到的
-      // "第一个 release 模式"覆盖用户/项目已选好的另一个 release 模式。
       const override = branch.profileOverrides?.[profile.id]?.activeDeployMode;
       const effectiveMode = override ?? profile.activeDeployMode ?? '';
       const effectiveLabel = effectiveMode ? profile.deployModes?.[effectiveMode]?.label : undefined;
-      if (effectiveMode && isReleaseDeployMode(effectiveMode, effectiveLabel)) continue;
+      const configIsRelease = !!effectiveMode && isReleaseDeployMode(effectiveMode, effectiveLabel);
+
+      if (configIsRelease) {
+        // 配置已是 release：看容器**真相**是否已对齐（与
+        // branchAutoPublishConverged 同口径）。已对齐 → 跳过不打扰；
+        // 未对齐（含旧数据无 deployedMode 戳=信任配置已对齐）→ redeploy-only。
+        const svc = branch.services?.[profile.id];
+        if (svc?.deployedMode === undefined) continue; // 旧数据：视为已对齐
+        const deployedLabel = svc.deployedMode
+          ? profile.deployModes?.[svc.deployedMode]?.label
+          : undefined;
+        const actuallyRelease =
+          svc.status === 'running' && isReleaseDeployMode(svc.deployedMode, deployedLabel);
+        if (actuallyRelease) continue; // 真已发布 → 不动
+        plan.push({
+          profileId: profile.id,
+          releaseMode: effectiveMode, // 保留已选的具体 release 模式
+          label: `${profile.name || profile.id}=${effectiveMode}(待生效)`,
+          rewriteOverride: false,
+        });
+        continue;
+      }
+
       plan.push({
         profileId: profile.id,
         releaseMode,
         label: `${profile.name || profile.id}=${releaseMode}`,
+        rewriteOverride: true,
       });
     }
     if (plan.length === 0) {
@@ -306,13 +336,16 @@ export class AutoLifecycleService {
       return;
     }
 
-    // 快照旧 override，redeploy 失败时回滚（避免假收敛）。
+    // 只有 switch 类（rewriteOverride）才动 override；redeploy-only 类
+    // override 已是用户/项目选的 release，原样保留，仅靠重部署生效。
+    const rewriteItems = plan.filter((p) => p.rewriteOverride);
+    // 快照旧 override（仅被改写的），redeploy 失败时回滚（避免假收敛）。
     const prevOverrides = new Map<string, string | undefined>();
-    for (const item of plan) {
+    for (const item of rewriteItems) {
       prevOverrides.set(item.profileId, branch.profileOverrides?.[item.profileId]?.activeDeployMode);
     }
     const restoreOverrides = (): void => {
-      for (const item of plan) {
+      for (const item of rewriteItems) {
         const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
         stateService.setBranchProfileOverride(branch.id, item.profileId, {
           ...(existing || {}),
@@ -322,14 +355,13 @@ export class AutoLifecycleService {
       stateService.save();
     };
 
-    const switchedModes: string[] = [];
-    for (const item of plan) {
+    const switchedModes: string[] = plan.map((p) => p.label);
+    for (const item of rewriteItems) {
       const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
       stateService.setBranchProfileOverride(branch.id, item.profileId, {
         ...(existing || {}),
         activeDeployMode: item.releaseMode,
       });
-      switchedModes.push(item.label);
     }
     stateService.save();
 
