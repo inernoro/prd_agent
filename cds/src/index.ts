@@ -672,12 +672,19 @@ const autoLifecycleService = new AutoLifecycleService(
     // 不动核心热路径。X-CDS-Trigger=auto-lifecycle 让活动日志能区分来源。
     redeployBranch: async (slug: string) => {
       const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(slug)}/deploy`;
+      // 2026-05-14 Codex review P2 "Include source project headers"：开了
+      // auth 时 X-CDS-Internal 走 loopback bypass guard，branch 级
+      // /deploy 要求能解析出源 project，否则 403 source-project-unresolved。
+      // 复刻 webhook dispatcher 的 sourceHeadersForBranch 逻辑。
+      const srcBranch = stateService.getBranch(slug);
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-CDS-Internal': '1',
           'X-CDS-Trigger': 'auto-lifecycle',
+          'X-CDS-Source-Branch-Id': slug,
+          ...(srcBranch?.projectId ? { 'X-CDS-Source-Project-Id': srcBranch.projectId } : {}),
         },
         body: JSON.stringify({}),
       });
@@ -685,13 +692,70 @@ const autoLifecycleService = new AutoLifecycleService(
         const body = await res.text().catch(() => '');
         throw new Error(`auto-publish 重部署 ${slug} 失败: HTTP ${res.status} ${body.slice(0, 160)}`);
       }
-      // deploy 路由返回 SSE 流；排空 body 避免 Node 未处理 socket 警告。
-      // 部署日志由路由侧自行持久化，这里不消费事件。
-      if (res.body && typeof (res.body as { getReader?: unknown }).getReader === 'function') {
-        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-        void (async () => {
-          try { for (;;) { const { done } = await reader.read(); if (done) break; } } catch { /* ignore */ }
-        })();
+      // 2026-05-14 Codex review P2 "Await the deploy stream"：deploy 是 SSE，
+      // fetch 在响应头就 resolve，pull/build/readiness 失败都在流后续才发。
+      // 必须把流读到终态事件再判定成败，否则 redeploy 提前返回成功、后续
+      // 部署失败无法触发 applyAutoPublish 的 override 回滚。
+      // 终态契约（branches.ts /deploy 路由）：
+      //   event: error    → 硬失败（抛异常路径）
+      //   event: complete → 跑完；services 里任一 status !== 'running' 视为失败
+      //   流结束但无 complete/error → 视为未完成（失败）
+      if (!res.body || typeof (res.body as { getReader?: unknown }).getReader !== 'function') {
+        throw new Error(`auto-publish 重部署 ${slug}：响应无 SSE body，无法确认部署结果`);
+      }
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let terminal: { ok: boolean; message: string } | null = null;
+      const parseBlock = (block: string): void => {
+        let evName = 'message';
+        let dataRaw = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) evName = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataRaw += line.slice(5).trim();
+        }
+        if (evName === 'error') {
+          let msg = '部署失败';
+          try { msg = (JSON.parse(dataRaw) as { message?: string }).message || msg; } catch { /* keep default */ }
+          terminal = { ok: false, message: msg };
+        } else if (evName === 'complete') {
+          let services: Record<string, { status?: string }> = {};
+          let msg = '';
+          try {
+            const d = JSON.parse(dataRaw) as { services?: Record<string, { status?: string }>; message?: string };
+            services = d.services || {};
+            msg = d.message || '';
+          } catch { /* treat as unparseable complete → fail below */ }
+          const failed = Object.entries(services)
+            .filter(([, s]) => s?.status !== 'running')
+            .map(([pid]) => pid);
+          terminal = failed.length === 0 && Object.keys(services).length > 0
+            ? { ok: true, message: msg || '部署完成' }
+            : { ok: false, message: `部署完成但有服务未就绪: ${failed.join(', ') || '无 running 服务'}` };
+        }
+      };
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (value) {
+            buf += decoder.decode(value, { stream: true });
+            let idx: number;
+            while ((idx = buf.indexOf('\n\n')) !== -1) {
+              parseBlock(buf.slice(0, idx));
+              buf = buf.slice(idx + 2);
+            }
+          }
+          if (done) break;
+        }
+        if (buf.trim()) parseBlock(buf);
+      } finally {
+        try { reader.releaseLock(); } catch { /* ignore */ }
+      }
+      if (!terminal) {
+        throw new Error(`auto-publish 重部署 ${slug}：SSE 流结束但未收到 complete/error 终态事件`);
+      }
+      if (!(terminal as { ok: boolean }).ok) {
+        throw new Error(`auto-publish 重部署 ${slug} 失败: ${(terminal as { message: string }).message}`);
       }
     },
   },
