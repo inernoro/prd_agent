@@ -569,6 +569,21 @@ const autoLifecycleService = new AutoLifecycleService(
     stopBranch: async (slug: string) => {
       const branch = stateService.getBranch(slug);
       if (!branch) return;
+      // 2026-05-14 Codex review P2：远端 stop 失败时要能回滚到 running，
+      // 否则分支卡在 stopping，AutoLifecycleService.tick 的
+      // `status==='running'` 过滤会永久跳过它、不再重试。先快照原状态。
+      const prevBranchStatus = branch.status;
+      const prevSvcStatus = new Map(
+        Object.values(branch.services).map(s => [s.profileId, s.status] as const),
+      );
+      const restoreRunning = (): void => {
+        branch.status = prevBranchStatus;
+        for (const s of Object.values(branch.services)) {
+          const prev = prevSvcStatus.get(s.profileId);
+          if (prev) s.status = prev;
+        }
+        stateService.save();
+      };
       branch.status = 'stopping';
       stateService.save();
 
@@ -587,9 +602,11 @@ const autoLifecycleService = new AutoLifecycleService(
           if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
         }
         stateService.save();
+        // 连接失败与"远端拒绝"分开处理，各自给准确错误信息，且不让
+        // !ok 的 throw 被同一个 catch 二次包装成误导性的"无法连接"。
+        let upstream: Awaited<ReturnType<typeof fetch>>;
         try {
-          const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`;
-          const upstream = await fetch(upstreamUrl, {
+          upstream = await fetch(`http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -597,22 +614,24 @@ const autoLifecycleService = new AutoLifecycleService(
             },
             body: JSON.stringify({ branchId: slug }),
           });
-          if (!upstream.ok) {
-            const errText = await upstream.text().catch(() => '');
-            console.warn(`[auto-lifecycle] 远端执行器 ${remoteExecutor.id} 拒绝停止 (HTTP ${upstream.status}): ${errText.slice(0, 160)}`);
-            // 远端拒绝：不强制把本地状态改 idle/cold（避免谎报已停），
-            // 下一拍 heartbeat reconcile 后会重试。
-            return;
-          }
-          // 执行器下一次 heartbeat 会 reconcile，这里先设可信本地态。
-          for (const svc of Object.values(branch.services)) svc.status = 'stopped';
-          branch.status = 'idle';
-          branch.heatState = 'cold';
-          stateService.incrementBranchStat(slug, 'stopCount');
-          stateService.save();
         } catch (err) {
-          console.warn(`[auto-lifecycle] 无法连接远端执行器 ${remoteExecutor.id}: ${(err as Error).message}`);
+          // 执行器不可达：回滚到原 running 状态 + 抛出。caller
+          // (applyAutoStop/applyAutoPublish) 不会 stamp 假成功，tick 下一拍
+          // 因 status 仍是 running 会重试。
+          restoreRunning();
+          throw new Error(`无法连接远端执行器 ${remoteExecutor.id}: ${(err as Error).message}`);
         }
+        if (!upstream.ok) {
+          const errText = await upstream.text().catch(() => '');
+          restoreRunning();
+          throw new Error(`远端执行器 ${remoteExecutor.id} 拒绝停止 (HTTP ${upstream.status}): ${errText.slice(0, 160)}`);
+        }
+        // 执行器下一次 heartbeat 会 reconcile，这里先设可信本地态。
+        for (const svc of Object.values(branch.services)) svc.status = 'stopped';
+        branch.status = 'idle';
+        branch.heatState = 'cold';
+        stateService.incrementBranchStat(slug, 'stopCount');
+        stateService.save();
         return;
       }
 
