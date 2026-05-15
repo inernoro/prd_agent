@@ -632,6 +632,9 @@
 - [Claude SDK 执行器 / Python sidecar 债务台账](debt.claude-sdk-executor) `debt.claude-sdk-executor`
   > claude-sdk 执行器与 Python sidecar 的已知债务与边界约束
 
+- [CDS state.json 影子存储 · 债务台账](debt.cds-state-json) `debt.cds-state-json`
+  > 4 条 open：webhook deliveries 全量刷盘 / StateService 内存全量加载 / mongo-split 模式 state.json 同步写 / 无独立清理策略
+
 ### 七、周报
 
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
