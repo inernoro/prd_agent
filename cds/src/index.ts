@@ -1075,6 +1075,11 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   schedulerService.stop();
   janitorService.stop();
+  // 2026-05-14 Cursor Bugbot Medium 修复：shutdown() 直接逐个 stop，
+  // 漏了 autoLifecycleService.stop()（stopBackgroundServices 里有，但
+  // 信号处理走的是本函数）。否则 graceful shutdown 期间 auto-lifecycle
+  // 的 setInterval 还在跑，可能在 mongo flush/close 时触发停容器/重部署。
+  autoLifecycleService.stop();
   try {
     const pendingWritesPath = path.join(config.repoRoot, 'cds', '.cds', 'pending-writes.json');
     const snap = await gracefulShutdownController.runShutdown({

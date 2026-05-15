@@ -171,6 +171,13 @@ type BranchDeployRuntime = {
   releaseProfiles: number;
   sourceProfiles: number;
   modes: string[];
+  /**
+   * 2026-05-14 真实态徽章：配置已切到发布版，但容器还没真正以发布版跑
+   * 起来（正在重部署 / 还停着 / 旧容器仍是源码构建）。true 时卡片应显示
+   * 「发布版·待生效」橙色，而不是绿色「发布版」——区分"配置意图"与
+   * "运行现状"，杜绝设了 override 就亮绿的虚假徽章。
+   */
+  pendingPublish: boolean;
 };
 
 // classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
@@ -180,23 +187,46 @@ function summarizeBranchDeployRuntime(
   branch: BranchEntry,
   profiles: BuildProfile[],
 ): BranchDeployRuntime {
-  let releaseProfiles = 0;
-  let sourceProfiles = 0;
+  // 真相 = "正在跑的容器实际用哪个 deploy mode"（svc.deployedMode），
+  // 不是"配置成什么"（profileOverrides）。两者分别算，再比对得出徽章。
+  let releaseProfiles = 0;   // 实际以发布版在跑的 profile 数（真相）
+  let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
+  let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
-    const activeMode = effectiveProfile.activeDeployMode;
-    const modeLabel = activeMode
-      ? effectiveProfile.deployModes?.[activeMode]?.label || activeMode
+    const configMode = effectiveProfile.activeDeployMode;
+    const configLabel = configMode
+      ? effectiveProfile.deployModes?.[configMode]?.label || configMode
       : '源码';
-    const kind = classifyDeployRuntime(activeMode, modeLabel);
-    if (kind === 'release') {
-      releaseProfiles += 1;
-    } else {
-      sourceProfiles += 1;
-    }
-    modeLabels.push(`${profile.name || profile.id}: ${modeLabel}`);
+    const configKind = classifyDeployRuntime(configMode, configLabel);
+
+    const svc = branch.services?.[profile.id];
+    const running = svc?.status === 'running';
+    // 旧数据兼容：deployedMode 字段引入前启动的容器没有该值，
+    // 此时退回"信任配置"（即旧行为），避免存量分支齐刷刷误报待生效。
+    // 只有当我们**确知**运行模式（有 deployedMode 戳）才用真相判定。
+    const hasTruth = running && svc?.deployedMode !== undefined;
+    const actualMode = hasTruth ? (svc!.deployedMode as string) : configMode;
+    const actualLabel = actualMode
+      ? effectiveProfile.deployModes?.[actualMode]?.label || actualMode
+      : '源码';
+    const actualKind = classifyDeployRuntime(actualMode, actualLabel);
+
+    if (actualKind === 'release') releaseProfiles += 1;
+    else sourceProfiles += 1;
+
+    // 配置要发布版，但真相不是发布版（容器没跟上 / 还停着 / 旧源码构建）
+    // → pending。仅在"确知真相 且 真相≠release"或"配置 release 但没在跑"
+    // 时判 pending；旧数据无真相时不误报。
+    if (configKind === 'release' && actualKind !== 'release') pendingPublish = true;
+    if (configKind === 'release' && !running) pendingPublish = true;
+
+    const suffix = hasTruth && actualMode !== configMode
+      ? `${actualLabel}（配置 ${configLabel}，待生效）`
+      : actualLabel;
+    modeLabels.push(`${profile.name || profile.id}: ${suffix}`);
   }
 
   const activeProfiles = profiles.length;
@@ -215,12 +245,13 @@ function summarizeBranchDeployRuntime(
     kind,
     label,
     title: modeLabels.length > 0
-      ? `当前生效模式: ${modeLabels.join(' / ')}`
+      ? `实际运行模式: ${modeLabels.join(' / ')}${pendingPublish ? '（发布版配置已设，等待重新部署生效）' : ''}`
       : '当前没有构建配置，按源码默认模式显示',
     activeProfiles,
     releaseProfiles,
     sourceProfiles,
     modes: modeLabels,
+    pendingPublish,
   };
 }
 
@@ -1240,7 +1271,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // merged env var map and let it handle the rest.
     // P4 Part 17 (G2 fix): scope by the branch's project so a remote
     // executor only receives profiles owned by this project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    // 2026-05-14 Codex review P2 "Propagate release overrides to remote
+    // redeploys"：执行器侧没有 master 的 branch.profileOverrides，也不会跑
+    // resolveEffectiveProfile。必须在 master 侧先 resolve，把已合并 override
+    // （含 auto-publish 刚写的 release activeDeployMode）的 effective profile
+    // 发过去——compute-then-send：master 算，executor 只管按收到的构建。
+    // 否则 cluster 场景执行器仍按源码/热加载旧模式重建，但 master state
+    // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
+    // auto-publish 表面成功实际没切容器。
+    const profiles = stateService
+      .getBuildProfilesForProject(entry.projectId || 'default')
+      .map((p) => resolveEffectiveProfile(p, entry));
     const env = getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
@@ -1367,6 +1408,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
+      // 2026-05-14 真实态徽章（远端）：proxy 成功时，钉住我们**派发给
+      // 执行器的已 resolve profile** 的 activeDeployMode。因为 Codex P2
+      // 修复后发过去的就是 resolveEffectiveProfile 结果，executor 实际
+      // 构建的就是这个模式，所以这是远端真相。失败则不动（保留旧值）。
+      if (!proxyHasError) {
+        for (const rp of profiles) {
+          const svc = entry.services[rp.id];
+          if (svc) svc.deployedMode = rp.activeDeployMode || '';
+        }
+      }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
     } catch (err) {
@@ -3435,6 +3486,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
             if (ready) {
               svc.status = 'running';
+              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
+              // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
+              // 据此判断"真发布"还是"配置了但容器没跟上"。
+              svc.deployedMode = effectiveProfile.activeDeployMode || '';
               logDeploy(id, `${profile.name} 启动成功 ✓`);
               const elapsed = Date.now() - serviceStartTime;
               logEvent({
@@ -3836,6 +3891,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         if (ready) {
           svc.status = 'running';
+          // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
+          svc.deployedMode = effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';
@@ -8034,6 +8091,9 @@ cdscli project list --human
             }, mergedEnv);
 
             svc.status = 'running';
+            // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
+            // （runService 直接吃 profile.*），钉住其 activeDeployMode。
+            svc.deployedMode = profile.activeDeployMode || '';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
           } catch (err) {
             svc.status = 'error';

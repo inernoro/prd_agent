@@ -105,6 +105,7 @@ interface BranchSummary {
     releaseProfiles: number;
     sourceProfiles: number;
     modes: string[];
+    pendingPublish?: boolean;
   };
 }
 
@@ -3809,7 +3810,7 @@ function BranchFailureHint({
   );
 }
 
-function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed'; label: string; title: string; className: string } | null {
+function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string } | null {
   const runtime = branch.deployRuntime;
   if (runtime?.kind === 'release') {
     return {
@@ -3817,6 +3818,17 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed';
       label: runtime.label || '发布版',
       title: runtime.title || '当前分支使用发布版构建模式',
       className: 'border-emerald-400/35 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300',
+    };
+  }
+  // 2026-05-14 真实态徽章：配置已切发布版但容器还没真正以发布版跑起来
+  // （重部署中 / 还停着 / 旧源码容器仍在跑）→ 橙色「发布版·待生效」，
+  // 明确区分"配置意图"与"运行现状"，不再设了 override 就亮绿误导。
+  if (runtime?.pendingPublish) {
+    return {
+      kind: 'pending',
+      label: '发布版·待生效',
+      title: runtime.title || '已配置发布版，等待重新部署后真正生效',
+      className: 'border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300',
     };
   }
   if (runtime?.kind === 'mixed') {

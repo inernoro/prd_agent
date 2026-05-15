@@ -59,6 +59,7 @@ interface BranchDetailData {
     kind: 'source' | 'release' | 'mixed';
     label: string;
     title: string;
+    pendingPublish?: boolean;
   };
 }
 

@@ -584,6 +584,14 @@ export interface ServiceState {
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
+  /**
+   * 2026-05-14：容器**真正启动成功那一刻**实际使用的 deploy mode id
+   * （= 当时 resolveEffectiveProfile 的 activeDeployMode）。这是"在跑的
+   * 是不是发布版"的唯一真相来源——卡片徽章据此判断真实态 vs 配置意图，
+   * 不再只看 profileOverrides。空串 = 源码/默认模式启动。
+   * undefined = 该容器在本字段引入前启动（旧数据），徽章回退到配置语义。
+   */
+  deployedMode?: string;
 }
 
 /** A build/operation log event */

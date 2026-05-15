@@ -92,10 +92,27 @@ function branchAutoPublishConverged(
     const override = branch.profileOverrides?.[profile.id]?.activeDeployMode;
     const effectiveMode = override ?? profile.activeDeployMode ?? '';
     const modeLabel = effectiveMode ? profile.deployModes?.[effectiveMode]?.label : undefined;
-    // 可切的 profile 还没切到 release → 未收敛。
+    // 可切的 profile 配置还没切到 release → 未收敛。
     if (!effectiveMode || !isReleaseDeployMode(effectiveMode, modeLabel)) return false;
+
+    // 2026-05-14 真实态收敛：配置已是 release 还不够——必须容器**真的**
+    // 以 release 跑起来才算收敛。否则 redeploy 静默失败（如 Codex P2 的
+    // cluster 场景：远端按旧模式重建，master override 却是 release）会让
+    // 收敛误判 true、auto-publish 永不重试，"自动切发布版"形同虚设。
+    // 真相来源 = svc.deployedMode（容器实际启动时钉的模式）。
+    const svc = branch.services?.[profile.id];
+    // 旧数据兼容：deployedMode 字段引入前启动的容器没有该戳，无法判定
+    // 真相 —— 退回"信任配置"（旧行为），不对存量分支制造无限重部署。
+    if (svc?.deployedMode === undefined) continue;
+    const deployedLabel = svc.deployedMode
+      ? profile.deployModes?.[svc.deployedMode]?.label
+      : undefined;
+    // 已知真相：容器不是以 release 跑（或没在跑）→ 未收敛，继续重试。
+    if (svc.status !== 'running' || !isReleaseDeployMode(svc.deployedMode, deployedLabel)) {
+      return false;
+    }
   }
-  // 没有任何"可切但未切"的 profile → 收敛。
+  // 没有任何"可切但未切 / 配置 release 但容器没跟上"的 profile → 收敛。
   return true;
 }
 
