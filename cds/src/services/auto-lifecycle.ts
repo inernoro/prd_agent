@@ -74,23 +74,16 @@ function findReleaseDeployMode(profile: BuildProfile): string | null {
 function branchAutoPublishConverged(
   branch: BranchEntry,
   profiles: BuildProfile[],
-  projectDefaults: Record<string, string> | undefined,
 ): boolean {
   for (const profile of profiles) {
     // 这个 profile 压根没有 release 模式可切 —— 不是阻塞项，跳过。
     if (!findReleaseDeployMode(profile)) continue;
 
+    // 2026-05-14：项目默认运行模式已改为"仅建分支时拷贝"语义，运行期不再
+    // 实时回退。生效模式与 resolveEffectiveProfile 保持一致：只看分支级
+    // override（含建分支时拷贝进来的项目默认）+ baseline activeDeployMode。
     const override = branch.profileOverrides?.[profile.id]?.activeDeployMode;
-    // projectDefault 必须和 container.ts 的 resolveEffectiveProfile 一样做
-    // 有效性校验 —— 只有 '' 或 deployModes 里真实存在的 mode 才采纳，否则
-    // 视为无效、回退到 profile.activeDeployMode，避免两处对"生效模式"判定
-    // 不一致导致 auto-publish 误触发 / 漏触发。
-    const rawProjectDefault = projectDefaults?.[profile.id];
-    const projectDefaultValid =
-      typeof rawProjectDefault === 'string' &&
-      (rawProjectDefault === '' || !!profile.deployModes?.[rawProjectDefault]);
-    const projectDefault = projectDefaultValid ? rawProjectDefault : undefined;
-    const effectiveMode = override ?? projectDefault ?? profile.activeDeployMode ?? '';
+    const effectiveMode = override ?? profile.activeDeployMode ?? '';
     const modeLabel = effectiveMode ? profile.deployModes?.[effectiveMode]?.label : undefined;
     // 可切的 profile 还没切到 release → 未收敛。
     if (!effectiveMode || !isReleaseDeployMode(effectiveMode, modeLabel)) return false;
@@ -149,7 +142,6 @@ export class AutoLifecycleService {
         if (autoPublishMin <= 0 && autoStopMin <= 0) continue;
 
         const profiles = stateService.getBuildProfilesForProject(project.id);
-        const projectDefaults = project.defaultDeployModes;
 
         // 2026-05-14 Codex review P2 修复：deploy / auto-build / webhook 等
         // headless 路径直接 `svc.status='running'` + 分支状态，**不一定**走
@@ -203,7 +195,7 @@ export class AutoLifecycleService {
           // 已收敛（所有"可切到发布版"的 profile 都已是 release）的分支不再触发，
           // 避免纯源码 sidecar / infra profile 让分支被反复无意义重启。
           if (autoPublishMin > 0 && ageSec >= autoPublishMin * 60) {
-            if (!branchAutoPublishConverged(branch, profiles, projectDefaults)) {
+            if (!branchAutoPublishConverged(branch, profiles)) {
               try {
                 await this.applyAutoPublish(branch, profiles, autoPublishMin);
                 continue; // 切完发布版后停下；下次 ready 再走 auto-stop 计时
@@ -222,7 +214,7 @@ export class AutoLifecycleService {
             // auto-publish 开着且尚未收敛时，跳过本次 auto-stop，等
             // auto-publish 在 autoPublishMin 到点后先切发布版（停 + 换模式）
             // → 重启后新 ready 计时 → 此时已收敛 → auto-stop 才接管。
-            if (autoPublishMin > 0 && !branchAutoPublishConverged(branch, profiles, projectDefaults)) {
+            if (autoPublishMin > 0 && !branchAutoPublishConverged(branch, profiles)) {
               continue;
             }
             try {

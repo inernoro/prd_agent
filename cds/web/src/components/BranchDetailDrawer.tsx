@@ -90,13 +90,6 @@ interface ProfileRow {
     deployModes?: Record<string, { label?: string }>;
   };
   hasOverride?: boolean;
-  /**
-   * 2026-05-14 新增。后端 resolveDeployModeSource 的结果，
-   * 让 UI 区分"继承项目默认"和"继承构建配置默认"。旧 CDS 兜底 'baseline'。
-   */
-  deployModeSource?: 'override' | 'project-default' | 'baseline';
-  /** 项目设置里配的该 profile 的默认模式（仅展示用）。 */
-  projectDefaultDeployMode?: string;
 }
 
 type ProfileOverridesState =
@@ -2797,32 +2790,14 @@ function SettingsPanel({
               const activeMode = hasBranchModeOverride
                 ? (profile.override?.activeDeployMode || '')
                 : (profile.effective?.activeDeployMode || '');
-              // 2026-05-14: chip 区分三种来源，避免「继承默认 → 实际是发布版」的误导。
-              const source = profile.deployModeSource
-                || (hasBranchModeOverride ? 'override' : 'baseline');
-              const chipText = source === 'override'
-                ? '本分支覆盖'
-                : source === 'project-default'
-                  ? '继承项目默认'
-                  : '继承构建配置默认';
-              const chipClass = source === 'override'
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                : source === 'project-default'
-                  ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                  : 'border-[hsl(var(--hairline))]';
-              const chipTitle = source === 'project-default'
-                ? '该模式来自「项目设置 → 新分支默认运行模式」，无需在分支级单独覆盖'
-                : source === 'baseline'
-                  ? '该模式来自构建配置自身的默认值（docker-compose / BuildProfile）'
-                  : '该分支单独覆盖了运行模式';
               return (
                 <div key={profile.profileId} className="flex flex-wrap items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{profile.profileName || profile.profileId}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span className="font-mono">{profile.profileId}</span>
-                      <span title={chipTitle} className={`rounded border px-1.5 py-0.5 ${chipClass}`}>
-                        {chipText}
+                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-[hsl(var(--hairline))]'}`}>
+                        {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
                       </span>
                     </div>
                   </div>

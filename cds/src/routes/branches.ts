@@ -10,7 +10,7 @@ import { Router, type Request } from 'express';
 import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
-import { resolveEffectiveProfile, resolveDeployModeSource } from '../services/container.js';
+import { resolveEffectiveProfile } from '../services/container.js';
 import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
@@ -179,14 +179,13 @@ type BranchDeployRuntime = {
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,
   profiles: BuildProfile[],
-  projectDefaults?: Record<string, string>,
 ): BranchDeployRuntime {
   let releaseProfiles = 0;
   let sourceProfiles = 0;
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
-    const effectiveProfile = resolveEffectiveProfile(profile, branch, projectDefaults);
+    const effectiveProfile = resolveEffectiveProfile(profile, branch);
     const activeMode = effectiveProfile.activeDeployMode;
     const modeLabel = activeMode
       ? effectiveProfile.deployModes?.[activeMode]?.label || activeMode
@@ -1967,7 +1966,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
-          project?.defaultDeployModes,
         );
         if (!live) {
           return {
@@ -3320,7 +3318,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         await Promise.all(layer.items.map(async (profile) => {
           // Resolve baseline → 项目默认 → 分支 override → mode override
-          const effectiveProfile = resolveEffectiveProfile(profile, entry, deployProject?.defaultDeployModes);
+          const effectiveProfile = resolveEffectiveProfile(profile, entry);
           const branchOverride = entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -3766,9 +3764,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
 
-      // Resolve baseline → 项目默认 → 分支 override → mode override
-      const singleProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
-      const effectiveProfile = resolveEffectiveProfile(profile, entry, singleProject?.defaultDeployModes);
+      // Resolve baseline → branch override → deploy-mode override
+      const effectiveProfile = resolveEffectiveProfile(profile, entry);
       const branchOverride = entry.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -4340,18 +4337,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // modal's "effective env" preview only enumerates profiles in
     // this project, not every project's profile.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
-    const ownerProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
-    const projectDefaults = ownerProject?.defaultDeployModes;
     const payload = profiles.map(profile => {
       const override = entry.profileOverrides?.[profile.id];
-      const resolved = resolveEffectiveProfile(profile, entry, projectDefaults);
+      const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
       const effective = {
         ...resolved,
         env: { ...cdsVars, ...(resolved.env || {}) },
       };
-      const deployModeSource = resolveDeployModeSource(profile, entry, projectDefaults);
       return {
         profileId: profile.id,
         profileName: profile.name,
@@ -4360,10 +4354,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         effective,
         cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
-        // 2026-05-14: expose which layer drove activeDeployMode so the
-        // drawer chip can say "继承项目默认" instead of the misleading "继承默认".
-        deployModeSource,
-        projectDefaultDeployMode: projectDefaults?.[profile.id],
       };
     });
     res.json({ branchId: id, profiles: payload });
@@ -4430,8 +4420,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Return the new effective profile so the UI can show the merged result
       // without a second round-trip.
       const refreshed = stateService.getBranch(id)!;
-      const putProject = refreshed.projectId ? stateService.getProject(refreshed.projectId) : undefined;
-      const effective = resolveEffectiveProfile(profile, refreshed, putProject?.defaultDeployModes);
+      const effective = resolveEffectiveProfile(profile, refreshed);
       res.json({
         message: '已保存分支覆盖',
         profileId,
