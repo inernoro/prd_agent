@@ -175,6 +175,39 @@ function messageRoleLabel(role: string): string {
   return role;
 }
 
+// 简洁模式：把工具名翻译成用户能懂的中文动作短语，不暴露原始 tool_use JSON。
+function toolActionLabel(toolName: string, payload: Record<string, unknown>): string {
+  const args = parseJsonString(payload.argsSummary) ?? {};
+  const path = typeof args.path === 'string' ? args.path : '';
+  const command = typeof args.command === 'string' ? args.command : '';
+  switch (toolName) {
+    case 'repo_read_file': return path ? `读取文件 ${path}` : '读取文件';
+    case 'repo_write_file': return path ? `修改文件 ${path}` : '修改文件';
+    case 'repo_list_files': return '浏览文件树';
+    case 'repo_search': return '搜索代码';
+    case 'repo_git_status': return '查看仓库状态';
+    case 'repo_git_diff': return '查看代码改动';
+    case 'repo_run_command': return command ? `运行命令 ${command}` : '运行命令';
+    case 'repo_create_pull_request': return '创建 Pull Request';
+    case 'current_time': return '获取当前时间';
+    case 'echo': return '回显测试';
+    default:
+      if (toolName.startsWith('cds_bridge')) return '操作远程页面';
+      return toolName;
+  }
+}
+
+const SIMPLE_VIEW_STORAGE_KEY = 'cds-agent:view-mode';
+
+function readInitialViewMode(): 'simple' | 'pro' {
+  try {
+    const saved = sessionStorage.getItem(SIMPLE_VIEW_STORAGE_KEY);
+    return saved === 'pro' ? 'pro' : 'simple';
+  } catch {
+    return 'simple';
+  }
+}
+
 function parseJsonString(value: unknown): Record<string, unknown> | null {
   if (typeof value !== 'string') return null;
   try {
@@ -398,6 +431,8 @@ export default function CdsAgentPage() {
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
+  const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
+  const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
   const [eventReplayIndex, setEventReplayIndex] = useState(1);
@@ -522,6 +557,14 @@ export default function CdsAgentPage() {
   useEffect(() => {
     void loadAll();
   }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SIMPLE_VIEW_STORAGE_KEY, viewMode);
+    } catch {
+      /* sessionStorage 不可用时忽略，仅影响刷新后记忆 */
+    }
+  }, [viewMode]);
 
   useEffect(() => {
     if (!activeSession?.id) {
@@ -1036,6 +1079,260 @@ export default function CdsAgentPage() {
     URL.revokeObjectURL(url);
   }
 
+  const viewToggle = (
+    <div className="inline-flex rounded-lg p-0.5" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
+      {(['simple', 'pro'] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => setViewMode(mode)}
+          className="rounded-md px-3 py-1.5 text-sm transition-colors"
+          style={
+            viewMode === mode
+              ? { background: 'rgba(99,179,237,0.18)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }
+              : { color: 'rgba(255,255,255,0.55)' }
+          }
+        >
+          {mode === 'simple' ? '简洁模式' : '专业模式'}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (viewMode === 'simple') {
+    const simpleEvents = displayedEvents.filter((event) =>
+      event.type === 'tool_call'
+      || event.type === 'tool_result'
+      || event.type === 'error'
+      || event.type === 'status');
+    const sendDisabled = !activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput);
+    return (
+      <div className="h-full min-h-0 flex flex-col px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
+            <p className="mt-1 text-sm text-white/55">告诉它要做什么，它会在远程沙箱里读代码、改文件、跑测试，过程实时可见。</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {viewToggle}
+            <button
+              type="button"
+              onClick={() => void loadAll()}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/70"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              <RefreshCw size={14} /> 刷新
+            </button>
+          </div>
+        </header>
+
+        <div className="mt-4 grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
+          <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-white/60">我的任务</span>
+              <button
+                type="button"
+                onClick={() => void createSession()}
+                disabled={!canCreateSession || busy}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs disabled:opacity-45"
+                style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.34)', color: 'rgba(186,230,253,0.95)' }}
+              >
+                <Plus size={12} /> 新任务
+              </button>
+            </div>
+            {!canCreateSession && (
+              <div className="mb-2 rounded-md px-2 py-1.5 text-xs leading-relaxed text-amber-100/80" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.24)' }}>
+                {activeProfileBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
+              </div>
+            )}
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              {sortedSessions.length === 0 ? (
+                <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  还没有任务，点「新任务」开始
+                </div>
+              ) : (
+                sortedSessions.map((session) => {
+                  const selected = session.id === activeSession?.id;
+                  return (
+                    <button
+                      key={session.id}
+                      type="button"
+                      onClick={() => setActiveSessionId(session.id)}
+                      className="block w-full rounded-lg px-3 py-2 text-left"
+                      style={{
+                        background: selected ? 'rgba(99,179,237,0.14)' : 'rgba(0,0,0,0.16)',
+                        border: selected ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.06)',
+                      }}
+                    >
+                      <div className="truncate text-sm text-white/78">{session.title}</div>
+                      <div className="mt-1 text-xs text-white/42">{statusLabel(session.status)} · {new Date(session.updatedAt).toLocaleString()}</div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+
+          <section className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white/78">{activeSession ? activeSession.title : '未选择任务'}</div>
+                <div className="mt-0.5 truncate text-xs text-white/42">
+                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeProfile?.model ?? '未配置模型'}` : '从左侧选择或新建一个任务'}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {activeSession && canStartActiveSession && (
+                  <button
+                    type="button"
+                    onClick={() => void startSession()}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-45"
+                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}
+                  >
+                    <Play size={14} /> {primaryActionLabel(activeSession.status)}
+                  </button>
+                )}
+                {activeSession && (activeSession.status === 'running' || activeSession.status === 'creating') && (
+                  <button
+                    type="button"
+                    onClick={() => void stopSession()}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-45"
+                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}
+                  >
+                    <Square size={14} /> 停止
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)', overscrollBehavior: 'contain' }}>
+              {messages.length === 0 && simpleEvents.length === 0 ? (
+                <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 text-center text-sm text-white/40">
+                  <MessageSquare size={20} className="text-white/30" />
+                  <div>在下方输入要做的事，例如<br />“读一下 README 的前 20 行”</div>
+                </div>
+              ) : (
+                <>
+                  {messages.map((message) => {
+                    const isUser = message.role === 'user';
+                    return (
+                      <article key={message.id} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                        <div
+                          className="max-w-[82%] rounded-lg px-3 py-2"
+                          style={{
+                            background: isUser ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.045)',
+                            border: isUser ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.08)',
+                          }}
+                        >
+                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(message.role)} · {new Date(message.createdAt).toLocaleTimeString()}</div>
+                          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{message.content}</div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                  {simpleEvents.map((event) => {
+                    const payload = parsePayload(event);
+                    const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
+                    const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
+                    const toolName = String(payload.toolName ?? '');
+                    const expanded = simpleExpandedEventId === event.id;
+                    let label: string;
+                    if (event.type === 'tool_call') label = toolActionLabel(toolName, payload);
+                    else if (event.type === 'tool_result') label = `完成：${toolActionLabel(toolName, payload)}`;
+                    else if (event.type === 'error') label = `出错：${String(payload.message ?? '未知错误')}`;
+                    else label = statusLabel(String(payload.status ?? '状态更新'));
+                    const tone = event.type === 'error'
+                      ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.24)', color: 'rgba(252,165,165,0.9)' }
+                      : event.type === 'tool_result'
+                        ? { background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(187,247,208,0.85)' }
+                        : { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.62)' };
+                    const canExpand = event.type === 'tool_call' || event.type === 'tool_result';
+                    return (
+                      <div key={event.id} className="flex justify-start">
+                        <div className="max-w-[88%] rounded-lg px-3 py-2 text-xs" style={tone}>
+                          <button
+                            type="button"
+                            disabled={!canExpand}
+                            onClick={() => setSimpleExpandedEventId((prev) => (prev === event.id ? null : event.id))}
+                            className="flex items-center gap-2 text-left disabled:cursor-default"
+                          >
+                            {event.type === 'tool_call' && <Terminal size={12} />}
+                            {event.type === 'tool_result' && <ShieldCheck size={12} />}
+                            <span className="break-words">{label}</span>
+                            {canExpand && <span className="text-white/35">{expanded ? '收起' : '详情'}</span>}
+                          </button>
+                          {expanded && canExpand && (
+                            <div className="mt-1 border-t border-white/10 pt-1"><EventBody event={event} /></div>
+                          )}
+                          {waitingApproval && (
+                            <div className="mt-2 flex gap-2">
+                              <button type="button" onClick={() => void approveTool(approvalId, 'allow')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>允许</button>
+                              <button type="button" onClick={() => void approveTool(approvalId, 'deny')} className="rounded-md px-2 py-1 text-xs" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}>拒绝</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={3}
+                placeholder="告诉 Agent 要做什么…"
+                className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
+                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+              <button
+                type="button"
+                onClick={() => void sendPrompt()}
+                disabled={sendDisabled}
+                className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45"
+                style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}
+              >
+                {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
+                {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
+              </button>
+            </div>
+          </section>
+
+          <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
+              <span className="text-xs text-white/35">{artifacts.length}</span>
+            </div>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              {artifacts.length === 0 ? (
+                <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg px-3 text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  任务产生的文件、diff、命令结果会出现在这里
+                </div>
+              ) : (
+                artifacts.map((artifact) => (
+                  <div key={artifact.id} className="rounded-lg p-2.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white/72">{artifactIcon(artifact.kind)} {artifact.title}</span>
+                      <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="rounded p-1 text-white/40 hover:text-white/80" aria-label={`复制${artifact.title}`}>
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                    <div className="mt-1 truncate text-xs text-white/45">{artifact.summary}</div>
+                    <pre className="mt-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-xs text-white/62">{artifact.body}</pre>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full min-h-0 overflow-y-auto px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
       <div className="mx-auto flex max-w-[1500px] flex-col gap-5">
@@ -1044,14 +1341,17 @@ export default function CdsAgentPage() {
             <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
             <p className="mt-1 text-sm text-white/55">在远程 CDS sandbox 中运行 Claude Code / Codex 类任务，过程、工具审批和日志都留在 MAP。</p>
           </div>
-          <button
-            type="button"
-            onClick={() => void loadAll()}
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/70"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
-          >
-            <RefreshCw size={14} /> 刷新
-          </button>
+          <div className="flex items-center gap-2">
+            {viewToggle}
+            <button
+              type="button"
+              onClick={() => void loadAll()}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/70"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              <RefreshCw size={14} /> 刷新
+            </button>
+          </div>
         </header>
 
         <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
