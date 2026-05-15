@@ -3593,6 +3593,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
+        // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
+        // 直接读 ok，不要再用全量 entry.services 重新推导——否则已删除/
+        // 僵尸 profile 的 stopped/error 服务会被误判成部署失败。
+        ok: !hasError,
         message: completeMsg,
         services: entry.services,
       });
@@ -3859,6 +3864,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
       logDeploy(id, `部署完成: ${completeMsg}`);
       sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
+        // 消费方统一读 ok 而非重推导 entry.services。
+        ok: svc.status === 'running',
         message: completeMsg,
         services: entry.services,
       });

@@ -719,19 +719,26 @@ const autoLifecycleService = new AutoLifecycleService(
           try { msg = (JSON.parse(dataRaw) as { message?: string }).message || msg; } catch { /* keep default */ }
           terminal = { ok: false, message: msg };
         } else if (evName === 'complete') {
-          let services: Record<string, { status?: string }> = {};
-          let msg = '';
-          try {
-            const d = JSON.parse(dataRaw) as { services?: Record<string, { status?: string }>; message?: string };
-            services = d.services || {};
-            msg = d.message || '';
-          } catch { /* treat as unparseable complete → fail below */ }
-          const failed = Object.entries(services)
-            .filter(([, s]) => s?.status !== 'running')
-            .map(([pid]) => pid);
-          terminal = failed.length === 0 && Object.keys(services).length > 0
-            ? { ok: true, message: msg || '部署完成' }
-            : { ok: false, message: `部署完成但有服务未就绪: ${failed.join(', ') || '无 running 服务'}` };
+          // 2026-05-14 Codex review P2：直接读路由下发的权威 ok（路由基于
+          // activeServices 算出，已剔除已删除/僵尸 profile）。不再用全量
+          // services 重新推导，避免僵尸服务误判失败。无 ok 字段（旧路由）
+          // 才回退到 services 推导兜底。
+          let parsed: { ok?: boolean; services?: Record<string, { status?: string }>; message?: string } = {};
+          try { parsed = JSON.parse(dataRaw) as typeof parsed; } catch { /* unparseable → fail below */ }
+          const msg = parsed.message || '';
+          if (typeof parsed.ok === 'boolean') {
+            terminal = parsed.ok
+              ? { ok: true, message: msg || '部署完成' }
+              : { ok: false, message: msg || '部署失败' };
+          } else {
+            const services = parsed.services || {};
+            const failed = Object.entries(services)
+              .filter(([, s]) => s?.status !== 'running')
+              .map(([pid]) => pid);
+            terminal = failed.length === 0 && Object.keys(services).length > 0
+              ? { ok: true, message: msg || '部署完成' }
+              : { ok: false, message: `部署完成但有服务未就绪: ${failed.join(', ') || '无 running 服务'}` };
+          }
         }
       };
       try {
