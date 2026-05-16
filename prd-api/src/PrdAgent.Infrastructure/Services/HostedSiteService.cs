@@ -584,19 +584,25 @@ public class HostedSiteService : IHostedSiteService
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
 
-        // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
-        try
+        // visit 便捷链只通过不可猜测的 /s/wp/{token} 暴露，绝不分配数字短链 /s/{seq}：
+        // /api/short-links/{seq} 匿名且可枚举，若给 visit 链分配 seq，攻击者枚举数字即可
+        // 访问到从未被主动分享的私有站点。仅 share 用户主动分享才分配数字短链。
+        if (effPurpose != "visit")
         {
-            var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
-            await _db.WebPageShareLinks.UpdateOneAsync(
-                x => x.Id == share.Id,
-                Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
-                cancellationToken: ct);
-            share.ShortSeq = seq;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
+            // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
+            try
+            {
+                var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
+                await _db.WebPageShareLinks.UpdateOneAsync(
+                    x => x.Id == share.Id,
+                    Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
+                    cancellationToken: ct);
+                share.ShortSeq = seq;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
+            }
         }
 
         _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
