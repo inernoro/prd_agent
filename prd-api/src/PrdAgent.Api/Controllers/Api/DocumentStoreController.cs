@@ -34,6 +34,9 @@ public class DocumentStoreController : ControllerBase
     /// <summary>20 MB per file</summary>
     private const long MaxUploadBytes = 20 * 1024 * 1024;
 
+    /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
+    private const int ViewDedupWindowMinutes = 30;
+
     private static readonly System.Text.Json.JsonSerializerOptions AgentRunJsonOptions = new()
     {
         PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
@@ -2307,6 +2310,48 @@ public class DocumentStoreController : ControllerBase
         var referer = Request.Headers.Referer.ToString();
         if (referer.Length > 500) referer = referer[..500];
 
+        // 行业通行的访问去重：同一访客（登录用户按 userId，匿名按 session token / UA 指纹）
+        // 在去重窗口内重复打开/刷新同一篇文档，不计入"总访问量"，
+        // 只复用上一条事件并刷新最后访问时间——避免总访问量虚高。
+        var anonToken = viewerId == null ? request?.AnonSessionToken : null;
+        var dedupWindow = TimeSpan.FromMinutes(ViewDedupWindowMinutes);
+        var dedupSince = DateTime.UtcNow - dedupWindow;
+
+        DocumentStoreViewEvent? recent = null;
+        if (!string.IsNullOrEmpty(viewerId))
+        {
+            recent = await _db.DocumentStoreViewEvents
+                .Find(e => e.StoreId == entry.StoreId
+                    && e.EntryId == entryId
+                    && e.ViewerUserId == viewerId
+                    && e.EnteredAt >= dedupSince)
+                .SortByDescending(e => e.EnteredAt)
+                .FirstOrDefaultAsync();
+        }
+        else if (!string.IsNullOrEmpty(anonToken))
+        {
+            recent = await _db.DocumentStoreViewEvents
+                .Find(e => e.StoreId == entry.StoreId
+                    && e.EntryId == entryId
+                    && e.ViewerUserId == null
+                    && e.AnonSessionToken == anonToken
+                    && e.EnteredAt >= dedupSince)
+                .SortByDescending(e => e.EnteredAt)
+                .FirstOrDefaultAsync();
+        }
+
+        if (recent != null)
+        {
+            // 命中去重窗口：不新建事件、不递增 ViewCount，
+            // 仅刷新最后访问时间（停留时长由 leave 端点累加，不在此清零）。
+            await _db.DocumentStoreViewEvents.UpdateOneAsync(
+                e => e.Id == recent.Id,
+                Builders<DocumentStoreViewEvent>.Update
+                    .Set(e => e.LastSeenAt, DateTime.UtcNow)
+                    .Inc(e => e.RevisitCount, 1));
+            return Ok(ApiResponse<object>.Ok(new { viewEventId = recent.Id, deduped = true }));
+        }
+
         var evt = new DocumentStoreViewEvent
         {
             StoreId = entry.StoreId,
@@ -2314,18 +2359,19 @@ public class DocumentStoreController : ControllerBase
             ViewerUserId = viewerId,
             ViewerName = viewerName,
             ViewerAvatar = viewerAvatar,
-            AnonSessionToken = viewerId == null ? request?.AnonSessionToken : null,
+            AnonSessionToken = anonToken,
             UserAgent = string.IsNullOrEmpty(ua) ? null : ua,
             Referer = string.IsNullOrEmpty(referer) ? null : referer,
+            LastSeenAt = DateTime.UtcNow,
         };
         await _db.DocumentStoreViewEvents.InsertOneAsync(evt);
 
-        // 递增 store 的冗余计数
+        // 递增 store 的冗余计数（仅去重后的首次访问）
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
             Builders<DocumentStore>.Update.Inc(s => s.ViewCount, 1));
 
-        return Ok(ApiResponse<object>.Ok(new { viewEventId = evt.Id }));
+        return Ok(ApiResponse<object>.Ok(new { viewEventId = evt.Id, deduped = false }));
     }
 
     /// <summary>补写浏览时长（用户离开或切换文档时调用，由 sendBeacon 发起，永远不失败）</summary>
@@ -2366,12 +2412,19 @@ public class DocumentStoreController : ControllerBase
             .ToListAsync();
 
         // 聚合统计：总访问量、独立访客数、总停留时长
-        var totalViews = await _db.DocumentStoreViewEvents.CountDocumentsAsync(e => e.StoreId == storeId);
-        var uniqueVisitorIds = events
+        // 经 B8 去重改造后，每条 view event 已是"去重窗口内的一次访问"，
+        // 因此事件文档总数即为去重后的总访问量（不再因刷新虚高）。
+        // 独立访客 / 总时长必须基于全量事件聚合，不能只算分页返回的 events。
+        var allEvents = await _db.DocumentStoreViewEvents
+            .Find(e => e.StoreId == storeId)
+            .Project(e => new { e.ViewerUserId, e.AnonSessionToken, e.Id, e.DurationMs })
+            .ToListAsync();
+        var totalViews = allEvents.Count;
+        var uniqueVisitorIds = allEvents
             .Select(e => e.ViewerUserId ?? e.AnonSessionToken ?? e.Id)
             .Distinct()
             .Count();
-        var totalDurationMs = events.Sum(e => e.DurationMs ?? 0);
+        var totalDurationMs = allEvents.Sum(e => e.DurationMs ?? 0);
 
         // 补 entry 标题供前端展示
         var entryIds = events.Where(e => e.EntryId != null).Select(e => e.EntryId!).Distinct().ToList();
@@ -2399,6 +2452,8 @@ public class DocumentStoreController : ControllerBase
                 e.EnteredAt,
                 e.LeftAt,
                 e.DurationMs,
+                e.LastSeenAt,
+                e.RevisitCount,
                 e.UserAgent,
                 e.Referer,
             }),

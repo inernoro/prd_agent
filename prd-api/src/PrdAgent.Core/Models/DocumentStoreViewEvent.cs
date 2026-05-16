@@ -45,4 +45,10 @@ public class DocumentStoreViewEvent
 
     /// <summary>停留时长（毫秒）；未补写时为 null</summary>
     public long? DurationMs { get; set; }
+
+    /// <summary>最后一次被看到的时间（去重窗口内重复访问时刷新此字段，不新建事件）</summary>
+    public DateTime? LastSeenAt { get; set; }
+
+    /// <summary>去重窗口内的重复访问次数（首次访问为 0；用于呈现"访问 N 次"而非虚高总量）</summary>
+    public int RevisitCount { get; set; }
 }

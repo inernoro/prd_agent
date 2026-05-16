@@ -262,6 +262,10 @@ export type DocumentStoreViewEvent = {
   enteredAt: string;
   leftAt?: string;
   durationMs?: number;
+  /** 去重窗口内最后一次访问时间 */
+  lastSeenAt?: string;
+  /** 去重窗口内的重复访问次数（0 表示仅访问一次） */
+  revisitCount?: number;
   userAgent?: string;
   referer?: string;
 };
