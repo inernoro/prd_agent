@@ -67,8 +67,11 @@ export function DocToc({
       },
     );
     elements.forEach(el => observer.observe(el));
-    // 初始化 active 为第一个
-    setActiveId(prev => prev ?? elements[0].id);
+    // 切换文档（headings 变化触发本 effect 重跑）时，把高亮重置为新文档的第一个标题，
+    // 不要用 prev ?? 惰性保留——否则会沿用上一篇的 heading id，直到
+    // IntersectionObserver 首次回调才纠正，造成切文档时 TOC 高亮闪烁/停在旧标题。
+    // 后续滚动高亮仍由 IntersectionObserver 接管。
+    setActiveId(elements[0]?.id ?? null);
     return () => observer.disconnect();
   }, [headings, scrollContainerRef]);
 

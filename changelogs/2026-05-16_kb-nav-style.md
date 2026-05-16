@@ -26,3 +26,6 @@
 | fix | prd-admin | 划词选区 offset 基于剥离 frontmatter 的正文解析（修复标题等同时出现在 frontmatter 时锚点错位）+ 搜索陈旧响应/异常时 spinner 兜底解除 |
 | fix | prd-api | 知识库全文评论：图片/音频/扫描PDF/被无文本文件替换过的条目（DocumentId 为空）此前被"该条目尚未关联正文"400 拦截无法评论；改为仅有锚点评论才强制要求正文，全文评论允许 DocumentId 为空（ContentHash 跳过算并存 null、DocumentId 存 string.Empty） |
 | fix | prd-admin | 修复含转义尖括号标题（如 `# Use &lt;T&gt; generics`）rendered 侧 slug 被 HTML 标签剥离正则误删致与 TOC 不一致：headingTextToSlug 增加 alreadyRendered 参数，rendered 路径跳过剥标签/解实体，两侧共用同一 normalize+slugger（SSOT） |
+| fix | prd-api | 知识库划词评论 rebind/orphan 过滤由 `!c.IsWholeDocument`（LINQ 译为 `{IsWholeDocument:false}`）改为 `Filter.Ne(IsWholeDocument,true)`，覆盖缺该新增字段的历史评论（false/null/缺字段三态），不再静默漏掉旧评论 |
+| fix | prd-admin | 知识库 TOC 切换文档时 activeId 由 `prev ?? 首项` 惰性保留改为重置为新文档首个 heading id，消除切文档高亮闪烁/停在上一篇标题 |
+| fix | prd-admin | 修复划词选区 offset 三级回退 step3 的 endOffset 用 strippedText.length（已剥 markdown 标记，偏短甚至越界）：改为优先末词在 raw 中的位置+末词长度，兜底原始可见文本长度，并 clamp 到 [startOffset, raw.length] |

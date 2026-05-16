@@ -101,9 +101,24 @@ function resolveOffsetInRaw(raw: string, text: string): { startOffset: number; e
     const hit2 = strippedRaw.indexOf(strippedText);
     if (hit2 >= 0) {
       // 粗略映射：用 strippedText 在 raw 里的近似锚点（首词）兜底定位
-      const firstWord = strippedText.split(' ')[0];
+      const words = strippedText.split(' ');
+      const firstWord = words[0];
       const approx = firstWord ? raw.indexOf(firstWord) : -1;
-      if (approx >= 0) return { startOffset: approx, endOffset: approx + strippedText.length };
+      if (approx >= 0) {
+        // endOffset 不能用 approx + strippedText.length：strippedText 已剥掉
+        // markdown 标记，比 raw 中对应跨度短，会落在选区中间甚至越界。
+        // 优先用末词在 raw 中（approx 之后）的位置 + 末词长度；定位不到则退而
+        // 求其次用原始可见文本长度。最终 clamp 到 [startOffset, raw.length]。
+        const lastWord = words[words.length - 1];
+        let end = -1;
+        if (lastWord) {
+          const lastIdx = raw.indexOf(lastWord, approx);
+          if (lastIdx >= 0) end = lastIdx + lastWord.length;
+        }
+        if (end < 0) end = approx + text.length;
+        const endOffset = Math.min(raw.length, Math.max(approx, end));
+        return { startOffset: approx, endOffset };
+      }
     }
   }
 
