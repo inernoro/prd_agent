@@ -2615,7 +2615,9 @@ public class DocumentStoreController : ControllerBase
         var isWholeDocComment = string.IsNullOrWhiteSpace(request.SelectedText);
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
-        if (string.IsNullOrEmpty(entry.DocumentId))
+        // 仅有锚点评论才强制要求正文（需要正文定位）；全文评论无锚点，允许 DocumentId 为空
+        // （图片/音频/扫描 PDF/被无文本文件替换过的条目 DocumentId 为空，仍应能做全文评论）
+        if (!isWholeDocComment && string.IsNullOrEmpty(entry.DocumentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该条目尚未关联正文"));
 
         var userDoc = await FindUserByAnyIdAsync(userId);
@@ -2623,15 +2625,20 @@ public class DocumentStoreController : ControllerBase
             ? userDoc.DisplayName
             : (userDoc?.Username ?? "未知用户");
 
-        // 读取当前正文计算 hash
-        var parsed = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
-        var contentHash = parsed != null ? ComputeSha256(parsed.RawContent ?? "") : null;
+        // 读取当前正文计算 hash；全文评论且无正文时跳过，ContentHash 留 null
+        string? contentHash = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var parsed = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
+            contentHash = parsed != null ? ComputeSha256(parsed.RawContent ?? "") : null;
+        }
 
         var comment = new DocumentInlineComment
         {
             StoreId = entry.StoreId,
             EntryId = entryId,
-            DocumentId = entry.DocumentId!,
+            // 全文评论可能无正文，DocumentId 沿用模型非空约定存 string.Empty
+            DocumentId = entry.DocumentId ?? string.Empty,
             ContentHash = contentHash,
             // 无选区时 SelectedText 留空，标记为全文评论，不参与 rebind / 正文高亮
             SelectedText = isWholeDocComment ? string.Empty : request.SelectedText,
