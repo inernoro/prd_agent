@@ -458,8 +458,8 @@ public class HostedSiteService : IHostedSiteService
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,
         string? password, int expiresInDays,
-        string purpose = "share",
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string purpose = "share")
     {
         var allIds = shareType == "collection" ? (siteIds ?? new()) : new List<string>();
         if (shareType != "collection")
