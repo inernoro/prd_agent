@@ -626,6 +626,7 @@ export default function CdsAgentPage() {
     const sidecarState = runtimeStatus
       ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount} healthy`
       : '未检测';
+    const registryIssue = runtimeStatus?.registryLastRefreshError || '';
     const payloads = events.map(parsePayload).reverse();
     const latestRuntimePayload = payloads.find((payload) => (
       readString(payload, 'runtimeAdapter')
@@ -669,6 +670,7 @@ export default function CdsAgentPage() {
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
         ['Pool', sidecarState],
+        ['Discovery', registryIssue || '无发现异常'],
         ['Cancel', cancelState],
       ],
     };

@@ -76,12 +76,13 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var opts = _options.CurrentValue;
         var next = new List<DynamicSidecarInstance>();
         var errors = new List<string>();
+        var notes = new List<string>();
 
         if (opts.CdsDiscovery.EnablePairedInfraConnections)
         {
             try
             {
-                next.AddRange(await DiscoverPairedConnectionsAsync(opts, ct));
+                next.AddRange(await DiscoverPairedConnectionsAsync(opts, notes, ct));
             }
             catch (Exception ex)
             {
@@ -89,12 +90,16 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 _logger.LogWarning(ex, "[CdsDiscovery] paired infra connection refresh failed");
             }
         }
+        else
+        {
+            notes.Add("paired-connections disabled");
+        }
 
         if (opts.CdsDiscovery.Enabled && !string.IsNullOrWhiteSpace(opts.CdsDiscovery.BaseUrl))
         {
             try
             {
-                next.AddRange(await DiscoverConfiguredCdsAsync(opts, ct));
+                next.AddRange(await DiscoverConfiguredCdsAsync(opts, notes, ct));
             }
             catch (Exception ex)
             {
@@ -102,30 +107,49 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 _logger.LogWarning(ex, "[CdsDiscovery] configured CDS refresh failed");
             }
         }
+        else
+        {
+            notes.Add("configured-cds disabled");
+        }
 
         if (errors.Count > 0 && next.Count == 0)
         {
             lock (_lock)
             {
                 _lastRefreshedAt = DateTime.UtcNow;
-                _lastRefreshError = string.Join("; ", errors);
+                _lastRefreshError = string.Join("; ", errors.Concat(notes));
             }
             _logger.LogWarning("[CdsDiscovery] refresh failed; keeping previous snapshot: {Error}", string.Join("; ", errors));
             return;
         }
 
+        var zeroInstanceReason = next.Count == 0 && notes.Count > 0
+            ? string.Join("; ", notes)
+            : null;
         lock (_lock)
         {
             _dynamic = next;
             _lastRefreshedAt = DateTime.UtcNow;
-            _lastRefreshError = errors.Count == 0 ? null : string.Join("; ", errors);
+            _lastRefreshError = errors.Count == 0
+                ? zeroInstanceReason
+                : string.Join("; ", errors.Concat(notes));
         }
-        _logger.LogInformation(
-            "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+        if (next.Count == 0)
+        {
+            _logger.LogWarning(
+                "[CdsDiscovery] refreshed 0 sidecar instance(s) from CDS; reason={Reason}",
+                zeroInstanceReason ?? "no discovery source returned instances");
+        }
+        else
+        {
+            _logger.LogInformation(
+                "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+        }
     }
 
     private async Task<IReadOnlyList<DynamicSidecarInstance>> DiscoverConfiguredCdsAsync(
         ClaudeSidecarOptions opts,
+        List<string> notes,
         CancellationToken ct)
     {
         var http = _httpFactory.CreateClient(HttpClientName);
@@ -141,10 +165,13 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         }
 
         var discovered = new List<DynamicSidecarInstance>();
+        var enabledHosts = 0;
+        var hostsWithInstance = 0;
         foreach (var host in listResp.Hosts)
         {
             if (host.Id == null) continue;
             if (host.IsEnabled == false) continue;
+            enabledHosts += 1;
 
             InstanceEnvelope? instResp;
             try
@@ -161,6 +188,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
 
             var inst = instResp.Instance;
             if (string.IsNullOrWhiteSpace(inst.Host) || inst.Port == null) continue;
+            hostsWithInstance += 1;
 
             discovered.Add(ToDynamicInstance(
                 name: $"cds:{host.Id}",
@@ -170,12 +198,17 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 tags: host.Tags ?? inst.Tags ?? new List<string>(),
                 source: "cds"));
         }
+        if (discovered.Count == 0)
+        {
+            notes.Add($"configured-cds hosts={listResp.Hosts.Count} enabled={enabledHosts} withInstance={hostsWithInstance}");
+        }
 
         return discovered;
     }
 
     private async Task<IReadOnlyList<DynamicSidecarInstance>> DiscoverPairedConnectionsAsync(
         ClaudeSidecarOptions opts,
+        List<string> notes,
         CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -189,13 +222,27 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             .Where(c => !string.IsNullOrWhiteSpace(c.PartnerBaseUrl))
             .Where(c => !string.IsNullOrWhiteSpace(c.InstanceDiscoveryUrl))
             .ToList();
-        if (activeCds.Count == 0) return Array.Empty<DynamicSidecarInstance>();
+        if (activeCds.Count == 0)
+        {
+            notes.Add($"paired-connections total={connections.Count} activeCds=0");
+            return Array.Empty<DynamicSidecarInstance>();
+        }
 
         var discovered = new List<DynamicSidecarInstance>();
+        var usableConnections = 0;
+        var endpointsWithInstances = 0;
+        var emptyEndpoints = 0;
+        var endpointFailures = 0;
+        var encryptedTokenFailures = 0;
         foreach (var conn in activeCds)
         {
-            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: false);
-            if (string.IsNullOrWhiteSpace(longToken)) continue;
+            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: true);
+            if (string.IsNullOrWhiteSpace(longToken))
+            {
+                encryptedTokenFailures += 1;
+                continue;
+            }
+            usableConnections += 1;
 
             var http = _httpFactory.CreateClient(HttpClientName);
             http.Timeout = TimeSpan.FromSeconds(Math.Max(2, opts.CdsDiscovery.RequestTimeoutSeconds));
@@ -209,10 +256,21 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             }
             catch (Exception ex)
             {
+                endpointFailures += 1;
                 _logger.LogDebug(ex, "[CdsDiscovery] paired instance discovery failed connection={Id}", conn.Id);
                 continue;
             }
-            if (envelope?.Instances == null) continue;
+            if (envelope?.Instances == null)
+            {
+                endpointFailures += 1;
+                continue;
+            }
+            if (envelope.Instances.Count == 0)
+            {
+                emptyEndpoints += 1;
+                continue;
+            }
+            endpointsWithInstances += 1;
 
             var idx = 0;
             foreach (var inst in envelope.Instances)
@@ -239,6 +297,11 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                         tags: inst.Tags ?? new List<string>(),
                         source: "cds-pairing"));
             }
+        }
+        if (discovered.Count == 0)
+        {
+            notes.Add(
+                $"paired-connections total={connections.Count} activeCds={activeCds.Count} usable={usableConnections} tokenFailures={encryptedTokenFailures} endpointFailures={endpointFailures} emptyEndpoints={emptyEndpoints} endpointsWithInstances={endpointsWithInstances}");
         }
 
         return discovered;
