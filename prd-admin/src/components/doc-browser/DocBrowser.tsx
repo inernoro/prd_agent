@@ -607,30 +607,34 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className="w-full flex items-center gap-1.5 py-[5px] text-left cursor-pointer transition-colors duration-100 group"
+        className={`w-full flex items-center gap-1.5 text-left cursor-pointer transition-colors duration-100 group ${isFolder ? 'py-2' : 'py-[5px]'}`}
         style={{
           paddingLeft: `${8 + depth * 16}px`,
-          paddingRight: '8px',
+          paddingRight: '10px',
           background: dragOver ? 'rgba(59,130,246,0.12)' : (isSelected && !isFolder ? 'rgba(59,130,246,0.08)' : 'transparent'),
           borderLeft: isSelected && !isFolder ? '2px solid rgba(59,130,246,0.6)' : '2px solid transparent',
           outline: dragOver ? '1px dashed rgba(59,130,246,0.4)' : 'none',
+          // F3：文件夹渲染为"章节分组"标题——上下分隔线、克制留白，更接近文档站目录观感
+          ...(isFolder
+            ? {
+                marginTop: depth === 0 ? '6px' : '2px',
+                borderTop: '1px solid var(--border-subtle)',
+                borderBottom: '1px solid var(--border-subtle)',
+              }
+            : {}),
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 展开/折叠箭头（仅文件夹显示，非文件夹不占位） */}
-        {isFolder && (
-          <span className="w-3.5 flex-shrink-0 flex items-center justify-center">
-            {isOpen ? <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />
-                    : <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />}
-          </span>
-        )}
-
         <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-        <span className="flex-1 truncate text-[12px]"
+        <span className="flex-1 truncate"
           style={{
-            color: isSelected && !isFolder ? 'var(--text-primary)' : 'var(--text-secondary, rgba(255,255,255,0.7))',
-            fontWeight: isFolder ? 500 : 400,
+            color: isFolder
+              ? 'var(--text-primary)'
+              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary, rgba(255,255,255,0.7))'),
+            fontWeight: isFolder ? 700 : 400,
+            fontSize: isFolder ? '12px' : '12px',
+            letterSpacing: isFolder ? '0.02em' : 'normal',
           }}>
           {displayTitle}
         </span>
@@ -702,10 +706,15 @@ function TreeNode({
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
 
+        {/* F3：文件夹章节——右侧文件计数 + 折叠箭头（文档站目录习惯：箭头在右） */}
         {isFolder && (
-          <span className="text-[10px] opacity-0 group-hover:opacity-50 flex-shrink-0"
-            style={{ color: 'var(--text-muted)' }}>
-            {children.length}
+          <span className="flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              {children.length}
+            </span>
+            {isOpen
+              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
           </span>
         )}
       </button>
