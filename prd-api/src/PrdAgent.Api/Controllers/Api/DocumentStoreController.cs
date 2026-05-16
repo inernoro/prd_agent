@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
@@ -2429,17 +2430,77 @@ public class DocumentStoreController : ControllerBase
         // 聚合统计：总访问量、独立访客数、总停留时长
         // 经 B8 去重改造后，每条 view event 已是"去重窗口内的一次访问"，
         // 因此事件文档总数即为去重后的总访问量（不再因刷新虚高）。
-        // 独立访客 / 总时长必须基于全量事件聚合，不能只算分页返回的 events。
-        var allEvents = await _db.DocumentStoreViewEvents
-            .Find(e => e.StoreId == storeId)
-            .Project(e => new { e.ViewerUserId, e.AnonSessionToken, e.Id, e.DurationMs })
-            .ToListAsync();
-        var totalViews = allEvents.Count;
-        var uniqueVisitorIds = allEvents
-            .Select(e => e.ViewerUserId ?? e.AnonSessionToken ?? e.Id)
-            .Distinct()
-            .Count();
-        var totalDurationMs = allEvents.Sum(e => e.DurationMs ?? 0);
+        // 独立访客 / 总时长必须基于全量事件聚合——用 MongoDB 聚合管道在服务端算，
+        // 不把该 store 的全量事件文档拉回应用层（store 访问量大时内存/延迟不可控）。
+        //
+        // BSON 元素名说明：本项目 MongoDB 没有 camelCase ConventionPack，
+        // 元素名即 C# 属性名原样 PascalCase（StoreId/ViewerUserId/AnonSessionToken/DurationMs），
+        // 仅 Id 属性映射为 _id（driver 默认）。
+        var statsPipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("StoreId", storeId)),
+            // 访客分组键：ViewerUserId ?? AnonSessionToken ?? _id（与原 LINQ 语义一致）
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "visitor", new BsonDocument("$ifNull", new BsonArray
+                    {
+                        "$ViewerUserId",
+                        new BsonDocument("$ifNull", new BsonArray { "$AnonSessionToken", "$_id" })
+                    })
+                },
+                { "DurationMs", 1 },
+            }),
+            new BsonDocument("$facet", new BsonDocument
+            {
+                // totals：总访问量 + 总停留时长
+                { "totals", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument
+                        {
+                            { "_id", BsonNull.Value },
+                            { "count", new BsonDocument("$sum", 1) },
+                            { "duration", new BsonDocument("$sum",
+                                new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 })) },
+                        })
+                    }
+                },
+                // uniques：独立访客数（两段 group + $count，避免大基数 $addToSet 内存压力）
+                { "uniques", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument("_id", "$visitor")),
+                        new BsonDocument("$count", "count"),
+                    }
+                },
+            }),
+        };
+
+        var statsResult = await _db.DocumentStoreViewEvents
+            .Aggregate<BsonDocument>(statsPipeline)
+            .FirstOrDefaultAsync();
+
+        long totalViews = 0;
+        int uniqueVisitorIds = 0;
+        long totalDurationMs = 0;
+        if (statsResult != null)
+        {
+            // facet 分支无文档时为空数组，全部兜底 0
+            if (statsResult.TryGetValue("totals", out var totalsVal)
+                && totalsVal is BsonArray totalsArr && totalsArr.Count > 0
+                && totalsArr[0] is BsonDocument totalsDoc)
+            {
+                if (totalsDoc.TryGetValue("count", out var c) && !c.IsBsonNull)
+                    totalViews = c.ToInt64();
+                if (totalsDoc.TryGetValue("duration", out var d) && !d.IsBsonNull)
+                    totalDurationMs = d.ToInt64();
+            }
+            if (statsResult.TryGetValue("uniques", out var uniquesVal)
+                && uniquesVal is BsonArray uniquesArr && uniquesArr.Count > 0
+                && uniquesArr[0] is BsonDocument uniquesDoc
+                && uniquesDoc.TryGetValue("count", out var u) && !u.IsBsonNull)
+            {
+                uniqueVisitorIds = u.ToInt32();
+            }
+        }
 
         // 补 entry 标题供前端展示
         var entryIds = events.Where(e => e.EntryId != null).Select(e => e.EntryId!).Distinct().ToList();
