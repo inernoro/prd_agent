@@ -15,6 +15,8 @@
  *     ATX 标题行（`# xxx`）的文本
  */
 
+import { parseAtxHeadingLine } from './markdownToc';
+
 export type ParsedFrontmatter = {
   /** frontmatter.title（去引号）或回退的首个正文标题；都没有则 undefined */
   title?: string;
@@ -55,9 +57,11 @@ function firstHeadingText(body: string): string | undefined {
       continue;
     }
     if (inFence) continue;
-    const m = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
-    if (m) {
-      const t = m[2].trim();
+    // SSOT：与 parseMarkdownToc 共用同一套 ATX 行解析（含尾部 # 处理），
+    // 保证闭合式标题（`## 标题 ##`）下左侧栏与右侧 TOC 展示文本一致。
+    const parsed = parseAtxHeadingLine(line);
+    if (parsed) {
+      const t = parsed.text.trim();
       if (t) return t;
     }
   }

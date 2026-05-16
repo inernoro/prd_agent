@@ -105,6 +105,27 @@ export function headingTextToSlug(
 }
 
 /**
+ * SSOT：解析单行 ATX 标题（`#`~`######`），返回层级 + 去掉「闭合式尾部 #」后的
+ * 原始标题文本。`frontmatter.firstHeadingText` 与 `parseMarkdownToc` 必须复用此函数，
+ * 保证同一行标题在右侧 TOC 与左侧栏的展示文本完全一致。
+ *
+ * 尾部 `#` 处理与 normalizeHeadingText 的 `\s+#+\s*$` 语义一致：
+ * 只有当 `#` 串前存在空白时才视为闭合标记并剥离。
+ *   - `## Heading ##`   → { level:2, text:'Heading' }（` ##` 被吃掉）
+ *   - `## 标题`          → { level:2, text:'标题' }
+ *   - `## C# 入门`       → { level:2, text:'C# 入门' }（`C#` 的 # 紧贴字母，不剥）
+ *   - `### a ### `       → { level:3, text:'a' }
+ * 非标题行返回 null。
+ */
+export function parseAtxHeadingLine(
+  line: string,
+): { level: number; text: string } | null {
+  const m = line.match(/^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/);
+  if (!m) return null;
+  return { level: m[1].length, text: m[2] };
+}
+
+/**
  * 从 markdown 原文按文档顺序解析 ATX 标题（# ~ ######），
  * 忽略 fenced code block（``` / ~~~）内的伪标题。
  */
@@ -130,12 +151,11 @@ export function parseMarkdownToc(content: string | null | undefined): TocHeading
     }
     if (inFence) continue;
 
-    const m = line.match(/^(#{1,6})\s+(.+?)\s*$/);
-    if (!m) continue;
-    const level = m[1].length;
-    const { text, id } = headingTextToSlug(m[2], slugger);
+    const parsed = parseAtxHeadingLine(line);
+    if (!parsed) continue;
+    const { text, id } = headingTextToSlug(parsed.text, slugger);
     if (!text) continue;
-    headings.push({ id, text, level });
+    headings.push({ id, text, level: parsed.level });
   }
 
   return headings;
