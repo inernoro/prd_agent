@@ -1229,9 +1229,22 @@ export function DocBrowser({
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
+  // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
+  // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
+  // 会先匹配到 frontmatter 块，导致 offset/上下文错位、评论锚点定位错误。
+  // 与 tocContent / MarkdownViewer 共用 parseFrontmatter（SSOT）。
+  const selectionRawContent = useMemo(() => {
+    const text = preview?.text;
+    if (!text) return text ?? undefined;
+    const e = entries.find(x => x.id === selectedEntryId);
+    if (!e || e.isFolder) return text;
+    const cfg = getFileTypeConfig(e.title, e.contentType);
+    return cfg.preview === 'text' ? parseFrontmatter(text).body : text;
+  }, [preview, entries, selectedEntryId]);
   const { selection: liveSelection, clear: clearLiveSelection } = useContentSelection(
     contentAreaRef,
-    preview?.text,
+    selectionRawContent,
     Boolean(selectedEntryId && !contentLoading && !editMode),
   );
   const trackedEntryForComments = useMemo(() => {
@@ -1418,11 +1431,19 @@ export function DocBrowser({
     if (trimmed && onSearch) {
       setSearching(true);
       searchTimerRef.current = setTimeout(async () => {
-        const results = await onSearch(trimmed, true);
-        // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
-        if (reqId !== searchSeqRef.current) return;
-        setSearchResults(results);
-        setSearching(false);
+        try {
+          const results = await onSearch(trimmed, true);
+          // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
+          if (reqId !== searchSeqRef.current) return;
+          setSearchResults(results);
+        } catch {
+          if (reqId !== searchSeqRef.current) return;
+          setSearchResults(null);
+        } finally {
+          // 仅最新请求负责收起 spinner：陈旧响应不动它（更新的在途请求会收），
+          // 但 onSearch 抛错时最新请求也必须解除 loading，避免 spinner 永久卡住。
+          if (reqId === searchSeqRef.current) setSearching(false);
+        }
       }, 400);
     } else {
       // 搜索框被清空：立即回到本地全量树，并让任何在途响应作废

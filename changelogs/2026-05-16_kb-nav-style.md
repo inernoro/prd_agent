@@ -23,3 +23,4 @@
 | fix | prd-admin | 修复 MarkdownViewer 重渲染复用有状态 slugger 致 heading id 漂移、TOC/锚点失配（每次渲染前 reset） |
 | fix | prd-admin | 知识库替换当前选中文件后预览不刷新：DocBrowser 内容加载缓存键由 entryId 改为 entryId+updatedAt（内容版本），替换后 updatedAt 变化自动重载新正文，移除 undefined→id 的 setTimeout hack；不影响 useViewTracking 埋点（仍以 entryId 为键） |
 | fix | prd-api | 知识库替换文件清理旧 Attachment/ParsedPrd DB 记录，避免每次替换都把上一版正文与附件记录变成永久孤儿（与 DeleteEntry 一致只删 DB 记录、不动共享 blob；CT.None + try/catch 尽力而为，清理失败不影响替换主流程） |
+| fix | prd-admin | 划词选区 offset 基于剥离 frontmatter 的正文解析（修复标题等同时出现在 frontmatter 时锚点错位）+ 搜索陈旧响应/异常时 spinner 兜底解除 |
