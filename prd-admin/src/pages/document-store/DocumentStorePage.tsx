@@ -37,6 +37,7 @@ import {
   deleteDocumentStore,
   listDocumentEntries,
   uploadDocumentFile,
+  replaceDocumentFile,
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,
@@ -495,6 +496,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 替换文件：记录待替换的 entryId + 独立 file input
+  const replaceTargetRef = useRef<string | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
@@ -532,6 +536,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     }
     setUploading(false);
   }, [storeId]);
+
+  // 替换文件：右键菜单触发 → 打开文件选择器，记录目标 entryId
+  const handleReplaceFile = useCallback((entryId: string) => {
+    replaceTargetRef.current = entryId;
+    replaceInputRef.current?.click();
+  }, []);
+
+  const doReplaceFile = useCallback(async (file: File) => {
+    const entryId = replaceTargetRef.current;
+    replaceTargetRef.current = null;
+    if (!entryId) return;
+    setUploading(true);
+    const res = await replaceDocumentFile(entryId, file);
+    if (res.success) {
+      // 注入 res.data.entry（含更新后的 updatedAt），DocBrowser 内容缓存键
+      // 以 entryId+updatedAt 组合为版本，updatedAt 变化即自动重载新正文，
+      // 无需 undefined→id 的 setTimeout hack
+      setEntries(prev => prev.map(e => e.id === entryId ? { ...e, ...res.data.entry } : e));
+      toast.success('替换成功', '文档内容已更新，标签与位置保留');
+    } else {
+      toast.error('替换失败', res.error?.message);
+    }
+    setUploading(false);
+  }, []);
 
   // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
   const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
@@ -742,6 +770,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       onDragOver={handleDragOver} onDrop={handleDrop}>
       <input ref={fileInputRef} type="file" className="hidden" accept={ACCEPT_TYPES} multiple
         onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) handleFiles(f); e.target.value = ''; }} />
+      <input ref={replaceInputRef} type="file" className="hidden" accept={ACCEPT_TYPES}
+        onChange={e => { const f = e.target.files?.[0]; if (f) doReplaceFile(f); e.target.value = ''; }} />
 
       <TabBar
         title={
@@ -784,7 +814,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
               <button
                 onClick={handleTogglePublish}
                 disabled={publishing}
-                className="surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all disabled:opacity-60"
+                className="surface-action-accent flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all disabled:opacity-60"
                 title="发布到智识殿堂，让更多人看到"
                 data-tour-id="document-store-publish"
               >
@@ -826,8 +856,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         </div>
       )}
 
-      {/* 左右分栏文档浏览器 */}
-      <div className="flex-1 min-h-0 flex flex-col px-5 pb-4 pt-3">
+      {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
+          消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
+      <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
           primaryEntryId={store.primaryEntryId}
@@ -855,6 +886,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
+          onReplaceFile={handleReplaceFile}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">

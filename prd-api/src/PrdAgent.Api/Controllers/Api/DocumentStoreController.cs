@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
@@ -34,6 +35,9 @@ public class DocumentStoreController : ControllerBase
     /// <summary>20 MB per file</summary>
     private const long MaxUploadBytes = 20 * 1024 * 1024;
 
+    /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
+    private const int ViewDedupWindowMinutes = 30;
+
     private static readonly System.Text.Json.JsonSerializerOptions AgentRunJsonOptions = new()
     {
         PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
@@ -62,6 +66,55 @@ public class DocumentStoreController : ControllerBase
     private async Task<User?> FindUserByAnyIdAsync(string userId)
     {
         return await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+    }
+
+    /// <summary>
+    /// 推断上传文件的 MIME。浏览器对 m4a/mp4/某些 wav 经常报 application/octet-stream，
+    /// 必须按扩展名兜底，否则 LocalAssetStorage 会把音频强存为 .png。
+    /// </summary>
+    private static string InferMime(string? contentType, string? fileName)
+    {
+        var mime = contentType?.ToLowerInvariant() ?? "application/octet-stream";
+        if ((mime == "application/octet-stream" || string.IsNullOrWhiteSpace(mime)) && !string.IsNullOrWhiteSpace(fileName))
+        {
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            mime = ext switch
+            {
+                ".md" or ".mdc" => "text/markdown",
+                ".txt" => "text/plain",
+                ".pdf" => "application/pdf",
+                ".doc" => "application/msword",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".ppt" => "application/vnd.ms-powerpoint",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".xls" => "application/vnd.ms-excel",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".json" => "application/json",
+                ".yaml" or ".yml" => "text/yaml",
+                ".csv" => "text/csv",
+                ".xml" => "application/xml",
+                ".html" or ".htm" => "text/html",
+                ".mp3" => "audio/mpeg",
+                ".m4a" => "audio/mp4",
+                ".wav" => "audio/wav",
+                ".aac" => "audio/aac",
+                ".ogg" or ".oga" => "audio/ogg",
+                ".flac" => "audio/flac",
+                ".weba" => "audio/webm",
+                ".mp4" => "video/mp4",
+                ".webm" => "video/webm",
+                ".mov" => "video/quicktime",
+                ".mkv" => "video/x-matroska",
+                ".avi" => "video/x-msvideo",
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".svg" => "image/svg+xml",
+                _ => mime,
+            };
+        }
+        return mime;
     }
 
     private async Task<(string userId, string userName)> GetActorInfoAsync()
@@ -298,6 +351,8 @@ public class DocumentStoreController : ControllerBase
             CreatedBy = userId,
             UpdatedBy = userId,
             UpdatedByName = userName,
+            // 新建文档立即带 NEW 徽标（前端按 24h 内判定），24h 后自动消失
+            LastChangedAt = DateTime.UtcNow,
         };
 
         await _db.DocumentEntries.InsertOneAsync(entry);
@@ -408,7 +463,9 @@ public class DocumentStoreController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
-            var kw = keyword.Trim();
+            // 关键词按字面量处理：转义正则元字符，避免 [draft] / v1.0 / foo( 等
+            // 被当作正则误匹配或非法正则导致请求失败（行为对齐原本地 includes）。
+            var kw = System.Text.RegularExpressions.Regex.Escape(keyword.Trim());
             var searchFilters = new List<FilterDefinition<DocumentEntry>>
             {
                 filterBuilder.Regex(e => e.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
@@ -698,8 +755,16 @@ public class DocumentStoreController : ControllerBase
     /// </summary>
     private async Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
     {
+        // 全文评论（IsWholeDocument）无锚点，不参与正文 rebind。
+        // 用 Ne(IsWholeDocument, true) 而非 !c.IsWholeDocument：后者被 LINQ 译成
+        // { IsWholeDocument: false } 会漏掉缺该字段的历史评论（IsWholeDocument 是新增字段）；
+        // Ne(...,true) 在 MongoDB 下匹配 false / null / 缺字段三种，正好覆盖历史数据。
+        var rebindFilter = Builders<DocumentInlineComment>.Filter.And(
+            Builders<DocumentInlineComment>.Filter.Eq(c => c.EntryId, entryId),
+            Builders<DocumentInlineComment>.Filter.Eq(c => c.Status, DocumentInlineCommentStatus.Active),
+            Builders<DocumentInlineComment>.Filter.Ne(c => c.IsWholeDocument, true));
         var comments = await _db.DocumentInlineComments
-            .Find(c => c.EntryId == entryId && c.Status == DocumentInlineCommentStatus.Active)
+            .Find(rebindFilter)
             .ToListAsync();
 
         if (comments.Count == 0) return (0, 0);
@@ -866,53 +931,8 @@ public class DocumentStoreController : ControllerBase
         if (file.Length > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
 
-        // MIME 推断
-        var mime = file.ContentType?.ToLowerInvariant() ?? "application/octet-stream";
-        // 浏览器对 m4a/mp4/某些 wav 经常报 application/octet-stream，必须按扩展名兜底
-        // 否则 LocalAssetStorage.MimeToExt 不认这个 mime，会把音频强存为 .png
-        if ((mime == "application/octet-stream" || string.IsNullOrWhiteSpace(mime)) && !string.IsNullOrWhiteSpace(file.FileName))
-        {
-            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-            mime = ext switch
-            {
-                // 文本/文档
-                ".md" or ".mdc" => "text/markdown",
-                ".txt" => "text/plain",
-                ".pdf" => "application/pdf",
-                ".doc" => "application/msword",
-                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".ppt" => "application/vnd.ms-powerpoint",
-                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                ".xls" => "application/vnd.ms-excel",
-                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".json" => "application/json",
-                ".yaml" or ".yml" => "text/yaml",
-                ".csv" => "text/csv",
-                ".xml" => "application/xml",
-                ".html" or ".htm" => "text/html",
-                // 音频
-                ".mp3" => "audio/mpeg",
-                ".m4a" => "audio/mp4",
-                ".wav" => "audio/wav",
-                ".aac" => "audio/aac",
-                ".ogg" or ".oga" => "audio/ogg",
-                ".flac" => "audio/flac",
-                ".weba" => "audio/webm",
-                // 视频
-                ".mp4" => "video/mp4",
-                ".webm" => "video/webm",
-                ".mov" => "video/quicktime",
-                ".mkv" => "video/x-matroska",
-                ".avi" => "video/x-msvideo",
-                // 图片
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".gif" => "image/gif",
-                ".webp" => "image/webp",
-                ".svg" => "image/svg+xml",
-                _ => mime,
-            };
-        }
+        // MIME 推断（浏览器对 m4a/mp4 等常报 octet-stream，按扩展名兜底）
+        var mime = InferMime(file.ContentType, file.FileName);
 
         // 读取文件字节
         byte[] bytes;
@@ -985,6 +1005,8 @@ public class DocumentStoreController : ControllerBase
             UpdatedBy = userId,
             UpdatedByName = userName,
             ContentIndex = contentIndex?.Trim(),
+            // 新上传文件立即带 NEW 徽标（前端按 24h 内判定），24h 后自动消失
+            LastChangedAt = DateTime.UtcNow,
         };
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
 
@@ -1002,6 +1024,169 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             entry,
+            attachmentId = attachment.AttachmentId,
+            documentId,
+            fileUrl = stored.Url,
+        }));
+    }
+
+    /// <summary>
+    /// 替换已有条目的文件内容（原地替换）。保留条目 Id / 父文件夹 / 标签 /
+    /// 主文档 / 置顶状态，仅更新正文、附件与标题，避免"删除再上传"丢失这些关联。
+    /// </summary>
+    [HttpPost("entries/{entryId}/replace")]
+    [RequestSizeLimit(MaxUploadBytes)]
+    public async Task<IActionResult> ReplaceEntryFile(string entryId, [FromForm] IFormFile file, CancellationToken ct = default)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync(ct);
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹无法替换文件"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要替换的文件"));
+        if (file.Length > MaxUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
+
+        // 覆盖前先捕获旧的 Attachment / ParsedPrd 引用，待替换成功后清理，
+        // 否则每次替换都把上一版正文 + Attachment 记录变成永久孤儿（删条目时只按新 id 清理，清不到历史版本）
+        var oldAttachmentId = entry.AttachmentId;
+        var oldDocumentId = entry.DocumentId;
+
+        var mime = InferMime(file.ContentType, file.FileName);
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
+
+        string? extractedText = null;
+        if (_fileContentExtractor.IsSupported(mime))
+            extractedText = _fileContentExtractor.Extract(bytes, mime, file.FileName);
+        else if (mime.StartsWith("text/") || mime == "application/json" || mime == "application/xml")
+            extractedText = System.Text.Encoding.UTF8.GetString(bytes);
+
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mime,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Document,
+            UploadedAt = DateTime.UtcNow,
+            ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        string? documentId = null;
+        if (!string.IsNullOrWhiteSpace(extractedText))
+        {
+            var parsed = await _documentService.ParseAsync(extractedText);
+            parsed.Title = Path.GetFileNameWithoutExtension(file.FileName);
+            await _documentService.SaveAsync(parsed);
+            documentId = parsed.Id;
+        }
+
+        var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
+        var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.AttachmentId, attachment.AttachmentId)
+                .Set(e => e.DocumentId, documentId)
+                .Set(e => e.Title, file.FileName ?? entry.Title)
+                .Set(e => e.Summary, summary?.Trim())
+                .Set(e => e.ContentType, mime)
+                .Set(e => e.FileSize, file.Length)
+                .Set(e => e.ContentIndex, contentIndex?.Trim())
+                .Set(e => e.UpdatedBy, userId)
+                .Set(e => e.UpdatedByName, userName)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Set(e => e.LastChangedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        // 正文已变，重新绑定/失效该条目下的划词评论
+        if (!string.IsNullOrWhiteSpace(extractedText))
+        {
+            await RebindInlineCommentsAsync(entryId, extractedText);
+        }
+        else
+        {
+            // 新文件无可提取正文（图片/音频/扫描 PDF 等）：原有划词评论的锚点已无正文可定位，
+            // 把非全文评论批量置为 Orphaned；全文评论（无锚点）保持 Active 不动。
+            // 同 RebindInlineCommentsAsync：用 Ne(IsWholeDocument, true) 而非 !c.IsWholeDocument，
+            // 否则缺该字段的历史评论会被静默排除（漏置 Orphaned）。
+            var orphanFilter = Builders<DocumentInlineComment>.Filter.And(
+                Builders<DocumentInlineComment>.Filter.Eq(c => c.EntryId, entryId),
+                Builders<DocumentInlineComment>.Filter.Eq(c => c.Status, DocumentInlineCommentStatus.Active),
+                Builders<DocumentInlineComment>.Filter.Ne(c => c.IsWholeDocument, true));
+            await _db.DocumentInlineComments.UpdateManyAsync(
+                orphanFilter,
+                Builders<DocumentInlineComment>.Update
+                    .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        }
+
+        // 替换主流程已成功，旧 Attachment / ParsedPrd 尽力而为清理（与 DeleteEntry 一致：只删 DB 记录，
+        // 不动存储 blob —— blob 按 sha 去重为多条目共享，删除路径同样不调 _assetStorage）。
+        // 清理失败不影响替换结果：CT.None 保证不被客户端断开打断，try/catch + 警告日志兜底。
+        if (!string.IsNullOrEmpty(oldDocumentId) && oldDocumentId != documentId)
+        {
+            try
+            {
+                // ParsedPrd.Id 由内容哈希派生：解析正文相同的多个条目会共享同一个 DocumentId。
+                // 删除前先做引用计数守卫——仍有其它条目指向它则跳过，避免误删共享正文/预览。
+                var stillReferenced = await _db.DocumentEntries
+                    .Find(e => e.DocumentId == oldDocumentId && e.Id != entryId)
+                    .AnyAsync(CancellationToken.None);
+                if (!stillReferenced)
+                {
+                    await _db.Documents.DeleteOneAsync(d => d.Id == oldDocumentId, CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Replace cleanup: 删除旧 ParsedPrd 失败 docId={DocId} entry={EntryId}", oldDocumentId, entryId);
+            }
+        }
+        // Attachment 为条目独占：上传与替换每次都新建独立 Attachment（默认 Guid Id，
+        // grep `AttachmentId =` 仅 request 传入 / 新建赋值，无复用共享场景），故直接删旧记录。
+        if (!string.IsNullOrEmpty(oldAttachmentId) && oldAttachmentId != attachment.AttachmentId)
+        {
+            try
+            {
+                await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Replace cleanup: 删除旧 Attachment 失败 attId={AttId} entry={EntryId}", oldAttachmentId, entryId);
+            }
+        }
+
+        _logger.LogInformation("[document-store] Entry replaced: {EntryId} -> '{FileName}' ({Size}B) by {UserId}",
+            entryId, file.FileName, file.Length, userId);
+
+        var updated = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry = updated,
             attachmentId = attachment.AttachmentId,
             documentId,
             fileUrl = stored.Url,
@@ -2179,7 +2364,7 @@ public class DocumentStoreController : ControllerBase
         {
             viewerId = this.GetRequiredUserId();
             isOwner = store.OwnerId == viewerId;
-            var userDoc = await _db.Users.Find(u => u.Id == viewerId).FirstOrDefaultAsync();
+            var userDoc = await FindUserByAnyIdAsync(viewerId);
             if (userDoc != null)
             {
                 viewerName = !string.IsNullOrWhiteSpace(userDoc.DisplayName) ? userDoc.DisplayName : userDoc.Username;
@@ -2199,6 +2384,61 @@ public class DocumentStoreController : ControllerBase
         var referer = Request.Headers.Referer.ToString();
         if (referer.Length > 500) referer = referer[..500];
 
+        // 行业通行的访问去重：同一访客（登录用户按 userId，匿名按 session token / UA 指纹）
+        // 在去重窗口内重复打开/刷新同一篇文档，不计入"总访问量"，
+        // 只复用上一条事件并刷新最后访问时间——避免总访问量虚高。
+        var anonToken = viewerId == null ? request?.AnonSessionToken : null;
+        var dedupWindow = TimeSpan.FromMinutes(ViewDedupWindowMinutes);
+        var dedupSince = DateTime.UtcNow - dedupWindow;
+
+        // 去重窗口基于"滚动的最后活动时间"：命中路径会刷新 LastSeenAt，
+        // 下次判定应以 LastSeenAt 为准，而非原始 EnteredAt（否则长会话第 N 次
+        // 刷新会因原始 EnteredAt 已超窗而误判为新访问，导致 ViewCount 虚增）。
+        // 旧行可能没有 LastSeenAt，回退到 EnteredAt。
+        var vf = Builders<DocumentStoreViewEvent>.Filter;
+        var withinWindow = vf.Or(
+            vf.Gte(e => e.LastSeenAt, dedupSince),
+            vf.And(
+                vf.Eq(e => e.LastSeenAt, (DateTime?)null),
+                vf.Gte(e => e.EnteredAt, dedupSince)));
+
+        DocumentStoreViewEvent? recent = null;
+        if (!string.IsNullOrEmpty(viewerId))
+        {
+            recent = await _db.DocumentStoreViewEvents
+                .Find(vf.And(
+                    vf.Eq(e => e.StoreId, entry.StoreId),
+                    vf.Eq(e => e.EntryId, entryId),
+                    vf.Eq(e => e.ViewerUserId, viewerId),
+                    withinWindow))
+                .SortByDescending(e => e.EnteredAt)
+                .FirstOrDefaultAsync();
+        }
+        else if (!string.IsNullOrEmpty(anonToken))
+        {
+            recent = await _db.DocumentStoreViewEvents
+                .Find(vf.And(
+                    vf.Eq(e => e.StoreId, entry.StoreId),
+                    vf.Eq(e => e.EntryId, entryId),
+                    vf.Eq(e => e.ViewerUserId, (string?)null),
+                    vf.Eq(e => e.AnonSessionToken, anonToken),
+                    withinWindow))
+                .SortByDescending(e => e.EnteredAt)
+                .FirstOrDefaultAsync();
+        }
+
+        if (recent != null)
+        {
+            // 命中去重窗口：不新建事件、不递增 ViewCount，
+            // 仅刷新最后访问时间（停留时长由 leave 端点累加，不在此清零）。
+            await _db.DocumentStoreViewEvents.UpdateOneAsync(
+                e => e.Id == recent.Id,
+                Builders<DocumentStoreViewEvent>.Update
+                    .Set(e => e.LastSeenAt, DateTime.UtcNow)
+                    .Inc(e => e.RevisitCount, 1));
+            return Ok(ApiResponse<object>.Ok(new { viewEventId = recent.Id, deduped = true }));
+        }
+
         var evt = new DocumentStoreViewEvent
         {
             StoreId = entry.StoreId,
@@ -2206,18 +2446,21 @@ public class DocumentStoreController : ControllerBase
             ViewerUserId = viewerId,
             ViewerName = viewerName,
             ViewerAvatar = viewerAvatar,
-            AnonSessionToken = viewerId == null ? request?.AnonSessionToken : null,
+            AnonSessionToken = anonToken,
             UserAgent = string.IsNullOrEmpty(ua) ? null : ua,
             Referer = string.IsNullOrEmpty(referer) ? null : referer,
+            LastSeenAt = DateTime.UtcNow,
+            // 初始化为数值 0，使 leave 端点的 $inc 累加可安全作用（避免对 null 执行 $inc 报错）
+            DurationMs = 0,
         };
         await _db.DocumentStoreViewEvents.InsertOneAsync(evt);
 
-        // 递增 store 的冗余计数
+        // 递增 store 的冗余计数（仅去重后的首次访问）
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
             Builders<DocumentStore>.Update.Inc(s => s.ViewCount, 1));
 
-        return Ok(ApiResponse<object>.Ok(new { viewEventId = evt.Id }));
+        return Ok(ApiResponse<object>.Ok(new { viewEventId = evt.Id, deduped = false }));
     }
 
     /// <summary>补写浏览时长（用户离开或切换文档时调用，由 sendBeacon 发起，永远不失败）</summary>
@@ -2229,11 +2472,31 @@ public class DocumentStoreController : ControllerBase
         if (durationMs < 0) durationMs = 0;
         if (durationMs > 24 * 60 * 60 * 1000) durationMs = 24 * 60 * 60 * 1000; // clamp 到 24 小时
 
+        // 累加而非覆盖：去重窗口内同一访客重开同一文档会复用同一 viewEvent，
+        // 每个子访问各自 flush 一次本段时长，必须累计，否则后一次会覆盖前一次。
+        // useViewTracking.flushIfAny 在每次 flush 后清空 viewEventId，
+        // 同一子访问不会重复 leave，故累加不会重复计时。
+        //
+        // 用聚合管道更新（$set + $add + $ifNull）而非 .Inc：本 PR 虽给新建事件
+        // 初始化 DurationMs=0，但历史 view event 文档可能 DurationMs=null，
+        // MongoDB $inc 作用于 null 字段会报错；leave 经 sendBeacon 调用、错误被静默吞，
+        // 丢时长无声无息。$ifNull 把 null 视作 0 后再 $add，旧 null 行也能正确累加。
+        // 字段名为 C# 属性名原样 PascalCase（本仓库无 camelCase ConventionPack，
+        // DocumentStoreViewEvent 无自定义 BsonClassMap），故为 "$DurationMs"/"LeftAt"。
+        var leaveSetStage = new BsonDocument("$set", new BsonDocument
+        {
+            { "LeftAt", DateTime.UtcNow },
+            { "DurationMs", new BsonDocument("$add", new BsonArray
+                {
+                    new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }),
+                    durationMs,
+                }) },
+        });
+        var leaveUpdate = Builders<DocumentStoreViewEvent>.Update.Pipeline(
+            new BsonDocument[] { leaveSetStage });
         await _db.DocumentStoreViewEvents.UpdateOneAsync(
             e => e.Id == viewEventId,
-            Builders<DocumentStoreViewEvent>.Update
-                .Set(e => e.LeftAt, DateTime.UtcNow)
-                .Set(e => e.DurationMs, durationMs));
+            leaveUpdate);
 
         return Ok(ApiResponse<object>.Ok(new { }));
     }
@@ -2258,12 +2521,79 @@ public class DocumentStoreController : ControllerBase
             .ToListAsync();
 
         // 聚合统计：总访问量、独立访客数、总停留时长
-        var totalViews = await _db.DocumentStoreViewEvents.CountDocumentsAsync(e => e.StoreId == storeId);
-        var uniqueVisitorIds = events
-            .Select(e => e.ViewerUserId ?? e.AnonSessionToken ?? e.Id)
-            .Distinct()
-            .Count();
-        var totalDurationMs = events.Sum(e => e.DurationMs ?? 0);
+        // 经 B8 去重改造后，每条 view event 已是"去重窗口内的一次访问"，
+        // 因此事件文档总数即为去重后的总访问量（不再因刷新虚高）。
+        // 独立访客 / 总时长必须基于全量事件聚合——用 MongoDB 聚合管道在服务端算，
+        // 不把该 store 的全量事件文档拉回应用层（store 访问量大时内存/延迟不可控）。
+        //
+        // BSON 元素名说明：本项目 MongoDB 没有 camelCase ConventionPack，
+        // 元素名即 C# 属性名原样 PascalCase（StoreId/ViewerUserId/AnonSessionToken/DurationMs），
+        // 仅 Id 属性映射为 _id（driver 默认）。
+        var statsPipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("StoreId", storeId)),
+            // 访客分组键：ViewerUserId ?? AnonSessionToken ?? _id（与原 LINQ 语义一致）
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "visitor", new BsonDocument("$ifNull", new BsonArray
+                    {
+                        "$ViewerUserId",
+                        new BsonDocument("$ifNull", new BsonArray { "$AnonSessionToken", "$_id" })
+                    })
+                },
+                { "DurationMs", 1 },
+            }),
+            new BsonDocument("$facet", new BsonDocument
+            {
+                // totals：总访问量 + 总停留时长
+                { "totals", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument
+                        {
+                            { "_id", BsonNull.Value },
+                            { "count", new BsonDocument("$sum", 1) },
+                            { "duration", new BsonDocument("$sum",
+                                new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 })) },
+                        })
+                    }
+                },
+                // uniques：独立访客数（两段 group + $count，避免大基数 $addToSet 内存压力）
+                { "uniques", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument("_id", "$visitor")),
+                        new BsonDocument("$count", "count"),
+                    }
+                },
+            }),
+        };
+
+        var statsResult = await _db.DocumentStoreViewEvents
+            .Aggregate<BsonDocument>(statsPipeline)
+            .FirstOrDefaultAsync();
+
+        long totalViews = 0;
+        int uniqueVisitorIds = 0;
+        long totalDurationMs = 0;
+        if (statsResult != null)
+        {
+            // facet 分支无文档时为空数组，全部兜底 0
+            if (statsResult.TryGetValue("totals", out var totalsVal)
+                && totalsVal is BsonArray totalsArr && totalsArr.Count > 0
+                && totalsArr[0] is BsonDocument totalsDoc)
+            {
+                if (totalsDoc.TryGetValue("count", out var c) && !c.IsBsonNull)
+                    totalViews = c.ToInt64();
+                if (totalsDoc.TryGetValue("duration", out var d) && !d.IsBsonNull)
+                    totalDurationMs = d.ToInt64();
+            }
+            if (statsResult.TryGetValue("uniques", out var uniquesVal)
+                && uniquesVal is BsonArray uniquesArr && uniquesArr.Count > 0
+                && uniquesArr[0] is BsonDocument uniquesDoc
+                && uniquesDoc.TryGetValue("count", out var u) && !u.IsBsonNull)
+            {
+                uniqueVisitorIds = u.ToInt32();
+            }
+        }
 
         // 补 entry 标题供前端展示
         var entryIds = events.Where(e => e.EntryId != null).Select(e => e.EntryId!).Distinct().ToList();
@@ -2291,6 +2621,8 @@ public class DocumentStoreController : ControllerBase
                 e.EnteredAt,
                 e.LeftAt,
                 e.DurationMs,
+                e.LastSeenAt,
+                e.RevisitCount,
                 e.UserAgent,
                 e.Referer,
             }),
@@ -2314,33 +2646,42 @@ public class DocumentStoreController : ControllerBase
         if (store == null || store.OwnerId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        if (string.IsNullOrWhiteSpace(request.SelectedText))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "选中内容不能为空"));
+        // B4：允许"不选中也能评论"——SelectedText 为空时视为对整篇文档的通用评论（无锚点）
+        var isWholeDocComment = string.IsNullOrWhiteSpace(request.SelectedText);
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
-        if (string.IsNullOrEmpty(entry.DocumentId))
+        // 仅有锚点评论才强制要求正文（需要正文定位）；全文评论无锚点，允许 DocumentId 为空
+        // （图片/音频/扫描 PDF/被无文本文件替换过的条目 DocumentId 为空，仍应能做全文评论）
+        if (!isWholeDocComment && string.IsNullOrEmpty(entry.DocumentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该条目尚未关联正文"));
 
-        var userDoc = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+        var userDoc = await FindUserByAnyIdAsync(userId);
         var authorName = userDoc != null && !string.IsNullOrWhiteSpace(userDoc.DisplayName)
             ? userDoc.DisplayName
             : (userDoc?.Username ?? "未知用户");
 
-        // 读取当前正文计算 hash
-        var parsed = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
-        var contentHash = parsed != null ? ComputeSha256(parsed.RawContent ?? "") : null;
+        // 读取当前正文计算 hash；全文评论且无正文时跳过，ContentHash 留 null
+        string? contentHash = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var parsed = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
+            contentHash = parsed != null ? ComputeSha256(parsed.RawContent ?? "") : null;
+        }
 
         var comment = new DocumentInlineComment
         {
             StoreId = entry.StoreId,
             EntryId = entryId,
-            DocumentId = entry.DocumentId!,
+            // 全文评论可能无正文，DocumentId 沿用模型非空约定存 string.Empty
+            DocumentId = entry.DocumentId ?? string.Empty,
             ContentHash = contentHash,
-            SelectedText = request.SelectedText,
-            ContextBefore = request.ContextBefore ?? string.Empty,
-            ContextAfter = request.ContextAfter ?? string.Empty,
-            StartOffset = request.StartOffset,
-            EndOffset = request.EndOffset,
+            // 无选区时 SelectedText 留空，标记为全文评论，不参与 rebind / 正文高亮
+            SelectedText = isWholeDocComment ? string.Empty : request.SelectedText,
+            ContextBefore = isWholeDocComment ? string.Empty : (request.ContextBefore ?? string.Empty),
+            ContextAfter = isWholeDocComment ? string.Empty : (request.ContextAfter ?? string.Empty),
+            StartOffset = isWholeDocComment ? 0 : request.StartOffset,
+            EndOffset = isWholeDocComment ? 0 : request.EndOffset,
+            IsWholeDocument = isWholeDocComment,
             Content = request.Content.Trim(),
             AuthorUserId = userId,
             AuthorDisplayName = authorName,
