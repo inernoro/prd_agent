@@ -136,12 +136,15 @@ function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): strin
 
 function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): string {
   if (!status) return '正在检测 CDS runtime pool，请稍后刷新。';
+  const firstBlocker = status.blockers?.find((item) => item.trim());
   if (status.instanceCount <= 0) {
+    if (firstBlocker) return firstBlocker;
     return status.registryLastRefreshError
       ? `未发现可用 sidecar 实例：${status.registryLastRefreshError}`
       : '未发现可用 sidecar 实例，请先完成 CDS sidecar pool 授权和实例发现。';
   }
   if (status.healthyCount <= 0) {
+    if (firstBlocker) return firstBlocker;
     const firstError = status.instances.find((item) => item.error)?.error;
     return firstError
       ? `sidecar 实例均不健康：${firstError}`
@@ -644,6 +647,8 @@ export default function CdsAgentPage() {
       ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount} healthy`
       : '未检测';
     const registryIssue = runtimeStatus?.registryLastRefreshError || '';
+    const blockers = runtimeStatus?.blockers?.filter(Boolean) ?? [];
+    const nextActions = runtimeStatus?.nextActions?.filter(Boolean) ?? [];
     const payloads = events.map(parsePayload).reverse();
     const latestRuntimePayload = payloads.find((payload) => (
       readString(payload, 'runtimeAdapter')
@@ -688,8 +693,12 @@ export default function CdsAgentPage() {
         ['Source', source || '无 runtime 事件'],
         ['Pool', sidecarState],
         ['Discovery', registryIssue || '无发现异常'],
+        ['Blocker', blockers[0] || '无阻塞项'],
+        ['Next', nextActions[0] || '无建议动作'],
         ['Cancel', cancelState],
       ],
+      blockers,
+      nextActions,
     };
   }, [activeSession, events, runtimeStatus]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
@@ -2345,6 +2354,30 @@ export default function CdsAgentPage() {
                         </div>
                       ))}
                     </div>
+                    {(runtimeDiagnostics.blockers.length > 0 || runtimeDiagnostics.nextActions.length > 0) && (
+                      <div className="mt-3 grid gap-2 xl:grid-cols-2">
+                        {runtimeDiagnostics.blockers.length > 0 && (
+                          <div className="rounded-md px-3 py-2" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}>
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-amber-100/60">阻塞项</div>
+                            <div className="mt-1 space-y-1">
+                              {runtimeDiagnostics.blockers.slice(0, 4).map((item) => (
+                                <div key={item} className="text-xs leading-relaxed text-amber-50/78">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {runtimeDiagnostics.nextActions.length > 0 && (
+                          <div className="rounded-md px-3 py-2" style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)' }}>
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-sky-100/60">下一步</div>
+                            <div className="mt-1 space-y-1">
+                              {runtimeDiagnostics.nextActions.slice(0, 4).map((item) => (
+                                <div key={item} className="text-xs leading-relaxed text-sky-50/74">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">

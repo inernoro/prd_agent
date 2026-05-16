@@ -109,6 +109,7 @@
 - P1.7 Toolbox 入口已有第二步异步语义：`CdsAgentAdapter` 在创建并发送远程任务后立即产出 `CDS Agent 远程运行句柄` JSON artifact，包含 `sessionId/traceId/runtimeAdapter/currentRuntimeRunId/workbenchPath/eventStreamPath/logsPath`；Toolbox 运行页已识别该 artifact 并渲染“打开工作台”和“停止”卡片操作，同时会重新附着远程 SSE 事件流、轮询兜底展示最近事件，并对等待中的 MAP 工具审批提供内联允许/拒绝；不再把 Toolbox step 的完成误写成远程 run 已完成。
 - P1.7 权限边界已有第二步：官方 adapter 默认仅开放 `Read/Grep/Glob`，`Bash/Edit/Write` 必须显式 opt-in；已接 `ClaudeAgentOptions.can_use_tool`，危险内置工具会创建 MAP approval request 并等待 approval，再返回官方 `PermissionResultAllow/Deny`。
 - P1.6 远程诊断新增实际阻塞定位：`runtime-status` 的 pool diagnostics 会透出 CDS discovery 为 0 的原因；后台 discovery 会把不可解密的历史 infra connection 标记为 revoked，避免旧 DataProtection key 丢失后每 10 秒重复噪声日志。
+- P1.6 诊断已从“字符串解释”升级为“可操作恢复路径”：`runtime-status` 现在返回 `blockers` 和 `nextActions`，页面 Runtime 调试区直接显示阻塞项与下一步，避免用户只看到 `instanceCount=0` 或 `/readyz 503` 却不知道该更新 CDS 控制面、重新授权，还是修 sidecar 的 `ANTHROPIC_API_KEY` / Claude CLI / `claude-agent-sdk` / workspace。
 - 2026-05-17 远程 preview 已部署到 `cca003766`，但真实 official SDK run 仍未通过：`runtime-status` 显示 `isConfigured=false / instanceCount=0`。已确认两个阻塞：一是旧 infra connection 的 DataProtection key ring 缺失，需重新授权；二是生产 CDS 本体的 `/api/projects/:id/instances` 尚未包含 `cca003766` 中的 shared-service 源码分支实例发现修复，因此 running 的 sidecar pool 暂时不会被 MAP 发现。更新共享 CDS 控制面需要明确批准，不能作为普通 preview 部署自动执行。
 - 下一步应做真实 official SDK run、真实 MAP 审批、取消和远程 CDS 视觉验证；Toolbox 的远程会话重新附着已先落地，但仍需要真实长 run 和 approval run 证明闭环。
 

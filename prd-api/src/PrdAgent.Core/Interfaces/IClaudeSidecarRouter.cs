@@ -143,7 +143,9 @@ public sealed record SidecarPoolDiagnostics(
     int HealthyCount,
     IReadOnlyList<SidecarInstanceDiagnostics> Instances,
     DateTime? RegistryLastRefreshedAt = null,
-    string? RegistryLastRefreshError = null
+    string? RegistryLastRefreshError = null,
+    IReadOnlyList<string>? Blockers = null,
+    IReadOnlyList<string>? NextActions = null
 );
 
 public sealed record SidecarInstanceDiagnostics(

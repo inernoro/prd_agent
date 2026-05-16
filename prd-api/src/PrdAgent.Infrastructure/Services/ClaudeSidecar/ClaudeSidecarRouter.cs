@@ -243,7 +243,105 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             HealthyCount,
             results,
             _registry.LastRefreshedAt,
-            _registry.LastRefreshError);
+            _registry.LastRefreshError,
+            BuildPoolBlockers(results),
+            BuildPoolNextActions(results));
+    }
+
+    private IReadOnlyList<string> BuildPoolBlockers(IReadOnlyList<SidecarInstanceDiagnostics> instances)
+    {
+        var blockers = new List<string>();
+        if (InstanceCount <= 0)
+        {
+            blockers.Add("MAP 当前没有发现任何 CDS sidecar runtime 实例");
+            if (!string.IsNullOrWhiteSpace(_registry.LastRefreshError))
+            {
+                blockers.Add(_registry.LastRefreshError);
+            }
+            return blockers;
+        }
+
+        if (HealthyCount <= 0)
+        {
+            blockers.Add("所有已发现的 sidecar runtime 实例当前都不可用");
+        }
+
+        foreach (var instance in instances)
+        {
+            if (!instance.TokenConfigured)
+            {
+                blockers.Add($"{instance.Name}: 缺少 sidecar bearer token");
+            }
+            if (instance.HttpStatus is >= 400)
+            {
+                blockers.Add($"{instance.Name}: /readyz 返回 HTTP {instance.HttpStatus}");
+            }
+            if (instance.Ready == false)
+            {
+                blockers.Add($"{instance.Name}: /readyz ready=false");
+            }
+            foreach (var missing in ReadMissingAdapterDependencies(instance.AdapterDiagnosticsJson))
+            {
+                blockers.Add($"{instance.Name}: 缺少 {missing}");
+            }
+            if (!string.IsNullOrWhiteSpace(instance.Error))
+            {
+                blockers.Add($"{instance.Name}: {instance.Error}");
+            }
+        }
+
+        return blockers.Distinct(StringComparer.Ordinal).Take(12).ToList();
+    }
+
+    private IReadOnlyList<string> BuildPoolNextActions(IReadOnlyList<SidecarInstanceDiagnostics> instances)
+    {
+        var actions = new List<string>();
+        if (InstanceCount <= 0)
+        {
+            actions.Add("确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复");
+            actions.Add("在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 失效的连接");
+            actions.Add("确认 shared sidecar pool 正在运行，并且实例标签/来源允许当前 MAP 发现");
+        }
+        else if (HealthyCount <= 0)
+        {
+            actions.Add("进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk");
+            actions.Add("确认 SIDECAR_AGENT_ADAPTER=claude-agent-sdk 时，AGENT_WORKSPACE_ROOT 存在且可读写");
+            actions.Add("修复后刷新 runtime-status，再启动 CDS Agent 会话");
+        }
+
+        if (instances.Any(x => x.AdapterDiagnosticsJson?.Contains("claude-agent-sdk", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            actions.Add("官方 SDK 模式下保持 MAP/CDS 只做控制面，工具执行和 turn loop 继续走 claude-agent-sdk");
+        }
+
+        return actions.Distinct(StringComparer.Ordinal).Take(8).ToList();
+    }
+
+    private static IEnumerable<string> ReadMissingAdapterDependencies(string? diagnosticsJson)
+    {
+        if (string.IsNullOrWhiteSpace(diagnosticsJson)) yield break;
+        JsonDocument? doc = null;
+        try
+        {
+            doc = JsonDocument.Parse(diagnosticsJson);
+            if (!doc.RootElement.TryGetProperty("missing", out var missing) || missing.ValueKind != JsonValueKind.Array)
+            {
+                yield break;
+            }
+
+            foreach (var item in missing.EnumerateArray())
+            {
+                var value = item.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    yield return value!;
+                }
+            }
+        }
+        finally
+        {
+            doc?.Dispose();
+        }
     }
 
     private static (bool? Ready, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)

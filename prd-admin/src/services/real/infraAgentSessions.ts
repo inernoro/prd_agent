@@ -145,6 +145,8 @@ export interface InfraAgentRuntimeDiagnostics {
   instances: InfraAgentSidecarInstanceDiagnostics[];
   registryLastRefreshedAt?: string | null;
   registryLastRefreshError?: string | null;
+  blockers?: string[] | null;
+  nextActions?: string[] | null;
 }
 
 interface ListResp {
