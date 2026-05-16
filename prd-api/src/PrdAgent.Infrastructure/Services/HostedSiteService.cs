@@ -448,7 +448,8 @@ public class HostedSiteService : IHostedSiteService
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,
         string? password, int expiresInDays,
-        CancellationToken ct)
+        string purpose = "share",
+        CancellationToken ct = default)
     {
         var allIds = shareType == "collection" ? (siteIds ?? new()) : new List<string>();
         if (shareType != "collection")
@@ -470,20 +471,27 @@ public class HostedSiteService : IHostedSiteService
         // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；
         // 复用时把有效期刷新为本次所选窗口，保证返回链接的寿命恰好等于用户本次所选
         // （既不会因旧链接即将过期而"开盖即废"，也不会超出所选窗口而绕过有效期管控）。
+        // Purpose 隔离：visit（站点访问便捷链）与 share（用户分享）是两个独立池，
+        // 复用判定按 Purpose 严格分流——访问流程绝不会匹配/篡改用户主动创建的限期分享。
+        // 旧记录无 Purpose 字段（Mongo 中缺字段），按 share 对待：Ne("visit") 能命中缺字段文档。
         var effShareType = shareType ?? "single";
+        var effPurpose = string.IsNullOrWhiteSpace(purpose) ? "share" : purpose;
         var wantAccess = string.IsNullOrWhiteSpace(password) ? "public" : "password";
         var newExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : (DateTime?)null;
 
-        var reuseCandidates = effShareType == "collection"
-            ? await _db.WebPageShareLinks
-                .Find(x => x.CreatedBy == userId && !x.IsRevoked
-                    && x.ShareType == "collection" && x.AccessLevel == wantAccess)
-                .SortByDescending(x => x.CreatedAt).ToListAsync(ct)
-            : await _db.WebPageShareLinks
-                .Find(x => x.CreatedBy == userId && !x.IsRevoked
-                    && x.ShareType == effShareType && x.SiteId == siteId
-                    && x.AccessLevel == wantAccess)
-                .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+        var fb = Builders<WebPageShareLink>.Filter;
+        var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
+            & fb.Eq(x => x.IsRevoked, false)
+            & fb.Eq(x => x.AccessLevel, wantAccess)
+            & (effShareType == "collection"
+                ? fb.Eq(x => x.ShareType, "collection")
+                : fb.Eq(x => x.ShareType, effShareType) & fb.Eq(x => x.SiteId, siteId))
+            & (effPurpose == "visit"
+                ? fb.Eq(x => x.Purpose, "visit")
+                : fb.Ne(x => x.Purpose, "visit"));
+
+        var reuseCandidates = await _db.WebPageShareLinks.Find(reuseFilter)
+            .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
 
         WebPageShareLink? reusable;
         if (effShareType == "collection")
@@ -532,6 +540,7 @@ public class HostedSiteService : IHostedSiteService
             SiteId = shareType != "collection" ? siteId : null,
             SiteIds = allIds,
             ShareType = shareType ?? "single",
+            Purpose = effPurpose,
             Title = shareTitle,
             Description = description?.Trim(),
             AccessLevel = string.IsNullOrWhiteSpace(password) ? "public" : "password",
@@ -566,7 +575,10 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)
     {
-        return await _db.WebPageShareLinks.Find(x => x.CreatedBy == userId && !x.IsRevoked)
+        // 排除 visit 便捷链（自动创建，非用户主动分享，不应污染分享管理列表）；
+        // Ne("visit") 能命中无 Purpose 字段的旧记录，旧分享照常列出。
+        return await _db.WebPageShareLinks
+            .Find(x => x.CreatedBy == userId && !x.IsRevoked && x.Purpose != "visit")
             .SortByDescending(x => x.CreatedAt)
             .Limit(100)
             .ToListAsync(ct);

@@ -475,7 +475,8 @@ public class WebPagesController : ControllerBase
                 GetUserId(), GetDisplayName(),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
-                req.Password, req.ExpiresInDays);
+                req.Password, req.ExpiresInDays,
+                purpose: req.Purpose == "visit" ? "visit" : "share");
 
             // 优先返回新短链 /s/{seq}；如分配失败（ShortSeq=0），退回老链接 /s/wp/{token}
             var hasShort = share.ShortSeq > 0;
@@ -632,4 +633,6 @@ public class CreateWebPageShareRequest
     public string? Description { get; set; }
     public string? Password { get; set; }
     public int ExpiresInDays { get; set; }
+    /// <summary>用途：visit = 站点访问便捷链（公开永久、独立池）；其余/缺省 = 用户分享</summary>
+    public string? Purpose { get; set; }
 }

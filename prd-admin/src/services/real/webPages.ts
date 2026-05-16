@@ -211,6 +211,8 @@ export async function createShareLink(data: {
   description?: string;
   password?: string;
   expiresInDays?: number;
+  /** 'visit' = 站点访问便捷链（公开永久、与用户分享互不复用/篡改）；缺省 = 用户分享 */
+  purpose?: string;
 }): Promise<ApiResponse<{
   id: string;
   token: string;

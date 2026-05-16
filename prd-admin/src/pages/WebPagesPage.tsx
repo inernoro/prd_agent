@@ -102,13 +102,14 @@ const sourceTypeLabels: Record<string, string> = {
  * 「访问」专用地址解析 —— 与「分享」彻底分开：
  * - 访问：地址一律走 ≥12 字母 token 形式 /s/wp/{token}
  * - 分享：ShareDialog 走数字短链 /s/{seq}
- * 复用/新建判定全部在服务端闭环（createSiteShareLink 内部按 用户+站点+访问级别 去重，
+ * 复用/新建判定全部在服务端闭环（createSiteShareLink 内部按 用户+站点+访问级别+purpose 去重，
  * 不依赖任何前端分页列表），前端只发指令、用返回 token 拼地址。
- * 解析失败时回退原始 siteUrl，保证访问永不失效。
+ * purpose:'visit' 使其落在独立池：永远是公开永久链，绝不复用或篡改用户主动创建的限期分享，
+ * 也不出现在分享管理列表。解析失败时回退原始 siteUrl，保证访问永不失效。
  */
 async function resolveVisitUrl(site: HostedSite): Promise<string> {
   try {
-    const res = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0 });
+    const res = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, purpose: 'visit' });
     if (res.success && res.data.token) return `${window.location.origin}/s/wp/${res.data.token}`;
   } catch {
     /* 网络异常回退裸链接 */
