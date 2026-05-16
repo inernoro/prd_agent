@@ -350,6 +350,8 @@ public class DocumentStoreController : ControllerBase
             CreatedBy = userId,
             UpdatedBy = userId,
             UpdatedByName = userName,
+            // 新建文档立即带 NEW 徽标（前端按 24h 内判定），24h 后自动消失
+            LastChangedAt = DateTime.UtcNow,
         };
 
         await _db.DocumentEntries.InsertOneAsync(entry);
@@ -995,6 +997,8 @@ public class DocumentStoreController : ControllerBase
             UpdatedBy = userId,
             UpdatedByName = userName,
             ContentIndex = contentIndex?.Trim(),
+            // 新上传文件立即带 NEW 徽标（前端按 24h 内判定），24h 后自动消失
+            LastChangedAt = DateTime.UtcNow,
         };
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
 

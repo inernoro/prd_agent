@@ -28,7 +28,7 @@ function normalizeHeadingText(raw: string): string {
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
-  FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
+  ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
   Sparkles, Wand2, Tags, Replace, BookOpen,
 } from 'lucide-react';
@@ -544,6 +544,7 @@ function TreeNode({
   expandedFolders,
   useContentTitle,
   contentFirstLines,
+  contentMatchIds,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
@@ -560,6 +561,7 @@ function TreeNode({
   expandedFolders: Set<string>;
   useContentTitle: boolean;
   contentFirstLines: Map<string, string>;
+  contentMatchIds: Set<string>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
@@ -608,34 +610,56 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`w-full flex items-center gap-1.5 text-left cursor-pointer transition-colors duration-100 group ${isFolder ? 'py-2' : 'py-[5px]'}`}
+        className={`relative w-full flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[6px] hover-bg-soft'}`}
         style={{
-          paddingLeft: `${8 + depth * 16}px`,
+          // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边
+          paddingLeft: `${10 + depth * 14}px`,
           paddingRight: '10px',
-          background: dragOver ? 'rgba(59,130,246,0.12)' : (isSelected && !isFolder ? 'rgba(59,130,246,0.08)' : 'transparent'),
-          borderLeft: isSelected && !isFolder ? '2px solid rgba(59,130,246,0.6)' : '2px solid transparent',
-          outline: dragOver ? '1px dashed rgba(59,130,246,0.4)' : 'none',
-          // F3：文件夹渲染为"章节分组"标题——上下分隔线、克制留白，更接近文档站目录观感
+          marginLeft: '6px',
+          marginRight: '6px',
+          borderRadius: '9px',
+          // 仅在拖拽/选中时显式给背景，未高亮时留空让 hover-bg-soft 类的 :hover 生效
+          background: dragOver
+            ? 'var(--accent-soft, rgba(99,102,241,0.14))'
+            : (isSelected && !isFolder
+                ? 'var(--accent-soft, rgba(99,102,241,0.10))'
+                : undefined),
+          outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
+          // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
           ...(isFolder
             ? {
-                marginTop: depth === 0 ? '6px' : '2px',
-                borderTop: '1px solid var(--border-subtle)',
-                borderBottom: '1px solid var(--border-subtle)',
+                marginTop: depth === 0 ? '8px' : '4px',
+                borderTop: '1px solid var(--border-faint)',
+                borderRadius: 0,
               }
             : {}),
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
+        {/* 选中态：圆角块内侧细 accent 条（不贴边、不粗方） */}
+        {isSelected && !isFolder && (
+          <span
+            aria-hidden
+            className="absolute left-[3px] top-1/2 -translate-y-1/2 rounded-full"
+            style={{
+              width: '3px',
+              height: '60%',
+              background: 'var(--accent-primary, var(--accent-gold))',
+              opacity: 0.85,
+            }}
+          />
+        )}
         <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
         <span className="flex-1 truncate"
           style={{
             color: isFolder
-              ? 'var(--text-primary)'
-              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary, rgba(255,255,255,0.7))'),
-            fontWeight: isFolder ? 700 : 400,
-            fontSize: isFolder ? '12px' : '12px',
-            letterSpacing: isFolder ? '0.02em' : 'normal',
+              ? 'var(--text-muted)'
+              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
+            fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
+            fontSize: isFolder ? '10.5px' : '12px',
+            letterSpacing: isFolder ? '0.06em' : 'normal',
+            textTransform: isFolder ? 'uppercase' : 'none',
           }}>
           {displayTitle}
         </span>
@@ -652,6 +676,23 @@ function TreeNode({
           >
             #{entry.tags![0]}
             {(entry.tags?.length ?? 0) > 1 ? ` +${entry.tags!.length - 1}` : ''}
+          </span>
+        )}
+
+        {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
+        {!isFolder && contentMatchIds.has(entry.id) && (
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+            style={{
+              background: 'var(--bg-tertiary)',
+              color: 'var(--text-muted)',
+              border: '1px solid var(--border-faint)',
+              letterSpacing: '0.2px',
+              lineHeight: 1.4,
+            }}
+            title="该文件因正文内容命中而被搜出（标题未含关键词）"
+          >
+            内容包含
           </span>
         )}
 
@@ -734,6 +775,7 @@ function TreeNode({
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
           contentFirstLines={contentFirstLines}
+          contentMatchIds={contentMatchIds}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
@@ -1133,7 +1175,6 @@ export function DocBrowser({
   loading,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
-  const [searchContent, setSearchContent] = useState(false);
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
@@ -1333,14 +1374,29 @@ export function DocBrowser({
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
   }, [search, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
 
-  // 搜索处理（防抖 + 内容搜索走后端）
+  // 内容命中标记：搜索时若条目在结果中但关键词不在标题里 → 标「（内容包含）」
+  const contentMatchIds = useMemo(() => {
+    const ids = new Set<string>();
+    const kw = search.trim().toLowerCase();
+    if (!kw) return ids;
+    const list = searchResults !== null ? searchResults : filteredRoots;
+    for (const e of list) {
+      if (e.isFolder) continue;
+      const titleHit = (e.title ?? '').toLowerCase().includes(kw);
+      const contentTitleHit = (contentFirstLines.get(e.id) ?? '').toLowerCase().includes(kw);
+      if (!titleHit && !contentTitleHit) ids.add(e.id);
+    }
+    return ids;
+  }, [search, searchResults, filteredRoots, contentFirstLines]);
+
+  // 搜索处理（防抖 + 永远同时搜标题+内容，走后端；onSearch 内部会先 rebuildContentIndex）
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
     setSearchResults(null);
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
-    if (value.trim() && searchContent && onSearch) {
+    if (value.trim() && onSearch) {
       setSearching(true);
       searchTimerRef.current = setTimeout(async () => {
         const results = await onSearch(value.trim(), true);
@@ -1350,24 +1406,7 @@ export function DocBrowser({
     } else {
       setSearching(false);
     }
-  }, [searchContent, onSearch]);
-
-  // 切换内容搜索时重新触发
-  const handleToggleContentSearch = useCallback(() => {
-    const newVal = !searchContent;
-    setSearchContent(newVal);
-    if (search.trim() && newVal && onSearch) {
-      setSearching(true);
-      setSearchResults(null);
-      onSearch(search.trim(), true).then(results => {
-        setSearchResults(results);
-        setSearching(false);
-      });
-    } else {
-      setSearchResults(null);
-      setSearching(false);
-    }
-  }, [searchContent, search, onSearch]);
+  }, [onSearch]);
 
   const toggleFolder = useCallback((folderId: string) => {
     setExpandedFolders(prev => {
@@ -1378,13 +1417,13 @@ export function DocBrowser({
     });
   }, []);
 
-  // 搜索时自动展开所有文件夹
+  // 搜索时自动展开所有文件夹（后端结果为扁平列表时无需展开，但展开无副作用）
   useEffect(() => {
-    if (search.trim() && !searchContent) {
+    if (search.trim()) {
       const allFolderIds = entries.filter(e => e.isFolder).map(e => e.id);
       setExpandedFolders(new Set(allFolderIds));
     }
-  }, [search, entries, searchContent]);
+  }, [search, entries]);
 
   // 加载内容
   const loadEntryContent = useCallback(async (entryId: string) => {
@@ -1459,37 +1498,33 @@ export function DocBrowser({
         }}>
 
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
-        <div className="surface-panel-header space-y-2 p-2.5">
-          {/* 标题模式切换 */}
+        <div className="surface-panel-header space-y-2.5 px-3 py-3">
+          {/* 标题模式切换（正文标题/文件名）— 保留 */}
           <div className="flex items-center justify-between">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
-              className="flex cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover:bg-white/4"
+              className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
               title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
               {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
               {useContentTitle ? '正文标题' : '文件名'}
             </button>
-            {onSearch && (
-              <button
-                onClick={handleToggleContentSearch}
-                className={`flex cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] transition-colors hover:bg-white/4 ${searchContent ? 'text-token-accent' : 'text-token-muted'}`}
-                title={searchContent ? '内容搜索已启用' : '点击启用内容搜索'}>
-                <FileSearch size={11} />
-                {searchContent ? '内容搜索' : '标题搜索'}
-              </button>
-            )}
           </div>
 
           <div className="flex gap-1.5">
             <div className="relative flex-1">
-              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
-                placeholder={searchContent ? '搜索文件内容...' : '搜索文件...'}
-                className="prd-field h-7 w-full rounded-[8px] pl-7 pr-2.5 text-[11px] outline-none"
+                placeholder="搜索标题或内容…"
+                className="h-8 w-full rounded-[9px] pl-8 pr-3 text-[11.5px] outline-none transition-colors"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-faint)',
+                  color: 'var(--text-primary)',
+                }}
               />
               {searching && (
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                <span className="absolute right-3 top-1/2 -translate-y-1/2">
                   <MapSpinner size={12} />
                 </span>
               )}
@@ -1655,6 +1690,7 @@ export function DocBrowser({
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
               contentFirstLines={contentFirstLines}
+              contentMatchIds={contentMatchIds}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
@@ -1678,9 +1714,13 @@ export function DocBrowser({
         )}
 
         {/* 底部统计 */}
-        <div className="px-3 py-2 text-[10px]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
-          <FolderOpen size={10} className="inline mr-1" />
-          {fileCount} 个文件
+        <div
+          className="flex items-center gap-1.5 px-3.5 py-2.5 text-[10px]"
+          style={{ borderTop: '1px solid var(--border-faint)', color: 'var(--text-muted)' }}
+        >
+          <FolderOpen size={11} style={{ opacity: 0.7 }} />
+          <span className="tabular-nums">{fileCount}</span>
+          <span style={{ opacity: 0.8 }}>个文件</span>
         </div>
 
         {/* 拖拽调整宽度的把手 */}
