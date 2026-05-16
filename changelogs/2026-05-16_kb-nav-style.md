@@ -33,3 +33,4 @@
 | fix | prd-api | 知识库访客离开补写时长改用聚合管道更新（$set + $add + $ifNull）替代 .Inc：历史 view event 文档 DurationMs 可能为 null，对 null 执行 $inc 会报错且经 sendBeacon 调用错误被静默吞致丢时长，$ifNull 视 null 为 0 后累加，旧 null 行也能正确累计 |
 | fix | prd-admin | 知识库本地搜索（searchResults 为 null）时「内容包含」标记回退仅迭代根级条目致文件夹内嵌套文件永远拿不到标记：回退集合扩展为 filteredRoots + filteredChildrenMap 所有展开子项，对全部可见条目统一判定，不影响后端搜索结果模式既有行为 |
 | fix | prd-admin | 知识库标题闭合式 ATX（`## 标题 ##`）下右侧 TOC 与左侧栏展示文本不一致：抽出共享 parseAtxHeadingLine（SSOT，尾部 `#` 串需前置空白才剥离），markdownToc 与 frontmatter 复用同一函数；`## C# 入门` 等紧贴字母的 `#` 不误删 |
+| fix | prd-admin | 知识库编辑当前文档时被左侧"替换文件"覆盖后未退出编辑态致保存会用旧文本覆盖新内容：DocBrowser 监听内容版本键，仅当同一 entry 的 updatedAt 变化（替换/外部更新）时强制 setEditMode(false)+清 editContent，切换文件/正常编辑路径不受影响 |

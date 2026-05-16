@@ -1515,6 +1515,29 @@ export function DocBrowser({
     }
   }, [selectedEntryId, loadEntryContent, entries]);
 
+  // 内容版本键变化时强制退出编辑态：
+  // loadedContentKey = `${entryId}:${updatedAt}`。当"同一个 entry"的 updatedAt
+  // 变了（左侧右键"替换文件"覆盖当前选中文档 / 外部更新），loadEntryContent
+  // 已重新拉取新正文，但 editMode/editContent 仍持有替换前的旧文本，此时若用户
+  // 点保存会把旧文本写回覆盖刚解析的新文档 → 替换像丢数据。这里在"同 entry 内容
+  // 换了版本"时清掉编辑态，回到新内容预览。
+  // 只针对"同 entry 且 key 真的变了"生效：首次加载（prev=null）、切换到不同
+  // entry 都不处理（切文件本就保留既有行为，用户正常进入/中途编辑不受影响）。
+  const prevLoadedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevLoadedKeyRef.current;
+    const cur = loadedContentKey;
+    prevLoadedKeyRef.current = cur;
+    if (!prev || !cur || prev === cur) return;
+    const prevEntryId = prev.slice(0, prev.indexOf(':'));
+    const curEntryId = cur.slice(0, cur.indexOf(':'));
+    // 不同 entry = 切换文件，沿用既有行为，不在此处干预
+    if (prevEntryId !== curEntryId) return;
+    // 同一 entry 但版本键变了 = 内容被替换/外部更新，退出编辑态避免旧文本覆盖
+    setEditMode(false);
+    setEditContent('');
+  }, [loadedContentKey]);
+
   // 自动选中主文档 + 展开其父文件夹链
   useEffect(() => {
     if (!selectedEntryId && primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
