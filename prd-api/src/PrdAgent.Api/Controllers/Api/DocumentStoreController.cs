@@ -755,11 +755,16 @@ public class DocumentStoreController : ControllerBase
     /// </summary>
     private async Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
     {
-        // 全文评论（IsWholeDocument）无锚点，不参与正文 rebind
+        // 全文评论（IsWholeDocument）无锚点，不参与正文 rebind。
+        // 用 Ne(IsWholeDocument, true) 而非 !c.IsWholeDocument：后者被 LINQ 译成
+        // { IsWholeDocument: false } 会漏掉缺该字段的历史评论（IsWholeDocument 是新增字段）；
+        // Ne(...,true) 在 MongoDB 下匹配 false / null / 缺字段三种，正好覆盖历史数据。
+        var rebindFilter = Builders<DocumentInlineComment>.Filter.And(
+            Builders<DocumentInlineComment>.Filter.Eq(c => c.EntryId, entryId),
+            Builders<DocumentInlineComment>.Filter.Eq(c => c.Status, DocumentInlineCommentStatus.Active),
+            Builders<DocumentInlineComment>.Filter.Ne(c => c.IsWholeDocument, true));
         var comments = await _db.DocumentInlineComments
-            .Find(c => c.EntryId == entryId
-                && c.Status == DocumentInlineCommentStatus.Active
-                && !c.IsWholeDocument)
+            .Find(rebindFilter)
             .ToListAsync();
 
         if (comments.Count == 0) return (0, 0);
@@ -1126,10 +1131,14 @@ public class DocumentStoreController : ControllerBase
         {
             // 新文件无可提取正文（图片/音频/扫描 PDF 等）：原有划词评论的锚点已无正文可定位，
             // 把非全文评论批量置为 Orphaned；全文评论（无锚点）保持 Active 不动。
+            // 同 RebindInlineCommentsAsync：用 Ne(IsWholeDocument, true) 而非 !c.IsWholeDocument，
+            // 否则缺该字段的历史评论会被静默排除（漏置 Orphaned）。
+            var orphanFilter = Builders<DocumentInlineComment>.Filter.And(
+                Builders<DocumentInlineComment>.Filter.Eq(c => c.EntryId, entryId),
+                Builders<DocumentInlineComment>.Filter.Eq(c => c.Status, DocumentInlineCommentStatus.Active),
+                Builders<DocumentInlineComment>.Filter.Ne(c => c.IsWholeDocument, true));
             await _db.DocumentInlineComments.UpdateManyAsync(
-                c => c.EntryId == entryId
-                    && c.Status == DocumentInlineCommentStatus.Active
-                    && !c.IsWholeDocument,
+                orphanFilter,
                 Builders<DocumentInlineComment>.Update
                     .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow));
