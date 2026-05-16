@@ -905,6 +905,10 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
     if (f) onReplaceFile(f);
   };
 
+  // 访问 = 直达站点 id 直链（siteUrl 形如 .../sites/{siteId}/index.html，
+  // 字母/id 地址，与分享的数字短链 /s/{seq} 体系彻底分开，不复用分享判断）
+  const handleVisit = () => { window.open(site.siteUrl, '_blank'); };
+
   return (
     <div
       className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
@@ -942,7 +946,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
         <div
           className="relative cursor-pointer overflow-hidden"
           style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
-          onClick={() => window.open(site.siteUrl, '_blank')}
+          onClick={handleVisit}
         >
           {site.coverImageUrl ? (
             <img
@@ -1037,7 +1041,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             <h3
               className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
               style={{ color: 'var(--text-primary)' }}
-              onClick={() => window.open(site.siteUrl, '_blank')}
+              onClick={handleVisit}
               title={site.title}
             >
               {site.title}
