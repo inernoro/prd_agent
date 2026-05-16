@@ -668,48 +668,21 @@ export default function WebPagesPage() {
 function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void }) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      // 1. 查找该 site 已有的、可用的无密码分享链接
-      const listRes = await listSiteShares();
-      if (cancelled) return;
-      if (listRes.success) {
-        const existing = listRes.data.items.find(s =>
-          s.siteId === site.id &&
-          s.shareType === 'single' &&
-          !s.isRevoked &&
-          s.accessLevel === 'public' &&
-          (!s.expiresAt || new Date(s.expiresAt) > new Date())
-        );
-        if (existing) {
-          const path = existing.shortSeq && existing.shortSeq > 0
-            ? `/s/${existing.shortSeq}`
-            : `/s/wp/${existing.token}`;
-          setShareUrl(`${window.location.origin}${path}`);
-          setLoading(false);
-          return;
-        }
-      }
-      // 2. 没有可复用的，才创建新的
-      const res = await createSiteShareLink({
-        siteId: site.id,
-        shareType: 'single',
-        expiresInDays: 0,
-      });
+      // 扫码访问 = 永久访问便捷链，与「访问」按钮同源走 resolveVisitUrl：
+      // 落在隔离的 visit 池（purpose:'visit'），绝不复用/篡改用户主动创建的限期分享，
+      // 也不依赖 listSiteShares 分页扫描。失败兜底裸链接，二维码恒可用。
+      const url = await resolveVisitUrl(site);
       if (cancelled) return;
       setLoading(false);
-      if (res.success) {
-        setShareUrl(`${window.location.origin}${res.data.shareUrl}`);
-      } else {
-        setError('创建分享链接失败');
-      }
+      setShareUrl(url);
     })();
     return () => { cancelled = true; };
-  }, [site.id]);
+  }, [site]);
 
   return (
     <Dialog
@@ -721,8 +694,6 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
         <div className="flex flex-col items-center gap-4 py-4">
           {loading ? (
             <MapSectionLoader text="正在生成分享链接…" />
-          ) : error ? (
-            <p className="text-sm py-8" style={{ color: '#ef4444' }}>{error}</p>
           ) : shareUrl ? (
             <>
               <div className="p-4 rounded-2xl" style={{ background: '#fff' }}>
