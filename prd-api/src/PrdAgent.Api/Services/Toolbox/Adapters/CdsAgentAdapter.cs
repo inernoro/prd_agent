@@ -21,17 +21,20 @@ public class CdsAgentAdapter : IAgentAdapter
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
+    private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
     private readonly ILogger<CdsAgentAdapter> _logger;
 
     public CdsAgentAdapter(
         MongoDbContext db,
         IInfraAgentSessionService sessions,
         IInfraAgentRuntimeProfileService runtimeProfiles,
+        IInfraAgentRuntimeAdapter? runtimeAdapter,
         ILogger<CdsAgentAdapter> logger)
     {
         _db = db;
         _sessions = sessions;
         _runtimeProfiles = runtimeProfiles;
+        _runtimeAdapter = runtimeAdapter;
         _logger = logger;
     }
 
@@ -110,6 +113,15 @@ public class CdsAgentAdapter : IAgentAdapter
         if (runtimeProfile == null)
         {
             yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
+            yield break;
+        }
+
+        if (RequiresManagedRuntime(runtimeProfile.Runtime) && _runtimeAdapter?.IsConfigured != true)
+        {
+            var detail = _runtimeAdapter == null
+                ? "runtime adapter 未注册"
+                : $"adapter={_runtimeAdapter.AdapterKind}, instances={_runtimeAdapter.InstanceCount}, healthy={_runtimeAdapter.HealthyCount}";
+            yield return AgentStreamChunk.Error($"CDS Agent runtime pool 不可用，已阻止 Toolbox 委托：{detail}");
             yield break;
         }
 
@@ -350,6 +362,12 @@ public class CdsAgentAdapter : IAgentAdapter
         string Model,
         bool IsDefault,
         DateTime UpdatedAt);
+
+    private static bool RequiresManagedRuntime(string? runtime)
+    {
+        return string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static string RenderEvent(InfraAgentEventView evt)
     {

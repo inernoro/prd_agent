@@ -156,6 +156,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var timeoutSeconds = runtimeProfile?.TimeoutSeconds ?? session.TimeoutSeconds;
             var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
             var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
+            EnsureRuntimeAdapterReady(runtime);
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
@@ -268,6 +269,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "当前会话已进入人工接管，恢复 Agent 后才能发送任务",
                 StatusCodes.Status409Conflict);
         }
+
+        EnsureRuntimeAdapterReady(session.Runtime);
 
         if (string.IsNullOrWhiteSpace(session.CdsSessionId))
         {
@@ -1250,18 +1253,21 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         if (_runtimeAdapter == null || !_runtimeAdapter.IsConfigured)
         {
+            var message = BuildRuntimeUnavailableMessage();
             await AppendRawEventAsync(
                 session.Id,
                 await NextEventSeqAsync(session.Id, ct),
-                InfraAgentEventTypes.Log,
+                InfraAgentEventTypes.Error,
                 JsonSerializer.Serialize(new
                 {
-                    level = "warning",
+                    code = InfraAgentSessionErrorCodes.RuntimeUnavailable,
                     source = "runtime-router",
-                    message = "real sidecar is not configured; CDS fake runtime output is being used"
+                    message,
+                    retryable = true
                 }),
                 ct);
-            return true;
+            await MarkRuntimeFailedAsync(session, message, ct);
+            return false;
         }
 
         var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
@@ -1476,6 +1482,33 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var value = Environment.GetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER");
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private void EnsureRuntimeAdapterReady(string? runtime)
+    {
+        if (!RequiresManagedRuntime(runtime)) return;
+        if (_runtimeAdapter?.IsConfigured == true) return;
+
+        throw new InfraAgentSessionException(
+            InfraAgentSessionErrorCodes.RuntimeUnavailable,
+            BuildRuntimeUnavailableMessage(),
+            StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private string BuildRuntimeUnavailableMessage()
+    {
+        if (_runtimeAdapter == null)
+        {
+            return "CDS Agent runtime adapter 未注册，不能启动真实 Agent 任务";
+        }
+
+        return $"CDS Agent runtime pool 不可用：adapter={_runtimeAdapter.AdapterKind}, instances={_runtimeAdapter.InstanceCount}, healthy={_runtimeAdapter.HealthyCount}";
+    }
+
+    private static bool RequiresManagedRuntime(string? runtime)
+    {
+        return string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<long> NextEventSeqAsync(string sessionId, CancellationToken ct)
