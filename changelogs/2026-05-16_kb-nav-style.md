@@ -34,3 +34,4 @@
 | fix | prd-admin | 知识库本地搜索（searchResults 为 null）时「内容包含」标记回退仅迭代根级条目致文件夹内嵌套文件永远拿不到标记：回退集合扩展为 filteredRoots + filteredChildrenMap 所有展开子项，对全部可见条目统一判定，不影响后端搜索结果模式既有行为 |
 | fix | prd-admin | 知识库标题闭合式 ATX（`## 标题 ##`）下右侧 TOC 与左侧栏展示文本不一致：抽出共享 parseAtxHeadingLine（SSOT，尾部 `#` 串需前置空白才剥离），markdownToc 与 frontmatter 复用同一函数；`## C# 入门` 等紧贴字母的 `#` 不误删 |
 | fix | prd-admin | 知识库编辑当前文档时被左侧"替换文件"覆盖后未退出编辑态致保存会用旧文本覆盖新内容：DocBrowser 监听内容版本键，仅当同一 entry 的 updatedAt 变化（替换/外部更新）时强制 setEditMode(false)+清 editContent，切换文件/正常编辑路径不受影响 |
+| fix | prd-api | 知识库替换文件清理旧 ParsedPrd 前增加引用计数守卫：ParsedPrd.Id 由内容哈希派生，解析正文相同的多条目共享同一 DocumentId，原无条件删除会令另一指向它的条目正文/预览全丢；改为仅当无其它 DocumentEntry 仍引用该 DocumentId 才删（Attachment 经 grep 确认上传/替换每次新建独立记录、条目独占，保持直接删并注释依据） |

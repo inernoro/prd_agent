@@ -1151,13 +1151,23 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                await _db.Documents.DeleteOneAsync(d => d.Id == oldDocumentId, CancellationToken.None);
+                // ParsedPrd.Id 由内容哈希派生：解析正文相同的多个条目会共享同一个 DocumentId。
+                // 删除前先做引用计数守卫——仍有其它条目指向它则跳过，避免误删共享正文/预览。
+                var stillReferenced = await _db.DocumentEntries
+                    .Find(e => e.DocumentId == oldDocumentId && e.Id != entryId)
+                    .AnyAsync(CancellationToken.None);
+                if (!stillReferenced)
+                {
+                    await _db.Documents.DeleteOneAsync(d => d.Id == oldDocumentId, CancellationToken.None);
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[document-store] Replace cleanup: 删除旧 ParsedPrd 失败 docId={DocId} entry={EntryId}", oldDocumentId, entryId);
             }
         }
+        // Attachment 为条目独占：上传与替换每次都新建独立 Attachment（默认 Guid Id，
+        // grep `AttachmentId =` 仅 request 传入 / 新建赋值，无复用共享场景），故直接删旧记录。
         if (!string.IsNullOrEmpty(oldAttachmentId) && oldAttachmentId != attachment.AttachmentId)
         {
             try
