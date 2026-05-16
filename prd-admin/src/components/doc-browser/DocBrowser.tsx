@@ -842,11 +842,20 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 // background-image:url(...) 做数据外带，削弱 sanitize 的 XSS 防护。
 // 代价：内嵌 <div style="margin:..."> 之类只丢内联间距，标签本身仍渲染成元素
 //（"裸标签当文本显示"的诉求已由 rehypeRaw 解决，不依赖 inline style）。
+//
+// 安全取舍（Codex-J）：同理不再放行任意元素的 className。
+// 上传 markdown 内嵌 HTML 可携带本应用 Tailwind/工具类（如 fixed inset-0、
+// 高 z-index、背景类）穿过 sanitizer，在已发布文档里覆盖/伪装应用 UI，
+// 与内联 style 是同源的 UI 钓鱼面。仅保留 id（标题锚点等）。
+// KaTeX 输出的 class 不经此 schema：rehype 顺序为
+// [rehypeRaw, rehypeSanitize, rehypeKatex]，rehypeKatex 在 sanitize 之后运行，
+// 故移除 className 放行不影响数学公式渲染；正文 markdown 的 class 由
+// React 组件 renderer 赋予（不经 raw+sanitize 链），同样不受影响。
 const docSanitizeSchema = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
-    '*': [...(defaultSchema.attributes?.['*'] || []), 'className', 'id'],
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'id'],
     math: ['xmlns'],
   },
   tagNames: [
@@ -1408,7 +1417,17 @@ export function DocBrowser({
     const ids = new Set<string>();
     const kw = search.trim().toLowerCase();
     if (!kw) return ids;
-    const list = searchResults !== null ? searchResults : filteredRoots;
+    // 后端搜索模式：searchResults 已是扁平的全部命中条目。
+    // 本地搜索模式（searchResults === null）：filteredRoots 只含根级条目，
+    // 文件夹内嵌套文件不在其中——必须并入 filteredChildrenMap 各 value 数组，
+    // 否则展开的子文件永远拿不到「内容包含」标记（Bugbot-L）。
+    let list: DocBrowserEntry[];
+    if (searchResults !== null) {
+      list = searchResults;
+    } else {
+      list = [...filteredRoots];
+      for (const children of filteredChildrenMap.values()) list.push(...children);
+    }
     for (const e of list) {
       if (e.isFolder) continue;
       const titleHit = (e.title ?? '').toLowerCase().includes(kw);
@@ -1416,7 +1435,7 @@ export function DocBrowser({
       if (!titleHit && !contentTitleHit) ids.add(e.id);
     }
     return ids;
-  }, [search, searchResults, filteredRoots, contentFirstLines]);
+  }, [search, searchResults, filteredRoots, filteredChildrenMap, contentFirstLines]);
 
   // 搜索处理（防抖 + 永远同时搜标题+内容，走后端；onSearch 内部会先 rebuildContentIndex）
   const handleSearchChange = useCallback((value: string) => {
