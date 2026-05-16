@@ -98,6 +98,34 @@ const sourceTypeLabels: Record<string, string> = {
   'saved-share': '从分享保存',
 };
 
+/**
+ * 「访问」专用地址解析 —— 与「分享」彻底分开：
+ * - 访问：复用/新建该站点的无密码单站点链接，地址一律走 ≥12 字母 token 形式 /s/wp/{token}
+ * - 分享：ShareDialog 自有逻辑，地址一律走数字短链 /s/{seq}
+ * 两套地址格式不同、判断函数独立，互不复用，避免混淆。
+ * 解析失败时回退原始 siteUrl，保证访问永不失效。
+ */
+async function resolveVisitUrl(site: HostedSite): Promise<string> {
+  try {
+    const listRes = await listSiteShares();
+    if (listRes.success) {
+      const existing = listRes.data.items.find(s =>
+        s.siteId === site.id &&
+        s.shareType === 'single' &&
+        !s.isRevoked &&
+        s.accessLevel === 'public' &&
+        (!s.expiresAt || new Date(s.expiresAt) > new Date())
+      );
+      if (existing?.token) return `${window.location.origin}/s/wp/${existing.token}`;
+    }
+    const res = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0 });
+    if (res.success && res.data.token) return `${window.location.origin}/s/wp/${res.data.token}`;
+  } catch {
+    /* 网络异常回退裸链接 */
+  }
+  return site.siteUrl;
+}
+
 // ─── Main Page ───
 
 export default function WebPagesPage() {
@@ -905,9 +933,12 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
     if (f) onReplaceFile(f);
   };
 
-  // 访问 = 直达站点 id 直链（siteUrl 形如 .../sites/{siteId}/index.html，
-  // 字母/id 地址，与分享的数字短链 /s/{seq} 体系彻底分开，不复用分享判断）
-  const handleVisit = () => { window.open(site.siteUrl, '_blank'); };
+  // 访问 = 无密码分享链接（≥12 字母 token 形式 /s/wp/{token}），
+  // 与分享的数字短链 /s/{seq} 体系彻底分开。先同步开窗规避拦截，再异步解析。
+  const handleVisit = () => {
+    const w = window.open('', '_blank');
+    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+  };
 
   return (
     <div
