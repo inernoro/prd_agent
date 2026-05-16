@@ -1049,6 +1049,11 @@ public class DocumentStoreController : ControllerBase
         if (file.Length > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
 
+        // 覆盖前先捕获旧的 Attachment / ParsedPrd 引用，待替换成功后清理，
+        // 否则每次替换都把上一版正文 + Attachment 记录变成永久孤儿（删条目时只按新 id 清理，清不到历史版本）
+        var oldAttachmentId = entry.AttachmentId;
+        var oldDocumentId = entry.DocumentId;
+
         var mime = InferMime(file.ContentType, file.FileName);
 
         byte[] bytes;
@@ -1128,6 +1133,32 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentInlineComment>.Update
                     .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        }
+
+        // 替换主流程已成功，旧 Attachment / ParsedPrd 尽力而为清理（与 DeleteEntry 一致：只删 DB 记录，
+        // 不动存储 blob —— blob 按 sha 去重为多条目共享，删除路径同样不调 _assetStorage）。
+        // 清理失败不影响替换结果：CT.None 保证不被客户端断开打断，try/catch + 警告日志兜底。
+        if (!string.IsNullOrEmpty(oldDocumentId) && oldDocumentId != documentId)
+        {
+            try
+            {
+                await _db.Documents.DeleteOneAsync(d => d.Id == oldDocumentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Replace cleanup: 删除旧 ParsedPrd 失败 docId={DocId} entry={EntryId}", oldDocumentId, entryId);
+            }
+        }
+        if (!string.IsNullOrEmpty(oldAttachmentId) && oldAttachmentId != attachment.AttachmentId)
+        {
+            try
+            {
+                await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Replace cleanup: 删除旧 Attachment 失败 attId={AttId} entry={EntryId}", oldAttachmentId, entryId);
+            }
         }
 
         _logger.LogInformation("[document-store] Entry replaced: {EntryId} -> '{FileName}' ({Size}B) by {UserId}",
