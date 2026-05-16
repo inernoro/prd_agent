@@ -19,6 +19,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import { distributeToColumns, getAspectRatio } from './waterfall';
 import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
+import { useInViewport } from '@/hooks/useInViewport';
 import { CreatorFilterRow } from './CreatorFilterRow';
 
 const TABS = [
@@ -27,7 +28,7 @@ const TABS = [
   { key: 'literary', label: '文学创作' },
 ] as const;
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 12;
 
 /* ── NotebookLM-style gradient fallbacks ── */
 const FALLBACK_GRADIENTS = [
@@ -69,6 +70,7 @@ function ShowcaseCard({
   useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
   useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
+  const [boxRef, inView] = useInViewport<HTMLDivElement>();
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
   const hasCover = !!item.coverUrl && !imgError;
 
@@ -98,20 +100,22 @@ function ShowcaseCard({
     >
       {/* Card — full-bleed image/gradient, natural aspect ratio for waterfall */}
       <div
+        ref={boxRef}
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
         }}
       >
-        {/* Cover image */}
-        {item.coverUrl && !imgError && (
+        {/* Cover image — only requested once the card nears the viewport */}
+        {item.coverUrl && !imgError && inView && (
           <img
             src={item.coverUrl}
             alt={item.title}
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
             style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
             loading="lazy"
+            decoding="async"
             onLoad={() => setImgLoaded(true)}
             onError={() => setImgError(true)}
           />

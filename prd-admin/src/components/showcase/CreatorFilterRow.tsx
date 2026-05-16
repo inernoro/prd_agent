@@ -1,4 +1,4 @@
-import { Users, Crown } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import type { SubmissionCreator } from '@/services/real/submissions';
 
@@ -11,11 +11,11 @@ interface Props {
 
 const ITEM_WIDTH = 64;
 
-/** Crown color for the top-3 creators (gold / silver / bronze) */
-const RANK_CROWN: Record<number, string> = {
-  0: '#FACC15',
-  1: '#CBD5E1',
-  2: '#D8975A',
+/** Colored ring for the top-3 creators: gold / silver / bronze */
+const RANK_RING: Record<number, { ring: string; glow: string; label: string }> = {
+  0: { ring: 'linear-gradient(135deg, #FDE68A 0%, #F59E0B 100%)', glow: 'rgba(245,158,11,0.55)', label: '#FBBF24' },
+  1: { ring: 'linear-gradient(135deg, #E5E7EB 0%, #94A3B8 100%)', glow: 'rgba(148,163,184,0.5)', label: '#CBD5E1' },
+  2: { ring: 'linear-gradient(135deg, #E0A472 0%, #B26B33 100%)', glow: 'rgba(178,107,51,0.5)', label: '#D8975A' },
 };
 
 /**
@@ -84,7 +84,7 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
       {creators.map((c, index) => {
         const active = selectedUserId === c.ownerUserId;
         const avatarUrl = resolveAvatarUrl({ avatarFileName: c.ownerAvatarFileName });
-        const crownColor = RANK_CROWN[index];
+        const rank = RANK_RING[index];
         return (
           <button
             key={c.ownerUserId}
@@ -98,26 +98,19 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
             <div
               className="relative w-11 h-11 rounded-full transition-all duration-200"
               style={{
-                padding: 2,
+                padding: rank ? 2.5 : 2,
                 background: active
                   ? 'linear-gradient(135deg, #818CF8 0%, #A78BFA 100%)'
-                  : 'rgba(255,255,255,0.08)',
-                boxShadow: active ? '0 0 14px rgba(129,140,248,0.4)' : 'none',
+                  : rank
+                    ? rank.ring
+                    : 'rgba(255,255,255,0.08)',
+                boxShadow: active
+                  ? '0 0 14px rgba(129,140,248,0.4)'
+                  : rank
+                    ? `0 0 12px ${rank.glow}`
+                    : 'none',
               }}
             >
-              {crownColor && (
-                <Crown
-                  size={13}
-                  fill={crownColor}
-                  strokeWidth={1.5}
-                  className="absolute left-1/2 -translate-x-1/2 pointer-events-none"
-                  style={{
-                    top: -10,
-                    color: crownColor,
-                    filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.6))',
-                  }}
-                />
-              )}
               <img
                 src={avatarUrl}
                 alt={c.ownerUserName}
@@ -131,7 +124,7 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
             </div>
             <span
               className="text-[11px] truncate w-full text-center"
-              style={{ color: active ? '#A5B4FC' : 'rgba(255,255,255,0.5)' }}
+              style={{ color: active ? '#A5B4FC' : rank ? rank.label : 'rgba(255,255,255,0.5)' }}
             >
               {c.ownerUserName}
             </span>
