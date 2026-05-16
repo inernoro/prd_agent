@@ -43,6 +43,7 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import { DocToc } from './DocToc';
 
 // ── 类型 ──
 
@@ -1156,6 +1157,17 @@ export function DocBrowser({
     return e && !e.isFolder ? e : null;
   }, [selectedEntryId, entries]);
 
+  // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
+  const tocContent = useMemo(() => {
+    if (!selectedEntryId) return null;
+    const e = entries.find(x => x.id === selectedEntryId);
+    if (!e || e.isFolder) return null;
+    const text = preview?.text;
+    if (!text) return null;
+    const cfg = getFileTypeConfig(e.title, e.contentType);
+    return cfg.preview === 'text' ? text : null;
+  }, [selectedEntryId, entries, preview]);
+
   // 拖拽调整宽度
   useEffect(() => {
     if (!resizing) return;
@@ -1865,57 +1877,63 @@ export function DocBrowser({
                 );
               })()}
             </div>
-            {/* 内容区 */}
-            <div
-              ref={contentAreaRef}
-              className="flex-1 px-6 py-4 relative"
-              style={{ minHeight: 0, overflowY: 'auto' }}
-            >
-              {contentLoading ? (
-                <MapSectionLoader text="加载文档内容…" />
-              ) : editMode ? (
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  spellCheck={false}
-                  className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
-                  style={{
-                    background: 'rgba(0,0,0,0.2)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: '8px',
-                    padding: '12px 16px',
-                    color: 'var(--text-primary)',
-                  }}
-                  placeholder="在此编辑文档内容..."
-                />
-              ) : preview ? (
-                <FilePreview
-                  entry={entries.find(e => e.id === selectedEntryId)}
-                  preview={preview}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
-                  <FolderOpen size={48} className="opacity-20 mb-2" />
-                  <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
-                </div>
-              )}
-              {/* 划词选中时的浮层"添加评论"按钮 */}
-              {liveSelection && !editMode && (
-                <SelectionActionPopover
-                  selection={liveSelection}
-                  onAddComment={() => {
-                    setPendingSelection({
-                      selectedText: liveSelection.selectedText,
-                      contextBefore: liveSelection.contextBefore,
-                      contextAfter: liveSelection.contextAfter,
-                      startOffset: liveSelection.startOffset,
-                      endOffset: liveSelection.endOffset,
-                    });
-                    setInlineCommentsOpen(true);
-                    clearLiveSelection();
-                    window.getSelection()?.removeAllRanges();
-                  }}
-                />
+            {/* 内容区 + 右侧本页章节导航（F1） */}
+            <div className="flex-1 flex min-w-0" style={{ minHeight: 0 }}>
+              <div
+                ref={contentAreaRef}
+                className="flex-1 min-w-0 px-6 py-4 relative"
+                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              >
+                {contentLoading ? (
+                  <MapSectionLoader text="加载文档内容…" />
+                ) : editMode ? (
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    spellCheck={false}
+                    className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
+                    style={{
+                      background: 'rgba(0,0,0,0.2)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '8px',
+                      padding: '12px 16px',
+                      color: 'var(--text-primary)',
+                    }}
+                    placeholder="在此编辑文档内容..."
+                  />
+                ) : preview ? (
+                  <FilePreview
+                    entry={entries.find(e => e.id === selectedEntryId)}
+                    preview={preview}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
+                    <FolderOpen size={48} className="opacity-20 mb-2" />
+                    <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                  </div>
+                )}
+                {/* 划词选中时的浮层"添加评论"按钮 */}
+                {liveSelection && !editMode && (
+                  <SelectionActionPopover
+                    selection={liveSelection}
+                    onAddComment={() => {
+                      setPendingSelection({
+                        selectedText: liveSelection.selectedText,
+                        contextBefore: liveSelection.contextBefore,
+                        contextAfter: liveSelection.contextAfter,
+                        startOffset: liveSelection.startOffset,
+                        endOffset: liveSelection.endOffset,
+                      });
+                      setInlineCommentsOpen(true);
+                      clearLiveSelection();
+                      window.getSelection()?.removeAllRanges();
+                    }}
+                  />
+                )}
+              </div>
+              {/* F1：本页章节导航——仅文本类预览且非编辑态显示，无标题时组件自身返回 null */}
+              {!contentLoading && !editMode && tocContent && (
+                <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
               )}
             </div>
           </>
