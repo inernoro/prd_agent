@@ -550,18 +550,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     setUploading(true);
     const res = await replaceDocumentFile(entryId, file);
     if (res.success) {
+      // 注入 res.data.entry（含更新后的 updatedAt），DocBrowser 内容缓存键
+      // 以 entryId+updatedAt 组合为版本，updatedAt 变化即自动重载新正文，
+      // 无需 undefined→id 的 setTimeout hack
       setEntries(prev => prev.map(e => e.id === entryId ? { ...e, ...res.data.entry } : e));
-      if (selectedEntryId === entryId) {
-        // 强制重新拉取新内容
-        setSelectedEntryId(undefined);
-        setTimeout(() => setSelectedEntryId(entryId), 0);
-      }
       toast.success('替换成功', '文档内容已更新，标签与位置保留');
     } else {
       toast.error('替换失败', res.error?.message);
     }
     setUploading(false);
-  }, [selectedEntryId]);
+  }, []);
 
   // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
   const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');

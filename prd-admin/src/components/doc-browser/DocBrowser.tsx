@@ -1191,7 +1191,8 @@ export function DocBrowser({
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
-  const [loadedEntryId, setLoadedEntryId] = useState<string | null>(null);
+  // 内容加载缓存键：以 entryId + updatedAt 组合作内容版本，替换文件后 updatedAt 变化即触发重载
+  const [loadedContentKey, setLoadedContentKey] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -1448,24 +1449,28 @@ export function DocBrowser({
   }, [search, entries]);
 
   // 加载内容
-  const loadEntryContent = useCallback(async (entryId: string) => {
-    if (entryId === loadedEntryId) return;
+  // contentKey = `${entryId}:${updatedAt}`：替换文件后后端会更新 updatedAt，
+  // 缓存键随之变化，命中失败 → 重新拉取新正文（修复"替换后预览不刷新"）
+  const loadEntryContent = useCallback(async (entryId: string, contentKey: string) => {
+    if (contentKey === loadedContentKey) return;
     setContentLoading(true);
     setPreview(null);
     try {
       const data = await loadContent(entryId);
       setPreview(data);
-      setLoadedEntryId(entryId);
+      setLoadedContentKey(contentKey);
     } catch {
       setPreview(null);
     }
     setContentLoading(false);
-  }, [loadContent, loadedEntryId]);
+  }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
     if (selectedEntryId) {
       const entry = entries.find(e => e.id === selectedEntryId);
-      if (entry && !entry.isFolder) loadEntryContent(selectedEntryId);
+      if (entry && !entry.isFolder) {
+        loadEntryContent(selectedEntryId, `${selectedEntryId}:${entry.updatedAt ?? ''}`);
+      }
     }
   }, [selectedEntryId, loadEntryContent, entries]);
 
