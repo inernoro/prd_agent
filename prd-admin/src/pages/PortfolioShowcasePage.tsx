@@ -12,15 +12,20 @@ import {
 } from 'lucide-react';
 import {
   listPublicSubmissions,
+  listSubmissionCreators,
   likeSubmission,
   unlikeSubmission,
   type SubmissionItem,
+  type SubmissionCreator,
 } from '@/services/real/submissions';
 import { SubmissionDetailModal } from '@/components/showcase/SubmissionDetailModal';
 import { LiteraryCard } from '@/components/showcase/LiteraryCard';
+import { CreatorFilterRow } from '@/components/showcase/CreatorFilterRow';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
+import { distributeToColumns, getAspectRatio } from '@/components/showcase/waterfall';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── Constants ──
@@ -32,30 +37,6 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 24;
-
-/** Distribute items into columns by shortest-column-first for waterfall layout */
-function distributeToColumns<T extends { coverWidth: number; coverHeight: number }>(
-  items: T[],
-  columnCount: number,
-): T[][] {
-  const columns: T[][] = Array.from({ length: columnCount }, () => []);
-  const heights = new Array(columnCount).fill(0);
-  for (const item of items) {
-    const ratio = item.coverWidth && item.coverHeight ? item.coverHeight / item.coverWidth : 0.625;
-    const shortest = heights.indexOf(Math.min(...heights));
-    columns[shortest].push(item);
-    heights[shortest] += ratio;
-  }
-  return columns;
-}
-
-/** Get aspect ratio string for a submission item */
-function getAspectRatio(item: SubmissionItem): string {
-  if (item.coverWidth && item.coverHeight) {
-    return `${item.coverWidth}/${item.coverHeight}`;
-  }
-  return '16/10';
-}
 
 // ── Unified Visual Card (NotebookLM style) ──
 
@@ -214,8 +195,13 @@ export default function PortfolioShowcasePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [scrollY, setScrollY] = useState(0);
+  const [creators, setCreators] = useState<SubmissionCreator[]>([]);
+  const [creatorsLoading, setCreatorsLoading] = useState(false);
+  const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
+  const selectedCreatorRef = useRef<string | null>(null);
   const fetchIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   // Track scroll for parallax hero
   useEffect(() => {
@@ -234,6 +220,7 @@ export default function PortfolioShowcasePage() {
     try {
       const res = await listPublicSubmissions({
         contentType: contentType || undefined,
+        ownerUserId: selectedCreatorRef.current || undefined,
         skip,
         limit: PAGE_SIZE,
       });
@@ -250,14 +237,35 @@ export default function PortfolioShowcasePage() {
     }
   }, []);
 
+  const fetchCreators = useCallback(async (contentType: string) => {
+    setCreatorsLoading(true);
+    try {
+      const res = await listSubmissionCreators({ contentType: contentType || undefined });
+      if (res.success) setCreators(res.data.creators);
+    } finally {
+      setCreatorsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchItems('', 0, false);
-  }, [fetchItems]);
+    fetchCreators('');
+  }, [fetchItems, fetchCreators]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setItems([]);
+    setSelectedCreatorId(null);
+    selectedCreatorRef.current = null;
     fetchItems(tab, 0, false);
+    fetchCreators(tab);
+  };
+
+  const handleSelectCreator = (userId: string | null) => {
+    setSelectedCreatorId(userId);
+    selectedCreatorRef.current = userId;
+    setItems([]);
+    fetchItems(activeTab, 0, false);
   };
 
   const handleLikeToggle = async (id: string, liked: boolean) => {
@@ -283,9 +291,8 @@ export default function PortfolioShowcasePage() {
 
   const hasMore = items.length < total;
 
-  // Waterfall column count + distribution
-  const columnCount = isMobile ? 2 : 4;
-  const gap = isMobile ? 12 : 16;
+  // Waterfall column count — driven by actual container width (ultrawide-aware)
+  const { columnCount, gap } = useWaterfallColumns(gridRef);
   const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
 
   // Infinite scroll sentinel
@@ -311,6 +318,15 @@ export default function PortfolioShowcasePage() {
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ background: '#0a0a0f' }}>
+      {/* Decorative aurora glow behind the whole page (so it isn't dead-black below the hero) */}
+      <div
+        className="absolute inset-0 overflow-hidden pointer-events-none"
+        style={{ zIndex: 0, opacity: 0.55 }}
+        aria-hidden
+      >
+        <div className="showcase-aurora" />
+      </div>
+
       {/* ── Floating top bar ── */}
       <div
         className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between transition-all duration-500"
@@ -381,7 +397,7 @@ export default function PortfolioShowcasePage() {
       </div>
 
       {/* ── Scrollable content ── */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto relative z-10">
         {/* ── Hero Section ── */}
         <div
           className="relative overflow-hidden"
@@ -396,15 +412,8 @@ export default function PortfolioShowcasePage() {
               transition: 'transform 0.1s linear',
             }}
           >
-            {/* Multi-layer gradient orbs */}
-            <div className="absolute inset-0" style={{
-              background: `
-                radial-gradient(ellipse 80% 60% at 20% 40%, rgba(99,102,241,0.15) 0%, transparent 60%),
-                radial-gradient(ellipse 60% 80% at 80% 30%, rgba(168,85,247,0.12) 0%, transparent 55%),
-                radial-gradient(ellipse 50% 50% at 50% 80%, rgba(236,72,153,0.08) 0%, transparent 50%),
-                radial-gradient(ellipse 90% 40% at 60% 10%, rgba(59,130,246,0.10) 0%, transparent 50%)
-              `,
-            }} />
+            {/* Multi-layer animated aurora orbs */}
+            <div className="showcase-aurora" style={{ opacity: 0.9 }} />
 
             {/* Animated floating particles effect via CSS */}
             <div className="absolute inset-0" style={{
@@ -556,10 +565,22 @@ export default function PortfolioShowcasePage() {
               <span>最受欢迎</span>
             </div>
           </div>
+
+          {/* Creator avatar filter row */}
+          {(creatorsLoading || creators.length > 0) && (
+            <div style={{ padding: isMobile ? '0 16px 12px' : '0 48px 14px' }}>
+              <CreatorFilterRow
+                creators={creators}
+                selectedUserId={selectedCreatorId}
+                onSelect={handleSelectCreator}
+                loading={creatorsLoading}
+              />
+            </div>
+          )}
         </div>
 
         {/* ── Gallery content ── */}
-        <div style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
+        <div ref={gridRef} style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
           {/* Loading skeleton — waterfall */}
           {loading && (
             <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>

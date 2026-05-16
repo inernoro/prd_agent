@@ -1095,6 +1095,7 @@ export const api = {
   // ============ 作品投稿展示 ============
   submissions: {
     public: () => '/api/submissions/public',
+    creators: () => '/api/submissions/public/creators',
     mine: () => '/api/submissions/mine',
     create: () => '/api/submissions',
     check: () => '/api/submissions/check',

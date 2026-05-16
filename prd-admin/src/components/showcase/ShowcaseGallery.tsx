@@ -9,11 +9,17 @@ import {
   adminWithdrawSubmission,
   type SubmissionItem,
 } from '@/services/real/submissions';
+import {
+  listSubmissionCreators,
+  type SubmissionCreator,
+} from '@/services/real/submissions';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
+import { distributeToColumns, getAspectRatio } from './waterfall';
+import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
+import { CreatorFilterRow } from './CreatorFilterRow';
 
 const TABS = [
   { key: '', label: '全部' },
@@ -22,30 +28,6 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 20;
-
-/** Distribute items into columns by shortest-column-first for waterfall layout */
-function distributeToColumns<T extends { coverWidth: number; coverHeight: number }>(
-  items: T[],
-  columnCount: number,
-): T[][] {
-  const columns: T[][] = Array.from({ length: columnCount }, () => []);
-  const heights = new Array(columnCount).fill(0);
-  for (const item of items) {
-    const ratio = item.coverWidth && item.coverHeight ? item.coverHeight / item.coverWidth : 0.625;
-    const shortest = heights.indexOf(Math.min(...heights));
-    columns[shortest].push(item);
-    heights[shortest] += ratio;
-  }
-  return columns;
-}
-
-/** Get aspect ratio string for a submission item */
-function getAspectRatio(item: SubmissionItem): string {
-  if (item.coverWidth && item.coverHeight) {
-    return `${item.coverWidth}/${item.coverHeight}`;
-  }
-  return '16/10';
-}
 
 /* ── NotebookLM-style gradient fallbacks ── */
 const FALLBACK_GRADIENTS = [
@@ -247,7 +229,6 @@ function ShowcaseCard({
 /* ── ShowcaseGallery ── */
 
 export function ShowcaseGallery() {
-  const { isMobile } = useBreakpoint();
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'ADMIN';
   const [activeTab, setActiveTab] = useState('');
@@ -256,6 +237,10 @@ export function ShowcaseGallery() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creators, setCreators] = useState<SubmissionCreator[]>([]);
+  const [creatorsLoading, setCreatorsLoading] = useState(false);
+  const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
+  const selectedCreatorRef = useRef<string | null>(null);
   const initialLoadDone = useRef(false);
   const fetchIdRef = useRef(0);
 
@@ -267,6 +252,7 @@ export function ShowcaseGallery() {
     try {
       const res = await listPublicSubmissions({
         contentType: contentType || undefined,
+        ownerUserId: selectedCreatorRef.current || undefined,
         skip,
         limit: PAGE_SIZE,
       });
@@ -283,17 +269,38 @@ export function ShowcaseGallery() {
     }
   }, []);
 
+  const fetchCreators = useCallback(async (contentType: string) => {
+    setCreatorsLoading(true);
+    try {
+      const res = await listSubmissionCreators({ contentType: contentType || undefined });
+      if (res.success) setCreators(res.data.creators);
+    } finally {
+      setCreatorsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!initialLoadDone.current) {
       initialLoadDone.current = true;
       fetchItems('', 0, false);
+      fetchCreators('');
     }
-  }, [fetchItems]);
+  }, [fetchItems, fetchCreators]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setItems([]);
+    setSelectedCreatorId(null);
+    selectedCreatorRef.current = null;
     fetchItems(tab, 0, false);
+    fetchCreators(tab);
+  };
+
+  const handleSelectCreator = (userId: string | null) => {
+    setSelectedCreatorId(userId);
+    selectedCreatorRef.current = userId;
+    setItems([]);
+    fetchItems(activeTab, 0, false);
   };
 
   const handleLikeToggle = async (id: string, liked: boolean) => {
@@ -340,9 +347,9 @@ export function ShowcaseGallery() {
 
   const hasMore = items.length < total;
 
-  // Waterfall column count
-  const columnCount = isMobile ? 2 : 4;
-  const gap = isMobile ? 12 : 16;
+  // Waterfall column count — driven by actual container width (ultrawide-aware)
+  const sectionRef = useRef<HTMLElement>(null);
+  const { columnCount, gap } = useWaterfallColumns(sectionRef);
   const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
 
   // Infinite scroll: observe a sentinel at the bottom
@@ -363,10 +370,19 @@ export function ShowcaseGallery() {
   }, [loading, loadingMore, items.length, total, activeTab, fetchItems]);
 
   // 只在初始加载（全部tab）没有数据时隐藏整个区域
-  if (!loading && items.length === 0 && initialLoadDone.current && !activeTab) return null;
+  if (!loading && items.length === 0 && initialLoadDone.current && !activeTab && !selectedCreatorId) return null;
 
   return (
-    <section className="mt-10">
+    <section ref={sectionRef} className="mt-10 relative">
+      {/* Decorative aurora glow behind the gallery (pointer-events none) */}
+      <div
+        className="absolute inset-0 overflow-hidden pointer-events-none -z-10"
+        style={{ opacity: 0.5 }}
+        aria-hidden
+      >
+        <div className="showcase-aurora" />
+      </div>
+
       {/* Section header with tabs */}
       <div className="flex items-center justify-between mb-6">
         <div
@@ -402,6 +418,18 @@ export function ShowcaseGallery() {
           ))}
         </div>
       </div>
+
+      {/* Creator avatar filter row */}
+      {(creatorsLoading || creators.length > 0) && (
+        <div className="mb-6">
+          <CreatorFilterRow
+            creators={creators}
+            selectedUserId={selectedCreatorId}
+            onSelect={handleSelectCreator}
+            loading={creatorsLoading}
+          />
+        </div>
+      )}
 
       {/* Loading skeleton — waterfall */}
       {loading && (

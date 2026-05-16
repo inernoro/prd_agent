@@ -200,6 +200,7 @@ public class SubmissionsController : ControllerBase
     [HttpGet("public")]
     public async Task<IActionResult> ListPublicSubmissions(
         [FromQuery] string? contentType = null,
+        [FromQuery] string? ownerUserId = null,
         [FromQuery] int skip = 0,
         [FromQuery] int limit = 20)
     {
@@ -209,6 +210,8 @@ public class SubmissionsController : ControllerBase
         var filter = Builders<Submission>.Filter.Eq(x => x.IsPublic, true);
         if (!string.IsNullOrWhiteSpace(contentType))
             filter &= Builders<Submission>.Filter.Eq(x => x.ContentType, contentType);
+        if (!string.IsNullOrWhiteSpace(ownerUserId))
+            filter &= Builders<Submission>.Filter.Eq(x => x.OwnerUserId, ownerUserId);
 
         var total = await _db.Submissions.CountDocumentsAsync(filter);
         var sort = Builders<Submission>.Sort
@@ -282,6 +285,47 @@ public class SubmissionsController : ControllerBase
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = result }));
+    }
+
+    /// <summary>
+    /// 获取公开作品的热门创作者列表（按投稿数排序，用于头像筛选行）
+    /// </summary>
+    [HttpGet("public/creators")]
+    public async Task<IActionResult> ListPublicSubmissionCreators(
+        [FromQuery] string? contentType = null,
+        [FromQuery] int limit = 24)
+    {
+        limit = Math.Clamp(limit, 1, 60);
+
+        var filter = Builders<Submission>.Filter.Eq(x => x.IsPublic, true);
+        if (!string.IsNullOrWhiteSpace(contentType))
+            filter &= Builders<Submission>.Filter.Eq(x => x.ContentType, contentType);
+
+        var grouped = await _db.Submissions
+            .Aggregate()
+            .Match(filter)
+            .Group(x => x.OwnerUserId, g => new
+            {
+                OwnerUserId = g.Key,
+                OwnerUserName = g.First().OwnerUserName,
+                OwnerAvatarFileName = g.First().OwnerAvatarFileName,
+                SubmissionCount = g.Count(),
+            })
+            .SortByDescending(x => x.SubmissionCount)
+            .Limit(limit)
+            .ToListAsync();
+
+        var creators = grouped
+            .Where(x => !string.IsNullOrWhiteSpace(x.OwnerUserId))
+            .Select(x => new
+            {
+                ownerUserId = x.OwnerUserId,
+                ownerUserName = x.OwnerUserName,
+                ownerAvatarFileName = x.OwnerAvatarFileName,
+                submissionCount = x.SubmissionCount,
+            });
+
+        return Ok(ApiResponse<object>.Ok(new { creators }));
     }
 
     /// <summary>
