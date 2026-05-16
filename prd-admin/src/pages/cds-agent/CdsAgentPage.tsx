@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Copy, Download, FileSearch, FileText, GitCompare, Globe2, MessageSquare, MousePointerClick, PauseCircle, Play, Plus, RefreshCw, Search, Send, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
+import { Archive, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
@@ -532,6 +532,32 @@ export default function CdsAgentPage() {
       artifactCount: artifacts.length,
     };
   }, [artifacts.length, events, sessions]);
+  const gitContext = useMemo(() => {
+    let branch = '';
+    let commit = '';
+    let prUrl = '';
+    for (const ev of displayedEvents) {
+      if (ev.type !== 'tool_result') continue;
+      const p = parsePayload(ev);
+      const detail = parseJsonString(p.resultSummary) ?? parseJsonString(p.content) ?? {};
+      if (typeof detail.branch === 'string' && detail.branch) branch = detail.branch;
+      if (typeof detail.commit === 'string' && detail.commit) commit = detail.commit;
+      const urlCandidate = typeof detail.url === 'string' ? detail.url
+        : typeof detail.prUrl === 'string' ? detail.prUrl
+          : typeof detail.pullRequestUrl === 'string' ? detail.pullRequestUrl : '';
+      if (urlCandidate && /github\.com\/.+\/pull\/\d+/.test(urlCandidate)) prUrl = urlCandidate;
+    }
+    if (!prUrl) {
+      for (const artifact of artifacts) {
+        const match = artifact.body.match(/https:\/\/github\.com\/[^\s)]+\/pull\/\d+/);
+        if (match?.[0]) {
+          prUrl = match[0];
+          break;
+        }
+      }
+    }
+    return { branch, commit, prUrl };
+  }, [artifacts, displayedEvents]);
   const auditRows = useMemo(() => {
     if (!activeSession) return [];
     const eventTypes = Array.from(new Set(events.map((item) => item.type))).sort();
@@ -551,6 +577,101 @@ export default function CdsAgentPage() {
       ['凭据暴露', '不向前端显示 long token / API key'],
     ];
   }, [activeConnection, activeSession, activeSessionProfile, events]);
+  const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
+  const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
+  const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
+  const runwaySteps = [
+    {
+      label: 'MAP 会话',
+      value: activeSession ? statusLabel(activeSession.status) : '未创建',
+      detail: activeSession ? `trace ${activeSession.traceId.slice(0, 12)}` : '先新建远程任务',
+      icon: MessageSquare,
+      active: Boolean(activeSession),
+    },
+    {
+      label: 'CDS Runtime',
+      value: runtimeReady ? '配置可用' : '待配置',
+      detail: activeRuntimeProfile ? profileSummary(activeRuntimeProfile) : '选择模型和 API key',
+      icon: Server,
+      active: runtimeReady,
+    },
+    {
+      label: 'Worker Sandbox',
+      value: activeSession ? formatSessionResourcePolicy(activeSession) : formatResourcePolicy(activeRuntimeProfile),
+      detail: activeConnection?.partnerName || activeConnection?.partnerId || '等待 CDS 授权连接',
+      icon: Cpu,
+      active: Boolean(activeSession && ['creating', 'running'].includes(activeSession.status)),
+    },
+    {
+      label: 'PR / 证据',
+      value: gitContext.prUrl || prArtifact ? '已有 PR 证据' : `${metrics.artifactCount} 个产物`,
+      detail: `${metrics.eventCount} 事件 / ${metrics.toolEvents} 工具事件`,
+      icon: GitPullRequest,
+      active: Boolean(gitContext.prUrl || prArtifact || metrics.artifactCount > 0),
+    },
+  ];
+
+  const executionRunway = (
+    <section className="rounded-xl px-4 py-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/78">
+            <Route size={15} />
+            执行链路
+          </div>
+          <div className="mt-1 text-xs leading-relaxed text-white/45">
+            从任务、runtime、沙箱到 PR/证据包的完整状态，避免用户只看到一堆日志却不知道 Agent 现在卡在哪。
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-white/58" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <KeyRound size={12} /> {activeConnection?.status === 'active' ? '连接已授权' : '连接待确认'}
+          </span>
+          <span className="inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-white/58" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <Network size={12} /> {networkPolicyLabel(activeRuntimeProfile?.networkPolicy)}
+          </span>
+          <span className="inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-white/58" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <ShieldCheck size={12} /> {activeSession?.toolPolicy ?? draft.toolPolicy}
+          </span>
+        </div>
+      </div>
+      <div className="relative mt-3">
+        <div className="absolute left-8 right-8 top-[47px] hidden h-px bg-slate-700/80 xl:block" />
+        <div className="relative grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {runwaySteps.map((step, index) => {
+            const Icon = step.icon;
+            return (
+              <div
+                key={step.label}
+                className="relative min-h-[100px] rounded-lg p-3"
+                style={{
+                  background: step.active ? 'rgba(34,197,94,0.08)' : 'rgba(15,23,42,0.92)',
+                  border: step.active ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(148,163,184,0.14)',
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-white/48">{step.label}</span>
+                  <span
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md"
+                    style={{ background: step.active ? 'rgba(34,197,94,0.13)' : 'rgba(148,163,184,0.08)' }}
+                  >
+                    <Icon size={14} className={step.active ? 'text-emerald-300/85' : 'text-white/36'} />
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: step.active ? 'rgba(34,197,94,0.2)' : 'rgba(148,163,184,0.12)', color: step.active ? 'rgba(134,239,172,0.95)' : 'rgba(148,163,184,0.9)' }}>
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 truncate text-sm font-semibold text-white/82">{step.value}</div>
+                </div>
+                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">{step.detail}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
 
   const hasContextDraft = Boolean(
     contextDraft.files.trim()
@@ -1160,25 +1281,13 @@ export default function CdsAgentPage() {
     const sendDisabled = !activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput);
 
     // 左侧任务分组：运行中 vs 已完成。
-    const runningSessions = sortedSessions.filter((s) => s.status === 'running' || s.status === 'creating' || s.status === 'idle');
-    const finishedSessions = sortedSessions.filter((s) => s.status === 'stopped' || s.status === 'failed' || s.status === 'stopping');
-
-    // 右栏 Git/PR 上下文：从事件里抽分支 / 提交 / PR 链接。
-    let gitBranch = '';
-    let gitCommit = '';
-    let prUrl = '';
-    for (const ev of displayedEvents) {
-      if (ev.type !== 'tool_result') continue;
-      const p = parsePayload(ev);
-      const detail = parseJsonString(p.resultSummary) ?? parseJsonString(p.content) ?? {};
-      if (typeof detail.branch === 'string' && detail.branch) gitBranch = detail.branch;
-      if (typeof detail.commit === 'string' && detail.commit) gitCommit = detail.commit;
-      const urlCandidate = typeof detail.url === 'string' ? detail.url
-        : typeof detail.prUrl === 'string' ? detail.prUrl
-          : typeof detail.pullRequestUrl === 'string' ? detail.pullRequestUrl : '';
-      if (urlCandidate && /github\.com\/.+\/pull\/\d+/.test(urlCandidate)) prUrl = urlCandidate;
-    }
-    const hasGitContext = Boolean(gitBranch || gitCommit || prUrl);
+    const runningSessions = visibleSessions.filter((s) => s.status === 'running' || s.status === 'creating' || s.status === 'idle');
+    const finishedSessions = visibleSessions.filter((s) => s.status === 'stopped' || s.status === 'failed' || s.status === 'stopping');
+    const promptPresets = [
+      '巡检当前仓库，找一个小问题并给出修复计划',
+      '读取 README 和最近 changelog，总结这个功能怎么验收',
+      '运行只读检查，整理失败原因和下一步动作',
+    ];
 
     // 运行中且最后一块不是 Agent 回复 = 还在干活，给"已等待 Xs"反馈（规则 #6）。
     const lastBlock = timelineBlocks[timelineBlocks.length - 1];
@@ -1192,7 +1301,7 @@ export default function CdsAgentPage() {
       waitedSec = Math.max(0, Math.round((nowTick - base) / 1000));
     }
     return (
-      <div className="h-full min-h-0 flex flex-col px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
+      <div className="h-full min-h-0 flex flex-col px-6 py-5 text-white" style={{ background: '#0F172A' }}>
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
@@ -1211,8 +1320,12 @@ export default function CdsAgentPage() {
           </div>
         </header>
 
-        <div className="mt-4 grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
-          <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
+        <div className="mt-4">
+          {executionRunway}
+        </div>
+
+        <div className="mt-3 grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
+          <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-xs font-semibold text-white/60">我的任务</span>
               <button
@@ -1230,10 +1343,23 @@ export default function CdsAgentPage() {
                 {activeProfileBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
               </div>
             )}
+            <label className="mb-3 flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.14)' }}>
+              <Search size={13} className="text-white/35" />
+              <input
+                value={sessionQuery}
+                onChange={(e) => setSessionQuery(e.target.value)}
+                className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
+                placeholder="搜索任务、模型、状态"
+              />
+            </label>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
               {sortedSessions.length === 0 ? (
                 <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
                   还没有任务，点「新任务」开始
+                </div>
+              ) : visibleSessions.length === 0 ? (
+                <div className="flex min-h-[120px] items-center justify-center rounded-lg text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  没有匹配的任务
                 </div>
               ) : (
                 ([
@@ -1270,12 +1396,12 @@ export default function CdsAgentPage() {
             </div>
           </aside>
 
-          <section className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
+          <section className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-white/78">{activeSession ? activeSession.title : '未选择任务'}</div>
                 <div className="mt-0.5 truncate text-xs text-white/42">
-                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeProfile?.model ?? '未配置模型'}` : '从左侧选择或新建一个任务'}
+                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeSessionProfile?.model ?? activeProfile?.model ?? '未配置模型'}` : '从左侧选择或新建一个任务'}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1304,7 +1430,7 @@ export default function CdsAgentPage() {
               </div>
             </div>
 
-            <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)', overscrollBehavior: 'contain' }}>
+            <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.78)', border: '1px solid rgba(148,163,184,0.12)', overscrollBehavior: 'contain' }}>
               {!hasTimeline ? (
                 <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 text-center text-sm text-white/40">
                   <MessageSquare size={20} className="text-white/30" />
@@ -1436,14 +1562,28 @@ export default function CdsAgentPage() {
               )}
             </div>
 
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
+              {promptPresets.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPrompt(item)}
+                  className="rounded-md px-2 py-1 text-xs text-white/48 hover:text-white/76"
+                  style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-2 flex gap-2">
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={3}
                 placeholder="告诉 Agent 要做什么…"
                 className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
-                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}
               />
               <button
                 type="button"
@@ -1458,27 +1598,28 @@ export default function CdsAgentPage() {
             </div>
           </section>
 
-          <aside className="min-h-0 flex flex-col gap-3 rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
-            {hasGitContext && (
-              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/62"><GitCompare size={13} /> 代码改动</div>
-                <div className="mt-2 space-y-1.5 text-xs">
-                  {gitBranch && (
-                    <div className="flex justify-between gap-2"><span className="text-white/40">分支</span><span className="truncate text-white/72">{gitBranch}</span></div>
-                  )}
-                  {gitCommit && (
-                    <div className="flex justify-between gap-2"><span className="text-white/40">提交</span><span className="truncate font-mono text-white/72">{gitCommit.slice(0, 12)}</span></div>
-                  )}
-                  {prUrl ? (
-                    <a href={prUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.34)', color: 'rgba(186,230,253,0.95)' }}>
-                      <Globe2 size={12} /> 打开 Pull Request
-                    </a>
-                  ) : (
-                    <div className="text-white/35">尚未创建 PR</div>
-                  )}
-                </div>
+          <aside className="min-h-0 flex flex-col gap-3 rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
+            <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.78)', border: gitContext.prUrl ? '1px solid rgba(34,197,94,0.24)' : '1px solid rgba(148,163,184,0.12)' }}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/66"><GitPullRequest size={13} /> Pull Request</div>
+                <span className="rounded px-2 py-0.5 text-[11px]" style={{ background: gitContext.prUrl ? 'rgba(34,197,94,0.13)' : 'rgba(148,163,184,0.1)', color: gitContext.prUrl ? 'rgba(134,239,172,0.95)' : 'rgba(148,163,184,0.9)' }}>
+                  {gitContext.prUrl ? 'Ready' : 'Pending'}
+                </span>
               </div>
-            )}
+              <div className="mt-3 space-y-1.5 text-xs">
+                <div className="flex justify-between gap-2"><span className="text-white/40">分支</span><span className="truncate text-white/72">{gitContext.branch || '等待 Agent 创建'}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-white/40">提交</span><span className="truncate font-mono text-white/72">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
+                {gitContext.prUrl ? (
+                  <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>
+                    <Globe2 size={12} /> 打开 Pull Request
+                  </a>
+                ) : (
+                  <div className="mt-2 rounded-md px-2 py-2 text-white/38" style={{ background: 'rgba(0,0,0,0.16)' }}>
+                    Agent 产生 diff 并通过审批后，PR 会固定出现在这里。
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
               <button
@@ -1493,8 +1634,13 @@ export default function CdsAgentPage() {
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
               {artifacts.length === 0 ? (
-                <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg px-3 text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  任务产生的文件、diff、命令结果会出现在这里。<br />运行后点上方「生成产物」抓取。
+                <div className="rounded-lg px-3 py-4 text-xs text-white/42" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div className="font-semibold text-white/58">等待证据</div>
+                  <div className="mt-2 space-y-1.5 leading-relaxed">
+                    <div>1. 文件树和仓库状态会证明它看过代码。</div>
+                    <div>2. diff、命令输出和日志会证明它真的执行过。</div>
+                    <div>3. PR 链接或页面快照会成为最终交付物。</div>
+                  </div>
                 </div>
               ) : (
                 artifacts.map((artifact) => (
@@ -1557,6 +1703,8 @@ export default function CdsAgentPage() {
             </div>
           ))}
         </section>
+
+        {executionRunway}
 
         {activeSession && (
           <section
