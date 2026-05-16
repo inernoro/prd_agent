@@ -485,6 +485,7 @@ public class WebPagesController : ControllerBase
                 share.Token,
                 share.ShareType,
                 share.AccessLevel,
+                share.Password,
                 share.ExpiresAt,
                 share.ShortSeq,
                 shareUrl = hasShort ? $"/s/{share.ShortSeq}" : $"/s/wp/{share.Token}",

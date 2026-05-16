@@ -466,6 +466,55 @@ public class HostedSiteService : IHostedSiteService
         if (ownedCount != allIds.Count)
             throw new UnauthorizedAccessException("包含非自己的站点");
 
+        // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
+        // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；
+        // 复用时把有效期刷新为本次所选窗口，保证返回链接的寿命恰好等于用户本次所选
+        // （既不会因旧链接即将过期而"开盖即废"，也不会超出所选窗口而绕过有效期管控）。
+        var effShareType = shareType ?? "single";
+        var wantAccess = string.IsNullOrWhiteSpace(password) ? "public" : "password";
+        var newExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : (DateTime?)null;
+
+        var reuseCandidates = effShareType == "collection"
+            ? await _db.WebPageShareLinks
+                .Find(x => x.CreatedBy == userId && !x.IsRevoked
+                    && x.ShareType == "collection" && x.AccessLevel == wantAccess)
+                .SortByDescending(x => x.CreatedAt).ToListAsync(ct)
+            : await _db.WebPageShareLinks
+                .Find(x => x.CreatedBy == userId && !x.IsRevoked
+                    && x.ShareType == effShareType && x.SiteId == siteId
+                    && x.AccessLevel == wantAccess)
+                .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+        WebPageShareLink? reusable;
+        if (effShareType == "collection")
+        {
+            var want = allIds.OrderBy(s => s).ToList();
+            reusable = reuseCandidates.FirstOrDefault(s =>
+            {
+                var have = (s.SiteIds ?? new List<string>()).OrderBy(v => v).ToList();
+                return have.Count == want.Count && have.SequenceEqual(want);
+            });
+        }
+        else
+        {
+            reusable = reuseCandidates.FirstOrDefault();
+        }
+
+        if (reusable is { } reuse)
+        {
+            if (reuse.ExpiresAt != newExpiresAt)
+            {
+                await _db.WebPageShareLinks.UpdateOneAsync(
+                    x => x.Id == reuse.Id,
+                    Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt),
+                    cancellationToken: ct);
+                reuse.ExpiresAt = newExpiresAt;
+            }
+            _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
+                userId, reuse.Id, reuse.ShareType);
+            return reuse;
+        }
+
         // 自动生成分享标题
         var shareTitle = title?.Trim();
         if (string.IsNullOrWhiteSpace(shareTitle))

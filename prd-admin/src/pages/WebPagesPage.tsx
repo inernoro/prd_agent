@@ -100,26 +100,14 @@ const sourceTypeLabels: Record<string, string> = {
 
 /**
  * 「访问」专用地址解析 —— 与「分享」彻底分开：
- * - 访问：复用/新建该站点的无密码单站点链接，地址一律走 ≥12 字母 token 形式 /s/wp/{token}
- * - 分享：ShareDialog 自有逻辑，地址一律走数字短链 /s/{seq}
- * 两套地址格式不同、判断函数独立，互不复用，避免混淆。
+ * - 访问：地址一律走 ≥12 字母 token 形式 /s/wp/{token}
+ * - 分享：ShareDialog 走数字短链 /s/{seq}
+ * 复用/新建判定全部在服务端闭环（createSiteShareLink 内部按 用户+站点+访问级别 去重，
+ * 不依赖任何前端分页列表），前端只发指令、用返回 token 拼地址。
  * 解析失败时回退原始 siteUrl，保证访问永不失效。
  */
 async function resolveVisitUrl(site: HostedSite): Promise<string> {
   try {
-    const listRes = await listSiteShares();
-    if (listRes.success) {
-      // 访问链接按永久创建（expiresInDays:0），因此只复用「永不过期」的无密码单站点链接，
-      // 否则复用到一条会过期的链接，过期后访问就 404。
-      const existing = listRes.data.items.find(s =>
-        s.siteId === site.id &&
-        s.shareType === 'single' &&
-        !s.isRevoked &&
-        s.accessLevel === 'public' &&
-        !s.expiresAt
-      );
-      if (existing?.token) return `${window.location.origin}/s/wp/${existing.token}`;
-    }
     const res = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0 });
     if (res.success && res.data.token) return `${window.location.origin}/s/wp/${res.data.token}`;
   } catch {
@@ -272,15 +260,21 @@ export default function WebPagesPage() {
   const handleConfirmReplace = useCallback(async () => {
     if (!replaceTarget || replacing) return;
     setReplacing(true);
-    const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
-    setReplacing(false);
-    if (res.success) {
-      toast.success('替换成功', `「${replaceTarget.site.title}」的网页内容已更新`);
-      setReplaceTarget(null);
-      load();
-      loadMeta();
-    } else {
-      toast.error('替换失败', res.error?.message || '请稍后重试');
+    try {
+      const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
+      if (res.success) {
+        toast.success('替换成功', `「${replaceTarget.site.title}」的网页内容已更新`);
+        setReplaceTarget(null);
+        load();
+        loadMeta();
+      } else {
+        toast.error('替换失败', res.error?.message || '请稍后重试');
+      }
+    } catch (e) {
+      // 网络异常等抛错时，若不在 finally 复位 replacing，按钮与弹窗会被永久锁死
+      toast.error('替换失败', e instanceof Error ? e.message : '网络异常，请稍后重试');
+    } finally {
+      setReplacing(false);
     }
   }, [replaceTarget, replacing, load, loadMeta]);
 
@@ -1163,6 +1157,11 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
     label: site.title,
     icon: '🌐',
   });
+  // 访问地址与 SiteCard 网格视图一致：统一走 /s/wp/{token}，避免列表/网格切换得到不同 URL
+  const handleVisit = () => {
+    const w = window.open('', '_blank');
+    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+  };
   return (
     <GlassCard
       className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
@@ -1192,7 +1191,7 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
             style={{ color: 'var(--text-primary)' }}
-            onClick={() => window.open(site.siteUrl, '_blank')}
+            onClick={handleVisit}
           >
             {site.title}
           </span>
@@ -1222,7 +1221,7 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        <button onClick={() => window.open(site.siteUrl, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+        <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
         <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]">
@@ -1472,71 +1471,31 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   const handleCreate = async () => {
     setCreating(true);
     const pwd = usePassword ? (password.trim() || undefined) : undefined;
-    const wantAccess = pwd ? 'password' : 'public';
-    const wantType = isCollection ? 'collection' : 'single';
 
-    // 不允许无限创建链接：先找该来源已有的、未吊销的同类型链接复用，
-    // 吊销后才会重新生成。无密码 / 有密码各自复用一条。
-    // 复用必须尊重所选有效期，否则用户选「7天」却被复用一条永不过期/更长寿命的链接，
-    // 等于绕过了有效期管控。规则：复用的链接寿命不得超过本次所选窗口。
-    const now = Date.now();
-    const wantNeverExpire = expiresInDays === 0;
-    const maxAllowedExpiry = wantNeverExpire ? null : now + expiresInDays * 86_400_000;
-
-    const listRes = await listSiteShares();
-    if (listRes.success) {
-      const existing = listRes.data.items.find(s => {
-        if (s.isRevoked) return false;
-        if (s.shareType !== wantType) return false;
-        if (s.accessLevel !== wantAccess) return false;
-        const exp = s.expiresAt ? new Date(s.expiresAt).getTime() : null;
-        if (exp !== null && exp <= now) return false;          // 已过期
-        if (wantNeverExpire) {
-          if (exp !== null) return false;                      // 要永久，但该链接会过期
-        } else {
-          if (exp === null) return false;                      // 要有限期，但该链接永不过期
-          if (exp > maxAllowedExpiry!) return false;           // 该链接寿命超出所选窗口
-        }
-        if (isCollection) {
-          const a = [...(s.siteIds ?? [])].sort();
-          const b = [...(siteIds ?? [])].sort();
-          return a.length === b.length && a.every((v, i) => v === b[i]);
-        }
-        return s.siteId === siteId;
+    // 复用 vs 新建、有效期刷新全部在服务端闭环：createSiteShareLink 按
+    // 用户+站点/合集+访问级别 去重（不依赖任何前端分页列表，账号链接再多也不失效），
+    // 并把有效期刷新为本次所选窗口。前端只发指令、用返回值展示。
+    try {
+      const res = await createSiteShareLink({
+        siteId: siteId || undefined,
+        siteIds: isCollection ? siteIds : undefined,
+        shareType: isCollection ? 'collection' : 'single',
+        password: pwd,
+        expiresInDays,
       });
-      if (existing) {
-        const path = existing.shortSeq && existing.shortSeq > 0
-          ? `/s/${existing.shortSeq}`
-          : `/s/wp/${existing.token}`;
-        const reused = { shareUrl: path, token: existing.token, password: existing.password };
-        setCreating(false);
-        setResult(reused);
-        let text = `${window.location.origin}${path}`;
-        if (reused.password) text += `\n访问密码：${reused.password}`;
+      if (res.success) {
+        // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准
+        const effPwd = res.data.password ?? pwd;
+        const shareResult = { shareUrl: res.data.shareUrl, token: res.data.token, password: effPwd };
+        setResult(shareResult);
+        let text = `${window.location.origin}${shareResult.shareUrl}`;
+        if (effPwd) text += `\n访问密码：${effPwd}`;
         navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-        return;
       }
-    }
-
-    const res = await createSiteShareLink({
-      siteId: siteId || undefined,
-      siteIds: isCollection ? siteIds : undefined,
-      shareType: isCollection ? 'collection' : 'single',
-      password: pwd,
-      expiresInDays,
-    });
-    setCreating(false);
-    if (res.success) {
-      const shareResult = { shareUrl: res.data.shareUrl, token: res.data.token, password: pwd };
-      setResult(shareResult);
-      // 自动复制链接和密码
-      let text = `${window.location.origin}${shareResult.shareUrl}`;
-      if (shareResult.password) text += `\n访问密码：${shareResult.password}`;
-      navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    } finally {
+      setCreating(false);
     }
   };
 
