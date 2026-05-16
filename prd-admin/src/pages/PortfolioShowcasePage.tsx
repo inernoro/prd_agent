@@ -653,32 +653,61 @@ export default function PortfolioShowcasePage() {
 
           {/* Empty state */}
           {!loading && items.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-32 gap-4">
-              <div
-                className="w-20 h-20 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: 'rgba(129,140,248,0.08)',
-                  border: '1px solid rgba(129,140,248,0.15)',
-                }}
-              >
-                <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
+            (activeTab || selectedCreatorId) ? (
+              <div className="flex flex-col items-center justify-center py-32 gap-4">
+                <div
+                  className="w-20 h-20 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: 'rgba(129,140,248,0.08)',
+                    border: '1px solid rgba(129,140,248,0.15)',
+                  }}
+                >
+                  <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
+                </div>
+                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  没有符合条件的作品
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('')}
+                  className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-105"
+                  style={{
+                    background: 'rgba(255,255,255,0.08)',
+                    color: 'rgba(255,255,255,0.7)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                  }}
+                >
+                  查看全部作品
+                </button>
               </div>
-              <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                暂无作品，创作第一件作品吧
-              </p>
-              <button
-                type="button"
-                onClick={() => navigate('/')}
-                className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-105"
-                style={{
-                  background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
-                  color: '#fff',
-                  boxShadow: '0 4px 20px rgba(99,102,241,0.3)',
-                }}
-              >
-                开始创作
-              </button>
-            </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-32 gap-4">
+                <div
+                  className="w-20 h-20 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: 'rgba(129,140,248,0.08)',
+                    border: '1px solid rgba(129,140,248,0.15)',
+                  }}
+                >
+                  <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
+                </div>
+                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  暂无作品，创作第一件作品吧
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-105"
+                  style={{
+                    background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+                    color: '#fff',
+                    boxShadow: '0 4px 20px rgba(99,102,241,0.3)',
+                  }}
+                >
+                  开始创作
+                </button>
+              </div>
+            )
           )}
         </div>
       </div>
