@@ -816,7 +816,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
               <button
                 onClick={handleTogglePublish}
                 disabled={publishing}
-                className="surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all disabled:opacity-60"
+                className="surface-action-accent flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold transition-all disabled:opacity-60"
                 title="发布到智识殿堂，让更多人看到"
                 data-tour-id="document-store-publish"
               >
@@ -858,8 +858,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         </div>
       )}
 
-      {/* 左右分栏文档浏览器 */}
-      <div className="flex-1 min-h-0 flex flex-col px-5 pb-4 pt-3">
+      {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
+          消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
+      <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
           primaryEntryId={store.primaryEntryId}
