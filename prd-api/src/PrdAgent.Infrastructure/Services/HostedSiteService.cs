@@ -477,6 +477,7 @@ public class HostedSiteService : IHostedSiteService
         var effShareType = shareType ?? "single";
         var effPurpose = string.IsNullOrWhiteSpace(purpose) ? "share" : purpose;
         var wantAccess = string.IsNullOrWhiteSpace(password) ? "public" : "password";
+        var wantPassword = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
         var nowUtc = DateTime.UtcNow;
         var newExpiresAt = expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
 
@@ -514,13 +515,26 @@ public class HostedSiteService : IHostedSiteService
 
         if (reusable is { } reuse)
         {
+            // 复用时把有效期 + 密码刷新为本次请求值（单链接模型下"改密码=轮换"）：
+            // 否则用户重设新密码却被静默丢弃、旧密码仍可用——既是展示错误也是安全隐患。
+            // 轮换后旧密码不再匹配，只有持新密码者可访问。
+            var ups = new List<UpdateDefinition<WebPageShareLink>>();
             if (reuse.ExpiresAt != newExpiresAt)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
+                reuse.ExpiresAt = newExpiresAt;
+            }
+            if (wantAccess == "password" && reuse.Password != wantPassword)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Password, wantPassword));
+                reuse.Password = wantPassword;
+            }
+            if (ups.Count > 0)
             {
                 await _db.WebPageShareLinks.UpdateOneAsync(
                     x => x.Id == reuse.Id,
-                    Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt),
+                    Builders<WebPageShareLink>.Update.Combine(ups),
                     cancellationToken: ct);
-                reuse.ExpiresAt = newExpiresAt;
             }
             _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
                 userId, reuse.Id, reuse.ShareType);
