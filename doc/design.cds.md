@@ -495,3 +495,15 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 | `plan.cds-roadmap.md` | Phase 0-3 里程碑 |
 | `plan.cds-resilience-rollout.md` | 高可用改造落地进度（可续传）|
 | `guide.cds-ai-auth.md` | 认证问题故障排查 |
+
+---
+
+## 13. 近期变更记录（2026-05-13）
+
+| 类型 | 模块 | 说明 |
+|------|------|------|
+| fix | cds | 将分支搜索命中提示改为稳定选中态，避免短暂闪烁后用户找不到目标卡片 |
+| fix | cds | 分支列表首屏使用缓存态快速渲染，后台再同步 Docker 实时状态 |
+| fix | cds | 分支列表首屏快路径跳过 worktree git log，进一步缩短首屏等待 |
+| fix | cds | 扩大提交实时流记录点击热区，并为提交标签增加状态图标 |
+| fix | cds | 优化提交实时流面板信息密度，折叠态显示最新分支与精确更新时间 |
