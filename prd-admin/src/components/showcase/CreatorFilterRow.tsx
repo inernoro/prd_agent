@@ -1,4 +1,4 @@
-import { Users } from 'lucide-react';
+import { Users, Crown } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import type { SubmissionCreator } from '@/services/real/submissions';
 
@@ -10,6 +10,13 @@ interface Props {
 }
 
 const ITEM_WIDTH = 64;
+
+/** Crown color for the top-3 creators (gold / silver / bronze) */
+const RANK_CROWN: Record<number, string> = {
+  0: '#FACC15',
+  1: '#CBD5E1',
+  2: '#D8975A',
+};
 
 /**
  * Horizontal row of circular creator avatars. Clicking a creator filters the
@@ -41,8 +48,8 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
 
   return (
     <div
-      className="flex items-center gap-3 overflow-x-auto pb-1"
-      style={{ scrollbarWidth: 'thin', overscrollBehaviorX: 'contain' }}
+      className="nav-scroll-hidden flex items-center gap-3 overflow-x-auto pb-1"
+      style={{ overscrollBehaviorX: 'contain' }}
     >
       {/* 全部 reset chip */}
       <button
@@ -74,9 +81,10 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
         </span>
       </button>
 
-      {creators.map((c) => {
+      {creators.map((c, index) => {
         const active = selectedUserId === c.ownerUserId;
         const avatarUrl = resolveAvatarUrl({ avatarFileName: c.ownerAvatarFileName });
+        const crownColor = RANK_CROWN[index];
         return (
           <button
             key={c.ownerUserId}
@@ -88,7 +96,7 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
             aria-pressed={active}
           >
             <div
-              className="w-11 h-11 rounded-full transition-all duration-200"
+              className="relative w-11 h-11 rounded-full transition-all duration-200"
               style={{
                 padding: 2,
                 background: active
@@ -97,6 +105,19 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
                 boxShadow: active ? '0 0 14px rgba(129,140,248,0.4)' : 'none',
               }}
             >
+              {crownColor && (
+                <Crown
+                  size={13}
+                  fill={crownColor}
+                  strokeWidth={1.5}
+                  className="absolute left-1/2 -translate-x-1/2 pointer-events-none"
+                  style={{
+                    top: -10,
+                    color: crownColor,
+                    filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.6))',
+                  }}
+                />
+              )}
               <img
                 src={avatarUrl}
                 alt={c.ownerUserName}

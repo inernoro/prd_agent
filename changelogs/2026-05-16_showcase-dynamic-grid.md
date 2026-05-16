@@ -2,3 +2,4 @@
 | feat | prd-admin | 作品广场新增创作者头像筛选行，点击头像只看该创作者作品，切类型标签自动刷新 |
 | feat | prd-admin | 作品广场增强极光渐变动效背景（柔和漂移+呼吸，支持 prefers-reduced-motion 降级） |
 | feat | prd-api | 投稿 public 列表支持 ownerUserId 过滤 + 新增 public/creators 聚合接口 |
+| fix | prd-admin | 创作者头像行隐藏老土滚动条（保留滚动），前三名头顶加金/银/铜小皇冠，首页区块移除有色极光背景 |

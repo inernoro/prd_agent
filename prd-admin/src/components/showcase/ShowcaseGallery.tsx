@@ -373,16 +373,7 @@ export function ShowcaseGallery() {
   if (!loading && items.length === 0 && initialLoadDone.current && !activeTab && !selectedCreatorId) return null;
 
   return (
-    <section ref={sectionRef} className="mt-10 relative">
-      {/* Decorative aurora glow behind the gallery (pointer-events none) */}
-      <div
-        className="absolute inset-0 overflow-hidden pointer-events-none -z-10"
-        style={{ opacity: 0.5 }}
-        aria-hidden
-      >
-        <div className="showcase-aurora" />
-      </div>
-
+    <section ref={sectionRef} className="mt-10">
       {/* Section header with tabs */}
       <div className="flex items-center justify-between mb-6">
         <div
