@@ -107,6 +107,36 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
   return await res.json();
 }
 
+/**
+ * 替换已有条目的文件（原地替换，保留 Id / 标签 / 主文档 / 置顶）。
+ * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
+ */
+export async function replaceDocumentFile(entryId: string, file: File): Promise<import('@/types/api').ApiResponse<{
+  entry: import('@/services/contracts/documentStore').DocumentEntry;
+  attachmentId: string;
+  documentId?: string;
+  fileUrl: string;
+}>> {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(api.documentStore.entries.replace(entryId), {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { success: false, data: null as never, error: { code: 'REPLACE_FAILED', message: text || `HTTP ${res.status}` } };
+  }
+  return await res.json();
+}
+
 /** 获取文档内容 */
 export async function getDocumentContent(entryId: string) {
   return await apiRequest<{

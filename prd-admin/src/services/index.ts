@@ -1794,6 +1794,7 @@ export {
   updateDocumentEntryReal as updateDocumentEntry,
   deleteDocumentEntryReal as deleteDocumentEntry,
   uploadDocumentFile,
+  replaceDocumentFile,
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,

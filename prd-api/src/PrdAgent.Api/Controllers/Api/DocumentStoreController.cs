@@ -64,6 +64,55 @@ public class DocumentStoreController : ControllerBase
         return await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
     }
 
+    /// <summary>
+    /// 推断上传文件的 MIME。浏览器对 m4a/mp4/某些 wav 经常报 application/octet-stream，
+    /// 必须按扩展名兜底，否则 LocalAssetStorage 会把音频强存为 .png。
+    /// </summary>
+    private static string InferMime(string? contentType, string? fileName)
+    {
+        var mime = contentType?.ToLowerInvariant() ?? "application/octet-stream";
+        if ((mime == "application/octet-stream" || string.IsNullOrWhiteSpace(mime)) && !string.IsNullOrWhiteSpace(fileName))
+        {
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            mime = ext switch
+            {
+                ".md" or ".mdc" => "text/markdown",
+                ".txt" => "text/plain",
+                ".pdf" => "application/pdf",
+                ".doc" => "application/msword",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".ppt" => "application/vnd.ms-powerpoint",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".xls" => "application/vnd.ms-excel",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".json" => "application/json",
+                ".yaml" or ".yml" => "text/yaml",
+                ".csv" => "text/csv",
+                ".xml" => "application/xml",
+                ".html" or ".htm" => "text/html",
+                ".mp3" => "audio/mpeg",
+                ".m4a" => "audio/mp4",
+                ".wav" => "audio/wav",
+                ".aac" => "audio/aac",
+                ".ogg" or ".oga" => "audio/ogg",
+                ".flac" => "audio/flac",
+                ".weba" => "audio/webm",
+                ".mp4" => "video/mp4",
+                ".webm" => "video/webm",
+                ".mov" => "video/quicktime",
+                ".mkv" => "video/x-matroska",
+                ".avi" => "video/x-msvideo",
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".svg" => "image/svg+xml",
+                _ => mime,
+            };
+        }
+        return mime;
+    }
+
     private async Task<(string userId, string userName)> GetActorInfoAsync()
     {
         var userId = GetUserId();
@@ -866,53 +915,8 @@ public class DocumentStoreController : ControllerBase
         if (file.Length > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
 
-        // MIME 推断
-        var mime = file.ContentType?.ToLowerInvariant() ?? "application/octet-stream";
-        // 浏览器对 m4a/mp4/某些 wav 经常报 application/octet-stream，必须按扩展名兜底
-        // 否则 LocalAssetStorage.MimeToExt 不认这个 mime，会把音频强存为 .png
-        if ((mime == "application/octet-stream" || string.IsNullOrWhiteSpace(mime)) && !string.IsNullOrWhiteSpace(file.FileName))
-        {
-            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
-            mime = ext switch
-            {
-                // 文本/文档
-                ".md" or ".mdc" => "text/markdown",
-                ".txt" => "text/plain",
-                ".pdf" => "application/pdf",
-                ".doc" => "application/msword",
-                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".ppt" => "application/vnd.ms-powerpoint",
-                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                ".xls" => "application/vnd.ms-excel",
-                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".json" => "application/json",
-                ".yaml" or ".yml" => "text/yaml",
-                ".csv" => "text/csv",
-                ".xml" => "application/xml",
-                ".html" or ".htm" => "text/html",
-                // 音频
-                ".mp3" => "audio/mpeg",
-                ".m4a" => "audio/mp4",
-                ".wav" => "audio/wav",
-                ".aac" => "audio/aac",
-                ".ogg" or ".oga" => "audio/ogg",
-                ".flac" => "audio/flac",
-                ".weba" => "audio/webm",
-                // 视频
-                ".mp4" => "video/mp4",
-                ".webm" => "video/webm",
-                ".mov" => "video/quicktime",
-                ".mkv" => "video/x-matroska",
-                ".avi" => "video/x-msvideo",
-                // 图片
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".gif" => "image/gif",
-                ".webp" => "image/webp",
-                ".svg" => "image/svg+xml",
-                _ => mime,
-            };
-        }
+        // MIME 推断（浏览器对 m4a/mp4 等常报 octet-stream，按扩展名兜底）
+        var mime = InferMime(file.ContentType, file.FileName);
 
         // 读取文件字节
         byte[] bytes;
@@ -1002,6 +1006,110 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             entry,
+            attachmentId = attachment.AttachmentId,
+            documentId,
+            fileUrl = stored.Url,
+        }));
+    }
+
+    /// <summary>
+    /// 替换已有条目的文件内容（原地替换）。保留条目 Id / 父文件夹 / 标签 /
+    /// 主文档 / 置顶状态，仅更新正文、附件与标题，避免"删除再上传"丢失这些关联。
+    /// </summary>
+    [HttpPost("entries/{entryId}/replace")]
+    [RequestSizeLimit(MaxUploadBytes)]
+    public async Task<IActionResult> ReplaceEntryFile(string entryId, [FromForm] IFormFile file, CancellationToken ct = default)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync(ct);
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹无法替换文件"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要替换的文件"));
+        if (file.Length > MaxUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
+
+        var mime = InferMime(file.ContentType, file.FileName);
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
+
+        string? extractedText = null;
+        if (_fileContentExtractor.IsSupported(mime))
+            extractedText = _fileContentExtractor.Extract(bytes, mime, file.FileName);
+        else if (mime.StartsWith("text/") || mime == "application/json" || mime == "application/xml")
+            extractedText = System.Text.Encoding.UTF8.GetString(bytes);
+
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mime,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Document,
+            UploadedAt = DateTime.UtcNow,
+            ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        string? documentId = null;
+        if (!string.IsNullOrWhiteSpace(extractedText))
+        {
+            var parsed = await _documentService.ParseAsync(extractedText);
+            parsed.Title = Path.GetFileNameWithoutExtension(file.FileName);
+            await _documentService.SaveAsync(parsed);
+            documentId = parsed.Id;
+        }
+
+        var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
+        var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.AttachmentId, attachment.AttachmentId)
+                .Set(e => e.DocumentId, documentId)
+                .Set(e => e.Title, file.FileName ?? entry.Title)
+                .Set(e => e.Summary, summary?.Trim())
+                .Set(e => e.ContentType, mime)
+                .Set(e => e.FileSize, file.Length)
+                .Set(e => e.ContentIndex, contentIndex?.Trim())
+                .Set(e => e.UpdatedBy, userId)
+                .Set(e => e.UpdatedByName, userName)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Set(e => e.LastChangedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        // 正文已变，重新绑定/失效该条目下的划词评论
+        if (!string.IsNullOrWhiteSpace(extractedText))
+            await RebindInlineCommentsAsync(entryId, extractedText);
+
+        _logger.LogInformation("[document-store] Entry replaced: {EntryId} -> '{FileName}' ({Size}B) by {UserId}",
+            entryId, file.FileName, file.Length, userId);
+
+        var updated = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry = updated,
             attachmentId = attachment.AttachmentId,
             documentId,
             fileUrl = stored.Url,
@@ -2179,7 +2287,7 @@ public class DocumentStoreController : ControllerBase
         {
             viewerId = this.GetRequiredUserId();
             isOwner = store.OwnerId == viewerId;
-            var userDoc = await _db.Users.Find(u => u.Id == viewerId).FirstOrDefaultAsync();
+            var userDoc = await FindUserByAnyIdAsync(viewerId);
             if (userDoc != null)
             {
                 viewerName = !string.IsNullOrWhiteSpace(userDoc.DisplayName) ? userDoc.DisplayName : userDoc.Username;
@@ -2321,7 +2429,7 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(entry.DocumentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该条目尚未关联正文"));
 
-        var userDoc = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+        var userDoc = await FindUserByAnyIdAsync(userId);
         var authorName = userDoc != null && !string.IsNullOrWhiteSpace(userDoc.DisplayName)
             ? userDoc.DisplayName
             : (userDoc?.Username ?? "未知用户");

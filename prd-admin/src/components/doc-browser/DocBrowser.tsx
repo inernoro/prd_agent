@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import 'katex/dist/katex.min.css';
 import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -28,7 +30,7 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags,
+  Sparkles, Wand2, Tags, Replace,
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
@@ -103,6 +105,8 @@ export type DocBrowserProps = {
   onGenerateSubtitle?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 点击"替换文件"时触发（仅文件条目显示）。原地替换内容，保留 Id/标签/主文档。 */
+  onReplaceFile?: (entryId: string) => void;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
@@ -179,7 +183,7 @@ function formatMetaTime(iso?: string): string {
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
-  onGenerateSubtitle, onReprocess,
+  onGenerateSubtitle, onReprocess, onReplaceFile,
   onClose,
 }: {
   x: number;
@@ -194,6 +198,7 @@ function ContextMenu({
   onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
+  onReplaceFile?: (entryId: string) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -260,6 +265,17 @@ function ContextMenu({
           onClick={() => { onSetPrimary(entry.id); onClose(); }}>
           <Star size={12} />
           设为主文档
+        </button>
+      )}
+      {!entry.isFolder
+        && entry.sourceType !== 'subscription'
+        && entry.sourceType !== 'github_directory'
+        && onReplaceFile && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => { onReplaceFile(entry.id); onClose(); }}>
+          <Replace size={12} />
+          替换文件
         </button>
       )}
       {onDelete && (
@@ -763,6 +779,25 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 
 // ── Markdown 渲染器 ──
 
+// 允许文档正文里内嵌的 HTML（div/span/strong 等）携带 class/style，
+// 同时经过 rehype-sanitize 过滤掉 script / on* 事件，防止 XSS。
+// KaTeX 输出的 math 标签也一并放行。
+const docSanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'className', 'style', 'id'],
+    span: [...(defaultSchema.attributes?.span || []), 'className', 'style'],
+    div: [...(defaultSchema.attributes?.div || []), 'className', 'style'],
+    math: ['xmlns'],
+  },
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub',
+    'mfrac', 'msqrt', 'mover', 'munder', 'mtable', 'mtr', 'mtd', 'mtext', 'annotation',
+  ],
+};
+
 function MarkdownViewer({ content }: { content: string }) {
   // 每次 content 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -793,7 +828,7 @@ function MarkdownViewer({ content }: { content: string }) {
     <div className="prose-invert max-w-none text-[13px] leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, docSanitizeSchema], rehypeKatex]}
         components={{
           h1: mkHeading('h1'),
           h2: mkHeading('h2'),
@@ -1065,6 +1100,7 @@ export function DocBrowser({
   onOpenSubscription,
   onGenerateSubtitle,
   onReprocess,
+  onReplaceFile,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -1933,6 +1969,7 @@ export function DocBrowser({
           onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
+          onReplaceFile={onReplaceFile}
           onClose={() => setContextMenu(null)}
         />
       )}

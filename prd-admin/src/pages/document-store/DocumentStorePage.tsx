@@ -37,6 +37,7 @@ import {
   deleteDocumentStore,
   listDocumentEntries,
   uploadDocumentFile,
+  replaceDocumentFile,
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,
@@ -495,6 +496,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 替换文件：记录待替换的 entryId + 独立 file input
+  const replaceTargetRef = useRef<string | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
@@ -532,6 +536,32 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     }
     setUploading(false);
   }, [storeId]);
+
+  // 替换文件：右键菜单触发 → 打开文件选择器，记录目标 entryId
+  const handleReplaceFile = useCallback((entryId: string) => {
+    replaceTargetRef.current = entryId;
+    replaceInputRef.current?.click();
+  }, []);
+
+  const doReplaceFile = useCallback(async (file: File) => {
+    const entryId = replaceTargetRef.current;
+    replaceTargetRef.current = null;
+    if (!entryId) return;
+    setUploading(true);
+    const res = await replaceDocumentFile(entryId, file);
+    if (res.success) {
+      setEntries(prev => prev.map(e => e.id === entryId ? { ...e, ...res.data.entry } : e));
+      if (selectedEntryId === entryId) {
+        // 强制重新拉取新内容
+        setSelectedEntryId(undefined);
+        setTimeout(() => setSelectedEntryId(entryId), 0);
+      }
+      toast.success('替换成功', '文档内容已更新，标签与位置保留');
+    } else {
+      toast.error('替换失败', res.error?.message);
+    }
+    setUploading(false);
+  }, [selectedEntryId]);
 
   // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
   const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
@@ -742,6 +772,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       onDragOver={handleDragOver} onDrop={handleDrop}>
       <input ref={fileInputRef} type="file" className="hidden" accept={ACCEPT_TYPES} multiple
         onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) handleFiles(f); e.target.value = ''; }} />
+      <input ref={replaceInputRef} type="file" className="hidden" accept={ACCEPT_TYPES}
+        onChange={e => { const f = e.target.files?.[0]; if (f) doReplaceFile(f); e.target.value = ''; }} />
 
       <TabBar
         title={
@@ -855,6 +887,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
+          onReplaceFile={handleReplaceFile}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
