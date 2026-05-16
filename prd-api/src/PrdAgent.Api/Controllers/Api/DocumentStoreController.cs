@@ -1114,7 +1114,21 @@ public class DocumentStoreController : ControllerBase
 
         // 正文已变，重新绑定/失效该条目下的划词评论
         if (!string.IsNullOrWhiteSpace(extractedText))
+        {
             await RebindInlineCommentsAsync(entryId, extractedText);
+        }
+        else
+        {
+            // 新文件无可提取正文（图片/音频/扫描 PDF 等）：原有划词评论的锚点已无正文可定位，
+            // 把非全文评论批量置为 Orphaned；全文评论（无锚点）保持 Active 不动。
+            await _db.DocumentInlineComments.UpdateManyAsync(
+                c => c.EntryId == entryId
+                    && c.Status == DocumentInlineCommentStatus.Active
+                    && !c.IsWholeDocument,
+                Builders<DocumentInlineComment>.Update
+                    .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        }
 
         _logger.LogInformation("[document-store] Entry replaced: {EntryId} -> '{FileName}' ({Size}B) by {UserId}",
             entryId, file.FileName, file.Length, userId);
@@ -2327,25 +2341,38 @@ public class DocumentStoreController : ControllerBase
         var dedupWindow = TimeSpan.FromMinutes(ViewDedupWindowMinutes);
         var dedupSince = DateTime.UtcNow - dedupWindow;
 
+        // 去重窗口基于"滚动的最后活动时间"：命中路径会刷新 LastSeenAt，
+        // 下次判定应以 LastSeenAt 为准，而非原始 EnteredAt（否则长会话第 N 次
+        // 刷新会因原始 EnteredAt 已超窗而误判为新访问，导致 ViewCount 虚增）。
+        // 旧行可能没有 LastSeenAt，回退到 EnteredAt。
+        var vf = Builders<DocumentStoreViewEvent>.Filter;
+        var withinWindow = vf.Or(
+            vf.Gte(e => e.LastSeenAt, dedupSince),
+            vf.And(
+                vf.Eq(e => e.LastSeenAt, (DateTime?)null),
+                vf.Gte(e => e.EnteredAt, dedupSince)));
+
         DocumentStoreViewEvent? recent = null;
         if (!string.IsNullOrEmpty(viewerId))
         {
             recent = await _db.DocumentStoreViewEvents
-                .Find(e => e.StoreId == entry.StoreId
-                    && e.EntryId == entryId
-                    && e.ViewerUserId == viewerId
-                    && e.EnteredAt >= dedupSince)
+                .Find(vf.And(
+                    vf.Eq(e => e.StoreId, entry.StoreId),
+                    vf.Eq(e => e.EntryId, entryId),
+                    vf.Eq(e => e.ViewerUserId, viewerId),
+                    withinWindow))
                 .SortByDescending(e => e.EnteredAt)
                 .FirstOrDefaultAsync();
         }
         else if (!string.IsNullOrEmpty(anonToken))
         {
             recent = await _db.DocumentStoreViewEvents
-                .Find(e => e.StoreId == entry.StoreId
-                    && e.EntryId == entryId
-                    && e.ViewerUserId == null
-                    && e.AnonSessionToken == anonToken
-                    && e.EnteredAt >= dedupSince)
+                .Find(vf.And(
+                    vf.Eq(e => e.StoreId, entry.StoreId),
+                    vf.Eq(e => e.EntryId, entryId),
+                    vf.Eq(e => e.ViewerUserId, (string?)null),
+                    vf.Eq(e => e.AnonSessionToken, anonToken),
+                    withinWindow))
                 .SortByDescending(e => e.EnteredAt)
                 .FirstOrDefaultAsync();
         }
