@@ -200,12 +200,11 @@ public class HostedSiteService : IHostedSiteService
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
 
-        // P1：失败的替换不得损坏原可用页面。新内容一律上传到一个全新的 staging 前缀
-        // （stageId，与现有 siteId 前缀完全不相交），因此即使 ZIP 超限/部分上传/DB 更新
-        // 失败或被取消，旧站点的 COS 对象（含 index.html）都不会被覆盖，DB 仍指向完好旧文件，
-        // 原页面继续可用。仅在「新内容上传 + DB 更新」全部成功后，才删除旧前缀的对象。
+        // P1 + URL 稳定 + 无孤儿：先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用），
+        // 校验通过前绝不写任何 COS 对象。校验失败直接抛错——旧 siteId 前缀文件零改动、
+        // DB 未动、也没有任何 staging 残留，原页面与既有 web-hosting/sites/{siteId}/... URL
+        // 继续可用。校验通过后才写入「稳定的 siteId 前缀」（覆盖同名、URL 不变）。
         var oldFiles = site.Files ?? new List<HostedSiteFile>();
-        var stageId = Guid.NewGuid().ToString("N");
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         List<HostedSiteFile> siteFiles;
@@ -214,7 +213,11 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            var result = await ExtractAndUploadZip(stageId, fileBytes);
+            var validationError = ValidateZip(fileBytes);
+            if (validationError != null)
+                throw new InvalidOperationException(validationError);
+            // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
+            var result = await ExtractAndUploadZip(siteId, fileBytes);
             if (result.Error != null)
                 throw new InvalidOperationException(result.Error);
             siteFiles = result.Files;
@@ -224,7 +227,7 @@ public class HostedSiteService : IHostedSiteService
         else if (ext is ".html" or ".htm")
         {
             var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
-            var cosKey = _storage.BuildSiteKey(stageId, "index.html");
+            var cosKey = _storage.BuildSiteKey(siteId, "index.html");
             await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
             siteFiles = new List<HostedSiteFile>
             {
@@ -238,8 +241,8 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("仅支持 .html/.htm/.zip 文件");
         }
 
-        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(stageId, entryFile));
-        var newCosPrefix = $"web-hosting/sites/{stageId}/";
+        // siteId 前缀保持不变 → SiteUrl 稳定，既有书签 / 公开主页 / 知识库引用不会 404
+        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile));
 
         // wrappedAssetType 必须显式覆盖（包括清空）：
         // - 用户把 PDF 重传到原 HTML 站，应写入 "pdf" 让分享/缩略走 PDF 路径
@@ -254,15 +257,16 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.SiteUrl, siteUrl)
                 .Set(x => x.Files, siteFiles)
                 .Set(x => x.TotalSize, totalSize)
-                .Set(x => x.CosPrefix, newCosPrefix)
                 .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 
-        // 新内容（staging 前缀）与 DB 均已成功，DB 现已指向新前缀，
-        // 才清理旧前缀对象。新旧前缀不相交，直接全删，无 key 覆盖风险。
+        // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
+        // 原地覆盖，不能删——否则会删掉刚写入的文件。
+        var newKeys = siteFiles.Select(f => f.CosKey).ToHashSet();
         foreach (var f in oldFiles)
         {
+            if (newKeys.Contains(f.CosKey)) continue;
             try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
             catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
         }
@@ -973,6 +977,59 @@ public class HostedSiteService : IHostedSiteService
             ?? files[0].Path;
 
         return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
+    }
+
+    /// <summary>
+    /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。条件与 ExtractAndUploadZip 完全一致，
+    /// 保证「校验通过」⇔「上传阶段会产出 ≥1 文件且不超限」。用于重传替换：先校验后写入，
+    /// 失败时零副作用（不碰旧文件、不留 staging 孤儿）。
+    /// </summary>
+    private string? ValidateZip(byte[] zipBytes)
+    {
+        try
+        {
+            using var zipStream = new MemoryStream(zipBytes);
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+
+            if (archive.Entries.Count > MaxFileCount)
+                return $"ZIP 包含的文件数超过限制 ({MaxFileCount})";
+
+            var rootPrefix = DetectRootPrefix(archive);
+            long totalSize = 0;
+            var validCount = 0;
+
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name)) continue;
+
+                var relativePath = entry.FullName;
+                if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
+                    relativePath = relativePath[rootPrefix.Length..];
+
+                if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
+                    continue;
+                if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
+                    continue;
+                if (BlockedExtensions.Contains(Path.GetExtension(entry.Name)))
+                    continue;
+
+                totalSize += entry.Length;
+                if (totalSize > MaxExtractedSize)
+                    return $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)";
+
+                if (entry.Length == 0) continue;
+                validCount++;
+            }
+
+            if (validCount == 0)
+                return "ZIP 中没有有效文件";
+
+            return null;
+        }
+        catch (InvalidDataException)
+        {
+            return "无效的 ZIP 文件";
+        }
     }
 
     private static string? DetectRootPrefix(ZipArchive archive)

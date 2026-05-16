@@ -10,5 +10,5 @@
 | fix | prd-api | 网页托管：复用带密码分享时按新密码轮换（旧密码失效），不再静默丢弃用户重设的密码 |
 | fix | prd-admin | 网页托管：扫码访问 QrCodeDialog 改走 resolveVisitUrl（visit 隔离池），不再扫 listSiteShares、不再把用户限期分享的有效期覆盖成永久 |
 | fix | prd-admin | 网页托管：ShareDialog 创建分享补 catch + 失败 toast，网络异常/后端失败不再静默无反馈 |
-| fix | prd-api | 网页托管：重传替换改为新内容上传到全新 staging 前缀、DB 成功后再删旧前缀，畸形/超限 zip 或 DB 失败时旧 index.html 不再被原地覆盖，原页面始终可用（P1） |
+| fix | prd-api | 网页托管：重传替换改为「内存校验通过后才写入稳定 siteId 前缀」，畸形/超限 zip 失败时零副作用——旧文件不被覆盖、SiteUrl 不变（既有书签/引用不 404）、无 staging 孤儿残留（P1+P2） |
 | fix | prd-admin | 网页托管：卡片操作按钮 hover 显示手型光标，提示可点击 |
