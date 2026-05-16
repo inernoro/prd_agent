@@ -200,12 +200,10 @@ public class HostedSiteService : IHostedSiteService
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
 
-        // 清理旧 COS 文件
-        foreach (var f in site.Files)
-        {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
-        }
+        // P1：失败的替换不得损坏原可用页面。旧 COS 文件延迟到「新内容上传 + DB 更新」
+        // 全部成功后再清理（见方法末尾）；若中途校验/上传抛错，旧站点完整保留、DB 未动，
+        // 原页面继续可用。
+        var oldFiles = site.Files ?? new List<HostedSiteFile>();
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         List<HostedSiteFile> siteFiles;
@@ -256,6 +254,16 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+
+        // 新内容与 DB 均已成功，才清理旧 COS 中不再被新文件集复用的对象。
+        // 同 key（如 index.html）已被新内容覆盖，不能删——否则会删掉刚写入的文件。
+        var newKeys = siteFiles.Select(f => f.CosKey).ToHashSet();
+        foreach (var f in oldFiles)
+        {
+            if (newKeys.Contains(f.CosKey)) continue;
+            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
+        }
 
         return (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
     }
