@@ -12,11 +12,9 @@ import {
 } from 'lucide-react';
 import {
   listPublicSubmissions,
-  listSubmissionCreators,
   likeSubmission,
   unlikeSubmission,
   type SubmissionItem,
-  type SubmissionCreator,
 } from '@/services/real/submissions';
 import { SubmissionDetailModal } from '@/components/showcase/SubmissionDetailModal';
 import { LiteraryCard } from '@/components/showcase/LiteraryCard';
@@ -26,6 +24,7 @@ import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
 import { useInViewport } from '@/hooks/useInViewport';
+import { useCreatorFilter } from '@/hooks/useCreatorFilter';
 import { distributeToColumns, getAspectRatio } from '@/components/showcase/waterfall';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
@@ -199,12 +198,16 @@ export default function PortfolioShowcasePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [scrollY, setScrollY] = useState(0);
-  const [creators, setCreators] = useState<SubmissionCreator[]>([]);
-  const [creatorsLoading, setCreatorsLoading] = useState(false);
-  const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
-  const selectedCreatorRef = useRef<string | null>(null);
+  const {
+    creators,
+    creatorsLoading,
+    selectedCreatorId,
+    selectedCreatorRef,
+    fetchCreators,
+    selectCreator,
+    resetCreator,
+  } = useCreatorFilter();
   const fetchIdRef = useRef(0);
-  const creatorsFetchIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Track scroll for parallax hero
@@ -239,19 +242,7 @@ export default function PortfolioShowcasePage() {
         setLoadingMore(false);
       }
     }
-  }, []);
-
-  const fetchCreators = useCallback(async (contentType: string) => {
-    const myFetchId = ++creatorsFetchIdRef.current;
-    setCreatorsLoading(true);
-    try {
-      const res = await listSubmissionCreators({ contentType: contentType || undefined });
-      if (creatorsFetchIdRef.current !== myFetchId) return;
-      if (res.success) setCreators(res.data.creators);
-    } finally {
-      if (creatorsFetchIdRef.current === myFetchId) setCreatorsLoading(false);
-    }
-  }, []);
+  }, [selectedCreatorRef]);
 
   useEffect(() => {
     fetchItems('', 0, false);
@@ -261,15 +252,13 @@ export default function PortfolioShowcasePage() {
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setItems([]);
-    setSelectedCreatorId(null);
-    selectedCreatorRef.current = null;
+    resetCreator();
     fetchItems(tab, 0, false);
     fetchCreators(tab);
   };
 
   const handleSelectCreator = (userId: string | null) => {
-    setSelectedCreatorId(userId);
-    selectedCreatorRef.current = userId;
+    selectCreator(userId);
     setItems([]);
     fetchItems(activeTab, 0, false);
   };

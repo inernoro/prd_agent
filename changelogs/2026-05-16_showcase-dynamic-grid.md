@@ -9,3 +9,4 @@
 | fix | prd-admin | 全部 tab 下选中创作者无作品时补空状态提示（避免空白区）；LiteraryCard 复用 waterfall.ts 的 getAspectRatio 消除重复 |
 | fix | prd-admin | useWaterfallColumns 改回调 ref + 测量内容盒宽度（扣除 padding，修复带 padding 容器多算一列；条件 remount 后 ResizeObserver 重新挂载） |
 | fix | prd-admin | PortfolioShowcasePage 筛选无结果时改显「没有符合条件的作品」+ 查看全部，不再误导用户去创作 |
+| refactor | prd-admin | 抽取 useCreatorFilter 共享 hook，消除两个作品广场组件重复的创作者筛选状态/竞态逻辑 |

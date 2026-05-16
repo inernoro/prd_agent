@@ -9,10 +9,6 @@ import {
   adminWithdrawSubmission,
   type SubmissionItem,
 } from '@/services/real/submissions';
-import {
-  listSubmissionCreators,
-  type SubmissionCreator,
-} from '@/services/real/submissions';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { useAuthStore } from '@/stores/authStore';
@@ -20,6 +16,7 @@ import { toast } from '@/lib/toast';
 import { distributeToColumns, getAspectRatio } from './waterfall';
 import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
 import { useInViewport } from '@/hooks/useInViewport';
+import { useCreatorFilter } from '@/hooks/useCreatorFilter';
 import { CreatorFilterRow } from './CreatorFilterRow';
 
 const TABS = [
@@ -241,13 +238,17 @@ export function ShowcaseGallery() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creators, setCreators] = useState<SubmissionCreator[]>([]);
-  const [creatorsLoading, setCreatorsLoading] = useState(false);
-  const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
-  const selectedCreatorRef = useRef<string | null>(null);
+  const {
+    creators,
+    creatorsLoading,
+    selectedCreatorId,
+    selectedCreatorRef,
+    fetchCreators,
+    selectCreator,
+    resetCreator,
+  } = useCreatorFilter();
   const initialLoadDone = useRef(false);
   const fetchIdRef = useRef(0);
-  const creatorsFetchIdRef = useRef(0);
 
   const fetchItems = useCallback(async (contentType: string, skip: number, append: boolean) => {
     const myFetchId = ++fetchIdRef.current;
@@ -272,19 +273,7 @@ export function ShowcaseGallery() {
         setLoadingMore(false);
       }
     }
-  }, []);
-
-  const fetchCreators = useCallback(async (contentType: string) => {
-    const myFetchId = ++creatorsFetchIdRef.current;
-    setCreatorsLoading(true);
-    try {
-      const res = await listSubmissionCreators({ contentType: contentType || undefined });
-      if (creatorsFetchIdRef.current !== myFetchId) return;
-      if (res.success) setCreators(res.data.creators);
-    } finally {
-      if (creatorsFetchIdRef.current === myFetchId) setCreatorsLoading(false);
-    }
-  }, []);
+  }, [selectedCreatorRef]);
 
   useEffect(() => {
     if (!initialLoadDone.current) {
@@ -297,15 +286,13 @@ export function ShowcaseGallery() {
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setItems([]);
-    setSelectedCreatorId(null);
-    selectedCreatorRef.current = null;
+    resetCreator();
     fetchItems(tab, 0, false);
     fetchCreators(tab);
   };
 
   const handleSelectCreator = (userId: string | null) => {
-    setSelectedCreatorId(userId);
-    selectedCreatorRef.current = userId;
+    selectCreator(userId);
     setItems([]);
     fetchItems(activeTab, 0, false);
   };
