@@ -477,12 +477,16 @@ public class HostedSiteService : IHostedSiteService
         var effShareType = shareType ?? "single";
         var effPurpose = string.IsNullOrWhiteSpace(purpose) ? "share" : purpose;
         var wantAccess = string.IsNullOrWhiteSpace(password) ? "public" : "password";
-        var newExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : (DateTime?)null;
+        var nowUtc = DateTime.UtcNow;
+        var newExpiresAt = expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
 
         var fb = Builders<WebPageShareLink>.Filter;
         var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
             & fb.Eq(x => x.IsRevoked, false)
             & fb.Eq(x => x.AccessLevel, wantAccess)
+            // 已过期的链接不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
+            // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
+            & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc))
             & (effShareType == "collection"
                 ? fb.Eq(x => x.ShareType, "collection")
                 : fb.Eq(x => x.ShareType, effShareType) & fb.Eq(x => x.SiteId, siteId))
