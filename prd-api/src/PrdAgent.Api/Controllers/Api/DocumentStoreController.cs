@@ -462,7 +462,9 @@ public class DocumentStoreController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
-            var kw = keyword.Trim();
+            // 关键词按字面量处理：转义正则元字符，避免 [draft] / v1.0 / foo( 等
+            // 被当作正则误匹配或非法正则导致请求失败（行为对齐原本地 includes）。
+            var kw = System.Text.RegularExpressions.Regex.Escape(keyword.Trim());
             var searchFilters = new List<FilterDefinition<DocumentEntry>>
             {
                 filterBuilder.Regex(e => e.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
@@ -2370,6 +2372,8 @@ public class DocumentStoreController : ControllerBase
             UserAgent = string.IsNullOrEmpty(ua) ? null : ua,
             Referer = string.IsNullOrEmpty(referer) ? null : referer,
             LastSeenAt = DateTime.UtcNow,
+            // 初始化为数值 0，使 leave 端点的 $inc 累加可安全作用（避免对 null 执行 $inc 报错）
+            DurationMs = 0,
         };
         await _db.DocumentStoreViewEvents.InsertOneAsync(evt);
 
@@ -2390,11 +2394,15 @@ public class DocumentStoreController : ControllerBase
         if (durationMs < 0) durationMs = 0;
         if (durationMs > 24 * 60 * 60 * 1000) durationMs = 24 * 60 * 60 * 1000; // clamp 到 24 小时
 
+        // 累加而非覆盖：去重窗口内同一访客重开同一文档会复用同一 viewEvent，
+        // 每个子访问各自 flush 一次本段时长，必须 Inc 累计，否则后一次会覆盖前一次。
+        // useViewTracking.flushIfAny 在每次 flush 后清空 viewEventId，
+        // 同一子访问不会重复 leave，故 Inc 不会重复计时。
         await _db.DocumentStoreViewEvents.UpdateOneAsync(
             e => e.Id == viewEventId,
             Builders<DocumentStoreViewEvent>.Update
                 .Set(e => e.LeftAt, DateTime.UtcNow)
-                .Set(e => e.DurationMs, durationMs));
+                .Inc(e => e.DurationMs, durationMs));
 
         return Ok(ApiResponse<object>.Ok(new { }));
     }
