@@ -60,29 +60,45 @@ function stripInlineMarkdown(s: string): string {
 }
 
 /**
- * SSOT：标题文本 → slug id。
+ * SSOT：标题文本 → slug id。两条调用路径共用最后的 normalize + slugger，
+ * 但前置规整步骤不同，由 opts.alreadyRendered 区分：
  *
- * DocBrowser 的 mkHeading 与本文件的 parseMarkdownToc 必须用同一套规整，
- * 否则点 TOC 跳不到对应标题。规整顺序：
+ * raw markdown 路径（parseMarkdownToc，opts.alreadyRendered=false / 默认）：
+ *   输入是原始 markdown 标题行，需要完整规整：
  *   1. 剥 markdown 行内标记（**bold** / `code` / [link]() 等）
- *   2. 剥内嵌 HTML 标签（rehypeRaw 渲染后正文是纯文本，TOC 也要去标签）
+ *   2. 剥内嵌 HTML 标签（<kbd>x</kbd> → x；rehypeRaw 渲染后正文为纯文本）
  *   3. HTML 实体解码（&amp; &lt; &nbsp; 等）
  *   4. normalizeHeadingText（去尾部 ###、合并空白、trim）
  *
- * 注意 #1#2 顺序：先 stripInlineMarkdown 再去标签，
- * 与 DocBrowser 侧 childrenToText（DOM 渲染后已无 markdown 标记、已无标签、已解码实体）等价。
+ * rendered 路径（DocBrowser mkHeading 的 childrenToText 结果，opts.alreadyRendered=true）：
+ *   输入已是 ReactMarkdown 渲染后的"最终可见文本"——
+ *   不再含真 HTML 标签（已成 DOM 元素）、实体已解码（&lt; 已是可见的 <）。
+ *   若再剥标签会把 `Use <T> generics` 里的 `<T>` 当标签误删 → 与 TOC 不一致。
+ *   因此 rendered 路径**跳过剥标签、跳过实体解码**，
+ *   只做 markdown 行内剥离（无害幂等）+ 同一 normalize + 同一 slugger。
  *
- * @param rawHeadingText markdown 标题行去掉前导 # 后的原始文本
+ * 两条路径对以下输入都产出相同 slug：
+ *   `# Use &lt;T&gt; generics`  → raw: 解码得 "Use <T> generics" / rendered: childrenToText 即 "Use <T> generics"
+ *   `## Press <kbd>Enter</kbd>` → raw: 剥标签得 "Press Enter"     / rendered: childrenToText 即 "Press Enter"
+ *   `## **加粗** 标题`          → 两侧均得 "加粗 标题"
+ *   `## 普通标题`               → 两侧均得 "普通标题"
+ *
+ * @param headingText raw 路径传 markdown 标题行去掉前导 # 后的原文；rendered 路径传渲染后纯文本
  * @param slugger 必须传入按文档顺序复用的同一个 GithubSlugger 实例
+ * @param opts.alreadyRendered true=rendered 路径（跳过剥标签/解实体）
  */
 export function headingTextToSlug(
-  rawHeadingText: string,
+  headingText: string,
   slugger: { slug: (s: string) => string },
+  opts?: { alreadyRendered?: boolean },
 ): { text: string; id: string } {
-  let t = stripInlineMarkdown(rawHeadingText);
-  // 剥掉内嵌 HTML 标签：<kbd>x</kbd> → x、<span>y</span> → y
-  t = t.replace(/<[^>]+>/g, '');
-  t = decodeHtmlEntities(t);
+  let t = stripInlineMarkdown(headingText);
+  if (!opts?.alreadyRendered) {
+    // 仅 raw markdown 路径：剥内嵌 HTML 标签 + 解 HTML 实体
+    // rendered 路径已是最终可见文本（标签已成元素、实体已解码），跳过这两步
+    t = t.replace(/<[^>]+>/g, '');
+    t = decodeHtmlEntities(t);
+  }
   const text = normalizeHeadingText(t);
   const id = text ? slugger.slug(text) : '';
   return { text, id };

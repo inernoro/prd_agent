@@ -871,8 +871,9 @@ function MarkdownViewer({ content }: { content: string }) {
   const mkHeading = useCallback(
     (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
       // childrenToText 拿到的是渲染后纯文本（HTML 标签已成元素、实体已解码），
-      // 仍走 headingTextToSlug 做等价规整，确保与 TOC 侧字面一致（SSOT）。
-      const { id: slugId } = headingTextToSlug(childrenToText(children), slugger);
+      // 走 rendered 路径（alreadyRendered=true）：跳过剥标签/解实体，
+      // 否则 `Use <T> generics` 里的 <T> 会被标签正则误删，与 TOC 不一致。
+      const { id: slugId } = headingTextToSlug(childrenToText(children), slugger, { alreadyRendered: true });
       const id = slugId || undefined;
       // F2：借鉴文档站的标题节奏——上间距明显大于下间距，层级清晰
       const classesByTag: Record<string, string> = {
