@@ -109,12 +109,14 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
   try {
     const listRes = await listSiteShares();
     if (listRes.success) {
+      // 访问链接按永久创建（expiresInDays:0），因此只复用「永不过期」的无密码单站点链接，
+      // 否则复用到一条会过期的链接，过期后访问就 404。
       const existing = listRes.data.items.find(s =>
         s.siteId === site.id &&
         s.shareType === 'single' &&
         !s.isRevoked &&
         s.accessLevel === 'public' &&
-        (!s.expiresAt || new Date(s.expiresAt) > new Date())
+        !s.expiresAt
       );
       if (existing?.token) return `${window.location.origin}/s/wp/${existing.token}`;
     }
@@ -1475,13 +1477,26 @@ function ShareDialog({ siteId, siteIds, onClose }: {
 
     // 不允许无限创建链接：先找该来源已有的、未吊销的同类型链接复用，
     // 吊销后才会重新生成。无密码 / 有密码各自复用一条。
+    // 复用必须尊重所选有效期，否则用户选「7天」却被复用一条永不过期/更长寿命的链接，
+    // 等于绕过了有效期管控。规则：复用的链接寿命不得超过本次所选窗口。
+    const now = Date.now();
+    const wantNeverExpire = expiresInDays === 0;
+    const maxAllowedExpiry = wantNeverExpire ? null : now + expiresInDays * 86_400_000;
+
     const listRes = await listSiteShares();
     if (listRes.success) {
       const existing = listRes.data.items.find(s => {
         if (s.isRevoked) return false;
         if (s.shareType !== wantType) return false;
         if (s.accessLevel !== wantAccess) return false;
-        if (s.expiresAt && new Date(s.expiresAt) <= new Date()) return false;
+        const exp = s.expiresAt ? new Date(s.expiresAt).getTime() : null;
+        if (exp !== null && exp <= now) return false;          // 已过期
+        if (wantNeverExpire) {
+          if (exp !== null) return false;                      // 要永久，但该链接会过期
+        } else {
+          if (exp === null) return false;                      // 要有限期，但该链接永不过期
+          if (exp > maxAllowedExpiry!) return false;           // 该链接寿命超出所选窗口
+        }
         if (isCollection) {
           const a = [...(s.siteIds ?? [])].sort();
           const b = [...(siteIds ?? [])].sort();
