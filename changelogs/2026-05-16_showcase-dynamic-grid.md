@@ -7,3 +7,4 @@
 | perf | prd-admin | 作品广场封面图视口懒挂载（IntersectionObserver，未滚动到的卡片零请求）+ 首屏批量缩小（首页20→12 / showcase 24→18）+ decoding=async，大幅降低首屏流量 |
 | fix | prd-admin | fetchCreators 增加请求令牌防竞态，快速切 tab 时旧创作者响应不再覆盖新 tab |
 | fix | prd-admin | 全部 tab 下选中创作者无作品时补空状态提示（避免空白区）；LiteraryCard 复用 waterfall.ts 的 getAspectRatio 消除重复 |
+| fix | prd-admin | useWaterfallColumns 改回调 ref + 测量内容盒宽度（扣除 padding，修复带 padding 容器多算一列；条件 remount 后 ResizeObserver 重新挂载） |

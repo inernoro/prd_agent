@@ -206,7 +206,6 @@ export default function PortfolioShowcasePage() {
   const fetchIdRef = useRef(0);
   const creatorsFetchIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const gridRef = useRef<HTMLDivElement>(null);
 
   // Track scroll for parallax hero
   useEffect(() => {
@@ -298,8 +297,8 @@ export default function PortfolioShowcasePage() {
 
   const hasMore = items.length < total;
 
-  // Waterfall column count — driven by actual container width (ultrawide-aware)
-  const { columnCount, gap } = useWaterfallColumns(gridRef);
+  // Waterfall column count — driven by actual container content width (ultrawide-aware)
+  const { columnCount, gap, ref: gridRef } = useWaterfallColumns();
   const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
 
   // Infinite scroll sentinel

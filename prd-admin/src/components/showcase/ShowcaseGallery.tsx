@@ -354,9 +354,8 @@ export function ShowcaseGallery() {
 
   const hasMore = items.length < total;
 
-  // Waterfall column count — driven by actual container width (ultrawide-aware)
-  const sectionRef = useRef<HTMLElement>(null);
-  const { columnCount, gap } = useWaterfallColumns(sectionRef);
+  // Waterfall column count — driven by actual container content width (ultrawide-aware)
+  const { columnCount, gap, ref: gridRef } = useWaterfallColumns();
   const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
 
   // Infinite scroll: observe a sentinel at the bottom
@@ -380,7 +379,7 @@ export function ShowcaseGallery() {
   if (!loading && items.length === 0 && initialLoadDone.current && !activeTab && !selectedCreatorId) return null;
 
   return (
-    <section ref={sectionRef} className="mt-10">
+    <section ref={gridRef} className="mt-10">
       {/* Section header with tabs */}
       <div className="flex items-center justify-between mb-6">
         <div
