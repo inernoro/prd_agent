@@ -3,6 +3,8 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
+import { Select } from '@/components/design/Select';
+import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { Dialog } from '@/components/ui/Dialog';
@@ -56,6 +58,8 @@ import {
   Globe,
   Library,
   BookOpen,
+  Replace,
+  AlertTriangle,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -125,6 +129,9 @@ export default function WebPagesPage() {
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [shares, setShares] = useState<ShareLinkItem[]>([]);
   const [qrSite, setQrSite] = useState<HostedSite | null>(null);
+  // 拖文件到卡片触发的"替换网页"二次确认（非 null 时弹出确认框）
+  const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
+  const [replacing, setReplacing] = useState(false);
 
   // ─── Load ───
 
@@ -231,6 +238,21 @@ export default function WebPagesPage() {
       loadMeta();
     }
   }, [loadMeta]);
+
+  const handleConfirmReplace = useCallback(async () => {
+    if (!replaceTarget || replacing) return;
+    setReplacing(true);
+    const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
+    setReplacing(false);
+    if (res.success) {
+      toast.success('替换成功', `「${replaceTarget.site.title}」的网页内容已更新`);
+      setReplaceTarget(null);
+      load();
+      loadMeta();
+    } else {
+      toast.error('替换失败', res.error?.message || '请稍后重试');
+    }
+  }, [replaceTarget, replacing, load, loadMeta]);
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
@@ -346,44 +368,47 @@ export default function WebPagesPage() {
 
           {/* Folder filter */}
           {folders.length > 0 && (
-            <select
-              value={activeFolder ?? ''}
-              onChange={e => setActiveFolder(e.target.value || null)}
-              className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-              style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-            >
-              <option value="">全部文件夹</option>
-              {folders.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
+            <div className="w-[150px] shrink-0">
+              <Select
+                uiSize="sm"
+                value={activeFolder ?? ''}
+                onChange={e => setActiveFolder(e.target.value || null)}
+              >
+                <option value="">全部文件夹</option>
+                {folders.map(f => <option key={f} value={f}>{f}</option>)}
+              </Select>
+            </div>
           )}
 
           {/* Source type filter */}
-          <select
-            value={activeSourceType ?? ''}
-            onChange={e => setActiveSourceType(e.target.value || null)}
-            className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-            style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-          >
-            <option value="">全部来源</option>
-            <option value="upload">手动上传</option>
-            <option value="workflow">工作流</option>
-            <option value="api">API</option>
-            <option value="saved-share">从分享保存</option>
-          </select>
+          <div className="w-[140px] shrink-0">
+            <Select
+              uiSize="sm"
+              value={activeSourceType ?? ''}
+              onChange={e => setActiveSourceType(e.target.value || null)}
+            >
+              <option value="">全部来源</option>
+              <option value="upload">手动上传</option>
+              <option value="workflow">工作流</option>
+              <option value="api">API</option>
+              <option value="saved-share">从分享保存</option>
+            </Select>
+          </div>
 
           {/* Sort */}
-          <select
-            value={sort}
-            onChange={e => setSort(e.target.value)}
-            className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-            style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-          >
-            <option value="newest">最新创建</option>
-            <option value="oldest">最早创建</option>
-            <option value="title">按标题</option>
-            <option value="most-viewed">最多浏览</option>
-            <option value="largest">最大体积</option>
-          </select>
+          <div className="w-[130px] shrink-0">
+            <Select
+              uiSize="sm"
+              value={sort}
+              onChange={e => setSort(e.target.value)}
+            >
+              <option value="newest">最新创建</option>
+              <option value="oldest">最早创建</option>
+              <option value="title">按标题</option>
+              <option value="most-viewed">最多浏览</option>
+              <option value="largest">最大体积</option>
+            </Select>
+          </div>
 
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
@@ -495,6 +520,7 @@ export default function WebPagesPage() {
               onShare={() => handleShare(site.id)}
               onQrCode={() => setQrSite(site)}
               onTransferToLibrary={() => setLibraryTargetSite(site)}
+              onReplaceFile={(file) => setReplaceTarget({ site, file })}
             />
           ))}
         </div>
@@ -533,6 +559,47 @@ export default function WebPagesPage() {
           }}
         />
       )}
+
+      {/* 拖文件替换网页 — 二次确认 */}
+      <Dialog
+        open={!!replaceTarget}
+        onOpenChange={(o) => { if (!o && !replacing) setReplaceTarget(null); }}
+        title="替换网页内容"
+        maxWidth={460}
+        content={
+          replaceTarget && (
+            <div className="flex flex-col gap-4">
+              <div
+                className="flex items-start gap-2.5 rounded-xl p-3 text-[13px]"
+                style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.32)', color: 'var(--text-secondary)' }}
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: '#fb923c' }} />
+                <span>
+                  即将用新文件覆盖「<span style={{ color: 'var(--text-primary)' }}>{replaceTarget.site.title}</span>」的全部网页内容，
+                  原有文件将被清理且<span style={{ color: 'var(--text-primary)' }}>无法恢复</span>。访问链接保持不变。
+                </span>
+              </div>
+              <div
+                className="flex items-center gap-2.5 rounded-xl p-3"
+                style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
+              >
+                <Replace size={18} style={{ color: 'var(--accent-primary)' }} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{replaceTarget.file.name}</p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{fmtSize(replaceTarget.file.size)}</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" disabled={replacing} onClick={() => setReplaceTarget(null)}>取消</Button>
+                <Button size="sm" variant="primary" disabled={replacing} onClick={handleConfirmReplace}>
+                  {replacing ? <MapSpinner size={14} className="mr-1" /> : <Replace size={14} className="mr-1" />}
+                  确认替换
+                </Button>
+              </div>
+            </div>
+          )
+        }
+      />
 
       {/* Share Dialog */}
       {showShareDialog && (
@@ -793,7 +860,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary }: {
+function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -804,14 +871,40 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
   onShare: () => void;
   onQrCode: () => void;
   onTransferToLibrary: () => void;
+  onReplaceFile: (file: File) => void;
 }) {
   const isPublic = site.visibility === 'public';
+  const [fileDragOver, setFileDragOver] = useState(false);
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
     id: site.id,
     label: site.title,
     icon: '🌐',
   });
+
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!fileDragOver) setFileDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // 仅当真正离开卡片时才收起（忽略子元素间冒泡）
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setFileDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setFileDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) onReplaceFile(f);
+  };
+
   return (
     <div
       className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
@@ -821,14 +914,31 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
         outlineOffset: selected ? 3 : 0,
       }}
       onPointerDown={onPointerDown}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <div
         className="relative overflow-hidden rounded-[18px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-xl group-hover:shadow-black/25"
         style={{
           background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
-          borderColor: selected ? 'var(--accent-primary)' : 'var(--border-default)',
+          borderColor: fileDragOver ? 'var(--accent-primary)' : selected ? 'var(--accent-primary)' : 'var(--border-default)',
         }}
       >
+        {/* 拖文件到卡片上时显示"替换网页"提示，松手后弹二次确认 */}
+        {fileDragOver && (
+          <div
+            className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-[18px] backdrop-blur-sm"
+            style={{
+              background: 'color-mix(in srgb, var(--accent-primary) 26%, rgba(0,0,0,0.55))',
+              border: '2px dashed var(--accent-primary)',
+            }}
+          >
+            <Replace size={30} className="text-white" />
+            <span className="text-[15px] font-semibold text-white">替换此网页</span>
+            <span className="px-3 text-center text-[11px] text-white/80">松开以替换「{site.title}」的内容</span>
+          </div>
+        )}
         <div
           className="relative cursor-pointer overflow-hidden"
           style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
@@ -863,7 +973,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="group/pub inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
+                className="group/pub inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
                 title="点击取消公开"
               >
                 <Globe size={12} className="inline-block group-hover/pub:hidden" />
@@ -875,7 +985,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="inline-flex h-7 items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
                 title="设为公开"
               >
                 <Globe size={12} /> 设为公开
@@ -884,7 +994,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
-              className="inline-flex h-7 items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-white/80 opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
+              className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-white/80 opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
               title={selected ? '取消选择' : '选择'}
             >
               <input
@@ -898,23 +1008,14 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             </button>
           </div>
 
-          <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
-            <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
-              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
-            </span>
-          </div>
-
-          <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); window.open(site.siteUrl, '_blank'); }}
-              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-black/54 px-3 text-[12px] font-semibold text-white shadow-md backdrop-blur-md transition-colors hover:bg-black/70"
-              title="访问"
-            >
-              <ExternalLink size={13} />
-              访问
-            </button>
-          </div>
+          {/* 来源标签：手动上传是常态，不展示；仅工作流/API/分享保存等非常态来源才标注 */}
+          {site.sourceType !== 'upload' && (
+            <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
+              <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
+                {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+              </span>
+            </div>
+          )}
 
           <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
@@ -997,7 +1098,7 @@ function IconAction({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+      className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
       title={label}
       aria-label={label}
       style={danger ? { color: '#fecaca' } : undefined}
@@ -1334,6 +1435,41 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   const handleCreate = async () => {
     setCreating(true);
     const pwd = usePassword ? (password.trim() || undefined) : undefined;
+    const wantAccess = pwd ? 'password' : 'public';
+    const wantType = isCollection ? 'collection' : 'single';
+
+    // 不允许无限创建链接：先找该来源已有的、未吊销的同类型链接复用，
+    // 吊销后才会重新生成。无密码 / 有密码各自复用一条。
+    const listRes = await listSiteShares();
+    if (listRes.success) {
+      const existing = listRes.data.items.find(s => {
+        if (s.isRevoked) return false;
+        if (s.shareType !== wantType) return false;
+        if (s.accessLevel !== wantAccess) return false;
+        if (s.expiresAt && new Date(s.expiresAt) <= new Date()) return false;
+        if (isCollection) {
+          const a = [...(s.siteIds ?? [])].sort();
+          const b = [...(siteIds ?? [])].sort();
+          return a.length === b.length && a.every((v, i) => v === b[i]);
+        }
+        return s.siteId === siteId;
+      });
+      if (existing) {
+        const path = existing.shortSeq && existing.shortSeq > 0
+          ? `/s/${existing.shortSeq}`
+          : `/s/wp/${existing.token}`;
+        const reused = { shareUrl: path, token: existing.token, password: existing.password };
+        setCreating(false);
+        setResult(reused);
+        let text = `${window.location.origin}${path}`;
+        if (reused.password) text += `\n访问密码：${reused.password}`;
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      }
+    }
+
     const res = await createSiteShareLink({
       siteId: siteId || undefined,
       siteIds: isCollection ? siteIds : undefined,
