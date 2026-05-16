@@ -247,6 +247,7 @@ export function ShowcaseGallery() {
   const selectedCreatorRef = useRef<string | null>(null);
   const initialLoadDone = useRef(false);
   const fetchIdRef = useRef(0);
+  const creatorsFetchIdRef = useRef(0);
 
   const fetchItems = useCallback(async (contentType: string, skip: number, append: boolean) => {
     const myFetchId = ++fetchIdRef.current;
@@ -274,12 +275,14 @@ export function ShowcaseGallery() {
   }, []);
 
   const fetchCreators = useCallback(async (contentType: string) => {
+    const myFetchId = ++creatorsFetchIdRef.current;
     setCreatorsLoading(true);
     try {
       const res = await listSubmissionCreators({ contentType: contentType || undefined });
+      if (creatorsFetchIdRef.current !== myFetchId) return;
       if (res.success) setCreators(res.data.creators);
     } finally {
-      setCreatorsLoading(false);
+      if (creatorsFetchIdRef.current === myFetchId) setCreatorsLoading(false);
     }
   }, []);
 

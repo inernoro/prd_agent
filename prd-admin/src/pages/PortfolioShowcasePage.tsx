@@ -204,6 +204,7 @@ export default function PortfolioShowcasePage() {
   const [selectedCreatorId, setSelectedCreatorId] = useState<string | null>(null);
   const selectedCreatorRef = useRef<string | null>(null);
   const fetchIdRef = useRef(0);
+  const creatorsFetchIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
@@ -242,12 +243,14 @@ export default function PortfolioShowcasePage() {
   }, []);
 
   const fetchCreators = useCallback(async (contentType: string) => {
+    const myFetchId = ++creatorsFetchIdRef.current;
     setCreatorsLoading(true);
     try {
       const res = await listSubmissionCreators({ contentType: contentType || undefined });
+      if (creatorsFetchIdRef.current !== myFetchId) return;
       if (res.success) setCreators(res.data.creators);
     } finally {
-      setCreatorsLoading(false);
+      if (creatorsFetchIdRef.current === myFetchId) setCreatorsLoading(false);
     }
   }, []);
 
