@@ -863,6 +863,11 @@ function MarkdownViewer({ content }: { content: string }) {
   // 每次 body 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const slugger = useMemo(() => new GithubSlugger(), [body]);
+  // GithubSlugger 有状态（记录已用过的 slug 以去重）。MarkdownViewer 在 body 不变的
+  // 重渲染（开评论抽屉/划词选区/父级 state 变化）下会复用同一 memo 实例，若不重置，
+  // 第二次渲染的 heading id 会漂移成 name-1/name-2，而 TOC 侧每次用全新 slugger 解析，
+  // 导致重渲染后锚点失配。每次渲染前 reset，保证两侧字面始终一致（SSOT）。
+  slugger.reset();
   const mkHeading = useCallback(
     (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
       // childrenToText 拿到的是渲染后纯文本（HTML 标签已成元素、实体已解码），
