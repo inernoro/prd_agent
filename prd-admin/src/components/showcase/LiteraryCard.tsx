@@ -3,6 +3,7 @@ import { Eye, BookOpen } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { useInViewport } from '@/hooks/useInViewport';
+import { getAspectRatio } from './waterfall';
 import type { SubmissionItem } from '@/services/real/submissions';
 
 interface LiteraryCardProps {
@@ -15,14 +16,6 @@ interface LiteraryCardProps {
  * 文学创作卡片 — 瀑布流风格
  * 自然比例 + 封面图全覆盖 + 底部渐变遮罩 + 文字叠加
  */
-
-/** Get aspect ratio string for a submission item */
-function getAspectRatio(item: SubmissionItem): string {
-  if (item.coverWidth && item.coverHeight) {
-    return `${item.coverWidth}/${item.coverHeight}`;
-  }
-  return '16/10';
-}
 
 /* 无封面图时的默认渐变背景 */
 const FALLBACK_GRADIENTS = [

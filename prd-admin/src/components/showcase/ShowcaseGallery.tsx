@@ -487,7 +487,7 @@ export function ShowcaseGallery() {
       )}
 
       {/* Empty state */}
-      {!loading && items.length === 0 && activeTab && (
+      {!loading && items.length === 0 && (activeTab || selectedCreatorId) && (
         <div
           className="flex flex-col items-center justify-center h-40 gap-2"
           style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
