@@ -1465,7 +1465,12 @@ function ShareDialog({ siteId, siteIds, onClose }: {
         navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
+      } else {
+        toast.error('创建分享链接失败', res.error?.message || '请稍后重试');
       }
+    } catch (e) {
+      // 网络异常等抛错时若无 catch，会变成未处理的 promise rejection，用户毫无反馈
+      toast.error('创建分享链接失败', e instanceof Error ? e.message : '网络异常，请稍后重试');
     } finally {
       setCreating(false);
     }
