@@ -765,7 +765,10 @@ export function resolvePreviewRootDomain(): string {
 export function shouldIncludeBranchServicesInInstanceDiscovery(
   project: Pick<Project, 'kind'> | null | undefined,
 ): boolean {
-  return project?.kind !== 'shared-service';
+  // Source-mode shared-service projects, such as the CDS-managed sidecar pool,
+  // run as normal branch services rather than ServiceDeployment records. They
+  // still need to be discoverable by MAP through /projects/:id/instances.
+  return project != null;
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';

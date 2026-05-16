@@ -132,7 +132,7 @@ describe('shouldIncludeBranchServicesInInstanceDiscovery', () => {
     expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'git' })).toBe(true);
   });
 
-  it('shared-service 项目只暴露系统级 ServiceDeployment', () => {
-    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'shared-service' })).toBe(false);
+  it('shared-service 项目也暴露源码分支服务，兼容 CDS 托管的 sidecar pool', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'shared-service' })).toBe(true);
   });
 });
