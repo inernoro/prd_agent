@@ -27,6 +27,24 @@ export function normalizeHeadingText(raw: string): string {
   return String(raw || '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * 解码常见 HTML 实体。
+ * MarkdownViewer 启用了 rehypeRaw，标题里的内嵌 HTML（如 `<kbd>Enter</kbd>`）
+ * 会被渲染成真实元素，正文 heading 的 id 由其纯文本（已解码实体）算出；
+ * TOC 这边喂的是原始 markdown 行，必须做等价解码才能 slug 一致。
+ */
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    // & 必须最后解，避免把已解码内容里的 & 二次误判
+    .replace(/&amp;/g, '&');
+}
+
 /** 剥离标题行里的常见 markdown 行内标记，得到与 ReactMarkdown 渲染后等价的纯文本 */
 function stripInlineMarkdown(s: string): string {
   let t = s;
@@ -39,6 +57,35 @@ function stripInlineMarkdown(s: string): string {
   // 加粗 / 斜体 / 删除线标记
   t = t.replace(/(\*\*\*|\*\*|\*|___|__|_|~~)/g, '');
   return t;
+}
+
+/**
+ * SSOT：标题文本 → slug id。
+ *
+ * DocBrowser 的 mkHeading 与本文件的 parseMarkdownToc 必须用同一套规整，
+ * 否则点 TOC 跳不到对应标题。规整顺序：
+ *   1. 剥 markdown 行内标记（**bold** / `code` / [link]() 等）
+ *   2. 剥内嵌 HTML 标签（rehypeRaw 渲染后正文是纯文本，TOC 也要去标签）
+ *   3. HTML 实体解码（&amp; &lt; &nbsp; 等）
+ *   4. normalizeHeadingText（去尾部 ###、合并空白、trim）
+ *
+ * 注意 #1#2 顺序：先 stripInlineMarkdown 再去标签，
+ * 与 DocBrowser 侧 childrenToText（DOM 渲染后已无 markdown 标记、已无标签、已解码实体）等价。
+ *
+ * @param rawHeadingText markdown 标题行去掉前导 # 后的原始文本
+ * @param slugger 必须传入按文档顺序复用的同一个 GithubSlugger 实例
+ */
+export function headingTextToSlug(
+  rawHeadingText: string,
+  slugger: { slug: (s: string) => string },
+): { text: string; id: string } {
+  let t = stripInlineMarkdown(rawHeadingText);
+  // 剥掉内嵌 HTML 标签：<kbd>x</kbd> → x、<span>y</span> → y
+  t = t.replace(/<[^>]+>/g, '');
+  t = decodeHtmlEntities(t);
+  const text = normalizeHeadingText(t);
+  const id = text ? slugger.slug(text) : '';
+  return { text, id };
 }
 
 /**
@@ -70,9 +117,8 @@ export function parseMarkdownToc(content: string | null | undefined): TocHeading
     const m = line.match(/^(#{1,6})\s+(.+?)\s*$/);
     if (!m) continue;
     const level = m[1].length;
-    const text = normalizeHeadingText(stripInlineMarkdown(m[2]));
+    const { text, id } = headingTextToSlug(m[2], slugger);
     if (!text) continue;
-    const id = slugger.slug(text);
     headings.push({ id, text, level });
   }
 

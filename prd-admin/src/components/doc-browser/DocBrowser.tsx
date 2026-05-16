@@ -22,9 +22,6 @@ function childrenToText(children: unknown): string {
   }
   return '';
 }
-function normalizeHeadingText(raw: string): string {
-  return String(raw || '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim();
-}
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
@@ -45,6 +42,9 @@ import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContent
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import { DocToc } from './DocToc';
+// SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
+// 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
+import { headingTextToSlug } from '@/lib/markdownToc';
 
 // ── 类型 ──
 
@@ -832,16 +832,21 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 
 // ── Markdown 渲染器 ──
 
-// 允许文档正文里内嵌的 HTML（div/span/strong 等）携带 class/style，
+// 允许文档正文里内嵌的 HTML（div/span/strong 等）携带 class/id，
 // 同时经过 rehype-sanitize 过滤掉 script / on* 事件，防止 XSS。
 // KaTeX 输出的 math 标签也一并放行。
+//
+// 安全取舍（Bugbot-3）：不再放行任意元素的内联 style。
+// 知识库可"发布到智识殿堂"被匿名公开访问，配合 rehypeRaw，
+// 通配放行 style 会让上传文档能用 position:fixed 做全页 UI 钓鱼、
+// background-image:url(...) 做数据外带，削弱 sanitize 的 XSS 防护。
+// 代价：内嵌 <div style="margin:..."> 之类只丢内联间距，标签本身仍渲染成元素
+//（"裸标签当文本显示"的诉求已由 rehypeRaw 解决，不依赖 inline style）。
 const docSanitizeSchema = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
-    '*': [...(defaultSchema.attributes?.['*'] || []), 'className', 'style', 'id'],
-    span: [...(defaultSchema.attributes?.span || []), 'className', 'style'],
-    div: [...(defaultSchema.attributes?.div || []), 'className', 'style'],
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'className', 'id'],
     math: ['xmlns'],
   },
   tagNames: [
@@ -860,8 +865,10 @@ function MarkdownViewer({ content }: { content: string }) {
   const slugger = useMemo(() => new GithubSlugger(), [body]);
   const mkHeading = useCallback(
     (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
-      const text = normalizeHeadingText(childrenToText(children));
-      const id = text ? slugger.slug(text) : undefined;
+      // childrenToText 拿到的是渲染后纯文本（HTML 标签已成元素、实体已解码），
+      // 仍走 headingTextToSlug 做等价规整，确保与 TOC 侧字面一致（SSOT）。
+      const { id: slugId } = headingTextToSlug(childrenToText(children), slugger);
+      const id = slugId || undefined;
       // F2：借鉴文档站的标题节奏——上间距明显大于下间距，层级清晰
       const classesByTag: Record<string, string> = {
         h1: 'text-[24px] font-bold mt-8 mb-4 pb-2.5 leading-tight scroll-mt-24',
