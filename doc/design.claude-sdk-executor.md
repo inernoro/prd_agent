@@ -2,8 +2,8 @@
 
 | 字段 | 内容 |
 |---|---|
-| 版本 | 0.2.0 |
-| 状态 | 草案（v1 + 零配置自启 + 工具回调 + llmrequestlogs 已落地，待真人验收） |
+| 版本 | 0.3.0 |
+| 状态 | active（v0.2 能跑通，但命名和官方 SDK 边界已在 v0.3 校准） |
 | 责任人 | Claude Code |
 | 关联 | `.claude/rules/llm-gateway.md`、`.claude/rules/cds-first-verification.md`、`doc/design.ai-toolbox.md` |
 
@@ -18,7 +18,7 @@ echo "ANTHROPIC_API_KEY=sk-ant-xxx" >> .env
 # 2. 启动 docker compose（claude-sidecar 默认包含，零额外参数）
 docker compose -f docker-compose.dev.yml up -d --build
 
-# 3. 完事 —— claude-sdk 执行器自动可用
+# 3. 完事 —— 历史名为 claude-sdk 的 sidecar runtime 自动可用
 #   工作流节点配 executorType="claude-sdk" 即可调用
 ```
 
@@ -35,12 +35,36 @@ docker compose -f docker-compose.dev.yml up -d --build
 
 ## 1. 管理摘要
 
-把 Anthropic 官方 Agent SDK 作为一种**新的执行器类型** `claude-sdk` 接入现有 CLI Agent Executor 框架。`prd-api` 不直接 import Python SDK，而是通过 HTTP + SSE 调用一个独立的 Python sidecar（`claude-sdk-sidecar/`），由 sidecar 持有 Anthropic 凭据并跑完整的多轮 `tool_use` 循环，再把事件流转译回主服务现有的 `cli-agent-*` 事件协议。
+`claude-sdk` 是历史执行器名，不等于“完整接入官方 Claude Code SDK / Claude Agent SDK”。当前实现更准确的描述是：
+
+- sidecar 使用官方 Anthropic Python SDK 包 `anthropic==0.39.0`，通过 `AsyncAnthropic.messages.stream` 调 Claude Messages API。
+- 多轮 `tool_use` 循环、HTTP + SSE sidecar 协议、工具审批等待、工具桥、MAP/CDS 事件转译，都是本仓库自研封装。
+- `prd-api` 不直接 import Python SDK，而是通过 HTTP + SSE 调 `claude-sdk-sidecar/`，由 sidecar 持有上游模型凭据。
+- 后续若迁移到官方 Claude Code SDK / Claude Agent SDK，应把自研 loop 收缩为 adapter，而不是继续扩大自研协议面。
 
 效果：
 - 业务层零迁移：现有 `WorkflowNode` 配置 `executorType: "claude-sdk"` 即可使用。
 - 部署灵活：sidecar 可以与 `prd-api` 同 compose、跑在远程 sandbox 服务器、k8s pod 多副本，**业务代码完全无感知**，差异只在 `appsettings.json` 的 `ClaudeSdkExecutor:Sidecars` 列表。
-- 不破坏 LlmGateway：常规 LLM 调用仍走 `ILlmGateway` 三级模型池。`claude-sdk` 是"自治 agent"路径，与之并行存在，仅供需要原生 Anthropic Agent SDK 能力（多轮 tool_use、official streaming、SDK-native MCP 集成）的场景。
+- 不破坏 LlmGateway：常规 LLM 调用仍走 `ILlmGateway` 三级模型池。`claude-sdk` 是"自治 agent"路径，与之并行存在。
+
+命名约束：
+
+- 对外产品文案尽量叫 `CDS Agent runtime` 或 `Claude sidecar runtime`。
+- 只有引用旧配置、旧字段、旧事件时才写 `claude-sdk`。
+- 不得把当前实现表述为“官方 Claude Code SDK 完整接入”。
+
+## 1.1 官方 / 自研边界
+
+| 层 | 当前来源 | 能省掉吗 | 说明 |
+|---|---|---|---|
+| Claude Messages API client | 官方 `anthropic` Python SDK | 不建议自研 | 负责鉴权、HTTP、stream event 基础封装 |
+| Agent 多轮 loop | 本仓库自研 | 可被官方 Agent SDK 替换 | 当前处理 tool_use、history 拼接、usage 汇总 |
+| Sidecar HTTP/SSE 协议 | 本仓库自研 | 需保留或适配 | MAP/CDS 需要跨进程、跨主机调度 |
+| 工具审批与审计 | 本仓库自研 | 必须保留 | 这是 MAP 权限和审计能力，不是 SDK 职责 |
+| repo / PR / browser 工具 | 本仓库自研 | 必须保留 | 与 CDS workspace、GitHub 凭据、Bridge 绑定 |
+| runtime pool / CDS 授权 | 本仓库自研 | 必须保留 | 属于基础设施控制面 |
+
+减少自研的现实收益：若迁移官方 Claude Code SDK / Claude Agent SDK，预计可以减少 30%-50% agent-loop 和上游适配维护量，主要集中在多轮工具调用、stream event、上下文续传、MCP/工具协议兼容和取消语义。但 MAP/CDS 的权限、审批、产物、日志、workspace、PR、运行时池仍需要本仓库维护。
 
 ---
 
@@ -48,9 +72,9 @@ docker compose -f docker-compose.dev.yml up -d --build
 
 | 何时选 | 何时不选 |
 |---|---|
-| 需要多轮 `tool_use` 循环 + Anthropic 官方流式 | 单轮 chat completion |
+| 需要多轮 `tool_use` 循环 + Claude Messages 流式 | 单轮 chat completion |
 | 需要让 Claude 自主决定调用哪个工具 | 业务代码自己编排工具顺序 |
-| 想要享受官方 SDK 后续新能力（Memory、Files、Citations） | 团队希望集中在 LlmGateway 三级池 |
+| 需要远程 sandbox 里的自治 Agent 行为 | 团队希望集中在 LlmGateway 三级池 |
 | 跑跨服务器 sandbox 隔离（凭据隔离 / 网络隔离） | 主服务进程内调即可 |
 
 `claude-sdk` 不是 LlmGateway 的替代品，是它**之外**的一类专用执行器。
@@ -95,8 +119,8 @@ docker compose -f docker-compose.dev.yml up -d --build
 |   - 多轮 tool_use 循环                         |
 |   - tool_use 时反向调主服务 /api/agent-tools  |
 +----------------------------------------------+
-               ↑ X-Agent-Api-Key: sk-ak-*
-               ↑ （v1 暂未实现 callback controller）
+               ↑ X-Sidecar-Token
+               ↑ v0.2 已实现工具 callback + 审批等待
 ```
 
 部署形态由配置决定：
@@ -121,7 +145,7 @@ docker compose -f docker-compose.dev.yml up -d --build
 
 ## 5. 数据设计
 
-无新建 MongoDB 集合。Token 用量记录复用 `llmrequestlogs` 思路：v1 暂未写入（待 P2），P2 会在 `ExecuteCliAgent_ClaudeSdkAsync` 退出时记录 `Provider="anthropic-sdk"`, `AppCallerCode="page-agent.claude-sdk::agent"`, `InputTokens/OutputTokens`。
+执行器本身无新建 MongoDB 集合。Token 用量记录复用 `llmrequestlogs`，`ExecuteCliAgent_ClaudeSdkAsync` 会在启动、首字节、完成、失败路径写入日志。
 
 健康状态由 `InstanceStateRegistry`（单例内存）维护，不入库；HostedService 周期写入。
 
@@ -223,20 +247,24 @@ ANTHROPIC_API_KEY=sk-ant-xxx CLAUDE_SDK_ENABLED=true \
 | 凭据泄露：sidecar 持有 Anthropic key | 独立容器 + token 走 env / Secret Manager；不写入镜像 |
 | 跨服务器网络不通 | HostedService 周期健康检查，路由器自动跳过不健康实例 |
 | Run 中 sidecar 崩溃 | SSE 断流 → executor 抛 InvalidOperationException → Run 标记失败 |
-| 不走 LlmGateway 导致计费/审计缺失 | v1.1 计划：在 executor 退出时主动写 `llmrequestlogs` |
-| Tool 桥接尚未实现 | v1 不传 tools → 单轮纯 chat；v1.1 加 `/api/agent-tools/invoke` controller |
+| 不走 LlmGateway 导致计费/审计分裂 | executor 写 `llmrequestlogs`，但长期应统一到模型用量面板 |
+| Tool 桥接权限过粗 | 已有 `/api/agent-tools/invoke`，但仍用对称 `X-Sidecar-Token`，高安全场景需补 scope |
 | 多个 sidecar 实例间 run 不共享状态 | `stickyKey` 强制同 run 落同实例（默认 stickyKey=runId） |
+| 历史命名误导 | 文档和 UI 必须注明当前是官方 `anthropic` SDK + 自研 sidecar loop |
 
 ---
 
 ## 10. 已知边界（debt）
 
-- v1 不实现 tool callback controller（`/api/agent-tools/invoke`）：sidecar 调不通会得到 stub。生产前必须补。
-- v1 不写 `llmrequestlogs`：当前只在结构化日志里输出 token 用量，账单页看不到。待 v1.1。
 - 没有为新 executorType 在 admin UI 加可视化 schema（前端 `WorkflowNodeEditor` 不知道 `claudeSdk.*` 字段），需通过 JSON 手动配置。
 - 没有 retry/熔断器（Polly）保护对 sidecar 的调用，依赖 IHttpClientFactory 默认行为；高频失败时会抖动。
+- `CDS Agent` 页面当前发送消息仍是同步等待后端处理，前端靠 3 秒轮询补体验，不是真正的后台 run + SSE。
+- `Stop` 当前停止 CDS session，不保证取消已经派发到 sidecar 的模型 run；需要持久化 runId 并接 `/v1/agent/cancel/{runId}`。
+- 事件列表默认最多 500 条，长审查会话需要按 `afterSeq` 分页或增量订阅。
+- `repo_run_command` 单次命令上限 180 秒，不适合大型测试套件或长构建。
+- 默认 `repo_create_pull_request` 会建 draft PR，后续应改成策略化配置。
 
-以上 4 条同步登记到 `doc/debt.claude-sdk-executor.md`（待补）。
+以上条目同步登记到 `doc/debt.claude-sdk-executor.md`。
 
 ---
 

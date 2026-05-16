@@ -30,6 +30,10 @@ public class InfraAgentSession
 
     public string Runtime { get; set; } = InfraAgentRuntimes.ClaudeSdk;
 
+    public string? RuntimeAdapter { get; set; }
+
+    public string? CurrentRuntimeRunId { get; set; }
+
     public string? Model { get; set; }
 
     public double ResourceCpuCores { get; set; } = 2;

@@ -26,6 +26,17 @@ public interface IClaudeSidecarRouter
     IAsyncEnumerable<SidecarEvent> RunStreamAsync(
         SidecarRunRequest request,
         CancellationToken ct);
+
+    /// <summary>
+    /// Best-effort cancellation for a previously dispatched run.
+    /// Implementations may broadcast to multiple sidecar instances when the owning instance is unknown.
+    /// </summary>
+    Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct);
+
+    /// <summary>
+    /// Runtime pool diagnostics for UI/runbook checks. Does not include secrets.
+    /// </summary>
+    Task<SidecarPoolDiagnostics> GetDiagnosticsAsync(CancellationToken ct);
 }
 
 /// <summary>Sidecar 协议事件类型，与 Python sidecar 的 SidecarEvent.type 一一对应。</summary>
@@ -36,6 +47,7 @@ public enum SidecarEventType
     ToolUse,
     ToolResult,
     Usage,
+    RuntimeInit,
     Done,
     Error,
     Keepalive,
@@ -101,6 +113,9 @@ public sealed class SidecarRunRequest
 
     /// <summary>上游协议：anthropic 或 openai-compatible。为空时 sidecar 默认按 anthropic 兼容处理。</summary>
     public string? Protocol { get; init; }
+
+    /// <summary>Optional sidecar runtime adapter selector, for example claude-agent-sdk.</summary>
+    public string? RuntimeAdapter { get; init; }
 }
 
 public sealed class SidecarChatMessage
@@ -115,3 +130,32 @@ public sealed class SidecarToolDef
     public string Description { get; init; } = string.Empty;
     public System.Text.Json.JsonElement InputSchema { get; init; }
 }
+
+public sealed record SidecarCancelResult(
+    bool Cancelled,
+    string? Reason = null,
+    string? SidecarName = null
+);
+
+public sealed record SidecarPoolDiagnostics(
+    bool IsConfigured,
+    int InstanceCount,
+    int HealthyCount,
+    IReadOnlyList<SidecarInstanceDiagnostics> Instances,
+    DateTime? RegistryLastRefreshedAt = null,
+    string? RegistryLastRefreshError = null
+);
+
+public sealed record SidecarInstanceDiagnostics(
+    string Name,
+    string BaseUrl,
+    string Source,
+    IReadOnlyList<string> Tags,
+    bool TokenConfigured,
+    bool HealthRegistryHealthy,
+    int? HttpStatus,
+    bool? Ready,
+    string? AgentAdapter,
+    string? AdapterDiagnosticsJson,
+    string? Error
+);

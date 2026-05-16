@@ -11,15 +11,20 @@ Sidecar HTTP 入口。
 """
 import asyncio
 import hmac
+import importlib.metadata
+import importlib.util
 import json
 import logging
 import os
+import shutil
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .agent_loop import run_agent
+from .official_agent_sdk import run_official_agent
 from .schemas import SidecarEvent, SidecarRunRequest
 
 
@@ -33,6 +38,7 @@ app = FastAPI(title="Claude Agent SDK Sidecar", version="0.1.0")
 
 SIDECAR_TOKEN = os.environ.get("SIDECAR_TOKEN", "").strip()
 SIDECAR_VERSION = os.environ.get("SIDECAR_VERSION", "0.1.0")
+DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "legacy-sidecar").strip()
 
 _active_runs: dict[str, asyncio.Event] = {}
 
@@ -61,15 +67,83 @@ async def readyz() -> JSONResponse:
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
     has_token = bool(SIDECAR_TOKEN)
     ready = has_key and has_token
+    adapter = DEFAULT_AGENT_ADAPTER or "legacy-sidecar"
+    diagnostics = _adapter_diagnostics(adapter)
+    if adapter.strip().lower() in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
+        ready = ready and bool(diagnostics.get("ready"))
     return JSONResponse(
         {
             "ready": ready,
             "anthropicKey": has_key,
             "sidecarToken": has_token,
             "activeRuns": len(_active_runs),
+            "agentAdapter": adapter,
+            "adapterDiagnostics": diagnostics,
         },
         status_code=200 if ready else 503,
     )
+
+
+def _adapter_diagnostics(adapter: str) -> dict[str, object]:
+    normalized = (adapter or "legacy-sidecar").strip().lower()
+    if normalized not in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
+        return {
+            "adapter": "legacy-sidecar",
+            "ready": True,
+            "reason": "legacy-sidecar uses the anthropic Python SDK path",
+        }
+
+    try:
+        sdk_spec = importlib.util.find_spec("claude_agent_sdk")
+    except ValueError:
+        sdk_spec = None
+    sdk_version = None
+    if sdk_spec is not None:
+        try:
+            sdk_version = importlib.metadata.version("claude-agent-sdk")
+        except importlib.metadata.PackageNotFoundError:
+            sdk_version = "unknown"
+
+    cli_path = shutil.which("claude")
+    cwd = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip()
+    cwd_exists = bool(cwd) and Path(cwd).exists()
+    allowed_tools = [
+        item.strip()
+        for item in os.environ.get("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", "Read,Grep,Glob").split(",")
+        if item.strip()
+    ]
+    write_tools = sorted({name for name in allowed_tools if name.lower() in {"bash", "edit", "write"}})
+    permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
+    missing = []
+    if sdk_spec is None:
+        missing.append("claude_agent_sdk")
+    if not cli_path:
+        missing.append("claude_cli")
+    if cwd and not cwd_exists:
+        missing.append("workspace_root")
+
+    return {
+        "adapter": "claude-agent-sdk",
+        "ready": len(missing) == 0,
+        "missing": missing,
+        "sdkInstalled": sdk_spec is not None,
+        "sdkVersion": sdk_version,
+        "claudeCliPath": cli_path,
+        "workspaceRoot": cwd or None,
+        "workspaceRootExists": cwd_exists if cwd else None,
+        "allowedTools": allowed_tools,
+        "permissionMode": permission_mode,
+        "builtinWriteToolsEnabled": bool(write_tools),
+        "builtinWriteTools": write_tools,
+        "approvalBridge": "sdk-can-use-tool",
+    }
+
+
+def _adapter_for(req: SidecarRunRequest) -> str:
+    value = (req.runtime_adapter or DEFAULT_AGENT_ADAPTER or "legacy-sidecar").strip().lower()
+    if value in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
+        return "claude-agent-sdk"
+    return "legacy-sidecar"
 
 
 def _format_sse(event: SidecarEvent) -> bytes:
@@ -91,8 +165,10 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
 
     async def producer() -> None:
         try:
-            async for ev in run_agent(req):
-                if cancel_event.is_set():
+            official_adapter = _adapter_for(req) == "claude-agent-sdk"
+            stream = run_official_agent(req, cancel_event=cancel_event) if official_adapter else run_agent(req)
+            async for ev in stream:
+                if cancel_event.is_set() and not official_adapter:
                     await queue.put(_format_sse(SidecarEvent(
                         type="error", error_code="cancelled", message="run cancelled"
                     )))

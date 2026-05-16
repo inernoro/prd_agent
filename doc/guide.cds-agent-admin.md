@@ -1,6 +1,6 @@
 # CDS Agent 管理员 · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-14 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-05-17 | **状态**：active（MVP 可用，生产级限制已标注）
 
 ## 适用对象
 
@@ -38,18 +38,35 @@ deployment:stream
 
 模型运行配置是系统级资源，用户会话只选择 profile，不直接暴露 API key。
 
+命名边界：
+
+- `runtime=claude-sdk` 是历史配置名。当前实现是官方 `anthropic` Python SDK + 本仓库自研 sidecar loop，不是完整官方 Claude Code SDK / Claude Agent SDK。
+- 管理后台、文档和对用户说明里应优先使用 `Claude sidecar runtime` 或 `CDS Agent runtime`，只有配置字段仍保留 `claude-sdk`。
+- `fake` 只用于冒烟链路，不允许作为最终验收 runtime。
+
 必填字段：
 
 | 字段 | 说明 |
 |------|------|
 | 名称 | 用户可识别的配置名，例如 `公司 Claude 网关` |
-| runtime | `claude-sdk`、`codex-sdk` 或 `fake` |
+| runtime | 历史字段值为 `claude-sdk`、`codex`、`custom` 或 `fake`；对用户说明时写 runtime 类型，不暗示官方 SDK 完整接入 |
 | baseUrl | 任意 OpenAI-compatible 或内部网关地址 |
 | model | 真实模型名，不写死 demo |
 | API key | 加密保存，页面只显示是否已配置 |
 | 默认配置 | 没有显式选择时使用的 profile |
 
-`fake` 只用于冒烟链路，不允许作为最终验收 runtime。
+## 生产级限制
+
+当前 CDS Agent MVP 已能完成远程巡检和 PR 验收，但管理员必须知道这些限制：
+
+| 限制 | 管理动作 |
+|------|----------|
+| 页面靠轮询刷新事件 | 验收时记录延迟，不把“页面能刷新”写成“真 SSE 已完成” |
+| 发送消息同步等待 | 长任务会占用请求链路，优先拆成只读巡检、修复、PR 三段 |
+| 停止不保证取消 sidecar run | 长任务异常时需要查 sidecar 日志和 token 消耗 |
+| 事件默认最多 500 条 | 大任务验收必须用 afterSeq 补拉或导出证据 |
+| `repo_run_command` 180 秒上限 | 长测试需要拆分，后续补长命令后台化 |
+| 其他仓库依赖 workspace | 审其他 repo 前配置 `AGENT_WORKSPACE_ROOT`、`AGENT_WORKSPACE_GITHUB_REPOSITORY`、`AGENT_WORKSPACE_GIT_REF` |
 
 ## Hook Profile
 
@@ -81,7 +98,7 @@ Hook 用于在会话生命周期中执行固定动作：
 | CDS 授权 | active，刷新后仍 active |
 | 模型配置 | 至少一个默认 profile，baseUrl/model/API key 完整 |
 | 新建会话 | 用户页面能创建 running 会话 |
-| 发送消息 | 页面有流式输出和事件 |
+| 发送消息 | 页面有事件和日志刷新；若只是轮询刷新，验收记录必须写明 |
 | 工具审批 | 危险工具卡片可允许或拒绝 |
 | 停止释放 | 会话停止后资源释放，日志可查 |
 | PR 验收 | 远程 runtime 可巡检 `prd_agent` 并提交 PR |

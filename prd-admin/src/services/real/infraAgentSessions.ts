@@ -1,4 +1,6 @@
 import { api } from '@/services/api';
+import { readSseStream } from '@/lib/sse';
+import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { apiRequest } from './apiClient';
 
@@ -15,6 +17,8 @@ export interface InfraAgentSessionView {
   runtimeProfileId?: string | null;
   modelBaseUrl?: string | null;
   runtime: string;
+  runtimeAdapter?: string | null;
+  currentRuntimeRunId?: string | null;
   model?: string | null;
   resourceCpuCores: number;
   resourceMemoryMb: number;
@@ -120,6 +124,29 @@ export interface InfraAgentRuntimeProfileTestResult {
   elapsedMs: number;
 }
 
+export interface InfraAgentSidecarInstanceDiagnostics {
+  name: string;
+  baseUrl: string;
+  source: string;
+  tags: string[];
+  tokenConfigured: boolean;
+  healthRegistryHealthy: boolean;
+  httpStatus?: number | null;
+  ready?: boolean | null;
+  agentAdapter?: string | null;
+  adapterDiagnosticsJson?: string | null;
+  error?: string | null;
+}
+
+export interface InfraAgentRuntimeDiagnostics {
+  isConfigured: boolean;
+  instanceCount: number;
+  healthyCount: number;
+  instances: InfraAgentSidecarInstanceDiagnostics[];
+  registryLastRefreshedAt?: string | null;
+  registryLastRefreshError?: string | null;
+}
+
 interface ListResp {
   items: InfraAgentSessionView[];
 }
@@ -134,6 +161,10 @@ interface EventsResp {
 
 interface EventSchemaResp {
   items: InfraAgentEventSchemaItem[];
+}
+
+interface RuntimeStatusResp {
+  diagnostics: InfraAgentRuntimeDiagnostics;
 }
 
 interface MessagesResp {
@@ -170,6 +201,10 @@ export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<Li
 
 export async function getInfraAgentEventSchema(): Promise<ApiResponse<EventSchemaResp>> {
   return await apiRequest<EventSchemaResp>(api.infraAgentSessions.eventSchema(), { method: 'GET' });
+}
+
+export async function getInfraAgentRuntimeStatus(): Promise<ApiResponse<RuntimeStatusResp>> {
+  return await apiRequest<RuntimeStatusResp>(api.infraAgentSessions.runtimeStatus(), { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {
@@ -286,6 +321,57 @@ export async function listInfraAgentEvents(
     `${api.infraAgentSessions.events(encodeURIComponent(id))}?afterSeq=${afterSeq}&limit=${limit}`,
     { method: 'GET' },
   );
+}
+
+export async function streamInfraAgentEvents(
+  id: string,
+  afterSeq: number,
+  limit: number,
+  onEvent: (event: InfraAgentEventView) => void,
+  signal: AbortSignal,
+  onOpen?: () => void,
+): Promise<void> {
+  const baseUrl = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '');
+  const qs = new URLSearchParams();
+  qs.set('afterSeq', String(afterSeq));
+  qs.set('limit', String(limit));
+  const path = `${api.infraAgentSessions.stream(encodeURIComponent(id))}?${qs.toString()}`;
+  const token = useAuthStore.getState().token;
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'text/event-stream',
+      'X-Client': 'admin',
+      'X-Client-Base-Url': window.location.origin,
+      'X-App-Name': 'prd-agent-web',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Infra agent event stream failed: HTTP ${res.status}`);
+  }
+
+  onOpen?.();
+
+  await readSseStream(res, (evt) => {
+    if (evt.event === 'error') {
+      throw new Error(evt.data || 'Infra agent event stream error');
+    }
+    if (!evt.data) return;
+    const seq = Number(evt.id ?? 0);
+    if (!Number.isFinite(seq) || seq <= afterSeq) return;
+    onEvent({
+      id: `${id}:${seq}`,
+      sessionId: id,
+      seq,
+      traceId: '',
+      type: evt.event || 'log',
+      payloadJson: evt.data,
+      createdAt: new Date().toISOString(),
+    });
+  }, signal);
 }
 
 export async function listInfraAgentMessages(

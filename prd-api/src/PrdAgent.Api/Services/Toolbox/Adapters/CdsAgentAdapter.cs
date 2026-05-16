@@ -15,6 +15,9 @@ namespace PrdAgent.Api.Services.Toolbox.Adapters;
 /// </summary>
 public class CdsAgentAdapter : IAgentAdapter
 {
+    private const int EventPageSize = 500;
+    private const int MaxEventPages = 20;
+
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
@@ -46,18 +49,23 @@ public class CdsAgentAdapter : IAgentAdapter
         CancellationToken ct = default)
     {
         var content = new System.Text.StringBuilder();
+        var artifacts = new List<ToolboxArtifact>();
         await foreach (var chunk in StreamExecuteAsync(context, ct))
         {
             if (chunk.Type == AgentChunkType.Text && !string.IsNullOrWhiteSpace(chunk.Content))
             {
                 content.Append(chunk.Content);
             }
+            if (chunk.Type == AgentChunkType.Artifact && chunk.Artifact != null)
+            {
+                artifacts.Add(chunk.Artifact);
+            }
             if (chunk.Type == AgentChunkType.Error)
             {
                 return AgentExecutionResult.Fail(chunk.Content ?? "CDS Agent 执行失败");
             }
         }
-        return AgentExecutionResult.Ok(content.ToString());
+        return AgentExecutionResult.Ok(content.ToString(), artifacts);
     }
 
     public async IAsyncEnumerable<AgentStreamChunk> StreamExecuteAsync(
@@ -135,14 +143,48 @@ public class CdsAgentAdapter : IAgentAdapter
         yield return AgentStreamChunk.Text($"远程 runtime 已启动：{session.Runtime} / {session.Model}\n");
 
         var prompt = BuildRemotePrompt(context);
-        yield return AgentStreamChunk.Text("正在发送远程任务并等待事件回放...\n");
+        yield return AgentStreamChunk.Text("正在发送远程任务并将 runtime job 放入后台队列...\n");
         session = await _sessions.SendMessageAsync(
             context.UserId,
             session.Id,
             new SendInfraAgentMessageRequest(prompt),
             ct) ?? session;
 
-        var events = await _sessions.ListEventsAsync(context.UserId, session.Id, 0, 500, ct);
+        var workbenchPath = $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}";
+        var handle = new
+        {
+            kind = "cds-agent-run-handle",
+            sessionId = session.Id,
+            traceId = session.TraceId,
+            toolboxRunId = context.RunId,
+            toolboxStepId = context.StepId,
+            cdsSessionId = session.CdsSessionId,
+            cdsWorkerId = session.CdsWorkerId,
+            runtime = session.Runtime,
+            runtimeAdapter = session.RuntimeAdapter,
+            currentRuntimeRunId = session.CurrentRuntimeRunId,
+            model = session.Model,
+            status = session.Status,
+            workbenchPath,
+            eventStreamPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/stream",
+            eventsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/events",
+            logsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/logs",
+            createdAt = DateTime.UtcNow,
+            note = "Toolbox has delegated the long-running work to CDS Agent. Continue observing and approving tools in the CDS Agent workbench."
+        };
+        yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
+        {
+            Type = ToolboxArtifactType.Json,
+            Name = "CDS Agent 远程运行句柄",
+            MimeType = "application/json",
+            Content = JsonSerializer.Serialize(handle, new JsonSerializerOptions { WriteIndented = true }),
+            SourceStepId = context.StepId
+        });
+        yield return AgentStreamChunk.Text(
+            $"远程任务已委托给 CDS Agent，会话 {session.Id} 正在后台运行。\n" +
+            $"打开工作台继续观察、审批和停止：{workbenchPath}\n");
+
+        var events = await ListSessionEventsByCursorAsync(context.UserId, session.Id, ct);
         foreach (var evt in events)
         {
             var text = RenderEvent(evt);
@@ -170,7 +212,7 @@ public class CdsAgentAdapter : IAgentAdapter
             Content = logs,
             SourceStepId = context.StepId
         });
-        yield return AgentStreamChunk.Text($"CDS 会话状态：{session.Status}\n");
+        yield return AgentStreamChunk.Text($"CDS 会话当前状态：{session.Status}。后续事件会在 CDS Agent 工作台继续增量更新。\n");
 
         if (string.Equals(session.Status, "failed", StringComparison.OrdinalIgnoreCase))
         {
@@ -182,6 +224,24 @@ public class CdsAgentAdapter : IAgentAdapter
         }
 
         yield return AgentStreamChunk.Done();
+    }
+
+    private async Task<List<InfraAgentEventView>> ListSessionEventsByCursorAsync(
+        string userId,
+        string sessionId,
+        CancellationToken ct)
+    {
+        var all = new List<InfraAgentEventView>();
+        var afterSeq = 0L;
+        for (var page = 0; page < MaxEventPages; page++)
+        {
+            var batch = await _sessions.ListEventsAsync(userId, sessionId, afterSeq, EventPageSize, ct);
+            if (batch.Count == 0) break;
+            all.AddRange(batch);
+            afterSeq = batch.Max(x => x.Seq);
+            if (batch.Count < EventPageSize) break;
+        }
+        return all;
     }
 
     private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(CancellationToken ct)

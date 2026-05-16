@@ -42,6 +42,12 @@ class SidecarRunRequest(BaseModel):
     api_key: Optional[str] = Field(None, alias="apiKey")
     protocol: Optional[str] = Field(None, alias="protocol")
 
+    # runtime adapter 选择：
+    #   legacy-sidecar / legacy: 走当前自研 messages.tool_use loop
+    #   claude-agent-sdk / official: 走官方 Claude Agent SDK（可选依赖）
+    # 为空时由 SIDECAR_AGENT_ADAPTER 环境变量决定，默认 legacy。
+    runtime_adapter: Optional[str] = Field(None, alias="runtimeAdapter")
+
     class Config:
         populate_by_name = True
 

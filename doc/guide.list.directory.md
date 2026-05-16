@@ -182,6 +182,9 @@
 - [CDS Agent 运行时架构设计](design.cds-agent-runtime-architecture) `design.cds-agent-runtime-architecture`
   > MAP 会话、CDS shared-service、sidecar pool、会话级 worker 与业务分支容器的边界图
 
+- [CDS Agent 官方 SDK Adapter 设计](design.cds-agent-official-sdk-adapter) `design.cds-agent-official-sdk-adapter`
+  > 保留 MAP/CDS 控制面，把自研 agent loop 压缩为官方 SDK adapter 的边界设计
+
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
@@ -576,6 +579,9 @@
 
 - [CDS Agent 工作台完全可用路线](plan.cds-agent-workbench) `plan.cds-agent-workbench`
   > MAP 通过 CDS 操作 Claude SDK / Codex 类 Agent 干活的完全可用路线，覆盖对话页、工作流、智能体、远程浏览器、可观测性和逐项验收
+
+- [CDS Agent 官方 SDK Adapter 迁移计划](plan.cds-agent-official-sdk-migration) `plan.cds-agent-official-sdk-migration`
+  > 一个周期内把 CDS Agent runtime 收缩到官方 SDK adapter 的最小开发计划、调试顺序和验收门槛
 
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
   > Phase 0-3 长期路线图

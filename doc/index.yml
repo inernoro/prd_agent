@@ -83,6 +83,7 @@ docs:
   design.cds: CDS (Cloud Development Suite) 设计文档
   design.cds-agent-api: CDS Agent API 契约设计
   design.cds-agent-runtime-architecture: CDS Agent 运行时架构设计
+  design.cds-agent-official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
@@ -219,6 +220,7 @@ docs:
   plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
   plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
   plan.cds-agent-workbench: CDS Agent 工作台完全可用路线
+  plan.cds-agent-official-sdk-migration: CDS Agent 官方 SDK Adapter 迁移计划
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划

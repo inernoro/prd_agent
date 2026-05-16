@@ -1045,6 +1045,9 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
 // MAP 端基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任）
 // 详见 spec.cds-map-pairing-protocol.md
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeJobQueue,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InMemoryInfraAgentRuntimeJobQueue>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentRuntimeWorker>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
 builder.Services.AddHttpClient(
@@ -1095,6 +1098,8 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IDynamicSidecarRegistry,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.DynamicSidecarRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeAdapter,
+    PrdAgent.Infrastructure.Services.AgentRuntime.LegacySidecarRuntimeAdapter>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
 builder.Services.AddHttpClient(

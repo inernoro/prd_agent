@@ -17,16 +17,39 @@ namespace PrdAgent.Api.Controllers.Api;
 public class InfraAgentSessionsController : ControllerBase
 {
     private readonly IInfraAgentSessionService _service;
+    private readonly IClaudeSidecarRouter? _sidecarRouter;
 
-    public InfraAgentSessionsController(IInfraAgentSessionService service)
+    public InfraAgentSessionsController(
+        IInfraAgentSessionService service,
+        IClaudeSidecarRouter? sidecarRouter = null)
     {
         _service = service;
+        _sidecarRouter = sidecarRouter;
     }
 
     [HttpGet("event-schema")]
     public IActionResult EventSchema()
     {
         return Ok(ApiResponse<object>.Ok(new { items = InfraAgentEventSchema.Items }));
+    }
+
+    [HttpGet("runtime-status")]
+    public async Task<IActionResult> RuntimeStatus(CancellationToken ct)
+    {
+        if (_sidecarRouter == null)
+        {
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                isConfigured = false,
+                instanceCount = 0,
+                healthyCount = 0,
+                instances = Array.Empty<object>(),
+                error = "sidecar router not registered"
+            }));
+        }
+
+        var diagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { diagnostics }));
     }
 
     [HttpGet]
@@ -393,16 +416,39 @@ public class InfraAgentSessionsController : ControllerBase
         Response.ContentType = "text/event-stream; charset=utf-8";
 
         var userId = this.GetRequiredUserId();
+        var pageLimit = Math.Clamp(limit <= 0 ? 500 : limit, 1, 500);
+        var cursor = afterSeq;
         try
         {
-            var items = await _service.ListEventsAsync(userId, id, afterSeq, limit <= 0 ? 500 : limit, ct);
-            foreach (var evt in items)
+            while (!ct.IsCancellationRequested)
             {
-                await Response.WriteAsync($"id: {evt.Seq}\n", ct);
-                await Response.WriteAsync($"event: {evt.Type}\n", ct);
-                await Response.WriteAsync($"data: {evt.PayloadJson}\n\n", ct);
+                var items = await _service.ListEventsAsync(userId, id, cursor, pageLimit, ct);
+                if (items.Count == 0)
+                {
+                    await Response.WriteAsync($": keepalive {DateTimeOffset.UtcNow:O}\n\n", ct);
+                    await Response.Body.FlushAsync(ct);
+                    await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                    continue;
+                }
+
+                foreach (var evt in items)
+                {
+                    await Response.WriteAsync($"id: {evt.Seq}\n", ct);
+                    await Response.WriteAsync($"event: {evt.Type}\n", ct);
+                    await Response.WriteAsync($"data: {evt.PayloadJson}\n\n", ct);
+                    cursor = Math.Max(cursor, evt.Seq);
+                }
+
                 await Response.Body.FlushAsync(ct);
+                if (items.Count < pageLimit)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+                }
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client disconnected.
         }
         catch (InfraAgentSessionException ex)
         {

@@ -14,6 +14,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> SendMessageAsync(string userId, string id, SendInfraAgentMessageRequest request, CancellationToken ct);
 
+    Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct);
+
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
 
     Task<InfraAgentSessionView?> ArchiveAsync(string userId, string id, CancellationToken ct);
@@ -40,6 +42,20 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> ApproveToolAsync(string userId, string sessionId, string approvalId, ToolApprovalRequest request, CancellationToken ct);
 }
+
+public interface IInfraAgentRuntimeJobQueue
+{
+    ValueTask EnqueueAsync(InfraAgentRuntimeJob job, CancellationToken ct);
+
+    IAsyncEnumerable<InfraAgentRuntimeJob> DequeueAsync(CancellationToken ct);
+}
+
+public sealed record InfraAgentRuntimeJob(
+    string UserId,
+    string SessionId,
+    string Content,
+    DateTime EnqueuedAt
+);
 
 public record CreateInfraAgentSessionRequest(
     string ConnectionId,
@@ -103,6 +119,8 @@ public record InfraAgentSessionView(
     string? CdsContainerName,
     string TraceId,
     string Runtime,
+    string? RuntimeAdapter,
+    string? CurrentRuntimeRunId,
     string? Model,
     double ResourceCpuCores,
     int ResourceMemoryMb,

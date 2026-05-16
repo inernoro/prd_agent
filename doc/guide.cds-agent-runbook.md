@@ -1,6 +1,6 @@
 # CDS Agent 运行手册 · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-14 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-05-17 | **状态**：active（MVP 可用，生产级限制已标注）
 
 ## 服务组成
 
@@ -10,7 +10,12 @@
 | `prd-api` | long token 保存、会话持久化、事件代理、runtime profile 加密 |
 | `cds` | 创建远程 runtime、执行消息、输出事件和日志 |
 | MongoDB | 保存连接、profile、session、event、hook |
-| runtime 容器或 worker | 执行 Claude SDK、Codex SDK 或 fake runtime |
+| runtime 容器或 worker | 执行 Claude sidecar、Codex-like 或 fake runtime |
+
+命名边界：
+
+- `claude-sdk` 是历史配置名，当前实现不是完整官方 Claude Code SDK / Claude Agent SDK。
+- sidecar 使用官方 `anthropic` Python SDK；agent loop、审批、repo/PR/Bridge 工具和 MAP/CDS 事件转译由本仓库维护。
 
 ## 部署后检查
 
@@ -88,6 +93,44 @@
 2. 修复前端去重。
 3. 对异常 session 保留日志，不要直接删除。
 
+## 页面看起来卡住
+
+症状：
+
+- 用户点击发送后按钮长时间 busy。
+- 页面不是逐字实时变化，而是几秒刷新一次。
+- 后端请求耗时接近一次完整 Agent 执行时间。
+
+诊断：
+
+1. 当前 CDS Agent 页面使用 3 秒轮询刷新详情，不是真正的长连接实时订阅。
+2. `SendMessageAsync` 会触发 CDS message 和 sidecar runtime，同步等待处理完成。
+3. 检查事件是否仍在增长；如果事件增长，说明任务还在执行，不是页面完全失效。
+
+处理：
+
+1. 让用户把大任务拆成“只读巡检 -> 最小修复 -> 创建 PR”三段。
+2. 如果任务超过预期，先查看 sidecar 日志和 runtime profile timeout。
+3. 后续工程修复应改为后台 run + 真 SSE / afterSeq 增量订阅。
+
+## 停止后仍疑似运行
+
+症状：
+
+- 用户点击停止后，页面显示 stopped，但 sidecar 日志仍有输出。
+- 模型 provider 仍有 token 消耗。
+
+诊断：
+
+1. 当前 `Stop` 主要停止 CDS session。
+2. 若没有持久化 sidecar runId，就无法可靠调用 `/v1/agent/cancel/{runId}`。
+
+处理：
+
+1. 记录 sessionId、traceId、sidecar 名称和时间窗口。
+2. 必要时在 sidecar 侧按进程或 run 日志排查。
+3. 后续工程修复必须持久化 runId，并把停止动作代理到 sidecar cancel。
+
 ## 工具审批卡住
 
 症状：
@@ -128,6 +171,24 @@
 1. 补齐 CDS 项目级 GitHub 凭据。
 2. 使用只读 git 命令确认访问权限。
 3. 让 Agent 先提交一个最小文档或测试修复 PR 验证链路。
+
+## 审查其他仓库失败
+
+症状：
+
+- Agent 明明要求审查其他 repo，但事件里仍读取 `prd_agent`。
+- PR 创建到错误仓库。
+
+诊断：
+
+1. 检查 runtime 环境变量：`AGENT_WORKSPACE_ROOT`、`AGENT_WORKSPACE_GITHUB_REPOSITORY`、`AGENT_WORKSPACE_GIT_REF`。
+2. 检查 sandbox 里实际 `git remote get-url origin` 和当前分支。
+3. 检查 runtime profile 是否复用了默认 workspace。
+
+处理：
+
+1. 先用只读 prompt 要求 Agent 输出 `git status --short`、`git remote get-url origin`、`git branch --show-current`。
+2. 确认仓库和分支正确后，再允许写文件、跑测试、创建 PR。
 
 ## 回滚
 

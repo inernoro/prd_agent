@@ -1,10 +1,16 @@
 # CDS Agent 工作台 · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-14 | **状态**：开发中
+> **版本**：v1.1 | **日期**：2026-05-17 | **状态**：active（MVP 可用，生产级限制已标注）
 
 ## 适用对象
 
 本指南面向普通 MAP 用户。目标是让用户像使用远程 Claude Code 或 Codex Web 一样，在 MAP 里创建一个远程 Agent 会话，让它进入 CDS sandbox 执行任务、展示过程、留下日志，并在需要时停止或恢复。
+
+重要边界：
+
+- 当前 runtime 历史名叫 `claude-sdk`，但它不是完整官方 Claude Code SDK 接入；它是官方 `anthropic` Python SDK + 本仓库自研 sidecar agent loop。
+- MAP/CDS 的连接、审批、日志、产物、PR、工作流接入都是本系统能力，不属于官方 SDK 自动提供。
+- 如果页面显示 `fake` runtime，只能说明链路冒烟可用，不能作为代码审查或 PR 验收结果。
 
 ## 入口
 
@@ -21,6 +27,56 @@
 5. 选择 CDS 连接和模型运行配置。
 6. 点击新建会话。
 7. 输入任务提示词并发送。
+
+## 审查自己的代码
+
+建议把审查拆成三段，不要一上来就要求 Agent 修改和开 PR。
+
+### 第一步：只读巡检
+
+```text
+请只读审查当前仓库。先运行 git status、查看最近提交和与本任务相关的目录，不要修改文件。最后列出 3 个最值得检查的风险点，每个风险点给出文件路径、证据和建议验证命令。
+```
+
+预期：
+
+- 事件里出现 `repo_git_status`、`repo_list_files`、`repo_read_file` 或 `repo_search`。
+- 不应出现写文件、提交、推送或创建 PR。
+- 输出应该包含文件路径和证据，不只是泛泛建议。
+
+### 第二步：最小修复
+
+确认某个风险点值得修后，再发送：
+
+```text
+基于上面的第 X 个问题，做最小修复。修改前先说明计划；只改必要文件；需要写文件、跑命令、提交 PR 时等待我审批。修完后运行最小相关测试，并说明没有覆盖到的风险。
+```
+
+预期：
+
+- `repo_write_file`、`repo_run_command` 会进入危险工具审批。
+- 用户必须在工具卡片里允许或拒绝。
+- 测试输出应进入事件或日志。
+
+### 第三步：创建 PR
+
+只有在 diff 和测试结果都可接受后，再发送：
+
+```text
+请把当前改动提交到新分支并创建指向 main 的 PR。PR body 必须包含修改文件、测试命令、测试结果、剩余风险。除非我明确要求 draft，否则创建 ready PR。
+```
+
+注意：当前 `repo_create_pull_request` 工具历史默认是 draft PR。若你需要 ready PR，需要在提示词中明确要求，并在 PR 创建结果里核对 `draft=false`。
+
+## 审查其他仓库
+
+CDS Agent 不是在页面输入 GitHub URL 就自动切换仓库。当前 repo 工具的工作区由 runtime/container 环境决定：
+
+- `AGENT_WORKSPACE_ROOT`
+- `AGENT_WORKSPACE_GITHUB_REPOSITORY`
+- `AGENT_WORKSPACE_GIT_REF`
+
+要审查其他仓库，需要管理员或 runtime profile 先把对应仓库 clone/挂载到 sandbox，并配置上面这些环境变量或等价的 CDS workspace。否则默认工作区可能仍是 `inernoro/prd_agent`。
 
 ## 会话状态
 
@@ -43,6 +99,13 @@
 - 日志面板显示容器或 worker 输出。
 
 如果页面超过 2 秒没有任何变化，应查看事件时间线和日志面板，而不是只等待。
+
+当前限制：
+
+- 页面现在用 3 秒轮询刷新运行中会话，不是真正的长连接实时流。
+- 一次详情刷新最多展示 500 条事件，长任务需要后续补分页和增量订阅。
+- `repo_run_command` 单次命令最长约 180 秒，长测试应拆分或等待后续长命令后台化。
+- 点击停止会停止 CDS session，但不一定能立即取消已经派发给 sidecar 的模型 run。
 
 ## 工具审批
 

@@ -14,6 +14,7 @@ import {
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
   getInfraAgentLogs,
+  getInfraAgentRuntimeStatus,
   importDefaultInfraAgentRuntimeProfile,
   listInfraAgentEvents,
   listInfraAgentMessages,
@@ -26,13 +27,18 @@ import {
   setInfraAgentManualTakeover,
   startInfraAgentSession,
   stopInfraAgentSession,
+  streamInfraAgentEvents,
   testInfraAgentRuntimeProfile,
   updateInfraAgentRuntimeProfile,
   type InfraAgentEventView,
   type InfraAgentMessageView,
+  type InfraAgentRuntimeDiagnostics,
   type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
 } from '@/services/real/infraAgentSessions';
+
+const EVENT_PAGE_LIMIT = 500;
+const EVENT_MAX_BATCHES_PER_REFRESH = 20;
 
 function statusLabel(status: string): string {
   if (status === 'creating') return '准备中';
@@ -151,6 +157,31 @@ function renderPayload(event: InfraAgentEventView): string {
   return JSON.stringify(payload, null, 2);
 }
 
+function mergeEventsBySeq(
+  current: InfraAgentEventView[],
+  incoming: InfraAgentEventView[],
+): InfraAgentEventView[] {
+  if (incoming.length === 0) return current;
+  const bySeq = new Map<number, InfraAgentEventView>();
+  current.forEach((item) => bySeq.set(item.seq, item));
+  incoming.forEach((item) => bySeq.set(item.seq, item));
+  return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+}
+
+function latestEventSeq(items: InfraAgentEventView[]): number {
+  return items.reduce((max, item) => Math.max(max, item.seq), 0);
+}
+
+function shortId(value?: string | null, head = 12): string {
+  if (!value) return '未上报';
+  return value.length > head + 4 ? `${value.slice(0, head)}...${value.slice(-4)}` : value;
+}
+
+function readString(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
 function buildPromptWithContext(
   task: string,
   context: { files: string; urls: string; notes: string },
@@ -206,6 +237,15 @@ function readInitialViewMode(): 'simple' | 'pro' {
     return saved === 'pro' ? 'pro' : 'simple';
   } catch {
     return 'simple';
+  }
+}
+
+function readRequestedSessionId(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return new URLSearchParams(window.location.search).get('sessionId')?.trim() ?? '';
+  } catch {
+    return '';
   }
 }
 
@@ -432,11 +472,14 @@ export default function CdsAgentPage() {
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
+  const [runtimeStatus, setRuntimeStatus] = useState<InfraAgentRuntimeDiagnostics | null>(null);
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
+  const eventsRef = useRef<InfraAgentEventView[]>([]);
+  const [eventStreamHealthy, setEventStreamHealthy] = useState(false);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
   const [eventReplayIndex, setEventReplayIndex] = useState(1);
@@ -577,6 +620,59 @@ export default function CdsAgentPage() {
       ['凭据暴露', '不向前端显示 long token / API key'],
     ];
   }, [activeConnection, activeSession, activeSessionProfile, events]);
+  const runtimeDiagnostics = useMemo(() => {
+    const primaryRuntime = runtimeStatus?.instances?.[0] ?? null;
+    const sidecarAdapter = primaryRuntime?.agentAdapter || '';
+    const sidecarState = runtimeStatus
+      ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount} healthy`
+      : '未检测';
+    const payloads = events.map(parsePayload).reverse();
+    const latestRuntimePayload = payloads.find((payload) => (
+      readString(payload, 'runtimeAdapter')
+      || readString(payload, 'runtimeInstance')
+      || readString(payload, 'runtimeRunId')
+      || readString(payload, 'messageId')
+      || readString(payload, 'sidecar')
+    ));
+    const adapter = activeSession?.runtimeAdapter
+      || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeAdapter') : '')
+      || sidecarAdapter
+      || (activeSession?.runtime === 'claude-sdk' ? 'legacy-sidecar-adapter' : '');
+    const runId = activeSession?.currentRuntimeRunId
+      || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeRunId') || readString(latestRuntimePayload, 'messageId') : '');
+    const instance = latestRuntimePayload
+      ? readString(latestRuntimePayload, 'runtimeInstance') || readString(latestRuntimePayload, 'sidecar')
+      : '';
+    const source = latestRuntimePayload ? readString(latestRuntimePayload, 'source') : '';
+    const adapterLabel = adapter || '未上报';
+    const adapterMode = adapter.includes('legacy')
+      ? 'Legacy fallback'
+      : adapter
+        ? 'Official SDK adapter'
+        : '待上报';
+    const cancelState = activeSession?.currentRuntimeRunId
+      ? 'Stop 会取消底层 run'
+      : activeSession?.status === 'running'
+        ? '等待 run id'
+        : '无活动 run';
+    return {
+      adapter: adapterLabel,
+      adapterMode,
+      runId,
+      instance,
+      source,
+      cancelState,
+      rows: [
+        ['Adapter', adapterLabel],
+        ['Mode', adapterMode],
+        ['Run ID', shortId(runId)],
+        ['Instance', instance || '未上报'],
+        ['Source', source || '无 runtime 事件'],
+        ['Pool', sidecarState],
+        ['Cancel', cancelState],
+      ],
+    };
+  }, [activeSession, events, runtimeStatus]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
@@ -590,8 +686,8 @@ export default function CdsAgentPage() {
     },
     {
       label: 'CDS Runtime',
-      value: runtimeReady ? '配置可用' : '待配置',
-      detail: activeRuntimeProfile ? profileSummary(activeRuntimeProfile) : '选择模型和 API key',
+      value: runtimeReady ? runtimeDiagnostics.adapterMode : '待配置',
+      detail: activeRuntimeProfile ? `${runtimeDiagnostics.adapter} · ${profileSummary(activeRuntimeProfile)}` : '选择模型和 API key',
       icon: Server,
       active: runtimeReady,
     },
@@ -691,6 +787,10 @@ export default function CdsAgentPage() {
     }
   }, [viewMode]);
 
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
+
   // 简洁模式时间线：新内容在底部，自动滚到底，符合 IM 习惯。
   useEffect(() => {
     if (viewMode !== 'simple') return;
@@ -698,19 +798,80 @@ export default function CdsAgentPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [viewMode, activeSessionId, messages.length, events.length]);
 
-  // 运行中自动轮询（规则 #6 禁止空白等待）：后端 /stream 是一次性返回，纯前端用轮询兜底。
+  // 运行中自动刷新会话元数据；事件优先走 SSE afterSeq 续读，异常时由 refreshDetail 兜底。
   const activeSessionForPoll = sessions.find((item) => item.id === activeSessionId) ?? null;
   const isLiveStatus = activeSessionForPoll?.status === 'running' || activeSessionForPoll?.status === 'creating';
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) return;
     const tick = window.setInterval(() => {
       setNowTick(Date.now());
-      void refreshDetail(activeSessionId);
+      void refreshDetail(activeSessionId, { skipEvents: eventStreamHealthy });
       void listInfraAgentSessions(100).then((res) => {
         if (res.success && res.data?.items) setSessions(sortSessions(res.data.items));
       });
     }, 3000);
     return () => window.clearInterval(tick);
+  }, [isLiveStatus, activeSessionId, eventStreamHealthy]);
+
+  useEffect(() => {
+    if (!isLiveStatus || !activeSessionId) {
+      setEventStreamHealthy(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    let stopped = false;
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => {
+      const timer = window.setTimeout(resolve, ms);
+      controller.signal.addEventListener('abort', () => {
+        window.clearTimeout(timer);
+        resolve();
+      }, { once: true });
+    });
+
+    const mergeStreamEvent = (event: InfraAgentEventView) => {
+      setEvents((prev) => {
+        const next = mergeEventsBySeq(prev, [event]);
+        eventsRef.current = next;
+        return next;
+      });
+    };
+
+    const pump = async () => {
+      setEventStreamHealthy(false);
+      while (!controller.signal.aborted && !stopped) {
+        const afterSeq = latestEventSeq(eventsRef.current);
+        let received = false;
+        try {
+          await streamInfraAgentEvents(
+            activeSessionId,
+            afterSeq,
+            EVENT_PAGE_LIMIT,
+            (event) => {
+              received = true;
+              mergeStreamEvent(event);
+            },
+            controller.signal,
+            () => {
+              if (!controller.signal.aborted && !stopped) setEventStreamHealthy(true);
+            },
+          );
+          await sleep(received ? 250 : 1200);
+        } catch {
+          if (!controller.signal.aborted && !stopped) {
+            setEventStreamHealthy(false);
+            await sleep(3000);
+          }
+        }
+      }
+    };
+
+    void pump();
+    return () => {
+      stopped = true;
+      controller.abort();
+    };
   }, [isLiveStatus, activeSessionId]);
 
   useEffect(() => {
@@ -724,7 +885,9 @@ export default function CdsAgentPage() {
     }
     setEventReplayMode(false);
     setEventReplayIndex(1);
-    void refreshDetail(activeSession.id);
+    eventsRef.current = [];
+    setEvents([]);
+    void refreshDetail(activeSession.id, { resetEvents: true });
   }, [activeSession?.id]);
 
   useEffect(() => {
@@ -755,10 +918,12 @@ export default function CdsAgentPage() {
   }, [activeProfile, profileDraft.apiKey]);
 
   async function loadAll() {
-    const [connRes, profileRes, sessionRes] = await Promise.all([
+    const requestedSessionId = readRequestedSessionId();
+    const [connRes, profileRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentSessions(100),
+      getInfraAgentRuntimeStatus(),
     ]);
     if (connRes.success) {
       const items = (connRes.data?.items ?? []).filter((item) => item.status !== 'revoked');
@@ -775,18 +940,48 @@ export default function CdsAgentPage() {
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
       setSessions(items);
-      setActiveSessionId((prev) => prev ?? items[0]?.id ?? null);
+      const requested = requestedSessionId
+        ? items.find((item) => item.id === requestedSessionId)
+        : null;
+      setActiveSessionId((prev) => requested?.id ?? prev ?? items[0]?.id ?? null);
+    }
+    if (runtimeRes.success && runtimeRes.data?.diagnostics) {
+      setRuntimeStatus(runtimeRes.data.diagnostics);
     }
   }
 
-  async function refreshDetail(sessionId: string) {
-    const [messagesRes, eventsRes, logsRes] = await Promise.all([
+  async function fetchEventsSince(sessionId: string, afterSeq: number): Promise<InfraAgentEventView[]> {
+    const collected: InfraAgentEventView[] = [];
+    let cursor = afterSeq;
+    for (let batch = 0; batch < EVENT_MAX_BATCHES_PER_REFRESH; batch += 1) {
+      const eventsRes = await listInfraAgentEvents(sessionId, cursor, EVENT_PAGE_LIMIT);
+      if (!eventsRes.success) break;
+      const items = eventsRes.data?.items ?? [];
+      if (items.length === 0) break;
+      collected.push(...items);
+      cursor = latestEventSeq(items);
+      if (items.length < EVENT_PAGE_LIMIT) break;
+    }
+    return collected;
+  }
+
+  async function refreshDetail(sessionId: string, options: { resetEvents?: boolean; skipEvents?: boolean } = {}) {
+    const afterSeq = options.resetEvents || activeSessionId !== sessionId ? 0 : latestEventSeq(eventsRef.current);
+    const [messagesRes, newEvents, logsRes] = await Promise.all([
       listInfraAgentMessages(sessionId, 200),
-      listInfraAgentEvents(sessionId, 0, 500),
+      options.skipEvents ? Promise.resolve([]) : fetchEventsSince(sessionId, afterSeq),
       getInfraAgentLogs(sessionId),
     ]);
     if (messagesRes.success) setMessages(messagesRes.data?.items ?? []);
-    if (eventsRes.success) setEvents(eventsRes.data?.items ?? []);
+    if (!options.skipEvents) {
+      setEvents((prev) => {
+        const next = afterSeq > 0
+          ? mergeEventsBySeq(prev, newEvents)
+          : mergeEventsBySeq([], newEvents);
+        eventsRef.current = next;
+        return next;
+      });
+    }
     if (logsRes.success) setLogs(logsRes.data?.logs ?? '');
   }
 
@@ -2005,6 +2200,11 @@ export default function CdsAgentPage() {
                   >
                     <div className="truncate text-sm font-medium text-white/85">{session.title}</div>
                     <div className="mt-1 text-xs text-white/45">{statusLabel(session.status)} · {session.model ?? '未配置模型'}</div>
+                    {(session.runtimeAdapter || session.currentRuntimeRunId) && (
+                      <div className="mt-1 truncate text-[11px] text-white/35">
+                        {session.runtimeAdapter ?? 'runtime adapter 未上报'} · {shortId(session.currentRuntimeRunId)}
+                      </div>
+                    )}
                     {session.lastError && <div className="mt-1 line-clamp-2 text-xs text-red-200/65">{session.lastError}</div>}
                   </button>
                 ))
@@ -2017,7 +2217,7 @@ export default function CdsAgentPage() {
               <div>
                 <div className="text-sm font-semibold text-white/90">{activeSession?.title ?? '未选择会话'}</div>
                 <div className="mt-1 text-xs text-white/45">
-                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeSession.runtime} · ${activeSession.modelBaseUrl ?? activeProfile?.baseUrl ?? '未配置 baseUrl'} · trace ${activeSession.traceId}` : '选择或新建一个远程会话'}
+                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeSession.runtime} · ${runtimeDiagnostics.adapter} · ${activeSession.modelBaseUrl ?? activeProfile?.baseUrl ?? '未配置 baseUrl'} · trace ${activeSession.traceId}` : '选择或新建一个远程会话'}
                 </div>
                 {activeSession && primaryActionHint(activeSession.status) && (
                   <div className="mt-1 text-xs text-white/40">{primaryActionHint(activeSession.status)}</div>
@@ -2073,6 +2273,43 @@ export default function CdsAgentPage() {
                     </div>
                   </div>
                 )}
+                <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76">
+                          <Server size={14} />
+                          Runtime 调试
+                        </div>
+                        <div className="mt-1 text-xs leading-relaxed text-white/42">
+                          {activeSession
+                            ? '当前显示的是后端实际记录的 adapter、run id、实例和取消能力；`Legacy fallback` 表示还未切到官方 SDK adapter。'
+                            : '选择或创建会话后，这里会显示真实 adapter、run id、实例和取消能力。'}
+                        </div>
+                      </div>
+                      <span
+                        className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-medium"
+                        style={{
+                          background: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)',
+                          border: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? '1px solid rgba(34,197,94,0.26)' : '1px solid rgba(245,158,11,0.26)',
+                          color: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? 'rgba(134,239,172,0.92)' : 'rgba(253,230,138,0.92)',
+                        }}
+                      >
+                        {runtimeDiagnostics.adapterMode}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                      {runtimeDiagnostics.rows.map(([label, value]) => (
+                        <div
+                          key={label}
+                          className="min-h-[58px] rounded-md px-3 py-2"
+                          style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)' }}
+                        >
+                          <div className="text-[11px] font-semibold text-white/38">{label}</div>
+                          <div className="mt-1 break-all text-xs leading-relaxed text-white/72">{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
@@ -2185,10 +2422,15 @@ export default function CdsAgentPage() {
                       const payload = parsePayload(event);
                       const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
                       const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
+                      const runtimeBadge = readString(payload, 'runtimeAdapter') || readString(payload, 'source');
+                      const runtimeInstance = readString(payload, 'runtimeInstance') || readString(payload, 'sidecar');
                       return (
                         <article key={event.id} className="rounded-lg px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
                           <div className="flex items-center justify-between gap-3">
-                            <span className="text-xs font-semibold text-white/65">{event.type} #{event.seq} · {event.traceId}</span>
+                            <span className="min-w-0 text-xs font-semibold text-white/65">
+                              {event.type} #{event.seq} · {event.traceId}
+                              {runtimeBadge && <span className="ml-2 text-white/35">{runtimeBadge}{runtimeInstance ? ` / ${runtimeInstance}` : ''}</span>}
+                            </span>
                             <button type="button" onClick={() => void copyText('事件', renderPayload(event))} className="rounded p-1 text-white/40 hover:text-white/80" aria-label="复制事件">
                               <Copy size={12} />
                             </button>

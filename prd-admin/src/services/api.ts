@@ -771,6 +771,7 @@ export const api = {
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
     eventSchema: () => '/api/infra-agent-sessions/event-schema',
+    runtimeStatus: () => '/api/infra-agent-sessions/runtime-status',
     list: () => '/api/infra-agent-sessions',
     create: () => '/api/infra-agent-sessions',
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,

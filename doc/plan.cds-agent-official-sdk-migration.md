@@ -1,0 +1,132 @@
+# plan.cds-agent-official-sdk-migration
+
+| 字段 | 内容 |
+| --- | --- |
+| 模块 | CDS Agent 官方 SDK adapter 迁移 |
+| 日期 | 2026-05-17 |
+| 状态 | Active plan |
+| 目标 | 保留 MAP/CDS 控制面，把自研 agent loop 压缩为官方 SDK adapter |
+| 关联 | `doc/design.cds-agent-official-sdk-adapter.md`, `doc/design.cds-agent-runtime-architecture.md`, `doc/plan.cds-agent-workbench.md` |
+
+## 1. 北极星
+
+用户上手后只需要选择仓库/分支/任务，系统就能完成代码审查或小改动，并且能清楚看到：
+
+- 当前用的是哪个官方 SDK adapter、哪个模型、哪个 workspace。
+- 正在读哪些文件、执行哪些命令、请求哪些审批。
+- 失败时失败在 provider、SDK、工具、权限、仓库、测试还是 PR。
+- 可以停止、重试、继续、下载日志、复现 run。
+
+## 2. 一个周期内的最小开发计划
+
+本周期只做“可替换运行时骨架 + 调试闭环”，不追求一次性重写所有智能体。
+
+| 项 | 交付 | 验收 |
+| --- | --- | --- |
+| P1.1 Runtime adapter seam | 新增 `IAgentRuntimeAdapter` 设计对应的后端接口或等价内部抽象 | `cds-agent` 和 workflow `claude-sdk` 能共享一层 runtime contract |
+| P1.2 Claude Agent SDK adapter spike | 增加官方 SDK adapter 试验实现，保留 legacy fallback | 本地 smoke 能返回 `runtime.init/text.delta/done/error` |
+| P1.3 Event mapper | 官方 SDK stream -> `InfraAgentEvent` / `ToolboxRunEvent` | 事件包含 `traceId/runId/seq/source/sdkRuntime` |
+| P1.4 Cancel handle | MAP session 保存底层 run/process id | UI stop 后底层 run 结束，事件有 `cancelled` |
+| P1.5 Event cursor | 替换 500 条一次性回放 | 大于 500 条事件不丢，UI 可分页 |
+| P1.6 Debug panel | CDS Agent 页面显示 runtime adapter、SDK health、trace id、event cursor、last error | 截图可证明不是静态页面 |
+| P1.7 Compatibility smoke | Toolbox `cds-agent`、PRD/缺陷/文学/视觉 agent 各跑最小路径 | 非代码 agent 不被运行时迁移破坏 |
+| P1.8 Documentation calibration | 设计、计划、债务、使用指南同步官方/自研边界 | `rg "完整官方 Claude Code SDK" doc` 不能出现夸大表达 |
+
+## 3. 调试顺序
+
+每个开发周期按这个顺序走，禁止先堆 UI：
+
+1. Runtime health：确认 official SDK 包、provider key、模型、workspaceRoot。
+2. Minimal run：只让 agent 输出当前仓库根目录摘要，不允许写文件。
+3. Tool run：允许 read/list/search，再允许 safe command。
+4. Approval run：触发一个需要确认的危险命令，验证 MAP 审批。
+5. Cancel run：启动长任务后停止，验证 SDK run 真取消。
+6. Event overflow：制造 600+ 小事件，验证 cursor。
+7. Toolbox run：从 AI 百宝箱调用 `cds-agent`。
+8. Visual run：打开 `/cds-agent`，截图记录真实 run 状态。
+9. Remote run：部署到 CDS preview，重复最小 run 和截图。
+
+## 4. 首轮调试用例
+
+| 用例 | Prompt | 成功标准 |
+| --- | --- | --- |
+| S1 repo read | “检查当前仓库结构，只输出 5 个最关键目录，不修改文件。” | 有 text delta、无 tool error、无文件变更 |
+| S2 code audit readonly | “审查 CDS Agent runtime 相关代码，指出一个风险，不修改。” | 返回文件路径和风险说明 |
+| S3 approval | “尝试运行一个需要审批的命令，但等待我确认。” | UI 出现 approval requested |
+| S4 cancel | “循环输出状态 2 分钟。” | Stop 后底层 run 取消，事件状态一致 |
+| S5 toolbox | AI 百宝箱 preferredAgents=`["cds-agent"]` | Toolbox event 中出现 CDS session/run artifact |
+| S6 compatibility | PRD/defect/literary/visual 各跑一个最小动作 | 无 runtime adapter 改动引起的回归 |
+
+## 5. 商业级可用性门槛
+
+| 维度 | 本周期最低门槛 | 最终门槛 |
+| --- | --- | --- |
+| 可观察性 | UI 显示 run id、trace id、adapter、last event、last error | OpenTelemetry/官方 trace 与 MAP event 双向关联 |
+| 可调试性 | 每次失败有结构化错误码和下一步 | 一键导出 run bundle |
+| 可用性 | 只读代码审查可跑通 | 审查、修改、测试、PR 全链路稳定 |
+| 方便性 | 用户不用理解 sidecar 细节 | 选择仓库/分支/任务即可运行 |
+| 稳定性 | cancel、event cursor、fallback 可用 | 多租户隔离、超时、重试、幂等全部覆盖 |
+
+## 6. 非自研收益预估
+
+迁移后可删除或收缩的代码主要在 Python sidecar loop、工具选择、history 管理、usage 汇总、MCP/permission 重复实现。
+
+| 区域 | 当前问题 | 迁移收益 |
+| --- | --- | --- |
+| `agent_loop.py` | 自己实现多轮循环，容易偏离官方行为 | 大部分替换为 SDK query/run 调用 |
+| `tool_bridge.py` | 同时承接工具协议、审批等待、MAP 回调 | 收缩为 MAP permission/MCP bridge |
+| sidecar schemas | 自定义事件和工具 schema 膨胀 | 只保留 MAP event envelope |
+| approval polling | 易超时、难取消 | 接 SDK permission/human review callback |
+| observability | 自己拼日志和 usage | 复用 SDK trace/usage，再映射到 MAP |
+
+保守估计，本周期完成 adapter seam 后不会立刻大量删代码；等 Claude Agent SDK adapter 跑通并覆盖 S1-S5 后，sidecar 运行时相关代码可减少约 30%-50%。如果后续工具全部 MCP 化，长期可减少 50%-70% 的自研运行时代码，并显著降低维护成本。
+
+## 7. 不再踩的坑
+
+- 不把 runtime 历史名当官方 SDK 接入事实。
+- 不先做静态好看的页面，再补功能。
+- 不把所有智能体都塞进代码 Agent。
+- 不让 UI stop 只改数据库状态。
+- 不用固定 500 条事件当审计边界。
+- 不让 Toolbox worker 同步等待一个长 run。
+- 不在文档里写“已完成商业级”直到真实远程 run 通过。
+
+## 8. 当前状态
+
+截至 2026-05-17：
+
+- UI 工作台已完成第一轮视觉升级，但它不是 runtime 完成的证明。
+- 当前 `claude-sdk` runtime 是官方 `anthropic` Python SDK + 自研 sidecar loop，不是完整官方 Claude Agent SDK adapter。
+- P1.1 已开始落代码：新增 `IInfraAgentRuntimeAdapter`，把现有 sidecar 包成 `LegacySidecarRuntimeAdapter`，`InfraAgentSessionService` 改为通过 runtime adapter 消费事件。
+- P1.4 已有第一步：session 写入 `CurrentRuntimeRunId`，Stop 时会通过 adapter 调 sidecar `/v1/agent/cancel/{runId}` 做 best-effort 取消。
+- P1.6 已接入第一版页面调试面板：`/cds-agent` 展示 runtime adapter、run id、runtime instance、事件 source、cancel 状态；事件标题也显示 adapter/source；无 active session 时也显示空态原因。
+- P1.6 已补 sidecar pool 诊断入口：sidecar `/readyz` 返回当前 adapter、官方 SDK 包、Claude CLI、workspace、allowed tools、permission mode、写工具 opt-in 和 approval bridge；MAP `GET /api/infra-agent-sessions/runtime-status` 透出 pool 诊断，页面 runtime 调试面板显示 healthy/instance 数。
+- P1.2 已有第一版官方 Claude Agent SDK adapter spike：sidecar 支持 `runtimeAdapter=claude-agent-sdk` / `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`，MAP 可通过 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent-sdk` 透传选择项；默认仍为 legacy fallback。
+- P1.3 已补 `runtime_init` 事件映射，官方 adapter 初始化信息会进入 MAP 事件流，供调试面板和审计使用。
+- P1.4 官方路径已有第一步取消语义：adapter 使用 `ClaudeSDKClient`，sidecar cancel event 会调用官方 `client.interrupt()`；下一步还要用真实 SDK/CLI/key 证明远程 run 能被停止。
+- P1.5 已有第二步事件游标：后端 `ListEventsAsync(afterSeq, limit)` 和 `/stream?afterSeq=&limit=` 已存在，`/stream` 已改为长连接 SSE + keepalive；`/cds-agent` 页面改为 SSE 优先续读、JSON 分页兜底，并按 `seq` 去重合并事件；Toolbox `cds-agent` 回放改为游标批量读取，避免固定 500 条覆盖长任务审计。
+- P1.6 后台运行已有第一步：`SendMessageAsync` 不再等待 sidecar runtime 跑完，而是写入用户消息、导入 CDS 事件、入队 `InfraAgentRuntimeJob`；`InfraAgentRuntimeWorker` 在后台 scope 中执行 adapter run，并把异常写回 MAP 事件。
+- P1.7 Toolbox 入口已有第二步异步语义：`CdsAgentAdapter` 在创建并发送远程任务后立即产出 `CDS Agent 远程运行句柄` JSON artifact，包含 `sessionId/traceId/runtimeAdapter/currentRuntimeRunId/workbenchPath/eventStreamPath/logsPath`；Toolbox 运行页已识别该 artifact 并渲染“打开工作台”和“停止”卡片操作，同时会重新附着远程 SSE 事件流、轮询兜底展示最近事件，并对等待中的 MAP 工具审批提供内联允许/拒绝；不再把 Toolbox step 的完成误写成远程 run 已完成。
+- P1.7 权限边界已有第二步：官方 adapter 默认仅开放 `Read/Grep/Glob`，`Bash/Edit/Write` 必须显式 opt-in；已接 `ClaudeAgentOptions.can_use_tool`，危险内置工具会创建 MAP approval request 并等待 approval，再返回官方 `PermissionResultAllow/Deny`。
+- 下一步应做真实 official SDK run、真实 MAP 审批、取消和远程 CDS 视觉验证；Toolbox 的远程会话重新附着已先落地，但仍需要真实长 run 和 approval run 证明闭环。
+
+验证记录：
+
+- `dotnet build prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj --no-restore` 通过；仅有既有 nullable/unused warning。
+- `dotnet build prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj --no-restore` 顺序重跑通过；仅有既有 MailKit NU1902。
+- `python3 -m py_compile claude-sdk-sidecar/app/main.py claude-sdk-sidecar/app/agent_loop.py claude-sdk-sidecar/app/official_agent_sdk.py claude-sdk-sidecar/app/schemas.py` 通过。
+- `python3 -m unittest discover -s claude-sdk-sidecar/tests` 通过；该测试使用 fake `claude_agent_sdk`，只验证 adapter 事件映射和 cancel/interrupt 结构，不代表真实 Claude 端到端调用通过。
+- `claude-sdk-sidecar/tests/test_sidecar_readiness.py` 覆盖 `/readyz` 背后的 adapter diagnostics：legacy 默认 ready、official 缺 SDK/CLI 时报告 missing、写工具 opt-in 时报告 `builtinWriteToolsEnabled`。
+- `PYTHONPATH=/tmp/codex-sidecar-req-check-2:claude-sdk-sidecar python3 ...` 真实 SDK shape check 通过，`runtime_init` 显示 `approvalBridge=sdk-can-use-tool`、默认 tools 为 `Read/Grep/Glob`、`permissionMode=default`。
+- 临时安装真实 `claude-agent-sdk` 到 `/tmp/codex-claude-agent-sdk` 后，API 形状验证通过：`ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 可导入且签名匹配当前 adapter 用法。
+- `python3 -m pip install --target /tmp/codex-sidecar-req-check-2 -r claude-sdk-sidecar/requirements.txt` 通过；验证组合为 `fastapi 0.115.0`、`starlette 0.38.6`、`pydantic 2.13.4`、`claude_agent_sdk 0.2.82`。
+- 真实 run smoke 仍未执行：还需要 Claude Code CLI、provider key、真实 workspace 和远程 CDS sidecar 环境。
+- `npm --prefix prd-admin run tsc` 通过。
+- `CdsAgentAdapter` 异步句柄改造后，`dotnet build prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj --no-restore --no-dependencies` 通过；`/cds-agent?sessionId=...` 前端直达选中会话的类型检查通过。
+- `ToolRunner` 已保存 `step_artifact` 事件中的 artifact，并识别 `kind=cds-agent-run-handle` 渲染 CDS Agent 远程运行卡片；卡片可调用 `stopInfraAgentSession` 请求停止 MAP/CDS session；`npm --prefix prd-admin run tsc` 通过。
+- `dotnet build prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj --no-restore` 通过。
+- `dotnet build prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj --no-restore` 通过，仅有既有 MailKit NU1902。
+- 本地视觉冒烟通过：Vite `http://127.0.0.1:8011/cds-agent`，截图 `/tmp/cds-agent-runtime-debug-auth.png` 显示 `Runtime 调试` 面板和 `Adapter/Mode/Run ID/Instance/Source/Cancel` 字段。该截图使用本地临时登录态，后端 API 未启动，因此只验证页面渲染和空态，不证明真实远程 run。
+- `git diff --check` 通过。
+- API 项目构建阻塞定位：`dotnet msbuild prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj /pp:/tmp/prd-api-preprocessed.xml /p:BuildProjectReferences=false` 可完成，说明项目文件展开正常；`/t:Restore` 卡在 `Determining projects to restore...`，`/t:ResolveReferences` 也卡住，问题集中在 NuGet/project reference resolution 阶段。
+- `dotnet build prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj --no-restore`、`--no-dependencies` 和 `dotnet msbuild ... /t:CoreCompile` 在本机仍只有 MSBuild banner、无项目输出，已停止；Api DI 注册、`InfraAgentRuntimeWorker`、`AgentToolsController` permission endpoint 和 `CdsAgentAdapter` API 层编译仍需排查构建卡住原因后复验。

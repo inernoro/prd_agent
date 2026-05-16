@@ -142,6 +142,144 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
+    public async Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            return new SidecarCancelResult(false, "run_id_empty");
+
+        var instances = GetRoutableInstances(_options.CurrentValue);
+        if (instances.Count == 0)
+            return new SidecarCancelResult(false, "sidecar_not_configured");
+
+        var http = _httpFactory.CreateClient(HttpClientName);
+        var lastReason = "not found";
+        foreach (var instance in instances)
+        {
+            var token = ResolveToken(instance);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                lastReason = "sidecar_token_missing";
+                continue;
+            }
+
+            var url = CombineUrl(instance.BaseUrl, $"/v1/agent/cancel/{Uri.EscapeDataString(runId)}");
+            using var httpReq = new HttpRequestMessage(HttpMethod.Post, url);
+            httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            try
+            {
+                using var response = await http.SendAsync(httpReq, ct);
+                var body = await SafeReadString(response, ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    _state.RecordSuccess(instance.Name);
+                    return new SidecarCancelResult(true, null, instance.Name);
+                }
+
+                lastReason = string.IsNullOrWhiteSpace(body)
+                    ? $"sidecar_http_{(int)response.StatusCode}"
+                    : body;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _state.RecordFailure(instance.Name);
+                lastReason = ex.Message;
+            }
+        }
+
+        return new SidecarCancelResult(false, lastReason);
+    }
+
+    public async Task<SidecarPoolDiagnostics> GetDiagnosticsAsync(CancellationToken ct)
+    {
+        var instances = GetRoutableInstances(_options.CurrentValue);
+        var http = _httpFactory.CreateClient(HttpClientName);
+        var results = new List<SidecarInstanceDiagnostics>(instances.Count);
+
+        foreach (var instance in instances)
+        {
+            var token = ResolveToken(instance);
+            var url = CombineUrl(instance.BaseUrl, "/readyz");
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                var body = await SafeReadString(resp, ct);
+                var parsed = ParseReadyz(body);
+                results.Add(new SidecarInstanceDiagnostics(
+                    instance.Name,
+                    instance.BaseUrl,
+                    instance.Source,
+                    instance.Tags,
+                    !string.IsNullOrWhiteSpace(token),
+                    _state.IsHealthy(instance.Name),
+                    (int)resp.StatusCode,
+                    parsed.Ready,
+                    parsed.AgentAdapter,
+                    parsed.AdapterDiagnosticsJson,
+                    resp.IsSuccessStatusCode ? null : Truncate(body, 800)));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                results.Add(new SidecarInstanceDiagnostics(
+                    instance.Name,
+                    instance.BaseUrl,
+                    instance.Source,
+                    instance.Tags,
+                    !string.IsNullOrWhiteSpace(token),
+                    _state.IsHealthy(instance.Name),
+                    null,
+                    null,
+                    null,
+                    null,
+                    ex.Message));
+            }
+        }
+
+        return new SidecarPoolDiagnostics(
+            IsConfigured,
+            InstanceCount,
+            HealthyCount,
+            results,
+            _registry.LastRefreshedAt,
+            _registry.LastRefreshError);
+    }
+
+    private static (bool? Ready, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return (null, null, null);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            bool? ready = root.TryGetProperty("ready", out var readyElement)
+                && (readyElement.ValueKind == JsonValueKind.True || readyElement.ValueKind == JsonValueKind.False)
+                ? readyElement.GetBoolean()
+                : null;
+            string? adapter = root.TryGetProperty("agentAdapter", out var adapterElement)
+                && adapterElement.ValueKind == JsonValueKind.String
+                ? adapterElement.GetString()
+                : null;
+            string? adapterDiagnostics = root.TryGetProperty("adapterDiagnostics", out var diagElement)
+                ? diagElement.GetRawText()
+                : null;
+            return (ready, adapter, adapterDiagnostics);
+        }
+        catch (JsonException)
+        {
+            return (null, null, null);
+        }
+    }
+
+    private static string Truncate(string value, int max)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= max) return value;
+        return value[..max] + "...";
+    }
+
     private async Task<DispatchResult> DispatchAsync(
         HttpClient http,
         HttpRequestMessage httpReq,
@@ -454,6 +592,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             baseUrl = string.IsNullOrWhiteSpace(req.BaseUrl) ? null : req.BaseUrl,
             apiKey = string.IsNullOrWhiteSpace(req.ApiKey) ? null : req.ApiKey,
             protocol = string.IsNullOrWhiteSpace(req.Protocol) ? null : req.Protocol,
+            runtimeAdapter = string.IsNullOrWhiteSpace(req.RuntimeAdapter) ? null : req.RuntimeAdapter,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");
@@ -531,7 +670,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 ToolName = TryStr(root, "tool_name"),
                 ToolUseId = TryStr(root, "tool_use_id"),
                 ToolInput = TryClone(root, "tool_input"),
-                Content = TryStr(root, "content"),
+                Content = TryStrOrJson(root, "content"),
                 FinalText = TryStr(root, "final_text"),
                 InputTokens = TryLong(root, "input_tokens"),
                 OutputTokens = TryLong(root, "output_tokens"),
@@ -559,6 +698,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         "tool_use" => SidecarEventType.ToolUse,
         "tool_result" => SidecarEventType.ToolResult,
         "usage" => SidecarEventType.Usage,
+        "runtime_init" => SidecarEventType.RuntimeInit,
         "done" => SidecarEventType.Done,
         "error" => SidecarEventType.Error,
         _ => SidecarEventType.Unknown,
@@ -568,6 +708,13 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
             ? v.GetString()
             : v.ValueKind == JsonValueKind.Number ? v.ToString() : null;
+
+    private static string? TryStrOrJson(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null)
+            return null;
+        return v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText();
+    }
 
     private static long? TryLong(JsonElement root, string name) =>
         root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number

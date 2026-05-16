@@ -21,7 +21,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private readonly ILogger<InfraAgentSessionService> _logger;
     private readonly IInfraConnectionService _connections;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
-    private readonly IClaudeSidecarRouter? _sidecarRouter;
+    private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
+    private readonly IInfraAgentRuntimeJobQueue _runtimeJobs;
     private readonly IAgentToolRegistry _toolRegistry;
     private readonly HttpClient _http;
 
@@ -30,7 +31,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         ILogger<InfraAgentSessionService> logger,
         IInfraConnectionService connections,
         IInfraAgentRuntimeProfileService runtimeProfiles,
-        IClaudeSidecarRouter? sidecarRouter,
+        IInfraAgentRuntimeAdapter? runtimeAdapter,
+        IInfraAgentRuntimeJobQueue runtimeJobs,
         IAgentToolRegistry toolRegistry,
         HttpClient http)
     {
@@ -38,7 +40,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _logger = logger;
         _connections = connections;
         _runtimeProfiles = runtimeProfiles;
-        _sidecarRouter = sidecarRouter;
+        _runtimeAdapter = runtimeAdapter;
+        _runtimeJobs = runtimeJobs;
         _toolRegistry = toolRegistry;
         _http = http;
     }
@@ -294,12 +297,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ct);
         response.EnsureSuccessStatusCode();
         await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
-        var runtimeOk = await RunSidecarRuntimeIfAvailableAsync(session, request.Content.Trim(), ct);
-        if (!runtimeOk)
-        {
-            var failed = await FindOwnedSessionAsync(userId, id, ct);
-            return failed == null ? null : ToView(failed);
-        }
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -307,7 +304,64 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, InfraAgentSessionStatuses.Running),
             cancellationToken: ct);
         session.Status = InfraAgentSessionStatuses.Running;
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, ct),
+            InfraAgentEventTypes.Log,
+            JsonSerializer.Serialize(new
+            {
+                level = "info",
+                source = "runtime-dispatcher",
+                message = "runtime job queued",
+                queuedAt = DateTime.UtcNow
+            }),
+            ct);
+        await _runtimeJobs.EnqueueAsync(new InfraAgentRuntimeJob(
+            userId,
+            id,
+            request.Content.Trim(),
+            DateTime.UtcNow), ct);
         return ToView(session);
+    }
+
+    public async Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return;
+
+        bool runtimeOk;
+        try
+        {
+            runtimeOk = await RunSidecarRuntimeIfAvailableAsync(session, content, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                await NextEventSeqAsync(session.Id, ct),
+                InfraAgentEventTypes.Error,
+                JsonSerializer.Serialize(new
+                {
+                    code = "runtime_job_failed",
+                    message = ex.Message,
+                    source = "runtime-dispatcher",
+                    retryable = true
+                }),
+                ct);
+            await MarkRuntimeFailedAsync(session, $"Runtime job failed: {ex.Message}", ct);
+            return;
+        }
+
+        if (!runtimeOk) return;
+
+        session.UpdatedAt = DateTime.UtcNow;
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.UpdatedAt, session.UpdatedAt)
+                .Set(x => x.Status, InfraAgentSessionStatuses.Running),
+            cancellationToken: ct);
     }
 
     public async Task<InfraAgentSessionView?> SetManualTakeoverAsync(
@@ -429,6 +483,26 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         try
         {
+            if (!string.IsNullOrWhiteSpace(session.CurrentRuntimeRunId) && _runtimeAdapter != null)
+            {
+                var cancel = await _runtimeAdapter.CancelAsync(session.CurrentRuntimeRunId, ct);
+                await AppendRawEventAsync(
+                    session.Id,
+                    await NextEventSeqAsync(session.Id, ct),
+                    InfraAgentEventTypes.Log,
+                    JsonSerializer.Serialize(new
+                    {
+                        level = cancel.Cancelled ? "info" : "warning",
+                        source = "runtime-adapter",
+                        runtimeAdapter = cancel.AdapterKind ?? session.RuntimeAdapter,
+                        runtimeRunId = session.CurrentRuntimeRunId,
+                        message = cancel.Cancelled
+                            ? "runtime run cancel requested"
+                            : $"runtime run cancel did not complete: {cancel.Reason ?? "unknown"}"
+                    }),
+                    ct);
+            }
+
             if (!string.IsNullOrWhiteSpace(session.CdsSessionId))
             {
                 var hookProfile = await GetHookProfileAsync(session, ct);
@@ -461,7 +535,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .Set(x => x.Status, InfraAgentSessionStatuses.Stopped)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.StoppedAt, now)
-            .Set(x => x.LastError, null);
+            .Set(x => x.LastError, null)
+            .Set(x => x.CurrentRuntimeRunId, null);
 
         await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == id && x.UserId == userId,
@@ -472,6 +547,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.UpdatedAt = now;
         session.StoppedAt = now;
         session.LastError = null;
+        session.CurrentRuntimeRunId = null;
 
         var nextSeq = await NextEventSeqAsync(session.Id, ct);
         await AppendStatusEventAsync(session.Id, nextSeq, session.Status, "session_stopped", ct);
@@ -1172,7 +1248,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return true;
         }
 
-        if (_sidecarRouter == null || !_sidecarRouter.IsConfigured)
+        if (_runtimeAdapter == null || !_runtimeAdapter.IsConfigured)
         {
             await AppendRawEventAsync(
                 session.Id,
@@ -1192,6 +1268,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
         var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
         var finalText = new StringBuilder();
+        await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.CurrentRuntimeRunId, runId)
+                .Set(x => x.RuntimeAdapter, _runtimeAdapter.AdapterKind)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+        session.CurrentRuntimeRunId = runId;
+        session.RuntimeAdapter = _runtimeAdapter.AdapterKind;
+
         await AppendRawEventAsync(
             session.Id,
             await NextEventSeqAsync(session.Id, ct),
@@ -1204,16 +1290,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 model,
                 baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
                 protocol = runtimeProfile?.Protocol,
+                runtimeAdapter = _runtimeAdapter.AdapterKind,
+                runtimeRunId = runId,
                 resourcePolicy = BuildResourcePolicy(session)
             }),
             ct);
 
-        var request = new SidecarRunRequest
+        var request = new InfraAgentRuntimeRunRequest
         {
             RunId = runId,
             Model = model,
             SystemPrompt = BuildAgentSystemPrompt(),
-            Messages = new List<SidecarChatMessage>
+            Messages = new List<InfraAgentRuntimeMessage>
             {
                 new() { Role = "user", Content = content }
             },
@@ -1225,7 +1313,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,
-            Protocol = runtimeProfile?.Protocol
+            Protocol = runtimeProfile?.Protocol,
+            RuntimeAdapter = ResolveSidecarRuntimeAdapter()
         };
 
         await AppendRawEventAsync(
@@ -1236,16 +1325,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 level = "info",
                 source = "runtime-router",
-                message = $"sidecar tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
+                runtimeAdapter = _runtimeAdapter.AdapterKind,
+                runtimeRunId = runId,
+                message = $"runtime tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
             }),
             ct);
 
-        await foreach (var ev in _sidecarRouter.RunStreamAsync(request, ct))
+        await foreach (var ev in _runtimeAdapter.RunStreamAsync(request, ct))
         {
             var seq = await NextEventSeqAsync(session.Id, ct);
+            var eventSource = string.IsNullOrWhiteSpace(ev.Source) ? _runtimeAdapter.AdapterKind : ev.Source;
             switch (ev.Type)
             {
-                case SidecarEventType.TextDelta:
+                case InfraAgentRuntimeEventType.TextDelta:
                     if (!string.IsNullOrEmpty(ev.Text))
                     {
                         var text = SanitizeAgentText(ev.Text);
@@ -1255,12 +1347,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         {
                             messageId = runId,
                             text,
-                            source = "claude-sdk-sidecar",
-                            sidecar = ev.SidecarName
+                            source = eventSource,
+                            runtimeAdapter = _runtimeAdapter.AdapterKind,
+                            runtimeInstance = ev.RuntimeInstanceName
                         }), ct);
                     }
                     break;
-                case SidecarEventType.ToolUse:
+                case InfraAgentRuntimeEventType.ToolUse:
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
                     {
                         approvalId = ev.ToolUseId ?? $"tool-{seq}",
@@ -1268,39 +1361,62 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         argsSummary = ev.ToolInput?.GetRawText() ?? "{}",
                         risk = "dangerous",
                         status = "waiting",
-                        source = "claude-sdk-sidecar",
-                        sidecar = ev.SidecarName
+                        source = eventSource,
+                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
-                case SidecarEventType.ToolResult:
+                case InfraAgentRuntimeEventType.ToolResult:
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolResult, JsonSerializer.Serialize(new
                     {
                         approvalId = ev.ToolUseId,
                         decision = "completed",
                         resultSummary = ev.Content,
-                        source = "claude-sdk-sidecar",
-                        sidecar = ev.SidecarName
+                        source = eventSource,
+                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
-                case SidecarEventType.Usage:
+                case InfraAgentRuntimeEventType.Usage:
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
                     {
                         level = "info",
-                        source = "claude-sdk-sidecar",
+                        source = eventSource,
+                        runtimeAdapter = _runtimeAdapter.AdapterKind,
                         inputTokens = ev.InputTokens,
                         outputTokens = ev.OutputTokens,
-                        sidecar = ev.SidecarName
+                        runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
-                case SidecarEventType.Done:
+                case InfraAgentRuntimeEventType.RuntimeInit:
+                    await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Log, JsonSerializer.Serialize(new
+                    {
+                        level = "info",
+                        source = eventSource,
+                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeInstance = ev.RuntimeInstanceName,
+                        runtimeRunId = runId,
+                        message = ev.Message ?? "runtime initialized",
+                        content = ev.Content
+                    }), ct);
+                    break;
+                case InfraAgentRuntimeEventType.Done:
                     var doneText = SanitizeAgentText(ev.FinalText ?? finalText.ToString());
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Done, JsonSerializer.Serialize(new
                     {
                         messageId = runId,
                         finalText = doneText,
-                        source = "claude-sdk-sidecar",
-                        sidecar = ev.SidecarName
+                        source = eventSource,
+                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
+                    await _db.InfraAgentSessions.UpdateOneAsync(
+                        x => x.Id == session.Id,
+                        Builders<InfraAgentSession>.Update
+                            .Set(x => x.CurrentRuntimeRunId, null)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: ct);
+                    session.CurrentRuntimeRunId = null;
                     if (!string.IsNullOrWhiteSpace(doneText))
                     {
                         await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
@@ -1313,15 +1429,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         }, cancellationToken: ct);
                     }
                     return true;
-                case SidecarEventType.Error:
+                case InfraAgentRuntimeEventType.Error:
                     var errorMessage = ev.Message ?? ev.ErrorCode ?? "unknown";
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Error, JsonSerializer.Serialize(new
                     {
                         code = ev.ErrorCode,
                         message = errorMessage,
                         retryable = true,
-                        source = "claude-sdk-sidecar",
-                        sidecar = ev.SidecarName
+                        source = eventSource,
+                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     await MarkRuntimeFailedAsync(session, $"Claude SDK sidecar 执行失败：{errorMessage}", ct);
                     return false;
@@ -1353,6 +1470,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             || text.Contains("修复", StringComparison.OrdinalIgnoreCase);
 
         return looksLikeLongRunningCodeTask ? 40 : 18;
+    }
+
+    private static string? ResolveSidecarRuntimeAdapter()
+    {
+        var value = Environment.GetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER");
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     private async Task<long> NextEventSeqAsync(string sessionId, CancellationToken ct)
@@ -1530,22 +1653,24 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update
                 .Set(x => x.Status, InfraAgentSessionStatuses.Failed)
                 .Set(x => x.LastError, error)
+                .Set(x => x.CurrentRuntimeRunId, null)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
         session.Status = InfraAgentSessionStatuses.Failed;
         session.LastError = error;
+        session.CurrentRuntimeRunId = null;
         session.UpdatedAt = now;
     }
 
-    private List<SidecarToolDef> BuildSidecarToolDefs()
+    private List<InfraAgentRuntimeToolDef> BuildSidecarToolDefs()
     {
-        var tools = new List<SidecarToolDef>();
+        var tools = new List<InfraAgentRuntimeToolDef>();
         foreach (var descriptor in _toolRegistry.ListAll())
         {
             try
             {
                 using var schema = JsonDocument.Parse(descriptor.InputSchemaJson);
-                tools.Add(new SidecarToolDef
+                tools.Add(new InfraAgentRuntimeToolDef
                 {
                     Name = descriptor.Name,
                     Description = descriptor.Description,
@@ -1777,6 +1902,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.CdsContainerName,
         string.IsNullOrWhiteSpace(session.TraceId) ? BuildEventTraceId(session.Id) : session.TraceId,
         session.Runtime,
+        session.RuntimeAdapter,
+        session.CurrentRuntimeRunId,
         session.Model,
         session.ResourceCpuCores,
         session.ResourceMemoryMb,
@@ -1863,6 +1990,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             RuntimeProfileId = view.RuntimeProfileId,
             ModelBaseUrl = view.ModelBaseUrl,
             Runtime = view.Runtime,
+            RuntimeAdapter = view.RuntimeAdapter,
+            CurrentRuntimeRunId = view.CurrentRuntimeRunId,
             Model = view.Model,
             ResourceCpuCores = view.ResourceCpuCores,
             ResourceMemoryMb = view.ResourceMemoryMb,
