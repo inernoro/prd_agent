@@ -807,26 +807,31 @@ function MarkdownViewer({ content }: { content: string }) {
     (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
       const text = normalizeHeadingText(childrenToText(children));
       const id = text ? slugger.slug(text) : undefined;
+      // F2：借鉴文档站的标题节奏——上间距明显大于下间距，层级清晰
       const classesByTag: Record<string, string> = {
-        h1: 'text-[22px] font-bold mt-6 mb-3 pb-2 scroll-mt-24',
-        h2: 'text-[18px] font-bold mt-5 mb-2.5 pb-1.5 scroll-mt-24',
-        h3: 'text-[15px] font-semibold mt-4 mb-2 scroll-mt-24',
-        h4: 'text-[14px] font-semibold mt-3 mb-1.5 scroll-mt-24',
-        h5: 'text-[13px] font-semibold mt-3 mb-1 scroll-mt-24',
-        h6: 'text-[12px] font-semibold mt-2 mb-1 scroll-mt-24',
+        h1: 'text-[24px] font-bold mt-8 mb-4 pb-2.5 leading-tight scroll-mt-24',
+        h2: 'text-[19px] font-bold mt-9 mb-3 pb-2 leading-snug scroll-mt-24',
+        h3: 'text-[16px] font-semibold mt-7 mb-2.5 leading-snug scroll-mt-24',
+        h4: 'text-[14px] font-semibold mt-5 mb-2 scroll-mt-24',
+        h5: 'text-[13px] font-semibold mt-4 mb-1.5 scroll-mt-24',
+        h6: 'text-[12px] font-semibold mt-4 mb-1.5 scroll-mt-24',
       };
       const style: React.CSSProperties =
         Tag === 'h1'
-          ? { borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }
+          ? { borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }
           : Tag === 'h2'
-            ? { borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-primary)' }
+            ? { borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }
             : { color: 'var(--text-primary)' };
       return <Tag id={id} className={classesByTag[Tag]} style={style}>{children}</Tag>;
     },
     [slugger],
   );
   return (
-    <div className="prose-invert max-w-none text-[13px] leading-relaxed">
+    // F2：文档站观感——更大行距、克制的最大宽度（长行不利阅读）、底部留白
+    <div
+      className="prose-invert text-[14px]"
+      style={{ lineHeight: 1.78, maxWidth: '860px', paddingBottom: '96px' }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, docSanitizeSchema], rehypeKatex]}
@@ -837,7 +842,7 @@ function MarkdownViewer({ content }: { content: string }) {
           h4: mkHeading('h4'),
           h5: mkHeading('h5'),
           h6: mkHeading('h6'),
-          p: ({ children }) => <p className="my-2 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
+          p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
           a: ({ href, children }) => {
             // 锚点 → SPA 内 scroll，不新开标签页
             if (href && href.startsWith('#')) {
@@ -858,21 +863,30 @@ function MarkdownViewer({ content }: { content: string }) {
           ul: ({ children, className }) => {
             const isTaskList = className?.includes('contains-task-list');
             return (
-              <ul className={`${isTaskList ? 'list-none pl-2' : 'list-disc pl-5'} my-2 space-y-0.5`} style={{ color: 'var(--text-secondary)' }}>
+              <ul className={`${isTaskList ? 'list-none pl-2' : 'list-disc pl-6'} my-3.5 space-y-1.5`} style={{ color: 'var(--text-secondary)' }}>
                 {children}
               </ul>
             );
           },
-          ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>{children}</ol>,
+          ol: ({ children }) => <ol className="list-decimal pl-6 my-3.5 space-y-1.5" style={{ color: 'var(--text-secondary)' }}>{children}</ol>,
           li: ({ children, className }) => {
             const isTaskItem = className?.includes('task-list-item');
-            return <li className={`text-[13px] ${isTaskItem ? 'flex items-start gap-2' : ''}`}>{children}</li>;
+            return <li className={`text-[14px] leading-relaxed ${isTaskItem ? 'flex items-start gap-2' : ''}`}>{children}</li>;
           },
           blockquote: ({ children }) => (
-            <blockquote className="my-3 pl-3 py-1" style={{ borderLeft: '3px solid rgba(96,165,250,0.3)', color: 'var(--text-muted)' }}>{children}</blockquote>
+            <blockquote
+              className="my-4 pl-4 pr-3 py-2 rounded-r-[6px]"
+              style={{
+                borderLeft: '3px solid var(--accent-primary, var(--accent-gold))',
+                background: 'var(--bg-input-hover)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {children}
+            </blockquote>
           ),
           table: ({ children }) => (
-            <div className="my-3 overflow-x-auto rounded-lg" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="my-4 overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
               <table className="w-full text-[12px]">{children}</table>
             </div>
           ),
@@ -894,7 +908,7 @@ function MarkdownViewer({ content }: { content: string }) {
                   language={match[1]}
                   PreTag="div"
                   customStyle={{
-                    margin: '12px 0', borderRadius: '10px', fontSize: '12px',
+                    margin: '18px 0', borderRadius: '10px', fontSize: '12px',
                     background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
                   }}
                 >
@@ -906,8 +920,8 @@ function MarkdownViewer({ content }: { content: string }) {
             return (
               <pre
                 style={{
-                  margin: '12px 0',
-                  padding: '12px 14px',
+                  margin: '18px 0',
+                  padding: '14px 16px',
                   borderRadius: '10px',
                   fontSize: '12px',
                   lineHeight: 1.6,
@@ -924,7 +938,7 @@ function MarkdownViewer({ content }: { content: string }) {
             );
           },
           pre: ({ children }) => <>{children}</>,
-          hr: () => <hr className="my-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />,
+          hr: () => <hr className="my-7" style={{ borderColor: 'var(--border-subtle)' }} />,
           img: ({ src, alt }) => (
             <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-3" style={{ maxHeight: '400px', border: '1px solid rgba(255,255,255,0.06)' }} />
           ),
