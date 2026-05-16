@@ -29,3 +29,6 @@
 | fix | prd-api | 知识库划词评论 rebind/orphan 过滤由 `!c.IsWholeDocument`（LINQ 译为 `{IsWholeDocument:false}`）改为 `Filter.Ne(IsWholeDocument,true)`，覆盖缺该新增字段的历史评论（false/null/缺字段三态），不再静默漏掉旧评论 |
 | fix | prd-admin | 知识库 TOC 切换文档时 activeId 由 `prev ?? 首项` 惰性保留改为重置为新文档首个 heading id，消除切文档高亮闪烁/停在上一篇标题 |
 | fix | prd-admin | 修复划词选区 offset 三级回退 step3 的 endOffset 用 strippedText.length（已剥 markdown 标记，偏短甚至越界）：改为优先末词在 raw 中的位置+末词长度，兜底原始可见文本长度，并 clamp 到 [startOffset, raw.length] |
+| fix | prd-admin | 知识库正文 sanitize schema 进一步移除对所有元素的 className 放行（仅保留 id 与 KaTeX math 属性），堵住公开知识库经 rehypeRaw 用上传 HTML 携带应用 Tailwind/工具类（fixed inset-0/高 z-index/背景类）伪装或覆盖应用 UI 的钓鱼面；rehypeKatex 在 sanitize 之后运行故数学公式渲染不受影响，正文 markdown class 由 React renderer 赋予同样不受影响 |
+| fix | prd-api | 知识库访客离开补写时长改用聚合管道更新（$set + $add + $ifNull）替代 .Inc：历史 view event 文档 DurationMs 可能为 null，对 null 执行 $inc 会报错且经 sendBeacon 调用错误被静默吞致丢时长，$ifNull 视 null 为 0 后累加，旧 null 行也能正确累计 |
+| fix | prd-admin | 知识库本地搜索（searchResults 为 null）时「内容包含」标记回退仅迭代根级条目致文件夹内嵌套文件永远拿不到标记：回退集合扩展为 filteredRoots + filteredChildrenMap 所有展开子项，对全部可见条目统一判定，不影响后端搜索结果模式既有行为 |

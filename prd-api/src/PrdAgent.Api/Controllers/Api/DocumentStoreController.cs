@@ -2463,14 +2463,30 @@ public class DocumentStoreController : ControllerBase
         if (durationMs > 24 * 60 * 60 * 1000) durationMs = 24 * 60 * 60 * 1000; // clamp 到 24 小时
 
         // 累加而非覆盖：去重窗口内同一访客重开同一文档会复用同一 viewEvent，
-        // 每个子访问各自 flush 一次本段时长，必须 Inc 累计，否则后一次会覆盖前一次。
+        // 每个子访问各自 flush 一次本段时长，必须累计，否则后一次会覆盖前一次。
         // useViewTracking.flushIfAny 在每次 flush 后清空 viewEventId，
-        // 同一子访问不会重复 leave，故 Inc 不会重复计时。
+        // 同一子访问不会重复 leave，故累加不会重复计时。
+        //
+        // 用聚合管道更新（$set + $add + $ifNull）而非 .Inc：本 PR 虽给新建事件
+        // 初始化 DurationMs=0，但历史 view event 文档可能 DurationMs=null，
+        // MongoDB $inc 作用于 null 字段会报错；leave 经 sendBeacon 调用、错误被静默吞，
+        // 丢时长无声无息。$ifNull 把 null 视作 0 后再 $add，旧 null 行也能正确累加。
+        // 字段名为 C# 属性名原样 PascalCase（本仓库无 camelCase ConventionPack，
+        // DocumentStoreViewEvent 无自定义 BsonClassMap），故为 "$DurationMs"/"LeftAt"。
+        var leaveSetStage = new BsonDocument("$set", new BsonDocument
+        {
+            { "LeftAt", DateTime.UtcNow },
+            { "DurationMs", new BsonDocument("$add", new BsonArray
+                {
+                    new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }),
+                    durationMs,
+                }) },
+        });
+        var leaveUpdate = Builders<DocumentStoreViewEvent>.Update.Pipeline(
+            new BsonDocument[] { leaveSetStage });
         await _db.DocumentStoreViewEvents.UpdateOneAsync(
             e => e.Id == viewEventId,
-            Builders<DocumentStoreViewEvent>.Update
-                .Set(e => e.LeftAt, DateTime.UtcNow)
-                .Inc(e => e.DurationMs, durationMs));
+            leaveUpdate);
 
         return Ok(ApiResponse<object>.Ok(new { }));
     }
