@@ -527,11 +527,25 @@ public class HostedSiteService : IHostedSiteService
             reusable = reuseCandidates.FirstOrDefault();
         }
 
+        // 标题/描述在复用与新建两条路径上必须一致，且复用时也要刷新——
+        // 否则站点改名或调用方传了新 title/description 后，ViewShareAsync 仍渲染旧值。
+        var shareTitle = title?.Trim();
+        if (string.IsNullOrWhiteSpace(shareTitle))
+        {
+            var firstSite = await _db.HostedSites.Find(x => x.Id == allIds[0])
+                .Project(Builders<HostedSite>.Projection.Expression(s => s.Title))
+                .FirstOrDefaultAsync(ct);
+            shareTitle = shareType == "collection"
+                ? $"{displayName} 分享给你的 {allIds.Count} 个站点合集"
+                : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
+        }
+        var effDescription = description?.Trim();
+
         if (reusable is { } reuse)
         {
-            // 复用时把有效期 + 密码刷新为本次请求值（单链接模型下"改密码=轮换"）：
-            // 否则用户重设新密码却被静默丢弃、旧密码仍可用——既是展示错误也是安全隐患。
-            // 轮换后旧密码不再匹配，只有持新密码者可访问。
+            // 复用时把有效期 + 密码 + 标题/描述刷新为本次请求/最新值（单链接模型下
+            // "改密码=轮换"）：否则用户重设新密码却被静默丢弃、旧密码仍可用——既是展示
+            // 错误也是安全隐患；标题/描述不刷新则站点改名后展示陈旧元数据。
             var ups = new List<UpdateDefinition<WebPageShareLink>>();
             if (reuse.ExpiresAt != newExpiresAt)
             {
@@ -542,6 +556,16 @@ public class HostedSiteService : IHostedSiteService
             {
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Password, wantPassword));
                 reuse.Password = wantPassword;
+            }
+            if (reuse.Title != shareTitle)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Title, shareTitle));
+                reuse.Title = shareTitle;
+            }
+            if (reuse.Description != effDescription)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Description, effDescription));
+                reuse.Description = effDescription;
             }
             if (ups.Count > 0)
             {
@@ -555,18 +579,6 @@ public class HostedSiteService : IHostedSiteService
             return reuse;
         }
 
-        // 自动生成分享标题
-        var shareTitle = title?.Trim();
-        if (string.IsNullOrWhiteSpace(shareTitle))
-        {
-            var firstSite = await _db.HostedSites.Find(x => x.Id == allIds[0])
-                .Project(Builders<HostedSite>.Projection.Expression(s => s.Title))
-                .FirstOrDefaultAsync(ct);
-            shareTitle = shareType == "collection"
-                ? $"{displayName} 分享给你的 {allIds.Count} 个站点合集"
-                : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
-        }
-
         var share = new WebPageShareLink
         {
             SiteId = shareType != "collection" ? siteId : null,
@@ -574,7 +586,7 @@ public class HostedSiteService : IHostedSiteService
             ShareType = shareType ?? "single",
             Purpose = effPurpose,
             Title = shareTitle,
-            Description = description?.Trim(),
+            Description = effDescription,
             AccessLevel = wantAccess,
             Password = wantPassword,
             ExpiresAt = newExpiresAt,
