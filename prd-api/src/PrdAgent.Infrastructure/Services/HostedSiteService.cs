@@ -569,9 +569,9 @@ public class HostedSiteService : IHostedSiteService
             Purpose = effPurpose,
             Title = shareTitle,
             Description = description?.Trim(),
-            AccessLevel = string.IsNullOrWhiteSpace(password) ? "public" : "password",
-            Password = password?.Trim(),
-            ExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : null,
+            AccessLevel = wantAccess,
+            Password = wantPassword,
+            ExpiresAt = newExpiresAt,
             CreatedBy = userId,
             CreatedByName = displayName,
         };
