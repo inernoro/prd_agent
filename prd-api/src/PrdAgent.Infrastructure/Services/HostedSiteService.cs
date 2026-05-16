@@ -200,10 +200,12 @@ public class HostedSiteService : IHostedSiteService
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
 
-        // P1：失败的替换不得损坏原可用页面。旧 COS 文件延迟到「新内容上传 + DB 更新」
-        // 全部成功后再清理（见方法末尾）；若中途校验/上传抛错，旧站点完整保留、DB 未动，
-        // 原页面继续可用。
+        // P1：失败的替换不得损坏原可用页面。新内容一律上传到一个全新的 staging 前缀
+        // （stageId，与现有 siteId 前缀完全不相交），因此即使 ZIP 超限/部分上传/DB 更新
+        // 失败或被取消，旧站点的 COS 对象（含 index.html）都不会被覆盖，DB 仍指向完好旧文件，
+        // 原页面继续可用。仅在「新内容上传 + DB 更新」全部成功后，才删除旧前缀的对象。
         var oldFiles = site.Files ?? new List<HostedSiteFile>();
+        var stageId = Guid.NewGuid().ToString("N");
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         List<HostedSiteFile> siteFiles;
@@ -212,7 +214,7 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            var result = await ExtractAndUploadZip(siteId, fileBytes);
+            var result = await ExtractAndUploadZip(stageId, fileBytes);
             if (result.Error != null)
                 throw new InvalidOperationException(result.Error);
             siteFiles = result.Files;
@@ -222,7 +224,7 @@ public class HostedSiteService : IHostedSiteService
         else if (ext is ".html" or ".htm")
         {
             var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
-            var cosKey = _storage.BuildSiteKey(siteId, "index.html");
+            var cosKey = _storage.BuildSiteKey(stageId, "index.html");
             await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
             siteFiles = new List<HostedSiteFile>
             {
@@ -236,7 +238,8 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("仅支持 .html/.htm/.zip 文件");
         }
 
-        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile));
+        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(stageId, entryFile));
+        var newCosPrefix = $"web-hosting/sites/{stageId}/";
 
         // wrappedAssetType 必须显式覆盖（包括清空）：
         // - 用户把 PDF 重传到原 HTML 站，应写入 "pdf" 让分享/缩略走 PDF 路径
@@ -251,16 +254,15 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.SiteUrl, siteUrl)
                 .Set(x => x.Files, siteFiles)
                 .Set(x => x.TotalSize, totalSize)
+                .Set(x => x.CosPrefix, newCosPrefix)
                 .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 
-        // 新内容与 DB 均已成功，才清理旧 COS 中不再被新文件集复用的对象。
-        // 同 key（如 index.html）已被新内容覆盖，不能删——否则会删掉刚写入的文件。
-        var newKeys = siteFiles.Select(f => f.CosKey).ToHashSet();
+        // 新内容（staging 前缀）与 DB 均已成功，DB 现已指向新前缀，
+        // 才清理旧前缀对象。新旧前缀不相交，直接全删，无 key 覆盖风险。
         foreach (var f in oldFiles)
         {
-            if (newKeys.Contains(f.CosKey)) continue;
             try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
             catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
         }
