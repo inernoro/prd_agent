@@ -126,6 +126,45 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task Start_ShouldMapRuntimeUnavailableToServiceUnavailable()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        service
+            .Setup(x => x.StartAsync("user-1", "session-1", It.IsAny<StartInfraAgentSessionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.RuntimeUnavailable,
+                "CDS Agent runtime pool 不可用：adapter=legacy-sidecar-adapter, instances=0, healthy=0",
+                StatusCodes.Status503ServiceUnavailable));
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.Start("session-1", new StartInfraAgentSessionRequest(null, null), CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    [Fact]
+    public async Task SendMessage_ShouldMapRuntimeUnavailableToServiceUnavailable()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var request = new SendInfraAgentMessageRequest("请检查当前仓库");
+        service
+            .Setup(x => x.SendMessageAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.RuntimeUnavailable,
+                "CDS Agent runtime pool 不可用：adapter=legacy-sidecar-adapter, instances=0, healthy=0",
+                StatusCodes.Status503ServiceUnavailable));
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.SendMessage("session-1", request, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable);
+    }
+
+    [Fact]
     public async Task CollectArtifacts_ShouldReturnSession()
     {
         var service = new Mock<IInfraAgentSessionService>();
@@ -257,6 +296,8 @@ public class InfraAgentSessionsControllerTests
             null,
             "infra-agent-session-test",
             InfraAgentRuntimes.ClaudeSdk,
+            null,
+            null,
             null,
             2,
             4096,
