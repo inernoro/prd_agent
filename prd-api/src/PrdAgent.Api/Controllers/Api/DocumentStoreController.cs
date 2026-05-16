@@ -750,8 +750,11 @@ public class DocumentStoreController : ControllerBase
     /// </summary>
     private async Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
     {
+        // 全文评论（IsWholeDocument）无锚点，不参与正文 rebind
         var comments = await _db.DocumentInlineComments
-            .Find(c => c.EntryId == entryId && c.Status == DocumentInlineCommentStatus.Active)
+            .Find(c => c.EntryId == entryId
+                && c.Status == DocumentInlineCommentStatus.Active
+                && !c.IsWholeDocument)
             .ToListAsync();
 
         if (comments.Count == 0) return (0, 0);
@@ -2477,8 +2480,8 @@ public class DocumentStoreController : ControllerBase
         if (store == null || store.OwnerId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        if (string.IsNullOrWhiteSpace(request.SelectedText))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "选中内容不能为空"));
+        // B4：允许"不选中也能评论"——SelectedText 为空时视为对整篇文档的通用评论（无锚点）
+        var isWholeDocComment = string.IsNullOrWhiteSpace(request.SelectedText);
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
         if (string.IsNullOrEmpty(entry.DocumentId))
@@ -2499,11 +2502,13 @@ public class DocumentStoreController : ControllerBase
             EntryId = entryId,
             DocumentId = entry.DocumentId!,
             ContentHash = contentHash,
-            SelectedText = request.SelectedText,
-            ContextBefore = request.ContextBefore ?? string.Empty,
-            ContextAfter = request.ContextAfter ?? string.Empty,
-            StartOffset = request.StartOffset,
-            EndOffset = request.EndOffset,
+            // 无选区时 SelectedText 留空，标记为全文评论，不参与 rebind / 正文高亮
+            SelectedText = isWholeDocComment ? string.Empty : request.SelectedText,
+            ContextBefore = isWholeDocComment ? string.Empty : (request.ContextBefore ?? string.Empty),
+            ContextAfter = isWholeDocComment ? string.Empty : (request.ContextAfter ?? string.Empty),
+            StartOffset = isWholeDocComment ? 0 : request.StartOffset,
+            EndOffset = isWholeDocComment ? 0 : request.EndOffset,
+            IsWholeDocument = isWholeDocComment,
             Content = request.Content.Trim(),
             AuthorUserId = userId,
             AuthorDisplayName = authorName,

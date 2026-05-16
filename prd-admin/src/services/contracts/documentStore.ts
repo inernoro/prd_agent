@@ -289,6 +289,8 @@ export type DocumentInlineComment = {
   contextAfter: string;
   startOffset: number;
   endOffset: number;
+  /** 全文评论：无选区，对整篇文档发表，不参与定位/高亮 */
+  isWholeDocument?: boolean;
   content: string;
   authorUserId: string;
   authorDisplayName: string;
