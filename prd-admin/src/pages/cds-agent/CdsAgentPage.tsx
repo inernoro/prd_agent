@@ -134,6 +134,22 @@ function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): strin
   return '';
 }
 
+function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): string {
+  if (!status) return '正在检测 CDS runtime pool，请稍后刷新。';
+  if (status.instanceCount <= 0) {
+    return status.registryLastRefreshError
+      ? `未发现可用 sidecar 实例：${status.registryLastRefreshError}`
+      : '未发现可用 sidecar 实例，请先完成 CDS sidecar pool 授权和实例发现。';
+  }
+  if (status.healthyCount <= 0) {
+    const firstError = status.instances.find((item) => item.error)?.error;
+    return firstError
+      ? `sidecar 实例均不健康：${firstError}`
+      : 'sidecar 实例均不健康，请检查 /readyz、SDK/CLI、workspace 和 token 配置。';
+  }
+  return '';
+}
+
 function sortSessions(items: InfraAgentSessionView[]): InfraAgentSessionView[] {
   return [...items].sort((a, b) => {
     const rank = statusRank(a.status) - statusRank(b.status);
@@ -549,9 +565,10 @@ export default function CdsAgentPage() {
     : activeProfile;
   const activeProfileBlockReason = profileBlockReason(activeProfile);
   const activeSessionProfileBlockReason = activeSession ? profileBlockReason(activeSessionProfile) : '';
+  const activeRuntimePoolBlockReason = runtimePoolBlockReason(runtimeStatus);
   const canUpdateActiveProfile = Boolean(activeProfile && profileDraft.apiKey.trim());
-  const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason);
-  const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason);
+  const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason && !activeRuntimePoolBlockReason);
+  const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason && !activeRuntimePoolBlockReason);
   const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
   const canSendActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
   const canRecordManualInput = Boolean(activeSession?.manualTakeoverEnabled && prompt.trim());
@@ -1001,6 +1018,10 @@ export default function CdsAgentPage() {
       toast.warning('模型配置不可用', activeProfileBlockReason);
       return;
     }
+    if (activeRuntimePoolBlockReason) {
+      toast.warning('CDS runtime pool 不可用', activeRuntimePoolBlockReason);
+      return;
+    }
     setBusy(true);
     try {
       const res = await createInfraAgentSession({
@@ -1028,6 +1049,10 @@ export default function CdsAgentPage() {
     if (!activeSession) return;
     if (activeSessionProfileBlockReason) {
       toast.warning('模型配置不可用', activeSessionProfileBlockReason);
+      return;
+    }
+    if (activeRuntimePoolBlockReason) {
+      toast.warning('CDS runtime pool 不可用', activeRuntimePoolBlockReason);
       return;
     }
     const sessionId = activeSession.id;
@@ -1074,6 +1099,10 @@ export default function CdsAgentPage() {
     }
     if (activeSessionProfileBlockReason) {
       toast.warning('模型配置不可用', activeSessionProfileBlockReason);
+      return;
+    }
+    if (activeRuntimePoolBlockReason) {
+      toast.warning('CDS runtime pool 不可用', activeRuntimePoolBlockReason);
       return;
     }
     const sessionId = activeSession.id;
@@ -1537,7 +1566,7 @@ export default function CdsAgentPage() {
             </div>
             {!canCreateSession && (
               <div className="mb-2 rounded-md px-2 py-1.5 text-xs leading-relaxed text-amber-100/80" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.24)' }}>
-                {activeProfileBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
+                {activeProfileBlockReason || activeRuntimePoolBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
               </div>
             )}
             <label className="mb-3 flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.14)' }}>
@@ -2223,6 +2252,11 @@ export default function CdsAgentPage() {
                 </div>
                 {activeSession && primaryActionHint(activeSession.status) && (
                   <div className="mt-1 text-xs text-white/40">{primaryActionHint(activeSession.status)}</div>
+                )}
+                {activeRuntimePoolBlockReason && (
+                  <div className="mt-1 max-w-[760px] text-xs leading-relaxed text-amber-100/75">
+                    {activeRuntimePoolBlockReason}
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-2">
