@@ -1206,6 +1206,8 @@ export function DocBrowser({
   });
   const [resizing, setResizing] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
+  const searchSeqRef = useRef(0);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
@@ -1403,14 +1405,22 @@ export function DocBrowser({
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
-    if (value.trim() && onSearch) {
+    const trimmed = value.trim();
+    // 每次输入变化都推进序号：在途响应回来时若序号已变即视为陈旧并丢弃
+    const reqId = ++searchSeqRef.current;
+
+    if (trimmed && onSearch) {
       setSearching(true);
       searchTimerRef.current = setTimeout(async () => {
-        const results = await onSearch(value.trim(), true);
+        const results = await onSearch(trimmed, true);
+        // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
+        if (reqId !== searchSeqRef.current) return;
         setSearchResults(results);
         setSearching(false);
       }, 400);
     } else {
+      // 搜索框被清空：立即回到本地全量树，并让任何在途响应作废
+      setSearchResults(null);
       setSearching(false);
     }
   }, [onSearch]);
