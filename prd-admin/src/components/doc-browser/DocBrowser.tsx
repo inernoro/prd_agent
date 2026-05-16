@@ -26,12 +26,13 @@ function normalizeHeadingText(raw: string): string {
   return String(raw || '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim();
 }
 import {
-  FileText, FolderOpen, FolderClosed, Star, Rss, Github,
+  FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace,
+  Sparkles, Wand2, Tags, Replace, BookOpen,
 } from 'lucide-react';
+import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -809,9 +810,12 @@ const docSanitizeSchema = {
 };
 
 function MarkdownViewer({ content }: { content: string }) {
-  // 每次 content 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
+  // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
+  // 与左侧标题提取共用 parseFrontmatter（SSOT）。
+  const body = useMemo(() => parseFrontmatter(content).body, [content]);
+  // 每次 body 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const slugger = useMemo(() => new GithubSlugger(), [content]);
+  const slugger = useMemo(() => new GithubSlugger(), [body]);
   const mkHeading = useCallback(
     (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
       const text = normalizeHeadingText(childrenToText(children));
@@ -953,7 +957,7 @@ function MarkdownViewer({ content }: { content: string }) {
           ),
         }}
       >
-        {content}
+        {body}
       </ReactMarkdown>
     </div>
   );
@@ -1188,7 +1192,8 @@ export function DocBrowser({
     const text = preview?.text;
     if (!text) return null;
     const cfg = getFileTypeConfig(e.title, e.contentType);
-    return cfg.preview === 'text' ? text : null;
+    // 与 MarkdownViewer 一致：剥掉 frontmatter，TOC 不把 ---/title: 当标题
+    return cfg.preview === 'text' ? parseFrontmatter(text).body : null;
   }, [selectedEntryId, entries, preview]);
 
   // 拖拽调整宽度
@@ -1259,15 +1264,20 @@ export function DocBrowser({
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
   }, [entries, primaryEntryId, pinnedSet]);
 
-  // 从 summary 中提取第一行作为标题（去掉 # 号）
+  // 从 summary 提取显示标题：优先 YAML frontmatter 的 title（去引号），
+  // 没有 frontmatter / 没有 title 时回退到 frontmatter 之后的首个正文标题，
+  // 再不行回退到首个非空行（去掉行首 # 号）。与正文渲染共用 parseFrontmatter。
   useEffect(() => {
     const lines = new Map<string, string>();
     for (const e of entries) {
       if (e.isFolder || !e.summary) continue;
-      const firstLine = e.summary.split('\n').find(l => l.trim());
-      if (firstLine) {
-        lines.set(e.id, firstLine.replace(/^#+\s*/, '').trim());
+      const { title, body } = parseFrontmatter(e.summary);
+      let display = (title ?? '').trim();
+      if (!display) {
+        const firstLine = body.split('\n').find(l => l.trim());
+        if (firstLine) display = firstLine.replace(/^#+\s*/, '').trim();
       }
+      if (display) lines.set(e.id, display);
     }
     setContentFirstLines(lines);
   }, [entries]);
@@ -1963,7 +1973,7 @@ export function DocBrowser({
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <FileText size={32} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.08)' }} />
+              <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
               <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
                 选择左侧文件查看内容
               </p>

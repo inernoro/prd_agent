@@ -19,6 +19,18 @@ import { useEffect, useState, useRef } from 'react';
  * 改为以 selectionchange 为主信号（防抖到选择稳定后再读），
  * 并补 dblclick 兜底；mousedown 仅在"点击容器外"时清空，
  * 容器内的 mousedown 不再清空（避免选词过程被打断）。
+ *
+ * B6 二次修复（blockquote / 标题 / 列表项 / 含 frontmatter 文档选区消失）：
+ * 旧实现里 `raw.indexOf(text)` 一旦失败就直接 return，导致 selection 永远是
+ * null、浮层不出现。失败场景非常常见：
+ *   - blockquote：DOM 文本去掉了每行的 `> ` 前缀，且多行被合并，
+ *     raw 里却带 `> ` 前缀与换行，indexOf 必然 miss
+ *   - 标题 / 列表项：raw 带 `#` / `-` / `*` / 数字. 等行首标记
+ *   - 文档带 YAML frontmatter：正文整体偏移、引号差异
+ * 修复策略：offset 解析改为「分级回退」——精确 indexOf → 空白归一化匹配
+ * → markdown 行首标记剥离后匹配 → 兜底 (-1)。**任何一种结果都照常产出
+ * selection**，绝不因为定位失败而吞掉选区（offset 仅用于评论锚点提示，
+ * 真正的高亮重定位走 DOM TreeWalker 按 selectedText 搜索，offset 容错）。
  */
 export type ContentSelectionInfo = {
   selectedText: string;
@@ -28,6 +40,76 @@ export type ContentSelectionInfo = {
   contextBefore: string;
   contextAfter: string;
 };
+
+/**
+ * 在 markdown 原文里定位选中文本的字符偏移，分级回退，永不抛错。
+ * 返回 startOffset = -1 表示三级都没命中（评论锚点会走 DOM 文本兜底）。
+ */
+function resolveOffsetInRaw(raw: string, text: string): { startOffset: number; endOffset: number } {
+  if (!raw || !text) return { startOffset: -1, endOffset: -1 };
+
+  // 1) 精确匹配（普通段落 / 单行标题去掉 # 后通常仍能命中）
+  const exact = raw.indexOf(text);
+  if (exact >= 0) return { startOffset: exact, endOffset: exact + text.length };
+
+  // 2) 空白归一化匹配：把连续空白（含换行、blockquote 合并产生的空隙）压成单空格
+  //    然后在同样归一化的 raw 上找，再把命中位置映射回原始 raw 索引
+  const collapse = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const needle = collapse(text);
+  if (needle) {
+    // 构建归一化字符串 + 原始索引映射
+    let normalized = '';
+    const map: number[] = []; // normalized[i] 对应 raw 的原始下标
+    let prevWasSpace = true; // 行首/起始处的空白整体跳过（等价 trim 头部）
+    for (let i = 0; i < raw.length; i++) {
+      const ch = raw[i];
+      if (/\s/.test(ch)) {
+        if (!prevWasSpace) {
+          normalized += ' ';
+          map.push(i);
+          prevWasSpace = true;
+        }
+      } else {
+        normalized += ch;
+        map.push(i);
+        prevWasSpace = false;
+      }
+    }
+    const normTrimmed = normalized.replace(/ $/, '');
+    const hit = normTrimmed.indexOf(needle);
+    if (hit >= 0) {
+      const start = map[hit];
+      const lastIdx = Math.min(hit + needle.length - 1, map.length - 1);
+      const end = map[lastIdx] + 1;
+      return { startOffset: start, endOffset: end };
+    }
+  }
+
+  // 3) 行首 markdown 标记剥离后匹配（blockquote `>`、标题 `#`、列表 `-`/`*`/`数字.`）
+  const strippedText = text
+    .split('\n')
+    .map((l) => l.replace(/^\s*(?:>+\s?|#{1,6}\s+|[-*+]\s+|\d+\.\s+)/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (strippedText) {
+    const strippedRaw = raw
+      .split('\n')
+      .map((l) => l.replace(/^\s*(?:>+\s?|#{1,6}\s+|[-*+]\s+|\d+\.\s+)/, ''))
+      .join(' ')
+      .replace(/\s+/g, ' ');
+    const hit2 = strippedRaw.indexOf(strippedText);
+    if (hit2 >= 0) {
+      // 粗略映射：用 strippedText 在 raw 里的近似锚点（首词）兜底定位
+      const firstWord = strippedText.split(' ')[0];
+      const approx = firstWord ? raw.indexOf(firstWord) : -1;
+      if (approx >= 0) return { startOffset: approx, endOffset: approx + strippedText.length };
+    }
+  }
+
+  // 4) 兜底：定位失败，offset 置 -1（不影响选区产出与浮层显示）
+  return { startOffset: -1, endOffset: -1 };
+}
 
 export function useContentSelection(
   containerRef: React.RefObject<HTMLElement>,
@@ -72,15 +154,19 @@ export function useContentSelection(
       if (!container.contains(range.commonAncestorContainer)) return;
 
       const raw = rawContentRef.current ?? '';
-      const startOffset = raw.indexOf(text);
-      if (startOffset < 0) {
-        // 完全找不到（markdown 符号被 render 隐藏等），放弃但不清空已有选区
-        return;
-      }
-      const endOffset = startOffset + text.length;
-      const contextBefore = raw.substring(Math.max(0, startOffset - 50), startOffset);
-      const contextAfter = raw.substring(endOffset, Math.min(raw.length, endOffset + 50));
+      // 分级回退定位。即使 startOffset = -1（blockquote/标题/列表/含
+      // frontmatter 等无法精确映射的情形），仍然照常产出 selection，
+      // 保证浮层"添加评论"一定出现——评论锚点重定位走 DOM 文本搜索，
+      // 不强依赖这里的字符偏移。
+      const { startOffset, endOffset } = resolveOffsetInRaw(raw, text);
+      const contextBefore =
+        startOffset >= 0 ? raw.substring(Math.max(0, startOffset - 50), startOffset) : '';
+      const contextAfter =
+        endOffset >= 0 ? raw.substring(endOffset, Math.min(raw.length, endOffset + 50)) : '';
       const rect = range.getBoundingClientRect();
+      // rect 全 0（极少数浏览器在选区刚成型时）→ 跳过这一拍，等下次
+      // selectionchange/mouseup 再读，避免浮层定位到左上角
+      if (rect.width === 0 && rect.height === 0) return;
       setSelection({
         selectedText: text,
         rect,
