@@ -13,6 +13,7 @@
 #   AI_ACCESS_KEY    prd-api X-AI-Access-Key
 #   SMOKE_USER       impersonate 用户，默认 admin
 #   SMOKE_VERBOSE=1  额外输出完整 runtime-status JSON
+#   CDS_HOST         可选；设置后会从远程 API 容器内检查 sidecar DNS alias
 # ============================================
 
 set -euo pipefail
@@ -21,11 +22,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-SMOKE_STEP_TOTAL=8
+SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
+SMOKE_CDS_AGENT_API_PROFILE="${SMOKE_CDS_AGENT_API_PROFILE:-api-prd-agent}"
+SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-v2-prd-agent}"
+SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
+SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-3}"
+SMOKE_CDS_AGENT_DOCTOR_RETRIES="${SMOKE_CDS_AGENT_DOCTOR_RETRIES:-5}"
+SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS="${SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS:-3}"
+SMOKE_STEP_TOTAL=9
 smoke_init "CDS Agent Runtime Doctor"
 
 smoke_step "读取 runtime-status"
-resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+resp=""
+last_error=""
+for attempt in $(seq 1 "$SMOKE_CDS_AGENT_DOCTOR_RETRIES"); do
+  if resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true" 2>&1); then
+    break
+  fi
+  last_error="$resp"
+  if (( attempt < SMOKE_CDS_AGENT_DOCTOR_RETRIES )); then
+    printf 'runtime-status unavailable (attempt %s/%s): %s; retrying in %ss...\n' \
+      "$attempt" "$SMOKE_CDS_AGENT_DOCTOR_RETRIES" "$last_error" "$SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS"
+    sleep "$SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS"
+  fi
+done
+if [[ -z "$resp" || "$resp" != \{* ]]; then
+  smoke_fail "runtime-status 不可用: ${last_error:-empty response}"
+fi
 smoke_verbose "$resp"
 success=$(printf '%s' "$resp" | jq -r '.success')
 smoke_assert_eq "$success" "true" "ApiResponse.success"
@@ -88,6 +111,47 @@ else
     select((.readyzNextActions // []) | length > 0) |
     "    readyzNextActions(" + (.name // "unknown") + "): " + ((.readyzNextActions // []) | join(" | "))
   '
+fi
+
+smoke_step "检查 API 容器内 sidecar DNS alias"
+if [[ -z "${CDS_HOST:-}" ]]; then
+  printf 'Skipped: set CDS_HOST to exec inside the remote CDS API container\n'
+else
+  remote_url="http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/readyz"
+  remote_cmd="echo hosts; getent hosts ${SMOKE_CDS_AGENT_SIDECAR_ALIAS} || true; "
+  for attempt in $(seq 1 "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS"); do
+    remote_cmd="${remote_cmd}echo sample=${attempt}; curl -sS --max-time 10 ${remote_url} || true; printf '\\n---cds-agent-doctor-alias-sample---\\n'; sleep 1; "
+  done
+  exec_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$remote_cmd")
+  smoke_verbose "$exec_resp"
+  if [[ "$(printf '%s' "$exec_resp" | jq -r '.ok')" != "true" ]]; then
+    printf 'Alias check failed: cdscli branch exec did not return ok=true\n'
+  else
+    alias_stdout=$(printf '%s' "$exec_resp" | jq -r '.data.stdout // ""')
+    alias_stderr=$(printf '%s' "$exec_resp" | jq -r '.data.stderr // ""')
+    printf '%s\n' "$alias_stdout"
+    if [[ -n "$alias_stderr" ]]; then
+      printf 'Alias check stderr: %s\n' "$alias_stderr"
+    fi
+    host_count=$(printf '%s\n' "$alias_stdout" | awk -v alias="$SMOKE_CDS_AGENT_SIDECAR_ALIAS" '$2 == alias {print $1}' | sort -u | wc -l | tr -d ' ')
+    ready_count=$(printf '%s' "$alias_stdout" | grep -o '"ready":true,"anthropicKey"' | wc -l | tr -d ' ')
+    loop_count=$(printf '%s' "$alias_stdout" | grep -o '"loopOwner":"claude-agent-sdk"' | wc -l | tr -d ' ')
+    printf 'Alias summary: alias=%s uniqueHosts=%s readySamples=%s/%s officialLoopSamples=%s/%s\n' \
+      "$SMOKE_CDS_AGENT_SIDECAR_ALIAS" \
+      "$host_count" \
+      "$ready_count" \
+      "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" \
+      "$loop_count" \
+      "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS"
+    if (( host_count > 1 )); then
+      printf 'Alias warning: DNS alias resolves to multiple IPs; stale Docker endpoint may still be attached.\n'
+    fi
+    if (( ready_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS || loop_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS )); then
+      printf 'Alias warning: not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk.\n'
+    elif (( host_count <= 1 )); then
+      smoke_ok "sidecar alias stable from API container"
+    fi
+  fi
 fi
 
 smoke_step "检查默认 runtime profile 兼容性"
