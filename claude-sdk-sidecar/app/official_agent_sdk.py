@@ -15,6 +15,7 @@ from .schemas import SidecarEvent, SidecarRunRequest
 from .tool_bridge import ToolBridge
 from .workspace import prepare_git_workspace, workspace_diagnostics, workspace_error_diagnostics
 from .sdk_events import SdkEventAccumulator, handle_sdk_message
+from .sdk_tooling import build_sdk_tooling
 from .upstream import provider_key_missing_event, resolve_upstream
 
 logger = logging.getLogger("sidecar.official_agent_sdk")
@@ -85,29 +86,14 @@ async def run_official_agent(
         timeout_seconds=req.timeout_seconds,
     )
 
-    sdk_tools = []
-    for tool_def in req.tools:
-        async def handler(args: dict[str, Any], tool_name: str = tool_def.name) -> dict[str, Any]:
-            payload = dict(args or {})
-            ok, content = await bridge.invoke(tool_name, payload)
-            return {
-                "content": [{"type": "text", "text": content}],
-                "is_error": not ok,
-            }
-
-        sdk_tools.append(
-            tool(tool_def.name, tool_def.description, tool_def.input_schema)(handler)
-        )
-
-    mcp_servers = {}
-    map_tool_names: list[str] = []
-    if sdk_tools:
-        mcp_servers["map"] = create_sdk_mcp_server(
-            name="map-agent-tools",
-            version="1.0.0",
-            tools=sdk_tools,
-        )
-        map_tool_names = [f"mcp__map__{tool_def.name}" for tool_def in req.tools]
+    sdk_tooling = build_sdk_tooling(
+        req,
+        bridge,
+        create_sdk_mcp_server=create_sdk_mcp_server,
+        sdk_tool=tool,
+        permission_result_allow=PermissionResultAllow,
+        permission_result_deny=PermissionResultDeny,
+    )
 
     builtin_allowed = _csv_env(
         "CLAUDE_AGENT_SDK_ALLOWED_TOOLS",
@@ -172,56 +158,22 @@ async def run_official_agent(
 
     env = upstream.to_sdk_env(req.timeout_seconds)
 
-    async def can_use_tool(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
-        normalized = tool_name.strip()
-        if normalized.lower() not in {"bash", "edit", "write"}:
-            return PermissionResultAllow()
-
-        approval_id = (
-            getattr(context, "tool_use_id", None)
-            or f"{normalized.lower()}-{req.run_id}"
-        )
-        description = (
-            getattr(context, "description", None)
-            or getattr(context, "title", None)
-            or f"Claude Code built-in tool {normalized}"
-        )
-        requested, request_message = await bridge.request_permission(
-            normalized,
-            dict(tool_input or {}),
-            approval_id,
-            description,
-        )
-        if not requested:
-            return PermissionResultDeny(
-                message=f"MAP approval request failed: {request_message}",
-                interrupt=False,
-            )
-
-        approved, approval_message = await bridge.wait_for_approval(normalized, approval_id)
-        if approved:
-            return PermissionResultAllow()
-        return PermissionResultDeny(
-            message=f"MAP approval denied: {approval_message}",
-            interrupt=False,
-        )
-
     options = ClaudeAgentOptions(
         tools={"type": "preset", "preset": "claude_code"},
-        allowed_tools=[*builtin_allowed, *map_tool_names],
+        allowed_tools=[*builtin_allowed, *sdk_tooling.map_tool_names],
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
             "append": req.system_prompt or "",
         },
-        mcp_servers=mcp_servers,
-        strict_mcp_config=bool(mcp_servers),
+        mcp_servers=sdk_tooling.mcp_servers,
+        strict_mcp_config=bool(sdk_tooling.mcp_servers),
         permission_mode=permission_mode,
         max_turns=req.max_turns,
         model=req.model,
         cwd=cwd,
         env=env,
-        can_use_tool=can_use_tool,
+        can_use_tool=sdk_tooling.can_use_tool,
         setting_sources=["project"],
     )
 
@@ -232,7 +184,7 @@ async def run_official_agent(
             "adapter": "claude-agent-sdk",
             "mapSessionId": req.map_session_id,
             "traceId": req.trace_id,
-            "allowedTools": [*builtin_allowed, *map_tool_names],
+            "allowedTools": [*builtin_allowed, *sdk_tooling.map_tool_names],
             "permissionMode": permission_mode,
             "cwd": cwd,
             "workspaceSource": workspace_source,
