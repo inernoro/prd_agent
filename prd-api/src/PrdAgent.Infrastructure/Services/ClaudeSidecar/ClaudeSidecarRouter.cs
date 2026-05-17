@@ -56,9 +56,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     public bool IsConfigured =>
         GetRoutableInstances(_options.CurrentValue).Count > 0;
 
-    public int InstanceCount => _registry.GetCurrent().Count;
+    public int InstanceCount => GetRoutableInstances(_options.CurrentValue).Count;
 
-    public int HealthyCount => _state.CountHealthy();
+    public int HealthyCount => CountHealthy(GetRoutableInstances(_options.CurrentValue));
 
     public IReadOnlyList<string> Blockers => BuildPoolBlockers(BuildSnapshotDiagnostics());
 
@@ -718,6 +718,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return current
             .Where(s => string.Equals(s.Source, PairedCdsSource, StringComparison.OrdinalIgnoreCase))
             .ToList();
+    }
+
+    private int CountHealthy(IReadOnlyList<DynamicSidecarInstance> instances)
+    {
+        return instances.Count(x => _state.IsHealthy(x.Name));
     }
 
     private static DynamicSidecarInstance PickWeighted(List<DynamicSidecarInstance> alive)

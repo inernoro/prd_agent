@@ -312,6 +312,40 @@ public class DynamicSidecarRegistryTests
     }
 
     [Fact]
+    public void Router_HealthyCount_ShouldOnlyCountCurrentRoutableInstances()
+    {
+        var options = new ClaudeSidecarOptions
+        {
+            Enabled = false,
+            Sidecars =
+            {
+                new SidecarInstanceConfig
+                {
+                    Name = "static-disabled",
+                    BaseUrl = "http://127.0.0.1:7400",
+                    Token = "token",
+                }
+            }
+        };
+        var state = new InstanceStateRegistry();
+        state.RecordSuccess("static-disabled");
+        state.RecordSuccess("stale-old-instance");
+        var registry = new FakeDynamicRegistry(Array.Empty<DynamicSidecarInstance>());
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            state,
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        Assert.False(router.IsConfigured);
+        Assert.Equal(0, router.InstanceCount);
+        Assert.Equal(0, router.HealthyCount);
+    }
+
+    [Fact]
     public async Task Router_Diagnostics_ShouldExplainMissingRuntimePool()
     {
         var options = new ClaudeSidecarOptions { Enabled = false };
