@@ -28,6 +28,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-cds-agent-official-sdk-controls.sh` | CDS Agent official SDK S2/S3 controls：默认只做 readiness；显式允许 provider 调用后才验证 MAP 审批和 Stop |
 | `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令 |
 | `scripts/smoke-cds-agent-commercial-readiness.sh` | CDS Agent 商业级 readiness 总账：不调用 provider，审计 R0/R1/T1/S1/S2/S3/V1 当前证据和 pending gate |
+| `scripts/smoke-cds-agent-one-cycle.sh` | CDS Agent 一个周期最小闭环：按 R0/R1/S1/S2/S3/V1/N6 顺序串联脚本，保存日志、S1 JSON 报告和视觉截图 |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -254,6 +255,34 @@ API key，但它会显示当前默认 profile 是否仍阻塞 R1。
 CI 环境误失败，`smoke-all.sh` 只有在检测到 `SMOKE_CDS_AGENT_ACCESS_TOKEN`，或同时
 检测到 `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` 时才运行它；
 否则会把它记为 skipped。验收 V1 时应显式提供登录凭据，不能只看 skipped。
+
+## CDS Agent 一个周期最小闭环
+
+日常调试 CDS Agent 商业级 readiness 时，优先用一个周期入口，而不是手工记忆脚本顺序：
+
+```bash
+SMOKE_TEST_HOST=https://cds-agent-workbench-ui-codex-prd-agent.miduo.org \
+AI_ACCESS_KEY=xxx \
+SMOKE_USER=admin \
+bash scripts/smoke-cds-agent-one-cycle.sh
+```
+
+它会把证据写到 `SMOKE_CDS_AGENT_CYCLE_DIR`，默认是
+`/tmp/cds-agent-cycle-<timestamp>`，包括每一步日志、`s1-report.json` 和可选视觉截图。
+没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 仍只做 readiness 或跳过真调用；
+没有 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 时，R1 repair 只做 dry-run，不会创建默认 profile。
+
+要真正关闭 R1 并进入 provider smoke，必须显式提供 Anthropic/Claude-compatible key：
+
+```bash
+SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=sk-ant-... \
+SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 \
+bash scripts/smoke-cds-agent-one-cycle.sh
+```
+
+这个命令会先走 R1 test-before-promote，再跑 S1/S2/S3。只有
+`commercial-readiness` 的 R1 变为 pass 且 S1/S2/S3 真 provider 证据通过后，才可以把
+CDS Agent 从“诊断可用”提升为“上手即用”。
 
 ---
 

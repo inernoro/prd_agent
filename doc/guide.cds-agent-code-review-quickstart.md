@@ -193,6 +193,12 @@ CDS Agent 迁移官方 SDK 时，不能把非代码智能体也绑到 sidecar ru
 配置真实 profile 后，先跑：
 
 ```bash
+SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh
+```
+
+如果只想拆开看失败点，再分别跑：
+
+```bash
 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh
 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh
 ```
