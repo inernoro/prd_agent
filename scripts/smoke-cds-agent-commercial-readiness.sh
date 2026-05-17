@@ -6,6 +6,7 @@
 # This script does not call the model provider. It audits the evidence needed
 # before calling S1/S2/S3 provider smokes:
 #   R0: MAP/CDS runtime pool can route to claude-agent-sdk.
+#   A0: default path remains a thin official SDK adapter, with legacy loop only as explicit fallback.
 #   R1: default runtime profile is compatible and has an API key.
 #   T1: official profile template and adapter compatibility APIs are present,
 #       and other official SDK candidates are not silently routable.
@@ -22,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-SMOKE_STEP_TOTAL=6
+SMOKE_STEP_TOTAL=7
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL="${SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL:-}"
 SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL:-}"
 SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-}"
@@ -32,6 +33,7 @@ SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS="${SMOKE_CDS_AGENT_RUNTIME_STATUS_R
 audit_pending=()
 require_commercial_failed=""
 gate_r0_status="unknown"
+gate_a0_status="unknown"
 gate_r1_status="unknown"
 gate_t1_status="unknown"
 gate_candidate_status="unknown"
@@ -70,6 +72,7 @@ write_report() {
     --arg workbenchUrl "${SMOKE_CDS_AGENT_WORKBENCH_URL:-}" \
     --arg pageCode "$page_code" \
     --arg gateR0 "$gate_r0_status" \
+    --arg gateA0 "$gate_a0_status" \
     --arg gateR1 "$gate_r1_status" \
     --arg gateT1 "$gate_t1_status" \
     --arg gateCandidates "$gate_candidate_status" \
@@ -108,6 +111,7 @@ write_report() {
       },
       gates: {
         R0: $gateR0,
+        A0: $gateA0,
         R1: $gateR1,
         T1: $gateT1,
         candidates: $gateCandidates,
@@ -154,6 +158,19 @@ fi
 gate_r0_status="pass"
 smoke_ok "R0 ready: pool=${healthy_count}/${instance_count} officialInstances=${official_instances}"
 
+smoke_step "A0 official SDK adapter boundary"
+commercial_readiness=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.commercialReadiness // empty')
+smoke_assert_nonempty "$commercial_readiness" "diagnostics.commercialReadiness"
+a0_gate=$(printf '%s' "$commercial_readiness" | jq -c '.gates[]? | select(.code == "A0")')
+smoke_assert_nonempty "$a0_gate" "commercialReadiness.A0"
+smoke_assert_eq "$(printf '%s' "$a0_gate" | jq -r '.status')" "pass" "commercialReadiness.A0.status"
+smoke_assert_contains "$(printf '%s' "$a0_gate" | jq -r '.message')" "claude-agent-sdk" "commercialReadiness.A0.message"
+execution_panel=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.executionPanel // empty')
+smoke_assert_nonempty "$execution_panel" "diagnostics.executionPanel"
+smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.gateCounts.pass >= 1')" "true" "executionPanel.gateCounts.pass"
+gate_a0_status="pass"
+smoke_ok "A0 ready: official SDK adapter boundary is backend-visible"
+
 smoke_step "R1 default runtime profile compatibility"
 default_profile=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.defaultRuntimeProfile // empty')
 smoke_assert_nonempty "$default_profile" "diagnostics.defaultRuntimeProfile"
@@ -172,8 +189,6 @@ smoke_assert_contains "$n6_evidence" "源码扫描" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$n6_evidence" "构造函数反射" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$n6_evidence" "最小业务路径" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
-execution_panel=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.executionPanel // empty')
-smoke_assert_nonempty "$execution_panel" "diagnostics.executionPanel"
 smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.commercialComplete')" "false" "executionPanel.commercialComplete"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
