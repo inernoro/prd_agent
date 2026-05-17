@@ -125,7 +125,10 @@ curl http://127.0.0.1:7400/readyz
 
 `readyz.adapterDiagnostics` 会返回 `sdkInstalled`、`sdkVersion`、`claudeCliPath`、
 `workspaceRootExists`、`allowedTools`、`permissionMode`、`builtinWriteToolsEnabled`
-和 `approvalBridge`。MAP 页面通过
+和 `approvalBridge`。`readyz.blockers` / `readyz.nextActions` 会直接给出缺失项和修复动作；
+默认 `SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env` 时，不会因为 sidecar env 缺少
+`ANTHROPIC_API_KEY` 判定不可用，provider key 可由 MAP runtime profile 或请求覆盖下发。
+MAP 页面通过
 `GET /api/infra-agent-sessions/runtime-status` 读取 sidecar pool 诊断；如果
 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 但缺 `claude_agent_sdk` 或 `claude` CLI，
 readyz 会返回 503，避免用户启动任务后才发现运行时不可用。

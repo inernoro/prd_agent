@@ -63,6 +63,8 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(payload["anthropicKey"], False)
         self.assertEqual(payload["providerKeyMode"], "runtime-profile-or-env")
         self.assertEqual(payload["providerKeyRequiredForReady"], False)
+        self.assertEqual(payload["blockers"], [])
+        self.assertEqual(payload["nextActions"], ["ready: start or attach a MAP/CDS Agent run"])
 
     def test_readyz_can_require_env_provider_key_for_standalone_sidecar(self) -> None:
         previous_token = sidecar_main.SIDECAR_TOKEN
@@ -81,6 +83,38 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(payload["ready"], False)
         self.assertEqual(payload["providerKeyMode"], "env")
         self.assertEqual(payload["providerKeyRequiredForReady"], True)
+        self.assertIn("missing ANTHROPIC_API_KEY", payload["blockers"])
+        self.assertIn(
+            "set ANTHROPIC_API_KEY or use SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env when MAP provides provider keys per request",
+            payload["nextActions"],
+        )
+
+    def test_readyz_reports_official_adapter_actionable_blockers(self) -> None:
+        previous_token = sidecar_main.SIDECAR_TOKEN
+        previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
+        sidecar_main.SIDECAR_TOKEN = "test-token"
+        sidecar_main.DEFAULT_AGENT_ADAPTER = "claude-agent-sdk"
+        try:
+            with patch.dict(os.environ, {
+                "SIDECAR_AGENT_ADAPTER": "claude-agent-sdk",
+            }, clear=True), \
+                    patch("importlib.util.find_spec", return_value=None), \
+                    patch("shutil.which", return_value=None):
+                response = self._run_readyz()
+        finally:
+            sidecar_main.SIDECAR_TOKEN = previous_token
+            sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("missing claude_agent_sdk", payload["blockers"])
+        self.assertIn("missing claude_cli", payload["blockers"])
+        self.assertIn("install the official SDK: pip install claude-agent-sdk", payload["nextActions"])
+        self.assertIn("install and authenticate Claude Code CLI so `claude` is on PATH", payload["nextActions"])
+        self.assertIn(
+            "provider key may be supplied by MAP runtime profile or per-request override",
+            payload["nextActions"],
+        )
 
     @staticmethod
     def _run_readyz():

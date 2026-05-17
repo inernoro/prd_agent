@@ -73,6 +73,17 @@ async def readyz() -> JSONResponse:
     diagnostics = _adapter_diagnostics(adapter)
     if adapter.strip().lower() in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
         ready = ready and bool(diagnostics.get("ready"))
+    blockers = _readyz_blockers(
+        has_key=has_key,
+        has_token=has_token,
+        provider_key_required=provider_key_required,
+        diagnostics=diagnostics,
+    )
+    next_actions = _readyz_next_actions(
+        blockers=blockers,
+        provider_key_required=provider_key_required,
+        diagnostics=diagnostics,
+    )
     return JSONResponse(
         {
             "ready": ready,
@@ -83,9 +94,63 @@ async def readyz() -> JSONResponse:
             "activeRuns": len(_active_runs),
             "agentAdapter": adapter,
             "adapterDiagnostics": diagnostics,
+            "blockers": blockers,
+            "nextActions": next_actions,
         },
         status_code=200 if ready else 503,
     )
+
+
+def _readyz_blockers(
+    *,
+    has_key: bool,
+    has_token: bool,
+    provider_key_required: bool,
+    diagnostics: dict[str, object],
+) -> list[str]:
+    blockers: list[str] = []
+    if not has_token:
+        blockers.append("missing SIDECAR_TOKEN")
+    if provider_key_required and not has_key:
+        blockers.append("missing ANTHROPIC_API_KEY")
+
+    missing = diagnostics.get("missing")
+    if isinstance(missing, list):
+        for item in missing:
+            if isinstance(item, str) and item:
+                blockers.append(f"missing {item}")
+
+    return list(dict.fromkeys(blockers))
+
+
+def _readyz_next_actions(
+    *,
+    blockers: list[str],
+    provider_key_required: bool,
+    diagnostics: dict[str, object],
+) -> list[str]:
+    actions: list[str] = []
+    if not blockers:
+        actions.append("ready: start or attach a MAP/CDS Agent run")
+        return actions
+
+    if "missing SIDECAR_TOKEN" in blockers:
+        actions.append("set SIDECAR_TOKEN and restart the sidecar")
+    if "missing ANTHROPIC_API_KEY" in blockers:
+        actions.append("set ANTHROPIC_API_KEY or use SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env when MAP provides provider keys per request")
+    elif not provider_key_required:
+        actions.append("provider key may be supplied by MAP runtime profile or per-request override")
+
+    missing = diagnostics.get("missing")
+    if isinstance(missing, list):
+        if "claude_agent_sdk" in missing:
+            actions.append("install the official SDK: pip install claude-agent-sdk")
+        if "claude_cli" in missing:
+            actions.append("install and authenticate Claude Code CLI so `claude` is on PATH")
+        if "workspace_root" in missing:
+            actions.append("set AGENT_WORKSPACE_ROOT to an existing readable workspace")
+
+    return list(dict.fromkeys(actions))
 
 
 def _adapter_diagnostics(adapter: str) -> dict[str, object]:
