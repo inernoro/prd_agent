@@ -115,6 +115,7 @@ finish_cycle() {
   local pending_has_r1=false
   local pending_has_provider=false
   local gate_r0_status="unknown"
+  local gate_a0_status="unknown"
   local gate_r1_status="unknown"
   local gate_s1_status="unknown"
   local gate_s2s3_status="unknown"
@@ -177,6 +178,13 @@ finish_cycle() {
   if printf '%s\n' "${failed_arr[@]:-}" | grep -Eq 'R0 runtime pool official SDK ownership|R0 sidecar alias stability from API container'; then
     gate_r0_status="failed"
   fi
+  if [[ "$boundary_status" == "pass" ]]; then
+    gate_a0_status="pass"
+  elif [[ "$boundary_status" == "failed" ]]; then
+    gate_a0_status="failed"
+  elif printf '%s\n' "${failed_arr[@]:-}" | grep -qx 'A0 official SDK adapter boundary'; then
+    gate_a0_status="failed"
+  fi
   if [[ "$r1_status" == "pass" || "$readiness_overall" == "ready_for_provider_smokes" ]]; then
     gate_r1_status="pass"
   elif [[ "$r1_status" == "dry_run_requires_api_key" || "$pending_has_r1" == "true" ]]; then
@@ -233,6 +241,7 @@ finish_cycle() {
   fi
 
   if [[ "$gate_r0_status" == "pass" \
+    && "$gate_a0_status" == "pass" \
     && "$gate_r1_status" == "pass" \
     && "$gate_s1_status" == "pass" \
     && "$gate_s2s3_status" == "pass" \
@@ -323,6 +332,7 @@ finish_cycle() {
     --arg boundaryReport "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
     --arg gateR0 "$gate_r0_status" \
+    --arg gateA0 "$gate_a0_status" \
     --arg gateR1 "$gate_r1_status" \
     --arg gateS1 "$gate_s1_status" \
     --arg gateS2S3 "$gate_s2s3_status" \
@@ -348,6 +358,10 @@ finish_cycle() {
       R0: {
         status: $gateR0,
         evidence: "runtime-status and sidecar alias prove claude-agent-sdk loop ownership"
+      },
+      A0: {
+        status: $gateA0,
+        evidence: "local source guardrail proves default path uses official Claude Agent SDK adapter and legacy loop is explicit fallback"
       },
       R1: {
         status: $gateR1,
@@ -472,11 +486,12 @@ finish_cycle() {
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Controls status: %s\n' "$controls_status"
   printf 'Official SDK boundary status: %s\n' "$boundary_status"
-  printf 'Commercial gates: R0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
-    "$gate_r0_status" "$gate_r1_status" "$gate_s1_status" "$gate_s2s3_status" "$gate_v1_status" "$gate_n6_status"
+  printf 'Commercial gates: R0=%s A0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
+    "$gate_r0_status" "$gate_a0_status" "$gate_r1_status" "$gate_s1_status" "$gate_s2s3_status" "$gate_v1_status" "$gate_n6_status"
   if [[ "$commercial_complete" != "true" ]]; then
     printf 'Commercial gates not pass:\n'
     [[ "$gate_r0_status" != "pass" ]] && printf '  - R0=%s\n' "$gate_r0_status"
+    [[ "$gate_a0_status" != "pass" ]] && printf '  - A0=%s\n' "$gate_a0_status"
     [[ "$gate_r1_status" != "pass" ]] && printf '  - R1=%s\n' "$gate_r1_status"
     [[ "$gate_s1_status" != "pass" ]] && printf '  - S1=%s\n' "$gate_s1_status"
     [[ "$gate_s2s3_status" != "pass" ]] && printf '  - S2/S3=%s\n' "$gate_s2s3_status"
