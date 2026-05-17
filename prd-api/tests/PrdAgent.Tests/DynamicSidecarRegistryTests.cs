@@ -119,6 +119,90 @@ public class DynamicSidecarRegistryTests
     }
 
     [Fact]
+    public async Task Router_Diagnostics_ShouldExplainMissingRuntimePool()
+    {
+        var options = new ClaudeSidecarOptions { Enabled = false };
+        var registry = new FakeDynamicRegistry(
+            Array.Empty<DynamicSidecarInstance>(),
+            "paired-connections total=1 activeCds=1 usable=1 endpointsWithInstances=0");
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            new InstanceStateRegistry(),
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
+
+        Assert.False(diagnostics.IsConfigured);
+        Assert.Equal(0, diagnostics.InstanceCount);
+        Assert.Contains("MAP 当前没有发现任何 CDS sidecar runtime 实例", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("paired-connections total=1 activeCds=1 usable=1 endpointsWithInstances=0", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains(
+            "确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复",
+            diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.Contains(
+            "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 失效的连接",
+            diagnostics.NextActions ?? Array.Empty<string>());
+    }
+
+    [Fact]
+    public async Task Router_Diagnostics_ShouldExposeOfficialSdkReadinessBlockers()
+    {
+        var options = new ClaudeSidecarOptions { Enabled = false };
+        var registry = new FakeDynamicRegistry(new[]
+        {
+            new DynamicSidecarInstance
+            {
+                Name = "cds-pairing:conn-1:host-a",
+                BaseUrl = "http://10.0.0.8:7400",
+                Token = "shared-sidecar-token",
+                Source = "cds-pairing",
+            },
+        });
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("""
+                {
+                  "ready": false,
+                  "agentAdapter": "claude-agent-sdk",
+                  "adapterDiagnostics": {
+                    "adapter": "claude-agent-sdk",
+                    "ready": false,
+                    "missing": ["claude_cli", "workspace_root"]
+                  }
+                }
+                """)
+            }),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            new InstanceStateRegistry(),
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
+
+        Assert.True(diagnostics.IsConfigured);
+        Assert.Equal(1, diagnostics.InstanceCount);
+        Assert.Equal(0, diagnostics.HealthyCount);
+        Assert.Contains("所有已发现的 sidecar runtime 实例当前都不可用", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: /readyz 返回 HTTP 503", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: /readyz ready=false", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: 缺少 claude_cli", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: 缺少 workspace_root", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains(
+            "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk",
+            diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.Contains(
+            "官方 SDK 模式下保持 MAP/CDS 只做控制面，工具执行和 turn loop 继续走 claude-agent-sdk",
+            diagnostics.NextActions ?? Array.Empty<string>());
+    }
+
+    [Fact]
     public async Task Router_UsesPublicCallbackBaseUrl_ForPairedCdsInstance()
     {
         var options = new ClaudeSidecarOptions
@@ -369,16 +453,18 @@ public class DynamicSidecarRegistryTests
     private sealed class FakeDynamicRegistry : IDynamicSidecarRegistry
     {
         private readonly IReadOnlyList<DynamicSidecarInstance> _items;
+        private readonly string? _lastRefreshError;
 
-        public FakeDynamicRegistry(IReadOnlyList<DynamicSidecarInstance> items)
+        public FakeDynamicRegistry(IReadOnlyList<DynamicSidecarInstance> items, string? lastRefreshError = null)
         {
             _items = items;
+            _lastRefreshError = lastRefreshError;
         }
 
         public IReadOnlyList<DynamicSidecarInstance> GetCurrent() => _items;
         public Task RefreshAsync(CancellationToken ct) => Task.CompletedTask;
         public DateTime? LastRefreshedAt => DateTime.UtcNow;
-        public string? LastRefreshError => null;
+        public string? LastRefreshError => _lastRefreshError;
     }
 
     private sealed class FakeHttpClientFactory : IHttpClientFactory
