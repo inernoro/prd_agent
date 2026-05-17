@@ -67,11 +67,17 @@ if [[ -z "$SMOKE_CDS_AGENT_ACCESS_TOKEN" ]]; then
     --arg username "$SMOKE_CDS_AGENT_LOGIN_USERNAME" \
     --arg password "$SMOKE_CDS_AGENT_LOGIN_PASSWORD" \
     '{username:$username,password:$password,clientType:"admin"}')
-  login_resp=$(curl --max-time "$SMOKE_TIMEOUT" --show-error --silent --fail-with-body \
+  login_raw=$(curl --max-time "$SMOKE_TIMEOUT" --show-error --silent \
+    --write-out $'\n%{http_code}' \
     -H "Content-Type: application/json" \
     -H "Accept: application/json" \
     -d "$login_body" \
-    "$SMOKE_HOST/api/v1/auth/login")
+    "$SMOKE_HOST/api/v1/auth/login" || true)
+  login_code=$(printf '%s' "$login_raw" | tail -n 1)
+  login_resp=$(printf '%s' "$login_raw" | sed '$d')
+  if [[ "$login_code" != "200" ]]; then
+    smoke_fail "登录失败: HTTP ${login_code}；请检查 SMOKE_CDS_AGENT_LOGIN_USERNAME/SMOKE_CDS_AGENT_LOGIN_PASSWORD 或改用 SMOKE_CDS_AGENT_ACCESS_TOKEN"
+  fi
   smoke_assert_eq "$(printf '%s' "$login_resp" | jq -r '.success')" "true" "Login.success"
   SMOKE_CDS_AGENT_ACCESS_TOKEN=$(printf '%s' "$login_resp" | jq -r '.data.accessToken')
   auth_user_json=$(printf '%s' "$login_resp" | jq -c '.data.user')
@@ -320,7 +326,7 @@ async function main() {
       returnByValue: true
     });
     const text = textResult.result?.value || '';
-    const required = ['CDS Agent', 'Runtime 调试', '商业级', 'READINESS LEDGER', '下一周期最小闭环'];
+    const required = ['CDS Agent', 'Runtime 调试', '当前执行结论', '商业级', 'READINESS LEDGER', '下一周期最小闭环'];
     const missing = required.filter((item) => !text.includes(item));
     if (missing.length) {
       throw new Error(`Workbench missing expected text: ${missing.join(', ')}`);
@@ -379,6 +385,7 @@ async function waitForWorkbench(send) {
     try { fs.writeFileSync(textDump, text); } catch {}
     if (text.includes('Runtime 调试')
       && text.includes('商业级')
+      && text.includes('当前执行结论')
       && text.includes('READINESS LEDGER')
       && text.includes('下一周期最小闭环')) return;
     if (text.includes('无权限访问')) throw new Error('Authenticated user lacks permission for /cds-agent');
