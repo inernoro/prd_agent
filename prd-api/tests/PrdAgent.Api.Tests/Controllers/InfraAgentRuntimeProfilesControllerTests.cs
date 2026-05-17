@@ -55,24 +55,39 @@ public class InfraAgentRuntimeProfilesControllerTests
         var items = rawItems.ShouldBeAssignableTo<IEnumerable<InfraAgentRuntimeAdapterCompatibilityView>>().ToList();
         var official = items.Single(x => x.Id == InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk);
         official.Status.ShouldBe("default-supported");
+        official.RoutableByDefault.ShouldBeTrue();
         official.LoopOwner.ShouldBe("claude-agent-sdk");
         official.MapRole.ShouldBe("control-plane-only");
+        official.SupportedTaskKinds.ShouldContain("code-review");
         official.CompatibleRuntimeProfileTemplateIds.ShouldContain(InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+        official.RequiredEvidenceGates.ShouldBe(new[] { "R0", "R1", "S1", "S2", "S3", "V1", "N6" });
+        official.MissingAdapterContracts.ShouldBeEmpty();
         official.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("deepseek", StringComparison.OrdinalIgnoreCase));
 
         var codex = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.CodexPlanned);
         codex.Status.ShouldBe("planned-not-routable");
+        codex.RoutableByDefault.ShouldBeFalse();
+        codex.RequiredEvidenceGates.ShouldContain("S1");
+        codex.MissingAdapterContracts.ShouldContain("tool-approval");
         codex.NextActions.ShouldContain(x => x.Contains("不要把用户代码审查任务默认路由到 codex runtime", StringComparison.OrdinalIgnoreCase));
 
         var openAiAgents = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.OpenAiAgentsSdkPlanned);
         openAiAgents.Status.ShouldBe("planned-not-routable");
+        openAiAgents.RoutableByDefault.ShouldBeFalse();
         openAiAgents.MapRole.ShouldBe("control-plane-only");
+        openAiAgents.SupportedTaskKinds.ShouldContain("non-code-orchestration-candidate");
+        openAiAgents.RequiredEvidenceGates.ShouldContain("adapter-contract");
+        openAiAgents.MissingAdapterContracts.ShouldContain("map-approval-bridge");
         openAiAgents.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("不能自动等价于代码审查 agent runtime", StringComparison.OrdinalIgnoreCase));
         openAiAgents.NextActions.ShouldContain(x => x.Contains("S1/S2/S3", StringComparison.OrdinalIgnoreCase));
 
         var googleAdk = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.GoogleAdkPlanned);
         googleAdk.Status.ShouldBe("planned-not-routable");
+        googleAdk.RoutableByDefault.ShouldBeFalse();
         googleAdk.LoopOwner.ShouldBe("google-adk");
+        googleAdk.SupportedTaskKinds.ShouldContain("gemini-ecosystem-candidate");
+        googleAdk.RequiredEvidenceGates.ShouldContain("adapter-contract");
+        googleAdk.MissingAdapterContracts.ShouldContain("artifact");
         googleAdk.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("不能直接复用 Claude Agent SDK", StringComparison.OrdinalIgnoreCase));
         googleAdk.NextActions.ShouldContain(x => x.Contains("不要把代码审查任务默认路由到 google-adk", StringComparison.OrdinalIgnoreCase));
     }

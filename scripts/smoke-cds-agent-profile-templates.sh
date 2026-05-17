@@ -72,21 +72,30 @@ official=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "c
 smoke_assert_nonempty "$official" "claude-agent-sdk compatibility"
 smoke_assert_eq "$(printf '%s' "$official" | jq -r '.loopOwner')" "claude-agent-sdk" "official.loopOwner"
 smoke_assert_eq "$(printf '%s' "$official" | jq -r '.mapRole')" "control-plane-only" "official.mapRole"
+smoke_assert_eq "$(printf '%s' "$official" | jq -r '.routableByDefault')" "true" "official.routableByDefault"
+smoke_assert_contains "$(printf '%s' "$official" | jq -r '.requiredEvidenceGates[]?')" "S1" "official.requiredEvidenceGates"
 incompatible_count=$(printf '%s' "$official" | jq -r '[.knownIncompatibleProfilePatterns[]? | select(test("deepseek"; "i"))] | length')
 smoke_assert_eq "$incompatible_count" "1" "official.deepseekIncompatiblePattern"
 codex=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "codex")')
 smoke_assert_nonempty "$codex" "codex compatibility"
 smoke_assert_eq "$(printf '%s' "$codex" | jq -r '.status')" "planned-not-routable" "codex.status"
+smoke_assert_eq "$(printf '%s' "$codex" | jq -r '.routableByDefault')" "false" "codex.routableByDefault"
+smoke_assert_contains "$(printf '%s' "$codex" | jq -r '.missingAdapterContracts[]?')" "tool-approval" "codex.missingAdapterContracts"
 openai_agents=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "openai-agents-sdk")')
 smoke_assert_nonempty "$openai_agents" "openai-agents-sdk compatibility"
 smoke_assert_eq "$(printf '%s' "$openai_agents" | jq -r '.status')" "planned-not-routable" "openai-agents-sdk.status"
 smoke_assert_eq "$(printf '%s' "$openai_agents" | jq -r '.mapRole')" "control-plane-only" "openai-agents-sdk.mapRole"
+smoke_assert_eq "$(printf '%s' "$openai_agents" | jq -r '.routableByDefault')" "false" "openai-agents-sdk.routableByDefault"
+smoke_assert_contains "$(printf '%s' "$openai_agents" | jq -r '.supportedTaskKinds[]?')" "non-code-orchestration-candidate" "openai-agents-sdk.supportedTaskKinds"
+smoke_assert_contains "$(printf '%s' "$openai_agents" | jq -r '.missingAdapterContracts[]?')" "map-approval-bridge" "openai-agents-sdk.missingAdapterContracts"
 openai_actions=$(printf '%s' "$openai_agents" | jq -r '.nextActions[]?')
 smoke_assert_contains "$openai_actions" "S1/S2/S3" "openai-agents-sdk.nextActions"
 google_adk=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "google-adk")')
 smoke_assert_nonempty "$google_adk" "google-adk compatibility"
 smoke_assert_eq "$(printf '%s' "$google_adk" | jq -r '.status')" "planned-not-routable" "google-adk.status"
 smoke_assert_eq "$(printf '%s' "$google_adk" | jq -r '.loopOwner')" "google-adk" "google-adk.loopOwner"
+smoke_assert_eq "$(printf '%s' "$google_adk" | jq -r '.routableByDefault')" "false" "google-adk.routableByDefault"
+smoke_assert_contains "$(printf '%s' "$google_adk" | jq -r '.missingAdapterContracts[]?')" "artifact" "google-adk.missingAdapterContracts"
 google_actions=$(printf '%s' "$google_adk" | jq -r '.nextActions[]?')
 smoke_assert_contains "$google_actions" "不要把代码审查任务默认路由到 google-adk" "google-adk.nextActions"
 smoke_ok "official SDK default-supported; codex/openai-agents-sdk/google-adk planned-not-routable"

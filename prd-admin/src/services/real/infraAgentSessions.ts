@@ -136,12 +136,16 @@ export interface InfraAgentRuntimeAdapterCompatibilityView {
   id: string;
   label: string;
   status: string;
+  routableByDefault: boolean;
   loopOwner: string;
   mapRole: string;
   cdsRole: string;
+  supportedTaskKinds: string[];
   supportedProfileProtocols: string[];
   modelHints: string[];
   compatibleRuntimeProfileTemplateIds: string[];
+  requiredEvidenceGates: string[];
+  missingAdapterContracts: string[];
   knownIncompatibleProfilePatterns: string[];
   notes: string[];
   nextActions: string[];

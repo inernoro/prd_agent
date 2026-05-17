@@ -245,7 +245,7 @@ public interface IAgentRuntimeAdapter
 - 为避免 pip 把 `starlette` 解到与 `fastapi==0.115.0` 不兼容的 `1.0.0`，requirements 固定 `starlette==0.38.6` 和 `sse-starlette==3.0.3`。
 - Anthropic 官方 profile 模板由 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates` 暴露，前端只按模板 id 套用。模型 id、协议、baseUrl 和资源默认值都应在后端模板里维护，避免 UI、脚本和运行前兼容性校验各自保存一份 provider 事实。
 - 由模板创建 profile 时走 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/profiles`。该入口只接收名称、API key 和默认标记，其他字段全部从后端模板复制；这样 UI 不需要重新提交 `model/baseUrl/protocol/resource`，也不会因为页面字段漂移而创建出“看似官方模板、实际不兼容”的 profile。
-- Adapter 兼容边界由 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapter-compatibility` 暴露：当前 `claude-agent-sdk` 是默认支持路径，`loopOwner=claude-agent-sdk`、`mapRole=control-plane-only`；`legacy-sidecar` 仅是显式 fallback；`codex` 目前为 `planned-not-routable`，不能因为页面能保存 `runtime=codex` profile 就把代码审查任务默认路由过去。前端 Runtime 调试区和 smoke 均读取该矩阵，避免再次把普通 OpenAI-compatible profile 当成官方 Claude SDK 可运行配置。
+- Adapter 兼容边界由 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapter-compatibility` 暴露：当前 `claude-agent-sdk` 是默认支持路径，`loopOwner=claude-agent-sdk`、`mapRole=control-plane-only`；`legacy-sidecar` 仅是显式 fallback；`codex` 目前为 `planned-not-routable`，不能因为页面能保存 `runtime=codex` profile 就把代码审查任务默认路由过去。前端 Runtime 调试区和 smoke 均读取该矩阵，避免再次把普通 OpenAI-compatible profile 当成官方 Claude SDK 可运行配置。矩阵还暴露 `routableByDefault`、`supportedTaskKinds`、`requiredEvidenceGates` 和 `missingAdapterContracts`；新增 OpenAI Agents SDK、Google ADK 或 Codex-like adapter 时，必须先关闭 run/event/tool approval/cancel/workspace/artifact 等缺失 contract，并通过同口径 S1/S2/S3/V1/N6 证据，才允许进入默认代码审查路径。
 
 2026-05-18 运行时证据和执行面板校准：
 
