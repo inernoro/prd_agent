@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -24,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\PrdAgent.Core\PrdAgent.Core.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\PrdAgent.Api\PrdAgent.Api.csproj" />
   </ItemGroup>
 
 </Project>
