@@ -27,6 +27,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-cds-agent-official-sdk-run.sh` | CDS Agent official SDK S1 run：默认只做 readiness；显式允许 provider 调用后才创建临时只读审查会话并等待 assistant 响应 |
 | `scripts/smoke-cds-agent-official-sdk-controls.sh` | CDS Agent official SDK S2/S3 controls：默认只做 readiness；显式允许 provider 调用后才验证 MAP 审批和 Stop |
 | `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令 |
+| `scripts/smoke-cds-agent-commercial-readiness.sh` | CDS Agent 商业级 readiness 总账：不调用 provider，审计 R0/R1/T1/S1/S2/S3/V1 当前证据和 pending gate |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -92,6 +93,12 @@ bash scripts/smoke-cds-agent-profile-preflight.sh
 # 不确定卡在哪里时，先跑 doctor。它不会触发 provider 调用。
 bash scripts/doctor-cds-agent-runtime.sh
 
+# 想看"离商业级上手可用还差什么"时，跑 readiness audit。它不会触发 provider 调用。
+bash scripts/smoke-cds-agent-commercial-readiness.sh
+
+# 验收环境希望 R1 profile 不兼容时直接失败，可以打开硬门禁。
+SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
+
 # 配好真实 Claude/Anthropic profile 后，先只做 readiness
 bash scripts/smoke-cds-agent-official-sdk-run.sh
 
@@ -133,6 +140,8 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_FAIL_FAST` | _(空)_ | 非空时首次失败即退出 |
 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL` | _(空)_ | official SDK run/control 脚本专用；设为 `1` 才真实发送 prompt |
 | `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE` | _(空)_ | 默认 profile 不兼容时是否失败；默认只跳过 provider run |
+| `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL` | _(空)_ | `smoke-cds-agent-commercial-readiness.sh` 专用；设为 `1` 时 R1 profile 不兼容/缺 key 直接失败 |
+| `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_REPO` | `inernoro/prd_agent` | S1 只读审查目标仓库 |
 | `SMOKE_CDS_AGENT_REF` | `main` | S1 只读审查目标 ref |
 | `SMOKE_CDS_AGENT_POLL_SECONDS` | `120` | 等待 assistant 消息或 failed 状态的秒数 |
@@ -177,6 +186,20 @@ readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后会触发一次危
 这条脚本的定位是"把问题定位到下一条命令"，所以它默认不失败于
 `instanceCount=0` 这类业务配置缺口；真正的验收仍看 runtime/profile/S1/controls
 smoke gate 是否通过。
+
+`smoke-cds-agent-commercial-readiness.sh` 是验收总账入口，不触发 provider 调用。
+它会检查：
+- R0：MAP/CDS runtime pool、healthy sidecar、`loopOwner=claude-agent-sdk`
+- R1：默认 runtime profile 是否兼容官方 SDK 且已有 API key
+- T1：官方 Anthropic profile 模板与 adapter compatibility API 是否由后端提供
+- S1/S2/S3：当前是否已经解除 provider 真调用的前置阻塞，并打印下一步命令
+- V1：`/cds-agent` 页面是否返回 HTTP 200
+
+默认模式下，R1/S1/S2/S3 不满足时会列为 pending，但脚本仍可完成，用于说明当前离
+商业级可用还差什么。验收环境应设置 `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1`，
+这样默认 profile 不兼容或缺 key 时会直接失败。即便该脚本全绿，仍需要显式运行
+`SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 的 S1/S2/S3 脚本来证明真实代码审查、
+MAP 审批和 Stop 都已通过。
 
 ---
 
