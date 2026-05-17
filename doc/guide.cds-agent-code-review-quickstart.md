@@ -86,6 +86,15 @@ SMOKE_CDS_AGENT_DOCTOR_REPORT=/tmp/cds-agent-doctor.json \
 
 报告里的 `diagnosis` 是当前结论，`nextRecommended` 是下一步动作，`aliasCheck` 证明 API 容器访问 sidecar 是否稳定，`defaultProfile.compatibleWithDesiredRuntimeAdapter` 判断 R1 是否仍阻塞。这样每次排障都能明确时间花在 runtime pool、profile、provider 真调用、视觉截图还是非代码兼容回归。
 
+如果要回答“这个长期目标是否已经完成”，不要只看某个页面或某次脚本退出码，先跑目标审计：
+
+```bash
+CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
+  bash scripts/audit-cds-agent-goal.sh
+```
+
+它会本地验证 A0 official SDK adapter 边界和 N6 非代码/候选 SDK 兼容性，并读取最新 one-cycle `cycle-summary.json`。输出里的 `goalStatus=not_complete` 是正常的保护状态：只要 R1/S1/S2/S3/V1 仍缺少当前证据，就不能把系统宣称为商业级完成；`executionPanel.nextCommand` 和 `deploymentAdvice` 才是下一步动作来源。
+
 完整一周期检查优先用：
 
 ```bash

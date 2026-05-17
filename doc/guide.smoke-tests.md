@@ -31,6 +31,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、sidecar alias、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令；可输出 JSON 诊断包 |
 | `scripts/smoke-cds-agent-commercial-readiness.sh` | CDS Agent 商业级 readiness 总账：不调用 provider，审计 R0/A0/R1/T1/S1/S2/S3/V1 当前证据和 pending gate |
 | `scripts/smoke-cds-agent-one-cycle.sh` | CDS Agent 一个周期最小闭环：按 doctor/R0/A0/R1/S1/S2/S3/V1/N6 顺序串联脚本，保存日志、JSON 报告和视觉截图 |
+| `scripts/audit-cds-agent-goal.sh` | CDS Agent 目标完成审计：本地跑 A0/N6，读取最新 one-cycle 摘要，输出目标是否完成、未证明 gate、下一条命令和部署建议 |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -108,6 +109,9 @@ bash scripts/smoke-cds-agent-official-sdk-boundary.sh
 # 想看"离商业级上手可用还差什么"时，跑 readiness audit。它不会触发 provider 调用。
 bash scripts/smoke-cds-agent-commercial-readiness.sh
 
+# 想看"这个长期目标到底完成没有"时，跑 goal audit。它不会部署，也不会触发 provider 调用。
+CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json bash scripts/audit-cds-agent-goal.sh
+
 # 验收环境希望 R1 profile 不兼容时直接失败，可以打开硬门禁。
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
 
@@ -161,6 +165,8 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_ALIAS_ATTEMPTS` | `6` | sidecar alias stability 专用；连续 `/readyz` 采样次数 |
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
+| `CDS_AGENT_GOAL_AUDIT_REPORT` | _(空)_ | goal audit 专用；指定目标完成审计 JSON 输出路径 |
+| `CDS_AGENT_GOAL_CYCLE_SUMMARY` | _(自动查找)_ | goal audit 专用；指定 one-cycle `cycle-summary.json`，不指定时自动查找最新 `/tmp/cds-agent-cycle-*/cycle-summary.json` |
 | `SMOKE_CDS_AGENT_DOCTOR_REPORT` | _(空)_ | doctor / one-cycle 专用；指定 JSON 诊断包输出路径，包含 diagnosis、nextRecommended、aliasCheck、默认 profile 和 adapter compatibility |
 | `SMOKE_CDS_AGENT_BOUNDARY_REPORT` | _(空)_ | official SDK boundary / one-cycle 专用；指定本地 adapter 边界 JSON 报告输出路径，包含默认 adapter、legacy fallback、adapter/support/total 行数预算和 helper loop-regression 扫描证据 |
 | `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
