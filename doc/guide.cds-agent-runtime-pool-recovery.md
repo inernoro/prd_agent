@@ -116,6 +116,16 @@ SIDECAR_GITHUB_TOKEN=<github-token>
 
 也可以复用环境中的 `GITHUB_TOKEN`。该 token 只用于 GitHub `clone/fetch` 的临时 HTTP header，不会写入 `runtime_init`、remote URL 或诊断包；诊断里只显示 `privateRepositoryAuthConfigured=true/false`。
 
+如果 session 事件出现 `workspace_prepare_failed`，优先看事件 `content.workspaceErrorCode`：
+
+| code | 处理 |
+| --- | --- |
+| `unsupported_git_repository` | 把 `gitRepository` 改成 `owner/repo` 或 `https://github.com/owner/repo` |
+| `unsupported_git_ref` | 检查 `gitRef`，不要使用路径穿越或 shell 片段 |
+| `github_repository_auth_or_not_found` | 检查 repo 是否存在；私有仓库确认 sidecar 有 `SIDECAR_GITHUB_TOKEN` 或 `GITHUB_TOKEN` |
+| `git_ref_not_found` | 确认 branch/tag/ref 存在 |
+| `workspace_target_conflict` | 清理或更换 `SIDECAR_WORKSPACES_ROOT` 下冲突目录 |
+
 验证入口仍然是：
 
 ```text

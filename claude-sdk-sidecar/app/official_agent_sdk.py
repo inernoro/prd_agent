@@ -216,6 +216,42 @@ def workspace_diagnostics() -> dict[str, Any]:
     }
 
 
+def _workspace_error_diagnostics(ex: Exception, req: SidecarRunRequest) -> dict[str, Any]:
+    raw = str(ex)
+    lower = raw.lower()
+    auth_configured = _github_token() is not None
+    code = "workspace_prepare_failed"
+    actions: list[str] = ["check sidecar logs for the failing git clone/fetch command"]
+
+    if isinstance(ex, ValueError):
+        if "gitrepository" in lower:
+            code = "unsupported_git_repository"
+            actions = ["set gitRepository to owner/repo or https://github.com/owner/repo"]
+        elif "gitref" in lower:
+            code = "unsupported_git_ref"
+            actions = ["set gitRef to a branch, tag, or commit ref without shell/path traversal characters"]
+    elif "repository not found" in lower or "authentication failed" in lower or "could not read username" in lower:
+        code = "github_repository_auth_or_not_found"
+        actions = [
+            "verify gitRepository owner/repo and that the branch service can reach github.com",
+            "set SIDECAR_GITHUB_TOKEN or GITHUB_TOKEN when the repository is private",
+        ]
+    elif "remote branch" in lower and "not found" in lower:
+        code = "git_ref_not_found"
+        actions = ["verify gitRef exists on the target repository"]
+    elif "not a git repository" in lower:
+        code = "workspace_target_conflict"
+        actions = ["remove or change the existing workspace directory before retrying"]
+
+    return {
+        "workspaceErrorCode": code,
+        "privateRepositoryAuthConfigured": auth_configured,
+        "nextActions": actions,
+        "gitRepository": req.git_repository,
+        "gitRef": req.git_ref,
+    }
+
+
 def _workspace_lock(target: Path) -> asyncio.Lock:
     key = str(target)
     lock = _WORKSPACE_LOCKS.get(key)
@@ -386,8 +422,7 @@ async def run_official_agent(
             message=str(ex),
             content={
                 "adapter": "claude-agent-sdk",
-                "gitRepository": req.git_repository,
-                "gitRef": req.git_ref,
+                **_workspace_error_diagnostics(ex, req),
             },
         )
         return

@@ -87,10 +87,26 @@ class FakeGitProcess:
         return b"", b""
 
 
+class FailingGitProcess(FakeGitProcess):
+    def __init__(self, args: tuple[Any, ...], stderr: str):
+        super().__init__(args)
+        self.returncode = 128
+        self.stderr = stderr
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return b"", self.stderr.encode("utf-8")
+
+
 async def fake_git_exec(*args: Any, cwd: str | None = None, env: dict[str, str] | None = None, **_: Any) -> FakeGitProcess:
     GIT_COMMANDS.append([str(item) for item in args])
     GIT_ENVS.append(env)
     return FakeGitProcess(args, cwd=cwd)
+
+
+async def fake_git_auth_failure_exec(*args: Any, cwd: str | None = None, env: dict[str, str] | None = None, **_: Any) -> FailingGitProcess:
+    GIT_COMMANDS.append([str(item) for item in args])
+    GIT_ENVS.append(env)
+    return FailingGitProcess(args, "remote: Repository not found.")
 
 
 def install_fake_sdk() -> None:
@@ -382,8 +398,10 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([event.type for event in events], ["error"])
         self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["workspaceErrorCode"], "unsupported_git_repository")
         self.assertEqual(events[0].content["gitRepository"], "ssh://github.com/inernoro/prd_agent")
         self.assertEqual(events[0].content["gitRef"], "main")
+        self.assertIn("owner/repo", events[0].content["nextActions"][0])
 
     async def test_invalid_git_ref_returns_structured_error(self) -> None:
         req = build_request().model_copy(update={
@@ -395,8 +413,30 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([event.type for event in events], ["error"])
         self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["workspaceErrorCode"], "unsupported_git_ref")
         self.assertEqual(events[0].content["gitRepository"], "inernoro/prd_agent")
         self.assertEqual(events[0].content["gitRef"], "../main")
+        self.assertIn("gitRef", events[0].content["nextActions"][0])
+
+    async def test_git_auth_or_missing_repo_failure_returns_actionable_workspace_error_without_token(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            os.environ["SIDECAR_GITHUB_TOKEN"] = "ghp-private-test"
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/private_repo",
+                "git_ref": "main",
+            })
+
+            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_auth_failure_exec):
+                events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["workspaceErrorCode"], "github_repository_auth_or_not_found")
+        self.assertEqual(events[0].content["privateRepositoryAuthConfigured"], True)
+        self.assertIn("SIDECAR_GITHUB_TOKEN", events[0].content["nextActions"][1])
+        self.assertNotIn("ghp-private-test", str(events[0].content))
+        self.assertNotIn("ghp-private-test", events[0].message)
 
     def test_workspace_diagnostics_reports_git_workspace_capabilities(self) -> None:
         with tempfile.TemporaryDirectory() as workspaces_root:
