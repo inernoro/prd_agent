@@ -160,6 +160,10 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
             "adapter": "legacy-sidecar",
             "ready": True,
             "reason": "legacy-sidecar uses the anthropic Python SDK path",
+            "loopOwner": "sidecar-legacy-loop",
+            "sdkLoopEnabled": False,
+            "mapRole": "control-plane",
+            "cdsRole": "sandbox-runtime",
         }
 
     try:
@@ -206,6 +210,10 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
         "builtinWriteToolsEnabled": bool(write_tools),
         "builtinWriteTools": write_tools,
         "approvalBridge": "sdk-can-use-tool",
+        "loopOwner": "claude-agent-sdk",
+        "sdkLoopEnabled": True,
+        "mapRole": "control-plane",
+        "cdsRole": "sandbox-runtime",
     }
 
 

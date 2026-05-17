@@ -18,6 +18,8 @@ class SidecarReadinessTests(unittest.TestCase):
 
         self.assertEqual(diagnostics["adapter"], "legacy-sidecar")
         self.assertEqual(diagnostics["ready"], True)
+        self.assertEqual(diagnostics["loopOwner"], "sidecar-legacy-loop")
+        self.assertEqual(diagnostics["sdkLoopEnabled"], False)
 
     def test_official_adapter_reports_missing_sdk_and_cli(self) -> None:
         with patch("importlib.util.find_spec", return_value=None), patch("shutil.which", return_value=None):
@@ -29,6 +31,10 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertIn("claude_cli", diagnostics["missing"])
         self.assertEqual(diagnostics["allowedTools"], ["Read", "Grep", "Glob"])
         self.assertEqual(diagnostics["approvalBridge"], "sdk-can-use-tool")
+        self.assertEqual(diagnostics["loopOwner"], "claude-agent-sdk")
+        self.assertEqual(diagnostics["sdkLoopEnabled"], True)
+        self.assertEqual(diagnostics["mapRole"], "control-plane")
+        self.assertEqual(diagnostics["cdsRole"], "sandbox-runtime")
 
     def test_official_adapter_reports_write_tool_opt_in(self) -> None:
         with patch.dict(os.environ, {
