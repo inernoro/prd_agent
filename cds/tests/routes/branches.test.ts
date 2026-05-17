@@ -4,13 +4,13 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createBranchRouter } from '../../src/routes/branches.js';
+import { clearRunningServiceErrorMessages, createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import type { CdsConfig } from '../../src/types.js';
+import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
 function makeConfig(tmpDir: string): CdsConfig {
   return {
@@ -24,6 +24,40 @@ function makeConfig(tmpDir: string): CdsConfig {
     jwt: { secret: 'test-secret', issuer: 'prdagent' },
   };
 }
+
+describe('branch status helpers', () => {
+  it('clears stale service errors once a service is running again', () => {
+    const entry: BranchEntry = {
+      id: 'branch-1',
+      projectId: 'default',
+      branch: 'main',
+      worktreePath: '/tmp/branch-1',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      services: {
+        api: {
+          profileId: 'api',
+          containerName: 'api-container',
+          hostPort: 10001,
+          status: 'running',
+          errorMessage: '容器 "api-container" 已消失',
+        },
+        worker: {
+          profileId: 'worker',
+          containerName: 'worker-container',
+          hostPort: 10002,
+          status: 'error',
+          errorMessage: '启动失败',
+        },
+      },
+    };
+
+    clearRunningServiceErrorMessages(entry);
+
+    expect(entry.services.api.errorMessage).toBeUndefined();
+    expect(entry.services.worker.errorMessage).toBe('启动失败');
+  });
+});
 
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown,

@@ -927,7 +927,16 @@ function buildSmokeEnv(opts: {
   return env;
 }
 
+export function clearRunningServiceErrorMessages(entry: Pick<BranchEntry, 'services'>): void {
+  for (const svc of Object.values(entry.services || {})) {
+    if (svc.status === 'running' && svc.errorMessage) {
+      svc.errorMessage = undefined;
+    }
+  }
+}
+
 function reconcileBranchStatus(entry: BranchEntry): void {
+  clearRunningServiceErrorMessages(entry);
   const statuses = Object.values(entry.services || {}).map((service) => service.status);
   const previousStatus = entry.status;
   if (statuses.some((status) => status === 'error')) entry.status = 'error';
@@ -3519,6 +3528,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
             if (ready) {
               svc.status = 'running';
+              svc.errorMessage = undefined;
               // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
               // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
               // 据此判断"真发布"还是"配置了但容器没跟上"。
@@ -3924,6 +3934,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         if (ready) {
           svc.status = 'running';
+          svc.errorMessage = undefined;
           // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
           svc.deployedMode = effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
@@ -8124,6 +8135,7 @@ cdscli project list --human
             }, mergedEnv);
 
             svc.status = 'running';
+            svc.errorMessage = undefined;
             // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
             // （runService 直接吃 profile.*），钉住其 activeDeployMode。
             svc.deployedMode = profile.activeDeployMode || '';

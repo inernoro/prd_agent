@@ -184,6 +184,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           }, mergedEnv);
 
           svc.status = 'running';
+          svc.errorMessage = undefined;
           sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}` });
         } catch (err) {
           svc.status = 'error';
