@@ -1079,6 +1079,17 @@ export default function CdsAgentPage() {
         : '待运行';
     const defaultProfileReady = Boolean(defaultRuntimeProfile?.hasApiKey && defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter);
     const templateReady = Boolean(anthropicOfficialProfileTemplate && activeAdapterCompatibility);
+    const backendCommercialReadiness = runtimeStatus?.commercialReadiness ?? null;
+    const backendCommercialGates = new Map((backendCommercialReadiness?.gates ?? []).map((gate) => [gate.code, gate]));
+    const backendGateState = (code: string, fallback: RuntimeReadinessGate['state']): RuntimeReadinessGate['state'] => {
+      const status = backendCommercialGates.get(code)?.status;
+      if (status === 'pass') return 'pass';
+      if (status === 'unblocked') return 'warn';
+      if (status === 'pending') return 'pending';
+      return fallback;
+    };
+    const backendGateValue = (code: string, fallback: string): string => backendCommercialGates.get(code)?.status || fallback;
+    const backendGateDetail = (code: string, fallback: string): string => backendCommercialGates.get(code)?.message || fallback;
     const s1EvidenceReady = officialLoopReady
       && events.some((event) => event.type === 'done' || event.type === 'text_delta')
       && messages.some((message) => message.role === 'assistant' && message.content.trim());
@@ -1089,66 +1100,66 @@ export default function CdsAgentPage() {
       {
         code: 'R0',
         label: '控制面与官方 loop',
-        value: runtimePoolReady && officialLoopReady ? 'ready' : runtimePoolReady ? 'pool ready' : 'not ready',
-        detail: runtimePoolReady && officialLoopReady
+        value: backendGateValue('R0', runtimePoolReady && officialLoopReady ? 'ready' : runtimePoolReady ? 'pool ready' : 'not ready'),
+        detail: backendGateDetail('R0', runtimePoolReady && officialLoopReady
           ? 'MAP 已发现 healthy sidecar，loopOwner 指向 claude-agent-sdk。'
           : runtimePoolReady
           ? 'runtime pool 可用，但还需要证明 loopOwner=claude-agent-sdk 且 SDK loop enabled。'
-          : blockers[0] || registryIssue || '需要先恢复 CDS sidecar runtime pool。',
-        state: runtimePoolReady && officialLoopReady ? 'pass' : runtimeStatus ? 'warn' : 'pending',
+          : blockers[0] || registryIssue || '需要先恢复 CDS sidecar runtime pool.'),
+        state: backendGateState('R0', runtimePoolReady && officialLoopReady ? 'pass' : runtimeStatus ? 'warn' : 'pending'),
       },
       {
         code: 'R1',
         label: '默认 Claude profile',
-        value: defaultProfileReady ? 'ready' : defaultRuntimeProfile ? 'pending' : 'missing',
-        detail: defaultProfileReady
+        value: backendGateValue('R1', defaultProfileReady ? 'ready' : defaultRuntimeProfile ? 'pending' : 'missing'),
+        detail: backendGateDetail('R1', defaultProfileReady
           ? `${defaultRuntimeProfile?.name} 已兼容 ${desiredRuntimeAdapter || 'claude-agent-sdk'}，且 API key 已保存。`
           : defaultRuntimeProfile
           ? profileCompatibilityWarning || `${defaultRuntimeProfile.name} 仍不是 Anthropic/Claude-compatible 默认 profile，真实 S1/S2/S3 会被阻断。`
-          : '需要用 Anthropic 官方模板创建默认 runtime profile，并填入 API key。',
-        state: defaultProfileReady ? 'pass' : defaultRuntimeProfile ? 'warn' : 'pending',
+          : '需要用 Anthropic 官方模板创建默认 runtime profile，并填入 API key.'),
+        state: backendGateState('R1', defaultProfileReady ? 'pass' : defaultRuntimeProfile ? 'warn' : 'pending'),
       },
       {
         code: 'T1',
         label: '官方模板与兼容矩阵',
-        value: templateReady ? 'ready' : 'pending',
-        detail: templateReady
+        value: backendGateValue('T1', templateReady ? 'ready' : 'pending'),
+        detail: backendGateDetail('T1', templateReady
           ? 'Anthropic 官方模板和 adapter compatibility 均由后端返回，不是页面硬编码。'
-          : '需要后端返回 Anthropic 官方模板和 claude-agent-sdk 兼容矩阵。',
-        state: templateReady ? 'pass' : 'pending',
+          : '需要后端返回 Anthropic 官方模板和 claude-agent-sdk 兼容矩阵.'),
+        state: backendGateState('T1', templateReady ? 'pass' : 'pending'),
       },
       {
         code: 'S1',
         label: '只读 provider run',
-        value: s1EvidenceReady ? 'evidence found' : defaultProfileReady ? 'unblocked' : 'blocked',
+        value: s1EvidenceReady ? 'evidence found' : backendGateValue('S1', defaultProfileReady ? 'unblocked' : 'blocked'),
         detail: s1EvidenceReady
           ? '当前会话已有 assistant 输出或 done 事件，可作为只读 run 的页面证据。'
-          : defaultProfileReady
+          : backendGateDetail('S1', defaultProfileReady
           ? '配置已解锁；还需运行 S1 smoke，证明官方 SDK 能真实审查仓库。'
-          : '等待 R1 默认 Claude profile 通过后再运行 S1。',
-        state: s1EvidenceReady ? 'pass' : defaultProfileReady ? 'warn' : 'pending',
+          : '等待 R1 默认 Claude profile 通过后再运行 S1.'),
+        state: s1EvidenceReady ? 'pass' : backendGateState('S1', defaultProfileReady ? 'warn' : 'pending'),
       },
       {
         code: 'S2',
         label: 'MAP 工具审批',
-        value: s2EvidenceReady ? 'evidence found' : defaultProfileReady ? 'unblocked' : 'blocked',
+        value: s2EvidenceReady ? 'evidence found' : backendGateValue('S2', defaultProfileReady ? 'unblocked' : 'blocked'),
         detail: s2EvidenceReady
           ? '当前会话已有 approval request 和 MAP decision 证据。'
-          : defaultProfileReady
+          : backendGateDetail('S2', defaultProfileReady
           ? '还需运行 S2 controls，证明危险工具会回到 MAP 审批。'
-          : '等待 R1 默认 Claude profile 通过后再运行 S2。',
-        state: s2EvidenceReady ? 'pass' : defaultProfileReady ? 'warn' : 'pending',
+          : '等待 R1 默认 Claude profile 通过后再运行 S2.'),
+        state: s2EvidenceReady ? 'pass' : backendGateState('S2', defaultProfileReady ? 'warn' : 'pending'),
       },
       {
         code: 'S3',
         label: 'Stop / interrupt',
-        value: s3EvidenceReady ? 'evidence found' : defaultProfileReady ? 'unblocked' : 'blocked',
+        value: s3EvidenceReady ? 'evidence found' : backendGateValue('S3', defaultProfileReady ? 'unblocked' : 'blocked'),
         detail: s3EvidenceReady
           ? '当前会话已有 runtime cancel 或 SDK cancelled 证据。'
-          : defaultProfileReady
+          : backendGateDetail('S3', defaultProfileReady
           ? '还需运行 S3 controls，证明 Stop 能触达底层 SDK run。'
-          : '等待 R1 默认 Claude profile 通过后再运行 S3。',
-        state: s3EvidenceReady ? 'pass' : defaultProfileReady ? 'warn' : 'pending',
+          : '等待 R1 默认 Claude profile 通过后再运行 S3.'),
+        state: s3EvidenceReady ? 'pass' : backendGateState('S3', defaultProfileReady ? 'warn' : 'pending'),
       },
       {
         code: 'V1',

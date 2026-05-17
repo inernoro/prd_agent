@@ -67,16 +67,94 @@ public class InfraAgentSessionsController : ControllerBase
             ? null
             : await ResolveDefaultRuntimeProfileDiagnosticsAsync(desiredRuntimeAdapter, ct);
         var baseDiagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
+        var commercialReadiness = BuildCommercialReadiness(
+            baseDiagnostics,
+            desiredRuntimeAdapter,
+            profileDiagnostics);
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
             RuntimeTransport = _runtimeAdapter?.AdapterKind,
             DefaultRuntimeProfile = profileDiagnostics,
+            CommercialReadiness = commercialReadiness,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
                 profileDiagnostics)
         };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
+    }
+
+    private static SidecarCommercialReadinessDiagnostics BuildCommercialReadiness(
+        SidecarPoolDiagnostics diagnostics,
+        string desiredRuntimeAdapter,
+        SidecarRuntimeProfileDiagnostics? profile)
+    {
+        var officialInstances = diagnostics.Instances.Count(x =>
+            string.Equals(x.LoopOwner, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+            || x.SdkLoopEnabled == true);
+        var r0Ready = diagnostics.InstanceCount > 0
+            && diagnostics.HealthyCount > 0
+            && officialInstances > 0
+            && string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase);
+        var r1Ready = profile is
+        {
+            HasApiKey: true,
+            CompatibleWithDesiredRuntimeAdapter: true
+        };
+        var t1Ready = InfraAgentRuntimeProfileTemplates.All.Any(x =>
+                x.CompatibleRuntimeAdapters.Contains(InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk))
+            && InfraAgentRuntimeAdapterCompatibility.All.Any(x =>
+                string.Equals(x.Id, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.Status, "default-supported", StringComparison.OrdinalIgnoreCase));
+        var providerStatus = r1Ready ? "unblocked" : "pending";
+        var providerMessage = r1Ready
+            ? "默认 profile 已兼容并带 key；可以显式开启 provider smoke 验证真实 run。"
+            : "等待 R1 通过后再运行真实 provider smoke。";
+
+        var gates = new List<SidecarCommercialReadinessGate>
+        {
+            new(
+                "R0",
+                "MAP/CDS runtime pool official SDK loop ownership",
+                r0Ready ? "pass" : "pending",
+                r0Ready
+                    ? $"pool={diagnostics.HealthyCount}/{diagnostics.InstanceCount} officialInstances={officialInstances}"
+                    : $"instanceCount={diagnostics.InstanceCount} healthyCount={diagnostics.HealthyCount} officialInstances={officialInstances}",
+                r0Ready ? Array.Empty<string>() : diagnostics.NextActions),
+            new(
+                "R1",
+                "Default runtime profile compatibility",
+                r1Ready ? "pass" : "pending",
+                r1Ready
+                    ? "default profile can be used by claude-agent-sdk"
+                    : "create a default Anthropic/Claude-compatible runtime profile with API key",
+                r1Ready ? Array.Empty<string>() : new[] { "使用 Anthropic 官方模板创建默认 profile，并填入 API key" }),
+            new(
+                "T1",
+                "Official template and adapter compatibility APIs",
+                t1Ready ? "pass" : "pending",
+                t1Ready
+                    ? "template and compatibility matrix are backend-owned"
+                    : "backend template or adapter compatibility matrix is missing official SDK support",
+                t1Ready ? Array.Empty<string>() : new[] { "检查 runtime profile templates 与 adapter compatibility API" }),
+            new("S1", "Read-only provider run", providerStatus, providerMessage,
+                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-run.sh" } : Array.Empty<string>()),
+            new("S2", "MAP tool approval provider run", providerStatus, providerMessage,
+                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh" } : Array.Empty<string>()),
+            new("S3", "Stop / interrupt provider run", providerStatus, providerMessage,
+                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh" } : Array.Empty<string>())
+        };
+        var passed = gates.Count(x => string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
+        var pending = gates
+            .Where(x => !string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase))
+            .Select(x => $"{x.Code}: {x.Message}")
+            .ToArray();
+        var overall = passed == gates.Count
+            ? "ready-for-visual-evidence"
+            : r1Ready
+                ? "provider-smokes-required"
+                : "profile-blocked";
+        return new SidecarCommercialReadinessDiagnostics(overall, passed, gates.Count, gates, pending);
     }
 
     private async Task<SidecarRuntimeProfileDiagnostics?> ResolveDefaultRuntimeProfileDiagnosticsAsync(

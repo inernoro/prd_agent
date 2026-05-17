@@ -379,6 +379,86 @@ public class InfraAgentSessionsControllerTests
         }
     }
 
+    [Fact]
+    public async Task RuntimeStatus_ShouldExposeCommercialReadinessLedger()
+    {
+        var previous = Environment.GetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar);
+        var service = new Mock<IInfraAgentSessionService>();
+        var router = new Mock<IClaudeSidecarRouter>();
+        var profiles = new Mock<IInfraAgentRuntimeProfileService>();
+        router
+            .Setup(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SidecarPoolDiagnostics(
+                true,
+                1,
+                1,
+                new[]
+                {
+                    new SidecarInstanceDiagnostics(
+                        "sidecar-1",
+                        "http://sidecar",
+                        "test",
+                        Array.Empty<string>(),
+                        true,
+                        true,
+                        200,
+                        true,
+                        true,
+                        false,
+                        true,
+                        InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk,
+                        null,
+                        null,
+                        LoopOwner: InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk,
+                        SdkLoopEnabled: true)
+                },
+                NextActions: Array.Empty<string>()));
+        profiles
+            .Setup(x => x.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<InfraAgentRuntimeProfileView>
+            {
+                new(
+                    "profile-1",
+                    "OpenRouter DeepSeek",
+                    InfraAgentRuntimes.ClaudeSdk,
+                    InfraAgentRuntimeProtocols.OpenAiCompatible,
+                    "https://openrouter.ai/api/v1",
+                    "deepseek/deepseek-v4-pro",
+                    2,
+                    4096,
+                    900,
+                    InfraAgentRuntimeNetworkPolicies.Restricted,
+                    30,
+                    true,
+                    true,
+                    DateTime.UtcNow,
+                    DateTime.UtcNow)
+            });
+        try
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, null);
+            var controller = BuildController(service.Object, "user-1", router.Object, runtimeProfiles: profiles.Object);
+
+            var result = await controller.RuntimeStatus(refreshDiscovery: false, CancellationToken.None);
+
+            var objectResult = result.ShouldBeOfType<OkObjectResult>();
+            var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+            var data = response.Data.ShouldNotBeNull();
+            var diagnosticsProperty = data.GetType().GetProperty("diagnostics").ShouldNotBeNull();
+            var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
+            var readiness = diagnostics.CommercialReadiness.ShouldNotBeNull();
+            readiness.Overall.ShouldBe("profile-blocked");
+            readiness.Gates.Single(x => x.Code == "R0").Status.ShouldBe("pass");
+            readiness.Gates.Single(x => x.Code == "T1").Status.ShouldBe("pass");
+            readiness.Gates.Single(x => x.Code == "R1").Status.ShouldBe("pending");
+            readiness.Pending.ShouldContain(x => x.StartsWith("R1:", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, previous);
+        }
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId,

@@ -216,6 +216,19 @@ export interface InfraAgentRuntimeDiagnostics {
     compatibleWithDesiredRuntimeAdapter: boolean;
     warning?: string | null;
   } | null;
+  commercialReadiness?: {
+    overall: string;
+    passed: number;
+    total: number;
+    gates: Array<{
+      code: string;
+      label: string;
+      status: string;
+      message: string;
+      nextActions?: string[] | null;
+    }>;
+    pending: string[];
+  } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;
     activeCdsConnections?: number | null;
