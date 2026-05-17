@@ -38,8 +38,10 @@ import './emergence.css';
 const INTRO_SEEN_KEY = 'emergence.intro.seen';
 // 一次探索/涌现预期的子节点数（仅用于预留 band 居中，多/少都不影响已落位节点）
 const EXPECTED_CHILDREN = 4;
-// 子节点逐个落位的间隔（后端常一次性快速 yield 3-5 个，靠这个节流出"一个个生长"的观感）
-const ARRIVAL_STAGGER_MS = 170;
+// 生成"播放"结束、临时面板消失后，等这么久再出第一个节点
+const REVEAL_DELAY_MS = 1000;
+// 之后每个节点渐显的间隔（一个一个长出来）
+const REVEAL_INTERVAL_MS = 1000;
 
 // ── 自定义节点注册 ──
 const nodeTypes = { emergence: EmergenceFlowNode };
@@ -135,22 +137,24 @@ function computeFullLayout(nodes: EmergenceNodeType[]): Map<string, XY> {
   return positions;
 }
 
-// ── 生成槽（占位节点）规格 ──
+// ── 临时生成面板 + 子节点 band 预留 ──
 interface GenSlot {
-  /** 触发该槽的父节点 id（涌现场景为锚点节点） */
+  /** 触发该面板的父节点 id（涌现场景为锚点节点） */
   parentId: string;
-  /** 槽节点 id */
+  /** 临时面板节点 id */
   slotId: string;
-  /** 该批子节点的水平起点（已落位的不再移动，槽随 filled 右移） */
+  /** 临时面板位置（父节点正下方居中，单一固定，绝不影响布局） */
+  panelX: number;
+  /** 该批子节点的水平起点（居中于父节点之下，逐个右移落位） */
   baseX: number;
-  /** 该批子节点的 y（父 y + DEPTH_STEP） */
+  /** 子节点行的 y（父 y + DEPTH_STEP） */
   y: number;
   /** 已落位子节点数 */
   filled: number;
   /** 维度（决定颜色） */
   dim: 1 | 2 | 3;
-  /** SSE 流是否已结束（队列排空后据此收尾） */
-  streamEnded: boolean;
+  /** 是否仍在"生成播放"中：true 显示临时面板；false 面板消失，准备逐个出节点 */
+  generating: boolean;
 }
 
 // ── 涌现画布 ──
@@ -166,15 +170,14 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const backendNodesRef = useRef<EmergenceNodeType[]>([]);
   // 位置权威：所有节点位置的唯一来源。流式期间只为「新到达节点」写入，绝不动既有节点
   const positionsRef = useRef<Map<string, XY>>(new Map());
-  // 活跃生成槽（按 parentId 索引，并行探索可有多个）
+  // 活跃临时面板（按 parentId 索引，并行探索可有多个）
   const slotsRef = useRef<Map<string, GenSlot>>(new Map());
-  // 每个 parentId 的生成槽实时 LLM 文本（喂给该槽，固定尺寸，绝不影响布局）
+  // 每个 parentId 的临时面板实时 LLM 文本（固定尺寸，绝不影响布局）
   const liveTextRef = useRef<Map<string, string>>(new Map());
-  // 子节点逐个落位队列 + 节流定时器
-  const arrivalQueueRef = useRef<EmergenceNodeType[]>([]);
-  const drainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 父节点尚未到达的孤儿子节点暂存（父出现后回收，避免被提升为根/丢失）
-  const pendingOrphansRef = useRef<Map<string, EmergenceNodeType[]>>(new Map());
+  // 生成期间，每个父节点的到达子节点先缓冲，等"播放"结束再逐个渐显
+  const pendingByParentRef = useRef<Map<string, EmergenceNodeType[]>>(new Map());
+  // 每个父节点的逐个渐显定时器
+  const revealTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // 刚到达节点的入场动画标记
   const arrivedIdsRef = useRef<Set<string>>(new Set());
   // 灵感对话框
@@ -260,12 +263,13 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       };
     });
 
-    // 生成槽：每个活跃父节点恰好一个，固定尺寸，实时文本只喂它
+    // 临时生成面板：仅在"播放中"显示，父节点正下方居中，单一固定
     for (const slot of slotsRef.current.values()) {
+      if (!slot.generating) continue;
       flowNodes.push({
         id: slot.slotId,
         type: 'emergence',
-        position: { x: slot.baseX + slot.filled * LEAF_WIDTH, y: slot.y },
+        position: { x: slot.panelX, y: slot.y },
         draggable: false,
         selectable: false,
         data: {
@@ -310,7 +314,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       }
     }
     for (const slot of slotsRef.current.values()) {
-      if (!byId.has(slot.parentId)) continue;
+      if (!slot.generating || !byId.has(slot.parentId)) continue;
       flowEdges.push({
         id: `slot:${slot.parentId}->${slot.slotId}`,
         source: slot.parentId,
@@ -371,66 +375,80 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     slotsRef.current.set(parentId, {
       parentId,
       slotId: `__gen_${parentId}_${Date.now()}`,
+      panelX: parentPos.x,
       baseX,
       y,
       filled: 0,
       dim,
-      streamEnded: false,
+      generating: true,
     });
   }, []);
 
-  const finalizeParent = useCallback((parentId: string) => {
+  // 解析一个到达节点应归属哪个临时面板（父 id / 锚点）
+  const resolveSlotKey = useCallback((node: EmergenceNodeType): string | null => {
+    if (node.parentId && slotsRef.current.has(node.parentId)) return node.parentId;
+    const has = (id: string) => backendNodesRef.current.some(n => n.id === id);
+    const a = anchorParentId(node, has);
+    if (a && slotsRef.current.has(a)) return a;
+    return emergeAnchorRef.current && slotsRef.current.has(emergeAnchorRef.current)
+      ? emergeAnchorRef.current
+      : null;
+  }, []);
+
+  // 生成期间：到达节点先缓冲，不落位（临时面板继续播放）
+  const enqueueArrival = useCallback((node: EmergenceNodeType) => {
+    const key = resolveSlotKey(node) ?? emergeAnchorRef.current ?? '__detached__';
+    const buf = pendingByParentRef.current.get(key) ?? [];
+    buf.push(node);
+    pendingByParentRef.current.set(key, buf);
+  }, [resolveSlotKey]);
+
+  // 收尾某父：清掉面板/缓冲/定时器
+  const cleanupParent = useCallback((parentId: string) => {
+    const t = revealTimersRef.current.get(parentId);
+    if (t) { clearTimeout(t); revealTimersRef.current.delete(parentId); }
     slotsRef.current.delete(parentId);
     liveTextRef.current.delete(parentId);
-    buildFlow();
-  }, [buildFlow]);
+    pendingByParentRef.current.delete(parentId);
+  }, []);
 
-  // 释放队列中的一个子节点 → 落到预留槽位
-  const releaseOne = useCallback(() => {
-    drainTimerRef.current = null;
-    const node = arrivalQueueRef.current.shift();
-    if (node) {
-      const has = (id: string) => backendNodesRef.current.some(n => n.id === id);
-      const anchor = node.parentId && slotsRef.current.has(node.parentId)
-        ? node.parentId
-        : (anchorParentId(node, has) && slotsRef.current.has(anchorParentId(node, has)!)
-          ? anchorParentId(node, has)!
-          : emergeAnchorRef.current);
-      const slot = anchor ? slotsRef.current.get(anchor) : undefined;
-
-      backendNodesRef.current = [...backendNodesRef.current, node];
-      if (slot) {
-        positionsRef.current.set(node.id, { x: slot.baseX + slot.filled * LEAF_WIDTH, y: slot.y });
-        slot.filled += 1;
-      }
-      // 回收等待该节点作为父的孤儿
-      const orphans = pendingOrphansRef.current.get(node.id);
-      if (orphans?.length) {
-        pendingOrphansRef.current.delete(node.id);
-        arrivalQueueRef.current.unshift(...orphans);
-      }
-      markArrived(node.id);
-      setNodeCount(c => c + 1);
+  // 逐个渐显：从缓冲弹一个 → 落到预留 band → 1s 后再下一个
+  const revealNext = useCallback((parentId: string) => {
+    revealTimersRef.current.delete(parentId);
+    const slot = slotsRef.current.get(parentId);
+    const buf = pendingByParentRef.current.get(parentId) ?? [];
+    const node = buf.shift();
+    if (!node || !slot) {
+      cleanupParent(parentId);
       buildFlow();
-      if (slot && slot.filled === 1) centerOnNode(node.id);
+      return;
     }
+    backendNodesRef.current = [...backendNodesRef.current, node];
+    positionsRef.current.set(node.id, { x: slot.baseX + slot.filled * LEAF_WIDTH, y: slot.y });
+    slot.filled += 1;
+    markArrived(node.id);
+    setNodeCount(c => c + 1);
+    buildFlow();
+    if (slot.filled === 1) centerOnNode(node.id);
 
-    if (arrivalQueueRef.current.length > 0) {
-      drainTimerRef.current = setTimeout(releaseOne, ARRIVAL_STAGGER_MS);
+    if (buf.length > 0) {
+      const t = setTimeout(() => revealNext(parentId), REVEAL_INTERVAL_MS);
+      revealTimersRef.current.set(parentId, t);
     } else {
-      // 队列排空：收尾所有已结束的流
-      for (const slot of [...slotsRef.current.values()]) {
-        if (slot.streamEnded) finalizeParent(slot.parentId);
-      }
+      cleanupParent(parentId);
     }
-  }, [markArrived, buildFlow, centerOnNode, finalizeParent]);
+  }, [markArrived, buildFlow, centerOnNode, cleanupParent]);
 
-  const enqueueArrival = useCallback((node: EmergenceNodeType) => {
-    arrivalQueueRef.current.push(node);
-    if (drainTimerRef.current == null) {
-      drainTimerRef.current = setTimeout(releaseOne, 0);
-    }
-  }, [releaseOne]);
+  // 生成"播放"结束：临时面板消失 → 等 1s → 开始逐个出节点
+  const finishGeneration = useCallback((parentId: string) => {
+    const slot = slotsRef.current.get(parentId);
+    if (!slot) return;
+    slot.generating = false;            // 临时面板立即消失
+    liveTextRef.current.delete(parentId);
+    buildFlow();
+    const t = setTimeout(() => revealNext(parentId), REVEAL_DELAY_MS);
+    revealTimersRef.current.set(parentId, t);
+  }, [buildFlow, revealNext]);
 
   // ── 涌现 SSE ──
   const {
@@ -453,9 +471,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       },
       onDone: (data) => {
         const pid = emergeAnchorRef.current;
-        const slot = pid ? slotsRef.current.get(pid) : undefined;
-        if (slot) slot.streamEnded = true;
-        if (arrivalQueueRef.current.length === 0 && pid) finalizeParent(pid);
+        if (pid) finishGeneration(pid);
         const d = data as { totalNew?: number; error?: string };
         if (d.error) toast.error('涌现失败', d.error);
         else if (!d.totalNew) toast.warning('涌现未生成节点', '已有节点可能不足以组合，请先探索更多节点。');
@@ -463,7 +479,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       },
       onError: (msg) => {
         const pid = emergeAnchorRef.current;
-        if (pid) finalizeParent(pid);
+        if (pid) { cleanupParent(pid); buildFlow(); }
         toast.error('涌现失败', msg);
       },
     });
@@ -491,9 +507,10 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
   useEffect(() => { loadTree(); }, [loadTree]);
 
-  // 卸载清理定时器
-  useEffect(() => () => {
-    if (drainTimerRef.current != null) clearTimeout(drainTimerRef.current);
+  // 卸载清理所有逐个渐显定时器
+  useEffect(() => {
+    const timers = revealTimersRef.current;
+    return () => { for (const t of timers.values()) clearTimeout(t); };
   }, []);
 
   // ── 探索 ──
@@ -514,6 +531,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
     reserveBand(nodeId, 1);
     buildFlow();
+    const gen = slotsRef.current.get(nodeId);
+    if (gen) centerOnNode(gen.slotId);
 
     const body = userPrompt?.trim() ? { userPrompt: userPrompt.trim() } : undefined;
 
@@ -554,27 +573,22 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     } finally {
       activeExploresRef.current.delete(nodeId);
       bumpExplore();
-      const slot = slotsRef.current.get(nodeId);
-      if (slot) {
-        slot.streamEnded = true;
-        if (arrivalQueueRef.current.length === 0) finalizeParent(nodeId);
-        else buildFlow();
-      } else {
-        buildFlow();
-      }
+      // 生成"播放"结束：临时面板消失 → 等 1s → 逐个出节点
+      // （若用户手动停止，slot 已被 stopAll 清掉，这里安全 no-op）
+      finishGeneration(nodeId);
     }
-  }, [isEmerging, bumpExplore, reserveBand, buildFlow, pokeSlotText, enqueueArrival, finalizeParent]);
+  }, [isEmerging, bumpExplore, reserveBand, buildFlow, pokeSlotText, enqueueArrival, finishGeneration, centerOnNode]);
 
   // 中止所有活跃流
   const stopAll = useCallback(() => {
     for (const s of activeExploresRef.current.values()) s.controller.abort();
     activeExploresRef.current.clear();
     abortEmerge();
-    if (drainTimerRef.current != null) { clearTimeout(drainTimerRef.current); drainTimerRef.current = null; }
-    arrivalQueueRef.current = [];
+    for (const t of revealTimersRef.current.values()) clearTimeout(t);
+    revealTimersRef.current.clear();
+    pendingByParentRef.current.clear();
     slotsRef.current.clear();
     liveTextRef.current.clear();
-    pendingOrphansRef.current.clear();
     emergeAnchorRef.current = null;
     bumpExplore();
     buildFlow();
@@ -618,9 +632,11 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     if (anchorId) {
       reserveBand(anchorId, fantasy ? 3 : 2);
       buildFlow();
+      const gen = slotsRef.current.get(anchorId);
+      if (gen) centerOnNode(gen.slotId);
     }
     startEmerge({ url: `${api.emergence.trees.emerge(treeId)}${fantasy ? '?fantasy=true' : ''}` });
-  }, [treeId, isEmerging, startEmerge, reserveBand, buildFlow]);
+  }, [treeId, isEmerging, startEmerge, reserveBand, buildFlow, centerOnNode]);
 
   // 手动整理：唯一会移动既有节点的入口，平滑滑行
   const handleTidy = useCallback(() => {
