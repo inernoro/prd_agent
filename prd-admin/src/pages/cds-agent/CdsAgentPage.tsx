@@ -1289,6 +1289,7 @@ export default function CdsAgentPage() {
           ? '不要重复部署；下一步是显式开启 provider smoke，补齐 S1/S2/S3 的真实调用证据。'
           : '不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile。');
     const executionNextCommand = backendExecutionPanel?.nextCommand || commercialNextCommand;
+    const executionGateCounts = backendExecutionPanel?.gateCounts ?? null;
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1371,6 +1372,7 @@ export default function CdsAgentPage() {
       commercialNextAction: executionNextAction,
       commercialDeploymentAdvice: executionDeploymentAdvice,
       commercialNextCommand: executionNextCommand,
+      executionGateCounts,
       nextCyclePlan,
       debugCommands,
       readinessGates,
@@ -3631,6 +3633,37 @@ export default function CdsAgentPage() {
                           <div>{runtimeDiagnostics.commercialPassed}/{runtimeDiagnostics.commercialTotal} gates passed</div>
                           <div>{runtimeDiagnostics.commercialPending.length} pending gates</div>
                           <div>{runtimeDiagnostics.commercialState}</div>
+                          {runtimeDiagnostics.executionGateCounts && (
+                            <div className="mt-2 flex max-w-[260px] flex-wrap justify-end gap-1 justify-self-end">
+                              {(['pass', 'pending', 'failed', 'unknown'] as const).map((key) => {
+                                const count = runtimeDiagnostics.executionGateCounts?.[key] ?? 0;
+                                if (count <= 0) return null;
+                                const tone = key === 'pass'
+                                  ? 'rgba(34,197,94,0.16)'
+                                  : key === 'failed'
+                                    ? 'rgba(239,68,68,0.16)'
+                                    : key === 'pending'
+                                      ? 'rgba(245,158,11,0.16)'
+                                      : 'rgba(148,163,184,0.12)';
+                                const textTone = key === 'pass'
+                                  ? 'rgba(134,239,172,0.92)'
+                                  : key === 'failed'
+                                    ? 'rgba(254,202,202,0.92)'
+                                    : key === 'pending'
+                                      ? 'rgba(253,230,138,0.92)'
+                                      : 'rgba(203,213,225,0.78)';
+                                return (
+                                  <span
+                                    key={key}
+                                    className="inline-flex min-h-6 items-center rounded px-1.5 text-[11px] font-semibold"
+                                    style={{ background: tone, color: textTone, border: '1px solid rgba(255,255,255,0.08)' }}
+                                  >
+                                    {key} {count}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
                       {runtimeDiagnostics.commercialNextCommand && (
