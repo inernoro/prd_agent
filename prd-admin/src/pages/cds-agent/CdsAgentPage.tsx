@@ -3880,6 +3880,21 @@ export default function CdsAgentPage() {
                           </span>
                         </div>
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          <div className="rounded-md px-3 py-2" style={{ background: activeAdapterCompatibility.routableByDefault ? 'rgba(34,197,94,0.08)' : 'rgba(245,158,11,0.09)', border: activeAdapterCompatibility.routableByDefault ? '1px solid rgba(34,197,94,0.22)' : '1px solid rgba(245,158,11,0.22)' }}>
+                            <div className="text-[11px] font-semibold text-white/38">默认路由</div>
+                            <div className="mt-1 text-xs font-semibold text-white/74">
+                              {activeAdapterCompatibility.routableByDefault ? '允许默认进入代码审查' : '禁止默认路由'}
+                            </div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/42">
+                              {(activeAdapterCompatibility.supportedTaskKinds.length > 0 ? activeAdapterCompatibility.supportedTaskKinds : ['未声明任务类型']).join(' / ')}
+                            </div>
+                          </div>
+                          <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                            <div className="text-[11px] font-semibold text-white/38">证据门禁</div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/66">
+                              {(activeAdapterCompatibility.requiredEvidenceGates.length > 0 ? activeAdapterCompatibility.requiredEvidenceGates : ['未声明']).join(' / ')}
+                            </div>
+                          </div>
                           <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
                             <div className="text-[11px] font-semibold text-white/38">支持的 profile</div>
                             <div className="mt-1 text-xs leading-relaxed text-white/66">
@@ -3895,7 +3910,38 @@ export default function CdsAgentPage() {
                               {activeAdapterCompatibility.knownIncompatibleProfilePatterns.slice(0, 2).join(' · ') || '未声明'}
                             </div>
                           </div>
+                          <div className="rounded-md px-3 py-2 md:col-span-2" style={{ background: activeAdapterCompatibility.missingAdapterContracts.length > 0 ? 'rgba(245,158,11,0.09)' : 'rgba(34,197,94,0.08)', border: activeAdapterCompatibility.missingAdapterContracts.length > 0 ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(34,197,94,0.18)' }}>
+                            <div className="text-[11px] font-semibold text-white/38">缺失 adapter contract</div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/66">
+                              {activeAdapterCompatibility.missingAdapterContracts.length > 0
+                                ? activeAdapterCompatibility.missingAdapterContracts.join(' / ')
+                                : '无缺失 contract'}
+                            </div>
+                          </div>
                         </div>
+                        {adapterCompatibility.length > 1 && (
+                          <div className="mt-2 rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.5)', border: '1px solid rgba(148,163,184,0.12)' }}>
+                            <div className="text-[11px] font-semibold text-white/38">候选 adapter 边界</div>
+                            <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                              {adapterCompatibility.map((item) => (
+                                <div key={item.id} className="rounded-md px-2.5 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <div className="truncate text-xs font-semibold text-white/72">{item.label}</div>
+                                      <div className="mt-0.5 text-[11px] text-white/38">{item.id}</div>
+                                    </div>
+                                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold" style={{ background: item.routableByDefault ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.1)', color: item.routableByDefault ? 'rgba(134,239,172,0.92)' : 'rgba(203,213,225,0.76)' }}>
+                                      {item.routableByDefault ? 'ROUTABLE' : item.status}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/48">
+                                    {(item.missingAdapterContracts.length > 0 ? item.missingAdapterContracts : item.supportedTaskKinds).join(' / ') || '未声明 contract'}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <div className="mt-2 grid gap-2 xl:grid-cols-2">
                           {activeAdapterCompatibility.notes.length > 0 && (
                             <div className="rounded-md px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
