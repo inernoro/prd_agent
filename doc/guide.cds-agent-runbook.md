@@ -1,6 +1,6 @@
 # CDS Agent 运行手册 · 指南
 
-> **版本**：v1.3 | **日期**：2026-05-17 | **状态**：active（官方 SDK adapter 路径已标注，商业级门禁未全部关闭）
+> **版本**：v1.4 | **日期**：2026-05-18 | **状态**：active（官方 SDK adapter 路径已标注，商业级门禁未全部关闭）
 
 ## 服务组成
 
@@ -100,6 +100,10 @@ phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-g
 `ready_for_provider_smokes`、`blocked_provider_smokes`、`provider_smokes_incomplete`
 都不应该靠重复部署解决，先补 provider key 或跑 provider smoke。
 
+长步骤会每 15 秒输出一次 heartbeat：包含当前 step、elapsed 秒数、日志路径和日志尾部。
+heartbeat 只用于暴露进度，不会让快步骤额外等待；如果看到某一步持续输出 heartbeat，
+优先看它的 phase 判断是本地测试、远程 API、容器 exec、provider 调用还是视觉截图。
+
 注意凭据边界：`AI_ACCESS_KEY` 是 MAP/CDS API 的 `X-AI-Access-Key` 鉴权，不是 Anthropic provider key。真实 provider key 只应通过 runtime profile、页面 R1 修复入口，或 smoke 里的 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 提供。
 
 | 门禁 | 证明什么 | 命令或入口 |
@@ -119,13 +123,18 @@ phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-g
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
 ```
 
-截至 2026-05-18，远程 preview 已部署到 `ef724771`，最新 one-cycle 证据是 `/tmp/cds-agent-cycle-ef724771`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`A0=pass`、`V1=pass`、`N6=pass`、`R1/S1/S2/S3=pending`，总耗时 84s，最慢步骤是 V1 视觉 29s、N6 非代码兼容 18s、R0 sidecar alias 10s。目标审计报告是 `/tmp/cds-agent-goal-audit-ef724771.json`，结论仍是 `goalStatus=not_complete`。这次远程自动部署从 GitHub check `23:17:57` in_progress 到 CDS `23:21:28` running，主要耗时在 CDS 构建/启动；一旦 preview 进入 running，`blocked_r1` 不需要继续 redeploy。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
+截至 2026-05-18，远程 preview 已部署到 `c874daa3`，最新无 provider one-cycle 证据是 `/tmp/cds-agent-cycle-heartbeat-fixed`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`A0=pass`、`V1=pass`、`N6=pass`、`R1/S1/S2/S3=pending`，总耗时 75s，最慢步骤是 V1 视觉 29s、R0 sidecar alias 11s、doctor 10s。V1 在 15s 时输出了 heartbeat，证明长视觉步骤可观察；其他快步骤没有被 heartbeat 人为拖慢。目标审计报告是 `/tmp/cds-agent-goal-audit-current.json`，结论仍是 `goalStatus=not_complete`。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
 
 ```bash
 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \
 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 \
   bash scripts/smoke-cds-agent-one-cycle.sh
 ```
+
+如果 `scripts/audit-cds-agent-goal.sh` 或 N6 在普通 sandbox 内出现 `MSB1025`、`NamedPipeServerStream`、
+`System.Net.Sockets.SocketException`、`Permission denied`，这不是非代码 Agent 兼容性失败，而是
+MSBuild named pipe/socket 权限不足。目标审计会把这种情况标成 `N6=infra_failed`；应在有 dotnet
+权限的本地环境重跑 audit，再判断 N6 是否真的失败。
 
 ## 会话无法恢复
 

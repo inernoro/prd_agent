@@ -36,6 +36,7 @@ timing_seconds=()
 timing_indices=()
 TIMING_STEP_TOTAL=2
 TIMING_STEP_CURRENT=0
+AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
 
 run_step() {
   local label="$1"
@@ -57,6 +58,51 @@ run_step() {
   ended=$(date +%s)
   duration=$((ended - started))
   printf 'FAIL %s (%ss)\n' "$label" "$duration" >&2
+  timing_names+=("$label")
+  timing_statuses+=("failed")
+  timing_seconds+=("$duration")
+  timing_indices+=("$TIMING_STEP_CURRENT")
+  failures+=("$label")
+  return 1
+}
+
+run_step_logged() {
+  local label="$1"
+  local log="$2"
+  shift 2
+  local started ended duration pid rc last_heartbeat elapsed
+  TIMING_STEP_CURRENT=$((TIMING_STEP_CURRENT + 1))
+  started=$(date +%s)
+  last_heartbeat="$started"
+  printf '>>> [%s/%s] %s\n' "$TIMING_STEP_CURRENT" "$TIMING_STEP_TOTAL" "$label"
+  printf '    log: %s\n' "$log"
+  "$@" >"$log" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    elapsed=$(( $(date +%s) - started ))
+    if kill -0 "$pid" 2>/dev/null && (( $(date +%s) - last_heartbeat >= AUDIT_HEARTBEAT_SECONDS )); then
+      last_heartbeat=$(date +%s)
+      printf '    still running · elapsed=%ss · log=%s\n' "$elapsed" "$log"
+      tail -n 3 "$log" 2>/dev/null || true
+    fi
+  done
+  set +e
+  wait "$pid"
+  rc=$?
+  set -e
+  ended=$(date +%s)
+  duration=$((ended - started))
+  if (( rc == 0 )); then
+    printf 'PASS %s (%ss)\n' "$label" "$duration"
+    timing_names+=("$label")
+    timing_statuses+=("pass")
+    timing_seconds+=("$duration")
+    timing_indices+=("$TIMING_STEP_CURRENT")
+    return 0
+  fi
+  printf 'FAIL %s (exit=%s, %ss)\n' "$label" "$rc" "$duration" >&2
+  tail -n 40 "$log" >&2 || true
   timing_names+=("$label")
   timing_statuses+=("failed")
   timing_seconds+=("$duration")
@@ -94,7 +140,7 @@ cd "$ROOT_DIR"
 mkdir -p "$AUDIT_DIR"
 
 run_step "A0 official SDK adapter boundary" env SMOKE_CDS_AGENT_BOUNDARY_REPORT="$BOUNDARY_REPORT" bash "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || true
-run_step "N6 non-code and candidate SDK compatibility" bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" >"$N6_LOG" 2>&1 || true
+run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
 
 if [[ -z "$cycle_summary" ]]; then
   cycle_summary=$(find_latest_cycle_summary)
@@ -120,7 +166,9 @@ if [[ -f "$BOUNDARY_REPORT" ]]; then
 fi
 
 n6_status="pass"
-if (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "N6 non-code and candidate SDK compatibility"; then
+if [[ -s "$N6_LOG" ]] && grep -Eq 'MSB1025|System\.Net\.Sockets\.SocketException|Permission denied|NamedPipeServerStream' "$N6_LOG"; then
+  n6_status="infra_failed"
+elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "N6 non-code and candidate SDK compatibility"; then
   n6_status="failed"
 elif [[ ! -s "$N6_LOG" ]]; then
   n6_status="missing"
@@ -215,7 +263,11 @@ if [[ "$boundary_status" != "pass" ]]; then
   failures+=("A0 boundary did not pass")
 fi
 if [[ "$n6_status" != "pass" ]]; then
-  failures+=("N6 compatibility did not pass")
+  if [[ "$n6_status" == "infra_failed" ]]; then
+    failures+=("N6 guardrail infra failed; rerun outside sandbox or with dotnet permissions")
+  else
+    failures+=("N6 compatibility did not pass")
+  fi
 fi
 
 goal_status="not_complete"

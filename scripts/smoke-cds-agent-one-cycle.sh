@@ -78,11 +78,25 @@ run_step() {
   local script="$3"
   local phase="${4:-remote-api}"
   local log="$SMOKE_CDS_AGENT_CYCLE_DIR/${key}.log"
-  local start_ts end_ts duration
+  local start_ts end_ts duration pid rc last_heartbeat elapsed
 
   next_step "$phase" "$name"
   start_ts=$(date +%s)
-  if bash "$script" >"$log" 2>&1; then
+  last_heartbeat="$start_ts"
+  bash "$script" >"$log" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    elapsed=$(( $(date +%s) - start_ts ))
+    if kill -0 "$pid" 2>/dev/null && (( $(date +%s) - last_heartbeat >= 15 )); then
+      last_heartbeat=$(date +%s)
+      printf 'Still running: %s · elapsed=%ss · log=%s\n' "$name" "$elapsed" "$log"
+      tail -n 3 "$log" 2>/dev/null || true
+    fi
+  done
+  wait "$pid"
+  rc=$?
+  if (( rc == 0 )); then
     end_ts=$(date +%s)
     duration=$((end_ts - start_ts))
     passed_arr+=("$name")
@@ -96,7 +110,7 @@ run_step() {
   duration=$((end_ts - start_ts))
   failed_arr+=("$name")
   record_timing "$key" "$name" "failed" "$duration" "$phase"
-  printf 'Result: failed · duration=%ss · log=%s\n' "$duration" "$log" >&2
+  printf 'Result: failed · exit=%s · duration=%ss · log=%s\n' "$rc" "$duration" "$log" >&2
   tail -n 40 "$log" >&2
   return 1
 }
