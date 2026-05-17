@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-SMOKE_STEP_TOTAL=4
+SMOKE_STEP_TOTAL=5
 smoke_init "CDS Agent Runtime Doctor"
 
 smoke_step "读取 runtime-status"
@@ -42,6 +42,7 @@ summary=$(printf '%s' "$resp" | jq -r '
   ] | join(" ")
 ')
 printf '%s\n' "$summary"
+desired_adapter=$(smoke_get_data "$resp" '.diagnostics.desiredRuntimeAdapter // ""')
 
 smoke_step "输出 blocker 和下一步"
 blocker_count=$(smoke_get_data "$resp" '.diagnostics.blockers // [] | length')
@@ -87,9 +88,29 @@ else
   '
 fi
 
+smoke_step "检查默认 runtime profile 兼容性"
+profiles_resp=$(smoke_get "/api/infra-agent-runtime-profiles")
+smoke_verbose "$profiles_resp"
+profiles_success=$(printf '%s' "$profiles_resp" | jq -r '.success')
+smoke_assert_eq "$profiles_success" "true" "RuntimeProfiles.success"
+default_profile=$(printf '%s' "$profiles_resp" | jq -c '.data.items[]? | select(.isDefault == true) | . ' | head -n 1)
+if [[ -z "$default_profile" || "$default_profile" == "null" ]]; then
+  printf 'Runtime profile: no default profile configured\n'
+else
+  profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
+  profile_runtime=$(printf '%s' "$default_profile" | jq -r '.runtime // "unknown"')
+  profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
+  profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
+  profile_has_key=$(printf '%s' "$default_profile" | jq -r '.hasApiKey // false')
+  printf 'Default profile: name=%s runtime=%s protocol=%s model=%s hasApiKey=%s\n' \
+    "$profile_name" "$profile_runtime" "$profile_protocol" "$profile_model" "$profile_has_key"
+  if [[ "$desired_adapter" == "claude-agent-sdk" && "$profile_model" != *claude* && "$profile_model" != anthropic/* ]]; then
+    printf 'Profile warning: claude-agent-sdk 通常需要 Claude/Anthropic 兼容模型；当前默认模型可能只适合普通 OpenAI-compatible gateway。\n'
+  fi
+fi
+
 printf '\nDiagnosis: '
 healthy_count=$(smoke_get_data "$resp" '.diagnostics.healthyCount // 0')
-desired_adapter=$(smoke_get_data "$resp" '.diagnostics.desiredRuntimeAdapter // ""')
 if [[ "$desired_adapter" != "claude-agent-sdk" ]]; then
   printf 'MAP 未期望官方 Claude Agent SDK adapter。\n'
 elif (( instance_count <= 0 )); then
