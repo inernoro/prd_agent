@@ -142,6 +142,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE` | _(空)_ | 默认 profile 不兼容时是否失败；默认只跳过 provider run |
 | `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL` | _(空)_ | `smoke-cds-agent-commercial-readiness.sh` 专用；设为 `1` 时 R1 profile 不兼容/缺 key 直接失败 |
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
+| `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
 | `SMOKE_CDS_AGENT_REPO` | `inernoro/prd_agent` | S1 只读审查目标仓库 |
 | `SMOKE_CDS_AGENT_REF` | `main` | S1 只读审查目标 ref |
 | `SMOKE_CDS_AGENT_POLL_SECONDS` | `120` | 等待 assistant 消息或 failed 状态的秒数 |
@@ -200,6 +201,18 @@ smoke gate 是否通过。
 这样默认 profile 不兼容或缺 key 时会直接失败。即便该脚本全绿，仍需要显式运行
 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 的 S1/S2/S3 脚本来证明真实代码审查、
 MAP 审批和 Stop 都已通过。
+
+如果需要把结果带进 CI artifact 或诊断包：
+
+```bash
+SMOKE_CDS_AGENT_READINESS_REPORT=/tmp/cds-agent-readiness.json \
+  bash scripts/smoke-cds-agent-commercial-readiness.sh
+```
+
+报告会包含 `overall`、runtime pool、默认 profile、页面 HTTP 状态、R0/R1/T1/S1S2S3/V1
+gate 状态和 pending 列表；不会包含 API key。
+如果同时设置 `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1`，脚本会在失败前先写出报告；
+此时失败点之后尚未执行的 gate 会显示为 `unknown`。
 
 ---
 

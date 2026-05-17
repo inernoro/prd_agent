@@ -12,6 +12,7 @@
 #
 # Set SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 to fail when R1 is not ready.
 # Set SMOKE_CDS_AGENT_WORKBENCH_URL to check a specific page URL.
+# Set SMOKE_CDS_AGENT_READINESS_REPORT=/path/report.json to write a machine-readable report.
 # ============================================
 
 set -euo pipefail
@@ -23,12 +24,91 @@ source "$SCRIPT_DIR/smoke-lib.sh"
 SMOKE_STEP_TOTAL=6
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL="${SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL:-}"
 SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL:-}"
+SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-}"
 
 audit_pending=()
+require_commercial_failed=""
+gate_r0_status="unknown"
+gate_r1_status="unknown"
+gate_t1_status="unknown"
+gate_provider_status="unknown"
+gate_v1_status="unknown"
+page_code="not_checked"
 
 mark_pending() {
   audit_pending+=("$1")
   printf 'PENDING: %s\n' "$1"
+}
+
+write_report() {
+  [[ -z "$SMOKE_CDS_AGENT_READINESS_REPORT" ]] && return
+
+  local pending_json overall elapsed
+  if (( ${#audit_pending[@]} == 0 )); then
+    pending_json='[]'
+    overall='ready_for_provider_smokes'
+  else
+    pending_json=$(printf '%s\n' "${audit_pending[@]}" | jq -R . | jq -s .)
+    overall='pending'
+  fi
+  elapsed=$(( $(date +%s) - SMOKE_STARTED_AT ))
+
+  jq -n \
+    --arg overall "$overall" \
+    --arg host "$SMOKE_HOST" \
+    --arg user "$SMOKE_USER" \
+    --arg desiredAdapter "${desired_adapter:-unknown}" \
+    --arg runtimeTransport "${runtime_transport:-unknown}" \
+    --arg profileName "${profile_name:-unknown}" \
+    --arg profileProtocol "${profile_protocol:-unknown}" \
+    --arg profileModel "${profile_model:-unknown}" \
+    --arg workbenchUrl "${SMOKE_CDS_AGENT_WORKBENCH_URL:-}" \
+    --arg pageCode "$page_code" \
+    --arg gateR0 "$gate_r0_status" \
+    --arg gateR1 "$gate_r1_status" \
+    --arg gateT1 "$gate_t1_status" \
+    --arg gateProvider "$gate_provider_status" \
+    --arg gateV1 "$gate_v1_status" \
+    --argjson instanceCount "${instance_count:-0}" \
+    --argjson healthyCount "${healthy_count:-0}" \
+    --argjson officialInstances "${official_instances:-0}" \
+    --argjson profileHasKey "${profile_has_key:-false}" \
+    --argjson profileCompatible "${profile_compatible:-false}" \
+    --argjson pending "$pending_json" \
+    --argjson elapsedSeconds "$elapsed" \
+    '{
+      overall: $overall,
+      host: $host,
+      user: $user,
+      elapsedSeconds: $elapsedSeconds,
+      runtime: {
+        desiredAdapter: $desiredAdapter,
+        transport: $runtimeTransport,
+        instanceCount: $instanceCount,
+        healthyCount: $healthyCount,
+        officialInstances: $officialInstances
+      },
+      defaultProfile: {
+        name: $profileName,
+        protocol: $profileProtocol,
+        model: $profileModel,
+        hasApiKey: $profileHasKey,
+        compatibleWithDesiredRuntimeAdapter: $profileCompatible
+      },
+      workbench: {
+        url: $workbenchUrl,
+        httpStatus: $pageCode
+      },
+      gates: {
+        R0: $gateR0,
+        R1: $gateR1,
+        T1: $gateT1,
+        S1S2S3: $gateProvider,
+        V1: $gateV1
+      },
+      pending: $pending
+    }' > "$SMOKE_CDS_AGENT_READINESS_REPORT"
+  printf 'Readiness report: %s\n' "$SMOKE_CDS_AGENT_READINESS_REPORT"
 }
 
 smoke_init "CDS Agent Commercial Readiness"
@@ -49,6 +129,7 @@ if (( instance_count <= 0 || healthy_count <= 0 || official_instances <= 0 )); t
   next_actions=$(smoke_get_data "$runtime_resp" '.diagnostics.nextActions // [] | join(" | ")')
   smoke_fail "R0 not ready: instanceCount=${instance_count} healthyCount=${healthy_count} officialInstances=${official_instances}; blockers=${blockers}; next=${next_actions}"
 fi
+gate_r0_status="pass"
 smoke_ok "R0 ready: pool=${healthy_count}/${instance_count} officialInstances=${official_instances}"
 
 smoke_step "R1 default runtime profile compatibility"
@@ -62,12 +143,19 @@ profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleW
 printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s\n' \
   "$profile_name" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible"
 if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
+  gate_r1_status="pending"
   mark_pending "R1: create a default Anthropic/Claude-compatible runtime profile with API key"
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL" ]]; then
-    smoke_fail "R1 not ready and SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL is set"
+    require_commercial_failed="R1 not ready and SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL is set"
   fi
 else
+  gate_r1_status="pass"
   smoke_ok "R1 ready: default profile can be used by claude-agent-sdk"
+fi
+
+if [[ -n "$require_commercial_failed" ]]; then
+  write_report
+  smoke_fail "$require_commercial_failed"
 fi
 
 smoke_step "T1 official template and adapter compatibility APIs"
@@ -84,6 +172,7 @@ official_adapter=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.
 smoke_assert_nonempty "$official_adapter" "claude-agent-sdk compatibility"
 smoke_assert_eq "$(printf '%s' "$official_adapter" | jq -r '.loopOwner')" "claude-agent-sdk" "official.loopOwner"
 smoke_assert_eq "$(printf '%s' "$official_adapter" | jq -r '.mapRole')" "control-plane-only" "official.mapRole"
+gate_t1_status="pass"
 smoke_ok "T1 ready: template and compatibility matrix are backend-owned"
 
 smoke_step "S1/S2/S3 provider-run gate status"
@@ -91,14 +180,17 @@ if [[ "$profile_compatible" == "true" && "$profile_has_key" == "true" ]]; then
   printf 'Next commands:\n'
   printf '  SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-run.sh\n'
   printf '  SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh\n'
+  gate_provider_status="pass"
   smoke_ok "S1/S2/S3 provider smokes are unblocked"
 else
+  gate_provider_status="pending"
   mark_pending "S1/S2/S3: blocked until R1 profile is compatible and keyed"
 fi
 
 smoke_step "V1 workbench page reachability"
 if [[ -z "$SMOKE_CDS_AGENT_WORKBENCH_URL" ]]; then
   if [[ "$SMOKE_HOST" == http://localhost:5000 || "$SMOKE_HOST" == http://127.0.0.1:5000 ]]; then
+    gate_v1_status="pending"
     mark_pending "V1: set SMOKE_CDS_AGENT_WORKBENCH_URL to verify the UI page"
   else
     SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_HOST%/}/cds-agent"
@@ -107,13 +199,16 @@ fi
 if [[ -n "$SMOKE_CDS_AGENT_WORKBENCH_URL" ]]; then
   page_code=$(curl --max-time "$SMOKE_TIMEOUT" --show-error --silent --output /dev/null --write-out '%{http_code}' -I "$SMOKE_CDS_AGENT_WORKBENCH_URL" || true)
   if [[ "$page_code" != "200" ]]; then
+    gate_v1_status="pending"
     mark_pending "V1: workbench page did not return HTTP 200 (${page_code}) at ${SMOKE_CDS_AGENT_WORKBENCH_URL}"
   else
+    gate_v1_status="pass"
     smoke_ok "V1 reachable: ${SMOKE_CDS_AGENT_WORKBENCH_URL}"
   fi
 fi
 
 smoke_step "Commercial readiness summary"
+write_report
 if (( ${#audit_pending[@]} == 0 )); then
   smoke_ok "All non-provider readiness gates are green; run S1/S2/S3 provider smokes next"
   smoke_done
