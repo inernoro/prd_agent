@@ -41,6 +41,9 @@ printf 'Target branch: %s\n' "$CDS_SELF_UPDATE_BRANCH"
 printf 'Preview branch: %s\n' "$SMOKE_CDS_BRANCH_ID"
 printf '==========================================\n'
 
+local_head=$(git rev-parse --short=8 HEAD)
+local_branch=$(git branch --show-current 2>/dev/null || printf 'unknown')
+
 printf '\n>>> [1/5] Read CDS self branches\n'
 self_branches_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py self branches)
 printf '%s\n' "$self_branches_resp" | jq '{ok, current:.data.current, commitHash:.data.commitHash}'
@@ -61,6 +64,14 @@ target_cds_touched=$(printf '%s' "$target_branch_json" | jq -r '.cdsTouched // f
 printf 'Current CDS: branch=%s commit=%s\n' "$current_branch" "$current_commit"
 printf 'Target CDS: branch=%s commit=%s cdsTouched=%s subject=%s\n' \
   "$CDS_SELF_UPDATE_BRANCH" "$target_commit" "$target_cds_touched" "$target_subject"
+printf 'Local worktree: branch=%s HEAD=%s\n' "$local_branch" "$local_head"
+target_matches_local=false
+if [[ "$target_commit" == "$local_head" ]]; then
+  target_matches_local=true
+  printf 'Target commit check: matches local HEAD\n'
+else
+  printf 'Target commit check: CDS sees %s but local HEAD is %s\n' "$target_commit" "$local_head"
+fi
 
 printf '\n>>> [2/5] Verify local stale-alias cleanup code exists\n'
 if rg -q 'pruneStaleAppContainersForProfile' cds/src/services/container.ts; then
@@ -109,6 +120,8 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
     --arg host "$CDS_HOST" \
     --arg currentBranch "$current_branch" \
     --arg currentCommit "$current_commit" \
+    --arg localBranch "$local_branch" \
+    --arg localHead "$local_head" \
     --arg targetBranch "$CDS_SELF_UPDATE_BRANCH" \
     --arg targetCommit "$target_commit" \
     --arg targetSubject "$target_subject" \
@@ -119,6 +132,7 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
     --arg aliasProbeLog "$alias_probe_log" \
     --arg recommendedCommand "$recommended_command" \
     --argjson targetCdsTouched "$target_cds_touched" \
+    --argjson targetMatchesLocalHead "$target_matches_local" \
     --argjson localCleanupPresent "$local_cleanup_present" \
     '{
       host: $host,
@@ -126,11 +140,16 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
         branch: $currentBranch,
         commit: $currentCommit
       },
+      localWorktree: {
+        branch: $localBranch,
+        head: $localHead
+      },
       targetControlPlane: {
         branch: $targetBranch,
         commit: $targetCommit,
         subject: $targetSubject,
-        cdsTouched: $targetCdsTouched
+        cdsTouched: $targetCdsTouched,
+        matchesLocalHead: $targetMatchesLocalHead
       },
       preview: {
         branchId: $previewBranch,

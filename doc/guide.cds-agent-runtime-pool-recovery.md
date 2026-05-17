@@ -64,6 +64,7 @@ bash scripts/preflight-cds-agent-cds-self-update.sh
 
 - 当前 CDS 控制面分支和 commit。
 - 目标 self-update 分支和 commit，以及 `cdsTouched`。
+- 本地 worktree HEAD，并比较目标 commit 是否等于本地 HEAD；不一致时先确认 CDS 是否已 fetch 到最新分支。
 - 当前 preview 分支服务状态。
 - 可选的 R0 alias stability probe 日志。
 - 需要用户明确批准后才能执行的推荐命令。
