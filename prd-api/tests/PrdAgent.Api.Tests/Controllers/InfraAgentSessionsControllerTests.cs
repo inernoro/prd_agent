@@ -395,6 +395,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.CurrentBlockingGate.ShouldBe("R0");
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
             executionPanel.NextCommand.ShouldBe("bash scripts/doctor-cds-agent-runtime.sh");
+            executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
@@ -475,6 +476,7 @@ public class InfraAgentSessionsControllerTests
             var readiness = diagnostics.CommercialReadiness.ShouldNotBeNull();
             readiness.Overall.ShouldBe("profile-blocked");
             readiness.Gates.Single(x => x.Code == "R0").Status.ShouldBe("pass");
+            readiness.Gates.Single(x => x.Code == "A0").Status.ShouldBe("pass");
             readiness.Gates.Single(x => x.Code == "T1").Status.ShouldBe("pass");
             readiness.Gates.Single(x => x.Code == "R1").Status.ShouldBe("pending");
             readiness.Pending.ShouldContain(x => x.StartsWith("R1:", StringComparison.Ordinal));
@@ -496,7 +498,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.CurrentBlockingGate.ShouldBe("R1");
             executionPanel.BlockingReason.ShouldContain("Anthropic/Claude-compatible");
             executionPanel.NextCommand.ShouldBe("bash scripts/smoke-cds-agent-r1-profile-repair.sh");
-            executionPanel.GateCounts["pass"].ShouldBe(2);
+            executionPanel.GateCounts["pass"].ShouldBe(3);
             executionPanel.GateCounts["pending"].ShouldBe(4);
         }
         finally

@@ -60,7 +60,7 @@ public class InfraAgentRuntimeProfilesControllerTests
         official.MapRole.ShouldBe("control-plane-only");
         official.SupportedTaskKinds.ShouldContain("code-review");
         official.CompatibleRuntimeProfileTemplateIds.ShouldContain(InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
-        official.RequiredEvidenceGates.ShouldBe(new[] { "R0", "R1", "S1", "S2", "S3", "V1", "N6" });
+        official.RequiredEvidenceGates.ShouldBe(new[] { "R0", "A0", "R1", "S1", "S2", "S3", "V1", "N6" });
         official.MissingAdapterContracts.ShouldBeEmpty();
         official.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("deepseek", StringComparison.OrdinalIgnoreCase));
 

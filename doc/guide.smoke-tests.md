@@ -29,7 +29,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-cds-agent-official-sdk-run.sh` | CDS Agent official SDK S1 run：默认只做 readiness；显式允许 provider 调用后才创建临时只读审查会话并等待 assistant 响应 |
 | `scripts/smoke-cds-agent-official-sdk-controls.sh` | CDS Agent official SDK S2/S3 controls：默认只做 readiness；显式允许 provider 调用后才验证 MAP 审批和 Stop |
 | `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、sidecar alias、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令；可输出 JSON 诊断包 |
-| `scripts/smoke-cds-agent-commercial-readiness.sh` | CDS Agent 商业级 readiness 总账：不调用 provider，审计 R0/R1/T1/S1/S2/S3/V1 当前证据和 pending gate |
+| `scripts/smoke-cds-agent-commercial-readiness.sh` | CDS Agent 商业级 readiness 总账：不调用 provider，审计 R0/A0/R1/T1/S1/S2/S3/V1 当前证据和 pending gate |
 | `scripts/smoke-cds-agent-one-cycle.sh` | CDS Agent 一个周期最小闭环：按 doctor/R0/A0/R1/S1/S2/S3/V1/N6 顺序串联脚本，保存日志、JSON 报告和视觉截图 |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
@@ -281,7 +281,7 @@ SMOKE_CDS_AGENT_READINESS_REPORT=/tmp/cds-agent-readiness.json \
   bash scripts/smoke-cds-agent-commercial-readiness.sh
 ```
 
-报告会包含 `overall`、runtime pool、默认 profile、页面 HTTP 状态、R0/R1/T1/S1S2S3/V1
+报告会包含 `overall`、runtime pool、默认 profile、页面 HTTP 状态、R0/A0/R1/T1/S1S2S3/V1
 gate 状态和 pending 列表；不会包含 API key。
 如果同时设置 `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1`，脚本会在失败前先写出报告；
 此时失败点之后尚未执行的 gate 会显示为 `unknown`。

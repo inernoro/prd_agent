@@ -342,6 +342,13 @@ public class InfraAgentSessionsController : ControllerBase
             && diagnostics.HealthyCount > 0
             && officialInstances > 0
             && string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase);
+        var a0Ready = string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+            && InfraAgentRuntimeAdapterCompatibility.All.Any(x =>
+                string.Equals(x.Id, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+                && x.RoutableByDefault
+                && string.Equals(x.LoopOwner, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.MapRole, "control-plane-only", StringComparison.OrdinalIgnoreCase)
+                && x.MissingAdapterContracts.Count == 0);
         var r1Ready = profile is
         {
             HasApiKey: true,
@@ -367,6 +374,14 @@ public class InfraAgentSessionsController : ControllerBase
                     ? $"pool={diagnostics.HealthyCount}/{diagnostics.InstanceCount} officialInstances={officialInstances}"
                     : $"instanceCount={diagnostics.InstanceCount} healthyCount={diagnostics.HealthyCount} officialInstances={officialInstances}",
                 r0Ready ? Array.Empty<string>() : diagnostics.NextActions),
+            new(
+                "A0",
+                "Official SDK adapter boundary",
+                a0Ready ? "pass" : "pending",
+                a0Ready
+                    ? "default adapter contract is claude-agent-sdk control-plane-only; legacy loop is explicit fallback"
+                    : "official SDK adapter boundary is missing or has unresolved contracts",
+                a0Ready ? Array.Empty<string>() : new[] { "运行 bash scripts/smoke-cds-agent-official-sdk-boundary.sh 并检查 adapter compatibility API" }),
             new(
                 "R1",
                 "Default runtime profile compatibility",

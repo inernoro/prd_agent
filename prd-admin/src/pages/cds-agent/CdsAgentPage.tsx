@@ -396,7 +396,7 @@ type RuntimeReadinessGate = {
 };
 
 type CommercialReadinessGate = RuntimeReadinessGate & {
-  code: 'R0' | 'R1' | 'T1' | 'S1' | 'S2' | 'S3' | 'V1';
+  code: 'R0' | 'A0' | 'R1' | 'T1' | 'S1' | 'S2' | 'S3' | 'V1';
 };
 
 function artifactIcon(kind: AgentArtifact['kind']) {
@@ -1166,6 +1166,15 @@ export default function CdsAgentPage() {
           ? 'runtime pool 可用，但还需要证明 loopOwner=claude-agent-sdk 且 SDK loop enabled。'
           : blockers[0] || registryIssue || '需要先恢复 CDS sidecar runtime pool.'),
         state: backendGateState('R0', runtimePoolReady && officialLoopReady ? 'pass' : runtimeStatus ? 'warn' : 'pending'),
+      },
+      {
+        code: 'A0',
+        label: '官方 SDK 边界',
+        value: backendGateValue('A0', activeAdapterCompatibility?.routableByDefault ? 'ready' : 'pending'),
+        detail: backendGateDetail('A0', activeAdapterCompatibility?.routableByDefault
+          ? '默认 adapter contract 指向 claude-agent-sdk，MAP/CDS 只保留控制面，legacy loop 只能显式 fallback。'
+          : '需要后端 adapter compatibility 证明 claude-agent-sdk 可默认路由且没有缺失 contract。'),
+        state: backendGateState('A0', activeAdapterCompatibility?.routableByDefault ? 'pass' : 'pending'),
       },
       {
         code: 'R1',

@@ -75,7 +75,7 @@
 处理：
 
 1. 优先用 Anthropic 官方模板新建或修复 runtime profile。
-2. 运行 `bash scripts/smoke-cds-agent-commercial-readiness.sh` 查看 R0/R1/T1/V1。
+2. 运行 `bash scripts/smoke-cds-agent-commercial-readiness.sh` 查看 R0/A0/R1/T1/V1。
 3. 配置真实 key 后，用 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 跑 S1/S2/S3。
 4. 在日志里确认请求进入 `claude-agent-sdk`，而不是 legacy/fake adapter。
 

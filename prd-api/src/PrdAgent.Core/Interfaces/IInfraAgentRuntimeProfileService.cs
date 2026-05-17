@@ -202,7 +202,7 @@ public static class InfraAgentRuntimeAdapterCompatibility
             [InfraAgentRuntimeProtocols.Anthropic, InfraAgentRuntimeProtocols.OpenAiCompatible],
             ["protocol=anthropic", "model contains claude", "model starts with anthropic/"],
             [InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4],
-            ["R0", "R1", "S1", "S2", "S3", "V1", "N6"],
+            ["R0", "A0", "R1", "S1", "S2", "S3", "V1", "N6"],
             [],
             ["openai-compatible model without claude/anthropic prefix, for example deepseek/*"],
             [
@@ -249,7 +249,7 @@ public static class InfraAgentRuntimeAdapterCompatibility
             [],
             ["not implemented in current CDS Agent runtime pool"],
             [],
-            ["R0", "R1", "S1", "S2", "S3", "V1", "N6"],
+            ["R0", "A0", "R1", "S1", "S2", "S3", "V1", "N6"],
             ["run", "event", "tool-approval", "cancel", "workspace", "artifact"],
             ["runtime=codex currently has no official adapter implementation in this repo"],
             [
