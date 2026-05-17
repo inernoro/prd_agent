@@ -292,7 +292,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_profile_resolution_failure_is_structured_error(self) -> None:
         req = build_request().model_copy(update={"profile": "missing-profile"})
 
-        with patch("app.official_agent_sdk.resolve_profile", return_value=None):
+        with patch("app.upstream.resolve_profile", return_value=None):
             events = [event async for event in run_official_agent(req)]
 
         self.assertEqual([event.type for event in events], ["error"])

@@ -13,9 +13,9 @@ from typing import Any, AsyncIterator
 
 from .schemas import SidecarEvent, SidecarRunRequest
 from .tool_bridge import ToolBridge
-from .profiles import resolve_profile
 from .workspace import prepare_git_workspace, workspace_diagnostics, workspace_error_diagnostics
 from .sdk_events import SdkEventAccumulator, handle_sdk_message
+from .upstream import provider_key_missing_event, resolve_upstream
 
 logger = logging.getLogger("sidecar.official_agent_sdk")
 
@@ -41,19 +41,6 @@ def _runtime_preflight(cwd: str | None) -> list[str]:
     if cwd and not Path(cwd).exists():
         missing.append("workspace_root")
     return missing
-
-
-def _resolve_upstream(req: SidecarRunRequest) -> tuple[str | None, str | None, str]:
-    if req.profile:
-        prof = resolve_profile(req.profile)
-        if prof is None:
-            raise RuntimeError(f"profile not found: {req.profile}")
-        return prof.base_url, prof.api_key, f"profile:{req.profile}"
-
-    if req.base_url or req.api_key:
-        return req.base_url, req.api_key, "request-override"
-
-    return None, None, "env-default"
 
 
 async def _interrupt_on_cancel(client: Any, cancel_event: asyncio.Event) -> None:
@@ -166,7 +153,7 @@ async def run_official_agent(
         return
 
     try:
-        upstream_base, upstream_key, upstream_source = _resolve_upstream(req)
+        upstream = resolve_upstream(req)
     except RuntimeError as ex:
         yield SidecarEvent(
             type="error",
@@ -179,44 +166,11 @@ async def run_official_agent(
         )
         return
 
-    env_base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None
-    effective_base_url = upstream_base or env_base_url
-    env_api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or None
-    effective_api_key = upstream_key or env_api_key
-    if not effective_api_key:
-        provider_key_mode = os.environ.get(
-            "SIDECAR_PROVIDER_KEY_MODE",
-            "runtime-profile-or-env",
-        ).strip().lower()
-        yield SidecarEvent(
-            type="error",
-            error_code="provider_key_missing",
-            message=(
-                "ANTHROPIC_API_KEY is required, or MAP must provide a runtime "
-                "profile/request apiKey for the official Claude Agent SDK adapter."
-            ),
-            content={
-                "adapter": "claude-agent-sdk",
-                "upstreamSource": upstream_source,
-                "baseUrlConfigured": bool(effective_base_url),
-                "apiKeyConfigured": False,
-                "providerKeyMode": provider_key_mode,
-                "nextActions": [
-                    "set ANTHROPIC_API_KEY on the sidecar environment for standalone use",
-                    "select or create a MAP runtime profile with a valid provider apiKey",
-                    "verify the CDS Agent session request includes the intended runtime profile",
-                ],
-            },
-        )
+    if not upstream.api_key_configured:
+        yield provider_key_missing_event(upstream)
         return
 
-    env: dict[str, str] = {
-        "API_TIMEOUT_MS": str(max(1, req.timeout_seconds) * 1000),
-        "CLAUDE_CODE_MAX_RETRIES": os.environ.get("CLAUDE_CODE_MAX_RETRIES", "2"),
-        "ANTHROPIC_API_KEY": effective_api_key,
-    }
-    if effective_base_url:
-        env["ANTHROPIC_BASE_URL"] = effective_base_url
+    env = upstream.to_sdk_env(req.timeout_seconds)
 
     async def can_use_tool(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
         normalized = tool_name.strip()
@@ -294,8 +248,8 @@ async def run_official_agent(
             "builtinWriteToolsEnabled": bool(unsafe_builtin_tools),
             "builtinWriteTools": unsafe_builtin_tools,
             "approvalBridge": "sdk-can-use-tool",
-            "upstreamSource": upstream_source,
-            "baseUrlConfigured": bool(effective_base_url),
+            "upstreamSource": upstream.source,
+            "baseUrlConfigured": upstream.base_url_configured,
             "apiKeyConfigured": True,
             "protocol": req.protocol or "anthropic",
         },
