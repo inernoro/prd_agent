@@ -2337,17 +2337,86 @@ export default function CdsAgentPage() {
       return;
     }
     setBusy(true);
-    const res = await updateInfraAgentRuntimeProfile(activeProfile.id, profileDraft);
-    setBusy(false);
-    if (!res.success || !res.data?.item) {
-      toast.error('更新模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
-      return;
+    let candidateId = '';
+    let promoted = false;
+    try {
+      if (profileDraft.isDefault) {
+        const template = matchingRuntimeProfileTemplate();
+        const candidateRes = template
+          ? await createInfraAgentRuntimeProfileFromTemplate(template.id, {
+              name: profileDraft.name,
+              apiKey: profileDraft.apiKey,
+              isDefault: false,
+            })
+          : await createInfraAgentRuntimeProfile({ ...profileDraft, isDefault: false });
+        if (!candidateRes.success || !candidateRes.data?.item) {
+          toast.error('更新模型配置失败', candidateRes.error?.message ?? '请检查 baseUrl、model 和 API key');
+          return;
+        }
+
+        let savedProfile = candidateRes.data.item;
+        candidateId = savedProfile.id;
+        const testRes = await testInfraAgentRuntimeProfile(savedProfile.id);
+        if (!testRes.success || !testRes.data?.result) {
+          toast.error('默认配置测试失败', testRes.error?.message ?? '已取消更新，并清理候选配置');
+          return;
+        }
+        const testResult = testRes.data.result;
+        const testMessage = `${testResult.success ? '可用' : '失败'} · ${testResult.protocol} · HTTP ${testResult.httpStatus ?? 'n/a'} · ${testResult.elapsedMs}ms · ${testResult.message}`;
+        setProfileTest(testMessage);
+        if (!testResult.success) {
+          toast.error('默认配置测试失败', `${testResult.message}；已清理候选配置，当前默认配置保持不变`);
+          return;
+        }
+
+        const promoteRes = await updateInfraAgentRuntimeProfile(savedProfile.id, {
+          name: savedProfile.name,
+          runtime: savedProfile.runtime,
+          protocol: savedProfile.protocol,
+          baseUrl: savedProfile.baseUrl,
+          model: savedProfile.model,
+          apiKey: profileDraft.apiKey,
+          resourceCpuCores: savedProfile.resourceCpuCores,
+          resourceMemoryMb: savedProfile.resourceMemoryMb,
+          timeoutSeconds: savedProfile.timeoutSeconds,
+          networkPolicy: savedProfile.networkPolicy,
+          autoCleanupMinutes: savedProfile.autoCleanupMinutes,
+          isDefault: true,
+        });
+        if (!promoteRes.success || !promoteRes.data?.item) {
+          toast.error('设为默认失败', promoteRes.error?.message ?? '候选配置已通过测试，但默认提升失败');
+          return;
+        }
+        savedProfile = promoteRes.data.item;
+        promoted = true;
+        if (activeProfile.id !== savedProfile.id) {
+          await deleteInfraAgentRuntimeProfile(activeProfile.id).catch(() => undefined);
+        }
+        setProfiles((prev) => [savedProfile, ...prev.filter((item) => item.id !== savedProfile.id && item.id !== activeProfile.id)]);
+        setDraft((prev) => ({ ...prev, runtimeProfileId: savedProfile.id }));
+        setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+        toast.success('模型配置已更新', '已通过模型测试并设为默认配置');
+        return;
+      }
+
+      const res = await updateInfraAgentRuntimeProfile(activeProfile.id, profileDraft);
+      if (!res.success || !res.data?.item) {
+        toast.error('更新模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+        return;
+      }
+      setProfiles((prev) => [res.data.item, ...prev.filter((item) => item.id !== res.data.item.id)]);
+      setDraft((prev) => ({ ...prev, runtimeProfileId: res.data.item.id }));
+      setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+      setProfileTest('');
+      toast.success('模型配置已更新', '这是一条系统级长期配置，后续会话会继续复用');
+    } catch (err) {
+      toast.error('更新模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 API key');
+    } finally {
+      if (candidateId && profileDraft.isDefault && !promoted) {
+        await deleteInfraAgentRuntimeProfile(candidateId).catch(() => undefined);
+      }
+      setBusy(false);
     }
-    setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
-    setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
-    setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
-    setProfileTest('');
-    toast.success('模型配置已更新', '这是一条系统级长期配置，后续会话会继续复用');
   }
 
   async function importDefaultProfile() {
