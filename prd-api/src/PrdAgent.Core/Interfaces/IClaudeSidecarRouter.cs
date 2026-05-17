@@ -168,5 +168,7 @@ public sealed record SidecarInstanceDiagnostics(
     bool? SidecarTokenConfigured,
     string? AgentAdapter,
     string? AdapterDiagnosticsJson,
-    string? Error
+    string? Error,
+    IReadOnlyList<string>? ReadyzBlockers = null,
+    IReadOnlyList<string>? ReadyzNextActions = null
 );

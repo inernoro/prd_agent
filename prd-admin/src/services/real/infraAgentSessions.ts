@@ -138,6 +138,8 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   agentAdapter?: string | null;
   adapterDiagnosticsJson?: string | null;
   error?: string | null;
+  readyzBlockers?: string[] | null;
+  readyzNextActions?: string[] | null;
 }
 
 export interface InfraAgentRuntimeDiagnostics {

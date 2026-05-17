@@ -224,7 +224,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     parsed.SidecarToken,
                     parsed.AgentAdapter,
                     parsed.AdapterDiagnosticsJson,
-                    resp.IsSuccessStatusCode ? null : Truncate(body, 800)));
+                    resp.IsSuccessStatusCode ? null : Truncate(body, 800),
+                    parsed.ReadyzBlockers,
+                    parsed.ReadyzNextActions));
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -298,6 +300,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             {
                 blockers.Add($"{instance.Name}: 缺少 SIDECAR_TOKEN");
             }
+            foreach (var blocker in instance.ReadyzBlockers ?? Array.Empty<string>())
+            {
+                blockers.Add($"{instance.Name}: {blocker}");
+            }
             foreach (var missing in ReadMissingAdapterDependencies(instance.AdapterDiagnosticsJson))
             {
                 blockers.Add($"{instance.Name}: 缺少 {missing}");
@@ -363,6 +369,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
         else if (HealthyCount <= 0)
         {
+            foreach (var action in instances.SelectMany(x => x.ReadyzNextActions ?? Array.Empty<string>()))
+            {
+                actions.Add(action);
+            }
             var providerKeyRequired = instances.Any(x => x.ProviderKeyRequiredForReady != false);
             actions.Add(providerKeyRequired
                 ? "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk"
@@ -418,10 +428,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null);
 
         try
         {
@@ -450,12 +460,30 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             string? adapterDiagnostics = root.TryGetProperty("adapterDiagnostics", out var diagElement)
                 ? diagElement.GetRawText()
                 : null;
-            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics);
+            var blockers = ReadStringArray(root, "blockers");
+            var nextActions = ReadStringArray(root, "nextActions");
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions);
         }
         catch (JsonException)
         {
-            return (null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null);
         }
+    }
+
+    private static IReadOnlyList<string>? ReadStringArray(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var items = value.EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Take(12)
+            .ToList();
+
+        return items.Count > 0 ? items : Array.Empty<string>();
     }
 
     private static string Truncate(string value, int max)
