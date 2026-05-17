@@ -110,7 +110,7 @@
 - P1.7 权限边界已有第二步：官方 adapter 默认仅开放 `Read/Grep/Glob`，`Bash/Edit/Write` 必须显式 opt-in；已接 `ClaudeAgentOptions.can_use_tool`，危险内置工具会创建 MAP approval request 并等待 approval，再返回官方 `PermissionResultAllow/Deny`。
 - P1.6 远程诊断新增实际阻塞定位：`runtime-status` 的 pool diagnostics 会透出 CDS discovery 为 0 的原因；后台 discovery 会把不可解密的历史 infra connection 标记为 revoked，避免旧 DataProtection key 丢失后每 10 秒重复噪声日志。
 - P1.6 诊断已从“字符串解释”升级为“可操作恢复路径”：`runtime-status` 现在返回 `blockers` 和 `nextActions`，页面 Runtime 调试区直接显示阻塞项与下一步，避免用户只看到 `instanceCount=0` 或 `/readyz 503` 却不知道该更新 CDS 控制面、重新授权，还是修 sidecar 的 `ANTHROPIC_API_KEY` / Claude CLI / `claude-agent-sdk` / workspace。
-- 2026-05-17 远程 preview 已部署到 `cca003766`，但真实 official SDK run 仍未通过：`runtime-status` 显示 `isConfigured=false / instanceCount=0`。已确认两个阻塞：一是旧 infra connection 的 DataProtection key ring 缺失，需重新授权；二是生产 CDS 本体的 `/api/projects/:id/instances` 尚未包含 `cca003766` 中的 shared-service 源码分支实例发现修复，因此 running 的 sidecar pool 暂时不会被 MAP 发现。更新共享 CDS 控制面需要明确批准，不能作为普通 preview 部署自动执行。
+- 2026-05-17 远程 preview 已部署到 `24a415e4`，但真实 official SDK run 仍未通过：`runtime-status` 显示 `isConfigured=false / instanceCount=0 / healthyCount=0`。已确认两个阻塞：一是旧 infra connection 的 DataProtection key ring 缺失，需重新授权；二是生产 CDS 本体的 `/api/projects/:id/instances` 尚未包含源码分支实例发现修复，因此 running 的 sidecar pool 暂时不会被 MAP 发现。更新共享 CDS 控制面需要明确批准，不能作为普通 preview 部署自动执行。
 - 下一步应做真实 official SDK run、真实 MAP 审批、取消和远程 CDS 视觉验证；Toolbox 的远程会话重新附着已先落地，但仍需要真实长 run 和 approval run 证明闭环。
 
 验证记录：
@@ -125,6 +125,8 @@
 - `python3 -m pip install --target /tmp/codex-sidecar-req-check-2 -r claude-sdk-sidecar/requirements.txt` 通过；验证组合为 `fastapi 0.115.0`、`starlette 0.38.6`、`pydantic 2.13.4`、`claude_agent_sdk 0.2.82`。
 - 真实 run smoke 仍未执行：还需要 Claude Code CLI、provider key、真实 workspace 和远程 CDS sidecar 环境。
 - `npm --prefix prd-admin run tsc` 通过。
+- `/cds-agent` 的会话详情刷新已改为稳定 `useCallback`，SSE 兜底轮询和切换会话的 hook 依赖已收敛；`npm exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 在 `prd-admin` 目录通过，消除了该页面既有 hook dependency warning。
+- 远程 preview `prd-agent-codex-cds-agent-workbench-ui` 已部署到 `24a415e4 fix: stabilize cds agent detail refresh`，API/Admin 服务均为 `running`；远程 `GET /api/infra-agent-sessions/runtime-status` 成功返回诊断，但 sidecar pool 仍为 0 实例。
 - `CdsAgentAdapter` 异步句柄改造后，`dotnet build prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj --no-restore --no-dependencies` 通过；`/cds-agent?sessionId=...` 前端直达选中会话的类型检查通过。
 - `ToolRunner` 已保存 `step_artifact` 事件中的 artifact，并识别 `kind=cds-agent-run-handle` 渲染 CDS Agent 远程运行卡片；卡片可调用 `stopInfraAgentSession` 请求停止 MAP/CDS session；`npm --prefix prd-admin run tsc` 通过。
 - `dotnet build prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj --no-restore` 通过。
