@@ -726,13 +726,17 @@ export default function CdsAgentPage() {
       || (activeSession?.runtime === 'claude-sdk' ? 'legacy-sidecar-adapter' : '');
     const loopOwner = (latestRuntimePayload ? readString(latestRuntimePayload, 'loopOwner') : '')
       || (latestRuntimeContent ? readString(latestRuntimeContent, 'loopOwner') : '')
+      || primaryRuntime?.loopOwner
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'loopOwner') : '')
       || (adapter.includes('legacy') ? 'sidecar-legacy-loop' : adapter ? 'claude-agent-sdk' : '');
     const sdkLoopEnabled = readBoolean(latestRuntimeContent, 'sdkLoopEnabled')
+      ?? primaryRuntime?.sdkLoopEnabled
       ?? readBoolean(primaryAdapterDiagnostics, 'sdkLoopEnabled');
     const mapRole = (latestRuntimeContent ? readString(latestRuntimeContent, 'mapRole') : '')
+      || primaryRuntime?.mapRole
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'mapRole') : '');
     const cdsRole = (latestRuntimeContent ? readString(latestRuntimeContent, 'cdsRole') : '')
+      || primaryRuntime?.cdsRole
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'cdsRole') : '');
     const runId = activeSession?.currentRuntimeRunId
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeRunId') || readString(latestRuntimePayload, 'messageId') : '');
@@ -807,6 +811,10 @@ export default function CdsAgentPage() {
       providerKeyRequiredForReady: item.providerKeyRequiredForReady,
       anthropicKeyConfigured: item.anthropicKeyConfigured,
       sidecarTokenConfigured: item.sidecarTokenConfigured,
+      loopOwner: item.loopOwner,
+      sdkLoopEnabled: item.sdkLoopEnabled,
+      mapRole: item.mapRole,
+      cdsRole: item.cdsRole,
       readyzBlockers: item.readyzBlockers,
       readyzNextActions: item.readyzNextActions,
       error: item.error,

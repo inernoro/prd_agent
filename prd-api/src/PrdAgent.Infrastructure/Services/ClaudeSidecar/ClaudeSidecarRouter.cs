@@ -208,7 +208,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
                 using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-                var body = await SafeReadString(resp, ct);
+                var body = await SafeReadString(resp, ct, maxLength: 8_000);
                 var parsed = ParseReadyz(body);
                 results.Add(new SidecarInstanceDiagnostics(
                     instance.Name,
@@ -226,7 +226,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     parsed.AdapterDiagnosticsJson,
                     resp.IsSuccessStatusCode ? null : Truncate(body, 800),
                     parsed.ReadyzBlockers,
-                    parsed.ReadyzNextActions));
+                    parsed.ReadyzNextActions,
+                    parsed.LoopOwner,
+                    parsed.SdkLoopEnabled,
+                    parsed.MapRole,
+                    parsed.CdsRole));
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -428,10 +432,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? MapRole, string? CdsRole) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null);
 
         try
         {
@@ -460,14 +464,36 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             string? adapterDiagnostics = root.TryGetProperty("adapterDiagnostics", out var diagElement)
                 ? diagElement.GetRawText()
                 : null;
+            string? loopOwner = TryReadString(diagElement, "loopOwner");
+            bool? sdkLoopEnabled = TryReadBool(diagElement, "sdkLoopEnabled");
+            string? mapRole = TryReadString(diagElement, "mapRole");
+            string? cdsRole = TryReadString(diagElement, "cdsRole");
             var blockers = ReadStringArray(root, "blockers");
             var nextActions = ReadStringArray(root, "nextActions");
-            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions);
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, mapRole, cdsRole);
         }
         catch (JsonException)
         {
-            return (null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null);
         }
+    }
+
+    private static string? TryReadString(JsonElement value, string name)
+    {
+        return value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty(name, out var item)
+            && item.ValueKind == JsonValueKind.String
+            ? item.GetString()
+            : null;
+    }
+
+    private static bool? TryReadBool(JsonElement value, string name)
+    {
+        return value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty(name, out var item)
+            && (item.ValueKind == JsonValueKind.True || item.ValueKind == JsonValueKind.False)
+            ? item.GetBoolean()
+            : null;
     }
 
     private static IReadOnlyList<string>? ReadStringArray(JsonElement root, string name)
@@ -948,12 +974,12 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return b + p;
     }
 
-    private static async Task<string> SafeReadString(HttpResponseMessage resp, CancellationToken ct)
+    private static async Task<string> SafeReadString(HttpResponseMessage resp, CancellationToken ct, int maxLength = 500)
     {
         try
         {
             var text = await resp.Content.ReadAsStringAsync(ct);
-            return text.Length > 500 ? text[..500] : text;
+            return text.Length > maxLength ? text[..maxLength] : text;
         }
         catch { return string.Empty; }
     }

@@ -138,6 +138,10 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   sidecarTokenConfigured?: boolean | null;
   agentAdapter?: string | null;
   adapterDiagnosticsJson?: string | null;
+  loopOwner?: string | null;
+  sdkLoopEnabled?: boolean | null;
+  mapRole?: string | null;
+  cdsRole?: string | null;
   error?: string | null;
   readyzBlockers?: string[] | null;
   readyzNextActions?: string[] | null;

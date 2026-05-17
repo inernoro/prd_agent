@@ -382,6 +382,10 @@ public class DynamicSidecarRegistryTests
                   "adapterDiagnostics": {
                     "adapter": "claude-agent-sdk",
                     "ready": false,
+                    "loopOwner": "claude-agent-sdk",
+                    "sdkLoopEnabled": true,
+                    "mapRole": "control-plane",
+                    "cdsRole": "sandbox-runtime",
                     "missing": ["claude_cli", "workspace_root"]
                   }
                 }
@@ -402,6 +406,10 @@ public class DynamicSidecarRegistryTests
         Assert.False(diagnostics.Instances[0].AnthropicKeyConfigured);
         Assert.False(diagnostics.Instances[0].ProviderKeyRequiredForReady);
         Assert.True(diagnostics.Instances[0].SidecarTokenConfigured);
+        Assert.Equal("claude-agent-sdk", diagnostics.Instances[0].LoopOwner);
+        Assert.True(diagnostics.Instances[0].SdkLoopEnabled);
+        Assert.Equal("control-plane", diagnostics.Instances[0].MapRole);
+        Assert.Equal("sandbox-runtime", diagnostics.Instances[0].CdsRole);
         Assert.Contains("missing claude_cli", diagnostics.Instances[0].ReadyzBlockers ?? Array.Empty<string>());
         Assert.Contains(
             "install and authenticate Claude Code CLI so `claude` is on PATH",

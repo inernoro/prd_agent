@@ -170,5 +170,9 @@ public sealed record SidecarInstanceDiagnostics(
     string? AdapterDiagnosticsJson,
     string? Error,
     IReadOnlyList<string>? ReadyzBlockers = null,
-    IReadOnlyList<string>? ReadyzNextActions = null
+    IReadOnlyList<string>? ReadyzNextActions = null,
+    string? LoopOwner = null,
+    bool? SdkLoopEnabled = null,
+    string? MapRole = null,
+    string? CdsRole = null
 );
