@@ -147,6 +147,13 @@ if [[ -f "$cycle_summary" ]]; then
   cycle_slowest=$(jq -c '.timing.slowest // []' "$cycle_summary")
 fi
 
+if [[ "$boundary_status" == "pass" ]]; then
+  gate_a0="pass"
+fi
+if [[ "$n6_status" == "pass" ]]; then
+  gate_n6="pass"
+fi
+
 if [[ "$boundary_status" != "pass" ]]; then
   failures+=("A0 boundary did not pass")
 fi
