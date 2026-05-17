@@ -9,7 +9,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.main as sidecar_main  # noqa: E402
-from app.main import _adapter_diagnostics, readyz  # noqa: E402
+from app.main import _adapter_diagnostics, _adapter_for, _legacy_runtime_init_event, readyz  # noqa: E402
+from app.schemas import SidecarRunRequest  # noqa: E402
 
 
 class SidecarReadinessTests(unittest.TestCase):
@@ -20,6 +21,37 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(diagnostics["ready"], True)
         self.assertEqual(diagnostics["loopOwner"], "sidecar-legacy-loop")
         self.assertEqual(diagnostics["sdkLoopEnabled"], False)
+
+    def test_default_adapter_is_official_and_legacy_requires_explicit_request(self) -> None:
+        previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
+        try:
+            sidecar_main.DEFAULT_AGENT_ADAPTER = "claude-agent-sdk"
+            self.assertEqual(_adapter_for(SidecarRunRequest(runId="default-run")), "claude-agent-sdk")
+            self.assertEqual(
+                _adapter_for(SidecarRunRequest(runId="legacy-run", runtimeAdapter="legacy-sidecar")),
+                "legacy-sidecar",
+            )
+        finally:
+            sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
+
+    def test_legacy_runtime_init_makes_fallback_auditable(self) -> None:
+        event = _legacy_runtime_init_event(SidecarRunRequest(
+            runId="legacy-run",
+            runtimeAdapter="legacy-sidecar",
+            mapSessionId="session-1",
+            traceId="trace-1",
+        ))
+
+        self.assertEqual(event.type, "runtime_init")
+        self.assertEqual(event.content["adapter"], "legacy-sidecar")
+        self.assertEqual(event.content["runtimeAdapter"], "legacy-sidecar")
+        self.assertEqual(event.content["loopOwner"], "sidecar-legacy-loop")
+        self.assertEqual(event.content["sdkLoopEnabled"], False)
+        self.assertEqual(event.content["mapRole"], "control-plane")
+        self.assertEqual(event.content["cdsRole"], "sandbox-runtime")
+        self.assertEqual(event.content["fallback"], "explicit")
+        self.assertEqual(event.content["mapSessionId"], "session-1")
+        self.assertEqual(event.content["traceId"], "trace-1")
 
     def test_official_adapter_reports_missing_sdk(self) -> None:
         with patch("importlib.util.find_spec", return_value=None), patch("shutil.which", return_value=None):

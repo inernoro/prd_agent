@@ -236,6 +236,25 @@ def _format_sse(event: SidecarEvent) -> bytes:
     return line.encode("utf-8")
 
 
+def _legacy_runtime_init_event(req: SidecarRunRequest) -> SidecarEvent:
+    return SidecarEvent(
+        type="runtime_init",
+        message="legacy sidecar loop started",
+        content={
+            "adapter": "legacy-sidecar",
+            "runtimeAdapter": "legacy-sidecar",
+            "mapSessionId": req.map_session_id,
+            "traceId": req.trace_id,
+            "client": "AsyncAnthropic",
+            "loopOwner": "sidecar-legacy-loop",
+            "sdkLoopEnabled": False,
+            "mapRole": "control-plane",
+            "cdsRole": "sandbox-runtime",
+            "fallback": "explicit",
+        },
+    )
+
+
 async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator[bytes]:
     cancel_event = asyncio.Event()
     _active_runs[req.run_id] = cancel_event
@@ -251,6 +270,8 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
         try:
             official_adapter = _adapter_for(req) == "claude-agent-sdk"
             stream = run_official_agent(req, cancel_event=cancel_event) if official_adapter else run_agent(req)
+            if not official_adapter:
+                await queue.put(_format_sse(_legacy_runtime_init_event(req)))
             async for ev in stream:
                 if cancel_event.is_set() and not official_adapter:
                     await queue.put(_format_sse(SidecarEvent(

@@ -224,6 +224,7 @@ public interface IAgentRuntimeAdapter
 - sidecar 支持 `runtimeAdapter=claude-agent-sdk` 或 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 显式声明官方路径；standalone 默认也已切到 `claude-agent-sdk`，只有 `SIDECAR_AGENT_ADAPTER=legacy-sidecar` 才回退自研 loop。
 - MAP 后端默认透传 `claude-agent-sdk`，保留 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 显式 fallback 和现有 `SidecarRuntimeAdapter` 传输层。
 - 新增 `runtime_init` 事件映射，MAP 会把 adapter、allowed tools、permission mode、cwd 等初始化信息落为 `InfraAgentEventTypes.Log`，用于 UI 调试和审计。
+- 显式 legacy fallback 也必须发首条 `runtime_init`，并标记 `loopOwner=sidecar-legacy-loop`、`sdkLoopEnabled=false`、`fallback=explicit`；这样排障可用，但不会被误认为官方 SDK adapter 已接管 turn loop。
 - 当前 spike 已改为 `ClaudeSDKClient` 结构，sidecar cancel event 会调用官方 `client.interrupt()` 并把结果映射为 `error_code=cancelled`。这只是 adapter 层取消闭环；跨进程精确定位、会话恢复和远程真实 run 仍需下一轮验证。
 - 本机尚未安装 `claude_agent_sdk`，所以真实 official SDK run 需要先完成 SDK 依赖、provider key、workspace 权限配置后验证；外部 PATH 上的 `claude` 命令只做诊断观测，官方 Python SDK 包自身携带 CLI 能力，不作为默认 ready gate。
 - 新增 `claude-sdk-sidecar/tests/test_official_agent_sdk_adapter.py`，用 fake SDK 验证 `runtime_init/text_delta/usage/done` 和 `cancel -> interrupt -> usage/error(cancelled)` 两条结构路径。
