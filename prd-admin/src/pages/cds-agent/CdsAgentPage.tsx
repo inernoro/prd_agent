@@ -40,11 +40,11 @@ import {
 const EVENT_PAGE_LIMIT = 500;
 const EVENT_MAX_BATCHES_PER_REFRESH = 20;
 const ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE = {
-  name: 'Anthropic Claude Sonnet 4.6',
+  name: 'Anthropic Claude Sonnet 4',
   runtime: 'claude-sdk',
   protocol: 'anthropic',
   baseUrl: 'https://api.anthropic.com',
-  model: 'claude-sonnet-4-6',
+  model: 'claude-sonnet-4-20250514',
   resourceCpuCores: 2,
   resourceMemoryMb: 4096,
   timeoutSeconds: 900,
