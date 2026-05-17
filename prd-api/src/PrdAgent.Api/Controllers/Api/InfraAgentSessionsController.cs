@@ -71,17 +71,58 @@ public class InfraAgentSessionsController : ControllerBase
             baseDiagnostics,
             desiredRuntimeAdapter,
             profileDiagnostics);
+        var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profileDiagnostics);
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
             RuntimeTransport = _runtimeAdapter?.AdapterKind,
             DefaultRuntimeProfile = profileDiagnostics,
             CommercialReadiness = commercialReadiness,
+            RuntimeProfileRepairPlan = runtimeProfileRepairPlan,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
                 profileDiagnostics)
         };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
+    }
+
+    private static SidecarRuntimeProfileRepairPlan BuildRuntimeProfileRepairPlan(
+        SidecarRuntimeProfileDiagnostics? profile)
+    {
+        var template = InfraAgentRuntimeProfileTemplates.All.Single(x =>
+            x.Id == InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+        var r1Ready = profile is
+        {
+            HasApiKey: true,
+            CompatibleWithDesiredRuntimeAdapter: true
+        };
+        var state = r1Ready
+            ? "ready"
+            : profile == null
+                ? "missing"
+                : "blocked";
+        var nextActions = r1Ready
+            ? new[]
+            {
+                "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-run.sh 验证 S1。",
+                "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh 验证 S2/S3。"
+            }
+            : new[]
+            {
+                "在 CDS Agent 页面点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。",
+                "填入 Anthropic API key，并保存为默认 runtime profile。",
+                "点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。"
+            };
+        return new SidecarRuntimeProfileRepairPlan(
+            "R1",
+            state,
+            profile,
+            template.Id,
+            template.Protocol,
+            template.BaseUrl,
+            template.Model,
+            template.IsDefaultRecommended,
+            nextActions);
     }
 
     private static SidecarCommercialReadinessDiagnostics BuildCommercialReadiness(

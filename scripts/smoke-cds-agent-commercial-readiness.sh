@@ -139,6 +139,11 @@ smoke_ok "R0 ready: pool=${healthy_count}/${instance_count} officialInstances=${
 smoke_step "R1 default runtime profile compatibility"
 default_profile=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.defaultRuntimeProfile // empty')
 smoke_assert_nonempty "$default_profile" "diagnostics.defaultRuntimeProfile"
+repair_plan=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.runtimeProfileRepairPlan // empty')
+smoke_assert_nonempty "$repair_plan" "diagnostics.runtimeProfileRepairPlan"
+smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.gate')" "R1" "runtimeProfileRepairPlan.gate"
+smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.targetTemplateId')" "anthropic-official-claude-sonnet-4" "runtimeProfileRepairPlan.targetTemplateId"
+smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.targetProtocol')" "anthropic" "runtimeProfileRepairPlan.targetProtocol"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
 profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
@@ -148,6 +153,9 @@ printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s
   "$profile_name" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible"
 if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   gate_r1_status="pending"
+  smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.state')" "blocked" "runtimeProfileRepairPlan.state"
+  repair_actions=$(printf '%s' "$repair_plan" | jq -r '.nextActions[]?')
+  smoke_assert_contains "$repair_actions" "准备默认 Claude 配置" "runtimeProfileRepairPlan.nextActions"
   mark_pending "R1: create a default Anthropic/Claude-compatible runtime profile with API key"
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL" ]]; then
     require_commercial_failed="R1 not ready and SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL is set"

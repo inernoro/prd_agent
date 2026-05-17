@@ -370,6 +370,14 @@ public class InfraAgentSessionsControllerTests
             var defaultProfile = diagnostics.DefaultRuntimeProfile.ShouldNotBeNull();
             defaultProfile.CompatibleWithDesiredRuntimeAdapter.ShouldBeFalse();
             defaultProfile.Warning.ShouldNotBeNull().ShouldContain("Claude/Anthropic");
+            var repairPlan = diagnostics.RuntimeProfileRepairPlan.ShouldNotBeNull();
+            repairPlan.Gate.ShouldBe("R1");
+            repairPlan.State.ShouldBe("blocked");
+            repairPlan.TargetTemplateId.ShouldBe(InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+            repairPlan.TargetProtocol.ShouldBe(InfraAgentRuntimeProtocols.Anthropic);
+            repairPlan.TargetModel.ShouldBe("claude-sonnet-4-20250514");
+            repairPlan.CurrentProfile.ShouldNotBeNull().Name.ShouldBe("OpenRouter DeepSeek");
+            repairPlan.NextActions.ShouldContain(x => x.Contains("准备默认 Claude 配置", StringComparison.Ordinal));
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         }
@@ -452,6 +460,9 @@ public class InfraAgentSessionsControllerTests
             readiness.Gates.Single(x => x.Code == "T1").Status.ShouldBe("pass");
             readiness.Gates.Single(x => x.Code == "R1").Status.ShouldBe("pending");
             readiness.Pending.ShouldContain(x => x.StartsWith("R1:", StringComparison.Ordinal));
+            var repairPlan = diagnostics.RuntimeProfileRepairPlan.ShouldNotBeNull();
+            repairPlan.State.ShouldBe("blocked");
+            repairPlan.TargetBaseUrl.ShouldBe("https://api.anthropic.com");
         }
         finally
         {

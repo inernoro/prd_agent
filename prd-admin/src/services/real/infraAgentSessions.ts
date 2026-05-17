@@ -229,6 +229,27 @@ export interface InfraAgentRuntimeDiagnostics {
     }>;
     pending: string[];
   } | null;
+  runtimeProfileRepairPlan?: {
+    gate: string;
+    state: string;
+    currentProfile?: {
+      id: string;
+      name: string;
+      runtime: string;
+      protocol: string;
+      model: string;
+      hasApiKey: boolean;
+      isDefault: boolean;
+      compatibleWithDesiredRuntimeAdapter: boolean;
+      warning?: string | null;
+    } | null;
+    targetTemplateId: string;
+    targetProtocol: string;
+    targetBaseUrl: string;
+    targetModel: string;
+    targetIsDefaultRecommended: boolean;
+    nextActions: string[];
+  } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;
     activeCdsConnections?: number | null;

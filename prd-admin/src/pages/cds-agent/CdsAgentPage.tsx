@@ -712,10 +712,12 @@ export default function CdsAgentPage() {
     !defaultRuntimeProfileDiagnostics.hasApiKey
     || !defaultRuntimeProfileDiagnostics.compatibleWithDesiredRuntimeAdapter
   ));
+  const backendR1RepairPlan = runtimeStatus?.runtimeProfileRepairPlan ?? null;
   const r1RepairPlan = useMemo(() => ({
-    gate: 'R1',
-    state: r1DefaultProfileBlocked ? 'blocked' : defaultRuntimeProfileDiagnostics ? 'ready' : 'missing',
-    currentProfile: defaultRuntimeProfileDiagnostics
+    gate: backendR1RepairPlan?.gate ?? 'R1',
+    state: backendR1RepairPlan?.state ?? (r1DefaultProfileBlocked ? 'blocked' : defaultRuntimeProfileDiagnostics ? 'ready' : 'missing'),
+    source: backendR1RepairPlan ? 'backend-runtime-status' : 'page-derived',
+    currentProfile: backendR1RepairPlan?.currentProfile ?? (defaultRuntimeProfileDiagnostics
       ? {
           name: defaultRuntimeProfileDiagnostics.name,
           protocol: defaultRuntimeProfileDiagnostics.protocol,
@@ -724,8 +726,16 @@ export default function CdsAgentPage() {
           compatibleWithDesiredRuntimeAdapter: defaultRuntimeProfileDiagnostics.compatibleWithDesiredRuntimeAdapter,
           warning: defaultRuntimeProfileDiagnostics.warning ?? null,
         }
-      : null,
-    targetTemplate: anthropicOfficialProfileTemplate
+      : null),
+    targetTemplate: backendR1RepairPlan
+      ? {
+          id: backendR1RepairPlan.targetTemplateId,
+          protocol: backendR1RepairPlan.targetProtocol,
+          baseUrl: backendR1RepairPlan.targetBaseUrl,
+          model: backendR1RepairPlan.targetModel,
+          isDefaultRecommended: backendR1RepairPlan.targetIsDefaultRecommended,
+        }
+      : anthropicOfficialProfileTemplate
       ? {
           id: anthropicOfficialProfileTemplate.id,
           protocol: anthropicOfficialProfileTemplate.protocol,
@@ -734,12 +744,12 @@ export default function CdsAgentPage() {
           isDefaultRecommended: anthropicOfficialProfileTemplate.isDefaultRecommended,
         }
       : null,
-    nextActions: [
+    nextActions: backendR1RepairPlan?.nextActions ?? [
       '点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。',
       '填入 Anthropic API key，并保存为默认 runtime profile。',
       '点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。',
     ],
-  }), [anthropicOfficialProfileTemplate, defaultRuntimeProfileDiagnostics, r1DefaultProfileBlocked]);
+  }), [anthropicOfficialProfileTemplate, backendR1RepairPlan, defaultRuntimeProfileDiagnostics, r1DefaultProfileBlocked]);
 
   const fetchEventsSince = useCallback(async (sessionId: string, afterSeq: number): Promise<InfraAgentEventView[]> => {
     const collected: InfraAgentEventView[] = [];

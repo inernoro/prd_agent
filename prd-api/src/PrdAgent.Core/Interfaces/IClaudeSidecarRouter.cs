@@ -171,7 +171,8 @@ public sealed record SidecarPoolDiagnostics(
     string? RuntimeTransport = null,
     SidecarDiscoveryMetrics? DiscoveryMetrics = null,
     SidecarRuntimeProfileDiagnostics? DefaultRuntimeProfile = null,
-    SidecarCommercialReadinessDiagnostics? CommercialReadiness = null
+    SidecarCommercialReadinessDiagnostics? CommercialReadiness = null,
+    SidecarRuntimeProfileRepairPlan? RuntimeProfileRepairPlan = null
 );
 
 public sealed record SidecarRuntimeProfileDiagnostics(
@@ -200,6 +201,18 @@ public sealed record SidecarCommercialReadinessGate(
     string Status,
     string Message,
     IReadOnlyList<string>? NextActions = null
+);
+
+public sealed record SidecarRuntimeProfileRepairPlan(
+    string Gate,
+    string State,
+    SidecarRuntimeProfileDiagnostics? CurrentProfile,
+    string TargetTemplateId,
+    string TargetProtocol,
+    string TargetBaseUrl,
+    string TargetModel,
+    bool TargetIsDefaultRecommended,
+    IReadOnlyList<string> NextActions
 );
 
 public sealed record SidecarWorkspacePreparationDiagnostics(
