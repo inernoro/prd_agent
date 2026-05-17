@@ -5,7 +5,7 @@ Python 进程，把 Agent runtime 包装成统一的 HTTP + SSE 协议，供 prd
 
 当前有两条 runtime 路径：
 
-- `legacy-sidecar`：默认路径，使用官方 `anthropic` Python SDK + 本仓库自研
+- `legacy-sidecar`：兼容路径，使用官方 `anthropic` Python SDK + 本仓库自研
   `agent_loop.py`。
 - `claude-agent-sdk`：官方 Claude Agent SDK adapter spike，使用
   `claude-agent-sdk` 的 Claude Code tools / agent loop / context management。该路径可通过
@@ -20,7 +20,10 @@ Python 进程，把 Agent runtime 包装成统一的 HTTP + SSE 协议，供 prd
   对 `Bash/Edit/Write` 会先向 MAP 创建 approval request，再等待 MAP approval。
 
 MAP/prd-api 侧也可以设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent-sdk`，
-由 `ClaudeSidecarRouter` 把选择项透传给 sidecar。未设置时保持 legacy fallback。
+由 `ClaudeSidecarRouter` 把选择项透传给 sidecar。MAP 未设置时默认请求
+`claude-agent-sdk`；如果需要回退自研 loop，可显式设置
+`INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar`。sidecar 独立运行且请求未传
+`runtimeAdapter` 时，仍由 `SIDECAR_AGENT_ADAPTER` 决定，未设置则保留 legacy fallback。
 
 ## 协议
 

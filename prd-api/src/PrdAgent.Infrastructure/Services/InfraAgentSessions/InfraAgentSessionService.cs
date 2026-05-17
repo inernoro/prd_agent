@@ -17,6 +17,8 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
+    private const string DefaultSidecarRuntimeAdapter = "claude-agent-sdk";
+
     private readonly MongoDbContext _db;
     private readonly ILogger<InfraAgentSessionService> _logger;
     private readonly IInfraConnectionService _connections;
@@ -1273,16 +1275,17 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
         var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
         var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
+        var selectedRuntimeAdapter = ResolveSidecarRuntimeAdapter();
         var finalText = new StringBuilder();
         await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == session.Id,
             Builders<InfraAgentSession>.Update
                 .Set(x => x.CurrentRuntimeRunId, runId)
-                .Set(x => x.RuntimeAdapter, _runtimeAdapter.AdapterKind)
+                .Set(x => x.RuntimeAdapter, selectedRuntimeAdapter)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
         session.CurrentRuntimeRunId = runId;
-        session.RuntimeAdapter = _runtimeAdapter.AdapterKind;
+        session.RuntimeAdapter = selectedRuntimeAdapter;
 
         await AppendRawEventAsync(
             session.Id,
@@ -1296,7 +1299,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 model,
                 baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
                 protocol = runtimeProfile?.Protocol,
-                runtimeAdapter = _runtimeAdapter.AdapterKind,
+                runtimeAdapter = selectedRuntimeAdapter,
+                runtimeTransport = _runtimeAdapter.AdapterKind,
                 runtimeRunId = runId,
                 resourcePolicy = BuildResourcePolicy(session)
             }),
@@ -1320,7 +1324,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,
             Protocol = runtimeProfile?.Protocol,
-            RuntimeAdapter = ResolveSidecarRuntimeAdapter()
+            RuntimeAdapter = selectedRuntimeAdapter
         };
 
         await AppendRawEventAsync(
@@ -1331,7 +1335,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 level = "info",
                 source = "runtime-router",
-                runtimeAdapter = _runtimeAdapter.AdapterKind,
+                runtimeAdapter = selectedRuntimeAdapter,
+                runtimeTransport = _runtimeAdapter.AdapterKind,
                 runtimeRunId = runId,
                 message = $"runtime tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
             }),
@@ -1354,7 +1359,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                             messageId = runId,
                             text,
                             source = eventSource,
-                            runtimeAdapter = _runtimeAdapter.AdapterKind,
+                            runtimeAdapter = selectedRuntimeAdapter,
                             runtimeInstance = ev.RuntimeInstanceName
                         }), ct);
                     }
@@ -1368,7 +1373,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         risk = "dangerous",
                         status = "waiting",
                         source = eventSource,
-                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeAdapter = selectedRuntimeAdapter,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
@@ -1379,7 +1384,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         decision = "completed",
                         resultSummary = ev.Content,
                         source = eventSource,
-                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeAdapter = selectedRuntimeAdapter,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
@@ -1388,7 +1393,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     {
                         level = "info",
                         source = eventSource,
-                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeAdapter = selectedRuntimeAdapter,
                         inputTokens = ev.InputTokens,
                         outputTokens = ev.OutputTokens,
                         content = ev.Content,
@@ -1400,7 +1405,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     {
                         level = "info",
                         source = eventSource,
-                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeAdapter = selectedRuntimeAdapter,
                         runtimeInstance = ev.RuntimeInstanceName,
                         runtimeRunId = runId,
                         message = ev.Message ?? "runtime initialized",
@@ -1414,7 +1419,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         messageId = runId,
                         finalText = doneText,
                         source = eventSource,
-                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeAdapter = selectedRuntimeAdapter,
                         content = ev.Content,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
@@ -1445,7 +1450,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         message = errorMessage,
                         retryable = true,
                         source = eventSource,
-                        runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        runtimeAdapter = selectedRuntimeAdapter,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     await MarkRuntimeFailedAsync(session, $"Claude SDK sidecar 执行失败：{errorMessage}", ct);
@@ -1483,7 +1488,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private static string? ResolveSidecarRuntimeAdapter()
     {
         var value = Environment.GetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER");
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        return string.IsNullOrWhiteSpace(value) ? DefaultSidecarRuntimeAdapter : value.Trim();
     }
 
     private void EnsureRuntimeAdapterReady(string? runtime)

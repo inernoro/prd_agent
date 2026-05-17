@@ -168,8 +168,8 @@ public interface IAgentRuntimeAdapter
 2026-05-17 第二轮实现新增官方 SDK adapter spike，但仍是可选路径：
 
 - `claude-sdk-sidecar/app/official_agent_sdk.py` 使用官方 `claude-agent-sdk` 的 `ClaudeSDKClient`、`tool()`、`create_sdk_mcp_server()` 和 `ClaudeAgentOptions`，把 MAP 工具桥包装为 in-process MCP server。
-- sidecar 支持 `runtimeAdapter=claude-agent-sdk` 或 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 选择官方路径；默认仍为 `legacy-sidecar`。
-- MAP 后端支持通过 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent-sdk` 透传选择项，保留现有 `LegacySidecarRuntimeAdapter` 作为 fallback。
+- sidecar 支持 `runtimeAdapter=claude-agent-sdk` 或 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 选择官方路径；standalone 默认仍为 `legacy-sidecar`。
+- MAP 后端默认透传 `claude-agent-sdk`，保留 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 显式 fallback 和现有 `LegacySidecarRuntimeAdapter` 传输层。
 - 新增 `runtime_init` 事件映射，MAP 会把 adapter、allowed tools、permission mode、cwd 等初始化信息落为 `InfraAgentEventTypes.Log`，用于 UI 调试和审计。
 - 当前 spike 已改为 `ClaudeSDKClient` 结构，sidecar cancel event 会调用官方 `client.interrupt()` 并把结果映射为 `error_code=cancelled`。这只是 adapter 层取消闭环；跨进程精确定位、会话恢复和远程真实 run 仍需下一轮验证。
 - 本机尚未安装 `claude_agent_sdk`，所以真实 official SDK run 需要先完成依赖、Claude Code CLI、provider key、workspace 权限配置后验证。

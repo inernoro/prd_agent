@@ -101,7 +101,7 @@
 - P1.4 已有第一步：session 写入 `CurrentRuntimeRunId`，Stop 时会通过 adapter 调 sidecar `/v1/agent/cancel/{runId}` 做 best-effort 取消。
 - P1.6 已接入第一版页面调试面板：`/cds-agent` 展示 runtime adapter、run id、runtime instance、事件 source、cancel 状态；事件标题也显示 adapter/source；无 active session 时也显示空态原因。
 - P1.6 已补 sidecar pool 诊断入口：sidecar `/readyz` 返回当前 adapter、官方 SDK 包、Claude CLI、workspace、allowed tools、permission mode、写工具 opt-in 和 approval bridge；MAP `GET /api/infra-agent-sessions/runtime-status` 透出 pool 诊断，页面 runtime 调试面板显示 healthy/instance 数。
-- P1.2 已有第一版官方 Claude Agent SDK adapter spike：sidecar 支持 `runtimeAdapter=claude-agent-sdk` / `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`，MAP 可通过 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent-sdk` 透传选择项；默认仍为 legacy fallback。
+- P1.2 已有第一版官方 Claude Agent SDK adapter spike：sidecar 支持 `runtimeAdapter=claude-agent-sdk` / `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`，MAP 默认按请求透传 `claude-agent-sdk`，仅在显式设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 时回退自研 loop；sidecar standalone 未传 `runtimeAdapter` 时仍保留 legacy fallback。
 - P1.3 已补 `runtime_init` 事件映射，官方 adapter 初始化信息会进入 MAP 事件流，供调试面板和审计使用。
 - P1.4 官方路径已有第一步取消语义：adapter 使用 `ClaudeSDKClient`，sidecar cancel event 会调用官方 `client.interrupt()`；下一步还要用真实 SDK/CLI/key 证明远程 run 能被停止。
 - P1.5 已有第二步事件游标：后端 `ListEventsAsync(afterSeq, limit)` 和 `/stream?afterSeq=&limit=` 已存在，`/stream` 已改为长连接 SSE + keepalive；`/cds-agent` 页面改为 SSE 优先续读、JSON 分页兜底，并按 `seq` 去重合并事件；Toolbox `cds-agent` 回放改为游标批量读取，避免固定 500 条覆盖长任务审计。
@@ -135,6 +135,7 @@
 - `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~CapsuleExecutorCdsAgentEventCursorTests` 通过，2 个测试；覆盖 workflow/capsule 的 CDS Agent 事件游标跨页读取和无进展防死循环。
 - `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~CdsAgentAdapterTests` 通过，10 个测试；覆盖 Toolbox CDS Agent runtime pool gate、事件游标跨页读取、完整性摘要和无进展防死循环。本轮在普通沙箱内因 MSBuild named pipe 权限失败，已在授权沙箱外重跑通过。
 - `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~CdsAgentRuntimeCompatibilityTests` 通过，7 个测试；通过源码扫描和构造函数反射双护栏锁定非代码 Toolbox agent 不依赖 CDS sidecar/runtime pool。
+- `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~InfraAgentSessionServiceRuntimeAdapterTests` 通过，2 个测试；锁定 MAP 默认请求 `claude-agent-sdk`，同时允许显式 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 回退。
 - `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter "FullyQualifiedName~CdsAgentRuntimeCompatibilityTests|FullyQualifiedName~CdsAgentAdapterTests"` 通过，15 个测试；覆盖 CDS Agent runtime adapter gate，并锁定非代码 Toolbox agent 不依赖 CDS sidecar/runtime pool。
 - `dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj --no-restore --filter FullyQualifiedName~DynamicSidecarRegistryTests` 通过，13 个测试；覆盖 MAP/CDS sidecar discovery、empty instances、invalid token 收敛、per-request provider key readiness、sidecar `/readyz.blockers/nextActions` 透传、official SDK adapter 诊断文案和 loop ownership 强类型字段。
 - `npm --prefix prd-admin run tsc` 通过；覆盖 `runtime-status.instances[].readyzBlockers/readyzNextActions`、loop ownership 强类型字段和 Runtime 就绪门禁前端类型兼容。
