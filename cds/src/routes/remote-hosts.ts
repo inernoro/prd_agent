@@ -501,13 +501,18 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
           instances.push({
             deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
+            profileId: serviceState.profileId,
+            branchId: branch.id,
+            branch: branch.branch,
+            serviceKind: 'branch-service',
+            projectKind: project.kind,
             host: serviceState.containerName,
             port: serviceState.hostPort,
             baseUrl,
             healthy: true,
             version: branch.githubCommitSha,
             deployedAt: branch.lastDeployAt || branch.createdAt,
-            tags: ['system', 'default', 'cds-sidecar'],
+            tags: ['system', 'default', 'cds-sidecar', `profile:${serviceState.profileId}`, `branch:${branch.branch}`],
             hostName: profile?.name || serviceState.profileId,
             hostId: branch.id,
           });

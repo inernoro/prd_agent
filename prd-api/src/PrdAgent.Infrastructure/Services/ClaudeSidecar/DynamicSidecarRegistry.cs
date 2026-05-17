@@ -291,19 +291,20 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                     : !string.IsNullOrWhiteSpace(inst.DeploymentId)
                         ? inst.DeploymentId
                         : idx.ToString();
+                var tags = NormalizeInstanceTags(inst);
                 discovered.Add(string.IsNullOrWhiteSpace(inst.BaseUrl)
                     ? ToDynamicInstance(
                         name: $"cds-pairing:{conn.Id}:{stable}",
                         host: inst.Host!,
                         port: inst.Port!.Value,
                         token: ResolveSharedSidecarToken(opts),
-                        tags: inst.Tags ?? new List<string>(),
+                        tags: tags,
                         source: "cds-pairing")
                     : ToDynamicInstance(
                         name: $"cds-pairing:{conn.Id}:{stable}",
                         baseUrl: inst.BaseUrl!,
                         token: ResolveSharedSidecarToken(opts),
-                        tags: inst.Tags ?? new List<string>(),
+                        tags: tags,
                         source: "cds-pairing"));
             }
         }
@@ -392,6 +393,27 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             .Trim();
         if (normalized.Length <= max) return normalized;
         return normalized[..max] + "...";
+    }
+
+    private static IReadOnlyList<string> NormalizeInstanceTags(InstanceDto inst)
+    {
+        var tags = new List<string>();
+        if (inst.Tags != null)
+        {
+            tags.AddRange(inst.Tags.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
+        }
+        AddTag(tags, "profile", inst.ProfileId);
+        AddTag(tags, "branch", inst.Branch);
+        AddTag(tags, "branchId", inst.BranchId);
+        AddTag(tags, "serviceKind", inst.ServiceKind);
+        AddTag(tags, "projectKind", inst.ProjectKind);
+        return tags.Distinct(StringComparer.OrdinalIgnoreCase).Take(24).ToList();
+    }
+
+    private static void AddTag(List<string> tags, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        tags.Add($"{key}:{value.Trim()}");
     }
 
     private static DynamicSidecarInstance ToDynamicInstance(
@@ -524,6 +546,11 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
     private sealed class InstanceDto
     {
         public string? DeploymentId { get; set; }
+        public string? ProfileId { get; set; }
+        public string? BranchId { get; set; }
+        public string? Branch { get; set; }
+        public string? ServiceKind { get; set; }
+        public string? ProjectKind { get; set; }
         public string? BaseUrl { get; set; }
         public string? Host { get; set; }
         public int? Port { get; set; }

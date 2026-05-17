@@ -150,12 +150,17 @@ describe('Remote hosts project instances route', () => {
     expect(res.body.instances).toHaveLength(1);
     expect(res.body.instances[0]).toMatchObject({
       deploymentId: 'branch:shared-main:api-prd-agent',
+      profileId: 'api-prd-agent',
+      branchId: 'shared-main',
+      branch: 'main',
+      serviceKind: 'branch-service',
+      projectKind: 'shared-service',
       host: 'cds-shared-sidecar-api',
       port: 17400,
       baseUrl: 'https://main-shared-sidecar-pool.preview.example.test',
       healthy: true,
       version: 'abc1234',
-      tags: ['system', 'default', 'cds-sidecar'],
+      tags: ['system', 'default', 'cds-sidecar', 'profile:api-prd-agent', 'branch:main'],
       hostName: 'api-prd-agent',
       hostId: 'shared-main',
     });

@@ -66,6 +66,11 @@ public class DynamicSidecarRegistryTests
                       "host": "10.0.0.8",
                       "port": 7400,
                       "healthy": true,
+                      "profileId": "api-prd-agent",
+                      "branchId": "shared-main",
+                      "branch": "main",
+                      "serviceKind": "branch-service",
+                      "projectKind": "shared-service",
                       "tags": ["prod", "agent-sdk"]
                     }
                   ]
@@ -89,6 +94,11 @@ public class DynamicSidecarRegistryTests
         Assert.Equal("shared-sidecar-token", item.Token);
         Assert.Equal("cds-pairing", item.Source);
         Assert.Contains("agent-sdk", item.Tags);
+        Assert.Contains("profile:api-prd-agent", item.Tags);
+        Assert.Contains("branch:main", item.Tags);
+        Assert.Contains("branchId:shared-main", item.Tags);
+        Assert.Contains("serviceKind:branch-service", item.Tags);
+        Assert.Contains("projectKind:shared-service", item.Tags);
     }
 
     [Fact]
