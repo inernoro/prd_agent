@@ -84,7 +84,7 @@ bash scripts/smoke-all.sh
 
 ```bash
 # 只跑 health + prd-agent，跳过 CDS Agent + defect + report
-SMOKE_SKIP=cds-agent-runtime,cds-agent-templates,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,defect,report bash scripts/smoke-all.sh
+SMOKE_SKIP=cds-agent-runtime,cds-agent-boundary,cds-agent-templates,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,defect,report bash scripts/smoke-all.sh
 
 # 或单独跑
 bash scripts/smoke-health.sh
@@ -144,7 +144,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_USER` | `admin` | 被假冒的用户 login（必须在 users 集合存在） |
 | `SMOKE_TIMEOUT` | `20` | 单次 curl 超时秒数 |
 | `SMOKE_VERBOSE` | _(空)_ | 非空时打印完整 JSON 响应摘要 |
-| `SMOKE_SKIP` | _(空)_ | 逗号/空格分隔要跳过的 key（`health`/`cds-agent-runtime`/`cds-agent-sidecar-alias`/`cds-agent-templates`/`cds-agent-preflight`/`cds-agent-readiness`/`cds-agent-s1`/`cds-agent-controls`/`prd-agent`/`defect`/`report`） |
+| `SMOKE_SKIP` | _(空)_ | 逗号/空格分隔要跳过的 key（`health`/`cds-agent-runtime`/`cds-agent-sidecar-alias`/`cds-agent-boundary`/`cds-agent-templates`/`cds-agent-preflight`/`cds-agent-readiness`/`cds-agent-s1`/`cds-agent-controls`/`prd-agent`/`defect`/`report`） |
 | `SMOKE_FAIL_FAST` | _(空)_ | 非空时首次失败即退出 |
 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL` | _(空)_ | official SDK run/control 脚本专用；设为 `1` 才真实发送 prompt |
 | `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE` | _(空)_ | 默认 profile 不兼容时是否失败；默认只跳过 provider run |
@@ -199,6 +199,7 @@ adapter 仍是 `claude-agent-sdk`，官方 adapter 仍使用 `ClaudeSDKClient` /
 引入 `AsyncAnthropic`、`client.messages.stream` 或 OpenAI-compatible
 `chat/completions` loop。one-cycle 会把它的 JSON 写入
 `official-sdk-boundary-report.json`，用于证明“压缩自研 loop”的方向没有回退。
+`smoke-all.sh` 也会默认运行它，key 为 `cds-agent-boundary`。
 
 `smoke-cds-agent-profile-preflight.sh` 会在默认 profile 不兼容 `claude-agent-sdk`
 时创建一个临时 idle session，断言 `SendMessage` 返回 `runtime_profile_incompatible`，
