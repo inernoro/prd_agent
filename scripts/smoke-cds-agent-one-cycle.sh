@@ -125,19 +125,21 @@ finish_cycle() {
 
   if [[ -z "$next_command" ]]; then
     case "$cycle_status" in
+      failed)
+        next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
+        ;;
       blocked_r1)
         next_command="SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
       ready_for_provider_smokes|blocked_provider_smokes|provider_smokes_incomplete)
         next_command="SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
-      failed)
-        next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
-        ;;
       *)
         next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and pending gates"
         ;;
     esac
+  elif [[ "$cycle_status" == "failed" ]]; then
+    next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
   fi
 
   passed_json='[]'

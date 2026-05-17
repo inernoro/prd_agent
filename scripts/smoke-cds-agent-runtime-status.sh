@@ -24,10 +24,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
 SMOKE_STEP_TOTAL=5
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES:-3}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS:-3}"
 smoke_init "CDS Agent Runtime Status"
 
 smoke_step "GET runtime-status?refreshDiscovery=true"
-resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+resp=""
+for attempt in $(seq 1 "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES"); do
+  resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+  healthy_count_probe=$(smoke_get_data "$resp" '.diagnostics.healthyCount // 0')
+  official_instances_probe=$(smoke_get_data "$resp" '[.diagnostics.instances[]? | select((.agentAdapter // "") == "claude-agent-sdk" or (.loopOwner // "") == "claude-agent-sdk")] | length')
+  if (( healthy_count_probe > 0 && official_instances_probe > 0 )); then
+    break
+  fi
+  if (( attempt < SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES )); then
+    printf 'runtime-status not ready yet (attempt %s/%s, healthy=%s official=%s), retrying in %ss...\n' \
+      "$attempt" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES" "$healthy_count_probe" "$official_instances_probe" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+    sleep "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+  fi
+done
 smoke_verbose "$resp"
 success=$(printf '%s' "$resp" | jq -r '.success')
 smoke_assert_eq "$success" "true" "ApiResponse.success"

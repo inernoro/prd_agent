@@ -26,6 +26,8 @@ SMOKE_STEP_TOTAL=6
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL="${SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL:-}"
 SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL:-}"
 SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES:-3}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS:-3}"
 
 audit_pending=()
 require_commercial_failed=""
@@ -118,7 +120,20 @@ write_report() {
 smoke_init "CDS Agent Commercial Readiness"
 
 smoke_step "R0 runtime pool official SDK loop ownership"
-runtime_resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+runtime_resp=""
+for attempt in $(seq 1 "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES"); do
+  runtime_resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+  healthy_count_probe=$(smoke_get_data "$runtime_resp" '.diagnostics.healthyCount // 0')
+  official_instances_probe=$(smoke_get_data "$runtime_resp" '[.diagnostics.instances[]? | select((.agentAdapter // "") == "claude-agent-sdk" or (.loopOwner // "") == "claude-agent-sdk")] | length')
+  if (( healthy_count_probe > 0 && official_instances_probe > 0 )); then
+    break
+  fi
+  if (( attempt < SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES )); then
+    printf 'runtime-status not ready yet (attempt %s/%s, healthy=%s official=%s), retrying in %ss...\n' \
+      "$attempt" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES" "$healthy_count_probe" "$official_instances_probe" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+    sleep "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+  fi
+done
 smoke_verbose "$runtime_resp"
 smoke_assert_eq "$(printf '%s' "$runtime_resp" | jq -r '.success')" "true" "RuntimeStatus.success"
 desired_adapter=$(smoke_get_data "$runtime_resp" '.diagnostics.desiredRuntimeAdapter // ""')
