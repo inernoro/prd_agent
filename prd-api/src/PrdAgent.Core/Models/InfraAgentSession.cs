@@ -28,6 +28,12 @@ public class InfraAgentSession
 
     public string? ModelBaseUrl { get; set; }
 
+    public string? WorkspaceRoot { get; set; }
+
+    public string? GitRepository { get; set; }
+
+    public string? GitRef { get; set; }
+
     public string Runtime { get; set; } = InfraAgentRuntimes.ClaudeSdk;
 
     public string? RuntimeAdapter { get; set; }

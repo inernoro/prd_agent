@@ -93,6 +93,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             CdsProjectId = connection.ProjectId,
             TraceId = NormalizeOptional(request.TraceId) ?? BuildEventTraceId(sessionId),
             RuntimeProfileId = NormalizeOptional(request.RuntimeProfileId),
+            WorkspaceRoot = NormalizeOptional(request.WorkspaceRoot),
+            GitRepository = NormalizeOptional(request.GitRepository),
+            GitRef = NormalizeOptional(request.GitRef),
             Runtime = NormalizeRuntime(request.Runtime),
             Model = NormalizeOptional(request.Model),
             ResourceCpuCores = 2,
@@ -1300,6 +1303,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 runtimeAdapter = selectedRuntimeAdapter,
                 runtimeTransport = _runtimeAdapter.AdapterKind,
                 runtimeRunId = runId,
+                workspaceRoot = session.WorkspaceRoot,
+                gitRepository = session.GitRepository,
+                gitRef = session.GitRef,
                 resourcePolicy = BuildResourcePolicy(session)
             }),
             ct);
@@ -1324,7 +1330,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Protocol = runtimeProfile?.Protocol,
             RuntimeAdapter = selectedRuntimeAdapter,
             MapSessionId = session.Id,
-            TraceId = session.TraceId
+            TraceId = session.TraceId,
+            WorkspaceRoot = session.WorkspaceRoot,
+            GitRepository = session.GitRepository,
+            GitRef = session.GitRef
         };
 
         await AppendRawEventAsync(
@@ -1952,6 +1961,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.RuntimeAdapter,
         session.CurrentRuntimeRunId,
         session.Model,
+        session.WorkspaceRoot,
+        session.GitRepository,
+        session.GitRef,
         session.ResourceCpuCores,
         session.ResourceMemoryMb,
         NormalizeRuntimeTimeout(session.TimeoutSeconds),
@@ -2040,6 +2052,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             RuntimeAdapter = view.RuntimeAdapter,
             CurrentRuntimeRunId = view.CurrentRuntimeRunId,
             Model = view.Model,
+            WorkspaceRoot = view.WorkspaceRoot,
+            GitRepository = view.GitRepository,
+            GitRef = view.GitRef,
             ResourceCpuCores = view.ResourceCpuCores,
             ResourceMemoryMb = view.ResourceMemoryMb,
             TimeoutSeconds = view.TimeoutSeconds,

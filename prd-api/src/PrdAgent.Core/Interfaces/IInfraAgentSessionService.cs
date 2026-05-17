@@ -65,7 +65,10 @@ public record CreateInfraAgentSessionRequest(
     string? ToolPolicy,
     string? HookProfileId,
     string? RuntimeProfileId = null,
-    string? TraceId = null
+    string? TraceId = null,
+    string? WorkspaceRoot = null,
+    string? GitRepository = null,
+    string? GitRef = null
 );
 
 public record StartInfraAgentSessionRequest(
@@ -122,6 +125,9 @@ public record InfraAgentSessionView(
     string? RuntimeAdapter,
     string? CurrentRuntimeRunId,
     string? Model,
+    string? WorkspaceRoot,
+    string? GitRepository,
+    string? GitRef,
     double ResourceCpuCores,
     int ResourceMemoryMb,
     int TimeoutSeconds,

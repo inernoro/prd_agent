@@ -567,6 +567,9 @@ export default function CdsAgentPage() {
     connectionId: '',
     runtimeProfileId: '',
     toolPolicy: 'confirm-dangerous',
+    gitRepository: '',
+    gitRef: 'main',
+    workspaceRoot: '',
   });
   const [profileDraft, setProfileDraft] = useState({
     name: '自定义模型配置',
@@ -602,6 +605,9 @@ export default function CdsAgentPage() {
       session.status,
       session.lastError ?? '',
       session.traceId,
+      session.gitRepository ?? '',
+      session.gitRef ?? '',
+      session.workspaceRoot ?? '',
     ].some((value) => value.toLowerCase().includes(query)));
   }, [sessionQuery, sortedSessions]);
   const resumableCount = useMemo(
@@ -714,6 +720,9 @@ export default function CdsAgentPage() {
       ['会话用户', activeSession.userId],
       ['CDS 连接', activeConnection?.partnerName || activeConnection?.partnerId || activeSession.partner],
       ['模型配置', activeSessionProfile?.name ?? activeSession.runtimeProfileId ?? '未绑定'],
+      ['目标仓库', activeSession.gitRepository || activeSession.cdsProjectId],
+      ['目标分支', activeSession.gitRef || '未指定'],
+      ['Workspace', activeSession.workspaceRoot || '由 CDS sidecar 默认工作区决定'],
       ['资源限制', formatSessionResourcePolicy(activeSession)],
       ['工具策略', activeSession.toolPolicy],
       ['人工接管', activeSession.manualTakeoverEnabled ? `已接管 · ${activeSession.manualTakeoverReason ?? '未填写原因'}` : '未接管'],
@@ -955,6 +964,9 @@ export default function CdsAgentPage() {
       runtimeAdapter: activeSession.runtimeAdapter,
       currentRuntimeRunId: activeSession.currentRuntimeRunId,
       runtimeProfileId: activeSession.runtimeProfileId,
+      workspaceRoot: activeSession.workspaceRoot,
+      gitRepository: activeSession.gitRepository,
+      gitRef: activeSession.gitRef,
     } : null,
     connection: activeConnection ? {
       id: activeConnection.id,
@@ -1305,6 +1317,9 @@ export default function CdsAgentPage() {
         runtimeProfileId: activeProfile?.id,
         title: draft.title,
         toolPolicy: draft.toolPolicy,
+        gitRepository: draft.gitRepository.trim() || undefined,
+        gitRef: draft.gitRef.trim() || undefined,
+        workspaceRoot: draft.workspaceRoot.trim() || undefined,
       });
       if (!res.success || !res.data?.item) {
         toast.error('新建会话失败', res.error?.message ?? '请检查 CDS 连接和模型配置');
@@ -2294,6 +2309,37 @@ export default function CdsAgentPage() {
                 </button>
                 {profileTest && <div className="mt-2 break-words text-xs leading-relaxed text-white/55">{profileTest}</div>}
               </div>
+              <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/65">
+                  <GitCompare size={13} /> 目标代码仓库
+                </div>
+                <div className="mt-2 grid gap-2">
+                  <input
+                    value={draft.gitRepository}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="GitHub 仓库，例如 inernoro/prd_agent"
+                  />
+                  <input
+                    value={draft.gitRef}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="分支或 ref，例如 main"
+                  />
+                  <input
+                    value={draft.workspaceRoot}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, workspaceRoot: e.target.value }))}
+                    className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
+                    placeholder="可选：sidecar 内 workspace 绝对路径"
+                  />
+                </div>
+                <div className="mt-2 text-xs leading-relaxed text-white/42">
+                  留空时沿用 CDS sidecar 默认工作区。填写 workspaceRoot 后会作为官方 SDK cwd 下发，并在 runtime_init 事件里回显，方便审计“到底审了哪个仓库”。
+                </div>
+              </div>
               <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/65">
                   <ShieldCheck size={13} /> 远程页面安全边界
@@ -2505,6 +2551,11 @@ export default function CdsAgentPage() {
                   >
                     <div className="truncate text-sm font-medium text-white/85">{session.title}</div>
                     <div className="mt-1 text-xs text-white/45">{statusLabel(session.status)} · {session.model ?? '未配置模型'}</div>
+                    {(session.gitRepository || session.gitRef || session.workspaceRoot) && (
+                      <div className="mt-1 truncate text-[11px] text-white/35">
+                        {session.gitRepository || session.cdsProjectId} · {session.gitRef || 'ref 未指定'} · {session.workspaceRoot || '默认 workspace'}
+                      </div>
+                    )}
                     {(session.runtimeAdapter || session.currentRuntimeRunId) && (
                       <div className="mt-1 truncate text-[11px] text-white/35">
                         {session.runtimeAdapter ?? 'runtime adapter 未上报'} · {shortId(session.currentRuntimeRunId)}

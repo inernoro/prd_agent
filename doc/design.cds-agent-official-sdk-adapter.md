@@ -180,7 +180,7 @@ public interface IAgentRuntimeAdapter
 - `SendMessageAsync` 已从同步等待 runtime run 改为后台 job 模式：HTTP 请求写入用户消息、导入 CDS 事件、追加 `runtime job queued` 日志并入队；`InfraAgentRuntimeWorker` 从 `IInfraAgentRuntimeJobQueue` 消费后调用 runtime adapter，异常会写回 MAP error 事件。
 - 官方 adapter 默认只开放 `Read/Grep/Glob` 只读内置工具，`permission_mode=default`。`Bash/Edit/Write` 必须通过 `CLAUDE_AGENT_SDK_ALLOWED_TOOLS` 显式 opt-in，且 `runtime_init` 会记录 `builtinWriteToolsEnabled` 和具体工具名。
 - 第一版官方 permission bridge 已接入 `ClaudeAgentOptions.can_use_tool`：只读内置工具直接 allow；`Bash/Edit/Write` 会向 MAP `POST /api/agent-tools/approvals/{runId}/{approvalId}/request` 创建 `tool_call` 审批事件，再复用 `/wait` 等待 MAP approval，最后返回 `PermissionResultAllow` 或 `PermissionResultDeny`。这仍需要真实 UI 审批和远程 official SDK run 验证。
-- Runtime request 的 MAP/session/workspace 上下文已开始进入 sidecar 协议：`mapSessionId/traceId/workspaceRoot/gitRepository/gitRef` 可随 run 下发，官方 SDK adapter 会把 request `workspaceRoot` 映射到 `ClaudeAgentOptions.cwd`，并在 `runtime_init` 中回报 workspace 来源和 repo/ref。当前只完成协议和 adapter 层，产品级“选择任意仓库/分支后审核”还需要下一轮 UI/API 与 CDS workspace 准备闭环。
+- Runtime request 的 MAP/session/workspace 上下文已开始进入 sidecar 协议：`mapSessionId/traceId/workspaceRoot/gitRepository/gitRef` 可随 run 下发，官方 SDK adapter 会把 request `workspaceRoot` 映射到 `ClaudeAgentOptions.cwd`，并在 `runtime_init` 中回报 workspace 来源和 repo/ref。`/cds-agent` 新建会话已能录入 repo/ref/workspace 并在审计摘要、诊断包和 runtime start 事件中回显；产品级“选择任意仓库/分支后自动准备 workspace”还需要下一轮 CDS clone/checkout 与 GitHub 授权闭环。
 
 依赖校准：
 

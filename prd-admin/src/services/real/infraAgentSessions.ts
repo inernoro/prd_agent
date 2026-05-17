@@ -20,6 +20,9 @@ export interface InfraAgentSessionView {
   runtimeAdapter?: string | null;
   currentRuntimeRunId?: string | null;
   model?: string | null;
+  workspaceRoot?: string | null;
+  gitRepository?: string | null;
+  gitRef?: string | null;
   resourceCpuCores: number;
   resourceMemoryMb: number;
   timeoutSeconds: number;
@@ -251,6 +254,9 @@ export async function createInfraAgentSession(input: {
   title?: string;
   toolPolicy?: string;
   hookProfileId?: string;
+  workspaceRoot?: string;
+  gitRepository?: string;
+  gitRef?: string;
 }): Promise<ApiResponse<ItemResp>> {
   return await apiRequest<ItemResp>(api.infraAgentSessions.create(), {
     method: 'POST',
