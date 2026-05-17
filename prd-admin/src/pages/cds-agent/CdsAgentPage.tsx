@@ -803,6 +803,24 @@ export default function CdsAgentPage() {
       : claudeCliBundled === false
         ? 'SDK 未安装'
         : claudeCliPath || '未上报';
+    const workspacePreparation = (
+      primaryRuntime?.workspacePreparation
+      ?? (primaryAdapterDiagnostics ? (primaryAdapterDiagnostics.workspacePreparation as Record<string, unknown> | null | undefined) : null)
+      ?? null
+    );
+    const autoGitWorkspace = readBoolean(workspacePreparation, 'autoGitWorkspace');
+    const workspaceRoot = workspacePreparation ? readString(workspacePreparation, 'workspacesRoot') : '';
+    const workspaceRootExists = readBoolean(workspacePreparation, 'workspacesRootExists');
+    const gitInstalled = readBoolean(workspacePreparation, 'gitInstalled');
+    const workspaceLock = workspacePreparation ? readString(workspacePreparation, 'workspaceLock') : '';
+    const workspacePrepState = workspacePreparation
+      ? [
+          autoGitWorkspace === true ? 'auto git' : autoGitWorkspace === false ? 'manual only' : 'auto 未上报',
+          gitInstalled === true ? 'git ok' : gitInstalled === false ? 'git missing' : 'git 未上报',
+          workspaceRootExists === true ? 'root exists' : workspaceRootExists === false ? 'root missing' : 'root 未上报',
+          workspaceLock || 'lock 未上报',
+        ].join(' · ')
+      : '未上报';
     const runId = activeSession?.currentRuntimeRunId
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeRunId') || readString(latestRuntimePayload, 'messageId') : '');
     const instance = latestRuntimePayload
@@ -909,6 +927,8 @@ export default function CdsAgentPage() {
         ['MAP role', mapRole || '未上报'],
         ['CDS role', cdsRole || '未上报'],
         ['External CLI', claudeCliState],
+        ['Workspace prep', workspacePrepState],
+        ['Workspace root', workspaceRoot || '未上报'],
         ['Run ID', shortId(runId)],
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
@@ -949,6 +969,7 @@ export default function CdsAgentPage() {
       cdsRole: item.cdsRole,
       claudeCliPath: item.claudeCliPath,
       claudeCliBundled: item.claudeCliBundled,
+      workspacePreparation: item.workspacePreparation,
       readyzBlockers: item.readyzBlockers,
       readyzNextActions: item.readyzNextActions,
       error: item.error,

@@ -415,7 +415,16 @@ public class DynamicSidecarRegistryTests
                     "cdsRole": "sandbox-runtime",
                     "missing": ["claude_agent_sdk", "workspace_root"],
                     "claudeCliPath": null,
-                    "claudeCliBundled": false
+                    "claudeCliBundled": false,
+                    "workspacePreparation": {
+                      "autoGitWorkspace": true,
+                      "workspacesRoot": "/tmp/cds-agent-workspaces",
+                      "workspacesRootExists": true,
+                      "gitInstalled": true,
+                      "supportedRepositoryHosts": ["github.com"],
+                      "supportedRepositoryFormats": ["owner/repo", "https://github.com/owner/repo"],
+                      "workspaceLock": "in-process"
+                    }
                   }
                 }
                 """)
@@ -441,6 +450,14 @@ public class DynamicSidecarRegistryTests
         Assert.Equal("sandbox-runtime", diagnostics.Instances[0].CdsRole);
         Assert.Null(diagnostics.Instances[0].ClaudeCliPath);
         Assert.False(diagnostics.Instances[0].ClaudeCliBundled);
+        Assert.NotNull(diagnostics.Instances[0].WorkspacePreparation);
+        Assert.True(diagnostics.Instances[0].WorkspacePreparation!.AutoGitWorkspace);
+        Assert.Equal("/tmp/cds-agent-workspaces", diagnostics.Instances[0].WorkspacePreparation!.WorkspacesRoot);
+        Assert.True(diagnostics.Instances[0].WorkspacePreparation!.WorkspacesRootExists);
+        Assert.True(diagnostics.Instances[0].WorkspacePreparation!.GitInstalled);
+        Assert.Equal("in-process", diagnostics.Instances[0].WorkspacePreparation!.WorkspaceLock);
+        Assert.Contains("github.com", diagnostics.Instances[0].WorkspacePreparation!.SupportedRepositoryHosts ?? Array.Empty<string>());
+        Assert.Contains("owner/repo", diagnostics.Instances[0].WorkspacePreparation!.SupportedRepositoryFormats ?? Array.Empty<string>());
         Assert.Contains("missing claude_agent_sdk", diagnostics.Instances[0].ReadyzBlockers ?? Array.Empty<string>());
         Assert.Contains(
             "install the official SDK: pip install claude-agent-sdk",

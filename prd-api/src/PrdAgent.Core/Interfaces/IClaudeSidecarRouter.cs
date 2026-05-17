@@ -172,6 +172,16 @@ public sealed record SidecarPoolDiagnostics(
     SidecarDiscoveryMetrics? DiscoveryMetrics = null
 );
 
+public sealed record SidecarWorkspacePreparationDiagnostics(
+    bool? AutoGitWorkspace = null,
+    string? WorkspacesRoot = null,
+    bool? WorkspacesRootExists = null,
+    bool? GitInstalled = null,
+    IReadOnlyList<string>? SupportedRepositoryHosts = null,
+    IReadOnlyList<string>? SupportedRepositoryFormats = null,
+    string? WorkspaceLock = null
+);
+
 public sealed record SidecarDiscoveryMetrics(
     int? TotalConnections = null,
     int? ActiveCdsConnections = null,
@@ -214,5 +224,6 @@ public sealed record SidecarInstanceDiagnostics(
     string? MapRole = null,
     string? CdsRole = null,
     string? ClaudeCliPath = null,
-    bool? ClaudeCliBundled = null
+    bool? ClaudeCliBundled = null,
+    SidecarWorkspacePreparationDiagnostics? WorkspacePreparation = null
 );

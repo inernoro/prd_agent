@@ -232,7 +232,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     parsed.MapRole,
                     parsed.CdsRole,
                     parsed.ClaudeCliPath,
-                    parsed.ClaudeCliBundled));
+                    parsed.ClaudeCliBundled,
+                    parsed.WorkspacePreparation));
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -492,10 +493,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? MapRole, string? CdsRole, string? ClaudeCliPath, bool? ClaudeCliBundled) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? MapRole, string? CdsRole, string? ClaudeCliPath, bool? ClaudeCliBundled, SidecarWorkspacePreparationDiagnostics? WorkspacePreparation) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
         try
         {
@@ -530,14 +531,34 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             string? cdsRole = TryReadString(diagElement, "cdsRole");
             string? claudeCliPath = TryReadString(diagElement, "claudeCliPath");
             bool? claudeCliBundled = TryReadBool(diagElement, "claudeCliBundled");
+            var workspacePreparation = TryReadWorkspacePreparation(diagElement);
             var blockers = ReadStringArray(root, "blockers");
             var nextActions = ReadStringArray(root, "nextActions");
-            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, mapRole, cdsRole, claudeCliPath, claudeCliBundled);
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, mapRole, cdsRole, claudeCliPath, claudeCliBundled, workspacePreparation);
         }
         catch (JsonException)
         {
-            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
+    }
+
+    private static SidecarWorkspacePreparationDiagnostics? TryReadWorkspacePreparation(JsonElement diagnostics)
+    {
+        if (diagnostics.ValueKind != JsonValueKind.Object
+            || !diagnostics.TryGetProperty("workspacePreparation", out var value)
+            || value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return new SidecarWorkspacePreparationDiagnostics(
+            AutoGitWorkspace: TryReadBool(value, "autoGitWorkspace"),
+            WorkspacesRoot: TryReadString(value, "workspacesRoot"),
+            WorkspacesRootExists: TryReadBool(value, "workspacesRootExists"),
+            GitInstalled: TryReadBool(value, "gitInstalled"),
+            SupportedRepositoryHosts: ReadStringArray(value, "supportedRepositoryHosts"),
+            SupportedRepositoryFormats: ReadStringArray(value, "supportedRepositoryFormats"),
+            WorkspaceLock: TryReadString(value, "workspaceLock"));
     }
 
     private static string? TryReadString(JsonElement value, string name)

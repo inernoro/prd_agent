@@ -147,6 +147,15 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   cdsRole?: string | null;
   claudeCliPath?: string | null;
   claudeCliBundled?: boolean | null;
+  workspacePreparation?: {
+    autoGitWorkspace?: boolean | null;
+    workspacesRoot?: string | null;
+    workspacesRootExists?: boolean | null;
+    gitInstalled?: boolean | null;
+    supportedRepositoryHosts?: string[] | null;
+    supportedRepositoryFormats?: string[] | null;
+    workspaceLock?: string | null;
+  } | null;
   error?: string | null;
   readyzBlockers?: string[] | null;
   readyzNextActions?: string[] | null;
