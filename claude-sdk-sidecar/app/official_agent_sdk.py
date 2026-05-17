@@ -7,6 +7,8 @@ the default fallback while MAP/CDS migrates toward the official SDK boundary.
 import logging
 import os
 import asyncio
+import shutil
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from .schemas import SidecarEvent, SidecarRunRequest
@@ -108,6 +110,15 @@ def _usage_value(usage: Any, name: str, fallback: int = 0) -> int:
         return fallback
 
 
+def _runtime_preflight(cwd: str | None) -> list[str]:
+    missing: list[str] = []
+    if not shutil.which("claude"):
+        missing.append("claude_cli")
+    if cwd and not Path(cwd).exists():
+        missing.append("workspace_root")
+    return missing
+
+
 async def _interrupt_on_cancel(client: Any, cancel_event: asyncio.Event) -> None:
     await cancel_event.wait()
     try:
@@ -183,6 +194,23 @@ async def run_official_agent(
     )
     permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
     cwd = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip() or None
+    missing_runtime = _runtime_preflight(cwd)
+    if missing_runtime:
+        yield SidecarEvent(
+            type="error",
+            error_code="claude_agent_sdk_runtime_not_ready",
+            message=(
+                "Official Claude Agent SDK runtime is not ready. "
+                f"missing={','.join(missing_runtime)}"
+            ),
+            content={
+                "adapter": "claude-agent-sdk",
+                "missing": missing_runtime,
+                "cwd": cwd,
+            },
+        )
+        return
+
     env: dict[str, str] = {
         "API_TIMEOUT_MS": str(max(1, req.timeout_seconds) * 1000),
         "CLAUDE_CODE_MAX_RETRIES": os.environ.get("CLAUDE_CODE_MAX_RETRIES", "2"),
