@@ -310,9 +310,25 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         var actions = new List<string>();
         if (InstanceCount <= 0)
         {
-            actions.Add("确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复");
-            actions.Add("在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 失效的连接");
-            actions.Add("确认 shared sidecar pool 正在运行，并且实例标签/来源允许当前 MAP 发现");
+            var refreshError = _registry.LastRefreshError ?? string.Empty;
+            if (refreshError.Contains("paired-empty-endpoints", StringComparison.OrdinalIgnoreCase)
+                || refreshError.Contains("empty_instances", StringComparison.OrdinalIgnoreCase))
+            {
+                actions.Add("当前 CDS 授权可用但实例列表为空：优先更新共享 CDS 控制面的 /api/projects/{id}/instances，使其暴露 running 的 branch-service sidecar 实例");
+                actions.Add("确认 shared sidecar pool 分支服务正在运行，并且服务标签/来源允许 MAP 作为 cds-sidecar 发现");
+            }
+            else
+            {
+                actions.Add("确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复");
+                actions.Add("确认 shared sidecar pool 正在运行，并且实例标签/来源允许当前 MAP 发现");
+            }
+
+            if (refreshError.Contains("invalid_long_token", StringComparison.OrdinalIgnoreCase)
+                || HasPositiveDiscoveryMetric(refreshError, "tokenFailures")
+                || refreshError.Contains("DataProtection", StringComparison.OrdinalIgnoreCase))
+            {
+                actions.Add("在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接");
+            }
         }
         else if (HealthyCount <= 0)
         {
@@ -327,6 +343,18 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
 
         return actions.Distinct(StringComparer.Ordinal).Take(8).ToList();
+    }
+
+    private static bool HasPositiveDiscoveryMetric(string value, string metric)
+    {
+        var index = value.IndexOf(metric + "=", StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return false;
+        var start = index + metric.Length + 1;
+        var end = start;
+        while (end < value.Length && char.IsDigit(value[end])) end += 1;
+        return end > start
+            && int.TryParse(value[start..end], out var count)
+            && count > 0;
     }
 
     private static IEnumerable<string> ReadMissingAdapterDependencies(string? diagnosticsJson)

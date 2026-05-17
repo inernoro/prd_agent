@@ -255,8 +255,57 @@ public class DynamicSidecarRegistryTests
         Assert.Contains(
             "确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复",
             diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.DoesNotContain(
+            "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接",
+            diagnostics.NextActions ?? Array.Empty<string>());
+    }
+
+    [Fact]
+    public async Task Router_Diagnostics_ShouldPreferCdsControlPlaneAction_WhenPairedEndpointIsEmpty()
+    {
+        var options = new ClaudeSidecarOptions { Enabled = false };
+        var registry = new FakeDynamicRegistry(
+            Array.Empty<DynamicSidecarInstance>(),
+            "paired-connections total=12 activeCds=1 usable=1 tokenFailures=0 endpointFailures=0 emptyEndpoints=1 endpointsWithInstances=0; paired-empty-endpoints conn-1 shared-sidecar-pool empty_instances");
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            new InstanceStateRegistry(),
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
+
         Assert.Contains(
-            "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 失效的连接",
+            "当前 CDS 授权可用但实例列表为空：优先更新共享 CDS 控制面的 /api/projects/{id}/instances，使其暴露 running 的 branch-service sidecar 实例",
+            diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.DoesNotContain(
+            "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接",
+            diagnostics.NextActions ?? Array.Empty<string>());
+    }
+
+    [Fact]
+    public async Task Router_Diagnostics_ShouldAskForReauthorization_WhenPairedTokenIsInvalid()
+    {
+        var options = new ClaudeSidecarOptions { Enabled = false };
+        var registry = new FakeDynamicRegistry(
+            Array.Empty<DynamicSidecarInstance>(),
+            "paired-connections total=12 activeCds=5 usable=5 tokenFailures=0 endpointFailures=4 emptyEndpoints=1 endpointsWithInstances=0; paired-endpoint-failures conn-1 shared-sidecar-pool HTTP 401 {\"error\":{\"code\":\"invalid_long_token\"}}");
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            new InstanceStateRegistry(),
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
+
+        Assert.Contains(
+            "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接",
             diagnostics.NextActions ?? Array.Empty<string>());
     }
 
