@@ -17,8 +17,6 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
-    private const string DefaultSidecarRuntimeAdapter = "claude-agent-sdk";
-
     private readonly MongoDbContext _db;
     private readonly ILogger<InfraAgentSessionService> _logger;
     private readonly IInfraConnectionService _connections;
@@ -1487,8 +1485,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private static string? ResolveSidecarRuntimeAdapter()
     {
-        var value = Environment.GetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER");
-        return string.IsNullOrWhiteSpace(value) ? DefaultSidecarRuntimeAdapter : value.Trim();
+        return InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter();
     }
 
     private void EnsureRuntimeAdapterReady(string? runtime)

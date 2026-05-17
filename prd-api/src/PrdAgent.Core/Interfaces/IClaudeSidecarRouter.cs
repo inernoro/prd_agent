@@ -151,7 +151,9 @@ public sealed record SidecarPoolDiagnostics(
     DateTime? RegistryLastRefreshedAt = null,
     string? RegistryLastRefreshError = null,
     IReadOnlyList<string>? Blockers = null,
-    IReadOnlyList<string>? NextActions = null
+    IReadOnlyList<string>? NextActions = null,
+    string? DesiredRuntimeAdapter = null,
+    string? RuntimeTransport = null
 );
 
 public sealed record SidecarInstanceDiagnostics(

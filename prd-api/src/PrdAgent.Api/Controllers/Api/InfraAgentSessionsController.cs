@@ -19,15 +19,18 @@ public class InfraAgentSessionsController : ControllerBase
     private readonly IInfraAgentSessionService _service;
     private readonly IClaudeSidecarRouter? _sidecarRouter;
     private readonly IDynamicSidecarRegistry? _sidecarRegistry;
+    private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
 
     public InfraAgentSessionsController(
         IInfraAgentSessionService service,
         IClaudeSidecarRouter? sidecarRouter = null,
-        IDynamicSidecarRegistry? sidecarRegistry = null)
+        IDynamicSidecarRegistry? sidecarRegistry = null,
+        IInfraAgentRuntimeAdapter? runtimeAdapter = null)
     {
         _service = service;
         _sidecarRouter = sidecarRouter;
         _sidecarRegistry = sidecarRegistry;
+        _runtimeAdapter = runtimeAdapter;
     }
 
     [HttpGet("event-schema")]
@@ -56,7 +59,11 @@ public class InfraAgentSessionsController : ControllerBase
             await _sidecarRegistry.RefreshAsync(ct);
         }
 
-        var diagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
+        var diagnostics = (await _sidecarRouter.GetDiagnosticsAsync(ct)) with
+        {
+            DesiredRuntimeAdapter = InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter(),
+            RuntimeTransport = _runtimeAdapter?.AdapterKind
+        };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
     }
 

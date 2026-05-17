@@ -284,11 +284,46 @@ public class InfraAgentSessionsControllerTests
         router.Verify(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task RuntimeStatus_ShouldExposeDesiredOfficialSdkAdapter()
+    {
+        var previous = Environment.GetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar);
+        var service = new Mock<IInfraAgentSessionService>();
+        var router = new Mock<IClaudeSidecarRouter>();
+        router
+            .Setup(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SidecarPoolDiagnostics(
+                false,
+                0,
+                0,
+                Array.Empty<SidecarInstanceDiagnostics>()));
+        try
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, null);
+            var controller = BuildController(service.Object, "user-1", router.Object);
+
+            var result = await controller.RuntimeStatus(refreshDiscovery: false, CancellationToken.None);
+
+            var objectResult = result.ShouldBeOfType<OkObjectResult>();
+            objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+            var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+            var data = response.Data.ShouldNotBeNull();
+            var diagnosticsProperty = data.GetType().GetProperty("diagnostics").ShouldNotBeNull();
+            var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
+            diagnostics.DesiredRuntimeAdapter.ShouldBe("claude-agent-sdk");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, previous);
+        }
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId,
         IClaudeSidecarRouter? sidecarRouter = null,
-        IDynamicSidecarRegistry? sidecarRegistry = null)
+        IDynamicSidecarRegistry? sidecarRegistry = null,
+        IInfraAgentRuntimeAdapter? runtimeAdapter = null)
     {
         var claims = new List<Claim>
         {
@@ -297,7 +332,7 @@ public class InfraAgentSessionsControllerTests
         var identity = new ClaimsIdentity(claims, "test");
         var principal = new ClaimsPrincipal(identity);
 
-        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry)
+        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry, runtimeAdapter)
         {
             ControllerContext = new ControllerContext
             {

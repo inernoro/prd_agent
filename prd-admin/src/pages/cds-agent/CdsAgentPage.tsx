@@ -700,6 +700,8 @@ export default function CdsAgentPage() {
   const runtimeDiagnostics = useMemo(() => {
     const primaryRuntime = runtimeStatus?.instances?.[0] ?? null;
     const sidecarAdapter = primaryRuntime?.agentAdapter || '';
+    const desiredRuntimeAdapter = runtimeStatus?.desiredRuntimeAdapter || '';
+    const runtimeTransport = runtimeStatus?.runtimeTransport || '';
     const sidecarState = runtimeStatus
       ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount} healthy`
       : '未检测';
@@ -730,6 +732,7 @@ export default function CdsAgentPage() {
     const adapter = activeSession?.runtimeAdapter
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeAdapter') : '')
       || sidecarAdapter
+      || desiredRuntimeAdapter
       || (activeSession?.runtime === 'claude-sdk' ? 'legacy-sidecar-adapter' : '');
     const loopOwner = (latestRuntimePayload ? readString(latestRuntimePayload, 'loopOwner') : '')
       || (latestRuntimeContent ? readString(latestRuntimeContent, 'loopOwner') : '')
@@ -846,6 +849,8 @@ export default function CdsAgentPage() {
       rows: [
         ['Adapter', adapterLabel],
         ['Mode', adapterMode],
+        ['Desired adapter', desiredRuntimeAdapter || '未上报'],
+        ['Transport', runtimeTransport || '未上报'],
         ['Loop owner', loopOwner || '未上报'],
         ['SDK loop', sdkLoopState],
         ['MAP role', mapRole || '未上报'],

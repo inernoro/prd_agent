@@ -1,5 +1,4 @@
-using System.Reflection;
-using PrdAgent.Infrastructure.Services.InfraAgentSessions;
+using PrdAgent.Core.Interfaces;
 using Shouldly;
 using Xunit;
 
@@ -15,7 +14,7 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         {
             Environment.SetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER", null);
 
-            ResolveSidecarRuntimeAdapter().ShouldBe("claude-agent-sdk");
+            InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter().ShouldBe("claude-agent-sdk");
         }
         finally
         {
@@ -31,21 +30,11 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         {
             Environment.SetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER", "legacy-sidecar");
 
-            ResolveSidecarRuntimeAdapter().ShouldBe("legacy-sidecar");
+            InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter().ShouldBe("legacy-sidecar");
         }
         finally
         {
             Environment.SetEnvironmentVariable("INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER", previous);
         }
-    }
-
-    private static string ResolveSidecarRuntimeAdapter()
-    {
-        var method = typeof(InfraAgentSessionService).GetMethod(
-            "ResolveSidecarRuntimeAdapter",
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        method.ShouldNotBeNull();
-        return method.Invoke(null, null).ShouldBeOfType<string>();
     }
 }

@@ -156,6 +156,8 @@ export interface InfraAgentRuntimeDiagnostics {
   registryLastRefreshError?: string | null;
   blockers?: string[] | null;
   nextActions?: string[] | null;
+  desiredRuntimeAdapter?: string | null;
+  runtimeTransport?: string | null;
 }
 
 interface ListResp {
