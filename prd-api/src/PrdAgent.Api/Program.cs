@@ -1099,7 +1099,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IDynamicSidecarRegistry,
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeAdapter,
-    PrdAgent.Infrastructure.Services.AgentRuntime.LegacySidecarRuntimeAdapter>();
+    PrdAgent.Infrastructure.Services.AgentRuntime.SidecarRuntimeAdapter>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
 builder.Services.AddHttpClient(

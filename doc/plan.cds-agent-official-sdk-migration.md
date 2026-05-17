@@ -97,7 +97,7 @@
 
 - UI 工作台已完成第一轮视觉升级，但它不是 runtime 完成的证明。
 - 当前 `claude-sdk` runtime 是官方 `anthropic` Python SDK + 自研 sidecar loop，不是完整官方 Claude Agent SDK adapter。
-- P1.1 已开始落代码：新增 `IInfraAgentRuntimeAdapter`，把现有 sidecar 包成 `LegacySidecarRuntimeAdapter`，`InfraAgentSessionService` 改为通过 runtime adapter 消费事件。
+- P1.1 已开始落代码：新增 `IInfraAgentRuntimeAdapter`，把现有 sidecar 包成 `SidecarRuntimeAdapter`，`InfraAgentSessionService` 改为通过 runtime adapter 消费事件。
 - P1.4 已有第一步：session 写入 `CurrentRuntimeRunId`，Stop 时会通过 adapter 调 sidecar `/v1/agent/cancel/{runId}` 做 best-effort 取消。
 - P1.6 已接入第一版页面调试面板：`/cds-agent` 展示 runtime adapter、run id、runtime instance、事件 source、cancel 状态；事件标题也显示 adapter/source；无 active session 时也显示空态原因。
 - P1.6 已补 sidecar pool 诊断入口：sidecar `/readyz` 返回当前 adapter、官方 SDK 包、外部 CLI 路径观测、workspace、allowed tools、permission mode、写工具 opt-in 和 approval bridge；MAP `GET /api/infra-agent-sessions/runtime-status` 透出 pool 诊断，页面 runtime 调试面板显示 healthy/instance 数。

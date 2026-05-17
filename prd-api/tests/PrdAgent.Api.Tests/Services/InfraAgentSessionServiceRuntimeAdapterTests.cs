@@ -42,10 +42,10 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
     }
 
     [Fact]
-    public async Task LegacySidecarRuntimeAdapter_ShouldForwardWorkspaceContext()
+    public async Task SidecarRuntimeAdapter_ShouldForwardWorkspaceContext()
     {
         var router = new CapturingSidecarRouter();
-        var adapter = new LegacySidecarRuntimeAdapter(router);
+        var adapter = new SidecarRuntimeAdapter(router);
         var request = new InfraAgentRuntimeRunRequest
         {
             RunId = "run-1",
@@ -90,7 +90,7 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
             Content = content,
             SidecarName = "official-sidecar-1"
         });
-        var adapter = new LegacySidecarRuntimeAdapter(router);
+        var adapter = new SidecarRuntimeAdapter(router);
 
         var events = new List<InfraAgentRuntimeEvent>();
         await foreach (var ev in adapter.RunStreamAsync(

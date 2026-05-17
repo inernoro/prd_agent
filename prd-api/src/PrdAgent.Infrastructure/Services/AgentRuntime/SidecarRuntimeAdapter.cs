@@ -9,12 +9,12 @@ namespace PrdAgent.Infrastructure.Services.AgentRuntime;
 /// The per-run RuntimeAdapter field decides whether the sidecar uses the official Claude Agent SDK
 /// loop or the legacy fallback; this layer only owns routing, SSE mapping, and cancel transport.
 /// </summary>
-public sealed class LegacySidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
+public sealed class SidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
 {
     private const string SourceName = "sidecar-runtime-adapter";
     private readonly IClaudeSidecarRouter _router;
 
-    public LegacySidecarRuntimeAdapter(IClaudeSidecarRouter router)
+    public SidecarRuntimeAdapter(IClaudeSidecarRouter router)
     {
         _router = router;
     }

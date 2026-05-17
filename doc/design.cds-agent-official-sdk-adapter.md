@@ -159,7 +159,7 @@ public interface IAgentRuntimeAdapter
 2026-05-17 第一轮实现只建立 seam，不声称已完成官方 SDK 迁移：
 
 - `IInfraAgentRuntimeAdapter` 已成为 MAP/CDS runtime 边界。
-- `LegacySidecarRuntimeAdapter` 先把现有 sidecar 协议藏在 adapter 后面，作为官方 SDK adapter 上线前的 fallback。
+- `SidecarRuntimeAdapter` 只表示 MAP 到 sidecar 的传输层：路由、SSE 映射和取消。真实 turn loop 由请求里的 `runtimeAdapter` 决定，默认走 `claude-agent-sdk`，仅显式配置时回退 sidecar legacy loop。
 - `InfraAgentSessionService` 不再直接消费 `IClaudeSidecarRouter.RunStreamAsync`，而是消费 runtime adapter。
 - session 开始持久化 `CurrentRuntimeRunId` 和 `RuntimeAdapter`，为 UI debug panel、真实 cancel、trace 关联做准备。
 - `ClaudeSidecarRouter.CancelRunAsync` 已补 best-effort cancel，当前会广播到可路由 sidecar；后续官方 SDK adapter 需要改成精确取消官方 run/session。
@@ -169,7 +169,7 @@ public interface IAgentRuntimeAdapter
 
 - `claude-sdk-sidecar/app/official_agent_sdk.py` 使用官方 `claude-agent-sdk` 的 `ClaudeSDKClient`、`tool()`、`create_sdk_mcp_server()` 和 `ClaudeAgentOptions`，把 MAP 工具桥包装为 in-process MCP server。
 - sidecar 支持 `runtimeAdapter=claude-agent-sdk` 或 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 选择官方路径；standalone 默认仍为 `legacy-sidecar`。
-- MAP 后端默认透传 `claude-agent-sdk`，保留 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 显式 fallback 和现有 `LegacySidecarRuntimeAdapter` 传输层。
+- MAP 后端默认透传 `claude-agent-sdk`，保留 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 显式 fallback 和现有 `SidecarRuntimeAdapter` 传输层。
 - 新增 `runtime_init` 事件映射，MAP 会把 adapter、allowed tools、permission mode、cwd 等初始化信息落为 `InfraAgentEventTypes.Log`，用于 UI 调试和审计。
 - 当前 spike 已改为 `ClaudeSDKClient` 结构，sidecar cancel event 会调用官方 `client.interrupt()` 并把结果映射为 `error_code=cancelled`。这只是 adapter 层取消闭环；跨进程精确定位、会话恢复和远程真实 run 仍需下一轮验证。
 - 本机尚未安装 `claude_agent_sdk`，所以真实 official SDK run 需要先完成 SDK 依赖、provider key、workspace 权限配置后验证；外部 PATH 上的 `claude` 命令只做诊断观测，官方 Python SDK 包自身携带 CLI 能力，不作为默认 ready gate。
