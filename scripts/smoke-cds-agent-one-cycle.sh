@@ -26,6 +26,7 @@ mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
 export SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/readiness-report.json}"
 export SMOKE_CDS_AGENT_R1_REPORT="${SMOKE_CDS_AGENT_R1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/r1-report.json}"
 export SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/s1-report.json}"
+export SMOKE_CDS_AGENT_CONTROLS_REPORT="${SMOKE_CDS_AGENT_CONTROLS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/controls-report.json}"
 SMOKE_CDS_AGENT_CYCLE_SUMMARY="${SMOKE_CDS_AGENT_CYCLE_SUMMARY:-$SMOKE_CDS_AGENT_CYCLE_DIR/cycle-summary.json}"
 
 passed_arr=()
@@ -66,6 +67,7 @@ finish_cycle() {
   local readiness_pending_count=0
   local r1_status="missing"
   local s1_status="missing"
+  local controls_status="missing"
   local provider_calls_enabled=false
   local r1_repair_apply=false
   local cycle_status="pending"
@@ -85,6 +87,10 @@ finish_cycle() {
     s1_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_S1_REPORT")
   fi
 
+  if [[ -f "$SMOKE_CDS_AGENT_CONTROLS_REPORT" ]]; then
+    controls_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_CONTROLS_REPORT")
+  fi
+
   if [[ "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-}" == "1" ]]; then
     provider_calls_enabled=true
   fi
@@ -94,8 +100,10 @@ finish_cycle() {
 
   if (( exit_code != 0 || ${#failed_arr[@]} > 0 )); then
     cycle_status="failed"
-  elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" ]]; then
-    cycle_status="provider_smokes_started"
+  elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" && "$controls_status" == "pass" ]]; then
+    cycle_status="provider_smokes_passed"
+  elif [[ "$provider_calls_enabled" == "true" ]]; then
+    cycle_status="provider_smokes_incomplete"
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" != "true" ]]; then
     cycle_status="ready_for_provider_smokes"
   fi
@@ -124,6 +132,8 @@ finish_cycle() {
     --arg r1Report "$SMOKE_CDS_AGENT_R1_REPORT" \
     --arg s1Status "$s1_status" \
     --arg s1Report "$SMOKE_CDS_AGENT_S1_REPORT" \
+    --arg controlsStatus "$controls_status" \
+    --arg controlsReport "$SMOKE_CDS_AGENT_CONTROLS_REPORT" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
     --argjson providerCallsEnabled "$provider_calls_enabled" \
     --argjson r1RepairApply "$r1_repair_apply" \
@@ -153,6 +163,10 @@ finish_cycle() {
         status: $s1Status,
         report: $s1Report
       },
+      controls: {
+        status: $controlsStatus,
+        report: $controlsReport
+      },
       visual: {
         screenshot: $screenshot
       },
@@ -171,6 +185,7 @@ finish_cycle() {
   printf 'Readiness overall: %s\n' "$readiness_overall"
   printf 'R1 status: %s\n' "$r1_status"
   printf 'S1 status: %s\n' "$s1_status"
+  printf 'Controls status: %s\n' "$controls_status"
   printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
   printf 'Passed: %s\n' "${#passed_arr[@]}"
   if (( ${#passed_arr[@]} > 0 )); then
@@ -193,6 +208,11 @@ finish_cycle() {
   if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
     printf '\nS1 report:\n'
     jq . "$SMOKE_CDS_AGENT_S1_REPORT"
+  fi
+
+  if [[ -f "$SMOKE_CDS_AGENT_CONTROLS_REPORT" ]]; then
+    printf '\nControls report:\n'
+    jq . "$SMOKE_CDS_AGENT_CONTROLS_REPORT"
   fi
 
   if (( readiness_pending_count > 0 )); then

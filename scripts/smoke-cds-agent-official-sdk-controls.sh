@@ -15,6 +15,7 @@
 #   SMOKE_CDS_AGENT_REPO=inernoro/prd_agent
 #   SMOKE_CDS_AGENT_REF=main
 #   SMOKE_CDS_AGENT_POLL_SECONDS=120
+#   SMOKE_CDS_AGENT_CONTROLS_REPORT=/tmp/controls.json
 # ============================================
 
 set -euo pipefail
@@ -29,6 +30,7 @@ SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE="${SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE:-}"
 SMOKE_CDS_AGENT_REPO="${SMOKE_CDS_AGENT_REPO:-inernoro/prd_agent}"
 SMOKE_CDS_AGENT_REF="${SMOKE_CDS_AGENT_REF:-main}"
 SMOKE_CDS_AGENT_POLL_SECONDS="${SMOKE_CDS_AGENT_POLL_SECONDS:-120}"
+SMOKE_CDS_AGENT_CONTROLS_REPORT="${SMOKE_CDS_AGENT_CONTROLS_REPORT:-}"
 
 created_session_ids=()
 cleanup_sessions() {
@@ -40,6 +42,30 @@ cleanup_sessions() {
   done
 }
 trap cleanup_sessions EXIT
+
+write_controls_report() {
+  [[ -z "$SMOKE_CDS_AGENT_CONTROLS_REPORT" ]] && return
+  local status="$1"
+  local evidence_json="${2:-{}}"
+  jq -n \
+    --arg status "$status" \
+    --arg host "$SMOKE_HOST" \
+    --arg repo "$SMOKE_CDS_AGENT_REPO" \
+    --arg ref "$SMOKE_CDS_AGENT_REF" \
+    --arg evidenceRaw "$evidence_json" \
+    '{
+      status: $status,
+      host: $host,
+      target: { repo: $repo, ref: $ref },
+      evidence: (
+        $evidenceRaw
+        | fromjson?
+          // (sub("}$"; "") | fromjson?)
+          // { reportError: "invalid evidence json", rawEvidence: $evidenceRaw }
+      )
+    }' > "$SMOKE_CDS_AGENT_CONTROLS_REPORT"
+  printf 'Controls report: %s\n' "$SMOKE_CDS_AGENT_CONTROLS_REPORT"
+}
 
 smoke_init "CDS Agent Official SDK S2/S3 Controls"
 
@@ -70,14 +96,17 @@ profile_runtime=$(printf '%s' "$default_profile" | jq -r '.runtime // "claude-sd
 profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end')
 smoke_assert_nonempty "$profile_id" "defaultProfile.id"
 printf 'Default profile: %s / %s compatible=%s\n' "$profile_name" "$profile_model" "$profile_compatible"
+profile_evidence=$(printf '%s' "$default_profile" | jq -c '{defaultProfile:{id:(.id // ""),name:(.name // ""),model:(.model // ""),runtime:(.runtime // "claude-sdk"),protocol:(.protocol // ""),hasApiKey:(.hasApiKey // false),compatibleWithDesiredRuntimeAdapter:(if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end)}}')
 if [[ "$profile_compatible" != "true" ]]; then
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE" ]]; then
+    write_controls_report "failed_incompatible_profile" "$profile_evidence"
     smoke_fail "default runtime profile is incompatible with claude-agent-sdk"
   fi
   for label in "默认 profile 不兼容，跳过 provider control run" "跳过选择 CDS connection" "跳过 S2 创建会话" "跳过 S2 发送审批 prompt" "跳过 S2 等待审批" "跳过 S2 拒绝审批" "跳过 S3 创建会话" "跳过 S3 stop"; do
     smoke_step "$label"
     smoke_ok "not applicable"
   done
+  write_controls_report "skipped_incompatible_profile" "$profile_evidence"
   smoke_done
   exit 0
 fi
@@ -90,6 +119,7 @@ if [[ "$SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL" != "1" ]]; then
     smoke_step "$label"
     smoke_ok "not applicable"
   done
+  write_controls_report "readiness_only" "$profile_evidence"
   smoke_done
   exit 0
 fi
@@ -205,6 +235,27 @@ final_status=$(printf '%s' "$stop_resp" | jq -r '.data.item.status // ""')
 if [[ "$final_status" != "stopped" && "$final_status" != "stopping" ]]; then
   smoke_fail "unexpected stop status: $final_status"
 fi
+pass_evidence=$(jq -n \
+  --arg runtimeAdapter "claude-agent-sdk" \
+  --arg s2SessionId "$s2_session_id" \
+  --arg approvalId "$approval_id" \
+  --argjson approvalDecisionResults "$decision_count" \
+  --arg s3SessionId "$s3_session_id" \
+  --arg stopStatus "$final_status" \
+  '{
+    runtimeAdapter: $runtimeAdapter,
+    s2: {
+      sessionId: $s2SessionId,
+      approvalId: $approvalId,
+      approvalDecisionResults: $approvalDecisionResults,
+      mapApprovalSource: "map-tool-approval"
+    },
+    s3: {
+      sessionId: $s3SessionId,
+      stopStatus: $stopStatus
+    }
+  }')
+write_controls_report "pass" "$pass_evidence"
 smoke_ok "S3 stop accepted status=$final_status"
 
 smoke_done

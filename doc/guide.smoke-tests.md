@@ -269,7 +269,7 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 
 它会把证据写到 `SMOKE_CDS_AGENT_CYCLE_DIR`，默认是
 `/tmp/cds-agent-cycle-<timestamp>`，包括每一步日志、`readiness-report.json`、
-`r1-report.json`、`s1-report.json`、`cycle-summary.json` 和可选视觉截图。终端汇总里的 `Passed`
+`r1-report.json`、`s1-report.json`、`controls-report.json`、`cycle-summary.json` 和可选视觉截图。终端汇总里的 `Passed`
 只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`Readiness overall` 和 pending
 gates 为准。
 没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 仍只做 readiness 或跳过真调用；
