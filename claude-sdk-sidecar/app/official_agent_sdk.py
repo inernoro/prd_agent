@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 
 from .schemas import SidecarEvent, SidecarRunRequest
 from .tool_bridge import ToolBridge
+from .profiles import resolve_profile
 
 logger = logging.getLogger("sidecar.official_agent_sdk")
 
@@ -119,6 +120,19 @@ def _runtime_preflight(cwd: str | None) -> list[str]:
     return missing
 
 
+def _resolve_upstream(req: SidecarRunRequest) -> tuple[str | None, str | None, str]:
+    if req.profile:
+        prof = resolve_profile(req.profile)
+        if prof is None:
+            raise RuntimeError(f"profile not found: {req.profile}")
+        return prof.base_url, prof.api_key, f"profile:{req.profile}"
+
+    if req.base_url or req.api_key:
+        return req.base_url, req.api_key, "request-override"
+
+    return None, None, "env-default"
+
+
 async def _interrupt_on_cancel(client: Any, cancel_event: asyncio.Event) -> None:
     await cancel_event.wait()
     try:
@@ -211,14 +225,28 @@ async def run_official_agent(
         )
         return
 
+    try:
+        upstream_base, upstream_key, upstream_source = _resolve_upstream(req)
+    except RuntimeError as ex:
+        yield SidecarEvent(
+            type="error",
+            error_code="upstream_resolve_failed",
+            message=str(ex),
+            content={
+                "adapter": "claude-agent-sdk",
+                "profile": req.profile,
+            },
+        )
+        return
+
     env: dict[str, str] = {
         "API_TIMEOUT_MS": str(max(1, req.timeout_seconds) * 1000),
         "CLAUDE_CODE_MAX_RETRIES": os.environ.get("CLAUDE_CODE_MAX_RETRIES", "2"),
     }
-    if req.api_key:
-        env["ANTHROPIC_API_KEY"] = req.api_key
-    if req.base_url:
-        env["ANTHROPIC_BASE_URL"] = req.base_url
+    if upstream_key:
+        env["ANTHROPIC_API_KEY"] = upstream_key
+    if upstream_base:
+        env["ANTHROPIC_BASE_URL"] = upstream_base
 
     async def can_use_tool(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
         normalized = tool_name.strip()
@@ -286,6 +314,10 @@ async def run_official_agent(
             "builtinWriteToolsEnabled": bool(unsafe_builtin_tools),
             "builtinWriteTools": unsafe_builtin_tools,
             "approvalBridge": "sdk-can-use-tool",
+            "upstreamSource": upstream_source,
+            "baseUrlConfigured": bool(upstream_base),
+            "apiKeyConfigured": bool(upstream_key or os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+            "protocol": req.protocol or "anthropic",
         },
     )
 

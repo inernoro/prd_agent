@@ -149,6 +149,9 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].content["permissionMode"], "default")
         self.assertEqual(events[0].content["builtinWriteToolsEnabled"], False)
         self.assertEqual(events[0].content["approvalBridge"], "sdk-can-use-tool")
+        self.assertEqual(events[0].content["upstreamSource"], "env-default")
+        self.assertEqual(events[0].content["baseUrlConfigured"], False)
+        self.assertEqual(events[0].content["apiKeyConfigured"], False)
 
     async def test_permission_callback_allows_readonly_and_denies_unbridged_write(self) -> None:
         stream = run_official_agent(build_request())
@@ -176,6 +179,35 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.content["permissionMode"], "acceptEdits")
         self.assertEqual(first.content["builtinWriteToolsEnabled"], True)
         self.assertEqual(first.content["builtinWriteTools"], ["Bash", "Edit", "Write"])
+
+    async def test_runtime_init_reports_request_provider_override(self) -> None:
+        req = build_request().model_copy(update={
+            "base_url": "https://provider.example/v1",
+            "api_key": "sk-test",
+            "protocol": "anthropic",
+        })
+
+        stream = run_official_agent(req)
+        first = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["upstreamSource"], "request-override")
+        self.assertEqual(first.content["baseUrlConfigured"], True)
+        self.assertEqual(first.content["apiKeyConfigured"], True)
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_BASE_URL"], "https://provider.example/v1")
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_API_KEY"], "sk-test")
+
+    async def test_profile_resolution_failure_is_structured_error(self) -> None:
+        req = build_request().model_copy(update={"profile": "missing-profile"})
+
+        with patch("app.official_agent_sdk.resolve_profile", return_value=None):
+            events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "upstream_resolve_failed")
+        self.assertEqual(events[0].content["adapter"], "claude-agent-sdk")
+        self.assertEqual(events[0].content["profile"], "missing-profile")
 
     async def test_cancel_event_interrupts_client_and_returns_cancelled_error(self) -> None:
         cancel_event = asyncio.Event()
