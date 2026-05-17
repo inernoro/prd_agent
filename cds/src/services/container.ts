@@ -445,8 +445,9 @@ export class ContainerService {
     }
 
     // Older CDS-created containers may not have cds.* labels. Docker DNS is
-    // driven by network endpoints, so inspect the project network as a second
-    // line of defense and remove only names that still match this branch/profile.
+    // driven by network endpoints, and a service alias cannot be shared on the
+    // same project network without round-robin responses. Inspect the network
+    // as a second line of defense and keep this profile's aliases unique.
     const networkInspect = await this.shell.exec(
       `docker network inspect --format='{{json .Containers}}' ${this.shellQuote(network)}`,
     );
@@ -465,7 +466,6 @@ export class ContainerService {
     for (const endpoint of Object.values(containers)) {
       const name = typeof endpoint.Name === 'string' ? endpoint.Name : '';
       if (!name || name === service.containerName || removed.has(name)) continue;
-      if (!name.includes(entry.id) || !name.includes(profile.id)) continue;
       const staleAliases = Array.isArray(endpoint.Aliases)
         ? endpoint.Aliases.filter((item): item is string => typeof item === 'string')
         : [];
