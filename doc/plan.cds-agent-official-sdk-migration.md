@@ -81,6 +81,37 @@
 
 如果 N1 没完成，S1/S2/S3 脚本只能作为 readiness 或 preflight 证据，不能算真实代码审查验收。
 
+### 4.2 单周期执行节奏
+
+每个开发周期最多只推进一个硬门禁，按“分析 -> 设计 -> 最小实现 -> 调试 -> 视觉证据 -> 文档校准”收口：
+
+| 环节 | 本周期必须输出 | 停止条件 |
+| --- | --- | --- |
+| 分析 | 明确当前 blocker 属于 profile、SDK、workspace、approval、cancel、event cursor、UI 还是非代码兼容 | blocker 不明确时不写新功能 |
+| 设计 | 写清官方能力与 MAP/CDS 自研边界，说明为什么不能直接复用官方能力时才新增自研代码 | 找不到官方缺口时不扩展 legacy loop |
+| 最小实现 | 只改能关闭当前 blocker 的最小代码或脚本 | 需要跨多个子系统时拆成下个周期 |
+| 调试 | 本地 smoke 先过；远程 preview 再过；provider 调用必须显式 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` | readiness 失败时不做视觉验收 |
+| 视觉证据 | 截图必须显示真实 `sessionId/traceId/adapter/loopOwner/workspace/last event/error` | 空态、mock、静态页面不算 |
+| 文档校准 | 更新 quickstart、design、plan 中的当前状态和下一步 | 文档不得写“已完成商业级”直到 S1/S2/S3/V1 全过 |
+
+这个节奏的目的不是拖慢开发，而是避免再次出现“页面变好看了，但真实 official SDK run、审批、停止和 profile 兼容性没有闭环”的问题。
+
+### 4.3 官方 adapter 决策门
+
+新增或切换任何智能体 adapter 前，先回答下面四个问题；回答不清楚时只允许保留 planned 状态，不允许接到默认路径：
+
+| 问题 | Claude Agent SDK | OpenAI Agents SDK | Google ADK | Codex-like |
+| --- | --- | --- | --- | --- |
+| 是否官方提供 agent loop / stream / tool 调用？ | 是 | 是 | 是 | 待确认本项目可路由契约 |
+| 是否天然覆盖代码仓库读写、命令和 Claude Code 工具？ | 是 | 否，需要自建工具/sandbox | 否，需要自建工具/sandbox | 待实现 |
+| 是否能直接承接 MAP approval / cancel / event cursor？ | 需要 adapter bridge | 需要 adapter bridge | 需要 adapter bridge | 待设计 |
+| 当前是否允许进入 CDS Agent 默认代码审查路径？ | 是，R1 profile 通过后 | 否，先做非代码编排试点 | 否，先做非代码编排试点 | 否，`planned-not-routable` |
+
+非代码智能体如果接 OpenAI Agents SDK 或 Google ADK，必须先证明两个事实：
+
+- 现有 PRD/缺陷/文学/视觉最小业务路径不依赖 CDS sidecar pool。
+- 新 SDK 的 trace、handoff、guardrail 不改变现有 artifact schema 和用户可见输出。
+
 ## 5. 商业级可用性门槛
 
 | 维度 | 本周期最低门槛 | 最终门槛 |

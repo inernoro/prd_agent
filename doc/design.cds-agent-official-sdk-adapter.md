@@ -75,6 +75,24 @@ MAP UI / Toolbox / workflow
 - OpenAI Agents SDK handoffs: https://openai.github.io/openai-agents-python/handoffs/
 - OpenAI Agents SDK tracing: https://openai.github.io/openai-agents-python/tracing/
 
+### 2.3 官方文档校准记录
+
+2026-05-17 重新校准官方文档后，当前判断如下：
+
+| SDK / 平台 | 官方能力口径 | 对 CDS Agent 的结论 |
+| --- | --- | --- |
+| Claude Agent SDK | 官方文档说明它提供与 Claude Code 相同的工具、agent loop 和上下文管理，并支持 Python / TypeScript 编程接入 | 代码仓库审查、编辑、命令、权限回调优先走它；本仓库只写 adapter |
+| Claude Agent SDK API key 使用 | 官方文档要求第三方产品使用 API key 认证，不应把 claude.ai 登录/额度包装给第三方用户 | MAP runtime profile 必须保存用户自己的 Anthropic/API key；不能把个人 Claude 登录态做成产品级租户能力 |
+| OpenAI Agents SDK | 官方文档定位为 agentic app 框架，覆盖工具、handoff、stream 和 trace | 可作为非代码 agent 的 orchestration/trace/handoff 试点；当前没有 CDS workspace、Claude Code 工具、MAP 审批语义，不能替代 Claude Agent SDK 跑代码审查 |
+| Google ADK | 官方文档定位为灵活、模块化、偏 Gemini 生态但模型无关的 agent 框架 | 未来可评估为非代码编排或 Gemini 生态 adapter；当前不接入 CDS Agent 默认代码路径 |
+| Codex-like adapter | 当前项目只有计划和 UI 文案，没有已落地的官方可路由 adapter 契约 | 状态必须保持 `planned-not-routable`，不能因为 profile 可保存就路由真实代码任务 |
+
+因此，“官方优先”不是把所有 SDK 都接成同一个按钮，而是按任务类型选择官方能力：
+
+- 代码仓库执行：Claude Agent SDK primary。
+- 非代码多 agent 编排、handoff、trace：OpenAI Agents SDK / Google ADK 作为候选，但必须先有 adapter contract、smoke 和兼容矩阵。
+- MAP/CDS 控制面：继续自研，因为官方 SDK 不负责本项目的账号、CDS 分支、preview、审批审计和 run bundle。
+
 ## 3. 当前自研边界
 
 ### 3.1 CDS Agent 需要替换的运行时核心

@@ -35,6 +35,20 @@
 5. 修改任务：只允许改一个小文件，要求运行最小测试。
 6. PR 任务：确认 GitHub 权限后再让它创建分支和 PR。
 
+## 正常上手路径
+
+当 R0/R1 已经通过后，用户不需要理解 sidecar 或 SDK 细节，按这个顺序使用即可：
+
+1. 打开 `/cds-agent`。
+2. 在 Runtime 调试面板确认 `loopOwner=claude-agent-sdk`，`Default profile` 兼容且有 key。
+3. 当前仓库审查时保留默认 workspace；其他仓库填写 `gitRepository` 和 `gitRef`。
+4. 第一条 prompt 明确只读，例如“审查当前仓库稳定性风险，不修改文件，不运行危险命令”。
+5. 等 assistant 输出后，检查结论是否包含文件路径、触发条件、验证方式。
+6. 需要命令、编辑或 PR 时，再把任务拆成一个小改动，并通过 MAP approval 逐项确认。
+7. 失败或结果重要时，导出诊断包；提交问题时只给 sessionId、traceId、事件摘要和错误码，不要提供 API key。
+
+如果第 2 步没通过，先不要发审查 prompt；应该先运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
+
 ## 最小可用闭环
 
 面向日常使用时，先把"能打开页面"和"能真实审查代码"分开判断：
@@ -121,6 +135,18 @@ N6 的最小自动化入口是 `bash scripts/smoke-cds-agent-non-code-compatibil
 | PRD/缺陷/文学/视觉智能体 | 非代码 agent | 先不迁到 Claude Agent SDK，避免被代码 runtime pool 影响 |
 
 `claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层，用来把官方 SDK 的事件、权限、取消和结果映射进 MAP/CDS。
+
+当前项目里 “SDK” 的归属口径如下：
+
+| 名称 | 是否官方 | 当前项目是否已可路由 | 用途 |
+| --- | --- | --- | --- |
+| `claude-agent-sdk` | 是，Anthropic/Claude 官方 Agent SDK | 是，CDS Agent 默认目标路径，但要求 Anthropic/Claude-compatible profile | 代码仓库审查、编辑、命令、权限回调 |
+| `openai-agents-sdk` | 是，OpenAI 官方 Agents SDK | 否，当前为 planned-not-routable | 未来可评估非代码 agent 的 handoff、guardrail、trace |
+| `google-adk` | 是，Google Agent Development Kit | 否，当前为 planned-not-routable | 未来可评估 Gemini/Google 生态编排 |
+| `legacy-sidecar` | 否，本仓库历史自研 loop | 只允许显式 fallback | 历史兼容，不再扩大能力 |
+| `SidecarRuntimeAdapter` | 否，本仓库薄传输层 | 是 | MAP 到 sidecar 的路由、SSE、cancel、诊断映射 |
+
+判断原则：如果官方 SDK 已经提供 loop、工具调用、上下文、stream、permission 或 trace，本仓库只写 adapter bridge；只有账号、CDS workspace、审批审计、事件持久化、run bundle 和 UI 调试继续自研。
 
 模型配置里的 “Anthropic 官方模板” 来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates`，不是页面硬编码。它会预填 Anthropic Messages 协议、官方 baseUrl、Claude Sonnet 模型和资源默认值；用户仍需手动填入自己的 API key 并保存为 runtime profile。保存时如果草稿仍匹配模板，页面会调用 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/profiles`，后端按模板创建 profile，缺 API key 会直接返回 `api_key_required`。
 
