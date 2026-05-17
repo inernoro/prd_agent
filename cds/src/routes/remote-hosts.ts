@@ -787,7 +787,7 @@ export function shouldIncludeBranchServicesInInstanceDiscovery(
   // Source-mode shared-service projects, such as the CDS-managed sidecar pool,
   // run as normal branch services rather than ServiceDeployment records. They
   // still need to be discoverable by MAP through /projects/:id/instances.
-  return project != null;
+  return project?.kind === 'shared-service';
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';

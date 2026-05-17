@@ -160,4 +160,67 @@ describe('Remote hosts project instances route', () => {
       hostId: 'shared-main',
     });
   });
+
+  it('does not expose branch services for regular projects through instance discovery', async () => {
+    process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
+    await startServer();
+    const pairing = new CdsPairingService(
+      stateService,
+      () => 'https://cds.example.test',
+      () => 'cds-test',
+      () => 'CDS Test',
+    );
+    const project: Project = {
+      id: 'business-project',
+      slug: 'business-project',
+      name: 'Business Project',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    stateService.addProject(project);
+    const issued = pairing.issue({ name: 'map-test' });
+    const accepted = pairing.accept(
+      {
+        pairingToken: issued.pairingToken,
+        partnerKind: 'map',
+        partnerId: 'map-test',
+        partnerName: 'MAP Test',
+        partnerBaseUrl: 'https://map.example.test',
+        projectIntent: { kind: 'shared-service', name: 'ignored' },
+      },
+      () => project,
+    );
+    stateService.addBranch({
+      id: 'business-main',
+      projectId: project.id,
+      branch: 'main',
+      worktreePath: path.join(tmpDir, 'business-main'),
+      status: 'running',
+      services: {
+        'api-prd-agent': {
+          profileId: 'api-prd-agent',
+          containerName: 'cds-business-api',
+          hostPort: 18080,
+          status: 'running',
+        },
+      },
+      createdAt: new Date().toISOString(),
+      lastAccessedAt: new Date().toISOString(),
+      githubCommitSha: 'def5678',
+    });
+
+    const res = await request(server, 'GET', `/api/projects/${project.id}/instances`, accepted.cdsLongToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.discovery).toMatchObject({
+      projectKind: 'git',
+      deploymentCount: 0,
+      branchCount: 0,
+      runningBranchCount: 0,
+      runningBranchServiceCount: 0,
+      previewRootConfigured: false,
+    });
+    expect(res.body.instances).toHaveLength(0);
+  });
 });
