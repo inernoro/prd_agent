@@ -1167,9 +1167,11 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
           >
             {site.title}
           </span>
-          <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
-            {sourceTypeLabels[site.sourceType] ?? site.sourceType}
-          </Badge>
+          {site.sourceType !== 'upload' && (
+            <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
+              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+            </Badge>
+          )}
           {isPublic && (
             <span
               className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/25 px-1.5 py-0.5 text-[10px] font-medium text-sky-200"
