@@ -169,7 +169,20 @@ public sealed record SidecarPoolDiagnostics(
     IReadOnlyList<string>? NextActions = null,
     string? DesiredRuntimeAdapter = null,
     string? RuntimeTransport = null,
-    SidecarDiscoveryMetrics? DiscoveryMetrics = null
+    SidecarDiscoveryMetrics? DiscoveryMetrics = null,
+    SidecarRuntimeProfileDiagnostics? DefaultRuntimeProfile = null
+);
+
+public sealed record SidecarRuntimeProfileDiagnostics(
+    string Id,
+    string Name,
+    string Runtime,
+    string Protocol,
+    string Model,
+    bool HasApiKey,
+    bool IsDefault,
+    bool CompatibleWithDesiredRuntimeAdapter,
+    string? Warning = null
 );
 
 public sealed record SidecarWorkspacePreparationDiagnostics(

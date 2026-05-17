@@ -20,17 +20,20 @@ public class InfraAgentSessionsController : ControllerBase
     private readonly IClaudeSidecarRouter? _sidecarRouter;
     private readonly IDynamicSidecarRegistry? _sidecarRegistry;
     private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
+    private readonly IInfraAgentRuntimeProfileService? _runtimeProfiles;
 
     public InfraAgentSessionsController(
         IInfraAgentSessionService service,
         IClaudeSidecarRouter? sidecarRouter = null,
         IDynamicSidecarRegistry? sidecarRegistry = null,
-        IInfraAgentRuntimeAdapter? runtimeAdapter = null)
+        IInfraAgentRuntimeAdapter? runtimeAdapter = null,
+        IInfraAgentRuntimeProfileService? runtimeProfiles = null)
     {
         _service = service;
         _sidecarRouter = sidecarRouter;
         _sidecarRegistry = sidecarRegistry;
         _runtimeAdapter = runtimeAdapter;
+        _runtimeProfiles = runtimeProfiles;
     }
 
     [HttpGet("event-schema")]
@@ -59,12 +62,75 @@ public class InfraAgentSessionsController : ControllerBase
             await _sidecarRegistry.RefreshAsync(ct);
         }
 
-        var diagnostics = (await _sidecarRouter.GetDiagnosticsAsync(ct)) with
+        var desiredRuntimeAdapter = InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter();
+        var profileDiagnostics = _runtimeProfiles == null
+            ? null
+            : await ResolveDefaultRuntimeProfileDiagnosticsAsync(desiredRuntimeAdapter, ct);
+        var baseDiagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
+        var diagnostics = baseDiagnostics with
         {
-            DesiredRuntimeAdapter = InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter(),
-            RuntimeTransport = _runtimeAdapter?.AdapterKind
+            DesiredRuntimeAdapter = desiredRuntimeAdapter,
+            RuntimeTransport = _runtimeAdapter?.AdapterKind,
+            DefaultRuntimeProfile = profileDiagnostics,
+            NextActions = MergeNextActions(
+                baseDiagnostics.NextActions,
+                profileDiagnostics)
         };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
+    }
+
+    private async Task<SidecarRuntimeProfileDiagnostics?> ResolveDefaultRuntimeProfileDiagnosticsAsync(
+        string desiredRuntimeAdapter,
+        CancellationToken ct)
+    {
+        var profiles = await _runtimeProfiles!.ListAsync(ct);
+        var selected = profiles.FirstOrDefault(x => x.IsDefault) ?? profiles.FirstOrDefault();
+        if (selected == null) return null;
+
+        var compatible = IsProfileCompatibleWithDesiredRuntimeAdapter(selected, desiredRuntimeAdapter);
+        var warning = compatible
+            ? null
+            : "claude-agent-sdk 通常需要 Claude/Anthropic 兼容模型；当前默认模型可能只适合普通 OpenAI-compatible gateway";
+        return new SidecarRuntimeProfileDiagnostics(
+            selected.Id,
+            selected.Name,
+            selected.Runtime,
+            selected.Protocol,
+            selected.Model,
+            selected.HasApiKey,
+            selected.IsDefault,
+            compatible,
+            warning);
+    }
+
+    private static bool IsProfileCompatibleWithDesiredRuntimeAdapter(
+        InfraAgentRuntimeProfileView profile,
+        string desiredRuntimeAdapter)
+    {
+        if (!string.Equals(desiredRuntimeAdapter, "claude-agent-sdk", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var model = profile.Model ?? string.Empty;
+        var protocol = profile.Protocol ?? string.Empty;
+        return protocol.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
+            || model.Contains("claude", StringComparison.OrdinalIgnoreCase)
+            || model.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<string>? MergeNextActions(
+        IReadOnlyList<string>? current,
+        SidecarRuntimeProfileDiagnostics? profile)
+    {
+        if (profile?.CompatibleWithDesiredRuntimeAdapter != false || string.IsNullOrWhiteSpace(profile.Warning))
+        {
+            return current;
+        }
+
+        var result = new List<string>(current ?? Array.Empty<string>());
+        result.Add("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
+        return result.Distinct().ToArray();
     }
 
     [HttpGet]

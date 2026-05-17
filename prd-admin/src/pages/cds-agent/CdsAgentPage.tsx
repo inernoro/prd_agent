@@ -792,6 +792,11 @@ export default function CdsAgentPage() {
     const registryIssue = runtimeStatus?.registryLastRefreshError || '';
     const blockers = runtimeStatus?.blockers?.filter(Boolean) ?? [];
     const nextActions = runtimeStatus?.nextActions?.filter(Boolean) ?? [];
+    const defaultRuntimeProfile = runtimeStatus?.defaultRuntimeProfile ?? null;
+    const profileCompatibilityWarning = defaultRuntimeProfile?.warning || '';
+    const profileCompatibilityState = defaultRuntimeProfile
+      ? `${defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter ? '兼容' : '需调整'} · ${defaultRuntimeProfile.name} / ${defaultRuntimeProfile.model}`
+      : '未上报';
     const readyzBlockers = primaryRuntime?.readyzBlockers?.filter(Boolean) ?? [];
     const readyzNextActions = primaryRuntime?.readyzNextActions?.filter(Boolean) ?? [];
     const providerKeyState = primaryRuntime
@@ -1051,13 +1056,15 @@ export default function CdsAgentPage() {
       },
       {
         label: '模型凭据',
-        value: providerKeyErrorCode ? '执行时缺失' : profileReady ? '可按请求下发' : '未就绪',
+        value: profileCompatibilityWarning ? '模型需调整' : providerKeyErrorCode ? '执行时缺失' : profileReady ? '可按请求下发' : '未就绪',
         detail: providerKeyErrorCode
           ? (providerKeyErrorActions[0] || '本次 run 没有拿到 env、runtime profile 或 request override provider key。')
+          : profileCompatibilityWarning
+          ? profileCompatibilityWarning
           : profileReady
           ? 'Runtime profile 已具备 baseUrl、model 和可用 API key。'
           : profileBlockReason(selectedProfile),
-        state: providerKeyErrorCode ? 'warn' : profileReady ? 'pass' : selectedProfile ? 'warn' : 'pending',
+        state: providerKeyErrorCode || profileCompatibilityWarning ? 'warn' : profileReady ? 'pass' : selectedProfile ? 'warn' : 'pending',
       },
       {
         label: '审批桥',
@@ -1127,6 +1134,8 @@ export default function CdsAgentPage() {
         ['Pool', sidecarState],
         ['Ready', readyState],
         ['HTTP', httpState],
+        ['Default profile', profileCompatibilityState],
+        ['Profile warning', profileCompatibilityWarning || '无兼容性提示'],
         ['Provider key', providerKeyState],
         ['Provider key error', providerKeyErrorState],
         ['Sidecar token', sidecarTokenState],

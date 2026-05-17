@@ -89,11 +89,14 @@ else
 fi
 
 smoke_step "检查默认 runtime profile 兼容性"
-profiles_resp=$(smoke_get "/api/infra-agent-runtime-profiles")
-smoke_verbose "$profiles_resp"
-profiles_success=$(printf '%s' "$profiles_resp" | jq -r '.success')
-smoke_assert_eq "$profiles_success" "true" "RuntimeProfiles.success"
-default_profile=$(printf '%s' "$profiles_resp" | jq -c '.data.items[]? | select(.isDefault == true) | . ' | head -n 1)
+default_profile=$(printf '%s' "$resp" | jq -c '.data.diagnostics.defaultRuntimeProfile // empty')
+if [[ -z "$default_profile" || "$default_profile" == "null" ]]; then
+  profiles_resp=$(smoke_get "/api/infra-agent-runtime-profiles")
+  smoke_verbose "$profiles_resp"
+  profiles_success=$(printf '%s' "$profiles_resp" | jq -r '.success')
+  smoke_assert_eq "$profiles_success" "true" "RuntimeProfiles.success"
+  default_profile=$(printf '%s' "$profiles_resp" | jq -c '.data.items[]? | select(.isDefault == true) | . ' | head -n 1)
+fi
 if [[ -z "$default_profile" || "$default_profile" == "null" ]]; then
   printf 'Runtime profile: no default profile configured\n'
 else
@@ -102,9 +105,12 @@ else
   profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
   profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
   profile_has_key=$(printf '%s' "$default_profile" | jq -r '.hasApiKey // false')
+  profile_warning=$(printf '%s' "$default_profile" | jq -r '.warning // ""')
   printf 'Default profile: name=%s runtime=%s protocol=%s model=%s hasApiKey=%s\n' \
     "$profile_name" "$profile_runtime" "$profile_protocol" "$profile_model" "$profile_has_key"
-  if [[ "$desired_adapter" == "claude-agent-sdk" && "$profile_model" != *claude* && "$profile_model" != anthropic/* ]]; then
+  if [[ -n "$profile_warning" ]]; then
+    printf 'Profile warning: %s\n' "$profile_warning"
+  elif [[ "$desired_adapter" == "claude-agent-sdk" && "$profile_model" != *claude* && "$profile_model" != anthropic/* ]]; then
     printf 'Profile warning: claude-agent-sdk 通常需要 Claude/Anthropic 兼容模型；当前默认模型可能只适合普通 OpenAI-compatible gateway。\n'
   fi
 fi

@@ -173,6 +173,17 @@ export interface InfraAgentRuntimeDiagnostics {
   nextActions?: string[] | null;
   desiredRuntimeAdapter?: string | null;
   runtimeTransport?: string | null;
+  defaultRuntimeProfile?: {
+    id: string;
+    name: string;
+    runtime: string;
+    protocol: string;
+    model: string;
+    hasApiKey: boolean;
+    isDefault: boolean;
+    compatibleWithDesiredRuntimeAdapter: boolean;
+    warning?: string | null;
+  } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;
     activeCdsConnections?: number | null;

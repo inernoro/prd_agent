@@ -318,12 +318,74 @@ public class InfraAgentSessionsControllerTests
         }
     }
 
+    [Fact]
+    public async Task RuntimeStatus_ShouldExposeDefaultRuntimeProfileCompatibility()
+    {
+        var previous = Environment.GetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar);
+        var service = new Mock<IInfraAgentSessionService>();
+        var router = new Mock<IClaudeSidecarRouter>();
+        var profiles = new Mock<IInfraAgentRuntimeProfileService>();
+        router
+            .Setup(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SidecarPoolDiagnostics(
+                true,
+                1,
+                1,
+                Array.Empty<SidecarInstanceDiagnostics>(),
+                NextActions: Array.Empty<string>()));
+        profiles
+            .Setup(x => x.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<InfraAgentRuntimeProfileView>
+            {
+                new(
+                    "profile-1",
+                    "OpenRouter DeepSeek",
+                    InfraAgentRuntimes.ClaudeSdk,
+                    "openai-compatible",
+                    "https://openrouter.ai/api/v1",
+                    "deepseek/deepseek-v4-pro",
+                    2,
+                    4096,
+                    900,
+                    InfraAgentRuntimeNetworkPolicies.Restricted,
+                    30,
+                    true,
+                    true,
+                    DateTime.UtcNow,
+                    DateTime.UtcNow)
+            });
+        try
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, null);
+            var controller = BuildController(service.Object, "user-1", router.Object, runtimeProfiles: profiles.Object);
+
+            var result = await controller.RuntimeStatus(refreshDiscovery: false, CancellationToken.None);
+
+            var objectResult = result.ShouldBeOfType<OkObjectResult>();
+            objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+            var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+            var data = response.Data.ShouldNotBeNull();
+            var diagnosticsProperty = data.GetType().GetProperty("diagnostics").ShouldNotBeNull();
+            var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
+            var defaultProfile = diagnostics.DefaultRuntimeProfile.ShouldNotBeNull();
+            defaultProfile.CompatibleWithDesiredRuntimeAdapter.ShouldBeFalse();
+            defaultProfile.Warning.ShouldNotBeNull().ShouldContain("Claude/Anthropic");
+            var nextActions = diagnostics.NextActions.ShouldNotBeNull();
+            nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, previous);
+        }
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId,
         IClaudeSidecarRouter? sidecarRouter = null,
         IDynamicSidecarRegistry? sidecarRegistry = null,
-        IInfraAgentRuntimeAdapter? runtimeAdapter = null)
+        IInfraAgentRuntimeAdapter? runtimeAdapter = null,
+        IInfraAgentRuntimeProfileService? runtimeProfiles = null)
     {
         var claims = new List<Claim>
         {
@@ -332,7 +394,7 @@ public class InfraAgentSessionsControllerTests
         var identity = new ClaimsIdentity(claims, "test");
         var principal = new ClaimsPrincipal(identity);
 
-        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry, runtimeAdapter)
+        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry, runtimeAdapter, runtimeProfiles)
         {
             ControllerContext = new ControllerContext
             {
