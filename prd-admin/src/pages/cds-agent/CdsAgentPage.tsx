@@ -16,6 +16,7 @@ import {
   getInfraAgentLogs,
   getInfraAgentRuntimeStatus,
   importDefaultInfraAgentRuntimeProfile,
+  listInfraAgentRuntimeAdapterCompatibility,
   listInfraAgentRuntimeProfileTemplates,
   listInfraAgentEvents,
   listInfraAgentMessages,
@@ -33,6 +34,7 @@ import {
   updateInfraAgentRuntimeProfile,
   type InfraAgentEventView,
   type InfraAgentMessageView,
+  type InfraAgentRuntimeAdapterCompatibilityView,
   type InfraAgentRuntimeDiagnostics,
   type InfraAgentRuntimeProfileTemplateView,
   type InfraAgentRuntimeProfileView,
@@ -588,6 +590,7 @@ export default function CdsAgentPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [profiles, setProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
   const [profileTemplates, setProfileTemplates] = useState<InfraAgentRuntimeProfileTemplateView[]>([]);
+  const [adapterCompatibility, setAdapterCompatibility] = useState<InfraAgentRuntimeAdapterCompatibilityView[]>([]);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
@@ -656,6 +659,11 @@ export default function CdsAgentPage() {
     () => profileTemplates.find((item) => item.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID) ?? null,
     [profileTemplates],
   );
+  const activeAdapterCompatibility = useMemo(() => {
+    const desired = (runtimeStatus?.desiredRuntimeAdapter || '').toLowerCase();
+    if (!desired) return null;
+    return adapterCompatibility.find((item) => item.id.toLowerCase() === desired) ?? null;
+  }, [adapterCompatibility, runtimeStatus?.desiredRuntimeAdapter]);
   const sortedSessions = useMemo(() => sortSessions(sessions), [sessions]);
   const visibleSessions = useMemo(() => {
     const query = sessionQuery.trim().toLowerCase();
@@ -1141,9 +1149,12 @@ export default function CdsAgentPage() {
       rows: [
         ['Adapter', adapterLabel],
         ['Mode', adapterMode],
+        ['Adapter status', activeAdapterCompatibility?.status || '未上报'],
         ['Desired adapter', desiredRuntimeAdapter || '未上报'],
         ['Transport', runtimeTransport || '未上报'],
         ['Loop owner', loopOwner || '未上报'],
+        ['Expected loop owner', activeAdapterCompatibility?.loopOwner || '未上报'],
+        ['Expected MAP role', activeAdapterCompatibility?.mapRole || '未上报'],
         ['SDK loop', sdkLoopState],
         ['MAP role', mapRole || '未上报'],
         ['CDS role', cdsRole || '未上报'],
@@ -1218,7 +1229,7 @@ export default function CdsAgentPage() {
           : '',
       } : null,
     };
-  }, [activeProfile, activeSession, activeSessionProfile, eventStreamHealthy, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
+  }, [activeAdapterCompatibility, activeProfile, activeSession, activeSessionProfile, eventStreamHealthy, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const sidecarInstanceSummaries = useMemo(() => (
     (runtimeStatus?.instances ?? []).map((item) => ({
       name: item.name,
@@ -1278,6 +1289,7 @@ export default function CdsAgentPage() {
       refreshed: runtimeDiscoveryRefreshed,
       loadedAt: runtimeStatusLoadedAt,
     },
+    adapterCompatibility: activeAdapterCompatibility,
     sidecarInstances: sidecarInstanceSummaries,
     runtimeStatus,
     summary: {
@@ -1303,7 +1315,7 @@ export default function CdsAgentPage() {
       workspaceError: runtimeDiagnostics.workspaceError,
       providerKeyError: runtimeDiagnostics.providerKeyError,
     },
-  }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
+  }), [activeAdapterCompatibility, activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
   const runBundle = useMemo(() => {
     const eventTypeCounts = events.reduce<Record<string, number>>((acc, event) => {
       acc[event.type] = (acc[event.type] ?? 0) + 1;
@@ -1631,10 +1643,11 @@ export default function CdsAgentPage() {
 
   async function loadAll() {
     const requestedSessionId = readRequestedSessionId();
-    const [connRes, profileRes, profileTemplateRes, sessionRes, runtimeRes] = await Promise.all([
+    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentRuntimeProfileTemplates(),
+      listInfraAgentRuntimeAdapterCompatibility(),
       listInfraAgentSessions(100),
       getInfraAgentRuntimeStatus(true),
     ]);
@@ -1652,6 +1665,9 @@ export default function CdsAgentPage() {
     }
     if (profileTemplateRes.success) {
       setProfileTemplates(profileTemplateRes.data?.items ?? []);
+    }
+    if (adapterCompatibilityRes.success) {
+      setAdapterCompatibility(adapterCompatibilityRes.data?.items ?? []);
     }
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
@@ -3164,6 +3180,58 @@ export default function CdsAgentPage() {
                         })}
                       </div>
                     </div>
+                    {activeAdapterCompatibility && (
+                      <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">Adapter 兼容性</div>
+                            <div className="mt-1 text-xs font-semibold text-white/72">{activeAdapterCompatibility.label}</div>
+                          </div>
+                          <span className="rounded px-2 py-1 text-[11px] font-semibold text-sky-100/80" style={{ background: 'rgba(56,189,248,0.1)', border: '1px solid rgba(56,189,248,0.2)' }}>
+                            {activeAdapterCompatibility.status}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 md:grid-cols-2">
+                          <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                            <div className="text-[11px] font-semibold text-white/38">支持的 profile</div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/66">
+                              {(activeAdapterCompatibility.supportedProfileProtocols.length > 0 ? activeAdapterCompatibility.supportedProfileProtocols : ['未声明']).join(' / ')}
+                            </div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/42">
+                              {activeAdapterCompatibility.modelHints.slice(0, 3).join(' · ') || '无模型提示'}
+                            </div>
+                          </div>
+                          <div className="rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.68)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                            <div className="text-[11px] font-semibold text-white/38">不兼容形态</div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/66">
+                              {activeAdapterCompatibility.knownIncompatibleProfilePatterns.slice(0, 2).join(' · ') || '未声明'}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="mt-2 grid gap-2 xl:grid-cols-2">
+                          {activeAdapterCompatibility.notes.length > 0 && (
+                            <div className="rounded-md px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                              <div className="text-[11px] font-semibold text-white/38">边界说明</div>
+                              <div className="mt-1 space-y-1">
+                                {activeAdapterCompatibility.notes.slice(0, 3).map((item) => (
+                                  <div key={item} className="text-xs leading-relaxed text-white/58">{item}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {activeAdapterCompatibility.nextActions.length > 0 && (
+                            <div className="rounded-md px-3 py-2" style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)' }}>
+                              <div className="text-[11px] font-semibold text-sky-100/60">推荐动作</div>
+                              <div className="mt-1 space-y-1">
+                                {activeAdapterCompatibility.nextActions.slice(0, 3).map((item) => (
+                                  <div key={item} className="text-xs leading-relaxed text-sky-50/74">{item}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     {(runtimeDiagnostics.blockers.length > 0 || runtimeDiagnostics.nextActions.length > 0) && (
                       <div className="mt-3 grid gap-2 xl:grid-cols-2">
                         {runtimeDiagnostics.blockers.length > 0 && (

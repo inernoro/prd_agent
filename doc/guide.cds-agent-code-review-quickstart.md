@@ -88,6 +88,8 @@
 
 模型配置里的 “Anthropic 官方模板” 来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates`，不是页面硬编码。它会预填 Anthropic Messages 协议、官方 baseUrl、Claude Sonnet 模型和资源默认值；用户仍需手动填入自己的 API key 并保存为 runtime profile。
 
+Adapter 兼容性来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapter-compatibility`。当前代码审查默认只把 `claude-agent-sdk` 当作可路由官方 SDK 路径；`legacy-sidecar` 是显式 fallback；`codex` 仍是 planned-not-routable，不代表页面选择 `runtime=codex` 后就已经接入官方 Codex 能力。
+
 ## 失败先看哪里
 
 | 现象 | 优先查看 |

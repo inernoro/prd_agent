@@ -8,6 +8,8 @@ public interface IInfraAgentRuntimeProfileService
 
     Task<List<InfraAgentRuntimeProfileTemplateView>> ListTemplatesAsync(CancellationToken ct);
 
+    Task<List<InfraAgentRuntimeAdapterCompatibilityView>> ListAdapterCompatibilityAsync(CancellationToken ct);
+
     Task<InfraAgentRuntimeProfileView> CreateAsync(string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileView> UpdateAsync(string id, string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
@@ -69,6 +71,21 @@ public record InfraAgentRuntimeProfileTemplateView(
     int AutoCleanupMinutes,
     bool IsDefaultRecommended,
     IReadOnlyList<string> CompatibleRuntimeAdapters
+);
+
+public record InfraAgentRuntimeAdapterCompatibilityView(
+    string Id,
+    string Label,
+    string Status,
+    string LoopOwner,
+    string MapRole,
+    string CdsRole,
+    IReadOnlyList<string> SupportedProfileProtocols,
+    IReadOnlyList<string> ModelHints,
+    IReadOnlyList<string> CompatibleRuntimeProfileTemplateIds,
+    IReadOnlyList<string> KnownIncompatibleProfilePatterns,
+    IReadOnlyList<string> Notes,
+    IReadOnlyList<string> NextActions
 );
 
 public record InfraAgentRuntimeProfileSecretView(
@@ -142,6 +159,73 @@ public static class InfraAgentRuntimeProfileTemplates
             30,
             true,
             [InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk])
+    ];
+}
+
+public static class InfraAgentRuntimeAdapterCompatibility
+{
+    public const string SidecarLegacyLoop = "legacy-sidecar";
+    public const string CodexPlanned = "codex";
+
+    public static IReadOnlyList<InfraAgentRuntimeAdapterCompatibilityView> All { get; } =
+    [
+        new(
+            InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk,
+            "Official Claude Agent SDK adapter",
+            "default-supported",
+            "claude-agent-sdk",
+            "control-plane-only",
+            "workspace-runtime-host",
+            [InfraAgentRuntimeProtocols.Anthropic, InfraAgentRuntimeProtocols.OpenAiCompatible],
+            ["protocol=anthropic", "model contains claude", "model starts with anthropic/"],
+            [InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4],
+            ["openai-compatible model without claude/anthropic prefix, for example deepseek/*"],
+            [
+                "MAP/CDS 只保留 session、workspace、审批、日志、事件和产物控制面。",
+                "Agent turn loop、上下文管理和 Claude Code 工具调用归官方 claude-agent-sdk。",
+                "OpenAI-compatible gateway 只有在代理 Claude/Anthropic 模型时才适合该 adapter。"
+            ],
+            [
+                "使用 Anthropic 官方模板创建带有效 API key 的 runtime profile。",
+                "如果必须使用普通 OpenAI-compatible 模型，请不要把任务路由到 claude-agent-sdk。"
+            ]),
+        new(
+            SidecarLegacyLoop,
+            "Sidecar legacy fallback",
+            "explicit-fallback",
+            "sidecar-legacy-loop",
+            "control-plane-plus-legacy-loop",
+            "workspace-runtime-host",
+            [InfraAgentRuntimeProtocols.Anthropic, InfraAgentRuntimeProtocols.OpenAiCompatible],
+            ["legacy self-managed loop only"],
+            [],
+            [],
+            [
+                "该路径保留给迁移期排障和显式 fallback。",
+                "它不是目标终态；能走官方 SDK 的代码任务不应继续扩展 legacy loop。"
+            ],
+            [
+                "仅在 INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar 显式配置时使用。",
+                "新增代码任务能力优先接入官方 SDK adapter。"
+            ]),
+        new(
+            CodexPlanned,
+            "Codex-like adapter",
+            "planned-not-routable",
+            "external-official-runtime",
+            "control-plane-only",
+            "workspace-runtime-host",
+            [],
+            ["not implemented in current CDS Agent runtime pool"],
+            [],
+            ["runtime=codex currently has no official adapter implementation in this repo"],
+            [
+                "当前页面可保存 runtime=codex profile，但 CDS Agent 代码任务不会因此自动获得 Codex 官方能力。",
+                "后续若接入官方 Codex/Agents SDK，应沿用 MAP/CDS 控制面，新增薄 adapter，而不是复制 Claude legacy loop。"
+            ],
+            [
+                "在官方 adapter、工具审批、取消和事件映射完成前，不要把用户代码审查任务默认路由到 codex runtime。"
+            ])
     ];
 }
 

@@ -33,6 +33,13 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    [HttpGet("adapter-compatibility")]
+    public async Task<IActionResult> ListAdapterCompatibility(CancellationToken ct)
+    {
+        var items = await _service.ListAdapterCompatibilityAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UpsertInfraAgentRuntimeProfileRequest req, CancellationToken ct)
     {

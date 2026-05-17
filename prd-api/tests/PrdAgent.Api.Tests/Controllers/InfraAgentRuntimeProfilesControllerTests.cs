@@ -33,4 +33,33 @@ public class InfraAgentRuntimeProfilesControllerTests
         template.Model.ShouldBe("claude-sonnet-4-20250514");
         template.CompatibleRuntimeAdapters.ShouldContain(InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk);
     }
+
+    [Fact]
+    public async Task ListAdapterCompatibility_ShouldExposeOfficialSdkAndFallbackBoundaries()
+    {
+        var service = new Mock<IInfraAgentRuntimeProfileService>();
+        service
+            .Setup(x => x.ListAdapterCompatibilityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(InfraAgentRuntimeAdapterCompatibility.All.ToList());
+        var controller = new InfraAgentRuntimeProfilesController(service.Object);
+
+        var result = await controller.ListAdapterCompatibility(CancellationToken.None);
+
+        var ok = result.ShouldBeOfType<OkObjectResult>();
+        var response = ok.Value.ShouldBeOfType<ApiResponse<object>>();
+        var data = response.Data.ShouldNotBeNull();
+        var itemsProperty = data.GetType().GetProperty("items").ShouldNotBeNull();
+        var rawItems = itemsProperty.GetValue(data).ShouldNotBeNull();
+        var items = rawItems.ShouldBeAssignableTo<IEnumerable<InfraAgentRuntimeAdapterCompatibilityView>>().ToList();
+        var official = items.Single(x => x.Id == InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk);
+        official.Status.ShouldBe("default-supported");
+        official.LoopOwner.ShouldBe("claude-agent-sdk");
+        official.MapRole.ShouldBe("control-plane-only");
+        official.CompatibleRuntimeProfileTemplateIds.ShouldContain(InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+        official.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("deepseek", StringComparison.OrdinalIgnoreCase));
+
+        var codex = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.CodexPlanned);
+        codex.Status.ShouldBe("planned-not-routable");
+        codex.NextActions.ShouldContain(x => x.Contains("不要把用户代码审查任务默认路由到 codex runtime", StringComparison.OrdinalIgnoreCase));
+    }
 }

@@ -132,6 +132,21 @@ export interface InfraAgentRuntimeProfileTemplateView {
   compatibleRuntimeAdapters: string[];
 }
 
+export interface InfraAgentRuntimeAdapterCompatibilityView {
+  id: string;
+  label: string;
+  status: string;
+  loopOwner: string;
+  mapRole: string;
+  cdsRole: string;
+  supportedProfileProtocols: string[];
+  modelHints: string[];
+  compatibleRuntimeProfileTemplateIds: string[];
+  knownIncompatibleProfilePatterns: string[];
+  notes: string[];
+  nextActions: string[];
+}
+
 export interface InfraAgentRuntimeProfileTestResult {
   id: string;
   success: boolean;
@@ -265,6 +280,10 @@ interface RuntimeProfilesResp {
 
 interface RuntimeProfileTemplatesResp {
   items: InfraAgentRuntimeProfileTemplateView[];
+}
+
+interface RuntimeAdapterCompatibilityResp {
+  items: InfraAgentRuntimeAdapterCompatibilityView[];
 }
 
 interface RuntimeProfileResp {
@@ -511,6 +530,10 @@ export async function listInfraAgentRuntimeProfiles(): Promise<ApiResponse<Runti
 
 export async function listInfraAgentRuntimeProfileTemplates(): Promise<ApiResponse<RuntimeProfileTemplatesResp>> {
   return await apiRequest<RuntimeProfileTemplatesResp>(api.infraAgentRuntimeProfiles.templates(), { method: 'GET' });
+}
+
+export async function listInfraAgentRuntimeAdapterCompatibility(): Promise<ApiResponse<RuntimeAdapterCompatibilityResp>> {
+  return await apiRequest<RuntimeAdapterCompatibilityResp>(api.infraAgentRuntimeProfiles.adapterCompatibility(), { method: 'GET' });
 }
 
 export async function createInfraAgentRuntimeProfile(input: {

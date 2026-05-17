@@ -22,7 +22,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-defect-agent.sh` | 缺陷 CRUD + 讨论消息追加 |
 | `scripts/smoke-report-agent.sh` | 团队/模板/周报 CRUD |
 | `scripts/smoke-cds-agent-runtime-status.sh` | CDS Agent runtime pool：验证 MAP runtime-status、sidecar discovery、`/readyz` healthy 与 `loopOwner=claude-agent-sdk`；不触发模型 run |
-| `scripts/smoke-cds-agent-profile-templates.sh` | CDS Agent runtime profile 模板：验证 MAP 后端暴露 Anthropic 官方 Claude Agent SDK profile 模板 |
+| `scripts/smoke-cds-agent-profile-templates.sh` | CDS Agent runtime profile 模板与 adapter 兼容矩阵：验证 MAP 后端暴露 Anthropic 官方 Claude Agent SDK profile 模板，并声明官方 SDK / legacy / Codex-like 边界 |
 | `scripts/smoke-cds-agent-profile-preflight.sh` | CDS Agent profile preflight：验证不兼容默认 profile 会在 `SendMessage` 前被 `runtime_profile_incompatible` 拦截，且不会写入消息或入队 |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
@@ -121,9 +121,10 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 通过 `CLAUDE_SIDECAR_BASE_URL` / `CLAUDE_SIDECAR_TOKEN` 配好静态 official SDK
 sidecar。该脚本只读 `runtime-status`，不会消耗模型 provider token。
 
-`smoke-cds-agent-profile-templates.sh` 只读 MAP 模板 API，确认 Anthropic 官方
-profile 模板仍由后端提供，并声明兼容 `claude-agent-sdk`。它不会保存 API key，
-也不会创建 runtime profile。
+`smoke-cds-agent-profile-templates.sh` 只读 MAP 模板与 adapter compatibility API，
+确认 Anthropic 官方 profile 模板仍由后端提供，并声明兼容 `claude-agent-sdk`；
+同时确认普通 `deepseek/*` 这类 OpenAI-compatible profile 不应误路由到官方 SDK，
+以及 `codex` 仍是 planned-not-routable。它不会保存 API key，也不会创建 runtime profile。
 
 `smoke-cds-agent-profile-preflight.sh` 会在默认 profile 不兼容 `claude-agent-sdk`
 时创建一个临时 idle session，断言 `SendMessage` 返回 `runtime_profile_incompatible`，

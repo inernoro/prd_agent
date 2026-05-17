@@ -50,6 +50,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return Task.FromResult(InfraAgentRuntimeProfileTemplates.All.ToList());
     }
 
+    public Task<List<InfraAgentRuntimeAdapterCompatibilityView>> ListAdapterCompatibilityAsync(CancellationToken ct)
+    {
+        return Task.FromResult(InfraAgentRuntimeAdapterCompatibility.All.ToList());
+    }
+
     public async Task<InfraAgentRuntimeProfileView> CreateAsync(
         string userId,
         UpsertInfraAgentRuntimeProfileRequest request,

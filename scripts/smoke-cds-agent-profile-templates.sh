@@ -6,6 +6,7 @@
 # 验证 MAP 后端是 runtime profile 模板的事实源：
 #   - 暴露 Anthropic official Claude Agent SDK 模板
 #   - 模板协议/baseUrl/model 与官方 SDK adapter 兼容
+#   - 暴露 adapter 兼容矩阵，避免把普通 OpenAI-compatible profile 误路由到官方 SDK
 #
 # 环境变量同 scripts/smoke-lib.sh。
 # ============================================
@@ -16,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-SMOKE_STEP_TOTAL=3
+SMOKE_STEP_TOTAL=5
 smoke_init "CDS Agent Runtime Profile Templates"
 
 smoke_step "GET runtime profile templates"
@@ -39,5 +40,22 @@ smoke_step "确认模板声明兼容 claude-agent-sdk"
 compatible_count=$(printf '%s' "$template" | jq -r '[.compatibleRuntimeAdapters[]? | select(. == "claude-agent-sdk")] | length')
 smoke_assert_eq "$compatible_count" "1" "compatibleRuntimeAdapters.claude-agent-sdk"
 smoke_ok "compatibleRuntimeAdapters includes claude-agent-sdk"
+
+smoke_step "GET adapter compatibility"
+compat_resp=$(smoke_get /api/infra-agent-runtime-profiles/adapter-compatibility)
+smoke_assert_eq "$(printf '%s' "$compat_resp" | jq -r '.success')" "true" "success"
+smoke_ok "adapter compatibility API 可访问"
+
+smoke_step "确认官方 SDK 与 Codex-like 边界"
+official=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "claude-agent-sdk")')
+smoke_assert_nonempty "$official" "claude-agent-sdk compatibility"
+smoke_assert_eq "$(printf '%s' "$official" | jq -r '.loopOwner')" "claude-agent-sdk" "official.loopOwner"
+smoke_assert_eq "$(printf '%s' "$official" | jq -r '.mapRole')" "control-plane-only" "official.mapRole"
+incompatible_count=$(printf '%s' "$official" | jq -r '[.knownIncompatibleProfilePatterns[]? | select(test("deepseek"; "i"))] | length')
+smoke_assert_eq "$incompatible_count" "1" "official.deepseekIncompatiblePattern"
+codex=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "codex")')
+smoke_assert_nonempty "$codex" "codex compatibility"
+smoke_assert_eq "$(printf '%s' "$codex" | jq -r '.status')" "planned-not-routable" "codex.status"
+smoke_ok "official SDK default-supported; codex planned-not-routable"
 
 smoke_done
