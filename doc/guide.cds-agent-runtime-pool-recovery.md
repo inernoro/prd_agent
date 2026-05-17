@@ -51,6 +51,23 @@ git diff --check
 - 已记录当前 shared sidecar pool project id、active connection id、当前 commitSha。
 - 可回滚到上一版 CDS 控制面。
 
+批准前先跑只读 preflight，生成当前控制面版本、目标分支、preview 状态和 R0 alias
+污染证据：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_PREFLIGHT_REPORT=/tmp/cds-agent-self-update-preflight.json \
+bash scripts/preflight-cds-agent-cds-self-update.sh
+```
+
+该脚本不会执行 `cdscli self update`。它只输出：
+
+- 当前 CDS 控制面分支和 commit。
+- 目标 self-update 分支和 commit，以及 `cdsTouched`。
+- 当前 preview 分支服务状态。
+- 可选的 R0 alias stability probe 日志。
+- 需要用户明确批准后才能执行的推荐命令。
+
 发布后立刻验证：
 
 ```bash

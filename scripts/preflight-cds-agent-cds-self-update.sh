@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# ============================================
+# CDS Agent R0 self-update preflight
+# ============================================
+#
+# Read-only preflight before asking a human to approve updating the shared
+# CDS control plane. This script never calls `cdscli self update`.
+#
+# Required:
+#   CDS_HOST
+#
+# Optional:
+#   CDS_SELF_UPDATE_BRANCH              default: codex/cds-agent-workbench-ui
+#   SMOKE_CDS_BRANCH_ID                 default: prd-agent-codex-cds-agent-workbench-ui
+#   SMOKE_CDS_AGENT_PREFLIGHT_REPORT    optional JSON report path
+#   SMOKE_CDS_AGENT_RUN_ALIAS_PROBE     default: 1
+# ============================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CDS_SELF_UPDATE_BRANCH="${CDS_SELF_UPDATE_BRANCH:-codex/cds-agent-workbench-ui}"
+SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
+SMOKE_CDS_AGENT_PREFLIGHT_REPORT="${SMOKE_CDS_AGENT_PREFLIGHT_REPORT:-}"
+SMOKE_CDS_AGENT_RUN_ALIAS_PROBE="${SMOKE_CDS_AGENT_RUN_ALIAS_PROBE:-1}"
+
+if [[ -z "${CDS_HOST:-}" ]]; then
+  printf 'CDS_HOST is required\n' >&2
+  exit 1
+fi
+
+if [[ ! -f ".claude/skills/cds/cli/cdscli.py" ]]; then
+  printf '.claude/skills/cds/cli/cdscli.py not found\n' >&2
+  exit 1
+fi
+
+printf '==========================================\n'
+printf 'CDS Agent R0 self-update preflight\n'
+printf 'CDS_HOST: %s\n' "$CDS_HOST"
+printf 'Target branch: %s\n' "$CDS_SELF_UPDATE_BRANCH"
+printf 'Preview branch: %s\n' "$SMOKE_CDS_BRANCH_ID"
+printf '==========================================\n'
+
+printf '\n>>> [1/5] Read CDS self branches\n'
+self_branches_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py self branches)
+printf '%s\n' "$self_branches_resp" | jq '{ok, current:.data.current, commitHash:.data.commitHash}'
+if [[ "$(printf '%s' "$self_branches_resp" | jq -r '.ok')" != "true" ]]; then
+  printf 'cdscli self branches failed\n' >&2
+  exit 1
+fi
+current_branch=$(printf '%s' "$self_branches_resp" | jq -r '.data.current // "unknown"')
+current_commit=$(printf '%s' "$self_branches_resp" | jq -r '.data.commitHash // "unknown"')
+target_branch_json=$(printf '%s' "$self_branches_resp" | jq -c --arg branch "$CDS_SELF_UPDATE_BRANCH" '.data.branchDetails[]? | select(.name == $branch)' | head -n 1)
+if [[ -z "$target_branch_json" ]]; then
+  printf 'target branch not found in CDS self branches: %s\n' "$CDS_SELF_UPDATE_BRANCH" >&2
+  exit 1
+fi
+target_commit=$(printf '%s' "$target_branch_json" | jq -r '.commitHash // "unknown"')
+target_subject=$(printf '%s' "$target_branch_json" | jq -r '.subject // ""')
+target_cds_touched=$(printf '%s' "$target_branch_json" | jq -r '.cdsTouched // false')
+printf 'Current CDS: branch=%s commit=%s\n' "$current_branch" "$current_commit"
+printf 'Target CDS: branch=%s commit=%s cdsTouched=%s subject=%s\n' \
+  "$CDS_SELF_UPDATE_BRANCH" "$target_commit" "$target_cds_touched" "$target_subject"
+
+printf '\n>>> [2/5] Verify local stale-alias cleanup code exists\n'
+if rg -q 'pruneStaleAppContainersForProfile' cds/src/services/container.ts; then
+  local_cleanup_present=true
+  printf 'local cleanup code: present\n'
+else
+  local_cleanup_present=false
+  printf 'local cleanup code: missing\n' >&2
+fi
+
+printf '\n>>> [3/5] Read preview branch status\n'
+branch_status_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch status "$SMOKE_CDS_BRANCH_ID")
+printf '%s\n' "$branch_status_resp" | jq '{ok, status:.data.status, commitSha:.data.commitSha, subject:.data.subject, services:(.data.services | keys)}'
+if [[ "$(printf '%s' "$branch_status_resp" | jq -r '.ok')" != "true" ]]; then
+  printf 'cdscli branch status failed\n' >&2
+  exit 1
+fi
+preview_status=$(printf '%s' "$branch_status_resp" | jq -r '.data.status // "unknown"')
+preview_commit=$(printf '%s' "$branch_status_resp" | jq -r '.data.commitSha // "unknown"')
+
+printf '\n>>> [4/5] Optional R0 alias probe\n'
+alias_probe_status="skipped"
+alias_probe_log=""
+if [[ "$SMOKE_CDS_AGENT_RUN_ALIAS_PROBE" == "1" ]]; then
+  alias_probe_log="${SMOKE_CDS_AGENT_PREFLIGHT_REPORT:-/tmp/cds-agent-self-update-preflight.json}.alias.log"
+  if CDS_HOST="$CDS_HOST" bash "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" >"$alias_probe_log" 2>&1; then
+    alias_probe_status="pass"
+  else
+    alias_probe_status="failed"
+  fi
+  printf 'alias probe: %s log=%s\n' "$alias_probe_status" "$alias_probe_log"
+  tail -n 30 "$alias_probe_log"
+else
+  printf 'alias probe: skipped\n'
+fi
+
+recommended_command="CDS_HOST=${CDS_HOST} python3 .claude/skills/cds/cli/cdscli.py self update --branch ${CDS_SELF_UPDATE_BRANCH}"
+printf '\n>>> [5/5] Recommendation\n'
+printf 'This preflight is read-only. It does not approve or run CDS self update.\n'
+printf 'If the human approves the shared control-plane update, run:\n'
+printf '  %s\n' "$recommended_command"
+
+if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
+  mkdir -p "$(dirname "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT")"
+  jq -n \
+    --arg host "$CDS_HOST" \
+    --arg currentBranch "$current_branch" \
+    --arg currentCommit "$current_commit" \
+    --arg targetBranch "$CDS_SELF_UPDATE_BRANCH" \
+    --arg targetCommit "$target_commit" \
+    --arg targetSubject "$target_subject" \
+    --arg previewBranch "$SMOKE_CDS_BRANCH_ID" \
+    --arg previewStatus "$preview_status" \
+    --arg previewCommit "$preview_commit" \
+    --arg aliasProbeStatus "$alias_probe_status" \
+    --arg aliasProbeLog "$alias_probe_log" \
+    --arg recommendedCommand "$recommended_command" \
+    --argjson targetCdsTouched "$target_cds_touched" \
+    --argjson localCleanupPresent "$local_cleanup_present" \
+    '{
+      host: $host,
+      currentControlPlane: {
+        branch: $currentBranch,
+        commit: $currentCommit
+      },
+      targetControlPlane: {
+        branch: $targetBranch,
+        commit: $targetCommit,
+        subject: $targetSubject,
+        cdsTouched: $targetCdsTouched
+      },
+      preview: {
+        branchId: $previewBranch,
+        status: $previewStatus,
+        commit: $previewCommit
+      },
+      r0AliasProbe: {
+        status: $aliasProbeStatus,
+        log: $aliasProbeLog
+      },
+      localCleanupPresent: $localCleanupPresent,
+      nextActionRequiresHumanApproval: true,
+      recommendedCommand: $recommendedCommand
+    }' > "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT"
+  printf 'Preflight report: %s\n' "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT"
+fi
