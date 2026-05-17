@@ -39,6 +39,19 @@ import {
 
 const EVENT_PAGE_LIMIT = 500;
 const EVENT_MAX_BATCHES_PER_REFRESH = 20;
+const ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE = {
+  name: 'Anthropic Claude Sonnet 4.6',
+  runtime: 'claude-sdk',
+  protocol: 'anthropic',
+  baseUrl: 'https://api.anthropic.com',
+  model: 'claude-sonnet-4-6',
+  resourceCpuCores: 2,
+  resourceMemoryMb: 4096,
+  timeoutSeconds: 900,
+  networkPolicy: 'restricted',
+  autoCleanupMinutes: 30,
+  isDefault: true,
+};
 
 function statusLabel(status: string): string {
   if (status === 'creating') return '准备中';
@@ -626,18 +639,18 @@ export default function CdsAgentPage() {
     workspaceRoot: '',
   });
   const [profileDraft, setProfileDraft] = useState({
-    name: '自定义模型配置',
-    runtime: 'claude-sdk',
-    protocol: 'anthropic',
-    baseUrl: 'https://api.anthropic.com',
-    model: 'claude-opus-4-5',
+    name: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.name,
+    runtime: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.runtime,
+    protocol: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.protocol,
+    baseUrl: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.baseUrl,
+    model: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.model,
     apiKey: '',
-    resourceCpuCores: 2,
-    resourceMemoryMb: 4096,
-    timeoutSeconds: 900,
-    networkPolicy: 'restricted',
-    autoCleanupMinutes: 30,
-    isDefault: true,
+    resourceCpuCores: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.resourceCpuCores,
+    resourceMemoryMb: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.resourceMemoryMb,
+    timeoutSeconds: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.timeoutSeconds,
+    networkPolicy: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.networkPolicy,
+    autoCleanupMinutes: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.autoCleanupMinutes,
+    isDefault: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.isDefault,
   });
 
   const activeConnection = useMemo(
@@ -1979,6 +1992,16 @@ export default function CdsAgentPage() {
     }
   }
 
+  function applyAnthropicOfficialTemplate() {
+    setProfileDraft((prev) => ({
+      ...prev,
+      ...ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE,
+      apiKey: prev.apiKey,
+    }));
+    setProfileTest('');
+    toast.success('已套用 Anthropic 官方模板', '填入 API key 后保存为默认配置');
+  }
+
   async function saveProfile() {
     if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
       toast.warning('模型配置不完整', 'baseUrl、model 和 API key 都必填');
@@ -2639,6 +2662,14 @@ export default function CdsAgentPage() {
                 {activeProfileBlockReason && (
                   <div className="mt-2 rounded-md px-2 py-2 text-xs leading-relaxed text-amber-100/85" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.26)' }}>
                     {activeProfileBlockReason}
+                    <button
+                      type="button"
+                      onClick={() => void applyAnthropicOfficialTemplate()}
+                      className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs"
+                      style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
+                    >
+                      <Server size={12} /> 套用 Anthropic 官方模板
+                    </button>
                   </div>
                 )}
                 <button
@@ -2711,6 +2742,14 @@ export default function CdsAgentPage() {
               <details open={Boolean(activeProfileBlockReason)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
                 <div className="mt-3 grid gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void applyAnthropicOfficialTemplate()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs"
+                    style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
+                  >
+                    <Server size={13} /> Anthropic 官方模板
+                  </button>
                   <input
                     value={profileDraft.name}
                     onChange={(e) => setProfileDraft((prev) => ({ ...prev, name: e.target.value }))}
