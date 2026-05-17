@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -581,6 +581,42 @@ export default function CdsAgentPage() {
   const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
   const canSendActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
   const canRecordManualInput = Boolean(activeSession?.manualTakeoverEnabled && prompt.trim());
+
+  const fetchEventsSince = useCallback(async (sessionId: string, afterSeq: number): Promise<InfraAgentEventView[]> => {
+    const collected: InfraAgentEventView[] = [];
+    let cursor = afterSeq;
+    for (let batch = 0; batch < EVENT_MAX_BATCHES_PER_REFRESH; batch += 1) {
+      const eventsRes = await listInfraAgentEvents(sessionId, cursor, EVENT_PAGE_LIMIT);
+      if (!eventsRes.success) break;
+      const items = eventsRes.data?.items ?? [];
+      if (items.length === 0) break;
+      collected.push(...items);
+      cursor = latestEventSeq(items);
+      if (items.length < EVENT_PAGE_LIMIT) break;
+    }
+    return collected;
+  }, []);
+
+  const refreshDetail = useCallback(async (sessionId: string, options: { resetEvents?: boolean; skipEvents?: boolean } = {}) => {
+    const afterSeq = options.resetEvents || activeSessionId !== sessionId ? 0 : latestEventSeq(eventsRef.current);
+    const [messagesRes, newEvents, logsRes] = await Promise.all([
+      listInfraAgentMessages(sessionId, 200),
+      options.skipEvents ? Promise.resolve([]) : fetchEventsSince(sessionId, afterSeq),
+      getInfraAgentLogs(sessionId),
+    ]);
+    if (messagesRes.success) setMessages(messagesRes.data?.items ?? []);
+    if (!options.skipEvents) {
+      setEvents((prev) => {
+        const next = afterSeq > 0
+          ? mergeEventsBySeq(prev, newEvents)
+          : mergeEventsBySeq([], newEvents);
+        eventsRef.current = next;
+        return next;
+      });
+    }
+    if (logsRes.success) setLogs(logsRes.data?.logs ?? '');
+  }, [activeSessionId, fetchEventsSince]);
+
   const displayedEvents = useMemo(
     () => eventReplayMode ? events.slice(0, Math.max(0, Math.min(eventReplayIndex, events.length))) : events,
     [eventReplayIndex, eventReplayMode, events],
@@ -898,7 +934,7 @@ export default function CdsAgentPage() {
       });
     }, 3000);
     return () => window.clearInterval(tick);
-  }, [isLiveStatus, activeSessionId, eventStreamHealthy]);
+  }, [isLiveStatus, activeSessionId, eventStreamHealthy, refreshDetail]);
 
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) {
@@ -975,7 +1011,7 @@ export default function CdsAgentPage() {
     eventsRef.current = [];
     setEvents([]);
     void refreshDetail(activeSession.id, { resetEvents: true });
-  }, [activeSession?.id]);
+  }, [activeSession?.id, refreshDetail]);
 
   useEffect(() => {
     if (events.length === 0) {
@@ -1035,41 +1071,6 @@ export default function CdsAgentPage() {
     if (runtimeRes.success && runtimeRes.data?.diagnostics) {
       setRuntimeStatus(runtimeRes.data.diagnostics);
     }
-  }
-
-  async function fetchEventsSince(sessionId: string, afterSeq: number): Promise<InfraAgentEventView[]> {
-    const collected: InfraAgentEventView[] = [];
-    let cursor = afterSeq;
-    for (let batch = 0; batch < EVENT_MAX_BATCHES_PER_REFRESH; batch += 1) {
-      const eventsRes = await listInfraAgentEvents(sessionId, cursor, EVENT_PAGE_LIMIT);
-      if (!eventsRes.success) break;
-      const items = eventsRes.data?.items ?? [];
-      if (items.length === 0) break;
-      collected.push(...items);
-      cursor = latestEventSeq(items);
-      if (items.length < EVENT_PAGE_LIMIT) break;
-    }
-    return collected;
-  }
-
-  async function refreshDetail(sessionId: string, options: { resetEvents?: boolean; skipEvents?: boolean } = {}) {
-    const afterSeq = options.resetEvents || activeSessionId !== sessionId ? 0 : latestEventSeq(eventsRef.current);
-    const [messagesRes, newEvents, logsRes] = await Promise.all([
-      listInfraAgentMessages(sessionId, 200),
-      options.skipEvents ? Promise.resolve([]) : fetchEventsSince(sessionId, afterSeq),
-      getInfraAgentLogs(sessionId),
-    ]);
-    if (messagesRes.success) setMessages(messagesRes.data?.items ?? []);
-    if (!options.skipEvents) {
-      setEvents((prev) => {
-        const next = afterSeq > 0
-          ? mergeEventsBySeq(prev, newEvents)
-          : mergeEventsBySeq([], newEvents);
-        eventsRef.current = next;
-        return next;
-      });
-    }
-    if (logsRes.success) setLogs(logsRes.data?.logs ?? '');
   }
 
   function upsertSession(session: InfraAgentSessionView) {
