@@ -132,6 +132,12 @@ cycle_slowest='[]'
 r1_report=""
 r1_status="missing"
 r1_details_json='null'
+s1_report=""
+s1_status="missing"
+s1_details_json='null'
+controls_report=""
+controls_status="missing"
+controls_details_json='null'
 if [[ -f "$cycle_summary" ]]; then
   cycle_status=$(jq -r '.status // "unknown"' "$cycle_summary")
   commercial_complete=$(jq -r '.commercialComplete // false' "$cycle_summary")
@@ -149,6 +155,8 @@ if [[ -f "$cycle_summary" ]]; then
   cycle_total_seconds=$(jq -r '.timing.totalSeconds // 0' "$cycle_summary")
   cycle_slowest=$(jq -c '.timing.slowest // []' "$cycle_summary")
   r1_report=$(jq -r '.r1.report // ""' "$cycle_summary")
+  s1_report=$(jq -r '.s1.report // ""' "$cycle_summary")
+  controls_report=$(jq -r '.controls.report // ""' "$cycle_summary")
 fi
 
 if [[ "$boundary_status" == "pass" ]]; then
@@ -169,6 +177,26 @@ if [[ -n "$r1_report" && -f "$r1_report" ]]; then
     missingKeyGuard: (.evidence.missingKeyGuard // null),
     providerKeyReceived: (.evidence.providerKeyReceived // false)
   }' "$r1_report")
+fi
+if [[ -n "$s1_report" && -f "$s1_report" ]]; then
+  s1_status=$(jq -r '.status // "unknown"' "$s1_report")
+  s1_details_json=$(jq -c '{
+    status: (.status // "unknown"),
+    host: (.host // ""),
+    target: (.target // null),
+    sessionId: (.sessionId // ""),
+    traceId: (.traceId // ""),
+    defaultProfile: (.evidence.defaultProfile // null)
+  }' "$s1_report")
+fi
+if [[ -n "$controls_report" && -f "$controls_report" ]]; then
+  controls_status=$(jq -r '.status // "unknown"' "$controls_report")
+  controls_details_json=$(jq -c '{
+    status: (.status // "unknown"),
+    host: (.host // ""),
+    target: (.target // null),
+    defaultProfile: (.evidence.defaultProfile // null)
+  }' "$controls_report")
 fi
 
 if [[ "$boundary_status" != "pass" ]]; then
@@ -243,6 +271,8 @@ audit_json=$(
     --arg n6Log "$N6_LOG" \
     --arg cycleSummary "$cycle_summary" \
     --arg r1Report "$r1_report" \
+    --arg s1Report "$s1_report" \
+    --arg controlsReport "$controls_report" \
     --arg cycleStatus "$cycle_status" \
     --arg currentBlockingGate "$current_blocking_gate" \
     --arg blockingReason "$blocking_reason" \
@@ -251,6 +281,8 @@ audit_json=$(
     --arg boundaryStatus "$boundary_status" \
     --arg n6Status "$n6_status" \
     --arg r1Status "$r1_status" \
+    --arg s1Status "$s1_status" \
+    --arg controlsStatus "$controls_status" \
     --arg gateR0 "$gate_r0" \
     --arg gateA0 "$gate_a0" \
     --arg gateR1 "$gate_r1" \
@@ -272,6 +304,8 @@ audit_json=$(
     --argjson localSlowest "$timing_slowest_json" \
     --argjson localTotalSeconds "$timing_total_seconds" \
     --argjson r1Details "$r1_details_json" \
+    --argjson s1Details "$s1_details_json" \
+    --argjson controlsDetails "$controls_details_json" \
     --argjson missing "$missing_json" \
     --argjson failures "$failures_json" \
     '{
@@ -282,7 +316,9 @@ audit_json=$(
         boundaryReport: $boundaryReport,
         nonCodeCompatibilityLog: $n6Log,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
-        r1Report: (if $r1Report == "" then null else $r1Report end)
+        r1Report: (if $r1Report == "" then null else $r1Report end),
+        s1Report: (if $s1Report == "" then null else $s1Report end),
+        controlsReport: (if $controlsReport == "" then null else $controlsReport end)
       },
       localTiming: {
         totalSeconds: $localTotalSeconds,
@@ -318,7 +354,11 @@ audit_json=$(
         },
         providerBackedRuns: {
           status: (if $gateS1 == "pass" and $gateS2S3 == "pass" then "proved" else "pending" end),
-          gates: ["S1", "S2S3"]
+          gates: ["S1", "S2S3"],
+          s1Status: $s1Status,
+          controlsStatus: $controlsStatus,
+          s1: $s1Details,
+          controls: $controlsDetails
         },
         visualAndUsabilityEvidence: {
           status: (if $gateV1 == "pass" then "proved" else $gateV1 end),
@@ -380,6 +420,13 @@ if [[ "$r1_details_json" != "null" ]]; then
     "$(jq -r '.targetTemplateId // "unknown"' <<< "$r1_details_json")" \
     "$(jq -r '.targetTemplate.protocol // "unknown"' <<< "$r1_details_json")" \
     "$(jq -r '.targetTemplate.model // "unknown"' <<< "$r1_details_json")"
+fi
+if [[ "$s1_details_json" != "null" || "$controls_details_json" != "null" ]]; then
+  printf 'Provider smokes: S1=%s S2/S3=%s target=%s@%s\n' \
+    "$s1_status" \
+    "$controls_status" \
+    "$(jq -r '(.target.repo // .target.gitRepository // "unknown")' <<< "$s1_details_json")" \
+    "$(jq -r '(.target.ref // .target.gitRef // "unknown")' <<< "$s1_details_json")"
 fi
 printf 'Deploy/build advice: %s\n' "$deployment_advice"
 printf 'Next command: %s\n' "$next_command"
