@@ -71,6 +71,9 @@ finish_cycle() {
   local provider_calls_enabled=false
   local r1_repair_apply=false
   local cycle_status="pending"
+  local next_command=""
+  local pending_has_r1=false
+  local pending_has_provider=false
   local passed_json skipped_json failed_json
 
   if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
@@ -81,6 +84,7 @@ finish_cycle() {
 
   if [[ -f "$SMOKE_CDS_AGENT_R1_REPORT" ]]; then
     r1_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_R1_REPORT")
+    next_command=$(jq -r '.suggestedCommand // ""' "$SMOKE_CDS_AGENT_R1_REPORT")
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
@@ -98,6 +102,13 @@ finish_cycle() {
     r1_repair_apply=true
   fi
 
+  if jq -e 'any(.[]?; test("R1|Default runtime profile|Anthropic/Claude-compatible"; "i"))' <<< "$readiness_pending_json" >/dev/null; then
+    pending_has_r1=true
+  fi
+  if jq -e 'any(.[]?; test("S1|S2|S3|provider smoke"; "i"))' <<< "$readiness_pending_json" >/dev/null; then
+    pending_has_provider=true
+  fi
+
   if (( exit_code != 0 || ${#failed_arr[@]} > 0 )); then
     cycle_status="failed"
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" && "$controls_status" == "pass" ]]; then
@@ -106,6 +117,27 @@ finish_cycle() {
     cycle_status="provider_smokes_incomplete"
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" != "true" ]]; then
     cycle_status="ready_for_provider_smokes"
+  elif [[ "$r1_status" == "dry_run_requires_api_key" || "$pending_has_r1" == "true" ]]; then
+    cycle_status="blocked_r1"
+  elif [[ "$pending_has_provider" == "true" ]]; then
+    cycle_status="blocked_provider_smokes"
+  fi
+
+  if [[ -z "$next_command" ]]; then
+    case "$cycle_status" in
+      blocked_r1)
+        next_command="SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+        ;;
+      ready_for_provider_smokes|blocked_provider_smokes|provider_smokes_incomplete)
+        next_command="SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+        ;;
+      failed)
+        next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
+        ;;
+      *)
+        next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and pending gates"
+        ;;
+    esac
   fi
 
   passed_json='[]'
@@ -124,6 +156,7 @@ finish_cycle() {
   jq -n \
     --arg cycleId "$CYCLE_ID" \
     --arg cycleStatus "$cycle_status" \
+    --arg nextCommand "$next_command" \
     --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
     --arg host "${SMOKE_TEST_HOST:-http://localhost:5000}" \
     --arg readinessOverall "$readiness_overall" \
@@ -145,6 +178,7 @@ finish_cycle() {
     '{
       cycleId: $cycleId,
       status: $cycleStatus,
+      nextCommand: $nextCommand,
       host: $host,
       evidenceDir: $evidenceDir,
       exitCode: $exitCode,
@@ -182,6 +216,7 @@ finish_cycle() {
   printf '##########################################\n'
   printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
   printf 'Cycle status: %s\n' "$cycle_status"
+  printf 'Next command: %s\n' "$next_command"
   printf 'Readiness overall: %s\n' "$readiness_overall"
   printf 'R1 status: %s\n' "$r1_status"
   printf 'S1 status: %s\n' "$s1_status"
@@ -220,7 +255,8 @@ finish_cycle() {
     jq -r '.[] | "  - " + .' <<< "$readiness_pending_json"
   fi
 
-  printf '\nNext: inspect readiness.log. The goal is not commercially complete until R1 is pass and S1/S2/S3 provider smokes run with SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1.\n'
+  printf '\nNext: %s\n' "$next_command"
+  printf 'The goal is not commercially complete until R1 is pass and S1/S2/S3 provider smokes run with SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1.\n'
   exit "$exit_code"
 }
 

@@ -272,6 +272,18 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 `r1-report.json`、`s1-report.json`、`controls-report.json`、`cycle-summary.json` 和可选视觉截图。终端汇总里的 `Passed`
 只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`Readiness overall` 和 pending
 gates 为准。
+
+`cycle-summary.json` 会写出 `status` 和 `nextCommand`。常见状态含义：
+
+| status | 含义 |
+| --- | --- |
+| `blocked_r1` | 默认 runtime profile 还不是官方 Claude/Anthropic-compatible，或缺少用于 R1 修复的 Anthropic/Claude-compatible key |
+| `ready_for_provider_smokes` | R1 已满足，下一步需要显式打开 provider 调用跑 S1/S2/S3 |
+| `blocked_provider_smokes` | R1 已不再是主阻塞，但 S1/S2/S3 还没有真实 provider 证据 |
+| `provider_smokes_incomplete` | 已打开 provider 调用，但 S1/S2/S3 没有全部通过 |
+| `provider_smokes_passed` | R1 和 S1/S2/S3 都有通过证据，可进入更高层业务验收 |
+| `failed` | 某个脚本步骤失败，先看 `cycle-summary.json` 和对应 step log |
+
 没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 仍只做 readiness 或跳过真调用；
 没有 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 时，R1 repair 只做 dry-run，不会创建默认 profile，
 但会在 `r1-report.json` 里写出当前默认 profile、后端 R1 修复计划、缺 key 保护结果和
