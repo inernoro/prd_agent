@@ -125,10 +125,10 @@ public class DynamicSidecarRegistryTests
         var services = new ServiceCollection()
             .AddSingleton<IInfraConnectionService>(infra)
             .BuildServiceProvider();
-        var httpFactory = new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        var httpFactory = new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
         {
             Content = new StringContent("""
-            {"error":{"code":"project_mismatch","message":"connection token cannot access this project"}}
+            {"error":{"code":"invalid_long_token","message":"invalid connection token"}}
             """),
         });
 
@@ -143,8 +143,9 @@ public class DynamicSidecarRegistryTests
         Assert.Empty(registry.GetCurrent());
         var error = registry.LastRefreshError ?? string.Empty;
         Assert.Contains("endpointFailures=1", error);
-        Assert.Contains("paired-endpoint-failures conn-fai proj-1 HTTP 403", error);
-        Assert.Contains("project_mismatch", error);
+        Assert.Contains("paired-endpoint-failures conn-fai proj-1 HTTP 401", error);
+        Assert.Contains("invalid_long_token", error);
+        Assert.Equal(new[] { "conn-failure-1" }, infra.ProbedIds);
     }
 
     [Fact]
@@ -531,12 +532,15 @@ public class DynamicSidecarRegistryTests
     {
         private readonly List<InfraConnectionPublicView> _items;
         private readonly string _token;
+        private readonly List<string> _probedIds = new();
 
         public FakeInfraConnectionService(InfraConnectionPublicView item, string token)
         {
             _items = new List<InfraConnectionPublicView> { item };
             _token = token;
         }
+
+        public IReadOnlyList<string> ProbedIds => _probedIds;
 
         public Task<InfraConnectionPublicView> PasteAsync(string clipboardText, string userId, CancellationToken ct) =>
             throw new NotImplementedException();
@@ -562,8 +566,11 @@ public class DynamicSidecarRegistryTests
         public Task<bool> DeleteAsync(string id, CancellationToken ct) =>
             Task.FromResult(false);
 
-        public Task<InfraConnectionPublicView?> ProbeAsync(string id, CancellationToken ct) =>
-            Task.FromResult(_items.FirstOrDefault(x => x.Id == id));
+        public Task<InfraConnectionPublicView?> ProbeAsync(string id, CancellationToken ct)
+        {
+            _probedIds.Add(id);
+            return Task.FromResult(_items.FirstOrDefault(x => x.Id == id));
+        }
     }
 
     private sealed class FakeDynamicRegistry : IDynamicSidecarRegistry

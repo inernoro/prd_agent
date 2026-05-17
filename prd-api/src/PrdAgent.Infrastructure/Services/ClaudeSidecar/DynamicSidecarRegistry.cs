@@ -252,21 +252,25 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", longToken);
 
             var url = JoinUrl(conn.PartnerBaseUrl, conn.InstanceDiscoveryUrl);
-            var (envelope, error) = await FetchProjectInstancesAsync(http, url, ct);
-            if (error != null)
+            var result = await FetchProjectInstancesAsync(http, url, ct);
+            if (result.Error != null)
             {
                 endpointFailures += 1;
-                endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} {error}");
-                _logger.LogDebug("[CdsDiscovery] paired instance discovery failed connection={Id}: {Error}", conn.Id, error);
+                endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} {result.Error}");
+                _logger.LogDebug("[CdsDiscovery] paired instance discovery failed connection={Id}: {Error}", conn.Id, result.Error);
+                if (result.InvalidLongToken)
+                {
+                    await service.ProbeAsync(conn.Id, ct);
+                }
                 continue;
             }
-            if (envelope?.Instances == null)
+            if (result.Envelope?.Instances == null)
             {
                 endpointFailures += 1;
                 endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} response_missing_instances");
                 continue;
             }
-            if (envelope.Instances.Count == 0)
+            if (result.Envelope.Instances.Count == 0)
             {
                 emptyEndpoints += 1;
                 emptyEndpointDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} empty_instances");
@@ -275,7 +279,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             endpointsWithInstances += 1;
 
             var idx = 0;
-            foreach (var inst in envelope.Instances)
+            foreach (var inst in result.Envelope.Instances)
             {
                 idx += 1;
                 if (string.IsNullOrWhiteSpace(inst.BaseUrl) && (string.IsNullOrWhiteSpace(inst.Host) || inst.Port == null)) continue;
@@ -317,7 +321,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         return discovered;
     }
 
-    private static async Task<(ProjectInstancesEnvelope? Envelope, string? Error)> FetchProjectInstancesAsync(
+    private static async Task<ProjectInstancesResult> FetchProjectInstancesAsync(
         HttpClient http,
         string url,
         CancellationToken ct)
@@ -328,21 +332,46 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
             {
-                return (null, $"HTTP {(int)response.StatusCode} {TruncateOneLine(body, 180)}".Trim());
+                return new ProjectInstancesResult(
+                    null,
+                    $"HTTP {(int)response.StatusCode} {TruncateOneLine(body, 180)}".Trim(),
+                    BodyHasErrorCode(body, "invalid_long_token"));
             }
             if (string.IsNullOrWhiteSpace(body))
             {
-                return (null, "empty_body");
+                return new ProjectInstancesResult(null, "empty_body", false);
             }
 
             var envelope = JsonSerializer.Deserialize<ProjectInstancesEnvelope>(
                 body,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            return (envelope, null);
+            return new ProjectInstancesResult(envelope, null, false);
         }
         catch (Exception ex)
         {
-            return (null, $"{ex.GetType().Name}: {TruncateOneLine(ex.Message, 180)}");
+            return new ProjectInstancesResult(null, $"{ex.GetType().Name}: {TruncateOneLine(ex.Message, 180)}", false);
+        }
+    }
+
+    private static bool BodyHasErrorCode(string body, string code)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
+            {
+                return error.TryGetProperty("code", out var nestedCode)
+                    && string.Equals(nestedCode.GetString(), code, StringComparison.OrdinalIgnoreCase);
+            }
+            return root.TryGetProperty("errorCode", out var topCode)
+                && string.Equals(topCode.GetString(), code, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -454,6 +483,11 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         public string? ProjectId { get; set; }
         public List<InstanceDto>? Instances { get; set; }
     }
+
+    private sealed record ProjectInstancesResult(
+        ProjectInstancesEnvelope? Envelope,
+        string? Error,
+        bool InvalidLongToken);
 
     private sealed class InstanceDto
     {
