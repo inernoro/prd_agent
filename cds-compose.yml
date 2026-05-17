@@ -71,7 +71,7 @@ services:
     working_dir: /repo
     volumes:
       - .:/repo
-      - ./.cds-data/api-nuget-cache:/root/.nuget/packages
+      - api-nuget-cache:/root/.nuget/packages
     ports:
       - "5000"
     command: >-
@@ -93,12 +93,16 @@ services:
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
       ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
+      # Preview 内置 official SDK sidecar 旁路：共享 CDS discovery 为空时，MAP 仍能发现本分支 sidecar。
+      # provider key 默认由 MAP runtime profile/request 按次下发，不要求 api 容器持有 ANTHROPIC_API_KEY。
+      CLAUDE_SIDECAR_BASE_URL: "http://claude-sidecar:7400"
+      CLAUDE_SIDECAR_TOKEN: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
       ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__RefreshIntervalSeconds: "10"
       AGENT_WORKSPACE_ROOT: /repo
       AGENT_WORKSPACE_GITHUB_REPOSITORY: "inernoro/prd_agent"
-      AGENT_WORKSPACE_GIT_REF: "${VITE_GIT_BRANCH}"
+      AGENT_WORKSPACE_GIT_REF: "${VITE_GIT_BRANCH:-main}"
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
@@ -125,6 +129,31 @@ services:
       cds.readiness-timeout: "600"
       cds.readiness-interval: "3"
 
+  claude-sidecar:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./claude-sdk-sidecar:/app
+    ports:
+      - "7400"
+    command: >-
+      apt-get update &&
+      apt-get install -y --no-install-recommends git curl ca-certificates &&
+      rm -rf /var/lib/apt/lists/* &&
+      pip install -r requirements.txt &&
+      uvicorn app.main:app --host 0.0.0.0 --port 7400 --no-server-header
+    environment:
+      SIDECAR_TOKEN: "dev-skip"
+      SIDECAR_AGENT_ADAPTER: "claude-agent-sdk"
+      SIDECAR_PROVIDER_KEY_MODE: "runtime-profile-or-env"
+      SIDECAR_WORKSPACES_ROOT: "/tmp/claude-sidecar-workspaces"
+      SIDECAR_VERSION: "cds-preview"
+      SIDECAR_LOG_LEVEL: "INFO"
+    labels:
+      cds.readiness-path: "/readyz"
+      cds.readiness-timeout: "600"
+      cds.readiness-interval: "5"
+
   # ── Infrastructure Services (无相对路径 mount) ──
 
   mongodb:
@@ -150,5 +179,6 @@ services:
       retries: 3
 
 volumes:
+  api-nuget-cache:
   mongodb-data:
   redis-data:
