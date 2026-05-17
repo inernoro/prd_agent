@@ -26,6 +26,7 @@ import type {
   ExecutiveAgentStat,
   ExecutiveModelStat,
   ExecutiveLeaderboard,
+  LeaderboardDimension,
 } from '@/services/contracts/executive';
 import type { EChartsOption } from 'echarts';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -301,6 +302,25 @@ function InfoTip({ tip }: { tip: string }) {
   );
 }
 
+/** 排行榜列头的问号说明：口径/怎么+1/排除异常，文案全部由后端下发（SSOT） */
+function DimHelp({ dim }: { dim: LeaderboardDimension }) {
+  if (!dim.description && !dim.howToIncrease && !dim.anomalyNote) return null;
+  const content = (
+    <div className="flex flex-col gap-1 text-left" style={{ maxWidth: 220, fontWeight: 400 }}>
+      {dim.description && <div>{dim.description}</div>}
+      {dim.howToIncrease && <div style={{ opacity: 0.85 }}>怎么 +1：{dim.howToIncrease}</div>}
+      {dim.anomalyNote && <div style={{ opacity: 0.65 }}>口径：{dim.anomalyNote}</div>}
+    </div>
+  );
+  return (
+    <Tooltip content={content} side="top">
+      <span onClick={(e) => e.stopPropagation()} className="inline-flex cursor-help">
+        <Info size={11} style={{ color: D.text3, opacity: 0.55, flexShrink: 0 }} />
+      </span>
+    </Tooltip>
+  );
+}
+
 /** 从 ROLE_META 提取主色调，供排行榜使用 */
 const ROLE_COLORS: Record<string, string> = new Proxy({} as Record<string, string>, {
   get: (_, key: string) => getRoleMeta(key).color,
@@ -379,12 +399,10 @@ const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor
   'prd-agent':        { icon: MessageSquare, color: D.primary,  barColor: hexAlpha(D.primary, 0.5),   short: 'PRD' },
   'visual-agent':     { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.45),  short: '视觉' },
   'literary-agent':   { icon: MessageSquare, color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '文学' },
-  'defect-agent':     { icon: Bug,           color: D.primary,  barColor: hexAlpha(D.primary, 0.5),   short: '缺陷' },
   'ai-toolbox':       { icon: Zap,           color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '工具箱' },
   'report-agent':     { icon: FileText,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '周报' },
   'video-agent':      { icon: Activity,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '视频' },
-  'defects-created':    { icon: Bug,           color: D.danger,   barColor: hexAlpha(D.danger, 0.35),   short: '提缺陷' },
-  'defects-resolved':   { icon: Bug,           color: D.success,  barColor: hexAlpha(D.success, 0.35),  short: '解缺陷' },
+  'defects':            { icon: Bug,           color: D.primary,  barColor: hexAlpha(D.primary, 0.5),   short: '缺陷' },
   'images':             { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '图片合计' },
   'image-gen-visual':   { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.45),  short: '视觉生图' },
   'image-gen-literary': { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '文学配图' },
@@ -524,7 +542,11 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       style={{ color: sortKey === dim.key ? D.primary : D.text3, verticalAlign: 'middle' }}
                       onClick={() => toggleSort(dim.key)}
                     >
-                      <span className="inline-flex items-center justify-center gap-1 w-full">{meta?.short ?? dim.name} <SortIcon col={dim.key} /></span>
+                      <span className="inline-flex items-center justify-center gap-1 w-full">
+                        {meta?.short ?? dim.name}
+                        <DimHelp dim={dim} />
+                        <SortIcon col={dim.key} />
+                      </span>
                       <div className="text-[9px] font-normal" style={{ color: D.text3, opacity: 0.7 }}>权重 {weightPct}%</div>
                     </th>
                   );
@@ -588,13 +610,21 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       const totalDays = Math.min(data?.totalDays ?? 1, 30);
                       const pct = Math.min((raw / Math.max(1, totalDays)) * 100, 100);
                       const isLastCol = dimIdx === allDims.length - 1;
+                      const sub = dim.subValues?.[user.userId];
+                      const numberEl = (
+                        <span className="tabular-nums font-bold text-[11px]" style={{ color: raw > 0 ? D.text2 : D.text3 }}>
+                          {raw.toLocaleString()}
+                        </span>
+                      );
 
                       return (
                         <td key={dim.key} className="py-2.5 px-2" style={{ verticalAlign: 'middle', borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
                           <div className="flex flex-col items-center gap-0.5" style={{ minWidth: 40 }}>
-                            <span className="tabular-nums font-bold text-[11px]" style={{ color: raw > 0 ? D.text2 : D.text3 }}>
-                              {raw.toLocaleString()}
-                            </span>
+                            {sub && raw > 0 ? (
+                              <Tooltip content={`提交 ${sub.created} 个 · 解决 ${sub.resolved} 个`} side="top">
+                                {numberEl}
+                              </Tooltip>
+                            ) : numberEl}
                             <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
                               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(255,255,255,0.12)' }} />
                             </div>
