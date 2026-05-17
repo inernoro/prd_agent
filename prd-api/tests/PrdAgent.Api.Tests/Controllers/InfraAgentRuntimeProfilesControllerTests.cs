@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
@@ -61,5 +63,87 @@ public class InfraAgentRuntimeProfilesControllerTests
         var codex = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.CodexPlanned);
         codex.Status.ShouldBe("planned-not-routable");
         codex.NextActions.ShouldContain(x => x.Contains("不要把用户代码审查任务默认路由到 codex runtime", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CreateFromTemplate_ShouldUseCurrentUserAndTemplateId()
+    {
+        var service = new Mock<IInfraAgentRuntimeProfileService>();
+        var request = new CreateInfraAgentRuntimeProfileFromTemplateRequest("Team Claude", "sk-ant-test", true);
+        var expected = new InfraAgentRuntimeProfileView(
+            "profile-1",
+            "Team Claude",
+            InfraAgentRuntimes.ClaudeSdk,
+            InfraAgentRuntimeProtocols.Anthropic,
+            "https://api.anthropic.com",
+            "claude-sonnet-4-20250514",
+            2,
+            4096,
+            900,
+            InfraAgentRuntimeNetworkPolicies.Restricted,
+            30,
+            true,
+            true,
+            DateTime.UtcNow,
+            DateTime.UtcNow);
+        service
+            .Setup(x => x.CreateFromTemplateAsync(
+                InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+                "user-1",
+                request,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.CreateFromTemplate(
+            InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+            request,
+            CancellationToken.None);
+
+        var created = result.ShouldBeOfType<ObjectResult>();
+        created.StatusCode.ShouldBe(StatusCodes.Status201Created);
+        service.Verify(x => x.CreateFromTemplateAsync(
+            InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+            "user-1",
+            request,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateFromTemplate_ShouldMapDomainError()
+    {
+        var service = new Mock<IInfraAgentRuntimeProfileService>();
+        var request = new CreateInfraAgentRuntimeProfileFromTemplateRequest(null, null, null);
+        service
+            .Setup(x => x.CreateFromTemplateAsync("missing", "user-1", request, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.TemplateNotFound,
+                "运行配置模板不存在",
+                StatusCodes.Status404NotFound));
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.CreateFromTemplate("missing", request, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status404NotFound);
+        var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+        response.Error.ShouldNotBeNull().Code.ShouldBe(InfraAgentRuntimeProfileErrorCodes.TemplateNotFound);
+    }
+
+    private static InfraAgentRuntimeProfilesController BuildController(
+        IInfraAgentRuntimeProfileService service,
+        string userId)
+    {
+        var identity = new ClaimsIdentity(new[] { new Claim("sub", userId) }, "test");
+        return new InfraAgentRuntimeProfilesController(service)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(identity)
+                }
+            }
+        };
     }
 }

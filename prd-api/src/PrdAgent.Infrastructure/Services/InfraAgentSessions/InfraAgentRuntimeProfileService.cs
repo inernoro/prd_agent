@@ -116,6 +116,38 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return ToView(item);
     }
 
+    public Task<InfraAgentRuntimeProfileView> CreateFromTemplateAsync(
+        string templateId,
+        string userId,
+        CreateInfraAgentRuntimeProfileFromTemplateRequest request,
+        CancellationToken ct)
+    {
+        var template = InfraAgentRuntimeProfileTemplates.All
+            .FirstOrDefault(x => string.Equals(x.Id, templateId, StringComparison.OrdinalIgnoreCase));
+        if (template == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.TemplateNotFound,
+                "运行配置模板不存在",
+                StatusCodes.Status404NotFound);
+        }
+
+        var upsert = new UpsertInfraAgentRuntimeProfileRequest(
+            NormalizeOptional(request.Name) ?? template.Name,
+            template.Runtime,
+            template.Protocol,
+            template.BaseUrl,
+            template.Model,
+            request.ApiKey,
+            template.ResourceCpuCores,
+            template.ResourceMemoryMb,
+            template.TimeoutSeconds,
+            template.NetworkPolicy,
+            template.AutoCleanupMinutes,
+            request.IsDefault ?? template.IsDefaultRecommended);
+        return CreateAsync(userId, upsert, ct);
+    }
+
     public async Task<InfraAgentRuntimeProfileView> UpdateAsync(
         string id,
         string userId,

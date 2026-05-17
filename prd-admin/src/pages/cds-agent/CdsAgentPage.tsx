@@ -12,6 +12,7 @@ import {
   captureInfraAgentBrowserSnapshot,
   collectInfraAgentArtifacts,
   createInfraAgentRuntimeProfile,
+  createInfraAgentRuntimeProfileFromTemplate,
   createInfraAgentSession,
   getInfraAgentLogs,
   getInfraAgentRuntimeStatus,
@@ -2052,13 +2053,34 @@ export default function CdsAgentPage() {
     toast.success('已套用 Anthropic 官方模板', '填入 API key 后保存为默认配置');
   }
 
+  function matchingRuntimeProfileTemplate() {
+    return profileTemplates.find((template) => (
+      profileDraft.runtime === template.runtime
+      && profileDraft.protocol === template.protocol
+      && profileDraft.baseUrl.trim() === template.baseUrl
+      && profileDraft.model.trim() === template.model
+      && Number(profileDraft.resourceCpuCores) === template.resourceCpuCores
+      && Number(profileDraft.resourceMemoryMb) === template.resourceMemoryMb
+      && Number(profileDraft.timeoutSeconds) === template.timeoutSeconds
+      && profileDraft.networkPolicy === template.networkPolicy
+      && Number(profileDraft.autoCleanupMinutes) === template.autoCleanupMinutes
+    )) ?? null;
+  }
+
   async function saveProfile() {
     if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
       toast.warning('模型配置不完整', 'baseUrl、model 和 API key 都必填');
       return;
     }
     setBusy(true);
-    const res = await createInfraAgentRuntimeProfile(profileDraft);
+    const template = matchingRuntimeProfileTemplate();
+    const res = template
+      ? await createInfraAgentRuntimeProfileFromTemplate(template.id, {
+          name: profileDraft.name,
+          apiKey: profileDraft.apiKey,
+          isDefault: profileDraft.isDefault,
+        })
+      : await createInfraAgentRuntimeProfile(profileDraft);
     setBusy(false);
     if (!res.success || !res.data?.item) {
       toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
@@ -2068,7 +2090,7 @@ export default function CdsAgentPage() {
     setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
     setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
     setProfileTest('');
-    toast.success('模型配置已保存', '可以立即点击测试模型');
+    toast.success('模型配置已保存', template ? '已按后端官方模板创建，可以立即点击测试模型' : '可以立即点击测试模型');
   }
 
   async function updateProfile() {

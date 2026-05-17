@@ -86,7 +86,7 @@
 
 `claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层，用来把官方 SDK 的事件、权限、取消和结果映射进 MAP/CDS。
 
-模型配置里的 “Anthropic 官方模板” 来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates`，不是页面硬编码。它会预填 Anthropic Messages 协议、官方 baseUrl、Claude Sonnet 模型和资源默认值；用户仍需手动填入自己的 API key 并保存为 runtime profile。
+模型配置里的 “Anthropic 官方模板” 来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates`，不是页面硬编码。它会预填 Anthropic Messages 协议、官方 baseUrl、Claude Sonnet 模型和资源默认值；用户仍需手动填入自己的 API key 并保存为 runtime profile。保存时如果草稿仍匹配模板，页面会调用 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/profiles`，后端按模板创建 profile，缺 API key 会直接返回 `api_key_required`。
 
 Adapter 兼容性来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapter-compatibility`。当前代码审查默认只把 `claude-agent-sdk` 当作可路由官方 SDK 路径；`legacy-sidecar` 是显式 fallback；`codex` 仍是 planned-not-routable，不代表页面选择 `runtime=codex` 后就已经接入官方 Codex 能力。
 

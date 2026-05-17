@@ -55,6 +55,21 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         }
     }
 
+    [HttpPost("templates/{templateId}/profiles")]
+    public async Task<IActionResult> CreateFromTemplate(string templateId, [FromBody] CreateInfraAgentRuntimeProfileFromTemplateRequest req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.CreateFromTemplateAsync(templateId, userId, req, ct);
+            return StatusCode(StatusCodes.Status201Created, ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentRuntimeProfileException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpPut("{id}")]
     public async Task<IActionResult> Update(string id, [FromBody] UpsertInfraAgentRuntimeProfileRequest req, CancellationToken ct)
     {

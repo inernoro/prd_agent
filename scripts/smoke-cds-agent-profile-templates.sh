@@ -6,6 +6,7 @@
 # 验证 MAP 后端是 runtime profile 模板的事实源：
 #   - 暴露 Anthropic official Claude Agent SDK 模板
 #   - 模板协议/baseUrl/model 与官方 SDK adapter 兼容
+#   - 模板创建入口缺 API key 时必须失败，不能创建半成品 profile
 #   - 暴露 adapter 兼容矩阵，避免把普通 OpenAI-compatible profile 误路由到官方 SDK
 #
 # 环境变量同 scripts/smoke-lib.sh。
@@ -17,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-SMOKE_STEP_TOTAL=5
+SMOKE_STEP_TOTAL=6
 smoke_init "CDS Agent Runtime Profile Templates"
 
 smoke_step "GET runtime profile templates"
@@ -40,6 +41,26 @@ smoke_step "确认模板声明兼容 claude-agent-sdk"
 compatible_count=$(printf '%s' "$template" | jq -r '[.compatibleRuntimeAdapters[]? | select(. == "claude-agent-sdk")] | length')
 smoke_assert_eq "$compatible_count" "1" "compatibleRuntimeAdapters.claude-agent-sdk"
 smoke_ok "compatibleRuntimeAdapters includes claude-agent-sdk"
+
+smoke_step "模板创建入口缺 API key 必须失败"
+create_tmp=$(mktemp)
+create_code=$(
+  curl --max-time "$SMOKE_TIMEOUT" \
+    --show-error \
+    --silent \
+    -o "$create_tmp" \
+    -w '%{http_code}' \
+    -X POST \
+    "${SMOKE_AUTH[@]}" \
+    -d '{"name":"Smoke missing key from official template"}' \
+    "$SMOKE_HOST/api/infra-agent-runtime-profiles/templates/anthropic-official-claude-sonnet-4/profiles"
+)
+create_resp=$(cat "$create_tmp")
+rm -f "$create_tmp"
+smoke_assert_eq "$create_code" "400" "CreateFromTemplate.httpStatus"
+smoke_assert_eq "$(printf '%s' "$create_resp" | jq -r '.success')" "false" "CreateFromTemplate.success"
+smoke_assert_eq "$(printf '%s' "$create_resp" | jq -r '.error.code // ""')" "api_key_required" "CreateFromTemplate.error.code"
+smoke_ok "missing API key rejected before profile creation"
 
 smoke_step "GET adapter compatibility"
 compat_resp=$(smoke_get /api/infra-agent-runtime-profiles/adapter-compatibility)
