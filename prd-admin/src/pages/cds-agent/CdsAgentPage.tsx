@@ -393,6 +393,10 @@ type RuntimeReadinessGate = {
   state: 'pass' | 'warn' | 'pending';
 };
 
+type CommercialReadinessGate = RuntimeReadinessGate & {
+  code: 'R0' | 'R1' | 'T1' | 'S1' | 'S2' | 'S3' | 'V1';
+};
+
 function artifactIcon(kind: AgentArtifact['kind']) {
   if (kind === 'diff') return <GitCompare size={13} />;
   if (kind === 'browser') return <Globe2 size={13} />;
@@ -1073,6 +1077,97 @@ export default function CdsAgentPage() {
       : events.length > 0
         ? '可回放'
         : '待运行';
+    const defaultProfileReady = Boolean(defaultRuntimeProfile?.hasApiKey && defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter);
+    const templateReady = Boolean(anthropicOfficialProfileTemplate && activeAdapterCompatibility);
+    const s1EvidenceReady = officialLoopReady
+      && events.some((event) => event.type === 'done' || event.type === 'text_delta')
+      && messages.some((message) => message.role === 'assistant' && message.content.trim());
+    const s2EvidenceReady = approvalEvidence.requestCount > 0 && approvalEvidence.decisionCount > 0;
+    const s3EvidenceReady = cancelEvidence.runtimeCancelRequested || cancelEvidence.sdkCancelled;
+    const v1EvidenceReady = Boolean(runtimeStatus && runtimeStatusLoadedAt);
+    const commercialReadinessGates: CommercialReadinessGate[] = [
+      {
+        code: 'R0',
+        label: '控制面与官方 loop',
+        value: runtimePoolReady && officialLoopReady ? 'ready' : runtimePoolReady ? 'pool ready' : 'not ready',
+        detail: runtimePoolReady && officialLoopReady
+          ? 'MAP 已发现 healthy sidecar，loopOwner 指向 claude-agent-sdk。'
+          : runtimePoolReady
+          ? 'runtime pool 可用，但还需要证明 loopOwner=claude-agent-sdk 且 SDK loop enabled。'
+          : blockers[0] || registryIssue || '需要先恢复 CDS sidecar runtime pool。',
+        state: runtimePoolReady && officialLoopReady ? 'pass' : runtimeStatus ? 'warn' : 'pending',
+      },
+      {
+        code: 'R1',
+        label: '默认 Claude profile',
+        value: defaultProfileReady ? 'ready' : defaultRuntimeProfile ? 'pending' : 'missing',
+        detail: defaultProfileReady
+          ? `${defaultRuntimeProfile?.name} 已兼容 ${desiredRuntimeAdapter || 'claude-agent-sdk'}，且 API key 已保存。`
+          : defaultRuntimeProfile
+          ? profileCompatibilityWarning || `${defaultRuntimeProfile.name} 仍不是 Anthropic/Claude-compatible 默认 profile，真实 S1/S2/S3 会被阻断。`
+          : '需要用 Anthropic 官方模板创建默认 runtime profile，并填入 API key。',
+        state: defaultProfileReady ? 'pass' : defaultRuntimeProfile ? 'warn' : 'pending',
+      },
+      {
+        code: 'T1',
+        label: '官方模板与兼容矩阵',
+        value: templateReady ? 'ready' : 'pending',
+        detail: templateReady
+          ? 'Anthropic 官方模板和 adapter compatibility 均由后端返回，不是页面硬编码。'
+          : '需要后端返回 Anthropic 官方模板和 claude-agent-sdk 兼容矩阵。',
+        state: templateReady ? 'pass' : 'pending',
+      },
+      {
+        code: 'S1',
+        label: '只读 provider run',
+        value: s1EvidenceReady ? 'evidence found' : defaultProfileReady ? 'unblocked' : 'blocked',
+        detail: s1EvidenceReady
+          ? '当前会话已有 assistant 输出或 done 事件，可作为只读 run 的页面证据。'
+          : defaultProfileReady
+          ? '配置已解锁；还需运行 S1 smoke，证明官方 SDK 能真实审查仓库。'
+          : '等待 R1 默认 Claude profile 通过后再运行 S1。',
+        state: s1EvidenceReady ? 'pass' : defaultProfileReady ? 'warn' : 'pending',
+      },
+      {
+        code: 'S2',
+        label: 'MAP 工具审批',
+        value: s2EvidenceReady ? 'evidence found' : defaultProfileReady ? 'unblocked' : 'blocked',
+        detail: s2EvidenceReady
+          ? '当前会话已有 approval request 和 MAP decision 证据。'
+          : defaultProfileReady
+          ? '还需运行 S2 controls，证明危险工具会回到 MAP 审批。'
+          : '等待 R1 默认 Claude profile 通过后再运行 S2。',
+        state: s2EvidenceReady ? 'pass' : defaultProfileReady ? 'warn' : 'pending',
+      },
+      {
+        code: 'S3',
+        label: 'Stop / interrupt',
+        value: s3EvidenceReady ? 'evidence found' : defaultProfileReady ? 'unblocked' : 'blocked',
+        detail: s3EvidenceReady
+          ? '当前会话已有 runtime cancel 或 SDK cancelled 证据。'
+          : defaultProfileReady
+          ? '还需运行 S3 controls，证明 Stop 能触达底层 SDK run。'
+          : '等待 R1 默认 Claude profile 通过后再运行 S3。',
+        state: s3EvidenceReady ? 'pass' : defaultProfileReady ? 'warn' : 'pending',
+      },
+      {
+        code: 'V1',
+        label: '页面可观察性',
+        value: v1EvidenceReady ? 'visible' : 'pending',
+        detail: v1EvidenceReady
+          ? '当前页面已显示 runtime-status、adapter、profile、事件和诊断包字段。'
+          : '需要打开 /cds-agent 并看到真实 runtime-status 结果。',
+        state: v1EvidenceReady ? 'pass' : 'pending',
+      },
+    ];
+    const commercialPassed = commercialReadinessGates.filter((gate) => gate.state === 'pass').length;
+    const commercialTotal = commercialReadinessGates.length;
+    const commercialPending = commercialReadinessGates.filter((gate) => gate.state !== 'pass');
+    const commercialState = commercialPassed === commercialTotal
+      ? 'commercial-ready'
+      : defaultProfileReady
+        ? 'provider-smokes-required'
+        : 'profile-blocked';
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1146,6 +1241,11 @@ export default function CdsAgentPage() {
       instance,
       source,
       cancelState,
+      commercialReadinessGates,
+      commercialPassed,
+      commercialTotal,
+      commercialPending,
+      commercialState,
       readinessGates,
       rows: [
         ['Adapter', adapterLabel],
@@ -1230,7 +1330,7 @@ export default function CdsAgentPage() {
           : '',
       } : null,
     };
-  }, [activeAdapterCompatibility, activeProfile, activeSession, activeSessionProfile, eventStreamHealthy, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
+  }, [activeAdapterCompatibility, activeProfile, activeSession, activeSessionProfile, anthropicOfficialProfileTemplate, eventStreamHealthy, events, messages, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const sidecarInstanceSummaries = useMemo(() => (
     (runtimeStatus?.instances ?? []).map((item) => ({
       name: item.name,
@@ -1304,6 +1404,11 @@ export default function CdsAgentPage() {
       instance: runtimeDiagnostics.instance,
       source: runtimeDiagnostics.source,
       cancelState: runtimeDiagnostics.cancelState,
+      commercialState: runtimeDiagnostics.commercialState,
+      commercialPassed: runtimeDiagnostics.commercialPassed,
+      commercialTotal: runtimeDiagnostics.commercialTotal,
+      commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
+      commercialPending: runtimeDiagnostics.commercialPending,
       readinessGates: runtimeDiagnostics.readinessGates,
       rows: runtimeDiagnostics.rows,
       blockers: runtimeDiagnostics.blockers,
@@ -3161,9 +3266,87 @@ export default function CdsAgentPage() {
                         </div>
                       ))}
                     </div>
+                    <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/46">
+                            <ShieldCheck size={13} />
+                            商业级 readiness ledger
+                          </div>
+                          <div className="mt-1 text-xs leading-relaxed text-white/48">
+                            与 smoke-cds-agent-commercial-readiness.sh 同口径；未全绿时不能宣称上手即用。
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-semibold"
+                            style={{
+                              background: runtimeDiagnostics.commercialState === 'commercial-ready' ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)',
+                              border: runtimeDiagnostics.commercialState === 'commercial-ready' ? '1px solid rgba(34,197,94,0.24)' : '1px solid rgba(245,158,11,0.22)',
+                              color: runtimeDiagnostics.commercialState === 'commercial-ready' ? 'rgba(134,239,172,0.92)' : 'rgba(253,230,138,0.92)',
+                            }}
+                          >
+                            {runtimeDiagnostics.commercialPassed}/{runtimeDiagnostics.commercialTotal} passed
+                          </span>
+                          <span className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-medium text-white/54" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            {runtimeDiagnostics.commercialState === 'commercial-ready'
+                              ? 'ready'
+                              : runtimeDiagnostics.commercialState === 'provider-smokes-required'
+                              ? '需要 S1/S2/S3'
+                              : 'R1 profile 阻塞'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                        {runtimeDiagnostics.commercialReadinessGates.map((gate) => {
+                          const isPass = gate.state === 'pass';
+                          const isWarn = gate.state === 'warn';
+                          return (
+                            <div
+                              key={gate.code}
+                              className="min-h-[112px] rounded-md px-3 py-2"
+                              style={{
+                                background: isPass ? 'rgba(34,197,94,0.08)' : isWarn ? 'rgba(245,158,11,0.09)' : 'rgba(15,23,42,0.72)',
+                                border: isPass ? '1px solid rgba(34,197,94,0.22)' : isWarn ? '1px solid rgba(245,158,11,0.22)' : '1px solid rgba(148,163,184,0.14)',
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-[11px] font-semibold text-white/42">{gate.code}</div>
+                                  <div className="mt-0.5 text-xs font-semibold text-white/74">{gate.label}</div>
+                                </div>
+                                <span
+                                  className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                                  style={{
+                                    background: isPass ? 'rgba(34,197,94,0.14)' : isWarn ? 'rgba(245,158,11,0.14)' : 'rgba(148,163,184,0.1)',
+                                    color: isPass ? 'rgba(134,239,172,0.92)' : isWarn ? 'rgba(253,230,138,0.92)' : 'rgba(203,213,225,0.76)',
+                                  }}
+                                >
+                                  {isPass ? 'PASS' : isWarn ? 'ACTION' : 'WAIT'}
+                                </span>
+                              </div>
+                              <div className="mt-2 break-words text-xs font-medium text-white/82">{gate.value}</div>
+                              <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-white/46">{gate.detail}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {runtimeDiagnostics.commercialPending.length > 0 && (
+                        <div className="mt-3 rounded-md px-3 py-2" style={{ background: 'rgba(245,158,11,0.09)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                          <div className="text-[11px] font-semibold uppercase tracking-normal text-amber-100/60">未关闭门禁</div>
+                          <div className="mt-1 grid gap-1 md:grid-cols-2">
+                            {runtimeDiagnostics.commercialPending.map((gate) => (
+                              <div key={gate.code} className="text-xs leading-relaxed text-amber-50/76">
+                                {gate.code} · {gate.detail}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">商业级就绪门禁</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">技术诊断门禁</div>
                         <div className="text-xs text-white/38">
                           {runtimeDiagnostics.readinessGates.filter((gate) => gate.state === 'pass').length}/{runtimeDiagnostics.readinessGates.length} passed
                         </div>
