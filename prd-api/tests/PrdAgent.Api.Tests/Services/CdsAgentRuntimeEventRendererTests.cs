@@ -27,7 +27,7 @@ public class CdsAgentRuntimeEventRendererTests
                 "select or create a MAP runtime profile with a valid provider apiKey",
                 "verify the CDS Agent session request includes the intended runtime profile"
               ],
-              "source": "legacy-sidecar-adapter",
+              "source": "sidecar-runtime-adapter",
               "runtimeAdapter": "claude-agent-sdk",
               "runtimeInstance": "sidecar-1"
             }

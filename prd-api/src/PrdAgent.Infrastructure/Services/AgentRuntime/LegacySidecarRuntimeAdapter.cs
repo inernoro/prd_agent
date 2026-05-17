@@ -5,12 +5,13 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Infrastructure.Services.AgentRuntime;
 
 /// <summary>
-/// Legacy adapter that keeps the existing sidecar protocol behind the new runtime boundary.
-/// This is the fallback while the official Claude Agent SDK adapter is introduced.
+/// MAP transport adapter for the sidecar protocol.
+/// The per-run RuntimeAdapter field decides whether the sidecar uses the official Claude Agent SDK
+/// loop or the legacy fallback; this layer only owns routing, SSE mapping, and cancel transport.
 /// </summary>
 public sealed class LegacySidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
 {
-    private const string SourceName = "legacy-sidecar-adapter";
+    private const string SourceName = "sidecar-runtime-adapter";
     private readonly IClaudeSidecarRouter _router;
 
     public LegacySidecarRuntimeAdapter(IClaudeSidecarRouter router)

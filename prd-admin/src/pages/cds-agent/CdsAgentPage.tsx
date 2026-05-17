@@ -952,7 +952,7 @@ export default function CdsAgentPage() {
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeAdapter') : '')
       || sidecarAdapter
       || desiredRuntimeAdapter
-      || (activeSession?.runtime === 'claude-sdk' ? 'legacy-sidecar-adapter' : '');
+      || (activeSession?.runtime === 'claude-sdk' ? 'sidecar-runtime-adapter' : '');
     const loopOwner = (latestRuntimePayload ? readString(latestRuntimePayload, 'loopOwner') : '')
       || (latestRuntimeContent ? readString(latestRuntimeContent, 'loopOwner') : '')
       || primaryRuntime?.loopOwner

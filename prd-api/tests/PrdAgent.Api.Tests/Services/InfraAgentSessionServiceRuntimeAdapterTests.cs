@@ -145,7 +145,7 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
                 Blockers: Array.Empty<string>(),
                 NextActions: Array.Empty<string>(),
                 DesiredRuntimeAdapter: "claude-agent-sdk",
-                RuntimeTransport: "legacy-sidecar-adapter",
+                RuntimeTransport: "sidecar-runtime-adapter",
                 DiscoveryMetrics: null));
     }
 }

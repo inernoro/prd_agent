@@ -133,7 +133,7 @@ public class InfraAgentSessionsControllerTests
             .Setup(x => x.StartAsync("user-1", "session-1", It.IsAny<StartInfraAgentSessionRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.RuntimeUnavailable,
-                "CDS Agent runtime pool 不可用：adapter=legacy-sidecar-adapter, instances=0, healthy=0",
+                "CDS Agent runtime pool 不可用：adapter=sidecar-runtime-adapter, instances=0, healthy=0",
                 StatusCodes.Status503ServiceUnavailable));
 
         var controller = BuildController(service.Object, "user-1");
@@ -153,7 +153,7 @@ public class InfraAgentSessionsControllerTests
             .Setup(x => x.SendMessageAsync("user-1", "session-1", request, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.RuntimeUnavailable,
-                "CDS Agent runtime pool 不可用：adapter=legacy-sidecar-adapter, instances=0, healthy=0",
+                "CDS Agent runtime pool 不可用：adapter=sidecar-runtime-adapter, instances=0, healthy=0",
                 StatusCodes.Status503ServiceUnavailable));
 
         var controller = BuildController(service.Object, "user-1");
