@@ -111,6 +111,7 @@
 - P1.6 远程诊断新增实际阻塞定位：`runtime-status` 的 pool diagnostics 会透出 CDS discovery 为 0 的原因；后台 discovery 会把不可解密的历史 infra connection 标记为 revoked，遇到 CDS 返回 `invalid_long_token` 时也会触发探活并收敛为 revoked，避免旧授权每 10 秒重复污染 runtime pool 诊断。
 - P1.6 诊断已从“字符串解释”升级为“可操作恢复路径”：`runtime-status` 现在返回 `blockers` 和 `nextActions`，页面 Runtime 调试区直接显示阻塞项与下一步，避免用户只看到 `instanceCount=0` 或 `/readyz 503` 却不知道该更新 CDS 控制面、重新授权，还是修 sidecar 的 `ANTHROPIC_API_KEY` / Claude CLI / `claude-agent-sdk` / workspace。
 - 2026-05-17 远程 preview 已部署到 `048cfab9`，但真实 official SDK run 仍未通过：`runtime-status` 显示 `isConfigured=false / instanceCount=0 / healthyCount=0`。最新诊断已把 4 条 CDS 返回 `invalid_long_token` 的 active 连接自动标为 revoked，当前只剩 1 条有效连接 `061b88ea`，其 `/api/projects/shared-sidecar-pool-mp4anabh/instances` 返回 `empty_instances`。剩余 blocker 是生产 CDS 本体的 `/api/projects/:id/instances` 尚未暴露源码分支 sidecar 服务，因此 running 的 sidecar pool 暂时不会被 MAP 发现。更新共享 CDS 控制面需要明确批准，不能作为普通 preview 部署自动执行。
+- CDS 本体已补路由级回归测试：`cds/tests/routes/remote-hosts-instances.test.ts` 用真实 `CdsPairingService` 签发 long token，经 HTTP 请求 `/api/projects/:id/instances` 证明 shared-service project 的 running branch service 会返回 `baseUrl/tags/host/port` 实例；这比 helper 单测更接近 MAP 的生产调用链。
 - 下一步应做真实 official SDK run、真实 MAP 审批、取消和远程 CDS 视觉验证；Toolbox 的远程会话重新附着已先落地，但仍需要真实长 run 和 approval run 证明闭环。
 
 验证记录：
@@ -130,6 +131,8 @@
 - `CdsAgentAdapter` 异步句柄改造后，`dotnet build prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj --no-restore --no-dependencies` 通过；`/cds-agent?sessionId=...` 前端直达选中会话的类型检查通过。
 - `ToolRunner` 已保存 `step_artifact` 事件中的 artifact，并识别 `kind=cds-agent-run-handle` 渲染 CDS Agent 远程运行卡片；卡片可调用 `stopInfraAgentSession` 请求停止 MAP/CDS session；`npm --prefix prd-admin run tsc` 通过。
 - `dotnet build prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj --no-restore` 通过。
+- `npm --prefix cds test -- remote-hosts-helpers remote-hosts-instances` 通过，14 个测试；其中 `remote-hosts-instances` 需要监听 `127.0.0.1` 临时端口，本地验证按沙箱外执行。
+- `npm --prefix cds run build` 通过。
 - `dotnet build prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj --no-restore` 通过，仅有既有 MailKit NU1902。
 - 本地视觉冒烟通过：Vite `http://127.0.0.1:8011/cds-agent`，截图 `/tmp/cds-agent-runtime-debug-auth.png` 显示 `Runtime 调试` 面板和 `Adapter/Mode/Run ID/Instance/Source/Cancel` 字段。该截图使用本地临时登录态，后端 API 未启动，因此只验证页面渲染和空态，不证明真实远程 run。
 - `git diff --check` 通过。
