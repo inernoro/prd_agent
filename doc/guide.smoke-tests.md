@@ -21,6 +21,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-prd-agent.sh` | PRD Agent 链路：Group → Session → Run → 轮询 Completed |
 | `scripts/smoke-defect-agent.sh` | 缺陷 CRUD + 讨论消息追加 |
 | `scripts/smoke-report-agent.sh` | 团队/模板/周报 CRUD |
+| `scripts/smoke-cds-agent-runtime-status.sh` | CDS Agent runtime pool：验证 MAP runtime-status、sidecar discovery、`/readyz` healthy 与 `loopOwner=claude-agent-sdk`；不触发模型 run |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -75,6 +76,9 @@ SMOKE_SKIP=defect,report bash scripts/smoke-all.sh
 # 或单独跑
 bash scripts/smoke-health.sh
 bash scripts/smoke-prd-agent.sh
+
+# CDS Agent official SDK 真实 run 前的控制面 readiness 闸门
+bash scripts/smoke-cds-agent-runtime-status.sh
 ```
 
 ### 3. CI fail-fast 模式
@@ -106,6 +110,10 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_VERBOSE` | _(空)_ | 非空时打印完整 JSON 响应摘要 |
 | `SMOKE_SKIP` | _(空)_ | 逗号/空格分隔要跳过的 key（`health`/`prd-agent`/`defect`/`report`） |
 | `SMOKE_FAIL_FAST` | _(空)_ | 非空时首次失败即退出 |
+
+`smoke-cds-agent-runtime-status.sh` 还要求目标环境已配置共享 CDS sidecar discovery，或
+通过 `CLAUDE_SIDECAR_BASE_URL` / `CLAUDE_SIDECAR_TOKEN` 配好静态 official SDK
+sidecar。该脚本只读 `runtime-status`，不会消耗模型 provider token。
 
 ---
 
