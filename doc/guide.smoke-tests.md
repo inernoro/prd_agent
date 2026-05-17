@@ -210,6 +210,8 @@ profile 已兼容 Claude/Anthropic，该脚本会跳过不兼容分支。
 commercial readiness 有 pending gate 时仍返回 0，因此它会出现在 smoke-all 的
 通过列表里；判断商业级完成度要看该脚本输出的 `Pending gates` 或
 `SMOKE_CDS_AGENT_READINESS_REPORT` JSON，而不是只看 smoke-all 的退出码。
+`smoke-all.sh` 汇总会打印每个子 smoke 的耗时，并列出最慢 5 项，用来判断时间花在
+远程 readiness、视觉截图、provider 调用还是本地检查。
 
 `smoke-cds-agent-official-sdk-run.sh` 是 S1 真运行入口。默认只确认 runtime pool
 和默认 profile 兼容性，不会发送 prompt；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1`
