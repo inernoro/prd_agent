@@ -1,4 +1,0 @@
-| fix | prd-api | 产品评审员 Agent 打分稳定性加固：`temperature` 降至 0、由 `submissionId` 派生稳定 `seed`，同一份方案重复评审结果一致；输出格式解析失败时自动重试 1 次（重试时换 seed 并追加严格 JSON 输出要求），仍失败则标记 `Status=Error` 提示用户「重新评审」，不再误判为 0 分未通过 |
-| fix | prd-api | 产品评审员 Agent 修复"分数与文字解释自相矛盾"：在 prompt 中加叙事一致性硬要求（不涉及=合规通过，禁止描述为 0 分）；系统按 truth table 重算清单类维度分数后，同步用模板覆盖 `comment` 字段；顶层 `summary` 末尾追加`[系统结论] 最终得分 X/100，已通过/未通过` 权威结论行，企微/钉钉 webhook 通知文案同步对齐 |
-| feat | prd-api | 产品评审员 Agent 新增排行榜聚合端点 `GET /api/review-agent/leaderboard?startMonth=&endMonth=&groupBy=submitter\|document`，按自然月区间统计评审数 / 通过率 / 一次性通过率；新增 `ReviewSubmission.RerunCount` 字段（rerun 时自增） |
-| feat | prd-admin | 产品评审员「全部评审提交」页新增「排行榜」视图（提交人 / 方案 两个维度），支持自然月区间 + 快捷时段（本月 / 近 3 月 / 近 6 月 / 今年）+ 三指标可排序 + 前三名奖牌图标；顺手把页面布局修复为 `h-full min-h-0 flex flex-col` 满高滚动（修复 full-height-layout 规则违规） |

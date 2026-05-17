@@ -640,6 +640,9 @@
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
+- [周报 2026-W20 (05-11 ~ 05-17)](report.2026-W20) `report.2026-W20`
+  > 2026 年第 20 周工作总结（305 commits / 28 PRs，网页托管媒体化 + 统一短链基础设施、CDS 项目级生命周期自动化、CDS Agent 工作台前后端、前端流式渲染基础设施统一、知识库文档浏览器升级）
+
 - [周报 2026-W19 (05-04 ~ 05-10)](report.2026-W19) `report.2026-W19`
   > 2026 年第 19 周工作总结（310 commits / 15 PRs，CDS 蓝绿/Forwarder 架构落地、自更新十八轮收尾、五平台博主订阅 → 首页海报 Phase 2+3、Claude SDK 执行器 + CDS-MAP 配对协议 v1）
 
@@ -724,6 +727,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-17 | 新增 | `report.2026-W20` | 周报 2026-W20 (05-11 ~ 05-17) |
 | 2026-05-15 | 新增 | `design.cds-agent-runtime-architecture` | CDS Agent 运行时架构设计 |
 | 2026-05-15 | 新增 | `report.cds-agent-workbench-2026-05-15` `guide.cds-agent-workbench-reproduce` `guide.cds-agent-next-agent-testing` | CDS Agent A10 完成复盘、复现教程、下一代测试与涌现建议 |
 | 2026-05-14 | 新增 | `guide.cds-agent-workbench` `guide.cds-agent-admin` `design.cds-agent-api` `guide.cds-agent-runbook` | CDS Agent 完全可用文档闭环 |
