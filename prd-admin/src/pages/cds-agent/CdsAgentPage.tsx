@@ -707,6 +707,39 @@ export default function CdsAgentPage() {
   const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
   const canSendActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
   const canRecordManualInput = Boolean(activeSession?.manualTakeoverEnabled && prompt.trim());
+  const defaultRuntimeProfileDiagnostics = runtimeStatus?.defaultRuntimeProfile ?? null;
+  const r1DefaultProfileBlocked = Boolean(defaultRuntimeProfileDiagnostics && (
+    !defaultRuntimeProfileDiagnostics.hasApiKey
+    || !defaultRuntimeProfileDiagnostics.compatibleWithDesiredRuntimeAdapter
+  ));
+  const r1RepairPlan = useMemo(() => ({
+    gate: 'R1',
+    state: r1DefaultProfileBlocked ? 'blocked' : defaultRuntimeProfileDiagnostics ? 'ready' : 'missing',
+    currentProfile: defaultRuntimeProfileDiagnostics
+      ? {
+          name: defaultRuntimeProfileDiagnostics.name,
+          protocol: defaultRuntimeProfileDiagnostics.protocol,
+          model: defaultRuntimeProfileDiagnostics.model,
+          hasApiKey: defaultRuntimeProfileDiagnostics.hasApiKey,
+          compatibleWithDesiredRuntimeAdapter: defaultRuntimeProfileDiagnostics.compatibleWithDesiredRuntimeAdapter,
+          warning: defaultRuntimeProfileDiagnostics.warning ?? null,
+        }
+      : null,
+    targetTemplate: anthropicOfficialProfileTemplate
+      ? {
+          id: anthropicOfficialProfileTemplate.id,
+          protocol: anthropicOfficialProfileTemplate.protocol,
+          baseUrl: anthropicOfficialProfileTemplate.baseUrl,
+          model: anthropicOfficialProfileTemplate.model,
+          isDefaultRecommended: anthropicOfficialProfileTemplate.isDefaultRecommended,
+        }
+      : null,
+    nextActions: [
+      '点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。',
+      '填入 Anthropic API key，并保存为默认 runtime profile。',
+      '点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。',
+    ],
+  }), [anthropicOfficialProfileTemplate, defaultRuntimeProfileDiagnostics, r1DefaultProfileBlocked]);
 
   const fetchEventsSince = useCallback(async (sessionId: string, afterSeq: number): Promise<InfraAgentEventView[]> => {
     const collected: InfraAgentEventView[] = [];
@@ -1402,6 +1435,7 @@ export default function CdsAgentPage() {
       loadedAt: runtimeStatusLoadedAt,
     },
     adapterCompatibility: activeAdapterCompatibility,
+    r1RepairPlan,
     sidecarInstances: sidecarInstanceSummaries,
     runtimeStatus,
     summary: {
@@ -1432,7 +1466,7 @@ export default function CdsAgentPage() {
       workspaceError: runtimeDiagnostics.workspaceError,
       providerKeyError: runtimeDiagnostics.providerKeyError,
     },
-  }), [activeAdapterCompatibility, activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
+  }), [activeAdapterCompatibility, activeConnection, activeSession, activeSessionProfile, r1RepairPlan, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
   const runBundle = useMemo(() => {
     const eventTypeCounts = events.reduce<Record<string, number>>((acc, event) => {
       acc[event.type] = (acc[event.type] ?? 0) + 1;
@@ -2870,6 +2904,32 @@ export default function CdsAgentPage() {
                     </button>
                   </div>
                 )}
+                {(r1DefaultProfileBlocked || !defaultRuntimeProfileDiagnostics) && (
+                  <div className="mt-2 rounded-md px-2 py-2 text-xs leading-relaxed text-amber-100/82" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}>
+                    <div className="inline-flex items-center gap-1.5 font-semibold text-amber-100/90">
+                      <KeyRound size={12} /> R1 默认 Claude profile
+                    </div>
+                    <div className="mt-1 break-words text-amber-50/72">
+                      当前: {defaultRuntimeProfileDiagnostics
+                        ? `${defaultRuntimeProfileDiagnostics.name} / ${defaultRuntimeProfileDiagnostics.protocol} / ${defaultRuntimeProfileDiagnostics.model}`
+                        : '未找到默认 runtime profile'}
+                    </div>
+                    <div className="mt-1 break-words text-amber-50/72">
+                      目标: {anthropicOfficialProfileTemplate
+                        ? `${anthropicOfficialProfileTemplate.protocol} / ${anthropicOfficialProfileTemplate.model}`
+                        : '等待后端官方模板'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void applyAnthropicOfficialTemplate()}
+                      disabled={!anthropicOfficialProfileTemplate}
+                      className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs disabled:opacity-45"
+                      style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
+                    >
+                      <KeyRound size={12} /> 准备默认 Claude 配置
+                    </button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => void testProfile()}
@@ -2937,7 +2997,7 @@ export default function CdsAgentPage() {
                   `repo_git_status`、`repo_git_diff` 和 `repo_create_pull_request` 会把分支、diff、测试输出和 PR 链接沉淀到事件与产物面板；`repo_create_pull_request` 属于危险工具，默认需要人工审批后才会提交分支并创建 PR。
                 </div>
               </div>
-              <details open={Boolean(activeProfileBlockReason)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <details open={Boolean(activeProfileBlockReason || r1DefaultProfileBlocked)} className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <summary className="cursor-pointer text-xs font-semibold text-white/60">保存新模型配置</summary>
                 <div className="mt-3 grid gap-2">
                   <button
