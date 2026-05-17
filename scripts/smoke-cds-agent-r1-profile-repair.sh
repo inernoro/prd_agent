@@ -12,6 +12,9 @@
 #
 # 默认不消耗 provider token；只有显式提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 才会写入
 # 一个新的 runtime profile；后端上游 test 成功前不会提升为默认。
+#
+# 环境变量:
+#   SMOKE_CDS_AGENT_R1_REPORT=/tmp/r1.json  可选: 输出 R1 修复证据 JSON
 # ============================================
 
 set -euo pipefail
@@ -26,6 +29,32 @@ smoke_init "CDS Agent R1 Runtime Profile Repair"
 target_template_id="anthropic-official-claude-sonnet-4"
 candidate_profile_id=""
 candidate_promoted=""
+SMOKE_CDS_AGENT_R1_REPORT="${SMOKE_CDS_AGENT_R1_REPORT:-}"
+
+write_r1_report() {
+  [[ -z "$SMOKE_CDS_AGENT_R1_REPORT" ]] && return
+  local status="$1"
+  local evidence_json="${2:-{}}"
+  jq -n \
+    --arg status "$status" \
+    --arg host "$SMOKE_HOST" \
+    --arg targetTemplateId "$target_template_id" \
+    --arg suggestedCommand "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh" \
+    --arg evidenceRaw "$evidence_json" \
+    '{
+      status: $status,
+      host: $host,
+      targetTemplateId: $targetTemplateId,
+      suggestedCommand: $suggestedCommand,
+      evidence: (
+        $evidenceRaw
+        | fromjson?
+          // (sub("}$"; "") | fromjson?)
+          // { reportError: "invalid evidence json", rawEvidence: $evidenceRaw }
+      )
+    }' > "$SMOKE_CDS_AGENT_R1_REPORT"
+  printf 'R1 report: %s\n' "$SMOKE_CDS_AGENT_R1_REPORT"
+}
 
 cleanup_candidate_profile() {
   if [[ -n "$candidate_profile_id" && -z "$candidate_promoted" ]]; then
@@ -69,6 +98,12 @@ if [[ "$current_r1_status" == "pass" ]]; then
   smoke_ok "not applicable"
   smoke_step "跳过修复后验证"
   smoke_ok "not applicable"
+  already_ready_evidence=$(jq -n \
+    --argjson currentR1 "$current_r1" \
+    --argjson defaultProfile "$default_profile" \
+    --argjson repairPlan "$repair_plan" \
+    '{currentR1:$currentR1, defaultProfile:$defaultProfile, repairPlan:$repairPlan}')
+  write_r1_report "already_pass" "$already_ready_evidence"
   smoke_done
   exit 0
 fi
@@ -98,6 +133,31 @@ smoke_ok "missing API key is rejected before profile creation"
 
 smoke_step "按需调用后端 R1 test-before-promote 入口"
 if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
+  dry_run_evidence=$(jq -n \
+    --argjson currentR1 "$current_r1" \
+    --argjson defaultProfile "$default_profile" \
+    --argjson repairPlan "$repair_plan" \
+    --argjson template "$template" \
+    --argjson missingKeyResponse "$missing_key_resp" \
+    '{
+      currentR1: $currentR1,
+      defaultProfile: $defaultProfile,
+      repairPlan: $repairPlan,
+      targetTemplate: {
+        id: ($template.id // ""),
+        name: ($template.name // ""),
+        protocol: ($template.protocol // ""),
+        baseUrl: ($template.baseUrl // ""),
+        model: ($template.model // ""),
+        compatibleRuntimeAdapters: ($template.compatibleRuntimeAdapters // [])
+      },
+      missingKeyGuard: {
+        success: ($missingKeyResponse.success // null),
+        errorCode: ($missingKeyResponse.error.code // "")
+      },
+      providerKeyReceived: false
+    }')
+  write_r1_report "dry_run_requires_api_key" "$dry_run_evidence"
   smoke_ok "dry-run only: set SMOKE_CDS_AGENT_ANTHROPIC_API_KEY to execute R1 repair"
   smoke_step "跳过后端上游测试和默认提升"
   smoke_ok "not applicable without SMOKE_CDS_AGENT_ANTHROPIC_API_KEY"
@@ -155,6 +215,33 @@ after_default=$(printf '%s' "$after_resp" | jq -c '.data.diagnostics.defaultRunt
 smoke_assert_eq "$(printf '%s' "$after_default" | jq -r '.protocol')" "anthropic" "defaultProfile.protocol.afterRepair"
 smoke_assert_eq "$(printf '%s' "$after_default" | jq -r '.hasApiKey')" "true" "defaultProfile.hasApiKey.afterRepair"
 smoke_assert_eq "$(printf '%s' "$after_default" | jq -r '.compatibleWithDesiredRuntimeAdapter')" "true" "defaultProfile.compatible.afterRepair"
+pass_evidence=$(jq -n \
+  --argjson beforeR1 "$current_r1" \
+  --argjson beforeDefault "$default_profile" \
+  --argjson createdProfile "$created_profile" \
+  --argjson profileTest "$profile_test" \
+  --argjson afterR1 "$after_r1" \
+  --argjson afterDefault "$after_default" \
+  '{
+    beforeR1: $beforeR1,
+    beforeDefaultProfile: $beforeDefault,
+    createdProfile: {
+      id: ($createdProfile.id // ""),
+      name: ($createdProfile.name // ""),
+      protocol: ($createdProfile.protocol // ""),
+      model: ($createdProfile.model // ""),
+      isDefault: ($createdProfile.isDefault // false),
+      hasApiKey: ($createdProfile.hasApiKey // false)
+    },
+    profileTest: {
+      success: ($profileTest.success // false),
+      protocol: ($profileTest.protocol // ""),
+      model: ($profileTest.model // "")
+    },
+    afterR1: $afterR1,
+    afterDefaultProfile: $afterDefault
+  }')
+write_r1_report "pass" "$pass_evidence"
 smoke_ok "R1 default profile is ready for provider smokes"
 
 smoke_done

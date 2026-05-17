@@ -24,6 +24,7 @@ SMOKE_CDS_AGENT_CYCLE_DIR="${SMOKE_CDS_AGENT_CYCLE_DIR:-/tmp/cds-agent-cycle-$CY
 mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
 
 export SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/readiness-report.json}"
+export SMOKE_CDS_AGENT_R1_REPORT="${SMOKE_CDS_AGENT_R1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/r1-report.json}"
 export SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/s1-report.json}"
 SMOKE_CDS_AGENT_CYCLE_SUMMARY="${SMOKE_CDS_AGENT_CYCLE_SUMMARY:-$SMOKE_CDS_AGENT_CYCLE_DIR/cycle-summary.json}"
 
@@ -63,6 +64,7 @@ finish_cycle() {
   local readiness_overall="unknown"
   local readiness_pending_json="[]"
   local readiness_pending_count=0
+  local r1_status="missing"
   local s1_status="missing"
   local provider_calls_enabled=false
   local r1_repair_apply=false
@@ -73,6 +75,10 @@ finish_cycle() {
     readiness_overall=$(jq -r '.overall // "unknown"' "$SMOKE_CDS_AGENT_READINESS_REPORT")
     readiness_pending_json=$(jq -c '.pending // []' "$SMOKE_CDS_AGENT_READINESS_REPORT")
     readiness_pending_count=$(jq -r '.pending // [] | length' "$SMOKE_CDS_AGENT_READINESS_REPORT")
+  fi
+
+  if [[ -f "$SMOKE_CDS_AGENT_R1_REPORT" ]]; then
+    r1_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_R1_REPORT")
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
@@ -114,6 +120,8 @@ finish_cycle() {
     --arg host "${SMOKE_TEST_HOST:-http://localhost:5000}" \
     --arg readinessOverall "$readiness_overall" \
     --arg readinessReport "$SMOKE_CDS_AGENT_READINESS_REPORT" \
+    --arg r1Status "$r1_status" \
+    --arg r1Report "$SMOKE_CDS_AGENT_R1_REPORT" \
     --arg s1Status "$s1_status" \
     --arg s1Report "$SMOKE_CDS_AGENT_S1_REPORT" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
@@ -137,6 +145,10 @@ finish_cycle() {
         report: $readinessReport,
         pending: $readinessPending
       },
+      r1: {
+        status: $r1Status,
+        report: $r1Report
+      },
       s1: {
         status: $s1Status,
         report: $s1Report
@@ -157,6 +169,7 @@ finish_cycle() {
   printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
   printf 'Cycle status: %s\n' "$cycle_status"
   printf 'Readiness overall: %s\n' "$readiness_overall"
+  printf 'R1 status: %s\n' "$r1_status"
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
   printf 'Passed: %s\n' "${#passed_arr[@]}"
@@ -170,6 +183,11 @@ finish_cycle() {
   printf 'Failed: %s\n' "${#failed_arr[@]}"
   if (( ${#failed_arr[@]} > 0 )); then
     for name in "${failed_arr[@]}"; do printf '  - %s\n' "$name"; done
+  fi
+
+  if [[ -f "$SMOKE_CDS_AGENT_R1_REPORT" ]]; then
+    printf '\nR1 report:\n'
+    jq . "$SMOKE_CDS_AGENT_R1_REPORT"
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
