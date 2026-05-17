@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.official_agent_sdk import run_official_agent  # noqa: E402
+from app.official_agent_sdk import run_official_agent, workspace_diagnostics  # noqa: E402
 from app.schemas import SidecarMessage, SidecarRunRequest  # noqa: E402
 
 LAST_OPTIONS: Any = None
@@ -318,10 +318,33 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.content["workspace"]["gitRepository"], "inernoro/prd_agent")
         self.assertEqual(first.content["workspace"]["gitRef"], "main")
         self.assertEqual(first.content["workspace"]["gitCommit"], "abc1234")
+        self.assertEqual(first.content["workspace"]["workspaceAction"], "clone")
+        self.assertEqual(first.content["workspace"]["workspaceLock"], "in-process")
         self.assertIn(workspaces_root, first.content["cwd"])
         self.assertEqual(LAST_OPTIONS.kwargs["cwd"], first.content["cwd"])
         self.assertEqual(GIT_COMMANDS[0][:5], ["git", "clone", "--depth", "1", "--branch"])
         self.assertEqual(GIT_COMMANDS[0][5], "main")
+
+    async def test_existing_git_workspace_fetches_under_same_workspace_path(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": "main",
+            })
+            slug = "inernoro-prd_agent-main-24f20bb79b"
+            existing = Path(workspaces_root) / slug
+            (existing / ".git").mkdir(parents=True)
+
+            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspace"]["workspaceAction"], "fetch")
+        self.assertEqual(GIT_COMMANDS[0], ["git", "fetch", "--depth", "1", "origin", "main"])
+        self.assertEqual(GIT_COMMANDS[1], ["git", "checkout", "--force", "FETCH_HEAD"])
 
     async def test_invalid_git_repository_returns_structured_error(self) -> None:
         req = build_request().model_copy(update={
@@ -335,6 +358,30 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].error_code, "workspace_prepare_failed")
         self.assertEqual(events[0].content["gitRepository"], "ssh://github.com/inernoro/prd_agent")
         self.assertEqual(events[0].content["gitRef"], "main")
+
+    async def test_invalid_git_ref_returns_structured_error(self) -> None:
+        req = build_request().model_copy(update={
+            "git_repository": "inernoro/prd_agent",
+            "git_ref": "../main",
+        })
+
+        events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["gitRepository"], "inernoro/prd_agent")
+        self.assertEqual(events[0].content["gitRef"], "../main")
+
+    def test_workspace_diagnostics_reports_git_workspace_capabilities(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            diagnostics = workspace_diagnostics()
+
+        self.assertEqual(diagnostics["autoGitWorkspace"], True)
+        self.assertEqual(diagnostics["workspacesRoot"], workspaces_root)
+        self.assertEqual(diagnostics["workspaceLock"], "in-process")
+        self.assertIn("github.com", diagnostics["supportedRepositoryHosts"])
+        self.assertIn("owner/repo", diagnostics["supportedRepositoryFormats"])
 
 
 if __name__ == "__main__":

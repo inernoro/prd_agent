@@ -127,6 +127,8 @@ CLAUDE_AGENT_SDK_PERMISSION_MODE=acceptEdits
   `SIDECAR_WORKSPACES_ROOT`（默认 `/tmp/cds-agent-workspaces`）下准备 GitHub 工作区，
   支持 `owner/repo` 或 `https://github.com/owner/repo`，再把准备好的目录作为 SDK cwd。
 - `gitRef` 会作为 shallow clone/fetch 的 ref；当前只支持安全字符集，不支持任意 shell 片段。
+- 同一 repo/ref 的准备过程有 sidecar 进程内异步锁，避免并发 clone/fetch 互相覆盖。
+- `readyz.adapterDiagnostics.workspacePreparation` 会暴露 workspace root、git 是否可用、支持的仓库格式和锁策略。
 - 这一步只负责 workspace/control-plane 准备，不接管 Claude Agent SDK 的 agent loop。
 
 官方 adapter 就绪诊断：

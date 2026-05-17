@@ -9,6 +9,7 @@ import os
 import asyncio
 import hashlib
 import re
+import shutil
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -21,6 +22,7 @@ logger = logging.getLogger("sidecar.official_agent_sdk")
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _GITHUB_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:\.git)?/?$")
 _GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+_WORKSPACE_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _prompt_from_messages(req: SidecarRunRequest) -> str:
@@ -175,6 +177,28 @@ def _workspace_slug(repo_slug: str, git_ref: str | None) -> str:
     return f"{safe}-{digest}"
 
 
+def workspace_diagnostics() -> dict[str, Any]:
+    root = Path(os.environ.get("SIDECAR_WORKSPACES_ROOT", "/tmp/cds-agent-workspaces")).expanduser()
+    return {
+        "autoGitWorkspace": True,
+        "workspacesRoot": str(root),
+        "workspacesRootExists": root.exists(),
+        "gitInstalled": shutil.which("git") is not None,
+        "supportedRepositoryHosts": ["github.com"],
+        "supportedRepositoryFormats": ["owner/repo", "https://github.com/owner/repo"],
+        "workspaceLock": "in-process",
+    }
+
+
+def _workspace_lock(target: Path) -> asyncio.Lock:
+    key = str(target)
+    lock = _WORKSPACE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _WORKSPACE_LOCKS[key] = lock
+    return lock
+
+
 async def _run_git(args: list[str], cwd: Path | None = None) -> str:
     proc = await asyncio.create_subprocess_exec(
         "git",
@@ -207,25 +231,29 @@ async def _prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, di
         "gitRepository": repo_slug,
         "gitRef": git_ref,
         "workspaceRoot": str(target),
+        "workspaceLock": "in-process",
     }
 
     root.mkdir(parents=True, exist_ok=True)
-    if (target / ".git").exists():
-        if git_ref:
-            await _run_git(["fetch", "--depth", "1", "origin", git_ref], cwd=target)
-            await _run_git(["checkout", "--force", "FETCH_HEAD"], cwd=target)
+    async with _workspace_lock(target):
+        if (target / ".git").exists():
+            metadata["workspaceAction"] = "fetch"
+            if git_ref:
+                await _run_git(["fetch", "--depth", "1", "origin", git_ref], cwd=target)
+                await _run_git(["checkout", "--force", "FETCH_HEAD"], cwd=target)
+            else:
+                await _run_git(["fetch", "--all", "--prune"], cwd=target)
         else:
-            await _run_git(["fetch", "--all", "--prune"], cwd=target)
-    else:
-        if target.exists() and any(target.iterdir()):
-            raise RuntimeError(f"workspace target exists and is not a git repository: {target}")
-        clone_args = ["clone", "--depth", "1"]
-        if git_ref:
-            clone_args.extend(["--branch", git_ref])
-        clone_args.extend([clone_url, str(target)])
-        await _run_git(clone_args)
+            metadata["workspaceAction"] = "clone"
+            if target.exists() and any(target.iterdir()):
+                raise RuntimeError(f"workspace target exists and is not a git repository: {target}")
+            clone_args = ["clone", "--depth", "1"]
+            if git_ref:
+                clone_args.extend(["--branch", git_ref])
+            clone_args.extend([clone_url, str(target)])
+            await _run_git(clone_args)
 
-    commit = await _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
+        commit = await _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
     metadata["gitCommit"] = commit
     return str(target), metadata
 

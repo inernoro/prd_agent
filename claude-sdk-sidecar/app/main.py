@@ -24,7 +24,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .agent_loop import run_agent
-from .official_agent_sdk import run_official_agent
+from .official_agent_sdk import run_official_agent, workspace_diagnostics
 from .schemas import SidecarEvent, SidecarRunRequest
 
 
@@ -207,6 +207,7 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
         "builtinWriteToolsEnabled": bool(write_tools),
         "builtinWriteTools": write_tools,
         "approvalBridge": "sdk-can-use-tool",
+        "workspacePreparation": workspace_diagnostics(),
         "loopOwner": "claude-agent-sdk",
         "sdkLoopEnabled": True,
         "mapRole": "control-plane",
