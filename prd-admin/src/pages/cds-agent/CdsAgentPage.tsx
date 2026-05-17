@@ -801,6 +801,44 @@ export default function CdsAgentPage() {
     const workspaceErrorState = workspaceErrorCode
       ? `${workspaceErrorCode}${workspaceErrorActions[0] ? ` · ${workspaceErrorActions[0]}` : ''}`
       : '无 workspace 错误';
+    const approvalRequests = events
+      .map((event) => ({ event, payload: parsePayload(event) }))
+      .filter(({ event, payload }) => event.type === 'tool_call' && readString(payload, 'approvalId'));
+    const approvalDecisions = events
+      .map((event) => ({ event, payload: parsePayload(event) }))
+      .filter(({ event, payload }) => event.type === 'tool_result' && readString(payload, 'approvalId') && readString(payload, 'source') === 'map-tool-approval');
+    const pendingApprovalCount = approvalRequests.filter(({ payload }) => readString(payload, 'status') === 'waiting').length;
+    const latestApprovalDecision = approvalDecisions.at(-1)?.payload ?? null;
+    const approvalEvidence = {
+      requestCount: approvalRequests.length,
+      pendingCount: pendingApprovalCount,
+      decisionCount: approvalDecisions.length,
+      latestDecision: latestApprovalDecision ? readString(latestApprovalDecision, 'decision') : '',
+      latestApprovalId: latestApprovalDecision ? readString(latestApprovalDecision, 'approvalId') : '',
+    };
+    const approvalEvidenceState = approvalEvidence.requestCount > 0
+      ? `${approvalEvidence.requestCount} requests · ${approvalEvidence.decisionCount} decisions${approvalEvidence.pendingCount ? ` · ${approvalEvidence.pendingCount} pending` : ''}`
+      : '无审批事件';
+    const cancelEvents = events
+      .map((event) => ({ event, payload: parsePayload(event) }))
+      .filter(({ payload }) => {
+        const message = readString(payload, 'message');
+        return readString(payload, 'reason') === 'session_stop_requested'
+          || message.includes('runtime run cancel')
+          || readString(payload, 'code') === 'cancelled'
+          || readString(payload, 'errorCode') === 'cancelled';
+      });
+    const cancelRequested = cancelEvents.some(({ payload }) => readString(payload, 'message').includes('runtime run cancel requested'));
+    const cancelCompleted = cancelEvents.some(({ payload }) => readString(payload, 'code') === 'cancelled' || readString(payload, 'errorCode') === 'cancelled');
+    const cancelEvidence = {
+      eventCount: cancelEvents.length,
+      requested: cancelRequested,
+      completed: cancelCompleted,
+      latestMessage: cancelEvents.length > 0 ? readString(cancelEvents[cancelEvents.length - 1].payload, 'message') || readString(cancelEvents[cancelEvents.length - 1].payload, 'reason') : '',
+    };
+    const cancelEvidenceState = cancelEvidence.eventCount > 0
+      ? `${cancelEvidence.eventCount} events · requested ${cancelEvidence.requested ? 'yes' : 'no'} · cancelled ${cancelEvidence.completed ? 'yes' : 'no'}`
+      : '无取消事件';
     const primaryAdapterDiagnostics = primaryRuntime ? parseJsonString(primaryRuntime.adapterDiagnosticsJson) : null;
     const adapter = activeSession?.runtimeAdapter
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeAdapter') : '')
@@ -962,6 +1000,8 @@ export default function CdsAgentPage() {
         ['Workspace root', workspaceRoot || '未上报'],
         ['Private repo auth', privateRepositoryAuthConfigured === true ? '已配置' : privateRepositoryAuthConfigured === false ? '未配置' : '未上报'],
         ['Workspace error', workspaceErrorState],
+        ['Approval evidence', approvalEvidenceState],
+        ['Cancel evidence', cancelEvidenceState],
         ['Run ID', shortId(runId)],
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
@@ -983,6 +1023,8 @@ export default function CdsAgentPage() {
       nextActions,
       readyzBlockers,
       readyzNextActions,
+      approvalEvidence,
+      cancelEvidence,
       workspaceError: workspaceErrorCode ? {
         code: workspaceErrorCode,
         nextActions: workspaceErrorActions,
@@ -1076,6 +1118,8 @@ export default function CdsAgentPage() {
       nextActions: runtimeDiagnostics.nextActions,
       readyzBlockers: runtimeDiagnostics.readyzBlockers,
       readyzNextActions: runtimeDiagnostics.readyzNextActions,
+      approvalEvidence: runtimeDiagnostics.approvalEvidence,
+      cancelEvidence: runtimeDiagnostics.cancelEvidence,
       workspaceError: runtimeDiagnostics.workspaceError,
     },
   }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
