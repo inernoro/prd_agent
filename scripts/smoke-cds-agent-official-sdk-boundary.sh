@@ -19,6 +19,9 @@ OFFICIAL_FILE="$ROOT_DIR/claude-sdk-sidecar/app/official_agent_sdk.py"
 LEGACY_FILE="$ROOT_DIR/claude-sdk-sidecar/app/agent_loop.py"
 REQ_FILE="$ROOT_DIR/claude-sdk-sidecar/requirements.txt"
 REPORT="${SMOKE_CDS_AGENT_BOUNDARY_REPORT:-}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+ROUTING_TEST="claude-sdk-sidecar/tests/test_sidecar_readiness.py"
+ROUTING_TEST_LOG=""
 
 failures=()
 
@@ -46,6 +49,7 @@ line_count() {
 
 official_lines=$(line_count "$OFFICIAL_FILE")
 legacy_lines=$(line_count "$LEGACY_FILE")
+routing_test_status="pass"
 
 require_contains "$MAIN_FILE" 'DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sdk").strip()' \
   "sidecar default adapter must remain claude-agent-sdk"
@@ -77,6 +81,12 @@ require_not_contains "$OFFICIAL_FILE" 'client.messages.stream' \
 require_not_contains "$OFFICIAL_FILE" 'chat/completions' \
   "official adapter must not rebuild OpenAI-compatible chat loop"
 
+ROUTING_TEST_LOG="$(mktemp "${TMPDIR:-/tmp}/cds-agent-boundary-routing.XXXXXX.log")"
+if ! (cd "$ROOT_DIR" && "$PYTHON_BIN" -m unittest "$ROUTING_TEST") >"$ROUTING_TEST_LOG" 2>&1; then
+  routing_test_status="failed"
+  failures+=("sidecar routing unit tests must prove default official adapter and explicit legacy fallback")
+fi
+
 status="pass"
 if (( ${#failures[@]} > 0 )); then
   status="failed"
@@ -93,6 +103,8 @@ if [[ -n "$REPORT" ]]; then
     --arg mainFile "claude-sdk-sidecar/app/main.py" \
     --arg officialFile "claude-sdk-sidecar/app/official_agent_sdk.py" \
     --arg legacyFile "claude-sdk-sidecar/app/agent_loop.py" \
+    --arg routingTest "$ROUTING_TEST" \
+    --arg routingTestStatus "$routing_test_status" \
     --argjson officialLines "$official_lines" \
     --argjson legacyLines "$legacy_lines" \
     --argjson failures "$failures_json" \
@@ -107,6 +119,10 @@ if [[ -n "$REPORT" ]]; then
         officialAdapterLines: $officialLines,
         legacyLoopLines: $legacyLines
       },
+      executableEvidence: {
+        routingTest: $routingTest,
+        routingTestStatus: $routingTestStatus
+      },
       assertionsFailed: $failures
     }' > "$REPORT"
 fi
@@ -114,10 +130,15 @@ fi
 printf 'Official SDK boundary: %s\n' "$status"
 printf 'Official adapter lines: %s\n' "$official_lines"
 printf 'Legacy loop lines: %s\n' "$legacy_lines"
+printf 'Routing unit test: %s (%s)\n' "$routing_test_status" "$ROUTING_TEST"
 if (( ${#failures[@]} > 0 )); then
   printf 'Boundary failures:\n' >&2
   for failure in "${failures[@]}"; do
     printf '  - %s\n' "$failure" >&2
   done
+  if [[ -s "$ROUTING_TEST_LOG" ]]; then
+    printf '\nRouting unit test log:\n' >&2
+    cat "$ROUTING_TEST_LOG" >&2
+  fi
   exit 1
 fi
