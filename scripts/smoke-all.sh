@@ -12,10 +12,11 @@
 #   6. smoke-cds-agent-commercial-readiness.sh — CDS Agent commercial readiness ledger
 #   7. smoke-cds-agent-official-sdk-run.sh      — CDS Agent S1 readiness / gated run
 #   8. smoke-cds-agent-official-sdk-controls.sh — CDS Agent S2/S3 readiness / gated controls
-#   9. smoke-cds-agent-non-code-compatibility.sh — 非代码 agent 兼容边界
-#   10. smoke-prd-agent.sh     — PRD 会话/Run 链路
-#   11. smoke-defect-agent.sh  — 缺陷 CRUD
-#   12. smoke-report-agent.sh — 周报 CRUD
+#   9. smoke-cds-agent-workbench-visual.sh — CDS Agent V1 authenticated visual evidence (optional auth)
+#   10. smoke-cds-agent-non-code-compatibility.sh — 非代码 agent 兼容边界
+#   11. smoke-prd-agent.sh     — PRD 会话/Run 链路
+#   12. smoke-defect-agent.sh  — 缺陷 CRUD
+#   13. smoke-report-agent.sh — 周报 CRUD
 #
 # 每个子脚本独立返回 0/非 0;本脚本累计失败数,最后汇总。
 # 任意子脚本失败不中断后续 —— 让使用者一次跑完能看到所有问题,而
@@ -28,7 +29,7 @@
 #     bash scripts/smoke-all.sh
 #
 # 跳过某个子 Agent (例如本地没配周报):
-#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-templates,cds-agent-r1-repair,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,cds-agent-non-code-compat,prd-agent,defect,report
+#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-templates,cds-agent-r1-repair,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,cds-agent-visual,cds-agent-non-code-compat,prd-agent,defect,report
 #
 # CI 环境建议: fail-fast 的话把 SMOKE_FAIL_FAST=1 设上,首次失败即退出。
 # ============================================
@@ -50,6 +51,7 @@ declare -a SMOKES=(
   "cds-agent-readiness|$SCRIPT_DIR/smoke-cds-agent-commercial-readiness.sh|CDS Agent Commercial Readiness"
   "cds-agent-s1|$SCRIPT_DIR/smoke-cds-agent-official-sdk-run.sh|CDS Agent Official SDK S1"
   "cds-agent-controls|$SCRIPT_DIR/smoke-cds-agent-official-sdk-controls.sh|CDS Agent Official SDK Controls"
+  "cds-agent-visual|$SCRIPT_DIR/smoke-cds-agent-workbench-visual.sh|CDS Agent Workbench Visual"
   "cds-agent-non-code-compat|$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh|CDS Agent Non-code Compatibility"
   "prd-agent|$SCRIPT_DIR/smoke-prd-agent.sh|PRD Agent"
   "defect|$SCRIPT_DIR/smoke-defect-agent.sh|Defect Agent"
@@ -81,6 +83,13 @@ for entry in "${SMOKES[@]}"; do
   IFS='|' read -r key script human <<< "$entry"
   if is_skipped "$key"; then
     printf '\n··· 跳过 %s (SMOKE_SKIP 命中)\n' "$human"
+    skipped_arr+=("$human")
+    continue
+  fi
+  if [[ "$key" == "cds-agent-visual" \
+    && -z "${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}" \
+    && ( -z "${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}" || -z "${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}" ) ]]; then
+    printf '\n··· 跳过 %s (未提供 SMOKE_CDS_AGENT_ACCESS_TOKEN 或登录用户名/密码)\n' "$human"
     skipped_arr+=("$human")
     continue
   fi

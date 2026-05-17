@@ -243,6 +243,11 @@ SMOKE_CDS_AGENT_SCREENSHOT=/tmp/cds-agent-workbench-visual.png \
 `SMOKE_CDS_AGENT_AUTH_USER_JSON` 用于填充前端 auth store 的用户信息。截图不会包含
 API key，但它会显示当前默认 profile 是否仍阻塞 R1。
 
+`smoke-all.sh` 已接入该视觉入口，key 为 `cds-agent-visual`。为了不让无登录凭据的
+CI 环境误失败，`smoke-all.sh` 只有在检测到 `SMOKE_CDS_AGENT_ACCESS_TOKEN`，或同时
+检测到 `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` 时才运行它；
+否则会把它记为 skipped。验收 V1 时应显式提供登录凭据，不能只看 skipped。
+
 ---
 
 ## 集成到 CI

@@ -54,7 +54,7 @@
 - `scripts/smoke-cds-agent-official-sdk-run.sh`：S1 真运行入口。默认只做 official SDK runtime/profile readiness，不消耗 provider token；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后才创建临时只读审查会话、启动 runtime、发送 prompt 并等待 assistant 消息。
 - `scripts/smoke-cds-agent-official-sdk-controls.sh`：S2/S3 真控制入口。默认只做 readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后才触发危险工具审批、拒绝审批并确认 MAP 审计，再创建长任务会话验证 Stop。
 - `scripts/smoke-cds-agent-workbench-visual.sh`：V1 authenticated 视觉入口。它不调用 provider，但要求真实登录 token 或用户名密码；脚本用 headless Chrome 打开 `/cds-agent`，等待 `Runtime 调试`、`商业级 readiness ledger` 和 `下一周期最小闭环` 出现，并保存截图。它用于补强 `commercial-readiness` 中仅 HTTP 200 的弱 V1 证据。
-- `scripts/smoke-all.sh` 默认包含上述 CDS Agent 五条 gate。无 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 脚本只做 readiness 或在默认 profile 不兼容时跳过，不会消耗 provider token。
+- `scripts/smoke-all.sh` 默认包含上述 CDS Agent gate。无 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 脚本只做 readiness 或在默认 profile 不兼容时跳过，不会消耗 provider token；无 `SMOKE_CDS_AGENT_ACCESS_TOKEN` 且无登录用户名/密码时，V1 authenticated visual 会记为 skipped，避免无凭据 CI 误失败。
 
 ## 4. 首轮调试用例
 
