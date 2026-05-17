@@ -14,6 +14,7 @@
 #   SMOKE_USER       impersonate 用户，默认 admin
 #   SMOKE_VERBOSE=1  额外输出完整 runtime-status JSON
 #   CDS_HOST         可选；设置后会从远程 API 容器内检查 sidecar DNS alias
+#   SMOKE_CDS_AGENT_DOCTOR_REPORT 可选；写出机器可读 JSON 诊断包
 # ============================================
 
 set -euo pipefail
@@ -29,6 +30,14 @@ SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
 SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-3}"
 SMOKE_CDS_AGENT_DOCTOR_RETRIES="${SMOKE_CDS_AGENT_DOCTOR_RETRIES:-5}"
 SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS="${SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS:-3}"
+SMOKE_CDS_AGENT_DOCTOR_REPORT="${SMOKE_CDS_AGENT_DOCTOR_REPORT:-}"
+alias_check_status="skipped"
+alias_unique_hosts=0
+alias_ready_count=0
+alias_loop_count=0
+alias_warning=""
+diagnosis=""
+next_recommended=""
 SMOKE_STEP_TOTAL=9
 smoke_init "CDS Agent Runtime Doctor"
 
@@ -116,6 +125,8 @@ fi
 smoke_step "检查 API 容器内 sidecar DNS alias"
 if [[ -z "${CDS_HOST:-}" ]]; then
   printf 'Skipped: set CDS_HOST to exec inside the remote CDS API container\n'
+  alias_check_status="skipped"
+  alias_warning="set CDS_HOST to exec inside the remote CDS API container"
 else
   remote_url="http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/readyz"
   remote_cmd="echo hosts; getent hosts ${SMOKE_CDS_AGENT_SIDECAR_ALIAS} || true; "
@@ -126,7 +137,10 @@ else
   smoke_verbose "$exec_resp"
   if [[ "$(printf '%s' "$exec_resp" | jq -r '.ok')" != "true" ]]; then
     printf 'Alias check failed: cdscli branch exec did not return ok=true\n'
+    alias_check_status="failed"
+    alias_warning="cdscli branch exec did not return ok=true"
   else
+    alias_check_status="checked"
     alias_stdout=$(printf '%s' "$exec_resp" | jq -r '.data.stdout // ""')
     alias_stderr=$(printf '%s' "$exec_resp" | jq -r '.data.stderr // ""')
     printf '%s\n' "$alias_stdout"
@@ -136,6 +150,9 @@ else
     host_count=$(printf '%s\n' "$alias_stdout" | awk -v alias="$SMOKE_CDS_AGENT_SIDECAR_ALIAS" '$2 == alias {print $1}' | sort -u | wc -l | tr -d ' ')
     ready_count=$(printf '%s' "$alias_stdout" | grep -o '"ready":true,"anthropicKey"' | wc -l | tr -d ' ')
     loop_count=$(printf '%s' "$alias_stdout" | grep -o '"loopOwner":"claude-agent-sdk"' | wc -l | tr -d ' ')
+    alias_unique_hosts="$host_count"
+    alias_ready_count="$ready_count"
+    alias_loop_count="$loop_count"
     printf 'Alias summary: alias=%s uniqueHosts=%s readySamples=%s/%s officialLoopSamples=%s/%s\n' \
       "$SMOKE_CDS_AGENT_SIDECAR_ALIAS" \
       "$host_count" \
@@ -145,10 +162,17 @@ else
       "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS"
     if (( host_count > 1 )); then
       printf 'Alias warning: DNS alias resolves to multiple IPs; stale Docker endpoint may still be attached.\n'
+      alias_warning="DNS alias resolves to multiple IPs; stale Docker endpoint may still be attached."
     fi
     if (( ready_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS || loop_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS )); then
       printf 'Alias warning: not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk.\n'
+      if [[ -n "$alias_warning" ]]; then
+        alias_warning="$alias_warning Not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk."
+      else
+        alias_warning="Not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk."
+      fi
     elif (( host_count <= 1 )); then
+      alias_check_status="stable"
       smoke_ok "sidecar alias stable from API container"
     fi
   fi
@@ -239,16 +263,20 @@ printf '  - bash scripts/smoke-all.sh\n'
 
 if [[ "$desired_adapter" != "claude-agent-sdk" ]]; then
   printf 'Next: 先把 MAP 期望 adapter 切到 claude-agent-sdk，再重跑 runtime-status。\n'
+  next_recommended="先把 MAP 期望 adapter 切到 claude-agent-sdk，再重跑 runtime-status。"
 elif (( runtime_instance_count <= 0 || runtime_healthy_count <= 0 )); then
   printf 'Next: 先修 CDS sidecar discovery / static sidecar / readyz，再重跑 runtime-status。\n'
+  next_recommended="先修 CDS sidecar discovery / static sidecar / readyz，再重跑 runtime-status。"
 elif [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   printf 'Next: 在 /cds-agent 用 Anthropic official template 创建默认 profile，并填入真实 API key。\n'
+  next_recommended="在 /cds-agent 用 Anthropic official template 创建默认 profile，并填入真实 API key。"
   if [[ -n "${template_id:-}" ]]; then
     printf '      Template API: POST /api/infra-agent-runtime-profiles/templates/%s/profiles\n' "$template_id"
   fi
   printf '      配好后运行: SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-run.sh\n'
 else
   printf 'Next: 默认 profile 已兼容；先跑 readiness，再显式打开 provider 调用做 S1/S2/S3。\n'
+  next_recommended="默认 profile 已兼容；先跑 readiness，再显式打开 provider 调用做 S1/S2/S3。"
   printf '      SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-run.sh\n'
   printf '      SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-run.sh\n'
   printf '      SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh\n'
@@ -258,17 +286,72 @@ printf '\nDiagnosis: '
 healthy_count=$(smoke_get_data "$resp" '.diagnostics.healthyCount // 0')
 if [[ "$desired_adapter" != "claude-agent-sdk" ]]; then
   printf 'MAP 未期望官方 Claude Agent SDK adapter。\n'
+  diagnosis="MAP 未期望官方 Claude Agent SDK adapter。"
 elif (( instance_count <= 0 )); then
   printf 'MAP/CDS 控制面未发现可路由 sidecar 实例。\n'
+  diagnosis="MAP/CDS 控制面未发现可路由 sidecar 实例。"
 elif (( healthy_count <= 0 )); then
   printf '已发现 sidecar，但 /readyz 未达到 healthy。\n'
+  diagnosis="已发现 sidecar，但 /readyz 未达到 healthy。"
 else
   official_instances=$(smoke_get_data "$resp" '[.diagnostics.instances[]? | select((.agentAdapter // "") == "claude-agent-sdk" or (.loopOwner // "") == "claude-agent-sdk")] | length')
   if (( official_instances <= 0 )); then
     printf 'sidecar healthy，但 loopOwner 未证明为官方 SDK。\n'
+    diagnosis="sidecar healthy，但 loopOwner 未证明为官方 SDK。"
   else
     printf 'runtime pool 已具备 official SDK adapter 最小运行前置条件。\n'
+    diagnosis="runtime pool 已具备 official SDK adapter 最小运行前置条件。"
   fi
+fi
+
+if [[ -n "$SMOKE_CDS_AGENT_DOCTOR_REPORT" ]]; then
+  mkdir -p "$(dirname "$SMOKE_CDS_AGENT_DOCTOR_REPORT")"
+  jq -n \
+    --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg host "$SMOKE_HOST" \
+    --arg desiredAdapter "$desired_adapter" \
+    --arg runtimeTransport "$(smoke_get_data "$resp" '.diagnostics.runtimeTransport // ""')" \
+    --arg diagnosis "$diagnosis" \
+    --arg nextRecommended "$next_recommended" \
+    --arg aliasStatus "$alias_check_status" \
+    --arg alias "$SMOKE_CDS_AGENT_SIDECAR_ALIAS" \
+    --arg aliasWarning "$alias_warning" \
+    --argjson instanceCount "$runtime_instance_count" \
+    --argjson healthyCount "$runtime_healthy_count" \
+    --argjson aliasAttempts "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" \
+    --argjson aliasUniqueHosts "$alias_unique_hosts" \
+    --argjson aliasReadyCount "$alias_ready_count" \
+    --argjson aliasLoopCount "$alias_loop_count" \
+    --argjson runtimeStatus "$(printf '%s' "$resp" | jq -c '.data.diagnostics')" \
+    --argjson defaultProfile "$(printf '%s' "${default_profile:-null}" | jq -c '.')" \
+    --argjson officialTemplate "$(printf '%s' "${anthropic_template:-null}" | jq -c '.')" \
+    --argjson adapterCompatibility "$(printf '%s' "$compat_resp" | jq -c '.data.items // []')" \
+    '{
+      generatedAt: $generatedAt,
+      host: $host,
+      diagnosis: $diagnosis,
+      nextRecommended: $nextRecommended,
+      runtime: {
+        desiredAdapter: $desiredAdapter,
+        runtimeTransport: $runtimeTransport,
+        instanceCount: $instanceCount,
+        healthyCount: $healthyCount,
+        diagnostics: $runtimeStatus
+      },
+      aliasCheck: {
+        status: $aliasStatus,
+        alias: $alias,
+        attempts: $aliasAttempts,
+        uniqueHosts: $aliasUniqueHosts,
+        readySamples: $aliasReadyCount,
+        officialLoopSamples: $aliasLoopCount,
+        warning: (if $aliasWarning == "" then null else $aliasWarning end)
+      },
+      defaultProfile: $defaultProfile,
+      officialTemplate: $officialTemplate,
+      adapterCompatibility: $adapterCompatibility
+    }' > "$SMOKE_CDS_AGENT_DOCTOR_REPORT"
+  printf '\nDoctor report: %s\n' "$SMOKE_CDS_AGENT_DOCTOR_REPORT"
 fi
 
 smoke_done
