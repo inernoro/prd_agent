@@ -77,7 +77,7 @@ bash scripts/smoke-all.sh
 
 ```bash
 # 只跑 health + prd-agent，跳过 CDS Agent + defect + report
-SMOKE_SKIP=cds-agent-runtime,cds-agent-templates,cds-agent-preflight,defect,report bash scripts/smoke-all.sh
+SMOKE_SKIP=cds-agent-runtime,cds-agent-templates,cds-agent-preflight,cds-agent-s1,cds-agent-controls,defect,report bash scripts/smoke-all.sh
 
 # 或单独跑
 bash scripts/smoke-health.sh
@@ -125,7 +125,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_USER` | `admin` | 被假冒的用户 login（必须在 users 集合存在） |
 | `SMOKE_TIMEOUT` | `20` | 单次 curl 超时秒数 |
 | `SMOKE_VERBOSE` | _(空)_ | 非空时打印完整 JSON 响应摘要 |
-| `SMOKE_SKIP` | _(空)_ | 逗号/空格分隔要跳过的 key（`health`/`cds-agent-runtime`/`cds-agent-templates`/`cds-agent-preflight`/`prd-agent`/`defect`/`report`） |
+| `SMOKE_SKIP` | _(空)_ | 逗号/空格分隔要跳过的 key（`health`/`cds-agent-runtime`/`cds-agent-templates`/`cds-agent-preflight`/`cds-agent-s1`/`cds-agent-controls`/`prd-agent`/`defect`/`report`） |
 | `SMOKE_FAIL_FAST` | _(空)_ | 非空时首次失败即退出 |
 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL` | _(空)_ | official SDK run/control 脚本专用；设为 `1` 才真实发送 prompt |
 | `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE` | _(空)_ | 默认 profile 不兼容时是否失败；默认只跳过 provider run |
