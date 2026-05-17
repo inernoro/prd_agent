@@ -1712,6 +1712,100 @@ export default function CdsAgentPage() {
           })}
         </div>
       </div>
+      <div
+        className="mt-3 rounded-lg px-3 py-3"
+        style={{
+          background: runtimeDiagnostics.commercialState === 'commercial-ready'
+            ? 'rgba(20,83,45,0.18)'
+            : 'rgba(113,63,18,0.18)',
+          border: runtimeDiagnostics.commercialState === 'commercial-ready'
+            ? '1px solid rgba(34,197,94,0.24)'
+            : '1px solid rgba(245,158,11,0.22)',
+        }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/48">
+              <ListChecks size={13} />
+              当前执行面板
+            </div>
+            <div className="mt-1 text-sm font-semibold text-white/84">
+              {runtimeDiagnostics.commercialState === 'commercial-ready'
+                ? '商业级门禁已通过'
+                : `${runtimeDiagnostics.commercialBlockingCode || 'Gate'} 阻塞`}
+            </div>
+            <div className="mt-1 max-w-5xl text-xs leading-relaxed text-white/58">
+              {runtimeDiagnostics.commercialNextAction}
+            </div>
+            <div className="mt-2 max-w-5xl rounded-md px-2 py-1.5 text-xs leading-relaxed text-white/62" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              {runtimeDiagnostics.commercialDeploymentAdvice}
+            </div>
+          </div>
+          <div className="flex min-w-[190px] flex-col items-stretch gap-2">
+            <div className="flex flex-wrap justify-end gap-1">
+              {runtimeDiagnostics.executionGateCounts
+                ? (['pass', 'pending', 'failed', 'unknown'] as const).map((key) => {
+                  const count = runtimeDiagnostics.executionGateCounts?.[key] ?? 0;
+                  if (count <= 0) return null;
+                  const tone = key === 'pass'
+                    ? 'rgba(34,197,94,0.16)'
+                    : key === 'failed'
+                      ? 'rgba(239,68,68,0.16)'
+                      : key === 'pending'
+                        ? 'rgba(245,158,11,0.16)'
+                        : 'rgba(148,163,184,0.12)';
+                  const textTone = key === 'pass'
+                    ? 'rgba(134,239,172,0.92)'
+                    : key === 'failed'
+                      ? 'rgba(254,202,202,0.92)'
+                      : key === 'pending'
+                        ? 'rgba(253,230,138,0.92)'
+                        : 'rgba(203,213,225,0.78)';
+                  return (
+                    <span
+                      key={key}
+                      className="inline-flex min-h-6 items-center rounded px-1.5 text-[11px] font-semibold"
+                      style={{ background: tone, color: textTone, border: '1px solid rgba(255,255,255,0.08)' }}
+                    >
+                      {key} {count}
+                    </span>
+                  );
+                })
+                : (
+                  <span className="inline-flex min-h-6 items-center rounded px-1.5 text-[11px] font-semibold text-white/60" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    {runtimeDiagnostics.commercialPassed}/{runtimeDiagnostics.commercialTotal} gates
+                  </span>
+                )}
+            </div>
+            {runtimeDiagnostics.commercialBlockingCode === 'R1' && (
+              <button
+                type="button"
+                onClick={() => void applyAnthropicOfficialTemplate()}
+                disabled={!anthropicOfficialProfileTemplate}
+                className="inline-flex min-h-8 items-center justify-center gap-2 rounded-md px-2 text-xs font-semibold disabled:opacity-45"
+                style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.32)', color: 'rgba(253,230,138,0.95)' }}
+              >
+                <KeyRound size={12} /> 准备默认 Claude 配置
+              </button>
+            )}
+          </div>
+        </div>
+        {runtimeDiagnostics.commercialNextCommand && (
+          <div className="mt-3 flex items-start gap-2">
+            <code className="min-w-0 flex-1 break-all rounded px-2 py-1.5 text-[11px] leading-relaxed text-amber-50/78" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              {runtimeDiagnostics.commercialNextCommand}
+            </code>
+            <button
+              type="button"
+              onClick={() => void copyText('当前下一步命令', runtimeDiagnostics.commercialNextCommand)}
+              className="shrink-0 rounded p-1.5 text-white/46 hover:text-white/86"
+              aria-label="复制当前下一步命令"
+            >
+              <Copy size={12} />
+            </button>
+          </div>
+        )}
+      </div>
     </section>
   );
 
