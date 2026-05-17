@@ -54,7 +54,7 @@ R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDisco
 
 下一周期 N1-N6 的最小闭环以同一个接口返回的 `diagnostics.nextCyclePlan` 为准。它会明确每一步的状态、阻塞项、验收证据和停止条件；页面 Runtime 调试区只展示该计划，不能把文档里的表格复制成另一套前端逻辑。
 
-N6 的最小自动化入口是 `bash scripts/smoke-cds-agent-non-code-compatibility.sh`。它不消耗 provider token，只验证 PRD/Defect/Literary/Visual 等非代码 Toolbox agent 没有注入 CDS sidecar runtime pool 或 Claude sidecar 依赖。
+N6 的最小自动化入口是 `bash scripts/smoke-cds-agent-non-code-compatibility.sh`。它不消耗 provider token，会验证 PRD/Defect/Literary/Visual 等非代码 Toolbox agent 没有注入 CDS sidecar runtime pool 或 Claude sidecar 依赖，并用 fake gateway 跑过各自的最小业务动作。
 
 ## 给自己或其他仓库做审查
 

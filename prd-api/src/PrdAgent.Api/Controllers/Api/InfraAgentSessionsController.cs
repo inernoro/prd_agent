@@ -199,7 +199,7 @@ public class InfraAgentSessionsController : ControllerBase
                 "N6",
                 "非代码智能体兼容回归",
                 "PRD/defect/literary/visual 不被 CDS sidecar pool 或 profile gate 阻断。",
-                "scripts/smoke-cds-agent-non-code-compatibility.sh 通过；它覆盖源码扫描和构造函数反射护栏。",
+                "scripts/smoke-cds-agent-non-code-compatibility.sh 通过；它覆盖源码扫描、构造函数反射和非代码 adapter 最小业务路径。",
                 "ready-to-run",
                 null,
                 new[] { "bash scripts/smoke-cds-agent-non-code-compatibility.sh" })

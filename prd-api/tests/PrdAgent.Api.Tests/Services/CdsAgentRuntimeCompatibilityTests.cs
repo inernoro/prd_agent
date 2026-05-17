@@ -1,6 +1,10 @@
 using Shouldly;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Api.Services.Toolbox;
 using PrdAgent.Api.Services.Toolbox.Adapters;
+using PrdAgent.Core.Models.Toolbox;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.Interfaces;
 using Xunit;
 
@@ -64,6 +68,50 @@ public class CdsAgentRuntimeCompatibilityTests
         owners.ShouldBe(new[] { nameof(CdsAgentAdapter) });
     }
 
+    [Fact]
+    public async Task NonCodeToolboxAdapters_ShouldExecuteMinimalBusinessPathWithoutCdsRuntimePool()
+    {
+        var gateway = new FakeLlmGateway();
+        var cases = new (IAgentAdapter Adapter, string Action, string ExpectedArtifactName)[]
+        {
+            (new PrdAgentAdapter(gateway, NullLogger<PrdAgentAdapter>.Instance), "analyze_prd", "PRD分析报告.md"),
+            (new DefectAgentAdapter(gateway, NullLogger<DefectAgentAdapter>.Instance), "extract_defect", "缺陷信息.md"),
+            (new LiteraryAgentAdapter(gateway, NullLogger<LiteraryAgentAdapter>.Instance), "generate_outline", "写作大纲.md")
+        };
+
+        foreach (var (adapter, action, expectedArtifactName) in cases)
+        {
+            adapter.CanHandle(action).ShouldBeTrue($"{adapter.AgentKey}:{action}");
+            var result = await adapter.ExecuteAsync(new AgentExecutionContext
+            {
+                RunId = "n6-smoke-run",
+                TraceId = "n6-smoke-trace",
+                StepId = $"{adapter.AgentKey}-step",
+                UserId = "test-user",
+                Action = action,
+                UserMessage = "N6 smoke minimal input"
+            });
+
+            result.Success.ShouldBeTrue(adapter.AgentKey);
+            result.Content.ShouldContain("fake gateway response");
+            result.Artifacts.Single().Name.ShouldBe(expectedArtifactName);
+        }
+
+        var visual = new VisualAgentAdapter(gateway, NullLogger<VisualAgentAdapter>.Instance);
+        visual.CanHandle("compose").ShouldBeTrue();
+        var visualResult = await visual.ExecuteAsync(new AgentExecutionContext
+        {
+            RunId = "n6-smoke-run",
+            TraceId = "n6-smoke-trace",
+            StepId = "visual-agent-step",
+            UserId = "test-user",
+            Action = "compose",
+            UserMessage = "N6 smoke visual compose"
+        });
+        visualResult.Success.ShouldBeTrue();
+        visualResult.Content.ShouldContain("compose");
+    }
+
     public static IEnumerable<object[]> NonCodeAdapterSources()
         => ReadToolboxAdapterSources()
             .Where(x => NonCodeToolboxAdapters.Contains(x.FileName, StringComparer.Ordinal))
@@ -109,5 +157,62 @@ public class CdsAgentRuntimeCompatibilityTests
         }
 
         throw new DirectoryNotFoundException("Could not locate repository root from test base directory.");
+    }
+
+    private sealed class FakeLlmGateway : ILlmGateway
+    {
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default) =>
+            Task.FromResult(GatewayResponse.Ok("fake gateway response", FakeResolution()));
+
+        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
+            GatewayRequest request,
+            [EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            yield return GatewayStreamChunk.Text("fake gateway response");
+            yield return GatewayStreamChunk.Done("stop", null);
+        }
+
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(
+            GatewayRawRequest request,
+            GatewayModelResolution resolution,
+            CancellationToken ct = default) =>
+            Task.FromResult(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"data":[{"url":"https://example.invalid/image.png"}]}""",
+                Resolution = resolution
+            });
+
+        public Task<GatewayModelResolution> ResolveModelAsync(
+            string appCallerCode,
+            string modelType,
+            string? expectedModel = null,
+            CancellationToken ct = default) =>
+            Task.FromResult(FakeResolution());
+
+        public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
+            string appCallerCode,
+            string modelType,
+            CancellationToken ct = default) =>
+            Task.FromResult(new List<AvailableModelPool>());
+
+        public ILLMClient CreateClient(
+            string appCallerCode,
+            string modelType,
+            int maxTokens = 4096,
+            double temperature = 0.2,
+            bool includeThinking = false,
+            string? expectedModel = null) =>
+            throw new NotSupportedException("N6 compatibility tests do not create legacy LLM clients.");
+
+        private static GatewayModelResolution FakeResolution() => new()
+        {
+            Success = true,
+            ResolutionType = "test",
+            ActualModel = "fake-model",
+            ActualPlatformId = "fake-platform"
+        };
     }
 }
