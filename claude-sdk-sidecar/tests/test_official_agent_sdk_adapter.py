@@ -374,7 +374,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "git_ref": "main",
             })
 
-            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_exec):
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
                 stream = run_official_agent(req)
                 first = await anext(stream)
                 await stream.aclose()
@@ -401,7 +401,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "git_ref": "main",
             })
 
-            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_exec):
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
                 stream = run_official_agent(req)
                 first = await anext(stream)
                 await stream.aclose()
@@ -424,7 +424,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
             existing = Path(workspaces_root) / slug
             (existing / ".git").mkdir(parents=True)
 
-            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_exec):
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
                 stream = run_official_agent(req)
                 first = await anext(stream)
                 await stream.aclose()
@@ -473,7 +473,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
                 "git_ref": "main",
             })
 
-            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_auth_failure_exec):
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_auth_failure_exec):
                 events = [event async for event in run_official_agent(req)]
 
         self.assertEqual([event.type for event in events], ["error"])
