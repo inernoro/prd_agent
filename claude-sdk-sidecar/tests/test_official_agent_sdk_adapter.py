@@ -21,6 +21,9 @@ class FakeResultMessage:
         self.result = result
         self.subtype = subtype
         self.usage = usage
+        self.session_id = "sdk-session-1"
+        self.total_cost_usd = 0.0123
+        self.duration_ms = 1234
 
 
 class FakeUsage:
@@ -145,6 +148,10 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1].final_text, "adapter ok")
         self.assertEqual(events[-1].input_tokens, 3)
         self.assertEqual(events[-1].output_tokens, 5)
+        self.assertEqual(events[2].content["sdkResult"]["subtype"], "success")
+        self.assertEqual(events[2].content["sdkResult"]["session_id"], "sdk-session-1")
+        self.assertEqual(events[2].content["sdkResult"]["total_cost_usd"], 0.0123)
+        self.assertEqual(events[-1].content["sdkResult"]["duration_ms"], 1234)
         self.assertEqual(events[0].content["allowedTools"], ["Read", "Grep", "Glob"])
         self.assertEqual(events[0].content["permissionMode"], "default")
         self.assertEqual(events[0].content["builtinWriteToolsEnabled"], False)

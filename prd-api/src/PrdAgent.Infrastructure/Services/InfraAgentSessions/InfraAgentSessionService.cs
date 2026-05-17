@@ -1391,6 +1391,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         runtimeAdapter = _runtimeAdapter.AdapterKind,
                         inputTokens = ev.InputTokens,
                         outputTokens = ev.OutputTokens,
+                        content = ev.Content,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
@@ -1414,6 +1415,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         finalText = doneText,
                         source = eventSource,
                         runtimeAdapter = _runtimeAdapter.AdapterKind,
+                        content = ev.Content,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     await _db.InfraAgentSessions.UpdateOneAsync(

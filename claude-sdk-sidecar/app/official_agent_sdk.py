@@ -111,6 +111,29 @@ def _usage_value(usage: Any, name: str, fallback: int = 0) -> int:
         return fallback
 
 
+def _safe_result_metadata(message: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    fields = (
+        "subtype",
+        "session_id",
+        "sessionId",
+        "model",
+        "stop_reason",
+        "stopReason",
+        "total_cost_usd",
+        "totalCostUsd",
+        "duration_ms",
+        "durationMs",
+        "num_turns",
+        "numTurns",
+    )
+    for name in fields:
+        value = getattr(message, name, None)
+        if isinstance(value, (str, int, float, bool)):
+            metadata[name] = value
+    return metadata
+
+
 def _runtime_preflight(cwd: str | None) -> list[str]:
     missing: list[str] = []
     if not shutil.which("claude"):
@@ -325,6 +348,7 @@ async def run_official_agent(
     total_in = 0
     total_out = 0
     cancelled = False
+    result_metadata: dict[str, Any] = {}
     interrupt_task: asyncio.Task | None = None
     try:
         async with ClaudeSDKClient(options=options) as client:
@@ -337,6 +361,7 @@ async def run_official_agent(
                     cancelled = True
 
                 if isinstance(message, ResultMessage):
+                    result_metadata = _safe_result_metadata(message)
                     result = getattr(message, "result", None)
                     if isinstance(result, str) and result and not cancelled:
                         final_text = result
@@ -381,8 +406,19 @@ async def run_official_agent(
             interrupt_task.cancel()
 
     if total_in or total_out:
-        yield SidecarEvent(type="usage", input_tokens=total_in, output_tokens=total_out)
+        yield SidecarEvent(
+            type="usage",
+            input_tokens=total_in,
+            output_tokens=total_out,
+            content={"sdkResult": result_metadata} if result_metadata else None,
+        )
     if cancelled:
         yield SidecarEvent(type="error", error_code="cancelled", message="run cancelled")
         return
-    yield SidecarEvent(type="done", final_text=final_text, input_tokens=total_in, output_tokens=total_out)
+    yield SidecarEvent(
+        type="done",
+        final_text=final_text,
+        input_tokens=total_in,
+        output_tokens=total_out,
+        content={"sdkResult": result_metadata} if result_metadata else None,
+    )
