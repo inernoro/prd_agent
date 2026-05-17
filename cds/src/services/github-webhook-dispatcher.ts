@@ -24,6 +24,7 @@ import type { GitHubAppClient } from './github-app-client.js';
 import { branchEvents, nowIso } from './branch-events.js';
 import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
+import { analyzeChangeImpact } from './change-impact-analyzer.js';
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
@@ -62,6 +63,7 @@ export interface WebhookDispatchResult {
     | 'ignored-non-branch'
     | 'ignored-non-push-branch'
     | 'ignored-auto-deploy-off'
+    | 'ignored-doc-only'
     | 'ignored-ping'
     | 'ignored-event'
     | 'branch-created'
@@ -133,6 +135,12 @@ export interface GitHubPushEvent {
   };
   installation?: { id: number };
   head_commit?: { id: string; message: string } | null;
+  commits?: Array<{
+    id?: string;
+    added?: string[];
+    modified?: string[];
+    removed?: string[];
+  }>;
   sender?: { login: string };
 }
 
@@ -370,6 +378,27 @@ export class GitHubWebhookDispatcher {
     const branches = this.deps.stateService.getBranchesForProject(projectId);
     const hit = branches.find((b) => b.githubPrNumber === prNumber);
     return hit ? hit.id : null;
+  }
+
+  private changedPathsFromPush(event: GitHubPushEvent): string[] {
+    const out = new Set<string>();
+    for (const commit of event.commits || []) {
+      for (const p of [...(commit.added || []), ...(commit.modified || []), ...(commit.removed || [])]) {
+        const normalized = String(p || '').trim().replace(/^\/+/, '');
+        if (normalized) out.add(normalized);
+      }
+    }
+    return [...out];
+  }
+
+  private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
+    const changedPaths = this.changedPathsFromPush(event);
+    if (changedPaths.length === 0) return { ok: false, changedPaths };
+    const impact = analyzeChangeImpact(changedPaths);
+    return {
+      ok: !impact.needsRestart && impact.hotReloadablePaths.length === 0 && impact.irrelevantPaths.length === changedPaths.length,
+      changedPaths,
+    };
   }
 
   /**
@@ -684,6 +713,38 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
     const branchId = entry?.id ?? canonicalId;
     let created = false;
+
+    const docsOnly = entry ? this.isDocsOnlyPush(event) : { ok: false, changedPaths: [] };
+    if (docsOnly.ok) {
+      if (!dryRun) {
+        this.deps.stateService.updateBranchGithubMeta(branchId, {
+          githubRepoFullName: repoFullName,
+          githubCommitSha: commitSha,
+          githubInstallationId: project.githubInstallationId ?? event.installation?.id,
+        });
+        this.deps.stateService.save();
+        const updatedEntry = this.deps.stateService.getBranch(branchId);
+        if (updatedEntry) {
+          branchEvents.emitEvent({
+            type: 'branch.updated',
+            payload: {
+              branchId,
+              projectId: updatedEntry.projectId,
+              patch: {
+                githubRepoFullName: updatedEntry.githubRepoFullName,
+                githubCommitSha: updatedEntry.githubCommitSha,
+              },
+              ts: nowIso(),
+            },
+          });
+        }
+      }
+      return {
+        action: 'ignored-doc-only',
+        message: `${dryRun ? '[dry-run] ' : ''}Push ${commitSha.slice(0, 7)} only changed ${docsOnly.changedPaths.length} doc/metadata file(s); refreshed branch metadata without deploy.`,
+        branchId,
+      };
+    }
 
     if (!entry) {
       // Refuse to auto-clone if the project's own clone isn't ready yet —
