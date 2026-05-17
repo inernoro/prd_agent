@@ -4,7 +4,7 @@
 # ============================================
 #
 # Runs the smallest useful CDS Agent cycle in dependency order:
-#   R0 runtime pool -> templates -> R1 repair dry-run/apply -> readiness ledger
+#   R0 runtime pool -> sidecar alias stability -> templates -> R1 repair dry-run/apply -> readiness ledger
 #   -> S1 official SDK run -> S2/S3 controls -> V1 visual -> N6 non-code boundary
 #
 # This script does not make provider calls unless the caller explicitly sets
@@ -271,6 +271,11 @@ printf 'Provider calls: %s\n' "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-0}"
 printf 'R1 repair apply: %s\n' "$([[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]] && printf yes || printf no)"
 
 run_step "r0-runtime" "R0 runtime pool official SDK ownership" "$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh" || finish_cycle 1
+if [[ -n "${CDS_HOST:-}" ]]; then
+  run_step "r0-sidecar-alias" "R0 sidecar alias stability from API container" "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" || finish_cycle 1
+else
+  skip_step "R0 sidecar alias stability from API container" "set CDS_HOST to exec inside the remote CDS API container"
+fi
 run_step "t1-templates" "T1 official templates and adapter matrix" "$SCRIPT_DIR/smoke-cds-agent-profile-templates.sh" || finish_cycle 1
 run_step "r1-repair" "R1 profile repair dry-run or test-before-promote" "$SCRIPT_DIR/smoke-cds-agent-r1-profile-repair.sh" || finish_cycle 1
 run_step "readiness" "Commercial readiness ledger" "$SCRIPT_DIR/smoke-cds-agent-commercial-readiness.sh" || finish_cycle 1
