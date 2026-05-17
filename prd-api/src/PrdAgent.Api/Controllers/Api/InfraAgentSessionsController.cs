@@ -199,10 +199,10 @@ public class InfraAgentSessionsController : ControllerBase
                 "N6",
                 "非代码智能体兼容回归",
                 "PRD/defect/literary/visual 不被 CDS sidecar pool 或 profile gate 阻断。",
-                "CdsAgentRuntimeCompatibilityTests 通过，并补对应业务最小 smoke 后再放宽路由。",
+                "scripts/smoke-cds-agent-non-code-compatibility.sh 通过；它覆盖源码扫描和构造函数反射护栏。",
                 "ready-to-run",
                 null,
-                new[] { "dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter FullyQualifiedName~CdsAgentRuntimeCompatibilityTests" })
+                new[] { "bash scripts/smoke-cds-agent-non-code-compatibility.sh" })
         };
         return new SidecarNextCyclePlan(
             "official-sdk-provider-closure",

@@ -472,6 +472,8 @@ public class InfraAgentSessionsControllerTests
             var nextCyclePlan = diagnostics.NextCyclePlan.ShouldNotBeNull();
             nextCyclePlan.Items.Select(x => x.Code).ShouldBe(new[] { "N1", "N2", "N3", "N4", "N5", "N6" });
             nextCyclePlan.Items.Single(x => x.Code == "N6").Status.ShouldBe("ready-to-run");
+            nextCyclePlan.Items.Single(x => x.Code == "N6").NextActions.ShouldNotBeNull()
+                .ShouldContain("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
         }
         finally
         {
