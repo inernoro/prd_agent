@@ -149,6 +149,20 @@ bash claude-sdk-sidecar/smoke.sh
 key 前置诊断已经接上。设置 `ANTHROPIC_API_KEY` 后重跑，才代表真实 Anthropic
 端到端调用通过。
 
+sidecar 自检通过后，再跑 MAP runtime-status smoke，确认 MAP 控制面能发现并路由到该
+official SDK sidecar：
+
+```bash
+SMOKE_TEST_HOST=http://localhost:5000 \
+AI_ACCESS_KEY=<map-ai-access-key> \
+SMOKE_USER=admin \
+bash scripts/smoke-cds-agent-runtime-status.sh
+```
+
+这个脚本不会发起模型 run；它只验证认证、`runtime-status`、实例发现、`healthyCount`
+和 `loopOwner=claude-agent-sdk`。如果这里失败，不要继续跑 S1/S2/S3，先修 sidecar
+discovery、`/readyz` 或 MAP 静态旁路配置。
+
 验证入口仍然是：
 
 ```text
