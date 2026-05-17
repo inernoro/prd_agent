@@ -126,6 +126,13 @@ SIDECAR_GITHUB_TOKEN=<github-token>
 | `git_ref_not_found` | 确认 branch/tag/ref 存在 |
 | `workspace_target_conflict` | 清理或更换 `SIDECAR_WORKSPACES_ROOT` 下冲突目录 |
 
+如果 session 事件出现 `provider_key_missing`，说明 sidecar 已可用，但本次 run 没有拿到
+Anthropic provider key。处理顺序：
+
+1. 独立 sidecar / 静态 sidecar：在 sidecar 环境设置 `ANTHROPIC_API_KEY`。
+2. MAP 控制面运行：在 CDS Agent 页面选择带有效 API key 的 runtime profile。
+3. 自动化调用：确认请求里传了 `profile`，或显式传 `apiKey/baseUrl` request override。
+
 验证入口仍然是：
 
 ```text

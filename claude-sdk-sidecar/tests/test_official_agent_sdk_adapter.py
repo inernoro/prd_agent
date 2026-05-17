@@ -183,6 +183,9 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("SIDECAR_WORKSPACES_ROOT", None)
         os.environ.pop("SIDECAR_GITHUB_TOKEN", None)
         os.environ.pop("GITHUB_TOKEN", None)
+        os.environ.pop("ANTHROPIC_BASE_URL", None)
+        os.environ.pop("SIDECAR_PROVIDER_KEY_MODE", None)
+        os.environ["ANTHROPIC_API_KEY"] = "sk-env-test"
 
     async def test_streams_runtime_text_usage_and_done(self) -> None:
         events = [event async for event in run_official_agent(build_request())]
@@ -211,8 +214,35 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].content["cdsRole"], "sandbox-runtime")
         self.assertEqual(events[0].content["upstreamSource"], "env-default")
         self.assertEqual(events[0].content["baseUrlConfigured"], False)
-        self.assertEqual(events[0].content["apiKeyConfigured"], False)
+        self.assertEqual(events[0].content["apiKeyConfigured"], True)
         self.assertEqual(events[0].content["workspaceSource"], "unset")
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_API_KEY"], "sk-env-test")
+
+    async def test_missing_provider_key_is_structured_error_before_sdk_run(self) -> None:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "provider_key_missing")
+        self.assertEqual(events[0].content["adapter"], "claude-agent-sdk")
+        self.assertEqual(events[0].content["upstreamSource"], "env-default")
+        self.assertEqual(events[0].content["apiKeyConfigured"], False)
+        self.assertEqual(events[0].content["providerKeyMode"], "runtime-profile-or-env")
+        self.assertIn("MAP runtime profile", events[0].content["nextActions"][1])
+        self.assertIsNone(LAST_OPTIONS)
+
+    async def test_env_default_provider_base_url_is_passed_to_sdk_options(self) -> None:
+        os.environ["ANTHROPIC_BASE_URL"] = "https://gateway.example/v1"
+
+        stream = run_official_agent(build_request())
+        first = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["upstreamSource"], "env-default")
+        self.assertEqual(first.content["baseUrlConfigured"], True)
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_BASE_URL"], "https://gateway.example/v1")
 
     async def test_permission_callback_allows_readonly_and_denies_unbridged_write(self) -> None:
         stream = run_official_agent(build_request())

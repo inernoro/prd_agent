@@ -151,6 +151,10 @@ curl http://127.0.0.1:7400/readyz
 `readyz.blockers` / `readyz.nextActions` 会直接给出缺失项和修复动作；
 默认 `SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env` 时，不会因为 sidecar env 缺少
 `ANTHROPIC_API_KEY` 判定不可用，provider key 可由 MAP runtime profile 或请求覆盖下发。
+真正执行 run 时，官方 adapter 会在进入 Claude Agent SDK 前检查有效 provider key；
+如果 env、runtime profile、request override 都没有 key，会返回结构化
+`provider_key_missing`，并在 `content.nextActions` 中提示设置 sidecar env 或选择 MAP
+runtime profile。这个错误发生在 SDK client 创建之前，不会伪装成 SDK 执行失败。
 MAP 页面通过
 `GET /api/infra-agent-sessions/runtime-status` 读取 sidecar pool 诊断；如果
 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 但缺 `claude_agent_sdk` 或 workspace root 不存在，

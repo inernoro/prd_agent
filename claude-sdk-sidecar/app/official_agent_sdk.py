@@ -459,14 +459,44 @@ async def run_official_agent(
         )
         return
 
+    env_base_url = os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None
+    effective_base_url = upstream_base or env_base_url
+    env_api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or None
+    effective_api_key = upstream_key or env_api_key
+    if not effective_api_key:
+        provider_key_mode = os.environ.get(
+            "SIDECAR_PROVIDER_KEY_MODE",
+            "runtime-profile-or-env",
+        ).strip().lower()
+        yield SidecarEvent(
+            type="error",
+            error_code="provider_key_missing",
+            message=(
+                "ANTHROPIC_API_KEY is required, or MAP must provide a runtime "
+                "profile/request apiKey for the official Claude Agent SDK adapter."
+            ),
+            content={
+                "adapter": "claude-agent-sdk",
+                "upstreamSource": upstream_source,
+                "baseUrlConfigured": bool(effective_base_url),
+                "apiKeyConfigured": False,
+                "providerKeyMode": provider_key_mode,
+                "nextActions": [
+                    "set ANTHROPIC_API_KEY on the sidecar environment for standalone use",
+                    "select or create a MAP runtime profile with a valid provider apiKey",
+                    "verify the CDS Agent session request includes the intended runtime profile",
+                ],
+            },
+        )
+        return
+
     env: dict[str, str] = {
         "API_TIMEOUT_MS": str(max(1, req.timeout_seconds) * 1000),
         "CLAUDE_CODE_MAX_RETRIES": os.environ.get("CLAUDE_CODE_MAX_RETRIES", "2"),
+        "ANTHROPIC_API_KEY": effective_api_key,
     }
-    if upstream_key:
-        env["ANTHROPIC_API_KEY"] = upstream_key
-    if upstream_base:
-        env["ANTHROPIC_BASE_URL"] = upstream_base
+    if effective_base_url:
+        env["ANTHROPIC_BASE_URL"] = effective_base_url
 
     async def can_use_tool(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
         normalized = tool_name.strip()
@@ -545,8 +575,8 @@ async def run_official_agent(
             "builtinWriteTools": unsafe_builtin_tools,
             "approvalBridge": "sdk-can-use-tool",
             "upstreamSource": upstream_source,
-            "baseUrlConfigured": bool(upstream_base),
-            "apiKeyConfigured": bool(upstream_key or os.environ.get("ANTHROPIC_API_KEY", "").strip()),
+            "baseUrlConfigured": bool(effective_base_url),
+            "apiKeyConfigured": True,
             "protocol": req.protocol or "anthropic",
         },
     )
