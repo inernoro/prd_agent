@@ -142,6 +142,92 @@ public class InfraAgentRuntimeProfilesControllerTests
         response.Error.ShouldNotBeNull().Code.ShouldBe(InfraAgentRuntimeProfileErrorCodes.TemplateNotFound);
     }
 
+    [Fact]
+    public async Task CreateDefaultFromTemplateAfterTest_ShouldUseBackendPromotionFlow()
+    {
+        var service = new Mock<IInfraAgentRuntimeProfileService>();
+        var request = new CreateInfraAgentRuntimeProfileFromTemplateRequest("Team Claude", "sk-ant-test", true);
+        var expected = new InfraAgentRuntimeProfileView(
+            "profile-1",
+            "Team Claude",
+            InfraAgentRuntimes.ClaudeSdk,
+            InfraAgentRuntimeProtocols.Anthropic,
+            "https://api.anthropic.com",
+            "claude-sonnet-4-20250514",
+            2,
+            4096,
+            900,
+            InfraAgentRuntimeNetworkPolicies.Restricted,
+            30,
+            true,
+            true,
+            DateTime.UtcNow,
+            DateTime.UtcNow);
+        var test = new InfraAgentRuntimeProfileTestResult(
+            "profile-1",
+            true,
+            "ok",
+            "模型配置可用，已收到上游响应。",
+            InfraAgentRuntimeProtocols.Anthropic,
+            "https://api.anthropic.com",
+            "claude-sonnet-4-20250514",
+            200,
+            123);
+        service
+            .Setup(x => x.CreateDefaultFromTemplateAfterTestAsync(
+                InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+                "user-1",
+                request,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new InfraAgentRuntimeProfilePromotionResult(expected, test));
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.CreateDefaultFromTemplateAfterTest(
+            InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+            request,
+            CancellationToken.None);
+
+        var created = result.ShouldBeOfType<ObjectResult>();
+        created.StatusCode.ShouldBe(StatusCodes.Status201Created);
+        var response = created.Value.ShouldBeOfType<ApiResponse<object>>();
+        var data = response.Data.ShouldNotBeNull();
+        data.GetType().GetProperty("item").ShouldNotBeNull().GetValue(data).ShouldBe(expected);
+        data.GetType().GetProperty("test").ShouldNotBeNull().GetValue(data).ShouldBe(test);
+        service.Verify(x => x.CreateDefaultFromTemplateAfterTestAsync(
+            InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+            "user-1",
+            request,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateDefaultFromTemplateAfterTest_ShouldMapFailedProfileTest()
+    {
+        var service = new Mock<IInfraAgentRuntimeProfileService>();
+        var request = new CreateInfraAgentRuntimeProfileFromTemplateRequest("Team Claude", "bad-key", true);
+        service
+            .Setup(x => x.CreateDefaultFromTemplateAfterTestAsync(
+                InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+                "user-1",
+                request,
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ProfileTestFailed,
+                "候选模型配置测试失败：invalid key",
+                StatusCodes.Status422UnprocessableEntity));
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.CreateDefaultFromTemplateAfterTest(
+            InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4,
+            request,
+            CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<ObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status422UnprocessableEntity);
+        var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+        response.Error.ShouldNotBeNull().Code.ShouldBe(InfraAgentRuntimeProfileErrorCodes.ProfileTestFailed);
+    }
+
     private static InfraAgentRuntimeProfilesController BuildController(
         IInfraAgentRuntimeProfileService service,
         string userId)

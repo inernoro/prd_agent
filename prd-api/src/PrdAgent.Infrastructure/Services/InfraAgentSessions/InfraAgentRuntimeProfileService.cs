@@ -148,6 +148,59 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return CreateAsync(userId, upsert, ct);
     }
 
+    public async Task<InfraAgentRuntimeProfilePromotionResult> CreateDefaultFromTemplateAfterTestAsync(
+        string templateId,
+        string userId,
+        CreateInfraAgentRuntimeProfileFromTemplateRequest request,
+        CancellationToken ct)
+    {
+        var candidate = await CreateFromTemplateAsync(
+            templateId,
+            userId,
+            request with { IsDefault = false },
+            ct);
+
+        var promoted = false;
+        try
+        {
+            var test = await TestAsync(candidate.Id, ct);
+            if (!test.Success)
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ProfileTestFailed,
+                    $"候选模型配置测试失败：{test.Message}",
+                    StatusCodes.Status422UnprocessableEntity);
+            }
+
+            var promotedItem = await UpdateAsync(
+                candidate.Id,
+                userId,
+                new UpsertInfraAgentRuntimeProfileRequest(
+                    candidate.Name,
+                    candidate.Runtime,
+                    candidate.Protocol,
+                    candidate.BaseUrl,
+                    candidate.Model,
+                    request.ApiKey,
+                    candidate.ResourceCpuCores,
+                    candidate.ResourceMemoryMb,
+                    candidate.TimeoutSeconds,
+                    candidate.NetworkPolicy,
+                    candidate.AutoCleanupMinutes,
+                    true),
+                ct);
+            promoted = true;
+            return new InfraAgentRuntimeProfilePromotionResult(promotedItem, test);
+        }
+        finally
+        {
+            if (!promoted)
+            {
+                await DeleteAsync(candidate.Id, ct);
+            }
+        }
+    }
+
     public async Task<InfraAgentRuntimeProfileView> UpdateAsync(
         string id,
         string userId,

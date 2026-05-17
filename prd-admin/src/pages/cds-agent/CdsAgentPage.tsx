@@ -12,6 +12,7 @@ import {
   captureInfraAgentBrowserSnapshot,
   collectInfraAgentArtifacts,
   createInfraAgentRuntimeProfile,
+  createDefaultInfraAgentRuntimeProfileFromTemplateAfterTest,
   createInfraAgentRuntimeProfileFromTemplate,
   createInfraAgentSession,
   deleteInfraAgentRuntimeProfile,
@@ -2256,6 +2257,27 @@ export default function CdsAgentPage() {
     try {
       const template = matchingRuntimeProfileTemplate();
       const shouldPromoteAfterTest = profileDraft.isDefault;
+      if (shouldPromoteAfterTest && template) {
+        const promotionRes = await createDefaultInfraAgentRuntimeProfileFromTemplateAfterTest(template.id, {
+          name: profileDraft.name,
+          apiKey: profileDraft.apiKey,
+          isDefault: true,
+        });
+        if (!promotionRes.success || !promotionRes.data?.item) {
+          toast.error('默认配置测试失败', promotionRes.error?.message ?? '已取消设为默认');
+          return;
+        }
+        const testResult = promotionRes.data.test;
+        setProfileTest(`${testResult.success ? '可用' : '失败'} · ${testResult.protocol} · HTTP ${testResult.httpStatus ?? 'n/a'} · ${testResult.elapsedMs}ms · ${testResult.message}`);
+        const savedProfile = promotionRes.data.item;
+        setProfiles((prev) => [savedProfile, ...prev.filter((item) => item.id !== savedProfile.id)]);
+        setDraft((prev) => ({ ...prev, runtimeProfileId: savedProfile.id }));
+        setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+        promoted = true;
+        toast.success('模型配置已保存', '已通过模型测试并设为默认配置');
+        return;
+      }
+
       const createInput = { ...profileDraft, isDefault: shouldPromoteAfterTest ? false : profileDraft.isDefault };
       const res = template
         ? await createInfraAgentRuntimeProfileFromTemplate(template.id, {
@@ -2342,13 +2364,30 @@ export default function CdsAgentPage() {
     try {
       if (profileDraft.isDefault) {
         const template = matchingRuntimeProfileTemplate();
-        const candidateRes = template
-          ? await createInfraAgentRuntimeProfileFromTemplate(template.id, {
-              name: profileDraft.name,
-              apiKey: profileDraft.apiKey,
-              isDefault: false,
-            })
-          : await createInfraAgentRuntimeProfile({ ...profileDraft, isDefault: false });
+        if (template) {
+          const promotionRes = await createDefaultInfraAgentRuntimeProfileFromTemplateAfterTest(template.id, {
+            name: profileDraft.name,
+            apiKey: profileDraft.apiKey,
+            isDefault: true,
+          });
+          if (!promotionRes.success || !promotionRes.data?.item) {
+            toast.error('默认配置测试失败', promotionRes.error?.message ?? '当前默认配置保持不变');
+            return;
+          }
+          const testResult = promotionRes.data.test;
+          setProfileTest(`${testResult.success ? '可用' : '失败'} · ${testResult.protocol} · HTTP ${testResult.httpStatus ?? 'n/a'} · ${testResult.elapsedMs}ms · ${testResult.message}`);
+          const savedProfile = promotionRes.data.item;
+          promoted = true;
+          if (activeProfile.id !== savedProfile.id) {
+            await deleteInfraAgentRuntimeProfile(activeProfile.id).catch(() => undefined);
+          }
+          setProfiles((prev) => [savedProfile, ...prev.filter((item) => item.id !== savedProfile.id && item.id !== activeProfile.id)]);
+          setDraft((prev) => ({ ...prev, runtimeProfileId: savedProfile.id }));
+          setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+          toast.success('模型配置已更新', '已通过模型测试并设为默认配置');
+          return;
+        }
+        const candidateRes = await createInfraAgentRuntimeProfile({ ...profileDraft, isDefault: false });
         if (!candidateRes.success || !candidateRes.data?.item) {
           toast.error('更新模型配置失败', candidateRes.error?.message ?? '请检查 baseUrl、model 和 API key');
           return;

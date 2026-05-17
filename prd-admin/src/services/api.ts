@@ -803,6 +803,7 @@ export const api = {
     templates: () => '/api/infra-agent-runtime-profiles/templates',
     adapterCompatibility: () => '/api/infra-agent-runtime-profiles/adapter-compatibility',
     createFromTemplate: (templateId: string) => `/api/infra-agent-runtime-profiles/templates/${templateId}/profiles`,
+    createDefaultFromTemplateAfterTest: (templateId: string) => `/api/infra-agent-runtime-profiles/templates/${templateId}/default-profile`,
     create: () => '/api/infra-agent-runtime-profiles',
     importDefaultModel: () => '/api/infra-agent-runtime-profiles/import-default-model',
     byId: (id: string) => `/api/infra-agent-runtime-profiles/${id}`,

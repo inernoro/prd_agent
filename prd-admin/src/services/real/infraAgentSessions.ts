@@ -339,6 +339,11 @@ interface RuntimeProfileResp {
   item: InfraAgentRuntimeProfileView;
 }
 
+interface RuntimeProfilePromotionResp {
+  item: InfraAgentRuntimeProfileView;
+  test: InfraAgentRuntimeProfileTestResult;
+}
+
 interface RuntimeProfileTestResp {
   result: InfraAgentRuntimeProfileTestResult;
 }
@@ -615,6 +620,17 @@ export async function createInfraAgentRuntimeProfileFromTemplate(templateId: str
   isDefault?: boolean;
 }): Promise<ApiResponse<RuntimeProfileResp>> {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.createFromTemplate(encodeURIComponent(templateId)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function createDefaultInfraAgentRuntimeProfileFromTemplateAfterTest(templateId: string, input: {
+  name?: string;
+  apiKey?: string;
+  isDefault?: boolean;
+}): Promise<ApiResponse<RuntimeProfilePromotionResp>> {
+  return await apiRequest<RuntimeProfilePromotionResp>(api.infraAgentRuntimeProfiles.createDefaultFromTemplateAfterTest(encodeURIComponent(templateId)), {
     method: 'POST',
     body: input,
   });

@@ -14,6 +14,8 @@ public interface IInfraAgentRuntimeProfileService
 
     Task<InfraAgentRuntimeProfileView> CreateFromTemplateAsync(string templateId, string userId, CreateInfraAgentRuntimeProfileFromTemplateRequest request, CancellationToken ct);
 
+    Task<InfraAgentRuntimeProfilePromotionResult> CreateDefaultFromTemplateAfterTestAsync(string templateId, string userId, CreateInfraAgentRuntimeProfileFromTemplateRequest request, CancellationToken ct);
+
     Task<InfraAgentRuntimeProfileView> UpdateAsync(string id, string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct);
@@ -44,6 +46,11 @@ public record CreateInfraAgentRuntimeProfileFromTemplateRequest(
     string? Name,
     string? ApiKey,
     bool? IsDefault = null
+);
+
+public record InfraAgentRuntimeProfilePromotionResult(
+    InfraAgentRuntimeProfileView Item,
+    InfraAgentRuntimeProfileTestResult Test
 );
 
 public record InfraAgentRuntimeProfileView(
@@ -294,6 +301,7 @@ public static class InfraAgentRuntimeProfileErrorCodes
     public const string ModelNotConfigured = "model_not_configured";
     public const string ModelConfigIncomplete = "model_config_incomplete";
     public const string TemplateNotFound = "template_not_found";
+    public const string ProfileTestFailed = "profile_test_failed";
 }
 
 public class InfraAgentRuntimeProfileException : Exception
