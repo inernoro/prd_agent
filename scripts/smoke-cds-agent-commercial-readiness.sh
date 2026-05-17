@@ -149,6 +149,10 @@ smoke_assert_nonempty "$next_cycle_plan" "diagnostics.nextCyclePlan"
 smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.cycle')" "official-sdk-provider-closure" "nextCyclePlan.cycle"
 smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '[.items[]? | select(.code == "N1")] | length')" "1" "nextCyclePlan.N1"
 smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '[.items[]? | select(.code == "N6")] | length')" "1" "nextCyclePlan.N6"
+n6_evidence=$(printf '%s' "$next_cycle_plan" | jq -r '.items[]? | select(.code == "N6") | .evidence')
+smoke_assert_contains "$n6_evidence" "源码扫描" "nextCyclePlan.N6.evidence"
+smoke_assert_contains "$n6_evidence" "构造函数反射" "nextCyclePlan.N6.evidence"
+smoke_assert_contains "$n6_evidence" "最小业务路径" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
