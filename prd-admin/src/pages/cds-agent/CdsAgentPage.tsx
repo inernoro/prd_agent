@@ -1209,6 +1209,8 @@ export default function CdsAgentPage() {
         value: s1EvidenceReady ? 'evidence found' : backendGateValue('S1', defaultProfileReady ? 'unblocked' : 'blocked'),
         detail: s1EvidenceReady
           ? '当前会话已有 assistant 输出或 done 事件，可作为只读 run 的页面证据。'
+          : providerEvidenceState.s1DetailOverride
+          ? providerEvidenceState.s1DetailOverride
           : backendGateDetail('S1', defaultProfileReady
           ? '配置已解锁；还需运行 S1 smoke，证明官方 SDK 能真实审查仓库。'
           : providerEvidenceState.blockedDetail),
@@ -1220,6 +1222,8 @@ export default function CdsAgentPage() {
         value: s2EvidenceReady ? 'evidence found' : backendGateValue('S2', defaultProfileReady ? 'unblocked' : 'blocked'),
         detail: s2EvidenceReady
           ? '当前会话已有 approval request 和 MAP decision 证据。'
+          : providerEvidenceState.s2DetailOverride
+          ? providerEvidenceState.s2DetailOverride
           : backendGateDetail('S2', defaultProfileReady
           ? '还需运行 S2 controls，证明危险工具会回到 MAP 审批。'
           : providerEvidenceState.blockedDetail),
@@ -1231,6 +1235,8 @@ export default function CdsAgentPage() {
         value: s3EvidenceReady ? 'evidence found' : backendGateValue('S3', defaultProfileReady ? 'unblocked' : 'blocked'),
         detail: s3EvidenceReady
           ? '当前会话已有 runtime cancel 或 SDK cancelled 证据。'
+          : providerEvidenceState.s3DetailOverride
+          ? providerEvidenceState.s3DetailOverride
           : backendGateDetail('S3', defaultProfileReady
           ? '还需运行 S3 controls，证明 Stop 能触达底层 SDK run。'
           : providerEvidenceState.blockedDetail),

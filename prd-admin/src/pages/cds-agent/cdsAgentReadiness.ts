@@ -9,6 +9,9 @@ export type ProviderEvidenceInput = {
 export type ProviderEvidenceState = {
   eligible: boolean;
   blockedDetail: string;
+  s1DetailOverride: string;
+  s2DetailOverride: string;
+  s3DetailOverride: string;
   s1EvidenceReady: boolean;
   s2EvidenceReady: boolean;
   s3EvidenceReady: boolean;
@@ -23,6 +26,9 @@ export function resolveProviderEvidenceState(input: ProviderEvidenceInput): Prov
   return {
     eligible,
     blockedDetail,
+    s1DetailOverride: !eligible && input.hasReadonlyRunEvidence ? blockedDetail : '',
+    s2DetailOverride: !eligible && input.hasApprovalEvidence ? blockedDetail : '',
+    s3DetailOverride: !eligible && input.hasCancelEvidence ? blockedDetail : '',
     s1EvidenceReady: eligible && input.hasReadonlyRunEvidence,
     s2EvidenceReady: eligible && input.hasApprovalEvidence,
     s3EvidenceReady: eligible && input.hasCancelEvidence,

@@ -17,6 +17,9 @@ describe('CDS Agent provider readiness evidence', () => {
     expect(state.s2EvidenceReady).toBe(false);
     expect(state.s3EvidenceReady).toBe(false);
     expect(state.blockedDetail).toContain('旧会话事件不能证明当前 provider gate');
+    expect(state.s1DetailOverride).toContain('旧会话事件不能证明当前 provider gate');
+    expect(state.s2DetailOverride).toContain('旧会话事件不能证明当前 provider gate');
+    expect(state.s3DetailOverride).toContain('旧会话事件不能证明当前 provider gate');
   });
 
   it('requires the official SDK loop before using page events as provider evidence', () => {
@@ -32,6 +35,9 @@ describe('CDS Agent provider readiness evidence', () => {
     expect(state.s1EvidenceReady).toBe(false);
     expect(state.s2EvidenceReady).toBe(false);
     expect(state.s3EvidenceReady).toBe(false);
+    expect(state.s1DetailOverride).toContain('旧会话事件不能证明当前 provider gate');
+    expect(state.s2DetailOverride).toContain('旧会话事件不能证明当前 provider gate');
+    expect(state.s3DetailOverride).toContain('旧会话事件不能证明当前 provider gate');
   });
 
   it('allows S1/S2/S3 page evidence only after R1 and official loop are ready', () => {
@@ -47,5 +53,8 @@ describe('CDS Agent provider readiness evidence', () => {
     expect(state.s1EvidenceReady).toBe(true);
     expect(state.s2EvidenceReady).toBe(true);
     expect(state.s3EvidenceReady).toBe(true);
+    expect(state.s1DetailOverride).toBe('');
+    expect(state.s2DetailOverride).toBe('');
+    expect(state.s3DetailOverride).toBe('');
   });
 });
