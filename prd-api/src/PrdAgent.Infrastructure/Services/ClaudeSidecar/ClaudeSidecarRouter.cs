@@ -562,6 +562,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             GitInstalled: TryReadBool(value, "gitInstalled"),
             SupportedRepositoryHosts: ReadStringArray(value, "supportedRepositoryHosts"),
             SupportedRepositoryFormats: ReadStringArray(value, "supportedRepositoryFormats"),
+            PrivateRepositoryAuthConfigured: TryReadBool(value, "privateRepositoryAuthConfigured"),
             WorkspaceLock: TryReadString(value, "workspaceLock"));
     }
 

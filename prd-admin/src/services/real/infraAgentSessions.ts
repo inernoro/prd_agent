@@ -154,6 +154,7 @@ export interface InfraAgentSidecarInstanceDiagnostics {
     gitInstalled?: boolean | null;
     supportedRepositoryHosts?: string[] | null;
     supportedRepositoryFormats?: string[] | null;
+    privateRepositoryAuthConfigured?: boolean | null;
     workspaceLock?: string | null;
   } | null;
   error?: string | null;

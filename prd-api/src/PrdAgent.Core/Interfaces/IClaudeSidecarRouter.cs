@@ -179,6 +179,7 @@ public sealed record SidecarWorkspacePreparationDiagnostics(
     bool? GitInstalled = null,
     IReadOnlyList<string>? SupportedRepositoryHosts = null,
     IReadOnlyList<string>? SupportedRepositoryFormats = null,
+    bool? PrivateRepositoryAuthConfigured = null,
     string? WorkspaceLock = null
 );
 

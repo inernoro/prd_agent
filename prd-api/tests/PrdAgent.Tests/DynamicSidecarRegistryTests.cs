@@ -430,6 +430,7 @@ public class DynamicSidecarRegistryTests
                       "gitInstalled": true,
                       "supportedRepositoryHosts": ["github.com"],
                       "supportedRepositoryFormats": ["owner/repo", "https://github.com/owner/repo"],
+                      "privateRepositoryAuthConfigured": true,
                       "workspaceLock": "in-process"
                     }
                   }
@@ -465,6 +466,7 @@ public class DynamicSidecarRegistryTests
         Assert.Equal("in-process", diagnostics.Instances[0].WorkspacePreparation!.WorkspaceLock);
         Assert.Contains("github.com", diagnostics.Instances[0].WorkspacePreparation!.SupportedRepositoryHosts ?? Array.Empty<string>());
         Assert.Contains("owner/repo", diagnostics.Instances[0].WorkspacePreparation!.SupportedRepositoryFormats ?? Array.Empty<string>());
+        Assert.True(diagnostics.Instances[0].WorkspacePreparation!.PrivateRepositoryAuthConfigured);
         Assert.Contains("missing claude_agent_sdk", diagnostics.Instances[0].ReadyzBlockers ?? Array.Empty<string>());
         Assert.Contains(
             "install the official SDK: pip install claude-agent-sdk",

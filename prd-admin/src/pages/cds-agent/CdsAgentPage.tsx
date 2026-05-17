@@ -812,12 +812,14 @@ export default function CdsAgentPage() {
     const workspaceRoot = workspacePreparation ? readString(workspacePreparation, 'workspacesRoot') : '';
     const workspaceRootExists = readBoolean(workspacePreparation, 'workspacesRootExists');
     const gitInstalled = readBoolean(workspacePreparation, 'gitInstalled');
+    const privateRepositoryAuthConfigured = readBoolean(workspacePreparation, 'privateRepositoryAuthConfigured');
     const workspaceLock = workspacePreparation ? readString(workspacePreparation, 'workspaceLock') : '';
     const workspacePrepState = workspacePreparation
       ? [
           autoGitWorkspace === true ? 'auto git' : autoGitWorkspace === false ? 'manual only' : 'auto 未上报',
           gitInstalled === true ? 'git ok' : gitInstalled === false ? 'git missing' : 'git 未上报',
           workspaceRootExists === true ? 'root exists' : workspaceRootExists === false ? 'root missing' : 'root 未上报',
+          privateRepositoryAuthConfigured === true ? 'private repo auth ok' : privateRepositoryAuthConfigured === false ? 'private repo auth missing' : 'private auth 未上报',
           workspaceLock || 'lock 未上报',
         ].join(' · ')
       : '未上报';
@@ -929,6 +931,7 @@ export default function CdsAgentPage() {
         ['External CLI', claudeCliState],
         ['Workspace prep', workspacePrepState],
         ['Workspace root', workspaceRoot || '未上报'],
+        ['Private repo auth', privateRepositoryAuthConfigured === true ? '已配置' : privateRepositoryAuthConfigured === false ? '未配置' : '未上报'],
         ['Run ID', shortId(runId)],
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
