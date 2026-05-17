@@ -153,6 +153,12 @@ function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): st
   return '';
 }
 
+function boolStatus(value: boolean | null | undefined, yes = 'OK', no = '缺失', unknown = '未知'): string {
+  if (value === true) return yes;
+  if (value === false) return no;
+  return unknown;
+}
+
 function sortSessions(items: InfraAgentSessionView[]): InfraAgentSessionView[] {
   return [...items].sort((a, b) => {
     const rank = statusRank(a.status) - statusRank(b.status);
@@ -649,6 +655,14 @@ export default function CdsAgentPage() {
     const registryIssue = runtimeStatus?.registryLastRefreshError || '';
     const blockers = runtimeStatus?.blockers?.filter(Boolean) ?? [];
     const nextActions = runtimeStatus?.nextActions?.filter(Boolean) ?? [];
+    const providerKeyState = primaryRuntime
+      ? boolStatus(primaryRuntime.anthropicKeyConfigured, '已配置', '缺失')
+      : '无实例';
+    const sidecarTokenState = primaryRuntime
+      ? boolStatus(primaryRuntime.sidecarTokenConfigured || primaryRuntime.tokenConfigured, '已配置', '缺失')
+      : '无实例';
+    const readyState = primaryRuntime ? boolStatus(primaryRuntime.ready, 'ready', 'not ready') : '无实例';
+    const httpState = primaryRuntime?.httpStatus ? `HTTP ${primaryRuntime.httpStatus}` : '未探测';
     const payloads = events.map(parsePayload).reverse();
     const latestRuntimePayload = payloads.find((payload) => (
       readString(payload, 'runtimeAdapter')
@@ -692,6 +706,10 @@ export default function CdsAgentPage() {
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
         ['Pool', sidecarState],
+        ['Ready', readyState],
+        ['HTTP', httpState],
+        ['Provider key', providerKeyState],
+        ['Sidecar token', sidecarTokenState],
         ['Discovery', registryIssue || '无发现异常'],
         ['Blocker', blockers[0] || '无阻塞项'],
         ['Next', nextActions[0] || '无建议动作'],
