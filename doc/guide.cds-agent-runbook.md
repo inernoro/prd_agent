@@ -83,6 +83,16 @@
 
 不要只看 `smoke-all.sh` 退出码。默认 smoke-all 会把尚未配置真实 provider 的 S1/S2/S3 识别为 readiness/skip，以便部署不断；商业级验收必须单独看 readiness pending。
 
+远程 preview 的默认入口是：
+
+```bash
+CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
+```
+
+不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 `blocked_r1`，不要继续 self update 或 redeploy；这表示 MAP/CDS/sidecar pool 已经到位，下一步是修 runtime profile。
+
+注意凭据边界：`AI_ACCESS_KEY` 是 MAP/CDS API 的 `X-AI-Access-Key` 鉴权，不是 Anthropic provider key。真实 provider key 只应通过 runtime profile、页面 R1 修复入口，或 smoke 里的 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 提供。
+
 | 门禁 | 证明什么 | 命令或入口 |
 | --- | --- | --- |
 | R0 | MAP/CDS/sidecar pool 可路由官方 SDK | `bash scripts/doctor-cds-agent-runtime.sh` |
@@ -97,6 +107,14 @@
 
 ```bash
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
+```
+
+截至 2026-05-18，远程 preview 的最新 one-cycle 证据是 `/tmp/cds-agent-cycle-20260518031829`：`R0=pass`、`N6=pass`、`R1/S1/S2/S3=pending`、`V1=skipped`，总耗时 40s。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
+
+```bash
+SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \
+SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 \
+  bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
 ## 会话无法恢复

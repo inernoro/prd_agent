@@ -49,6 +49,8 @@
 
 如果第 2 步没通过，先不要发审查 prompt；应该先运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
+当前远程 preview 的最新状态是：R0 控制面已通过，R1 仍阻塞。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
+
 ## 最小可用闭环
 
 面向日常使用时，先把"能打开页面"和"能真实审查代码"分开判断：
@@ -77,6 +79,14 @@ SMOKE_CDS_AGENT_DOCTOR_REPORT=/tmp/cds-agent-doctor.json \
 ```
 
 报告里的 `diagnosis` 是当前结论，`nextRecommended` 是下一步动作，`aliasCheck` 证明 API 容器访问 sidecar 是否稳定，`defaultProfile.compatibleWithDesiredRuntimeAdapter` 判断 R1 是否仍阻塞。这样每次排障都能明确时间花在 runtime pool、profile、provider 真调用、视觉截图还是非代码兼容回归。
+
+完整一周期检查优先用：
+
+```bash
+CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
+```
+
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518031829` 的结果是 `blocked_r1`，总耗时 40s，最慢的是 alias stability 10s、doctor 9s、readiness ledger 5s；这类时间线就是后续判断“时间花在哪里”的主记录。
 
 R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本。脚本和页面都会调用后端 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile`，由后端创建非默认 Anthropic 候选 profile，调用 `/test` 验证上游可用，成功后才提升为默认 profile，并复查 `commercialReadiness.R1=pass`。页面的“保存配置 + 设为默认”和“更新当前配置 + 设为默认”都走同样的 test-before-promote 流程；测试失败时会清理候选 profile，不会覆盖当前默认配置。
 设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。
