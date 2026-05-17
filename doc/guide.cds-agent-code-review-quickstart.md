@@ -52,6 +52,8 @@
 
 R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true` 返回的 `diagnostics.runtimeProfileRepairPlan` 为准。页面上的 “R1 默认 Claude profile” 卡片、复制诊断包和 readiness smoke 都应消费这个后端字段；不要在前端或文档里另写一套默认模型、协议或下一步判断。
 
+R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本，它会用后端模板创建默认 Anthropic profile，并复查 `commercialReadiness.R1=pass`。
+
 下一周期 N1-N6 的最小闭环以同一个接口返回的 `diagnostics.nextCyclePlan` 为准。它会明确每一步的状态、阻塞项、验收证据和停止条件；页面 Runtime 调试区只展示该计划，不能把文档里的表格复制成另一套前端逻辑。
 
 N6 的最小自动化入口是 `bash scripts/smoke-cds-agent-non-code-compatibility.sh`。它不消耗 provider token，会验证 PRD/Defect/Literary/Visual 等非代码 Toolbox agent 没有注入 CDS sidecar runtime pool 或 Claude sidecar 依赖，并用 fake gateway 跑过各自的最小业务动作。
