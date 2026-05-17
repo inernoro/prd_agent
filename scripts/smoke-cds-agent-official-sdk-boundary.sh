@@ -16,6 +16,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAIN_FILE="$ROOT_DIR/claude-sdk-sidecar/app/main.py"
 OFFICIAL_FILE="$ROOT_DIR/claude-sdk-sidecar/app/official_agent_sdk.py"
+SDK_TOOLING_FILE="$ROOT_DIR/claude-sdk-sidecar/app/sdk_tooling.py"
+UPSTREAM_FILE="$ROOT_DIR/claude-sdk-sidecar/app/upstream.py"
+SDK_EVENTS_FILE="$ROOT_DIR/claude-sdk-sidecar/app/sdk_events.py"
+WORKSPACE_FILE="$ROOT_DIR/claude-sdk-sidecar/app/workspace.py"
 LEGACY_FILE="$ROOT_DIR/claude-sdk-sidecar/app/agent_loop.py"
 REQ_FILE="$ROOT_DIR/claude-sdk-sidecar/requirements.txt"
 REPORT="${SMOKE_CDS_AGENT_BOUNDARY_REPORT:-}"
@@ -25,6 +29,8 @@ ROUTING_TEST="claude-sdk-sidecar/tests/test_sidecar_readiness.py"
 ROUTING_TEST_LOG=""
 
 failures=()
+SUPPORT_FILES=("$SDK_TOOLING_FILE" "$UPSTREAM_FILE" "$SDK_EVENTS_FILE" "$WORKSPACE_FILE")
+BOUNDARY_FILES=("$OFFICIAL_FILE" "${SUPPORT_FILES[@]}")
 
 if ! [[ "$OFFICIAL_ADAPTER_MAX_LINES" =~ ^[0-9]+$ ]]; then
   printf 'Invalid SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES: %s\n' "$OFFICIAL_ADAPTER_MAX_LINES" >&2
@@ -55,6 +61,15 @@ line_count() {
 
 official_lines=$(line_count "$OFFICIAL_FILE")
 legacy_lines=$(line_count "$LEGACY_FILE")
+support_lines_json=$(
+  for file in "${SUPPORT_FILES[@]}"; do
+    rel="${file#$ROOT_DIR/}"
+    lines=$(line_count "$file")
+    jq -n --arg file "$rel" --argjson lines "$lines" '{file:$file,lines:$lines}'
+  done | jq -s .
+)
+support_total_lines=$(jq -r '[.[].lines] | add // 0' <<< "$support_lines_json")
+bridge_total_lines=$((official_lines + support_total_lines))
 routing_test_status="pass"
 
 require_contains "$MAIN_FILE" 'DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sdk").strip()' \
@@ -71,6 +86,10 @@ require_contains "$OFFICIAL_FILE" 'create_sdk_mcp_server' \
   "MAP tools must be exposed through SDK MCP server"
 require_contains "$OFFICIAL_FILE" 'can_use_tool' \
   "MAP approval must bridge through SDK permission callback"
+require_contains "$SDK_TOOLING_FILE" 'create_sdk_mcp_server' \
+  "MAP SDK tooling helper must own SDK MCP server construction"
+require_contains "$SDK_TOOLING_FILE" 'can_use_tool' \
+  "MAP SDK tooling helper must own SDK permission callback"
 require_contains "$OFFICIAL_FILE" 'await client.query(' \
   "official adapter must delegate turn execution through ClaudeSDKClient.query"
 require_contains "$OFFICIAL_FILE" 'async for message in client.receive_response():' \
@@ -82,16 +101,19 @@ require_contains "$OFFICIAL_FILE" '"sdkLoopEnabled": True' \
 require_contains "$REQ_FILE" 'claude-agent-sdk' \
   "sidecar requirements must include official claude-agent-sdk"
 
-require_not_contains "$OFFICIAL_FILE" 'from anthropic import' \
-  "official adapter must not use raw anthropic client loop"
-require_not_contains "$OFFICIAL_FILE" 'AsyncAnthropic' \
-  "official adapter must not use AsyncAnthropic"
-require_not_contains "$OFFICIAL_FILE" 'client.messages.stream' \
-  "official adapter must not rebuild Anthropic message streaming"
-require_not_contains "$OFFICIAL_FILE" 'chat/completions' \
-  "official adapter must not rebuild OpenAI-compatible chat loop"
-require_not_contains "$OFFICIAL_FILE" 'run_agent' \
-  "official adapter must not call the legacy sidecar loop"
+for file in "${BOUNDARY_FILES[@]}"; do
+  rel="${file#$ROOT_DIR/}"
+  require_not_contains "$file" 'from anthropic import' \
+    "$rel must not use raw anthropic client loop"
+  require_not_contains "$file" 'AsyncAnthropic' \
+    "$rel must not use AsyncAnthropic"
+  require_not_contains "$file" 'client.messages.stream' \
+    "$rel must not rebuild Anthropic message streaming"
+  require_not_contains "$file" 'chat/completions' \
+    "$rel must not rebuild OpenAI-compatible chat loop"
+  require_not_contains "$file" 'run_agent' \
+    "$rel must not call the legacy sidecar loop"
+done
 
 if (( official_lines > OFFICIAL_ADAPTER_MAX_LINES )); then
   failures+=("official adapter should stay thin: ${official_lines} lines exceeds budget ${OFFICIAL_ADAPTER_MAX_LINES}; split MAP/CDS bridge helpers before growing a second loop")
@@ -125,6 +147,9 @@ if [[ -n "$REPORT" ]]; then
     --argjson officialLines "$official_lines" \
     --argjson legacyLines "$legacy_lines" \
     --argjson officialMaxLines "$OFFICIAL_ADAPTER_MAX_LINES" \
+    --argjson supportLines "$support_lines_json" \
+    --argjson supportTotalLines "$support_total_lines" \
+    --argjson bridgeTotalLines "$bridge_total_lines" \
     --argjson failures "$failures_json" \
     '{
       status: $status,
@@ -135,9 +160,13 @@ if [[ -n "$REPORT" ]]; then
         officialFile: $officialFile,
         legacyFile: $legacyFile,
         officialAdapterLines: $officialLines,
+        bridgeSupportFiles: $supportLines,
+        bridgeSupportLines: $supportTotalLines,
+        bridgeTotalLines: $bridgeTotalLines,
         legacyLoopLines: $legacyLines,
         officialAdapterMaxLines: $officialMaxLines,
-        officialAdapterWithinBudget: ($officialLines <= $officialMaxLines)
+        officialAdapterWithinBudget: ($officialLines <= $officialMaxLines),
+        boundaryFilesScannedForLoopRegression: ([$officialFile] + ($supportLines | map(.file)))
       },
       executableEvidence: {
         routingTest: $routingTest,
@@ -149,6 +178,8 @@ fi
 
 printf 'Official SDK boundary: %s\n' "$status"
 printf 'Official adapter lines: %s/%s\n' "$official_lines" "$OFFICIAL_ADAPTER_MAX_LINES"
+printf 'Bridge support lines: %s\n' "$support_total_lines"
+printf 'Bridge total lines: %s\n' "$bridge_total_lines"
 printf 'Legacy loop lines: %s\n' "$legacy_lines"
 printf 'Routing unit test: %s (%s)\n' "$routing_test_status" "$ROUTING_TEST"
 if (( ${#failures[@]} > 0 )); then
