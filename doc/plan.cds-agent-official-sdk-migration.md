@@ -147,7 +147,7 @@
 - `PYTHONPATH=/tmp/codex-sidecar-req-check-2:claude-sdk-sidecar python3 ...` 真实 SDK shape check 通过，`runtime_init` 显示 `approvalBridge=sdk-can-use-tool`、默认 tools 为 `Read/Grep/Glob`、`permissionMode=default`。
 - 临时安装真实 `claude-agent-sdk` 到 `/tmp/codex-claude-agent-sdk` 后，API 形状验证通过：`ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 可导入且签名匹配当前 adapter 用法。
 - `python3 -m pip install --target /tmp/codex-sidecar-req-check-2 -r claude-sdk-sidecar/requirements.txt` 通过；验证组合为 `fastapi 0.115.0`、`starlette 0.38.6`、`pydantic 2.13.4`、`claude_agent_sdk 0.2.82`。
-- 真实 run smoke 仍未执行：还需要 Claude Code CLI、provider key、真实 workspace 和远程 CDS sidecar 环境。
+- 真实 run smoke 仍未执行：还需要 provider key、真实 workspace 和远程 CDS sidecar 环境；外部 PATH 上的 `claude` 命令只做诊断观测，官方 Python SDK 包自身携带 CLI 能力，不作为默认 ready gate。
 - `npm --prefix prd-admin run tsc` 通过。
 - `/cds-agent` 的会话详情刷新已改为稳定 `useCallback`，SSE 兜底轮询和切换会话的 hook 依赖已收敛；`npm exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 在 `prd-admin` 目录通过，消除了该页面既有 hook dependency warning。
 - 远程 preview `prd-agent-codex-cds-agent-workbench-ui` 已部署到 `048cfab9 fix: revoke invalid cds sidecar tokens`，API/Admin 服务均为 `running`；远程 `GET /api/infra-agent-sessions/runtime-status` 成功返回诊断，active CDS 连接已从 5 条收敛到 1 条，sidecar pool 仍为 0 实例且原因是有效连接返回 `empty_instances`。

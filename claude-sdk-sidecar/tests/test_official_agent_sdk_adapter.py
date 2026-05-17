@@ -131,9 +131,6 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         os.environ.pop("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", None)
         os.environ.pop("CLAUDE_AGENT_SDK_PERMISSION_MODE", None)
         os.environ.pop("AGENT_WORKSPACE_ROOT", None)
-        self.which_patcher = patch("app.official_agent_sdk.shutil.which", return_value="/usr/local/bin/claude")
-        self.which_patcher.start()
-        self.addCleanup(self.which_patcher.stop)
 
     async def test_streams_runtime_text_usage_and_done(self) -> None:
         events = [event async for event in run_official_agent(build_request())]
@@ -232,13 +229,15 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event.type for event in remaining], ["usage", "error"])
         self.assertEqual(remaining[-1].error_code, "cancelled")
 
-    async def test_preflight_reports_missing_claude_cli_before_sdk_run(self) -> None:
-        with patch("app.official_agent_sdk.shutil.which", return_value=None):
-            events = [event async for event in run_official_agent(build_request())]
+    async def test_preflight_allows_bundled_cli_when_path_command_is_missing(self) -> None:
+        events = [event async for event in run_official_agent(build_request())]
 
-        self.assertEqual([event.type for event in events], ["error"])
-        self.assertEqual(events[0].error_code, "claude_agent_sdk_runtime_not_ready")
-        self.assertEqual(events[0].content["missing"], ["claude_cli"])
+        self.assertEqual([event.type for event in events], [
+            "runtime_init",
+            "text_delta",
+            "usage",
+            "done",
+        ])
 
     async def test_preflight_reports_missing_workspace_root(self) -> None:
         os.environ["AGENT_WORKSPACE_ROOT"] = "/tmp/cds-agent-missing-workspace"

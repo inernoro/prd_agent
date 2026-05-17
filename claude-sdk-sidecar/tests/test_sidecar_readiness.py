@@ -21,20 +21,30 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(diagnostics["loopOwner"], "sidecar-legacy-loop")
         self.assertEqual(diagnostics["sdkLoopEnabled"], False)
 
-    def test_official_adapter_reports_missing_sdk_and_cli(self) -> None:
+    def test_official_adapter_reports_missing_sdk(self) -> None:
         with patch("importlib.util.find_spec", return_value=None), patch("shutil.which", return_value=None):
             diagnostics = _adapter_diagnostics("claude-agent-sdk")
 
         self.assertEqual(diagnostics["adapter"], "claude-agent-sdk")
         self.assertEqual(diagnostics["ready"], False)
         self.assertIn("claude_agent_sdk", diagnostics["missing"])
-        self.assertIn("claude_cli", diagnostics["missing"])
+        self.assertNotIn("claude_cli", diagnostics["missing"])
         self.assertEqual(diagnostics["allowedTools"], ["Read", "Grep", "Glob"])
         self.assertEqual(diagnostics["approvalBridge"], "sdk-can-use-tool")
         self.assertEqual(diagnostics["loopOwner"], "claude-agent-sdk")
         self.assertEqual(diagnostics["sdkLoopEnabled"], True)
         self.assertEqual(diagnostics["mapRole"], "control-plane")
         self.assertEqual(diagnostics["cdsRole"], "sandbox-runtime")
+
+    def test_official_adapter_is_ready_with_bundled_cli_when_sdk_exists(self) -> None:
+        with patch("importlib.util.find_spec", return_value=object()), \
+                patch("importlib.metadata.version", return_value="0.2.82"), \
+                patch("shutil.which", return_value=None):
+            diagnostics = _adapter_diagnostics("claude-agent-sdk")
+
+        self.assertEqual(diagnostics["ready"], True)
+        self.assertEqual(diagnostics["claudeCliPath"], None)
+        self.assertEqual(diagnostics["claudeCliBundled"], True)
 
     def test_official_adapter_reports_write_tool_opt_in(self) -> None:
         with patch.dict(os.environ, {
@@ -114,9 +124,8 @@ class SidecarReadinessTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(response.status_code, 503)
         self.assertIn("missing claude_agent_sdk", payload["blockers"])
-        self.assertIn("missing claude_cli", payload["blockers"])
+        self.assertNotIn("missing claude_cli", payload["blockers"])
         self.assertIn("install the official SDK: pip install claude-agent-sdk", payload["nextActions"])
-        self.assertIn("install and authenticate Claude Code CLI so `claude` is on PATH", payload["nextActions"])
         self.assertIn(
             "provider key may be supplied by MAP runtime profile or per-request override",
             payload["nextActions"],

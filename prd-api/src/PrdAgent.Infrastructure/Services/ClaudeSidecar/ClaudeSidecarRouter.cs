@@ -379,8 +379,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             }
             var providerKeyRequired = instances.Any(x => x.ProviderKeyRequiredForReady != false);
             actions.Add(providerKeyRequired
-                ? "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk"
-                : "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发");
+                ? "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN 和 claude-agent-sdk"
+                : "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发");
             actions.Add("确认 SIDECAR_AGENT_ADAPTER=claude-agent-sdk 时，AGENT_WORKSPACE_ROOT 存在且可读写");
             actions.Add("修复后刷新 runtime-status，再启动 CDS Agent 会话");
         }

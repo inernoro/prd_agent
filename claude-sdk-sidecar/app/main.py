@@ -145,8 +145,6 @@ def _readyz_next_actions(
     if isinstance(missing, list):
         if "claude_agent_sdk" in missing:
             actions.append("install the official SDK: pip install claude-agent-sdk")
-        if "claude_cli" in missing:
-            actions.append("install and authenticate Claude Code CLI so `claude` is on PATH")
         if "workspace_root" in missing:
             actions.append("set AGENT_WORKSPACE_ROOT to an existing readable workspace")
 
@@ -190,8 +188,6 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
     missing = []
     if sdk_spec is None:
         missing.append("claude_agent_sdk")
-    if not cli_path:
-        missing.append("claude_cli")
     if cwd and not cwd_exists:
         missing.append("workspace_root")
 
@@ -202,6 +198,7 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
         "sdkInstalled": sdk_spec is not None,
         "sdkVersion": sdk_version,
         "claudeCliPath": cli_path,
+        "claudeCliBundled": sdk_spec is not None,
         "workspaceRoot": cwd or None,
         "workspaceRootExists": cwd_exists if cwd else None,
         "providerKeyMode": os.environ.get("SIDECAR_PROVIDER_KEY_MODE", "runtime-profile-or-env").strip().lower(),

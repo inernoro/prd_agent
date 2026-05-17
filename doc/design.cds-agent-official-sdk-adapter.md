@@ -172,10 +172,10 @@ public interface IAgentRuntimeAdapter
 - MAP 后端默认透传 `claude-agent-sdk`，保留 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 显式 fallback 和现有 `LegacySidecarRuntimeAdapter` 传输层。
 - 新增 `runtime_init` 事件映射，MAP 会把 adapter、allowed tools、permission mode、cwd 等初始化信息落为 `InfraAgentEventTypes.Log`，用于 UI 调试和审计。
 - 当前 spike 已改为 `ClaudeSDKClient` 结构，sidecar cancel event 会调用官方 `client.interrupt()` 并把结果映射为 `error_code=cancelled`。这只是 adapter 层取消闭环；跨进程精确定位、会话恢复和远程真实 run 仍需下一轮验证。
-- 本机尚未安装 `claude_agent_sdk`，所以真实 official SDK run 需要先完成依赖、Claude Code CLI、provider key、workspace 权限配置后验证。
+- 本机尚未安装 `claude_agent_sdk`，所以真实 official SDK run 需要先完成 SDK 依赖、provider key、workspace 权限配置后验证；外部 PATH 上的 `claude` 命令只做诊断观测，官方 Python SDK 包自身携带 CLI 能力，不作为默认 ready gate。
 - 新增 `claude-sdk-sidecar/tests/test_official_agent_sdk_adapter.py`，用 fake SDK 验证 `runtime_init/text_delta/usage/done` 和 `cancel -> interrupt -> usage/error(cancelled)` 两条结构路径。
 - `/cds-agent` 页面事件刷新已改为 `afterSeq` 增量拉取并按 seq 去重合并；前端也已接入 `/stream?afterSeq=&limit=` 作为 SSE 续读路径，失败时回退 JSON 分页。后端 `/stream` 已改为长连接 SSE + keepalive；Toolbox `cds-agent` 回放也从固定 500 条改为游标批量读取。下一步应做远程真实长会话验证。
-- sidecar `/readyz` 现在返回 adapter diagnostics：official SDK 包、Claude CLI、workspaceRoot、allowed tools、permission mode、写工具 opt-in、approval bridge。MAP 通过 `/api/infra-agent-sessions/runtime-status` 透出 sidecar pool 诊断，页面可看到 runtime pool healthy/instance 数，避免把 SDK/CLI 缺失伪装成模型调用失败。
+- sidecar `/readyz` 现在返回 adapter diagnostics：official SDK 包、外部 CLI 路径观测、workspaceRoot、allowed tools、permission mode、写工具 opt-in、approval bridge。MAP 通过 `/api/infra-agent-sessions/runtime-status` 透出 sidecar pool 诊断，页面可看到 runtime pool healthy/instance 数，避免把 SDK 或 workspace 缺失伪装成模型调用失败。
 - Toolbox `cds-agent` 入口已改为异步委托语义：创建 MAP/CDS session、发送任务、入队 runtime job 后立即产出 `CDS Agent 远程运行句柄` artifact，并给出 `/cds-agent?sessionId=...`、event stream、events、logs 路径。Toolbox 运行页会把该 artifact 渲染为远程运行卡片和“打开工作台”操作。Toolbox step 表示“委托已创建”，真实远程 run 状态仍由 MAP session 和 `/cds-agent` 工作台观察。
 - `SendMessageAsync` 已从同步等待 runtime run 改为后台 job 模式：HTTP 请求写入用户消息、导入 CDS 事件、追加 `runtime job queued` 日志并入队；`InfraAgentRuntimeWorker` 从 `IInfraAgentRuntimeJobQueue` 消费后调用 runtime adapter，异常会写回 MAP error 事件。
 - 官方 adapter 默认只开放 `Read/Grep/Glob` 只读内置工具，`permission_mode=default`。`Bash/Edit/Write` 必须通过 `CLAUDE_AGENT_SDK_ALLOWED_TOOLS` 显式 opt-in，且 `runtime_init` 会记录 `builtinWriteToolsEnabled` 和具体工具名。

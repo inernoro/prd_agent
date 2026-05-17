@@ -377,8 +377,8 @@ public class DynamicSidecarRegistryTests
                   "providerKeyRequiredForReady": false,
                   "sidecarToken": true,
                   "agentAdapter": "claude-agent-sdk",
-                  "blockers": ["missing claude_cli", "missing workspace_root"],
-                  "nextActions": ["install and authenticate Claude Code CLI so `claude` is on PATH", "set AGENT_WORKSPACE_ROOT to an existing readable workspace"],
+                  "blockers": ["missing claude_agent_sdk", "missing workspace_root"],
+                  "nextActions": ["install the official SDK: pip install claude-agent-sdk", "set AGENT_WORKSPACE_ROOT to an existing readable workspace"],
                   "adapterDiagnostics": {
                     "adapter": "claude-agent-sdk",
                     "ready": false,
@@ -386,7 +386,9 @@ public class DynamicSidecarRegistryTests
                     "sdkLoopEnabled": true,
                     "mapRole": "control-plane",
                     "cdsRole": "sandbox-runtime",
-                    "missing": ["claude_cli", "workspace_root"]
+                    "missing": ["claude_agent_sdk", "workspace_root"],
+                    "claudeCliPath": null,
+                    "claudeCliBundled": false
                   }
                 }
                 """)
@@ -410,22 +412,22 @@ public class DynamicSidecarRegistryTests
         Assert.True(diagnostics.Instances[0].SdkLoopEnabled);
         Assert.Equal("control-plane", diagnostics.Instances[0].MapRole);
         Assert.Equal("sandbox-runtime", diagnostics.Instances[0].CdsRole);
-        Assert.Contains("missing claude_cli", diagnostics.Instances[0].ReadyzBlockers ?? Array.Empty<string>());
+        Assert.Contains("missing claude_agent_sdk", diagnostics.Instances[0].ReadyzBlockers ?? Array.Empty<string>());
         Assert.Contains(
-            "install and authenticate Claude Code CLI so `claude` is on PATH",
+            "install the official SDK: pip install claude-agent-sdk",
             diagnostics.Instances[0].ReadyzNextActions ?? Array.Empty<string>());
         Assert.Contains("所有已发现的 sidecar runtime 实例当前都不可用", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: /readyz 返回 HTTP 503", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: /readyz ready=false", diagnostics.Blockers ?? Array.Empty<string>());
-        Assert.Contains("cds-pairing:conn-1:host-a: missing claude_cli", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: missing claude_agent_sdk", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.DoesNotContain("cds-pairing:conn-1:host-a: 缺少 ANTHROPIC_API_KEY", diagnostics.Blockers ?? Array.Empty<string>());
-        Assert.Contains("cds-pairing:conn-1:host-a: 缺少 claude_cli", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: 缺少 claude_agent_sdk", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: 缺少 workspace_root", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains(
-            "install and authenticate Claude Code CLI so `claude` is on PATH",
+            "install the official SDK: pip install claude-agent-sdk",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.Contains(
-            "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发",
+            "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.Contains(
             "官方 SDK 模式下保持 MAP/CDS 只做控制面，工具执行和 turn loop 继续走 claude-agent-sdk",

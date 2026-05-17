@@ -7,7 +7,6 @@ the default fallback while MAP/CDS migrates toward the official SDK boundary.
 import logging
 import os
 import asyncio
-import shutil
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -136,8 +135,6 @@ def _safe_result_metadata(message: Any) -> dict[str, Any]:
 
 def _runtime_preflight(cwd: str | None) -> list[str]:
     missing: list[str] = []
-    if not shutil.which("claude"):
-        missing.append("claude_cli")
     if cwd and not Path(cwd).exists():
         missing.append("workspace_root")
     return missing
@@ -184,8 +181,8 @@ async def run_official_agent(
             error_code="claude_agent_sdk_not_available",
             message=(
                 "claude-agent-sdk is not installed or cannot be imported. "
-                "Install the official SDK with `pip install claude-agent-sdk` "
-                f"and ensure Claude Code CLI is available. import_error={ex}"
+                "Install the official SDK with `pip install claude-agent-sdk`. "
+                f"import_error={ex}"
             ),
         )
         return
