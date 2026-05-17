@@ -25,6 +25,8 @@ REQ_FILE="$ROOT_DIR/claude-sdk-sidecar/requirements.txt"
 REPORT="${SMOKE_CDS_AGENT_BOUNDARY_REPORT:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 OFFICIAL_ADAPTER_MAX_LINES="${SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES:-320}"
+BRIDGE_SUPPORT_MAX_LINES="${SMOKE_CDS_AGENT_BRIDGE_SUPPORT_MAX_LINES:-650}"
+BRIDGE_TOTAL_MAX_LINES="${SMOKE_CDS_AGENT_BRIDGE_TOTAL_MAX_LINES:-850}"
 ROUTING_TEST="claude-sdk-sidecar/tests/test_sidecar_readiness.py"
 ROUTING_TEST_LOG=""
 
@@ -34,6 +36,14 @@ BOUNDARY_FILES=("$OFFICIAL_FILE" "${SUPPORT_FILES[@]}")
 
 if ! [[ "$OFFICIAL_ADAPTER_MAX_LINES" =~ ^[0-9]+$ ]]; then
   printf 'Invalid SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES: %s\n' "$OFFICIAL_ADAPTER_MAX_LINES" >&2
+  exit 2
+fi
+if ! [[ "$BRIDGE_SUPPORT_MAX_LINES" =~ ^[0-9]+$ ]]; then
+  printf 'Invalid SMOKE_CDS_AGENT_BRIDGE_SUPPORT_MAX_LINES: %s\n' "$BRIDGE_SUPPORT_MAX_LINES" >&2
+  exit 2
+fi
+if ! [[ "$BRIDGE_TOTAL_MAX_LINES" =~ ^[0-9]+$ ]]; then
+  printf 'Invalid SMOKE_CDS_AGENT_BRIDGE_TOTAL_MAX_LINES: %s\n' "$BRIDGE_TOTAL_MAX_LINES" >&2
   exit 2
 fi
 
@@ -118,6 +128,12 @@ done
 if (( official_lines > OFFICIAL_ADAPTER_MAX_LINES )); then
   failures+=("official adapter should stay thin: ${official_lines} lines exceeds budget ${OFFICIAL_ADAPTER_MAX_LINES}; split MAP/CDS bridge helpers before growing a second loop")
 fi
+if (( support_total_lines > BRIDGE_SUPPORT_MAX_LINES )); then
+  failures+=("official bridge helpers should stay bounded: ${support_total_lines} lines exceeds support budget ${BRIDGE_SUPPORT_MAX_LINES}; split domain-specific helpers and confirm they do not rebuild a loop")
+fi
+if (( bridge_total_lines > BRIDGE_TOTAL_MAX_LINES )); then
+  failures+=("official SDK bridge should stay bounded: ${bridge_total_lines} lines exceeds total budget ${BRIDGE_TOTAL_MAX_LINES}; prefer official SDK features before adding MAP/CDS glue")
+fi
 
 ROUTING_TEST_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cds-agent-boundary-routing.XXXXXX")"
 ROUTING_TEST_LOG="$ROUTING_TEST_TMP_DIR/unittest.log"
@@ -147,6 +163,8 @@ if [[ -n "$REPORT" ]]; then
     --argjson officialLines "$official_lines" \
     --argjson legacyLines "$legacy_lines" \
     --argjson officialMaxLines "$OFFICIAL_ADAPTER_MAX_LINES" \
+    --argjson supportMaxLines "$BRIDGE_SUPPORT_MAX_LINES" \
+    --argjson bridgeTotalMaxLines "$BRIDGE_TOTAL_MAX_LINES" \
     --argjson supportLines "$support_lines_json" \
     --argjson supportTotalLines "$support_total_lines" \
     --argjson bridgeTotalLines "$bridge_total_lines" \
@@ -162,7 +180,11 @@ if [[ -n "$REPORT" ]]; then
         officialAdapterLines: $officialLines,
         bridgeSupportFiles: $supportLines,
         bridgeSupportLines: $supportTotalLines,
+        bridgeSupportMaxLines: $supportMaxLines,
+        bridgeSupportWithinBudget: ($supportTotalLines <= $supportMaxLines),
         bridgeTotalLines: $bridgeTotalLines,
+        bridgeTotalMaxLines: $bridgeTotalMaxLines,
+        bridgeTotalWithinBudget: ($bridgeTotalLines <= $bridgeTotalMaxLines),
         legacyLoopLines: $legacyLines,
         officialAdapterMaxLines: $officialMaxLines,
         officialAdapterWithinBudget: ($officialLines <= $officialMaxLines),
@@ -178,8 +200,8 @@ fi
 
 printf 'Official SDK boundary: %s\n' "$status"
 printf 'Official adapter lines: %s/%s\n' "$official_lines" "$OFFICIAL_ADAPTER_MAX_LINES"
-printf 'Bridge support lines: %s\n' "$support_total_lines"
-printf 'Bridge total lines: %s\n' "$bridge_total_lines"
+printf 'Bridge support lines: %s/%s\n' "$support_total_lines" "$BRIDGE_SUPPORT_MAX_LINES"
+printf 'Bridge total lines: %s/%s\n' "$bridge_total_lines" "$BRIDGE_TOTAL_MAX_LINES"
 printf 'Legacy loop lines: %s\n' "$legacy_lines"
 printf 'Routing unit test: %s (%s)\n' "$routing_test_status" "$ROUTING_TEST"
 if (( ${#failures[@]} > 0 )); then
