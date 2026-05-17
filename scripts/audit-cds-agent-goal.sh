@@ -129,6 +129,9 @@ gate_v1="unknown"
 gate_n6="$n6_status"
 cycle_total_seconds=0
 cycle_slowest='[]'
+r1_report=""
+r1_status="missing"
+r1_details_json='null'
 if [[ -f "$cycle_summary" ]]; then
   cycle_status=$(jq -r '.status // "unknown"' "$cycle_summary")
   commercial_complete=$(jq -r '.commercialComplete // false' "$cycle_summary")
@@ -145,6 +148,7 @@ if [[ -f "$cycle_summary" ]]; then
   gate_n6=$(jq -r '.commercialGates.N6.status // "'"$n6_status"'"' "$cycle_summary")
   cycle_total_seconds=$(jq -r '.timing.totalSeconds // 0' "$cycle_summary")
   cycle_slowest=$(jq -c '.timing.slowest // []' "$cycle_summary")
+  r1_report=$(jq -r '.r1.report // ""' "$cycle_summary")
 fi
 
 if [[ "$boundary_status" == "pass" ]]; then
@@ -152,6 +156,19 @@ if [[ "$boundary_status" == "pass" ]]; then
 fi
 if [[ "$n6_status" == "pass" ]]; then
   gate_n6="pass"
+fi
+if [[ -n "$r1_report" && -f "$r1_report" ]]; then
+  r1_status=$(jq -r '.status // "unknown"' "$r1_report")
+  r1_details_json=$(jq -c '{
+    status: (.status // "unknown"),
+    targetTemplateId: (.targetTemplateId // ""),
+    suggestedCommand: (.suggestedCommand // ""),
+    defaultProfile: (.evidence.defaultProfile // null),
+    repairPlan: (.evidence.repairPlan // null),
+    targetTemplate: (.evidence.targetTemplate // null),
+    missingKeyGuard: (.evidence.missingKeyGuard // null),
+    providerKeyReceived: (.evidence.providerKeyReceived // false)
+  }' "$r1_report")
 fi
 
 if [[ "$boundary_status" != "pass" ]]; then
@@ -225,6 +242,7 @@ audit_json=$(
     --arg boundaryReport "$BOUNDARY_REPORT" \
     --arg n6Log "$N6_LOG" \
     --arg cycleSummary "$cycle_summary" \
+    --arg r1Report "$r1_report" \
     --arg cycleStatus "$cycle_status" \
     --arg currentBlockingGate "$current_blocking_gate" \
     --arg blockingReason "$blocking_reason" \
@@ -232,6 +250,7 @@ audit_json=$(
     --arg nextCommand "$next_command" \
     --arg boundaryStatus "$boundary_status" \
     --arg n6Status "$n6_status" \
+    --arg r1Status "$r1_status" \
     --arg gateR0 "$gate_r0" \
     --arg gateA0 "$gate_a0" \
     --arg gateR1 "$gate_r1" \
@@ -252,6 +271,7 @@ audit_json=$(
     --argjson localTiming "$timing_json" \
     --argjson localSlowest "$timing_slowest_json" \
     --argjson localTotalSeconds "$timing_total_seconds" \
+    --argjson r1Details "$r1_details_json" \
     --argjson missing "$missing_json" \
     --argjson failures "$failures_json" \
     '{
@@ -261,7 +281,8 @@ audit_json=$(
       artifacts: {
         boundaryReport: $boundaryReport,
         nonCodeCompatibilityLog: $n6Log,
-        cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end)
+        cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
+        r1Report: (if $r1Report == "" then null else $r1Report end)
       },
       localTiming: {
         totalSeconds: $localTotalSeconds,
@@ -291,7 +312,9 @@ audit_json=$(
         },
         providerReadiness: {
           status: (if $gateR1 == "pass" then "proved" else "pending" end),
-          gate: "R1"
+          gate: "R1",
+          reportStatus: $r1Status,
+          details: $r1Details
         },
         providerBackedRuns: {
           status: (if $gateS1 == "pass" and $gateS2S3 == "pass" then "proved" else "pending" end),
@@ -346,6 +369,18 @@ printf 'N6 compatibility: %s\n' "$n6_status"
 printf 'Cycle status: %s\n' "$cycle_status"
 printf 'Current blocking gate: %s\n' "${current_blocking_gate:-unknown}"
 printf 'Blocking reason: %s\n' "$blocking_reason"
+if [[ "$r1_details_json" != "null" ]]; then
+  printf 'R1 profile: %s / %s / %s compatible=%s hasKey=%s\n' \
+    "$(jq -r '.defaultProfile.name // "unknown"' <<< "$r1_details_json")" \
+    "$(jq -r '.defaultProfile.protocol // "unknown"' <<< "$r1_details_json")" \
+    "$(jq -r '.defaultProfile.model // "unknown"' <<< "$r1_details_json")" \
+    "$(jq -r 'if .defaultProfile | has("compatibleWithDesiredRuntimeAdapter") then (.defaultProfile.compatibleWithDesiredRuntimeAdapter | tostring) else "unknown" end' <<< "$r1_details_json")" \
+    "$(jq -r 'if .defaultProfile | has("hasApiKey") then (.defaultProfile.hasApiKey | tostring) else "unknown" end' <<< "$r1_details_json")"
+  printf 'R1 target: %s / %s / %s\n' \
+    "$(jq -r '.targetTemplateId // "unknown"' <<< "$r1_details_json")" \
+    "$(jq -r '.targetTemplate.protocol // "unknown"' <<< "$r1_details_json")" \
+    "$(jq -r '.targetTemplate.model // "unknown"' <<< "$r1_details_json")"
+fi
 printf 'Deploy/build advice: %s\n' "$deployment_advice"
 printf 'Next command: %s\n' "$next_command"
 printf 'Gates: R0=%s A0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
