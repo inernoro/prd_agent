@@ -920,51 +920,87 @@ public class HostedSiteService : IHostedSiteService
     // 内部工具方法
     // ─────────────────────────────────────────────
 
-    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
+    private sealed class ZipPlan
     {
-        var files = new List<HostedSiteFile>();
+        public string? Error;
+        public List<(ZipArchiveEntry Entry, string RelativePath, string Mime)> Items = new();
+    }
+
+    /// <summary>
+    /// ZIP 过滤/计数/限额逻辑的唯一来源（路径穿越、__MACOSX、黑名单后缀、文件数、
+    /// 解压总大小、空文件处理、≥1 有效文件）。ValidateZip 与 ExtractAndUploadZip 都走它，
+    /// 结构上保证「校验通过」⇔「上传阶段产出 ≥1 文件且不超限」，杜绝两份逻辑各自漂移。
+    /// 返回的 Entry 仅在传入 archive 的生命周期内有效。
+    /// </summary>
+    private ZipPlan PlanZipEntries(ZipArchive archive)
+    {
+        var plan = new ZipPlan();
+
+        if (archive.Entries.Count > MaxFileCount)
+        {
+            plan.Error = $"ZIP 包含的文件数超过限制 ({MaxFileCount})";
+            return plan;
+        }
+
+        var rootPrefix = DetectRootPrefix(archive);
         long totalSize = 0;
 
+        foreach (var entry in archive.Entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name)) continue;
+
+            var relativePath = entry.FullName;
+            if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
+                relativePath = relativePath[rootPrefix.Length..];
+
+            if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
+                continue;
+            if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
+                continue;
+
+            var fileExt = Path.GetExtension(entry.Name);
+            if (BlockedExtensions.Contains(fileExt))
+                continue;
+
+            totalSize += entry.Length;
+            if (totalSize > MaxExtractedSize)
+            {
+                plan.Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)";
+                return plan;
+            }
+
+            if (entry.Length == 0) continue;
+
+            plan.Items.Add((entry, relativePath, GetMimeType(fileExt)));
+        }
+
+        if (plan.Items.Count == 0)
+            plan.Error = "ZIP 中没有有效文件";
+
+        return plan;
+    }
+
+    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
+    {
         try
         {
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
 
-            if (archive.Entries.Count > MaxFileCount)
-                return new ZipExtractResult { Error = $"ZIP 包含的文件数超过限制 ({MaxFileCount})" };
+            var plan = PlanZipEntries(archive);
+            if (plan.Error != null)
+                return new ZipExtractResult { Error = plan.Error };
 
-            var rootPrefix = DetectRootPrefix(archive);
+            var files = new List<HostedSiteFile>();
+            long totalSize = 0;
 
-            foreach (var entry in archive.Entries)
+            foreach (var (entry, relativePath, mimeType) in plan.Items)
             {
-                if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                var relativePath = entry.FullName;
-                if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
-                    relativePath = relativePath[rootPrefix.Length..];
-
-                if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
-                    continue;
-                if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
-                    continue;
-
-                var fileExt = Path.GetExtension(entry.Name);
-                if (BlockedExtensions.Contains(fileExt))
-                    continue;
-
-                totalSize += entry.Length;
-                if (totalSize > MaxExtractedSize)
-                    return new ZipExtractResult { Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)" };
-
-                if (entry.Length == 0)
-                    continue;
-
                 using var entryStream = entry.Open();
                 using var entryMs = new MemoryStream();
                 await entryStream.CopyToAsync(entryMs);
                 var entryBytes = entryMs.ToArray();
 
-                var mimeType = GetMimeType(fileExt);
                 if (mimeType == "text/html")
                     entryBytes = RewriteAbsolutePathsInHtml(entryBytes, relativePath);
 
@@ -979,28 +1015,25 @@ public class HostedSiteService : IHostedSiteService
                     Size = entryBytes.Length,
                     MimeType = mimeType,
                 });
+                totalSize += entryBytes.Length;
             }
+
+            var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
+                ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
+                ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
+                ?? files[0].Path;
+
+            return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
         }
         catch (InvalidDataException)
         {
             return new ZipExtractResult { Error = "无效的 ZIP 文件" };
         }
-
-        if (files.Count == 0)
-            return new ZipExtractResult { Error = "ZIP 中没有有效文件" };
-
-        var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
-            ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
-            ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
-            ?? files[0].Path;
-
-        return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
     }
 
     /// <summary>
-    /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。条件与 ExtractAndUploadZip 完全一致，
-    /// 保证「校验通过」⇔「上传阶段会产出 ≥1 文件且不超限」。用于重传替换：先校验后写入，
-    /// 失败时零副作用（不碰旧文件、不留 staging 孤儿）。
+    /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
+    /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
     /// </summary>
     private string? ValidateZip(byte[] zipBytes)
     {
@@ -1008,41 +1041,7 @@ public class HostedSiteService : IHostedSiteService
         {
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
-
-            if (archive.Entries.Count > MaxFileCount)
-                return $"ZIP 包含的文件数超过限制 ({MaxFileCount})";
-
-            var rootPrefix = DetectRootPrefix(archive);
-            long totalSize = 0;
-            var validCount = 0;
-
-            foreach (var entry in archive.Entries)
-            {
-                if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                var relativePath = entry.FullName;
-                if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
-                    relativePath = relativePath[rootPrefix.Length..];
-
-                if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
-                    continue;
-                if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
-                    continue;
-                if (BlockedExtensions.Contains(Path.GetExtension(entry.Name)))
-                    continue;
-
-                totalSize += entry.Length;
-                if (totalSize > MaxExtractedSize)
-                    return $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)";
-
-                if (entry.Length == 0) continue;
-                validCount++;
-            }
-
-            if (validCount == 0)
-                return "ZIP 中没有有效文件";
-
-            return null;
+            return PlanZipEntries(archive).Error;
         }
         catch (InvalidDataException)
         {
