@@ -256,7 +256,7 @@ if [[ "$profile_compatible" == "true" && "$profile_has_key" == "true" ]]; then
   printf 'Next commands:\n'
   printf '  SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-run.sh\n'
   printf '  SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh\n'
-  gate_provider_status="pass"
+  gate_provider_status="unblocked"
   smoke_ok "S1/S2/S3 provider smokes are unblocked"
 else
   gate_provider_status="pending"
