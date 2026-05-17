@@ -807,7 +807,11 @@ export default function CdsAgentPage() {
     const approvalDecisions = events
       .map((event) => ({ event, payload: parsePayload(event) }))
       .filter(({ event, payload }) => event.type === 'tool_result' && readString(payload, 'approvalId') && readString(payload, 'source') === 'map-tool-approval');
-    const pendingApprovalCount = approvalRequests.filter(({ payload }) => readString(payload, 'status') === 'waiting').length;
+    const decidedApprovalIds = new Set(approvalDecisions.map(({ payload }) => readString(payload, 'approvalId')).filter(Boolean));
+    const pendingApprovalCount = approvalRequests.filter(({ payload }) => {
+      const approvalId = readString(payload, 'approvalId');
+      return readString(payload, 'status') === 'waiting' && !decidedApprovalIds.has(approvalId);
+    }).length;
     const latestApprovalDecision = approvalDecisions.at(-1)?.payload ?? null;
     const approvalEvidence = {
       requestCount: approvalRequests.length,
@@ -828,16 +832,18 @@ export default function CdsAgentPage() {
           || readString(payload, 'code') === 'cancelled'
           || readString(payload, 'errorCode') === 'cancelled';
       });
-    const cancelRequested = cancelEvents.some(({ payload }) => readString(payload, 'message').includes('runtime run cancel requested'));
-    const cancelCompleted = cancelEvents.some(({ payload }) => readString(payload, 'code') === 'cancelled' || readString(payload, 'errorCode') === 'cancelled');
+    const stopRequested = cancelEvents.some(({ payload }) => readString(payload, 'reason') === 'session_stop_requested');
+    const runtimeCancelRequested = cancelEvents.some(({ payload }) => readString(payload, 'message').includes('runtime run cancel requested'));
+    const sdkCancelled = cancelEvents.some(({ payload }) => readString(payload, 'code') === 'cancelled' || readString(payload, 'errorCode') === 'cancelled');
     const cancelEvidence = {
       eventCount: cancelEvents.length,
-      requested: cancelRequested,
-      completed: cancelCompleted,
+      stopRequested,
+      runtimeCancelRequested,
+      sdkCancelled,
       latestMessage: cancelEvents.length > 0 ? readString(cancelEvents[cancelEvents.length - 1].payload, 'message') || readString(cancelEvents[cancelEvents.length - 1].payload, 'reason') : '',
     };
     const cancelEvidenceState = cancelEvidence.eventCount > 0
-      ? `${cancelEvidence.eventCount} events · requested ${cancelEvidence.requested ? 'yes' : 'no'} · cancelled ${cancelEvidence.completed ? 'yes' : 'no'}`
+      ? `${cancelEvidence.eventCount} events · stop ${cancelEvidence.stopRequested ? 'yes' : 'no'} · runtime ${cancelEvidence.runtimeCancelRequested ? 'yes' : 'no'} · sdk ${cancelEvidence.sdkCancelled ? 'yes' : 'no'}`
       : '无取消事件';
     const primaryAdapterDiagnostics = primaryRuntime ? parseJsonString(primaryRuntime.adapterDiagnosticsJson) : null;
     const adapter = activeSession?.runtimeAdapter
