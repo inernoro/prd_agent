@@ -165,6 +165,7 @@
 - `python3 -m unittest discover -s claude-sdk-sidecar/tests` 通过；该测试使用 fake `claude_agent_sdk`，只验证 adapter 事件映射和 cancel/interrupt 结构，不代表真实 Claude 端到端调用通过。
 - `python3 -m unittest discover -s claude-sdk-sidecar/tests` 最新通过 23 个测试；覆盖私有 GitHub token 不进入 clone URL/runtime event/diagnostic，只通过 Git 临时 config env 用于 clone/fetch。
 - `bash claude-sdk-sidecar/smoke.sh` 已升级为 official SDK adapter smoke：默认校验 `claude-agent-sdk` 包、`loopOwner=claude-agent-sdk`、无 token 401、无 provider key 时的 `provider_key_missing` SSE error；设置 `ANTHROPIC_API_KEY` 后才继续真实 Anthropic run。
+- 2026-05-17 本地重跑 `bash claude-sdk-sidecar/smoke.sh` 通过结构性 official adapter smoke：`/readyz` 返回 `sdkInstalled=true`、`sdkVersion=0.2.82`、`agentAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk`、默认只读工具 `Read/Grep/Glob`、`approvalBridge=sdk-can-use-tool`；无 `ANTHROPIC_API_KEY` 时 `/v1/agent/run` 返回结构化 `provider_key_missing` 和 MAP runtime profile 修复建议。该证据仍不等同真实 Anthropic run，设置 provider key 后还需跑 S1/S2/S3。
 - `claude-sdk-sidecar/tests/test_sidecar_readiness.py` 覆盖 `/readyz` 背后的 adapter diagnostics：legacy 默认 ready、official 缺 SDK 包时报告 missing、外部 `claude` PATH 命令缺失不阻塞、写工具 opt-in 时报告 `builtinWriteToolsEnabled`。
 - `PYTHONPATH=/tmp/codex-sidecar-req-check-2:claude-sdk-sidecar python3 ...` 真实 SDK shape check 通过，`runtime_init` 显示 `approvalBridge=sdk-can-use-tool`、默认 tools 为 `Read/Grep/Glob`、`permissionMode=default`。
 - 临时安装真实 `claude-agent-sdk` 到 `/tmp/codex-claude-agent-sdk` 后，API 形状验证通过：`ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 可导入且签名匹配当前 adapter 用法。
