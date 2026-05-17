@@ -1,6 +1,6 @@
 # CDS Agent 运行手册 · 指南
 
-> **版本**：v1.1 | **日期**：2026-05-17 | **状态**：active（MVP 可用，生产级限制已标注）
+> **版本**：v1.2 | **日期**：2026-05-17 | **状态**：active（MVP 可用，生产级限制已标注）
 
 ## 服务组成
 
@@ -16,6 +16,7 @@
 
 - `claude-sdk` 是历史配置名，当前实现不是完整官方 Claude Code SDK / Claude Agent SDK。
 - sidecar 使用官方 `anthropic` Python SDK；agent loop、审批、repo/PR/Bridge 工具和 MAP/CDS 事件转译由本仓库维护。
+- `claude-agent-sdk` adapter seam 已存在，但真实远程 official SDK run 依赖 MAP 能发现 healthy CDS sidecar runtime pool；恢复步骤见 `doc/guide.cds-agent-runtime-pool-recovery.md`。
 
 ## 部署后检查
 
@@ -98,20 +99,21 @@
 症状：
 
 - 用户点击发送后按钮长时间 busy。
-- 页面不是逐字实时变化，而是几秒刷新一次。
-- 后端请求耗时接近一次完整 Agent 执行时间。
+- 页面不是逐字实时变化，或 SSE 断开后只靠兜底刷新。
+- 后端已经返回，但运行状态长时间停在 queued/running。
 
 诊断：
 
-1. 当前 CDS Agent 页面使用 3 秒轮询刷新详情，不是真正的长连接实时订阅。
-2. `SendMessageAsync` 会触发 CDS message 和 sidecar runtime，同步等待处理完成。
-3. 检查事件是否仍在增长；如果事件增长，说明任务还在执行，不是页面完全失效。
+1. 当前 CDS Agent 页面是 SSE 优先，失败时按 `afterSeq` JSON 分页兜底。
+2. `SendMessageAsync` 只负责写入消息并入队后台 runtime job，不应同步等待完整 Agent 执行。
+3. 检查 `/events?afterSeq=` 是否仍在增长；如果事件增长，说明任务还在执行，不是页面完全失效。
+4. 如果一直没有 runtime 事件，先查 `/api/infra-agent-sessions/runtime-status?refreshDiscovery=true`，确认 runtime pool 是否 healthy。
 
 处理：
 
 1. 让用户把大任务拆成“只读巡检 -> 最小修复 -> 创建 PR”三段。
-2. 如果任务超过预期，先查看 sidecar 日志和 runtime profile timeout。
-3. 后续工程修复应改为后台 run + 真 SSE / afterSeq 增量订阅。
+2. 如果任务超过预期，先查看 sidecar 日志、runtime profile timeout 和 runtime-status blockers。
+3. 如果 SSE 断开但分页正常，优先修前端订阅/代理超时；如果分页也没有事件，优先修后台 job 或 runtime pool。
 
 ## 停止后仍疑似运行
 
@@ -122,14 +124,14 @@
 
 诊断：
 
-1. 当前 `Stop` 主要停止 CDS session。
-2. 若没有持久化 sidecar runId，就无法可靠调用 `/v1/agent/cancel/{runId}`。
+1. 当前 `Stop` 会停止 MAP session，并通过 adapter best-effort 调 sidecar cancel。
+2. session 已持久化 `CurrentRuntimeRunId`，但真实 official SDK 路径仍必须验证是否调用到 `ClaudeSDKClient.interrupt()`。
 
 处理：
 
 1. 记录 sessionId、traceId、sidecar 名称和时间窗口。
-2. 必要时在 sidecar 侧按进程或 run 日志排查。
-3. 后续工程修复必须持久化 runId，并把停止动作代理到 sidecar cancel。
+2. 必要时在 sidecar 侧按 runId 或日志排查。
+3. 如果 MAP 状态停止但 sidecar 仍输出，按 `doc/guide.cds-agent-runtime-pool-recovery.md` 的 S3 cancel smoke 定位。
 
 ## 工具审批卡住
 
