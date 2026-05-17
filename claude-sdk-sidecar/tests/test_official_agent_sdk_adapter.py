@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -160,6 +161,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].content["upstreamSource"], "env-default")
         self.assertEqual(events[0].content["baseUrlConfigured"], False)
         self.assertEqual(events[0].content["apiKeyConfigured"], False)
+        self.assertEqual(events[0].content["workspaceSource"], "unset")
 
     async def test_permission_callback_allows_readonly_and_denies_unbridged_write(self) -> None:
         stream = run_official_agent(build_request())
@@ -247,6 +249,30 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([event.type for event in events], ["error"])
         self.assertEqual(events[0].error_code, "claude_agent_sdk_runtime_not_ready")
         self.assertIn("workspace_root", events[0].content["missing"])
+
+    async def test_request_workspace_root_overrides_env_and_reports_repo_context(self) -> None:
+        os.environ["AGENT_WORKSPACE_ROOT"] = "/tmp/cds-agent-missing-env-workspace"
+        with tempfile.TemporaryDirectory() as workspace:
+            req = build_request().model_copy(update={
+                "map_session_id": "session-1",
+                "trace_id": "trace-1",
+                "workspace_root": workspace,
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": "codex/cds-agent-workbench-ui",
+            })
+
+            stream = run_official_agent(req)
+            first = await anext(stream)
+            await stream.aclose()
+
+            self.assertEqual(first.type, "runtime_init")
+            self.assertEqual(first.content["cwd"], workspace)
+            self.assertEqual(first.content["mapSessionId"], "session-1")
+            self.assertEqual(first.content["traceId"], "trace-1")
+            self.assertEqual(first.content["workspaceSource"], "request")
+            self.assertEqual(first.content["gitRepository"], "inernoro/prd_agent")
+            self.assertEqual(first.content["gitRef"], "codex/cds-agent-workbench-ui")
+            self.assertEqual(LAST_OPTIONS.kwargs["cwd"], workspace)
 
 
 if __name__ == "__main__":

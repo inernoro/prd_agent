@@ -893,6 +893,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             apiKey = string.IsNullOrWhiteSpace(req.ApiKey) ? null : req.ApiKey,
             protocol = string.IsNullOrWhiteSpace(req.Protocol) ? null : req.Protocol,
             runtimeAdapter = string.IsNullOrWhiteSpace(req.RuntimeAdapter) ? null : req.RuntimeAdapter,
+            mapSessionId = string.IsNullOrWhiteSpace(req.MapSessionId) ? null : req.MapSessionId,
+            traceId = string.IsNullOrWhiteSpace(req.TraceId) ? null : req.TraceId,
+            workspaceRoot = string.IsNullOrWhiteSpace(req.WorkspaceRoot) ? null : req.WorkspaceRoot,
+            gitRepository = string.IsNullOrWhiteSpace(req.GitRepository) ? null : req.GitRepository,
+            gitRef = string.IsNullOrWhiteSpace(req.GitRef) ? null : req.GitRef,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");

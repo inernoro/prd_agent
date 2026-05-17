@@ -64,7 +64,12 @@ public sealed class LegacySidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
             BaseUrl = request.BaseUrl,
             ApiKey = request.ApiKey,
             Protocol = request.Protocol,
-            RuntimeAdapter = request.RuntimeAdapter
+            RuntimeAdapter = request.RuntimeAdapter,
+            MapSessionId = request.MapSessionId,
+            TraceId = request.TraceId,
+            WorkspaceRoot = request.WorkspaceRoot,
+            GitRepository = request.GitRepository,
+            GitRef = request.GitRef
         };
 
         await foreach (var ev in _router.RunStreamAsync(sidecarRequest, ct))

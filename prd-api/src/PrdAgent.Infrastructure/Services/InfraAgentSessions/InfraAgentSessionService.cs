@@ -1322,7 +1322,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,
             Protocol = runtimeProfile?.Protocol,
-            RuntimeAdapter = selectedRuntimeAdapter
+            RuntimeAdapter = selectedRuntimeAdapter,
+            MapSessionId = session.Id,
+            TraceId = session.TraceId
         };
 
         await AppendRawEventAsync(

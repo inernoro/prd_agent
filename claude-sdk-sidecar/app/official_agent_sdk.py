@@ -227,7 +227,10 @@ async def run_official_agent(
         {name for name in builtin_allowed if name.lower() in {"bash", "edit", "write"}}
     )
     permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
-    cwd = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip() or None
+    request_cwd = (req.workspace_root or "").strip() or None
+    env_cwd = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip() or None
+    cwd = request_cwd or env_cwd
+    workspace_source = "request" if request_cwd else ("env" if env_cwd else "unset")
     missing_runtime = _runtime_preflight(cwd)
     if missing_runtime:
         yield SidecarEvent(
@@ -326,9 +329,14 @@ async def run_official_agent(
         message="claude-agent-sdk adapter started",
         content={
             "adapter": "claude-agent-sdk",
+            "mapSessionId": req.map_session_id,
+            "traceId": req.trace_id,
             "allowedTools": [*builtin_allowed, *map_tool_names],
             "permissionMode": permission_mode,
             "cwd": cwd,
+            "workspaceSource": workspace_source,
+            "gitRepository": req.git_repository,
+            "gitRef": req.git_ref,
             "client": "ClaudeSDKClient",
             "loopOwner": "claude-agent-sdk",
             "sdkLoopEnabled": True,

@@ -49,6 +49,17 @@ class SidecarRunRequest(BaseModel):
     # sidecar standalone 默认 legacy。
     runtime_adapter: Optional[str] = Field(None, alias="runtimeAdapter")
 
+    # MAP/CDS trace context. These identifiers are safe to log and help correlate
+    # official SDK events with MAP events and UI diagnostics.
+    map_session_id: Optional[str] = Field(None, alias="mapSessionId")
+    trace_id: Optional[str] = Field(None, alias="traceId")
+
+    # Per-run workspace context. MAP/CDS owns workspace selection; official SDK uses
+    # workspace_root as cwd when present, otherwise falls back to AGENT_WORKSPACE_ROOT.
+    workspace_root: Optional[str] = Field(None, alias="workspaceRoot")
+    git_repository: Optional[str] = Field(None, alias="gitRepository")
+    git_ref: Optional[str] = Field(None, alias="gitRef")
+
     class Config:
         populate_by_name = True
 

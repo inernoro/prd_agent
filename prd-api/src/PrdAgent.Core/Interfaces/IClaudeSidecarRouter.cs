@@ -122,6 +122,21 @@ public sealed class SidecarRunRequest
 
     /// <summary>Optional sidecar runtime adapter selector, for example claude-agent-sdk.</summary>
     public string? RuntimeAdapter { get; init; }
+
+    /// <summary>MAP session id for cross-system tracing. Not a secret.</summary>
+    public string? MapSessionId { get; init; }
+
+    /// <summary>MAP trace id for event/SDK trace correlation. Not a secret.</summary>
+    public string? TraceId { get; init; }
+
+    /// <summary>Per-run workspace root inside the sidecar container. Falls back to AGENT_WORKSPACE_ROOT.</summary>
+    public string? WorkspaceRoot { get; init; }
+
+    /// <summary>Repository identity for diagnostics and future workspace preparation.</summary>
+    public string? GitRepository { get; init; }
+
+    /// <summary>Git ref/branch for diagnostics and future workspace preparation.</summary>
+    public string? GitRef { get; init; }
 }
 
 public sealed class SidecarChatMessage
