@@ -128,6 +128,7 @@ public interface IAgentRuntimeAdapter
 3. `ToolboxRunEvent` 和 `InfraAgentEvent` 保持对前端兼容，新增字段只能放在 metadata/payload。
 4. 旧 runtime 名 `claude-sdk` 保持配置兼容，但 UI/文档必须显示为 `Claude sidecar runtime` 或 `Claude Agent SDK adapter`。
 5. OpenAI Agents SDK 先用于非代码智能体的 trace/handoff 试点，不替代 CDS sandbox。
+6. `CdsAgentRuntimeCompatibilityTests` 固化该边界：非代码 Toolbox adapter 不能依赖 `IInfraAgentRuntimeAdapter`、`IClaudeSidecarRouter` 或 `InfraAgentRuntimes`。
 
 ## 6. 关键风险
 
