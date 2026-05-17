@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-14
+> 最后更新：2026-05-17
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -208,9 +208,6 @@
 
 - [周报管理 Agent 架构设计](design.report-agent) `design.report-agent`
   > 周报 Agent 的完整架构：团队管理、AI 生成、数据源采集
-
-- [产品评审员技术设计文档](design.review-agent) `design.review-agent`
-  > ReviewAgent 的完整技术设计：状态机、LLM 集成、SSE 协议
 
 - [系统涌现：从基础组件到协同智能](design.system-emergence) `design.system-emergence`
   > MAP 平台从基础能力到协同智能的涌现机制说明
