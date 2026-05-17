@@ -461,7 +461,6 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
 
   const { dimensions: allDims } = data;
   const scored = computeScores(data);
-  const weightPct = allDims.length > 0 ? (100 / allDims.length).toFixed(1) : '0';
 
   const tableSorted = [...scored].sort((a, b) => {
     let va: number, vb: number;
@@ -521,7 +520,13 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
       <DashCard>
         <SectionTitle>综合排行榜</SectionTitle>
         <div className="overflow-x-auto">
-          <table className="w-full text-[12px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+          <table className="w-full text-[12px]" style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed' }}>
+            <colgroup>
+              <col style={{ width: 40 }} />
+              <col style={{ width: 184 }} />
+              <col style={{ width: 88 }} />
+              {allDims.map(d => <col key={d.key} style={{ width: 112 }} />)}
+            </colgroup>
             <thead>
               <tr style={{ borderBottom: `1px solid ${D.border}` }}>
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: D.text3, verticalAlign: 'middle' }}>#</th>
@@ -547,7 +552,6 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         <DimHelp dim={dim} />
                         <SortIcon col={dim.key} />
                       </span>
-                      <div className="text-[9px] font-normal" style={{ color: D.text3, opacity: 0.7 }}>权重 {weightPct}%</div>
                     </th>
                   );
                 })}
@@ -575,18 +579,18 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       )}
                     </td>
                     <td className="py-2.5 pr-4" style={{ verticalAlign: 'middle' }}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         {user.avatarFileName ? (
-                          <UserAvatar src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5" />
+                          <UserAvatar src={resolveAvatarUrl({ avatarFileName: user.avatarFileName })} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/5 flex-shrink-0" />
                         ) : (
-                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold"
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
                             style={{ background: `${roleColor}22`, color: roleColor }}>
                             {user.displayName[0]}
                           </div>
                         )}
-                        <div>
-                          <div className="text-[12px] font-medium" style={{ color: D.text1 }}>{user.displayName}</div>
-                          <div className="text-[9px] font-medium" style={{ color: roleColor }}>{getRoleMeta(user.role).label}</div>
+                        <div className="min-w-0">
+                          <div className="text-[12px] font-medium truncate" style={{ color: D.text1 }}>{user.displayName}</div>
+                          <div className="text-[9px] font-medium truncate" style={{ color: roleColor }}>{getRoleMeta(user.role).label}</div>
                         </div>
                       </div>
                     </td>
