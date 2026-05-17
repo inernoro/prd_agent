@@ -11,8 +11,9 @@
 命名校准：
 
 - 页面和 API 里仍有历史 runtime 名 `claude-sdk`。
-- 当前实现使用官方 `anthropic` Python SDK，但 agent loop、sidecar 协议、工具审批、repo/PR/Bridge 工具和事件转译是本仓库自研。
-- 复现通过只证明 CDS Agent MVP 链路可用，不证明完整官方 Claude Code SDK / Claude Agent SDK 已接入。
+- `claude-agent-sdk` 是官方 Claude Agent SDK，不是本仓库自研；本仓库只写 adapter，把官方 SDK 事件、权限、取消和结果映射到 MAP/CDS。
+- 当前默认目标路径是 `runtimeAdapter=claude-agent-sdk`；`legacy-sidecar` 只作为显式 fallback，仍使用官方 `anthropic` Python SDK + 本仓库自研 loop。
+- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 `doc/guide.cds-agent-runtime-pool-recovery.md` 里的 official SDK smoke。
 
 ## 前置条件
 
@@ -180,7 +181,7 @@ python3 .agents/skills/cds/cli/cdscli.py branch status prd-agent-main
 | sidecar 不健康 | CDS shared sidecar pool 未发现或未 running | 查 CDS 系统 sidecar pool health |
 | 工具回调失败 | callback URL 推导错误或公网 524 | 检查 `ClaudeSidecarRouter` callback base 与长命令内网 callback |
 | 页面看不到会话 | 用户隔离生效，当前浏览器不是会话 owner | 切换到会话创建用户再看 |
-| 事件只有前 100 条 | API 分页未用 `afterSeq` | 逐页拉取事件 |
+| 事件不完整 | API 分页或 SSE 续读未用 `afterSeq` | 逐页拉取事件，并检查 cursor 状态 |
 | PR 创建失败 | GitHub token/App 权限不足 | 检查 release 容器 GitHub 凭据 |
 
 ## 十一、验收清单
@@ -199,6 +200,7 @@ python3 .agents/skills/cds/cli/cdscli.py branch status prd-agent-main
 | 智能体 | AI 百宝箱可委托 CDS Agent |
 | PR | 远程 Agent 可创建真实 PR |
 | 停止释放 | 完成后 status 为 stopped |
+| 官方 SDK | `runtime_init` 显示 `runtimeAdapter=claude-agent-sdk` 且 `loopOwner=claude-agent-sdk` |
 
 ## 十二、交接提示词
 
