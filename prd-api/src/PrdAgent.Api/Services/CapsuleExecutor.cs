@@ -4798,7 +4798,7 @@ function safeChart(canvasId, config) {
                 else if (evt.Type == InfraAgentEventTypes.Done && root.TryGetProperty("finalText", out var finalText))
                     sb.AppendLine(finalText.GetString());
                 else if (evt.Type is InfraAgentEventTypes.ToolCall or InfraAgentEventTypes.ToolResult or InfraAgentEventTypes.Error or InfraAgentEventTypes.Hook)
-                    sb.AppendLine($"[{evt.Seq}] {evt.Type}: {root}");
+                    sb.AppendLine($"[{evt.Seq}] {evt.Type}: {CdsAgentRuntimeEventRenderer.Render(evt)}");
             }
             catch
             {

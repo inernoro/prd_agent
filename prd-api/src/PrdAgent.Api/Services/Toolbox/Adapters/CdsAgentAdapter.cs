@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
+using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.InfraConnections;
 
@@ -432,35 +433,6 @@ public class CdsAgentAdapter : IAgentAdapter
 
     private static string RenderEvent(InfraAgentEventView evt)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(evt.PayloadJson);
-            var root = doc.RootElement;
-            if (evt.Type == InfraAgentEventTypes.TextDelta && root.TryGetProperty("text", out var text))
-            {
-                return text.GetString() ?? string.Empty;
-            }
-            if (evt.Type == InfraAgentEventTypes.Done && root.TryGetProperty("finalText", out var finalText))
-            {
-                return finalText.GetString() ?? string.Empty;
-            }
-            if (evt.Type == InfraAgentEventTypes.ToolCall)
-            {
-                return $"工具调用：{root}";
-            }
-            if (evt.Type == InfraAgentEventTypes.ToolResult)
-            {
-                return $"工具结果：{root}";
-            }
-            if (evt.Type == InfraAgentEventTypes.Error)
-            {
-                return $"错误：{root}";
-            }
-        }
-        catch
-        {
-            return evt.PayloadJson;
-        }
-        return string.Empty;
+        return CdsAgentRuntimeEventRenderer.Render(evt);
     }
 }
