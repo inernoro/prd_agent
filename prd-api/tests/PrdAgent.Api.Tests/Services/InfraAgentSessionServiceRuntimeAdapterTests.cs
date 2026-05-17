@@ -2,6 +2,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Services.AgentRuntime;
 using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
+using System.Text.Json;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -70,6 +71,53 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task SidecarRuntimeAdapter_ShouldPreserveOfficialProviderKeyError()
+    {
+        var content = """
+        {
+          "adapter": "claude-agent-sdk",
+          "providerKeyMode": "runtime-profile-or-env",
+          "nextActions": [
+            "select or create a MAP runtime profile with a valid provider apiKey"
+          ]
+        }
+        """;
+        var router = new CapturingSidecarRouter(new SidecarEvent
+        {
+            Type = SidecarEventType.Error,
+            ErrorCode = "provider_key_missing",
+            Message = "ANTHROPIC_API_KEY is required",
+            Content = content,
+            SidecarName = "official-sidecar-1"
+        });
+        var adapter = new LegacySidecarRuntimeAdapter(router);
+
+        var events = new List<InfraAgentRuntimeEvent>();
+        await foreach (var ev in adapter.RunStreamAsync(
+            new InfraAgentRuntimeRunRequest
+            {
+                RunId = "run-provider-key",
+                RuntimeAdapter = "claude-agent-sdk"
+            },
+            CancellationToken.None))
+        {
+            events.Add(ev);
+        }
+
+        var error = events.Single();
+        error.Type.ShouldBe(InfraAgentRuntimeEventType.Error);
+        error.ErrorCode.ShouldBe("provider_key_missing");
+        error.Message.ShouldBe("ANTHROPIC_API_KEY is required");
+        error.Content.ShouldBe(content);
+        error.RuntimeInstanceName.ShouldBe("official-sidecar-1");
+        error.Source.ShouldBe("sidecar-runtime-adapter");
+
+        using var doc = JsonDocument.Parse(error.Content!);
+        doc.RootElement.GetProperty("adapter").GetString().ShouldBe("claude-agent-sdk");
+        doc.RootElement.GetProperty("nextActions")[0].GetString().ShouldBe("select or create a MAP runtime profile with a valid provider apiKey");
+    }
+
+    [Fact]
     public void BuildRuntimeErrorStatus_ShouldClassifyProviderKeyMissingAsConfigIssue()
     {
         var status = InfraAgentSessionService.BuildRuntimeErrorStatus(
@@ -115,6 +163,13 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
 
     private sealed class CapturingSidecarRouter : IClaudeSidecarRouter
     {
+        private readonly SidecarEvent? _event;
+
+        public CapturingSidecarRouter(SidecarEvent? ev = null)
+        {
+            _event = ev;
+        }
+
         public SidecarRunRequest? LastRequest { get; private set; }
         public bool IsConfigured => true;
         public int InstanceCount => 1;
@@ -128,7 +183,7 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         {
             LastRequest = request;
             await Task.Yield();
-            yield return new SidecarEvent { Type = SidecarEventType.Done, FinalText = "ok" };
+            yield return _event ?? new SidecarEvent { Type = SidecarEventType.Done, FinalText = "ok" };
         }
 
         public Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct) =>
