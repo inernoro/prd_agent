@@ -79,6 +79,43 @@ GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true
 | `branchCount=0` | shared sidecar pool project 没有可发现分支 |
 | 没有 `discovery(...)` | 共享 CDS 控制面仍是旧版本，发布未生效 |
 
+## 静态 Sidecar 旁路恢复
+
+如果共享 CDS 控制面暂时不能更新，或需要先证明 official SDK adapter 的 S1 smoke，可以把 MAP 临时指向一个显式 sidecar。这个路径不替代共享 runtime pool，只用于恢复、演示和最小闭环验证。
+
+MAP 配置：
+
+```text
+ClaudeSdkExecutor:Enabled=true
+ClaudeSdkExecutor:Sidecars:0:Name=manual-official-sdk
+ClaudeSdkExecutor:Sidecars:0:BaseUrl=http://<sidecar-host>:7400
+ClaudeSdkExecutor:Sidecars:0:Token=<SIDECAR_TOKEN>
+```
+
+本地/临时环境也可以用：
+
+```bash
+CLAUDE_SIDECAR_BASE_URL=http://127.0.0.1:7400
+CLAUDE_SIDECAR_TOKEN=<SIDECAR_TOKEN>
+```
+
+sidecar 至少需要：
+
+```bash
+SIDECAR_TOKEN=<SIDECAR_TOKEN>
+SIDECAR_AGENT_ADAPTER=claude-agent-sdk
+SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env
+SIDECAR_WORKSPACES_ROOT=/tmp/cds-agent-workspaces
+```
+
+验证入口仍然是：
+
+```text
+GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true
+```
+
+预期 `diagnostics.instanceCount > 0`，并且实例级 `/readyz` 显示 `agentAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk`。如果 `InstanceCount=0`，先确认 `ClaudeSdkExecutor:Enabled=true`；静态 `Sidecars` 只有在该开关启用时才会被 MAP 路由和健康检查纳入。
+
 ## 官方 SDK Smoke
 
 只有 runtime pool healthy 后，才开始官方 SDK smoke。每一步都要保存 sessionId、traceId、runtimeAdapter、CurrentRuntimeRunId 和截图。

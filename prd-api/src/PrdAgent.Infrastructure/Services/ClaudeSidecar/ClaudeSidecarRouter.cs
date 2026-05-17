@@ -273,7 +273,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         var blockers = new List<string>();
         if (InstanceCount <= 0)
         {
-            blockers.Add("MAP 当前没有发现任何 CDS sidecar runtime 实例");
+            blockers.Add("MAP 当前没有发现任何可路由 sidecar runtime 实例");
+            blockers.Add("未发现静态 ClaudeSdkExecutor:Sidecars，也未发现可用的 CDS paired sidecar 实例");
             if (!string.IsNullOrWhiteSpace(_registry.LastRefreshError))
             {
                 blockers.Add(_registry.LastRefreshError);
@@ -386,6 +387,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             {
                 actions.Add("在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接");
             }
+
+            actions.Add("如需绕过共享 CDS discovery，显式配置 ClaudeSdkExecutor:Enabled=true 与 ClaudeSdkExecutor:Sidecars[0].BaseUrl/Token 指向一个健康的 claude-agent-sdk sidecar");
+            actions.Add("本地/临时验证可设置 CLAUDE_SIDECAR_BASE_URL 与 CLAUDE_SIDECAR_TOKEN，并确保 ClaudeSdkExecutor:Enabled=true");
         }
         else if (HealthyCount <= 0)
         {

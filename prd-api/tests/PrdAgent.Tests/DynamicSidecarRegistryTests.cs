@@ -278,10 +278,17 @@ public class DynamicSidecarRegistryTests
 
         Assert.False(diagnostics.IsConfigured);
         Assert.Equal(0, diagnostics.InstanceCount);
-        Assert.Contains("MAP 当前没有发现任何 CDS sidecar runtime 实例", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("MAP 当前没有发现任何可路由 sidecar runtime 实例", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("未发现静态 ClaudeSdkExecutor:Sidecars，也未发现可用的 CDS paired sidecar 实例", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("paired-connections total=1 activeCds=1 usable=1 endpointsWithInstances=0", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains(
             "确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复",
+            diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.Contains(
+            "如需绕过共享 CDS discovery，显式配置 ClaudeSdkExecutor:Enabled=true 与 ClaudeSdkExecutor:Sidecars[0].BaseUrl/Token 指向一个健康的 claude-agent-sdk sidecar",
+            diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.Contains(
+            "本地/临时验证可设置 CLAUDE_SIDECAR_BASE_URL 与 CLAUDE_SIDECAR_TOKEN，并确保 ClaudeSdkExecutor:Enabled=true",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.DoesNotContain(
             "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接",
