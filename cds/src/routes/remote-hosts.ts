@@ -461,6 +461,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       branchCount: 0,
       runningBranchCount: 0,
       runningBranchServiceCount: 0,
+      runtimeBranchServiceCount: 0,
+      skippedBranchServiceCount: 0,
       previewRootConfigured: false,
     };
     for (const dep of latest) {
@@ -497,6 +499,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           if (serviceState.status !== 'running') continue;
           discovery.runningBranchServiceCount += 1;
           const profile = deps.stateService.getBuildProfile(serviceState.profileId);
+          if (!isRuntimeBranchService(serviceState.profileId, profile?.name, serviceState.containerName)) {
+            discovery.skippedBranchServiceCount += 1;
+            continue;
+          }
+          discovery.runtimeBranchServiceCount += 1;
           const previewSlug = computePreviewSlug(branch.branch, projectSlug);
           const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
           instances.push({
@@ -793,6 +800,13 @@ export function shouldIncludeBranchServicesInInstanceDiscovery(
   // run as normal branch services rather than ServiceDeployment records. They
   // still need to be discoverable by MAP through /projects/:id/instances.
   return project?.kind === 'shared-service';
+}
+
+export function isRuntimeBranchService(profileId: string, profileName?: string, containerName?: string): boolean {
+  const text = [profileId, profileName, containerName].filter(Boolean).join(' ').toLowerCase();
+  if (!text.trim()) return false;
+  if (/\b(admin|web|frontend|ui|dashboard)\b/.test(text.replace(/[-_]/g, ' '))) return false;
+  return /\b(api|sidecar|runtime|worker|agent)\b/.test(text.replace(/[-_]/g, ' '));
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';

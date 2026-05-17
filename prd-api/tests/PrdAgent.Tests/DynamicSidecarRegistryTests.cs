@@ -206,6 +206,8 @@ public class DynamicSidecarRegistryTests
                 "branchCount": 1,
                 "runningBranchCount": 1,
                 "runningBranchServiceCount": 0,
+                "runtimeBranchServiceCount": 0,
+                "skippedBranchServiceCount": 0,
                 "previewRootConfigured": true
               }
             }
@@ -226,6 +228,7 @@ public class DynamicSidecarRegistryTests
         Assert.Contains("paired-empty-endpoints conn-emp shared-sidecar-pool empty_instances", error);
         Assert.Contains("discovery(projectKind=shared-service", error);
         Assert.Contains("runningBranchServices=0", error);
+        Assert.Contains("runtimeBranchServices=0", error);
     }
 
     [Fact]
@@ -320,7 +323,7 @@ public class DynamicSidecarRegistryTests
         var options = new ClaudeSidecarOptions { Enabled = false };
         var registry = new FakeDynamicRegistry(
             Array.Empty<DynamicSidecarInstance>(),
-            "paired-connections total=12 activeCds=1 usable=1 tokenFailures=0 endpointFailures=0 emptyEndpoints=1 endpointsWithInstances=0; paired-empty-endpoints conn-1 shared-sidecar-pool empty_instances discovery(projectKind=shared-service deployments=0 runningDeployments=0 disabledHostDeployments=0 branches=1 runningBranches=1 runningBranchServices=0 previewRootConfigured=True)");
+            "paired-connections total=12 activeCds=1 usable=1 tokenFailures=0 endpointFailures=0 emptyEndpoints=1 endpointsWithInstances=0; paired-empty-endpoints conn-1 shared-sidecar-pool empty_instances discovery(projectKind=shared-service deployments=0 runningDeployments=0 disabledHostDeployments=0 branches=1 runningBranches=1 runningBranchServices=1 runtimeBranchServices=0 skippedBranchServices=1 previewRootConfigured=True)");
         var router = new ClaudeSidecarRouter(
             new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)),
             new StaticOptionsMonitor<ClaudeSidecarOptions>(options),

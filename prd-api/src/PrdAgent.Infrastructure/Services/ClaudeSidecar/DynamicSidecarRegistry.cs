@@ -519,6 +519,8 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         public int? BranchCount { get; set; }
         public int? RunningBranchCount { get; set; }
         public int? RunningBranchServiceCount { get; set; }
+        public int? RuntimeBranchServiceCount { get; set; }
+        public int? SkippedBranchServiceCount { get; set; }
         public bool? PreviewRootConfigured { get; set; }
 
         public string ToSummary()
@@ -532,6 +534,8 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 $"branches={BranchCount ?? 0}",
                 $"runningBranches={RunningBranchCount ?? 0}",
                 $"runningBranchServices={RunningBranchServiceCount ?? 0}",
+                $"runtimeBranchServices={RuntimeBranchServiceCount ?? 0}",
+                $"skippedBranchServices={SkippedBranchServiceCount ?? 0}",
                 $"previewRootConfigured={PreviewRootConfigured == true}",
             };
             return "discovery(" + string.Join(" ", parts) + ")";

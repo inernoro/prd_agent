@@ -128,6 +128,12 @@ describe('Remote hosts project instances route', () => {
           hostPort: 17400,
           status: 'running',
         },
+        'admin-prd-agent': {
+          profileId: 'admin-prd-agent',
+          containerName: 'cds-shared-sidecar-admin',
+          hostPort: 17480,
+          status: 'running',
+        },
       },
       createdAt: new Date().toISOString(),
       lastAccessedAt: new Date().toISOString(),
@@ -144,7 +150,9 @@ describe('Remote hosts project instances route', () => {
       runningDeploymentCount: 0,
       branchCount: 1,
       runningBranchCount: 1,
-      runningBranchServiceCount: 1,
+      runningBranchServiceCount: 2,
+      runtimeBranchServiceCount: 1,
+      skippedBranchServiceCount: 1,
       previewRootConfigured: true,
     });
     expect(res.body.instances).toHaveLength(1);
@@ -224,6 +232,8 @@ describe('Remote hosts project instances route', () => {
       branchCount: 0,
       runningBranchCount: 0,
       runningBranchServiceCount: 0,
+      runtimeBranchServiceCount: 0,
+      skippedBranchServiceCount: 0,
       previewRootConfigured: false,
     });
     expect(res.body.instances).toHaveLength(0);
