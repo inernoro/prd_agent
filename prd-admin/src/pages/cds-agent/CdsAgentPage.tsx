@@ -245,6 +245,36 @@ function readStringArray(payload: Record<string, unknown> | null, key: string): 
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
 }
 
+function redactSensitiveText(value: string): string {
+  return value
+    .replace(/sk-ant-[A-Za-z0-9._-]+/g, 'sk-ant-***')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, 'Bearer ***')
+    .replace(/(api[_-]?key|access[_-]?token|long[_-]?token|sid(e)?car[_-]?token|authorization)(["'\s:=]+)([^"',\s}]+)/gi, '$1$3***');
+}
+
+function redactForBundle(value: unknown): unknown {
+  if (typeof value === 'string') return redactSensitiveText(value);
+  if (Array.isArray(value)) return value.map((item) => redactForBundle(item));
+  if (!value || typeof value !== 'object') return value;
+
+  const result: Record<string, unknown> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+    if (/apiKey|accessToken|longToken|sidecarToken|authorization|secret|password/i.test(key)) {
+      if (typeof item === 'boolean') result[key] = item;
+      else if (item == null || item === '') result[key] = item;
+      else result[key] = '***';
+      return;
+    }
+    result[key] = redactForBundle(item);
+  });
+  return result;
+}
+
+function safeFilenamePart(value?: string | null): string {
+  const normalized = (value || 'session').trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return normalized.slice(0, 80) || 'session';
+}
+
 function buildPromptWithContext(
   task: string,
   context: { files: string; urls: string; notes: string },
@@ -1238,6 +1268,62 @@ export default function CdsAgentPage() {
       providerKeyError: runtimeDiagnostics.providerKeyError,
     },
   }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
+  const runBundle = useMemo(() => {
+    const eventTypeCounts = events.reduce<Record<string, number>>((acc, event) => {
+      acc[event.type] = (acc[event.type] ?? 0) + 1;
+      return acc;
+    }, {});
+    const lastSeq = latestEventSeq(events);
+    const payload = {
+      schemaVersion: 'cds-agent-run-bundle/v1',
+      generatedAt: new Date().toISOString(),
+      page: {
+        path: typeof window === 'undefined' ? '/cds-agent' : window.location.pathname,
+        mode: viewMode,
+      },
+      summary: {
+        sessionId: activeSession?.id ?? null,
+        title: activeSession?.title ?? null,
+        status: activeSession?.status ?? null,
+        traceId: activeSession?.traceId ?? null,
+        runtimeAdapter: runtimeDiagnostics.adapter,
+        loopOwner: runtimeDiagnostics.loopOwner,
+        sdkLoopEnabled: runtimeDiagnostics.sdkLoopEnabled,
+        runtimePool: runtimeStatus ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount}` : null,
+        readinessPassed: runtimeDiagnostics.readinessGates.filter((gate) => gate.state === 'pass').length,
+        readinessTotal: runtimeDiagnostics.readinessGates.length,
+        eventCount: events.length,
+        lastSeq,
+        eventTypeCounts,
+        artifactCount: artifacts.length,
+        logLineCount: logs.split('\n').filter(Boolean).length,
+      },
+      runtimeDiagnosticBundle,
+      messages: messages.map((message) => ({
+        id: message.id,
+        role: message.role,
+        createdAt: message.createdAt,
+        content: message.content,
+      })),
+      events: events.map((event) => ({
+        id: event.id,
+        seq: event.seq,
+        type: event.type,
+        createdAt: event.createdAt,
+        payload: parsePayload(event),
+      })),
+      artifacts: artifacts.map((artifact) => ({
+        id: artifact.id,
+        title: artifact.title,
+        kind: artifact.kind,
+        summary: artifact.summary,
+        count: artifact.count,
+        body: artifact.body,
+      })),
+      logs,
+    };
+    return redactForBundle(payload);
+  }, [activeSession, artifacts, events, logs, messages, runtimeDiagnosticBundle, runtimeDiagnostics, runtimeStatus, viewMode]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
@@ -1959,14 +2045,20 @@ export default function CdsAgentPage() {
     toast.success(`${label}已复制`);
   }
 
-  function downloadText(filename: string, value: string) {
-    const blob = new Blob([value], { type: 'text/plain;charset=utf-8' });
+  function downloadText(filename: string, value: string, mimeType = 'text/plain;charset=utf-8') {
+    const blob = new Blob([value], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  function downloadRunBundle() {
+    const filename = `cds-agent-run-bundle-${safeFilenamePart(activeSession?.id ?? activeSession?.traceId)}.json`;
+    downloadText(filename, JSON.stringify(runBundle, null, 2), 'application/json;charset=utf-8');
+    toast.success('Run bundle 已导出', filename);
   }
 
   const viewToggle = (
@@ -2882,6 +2974,14 @@ export default function CdsAgentPage() {
                           style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
                         >
                           <Copy size={12} /> 复制诊断包
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadRunBundle}
+                          className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-white/58 hover:text-white/86"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        >
+                          <Download size={12} /> 导出 run bundle
                         </button>
                         <span
                           className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-medium"
