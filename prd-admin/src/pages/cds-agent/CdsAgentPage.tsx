@@ -134,8 +134,33 @@ function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): strin
   return '';
 }
 
+function runtimeDiscoveryBlockReason(status: InfraAgentRuntimeDiagnostics): string {
+  const metrics = status.discoveryMetrics;
+  if (!metrics) return '';
+  if ((metrics.tokenFailures ?? 0) > 0) {
+    return 'CDS 长期授权不可用，请在基础设施设置中重新完成 CDS 授权。';
+  }
+  if ((metrics.endpointFailures ?? 0) > 0 && (metrics.emptyEndpoints ?? 0) <= 0) {
+    return `CDS 实例发现请求失败：${metrics.endpointFailures} 个 endpoint 失败，请检查共享 CDS 控制面和 long token。`;
+  }
+  if ((metrics.emptyEndpoints ?? 0) > 0 || (metrics.endpointsWithInstances ?? 0) === 0) {
+    if ((metrics.skippedBranchServiceCount ?? 0) > 0 && (metrics.runtimeBranchServiceCount ?? 0) <= 0) {
+      return `CDS 已发现 ${metrics.runningBranchServiceCount ?? 0} 个 running 分支服务，但 ${metrics.skippedBranchServiceCount} 个被 runtime 过滤跳过；请把 sidecar runtime profile/service 命名为 api、sidecar、runtime、worker 或 agent，避免 admin/web/ui。`;
+    }
+    if ((metrics.runningBranchServiceCount ?? 0) <= 0) {
+      return 'CDS 授权可用，但 shared sidecar pool 当前没有 running branch service；请先启动或重新部署 sidecar pool。';
+    }
+    if ((metrics.runtimeBranchServiceCount ?? 0) <= 0) {
+      return 'CDS 发现到了分支服务，但没有可作为 runtime 的 sidecar 实例；请检查服务命名、标签和实例发现过滤规则。';
+    }
+  }
+  return '';
+}
+
 function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): string {
   if (!status) return '正在检测 CDS runtime pool，请稍后刷新。';
+  const discoveryReason = runtimeDiscoveryBlockReason(status);
+  if (discoveryReason) return discoveryReason;
   const firstBlocker = status.blockers?.find((item) => item.trim());
   if (status.instanceCount <= 0) {
     if (firstBlocker) return firstBlocker;
