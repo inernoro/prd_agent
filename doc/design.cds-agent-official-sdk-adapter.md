@@ -39,6 +39,34 @@ MAP UI / Toolbox / workflow
 | Observability | OpenTelemetry / usage | Trace/span 默认覆盖 agent、generation、tool、handoff、guardrail | Mongo event + logs | 双写：官方 trace id + MAP session event id |
 | Sandbox / workspace ownership | SDK 可运行在宿主环境，CDS 仍负责容器 | OpenAI sandbox agents 可评估，但不能直接替代现有 CDS 分支模型 | CDS 自研 | CDS 继续做 workspace/control plane |
 
+### 2.1 官方优先决策表
+
+后续每个 CDS Agent 能力都先过这张表，避免再次把 SDK 已经负责的运行时能力写回自研 loop：
+
+| 问题 | 结论 | 代码归属 |
+| --- | --- | --- |
+| 官方 SDK 是否已经提供 agent turn loop、上下文管理、工具调用、streaming？ | 是，则本仓库不能再实现第二套 loop | `claude_agent_sdk` / `agents` |
+| 官方 SDK 是否已经提供 permission / human review / guardrail？ | 是，则 MAP 只提供审批 UI、策略和审计记录 | SDK callback + MAP approval bridge |
+| 官方 SDK 是否已经提供 trace / usage / result metadata？ | 是，则 MAP 只保存 trace link 和脱敏摘要 | SDK trace + MAP event envelope |
+| 官方 SDK 是否不负责多租户账号、CDS branch、workspace、secret、preview URL？ | 是，这些必须保留自研控制面 | MAP/CDS |
+| 官方 SDK 是否无法表达现有产品产物，例如 PR 链接、截图、审计包？ | 是，只保留产品 adapter，不扩大 runtime loop | MAP artifact/event store |
+| 能力是否只服务非代码文本/图片 agent？ | 是，优先保持现有 gateway，逐步接 trace/guardrail | `ILlmGateway` / media pipeline |
+
+一个实现如果同时做“选择下一步工具、维护多轮消息、解释 tool result、决定是否继续思考”，默认就是 agent loop。除非官方 SDK 没有对应能力，否则应删除或收缩。
+
+### 2.2 最小自研面
+
+目标状态下，CDS Agent 自研代码只保留这些薄层：
+
+- `RuntimeProfileResolver`：把 MAP 里的 provider/model/key ref/baseUrl 解析成 SDK 可用配置，禁止把密钥写入事件。
+- `WorkspaceResolver`：把 CDS project/branch/repo/ref 准备成 SDK `cwd`，并输出 commit/workspace 证据。
+- `PermissionBridge`：把 SDK permission request 映射成 MAP approval request，再把用户 decision 返回 SDK。
+- `EventMapper`：把 SDK message/trace/usage/tool/error 映射成稳定的 MAP event schema。
+- `RunHandleStore`：保存 official SDK session/run id、cancel handle、trace id 和 event cursor。
+- `ArtifactCollector`：收集 diff、测试日志、截图、PR 链接和可导出的诊断包。
+
+除此之外的 loop、工具选择、history 拼装、usage 聚合、MCP 协议翻译都应优先使用官方实现。
+
 参考来源：
 
 - Claude Agent SDK overview: https://code.claude.com/docs/en/agent-sdk/overview
@@ -120,6 +148,13 @@ public interface IAgentRuntimeAdapter
 | `literary-agent` | `ILlmGateway` 文本生成 | 否 | 暂不需要 agent loop | 低 |
 | `visual-agent` | 图片生成/视觉 gateway | 否 | 保留专用 media pipeline；可加 trace | 中：图片 URL、资产持久化、超时 |
 | workflow/capsule `claude-sdk` | CLI Agent executor + sidecar | 是 | 同 CDS Agent 共享 adapter | 高：历史配置值和运行日志兼容 |
+
+### 5.1 兼容性结论
+
+- `cds-agent` 和 workflow/capsule 的历史 `claude-sdk` 是同一类问题：代码仓库运行、工具、审批、取消、长事件流。它们应共享 official SDK runtime adapter。
+- PRD/缺陷/文学/视觉 agent 不是同一类问题：它们的核心价值在结构化输出、媒体管线或业务 prompt，不应该因为 CDS Agent 迁移而依赖 sidecar pool。
+- OpenAI Agents SDK 更适合作为非代码 agent 的 orchestration / handoff / tracing 试点；Claude Agent SDK 更适合代码仓库执行。两者都不能替代 MAP/CDS 的账号、权限、workspace、审计和部署控制面。
+- 兼容性测试必须证明“非代码 agent 不因为 official SDK sidecar 不健康而失败”。这比简单编译更重要，因为历史问题通常来自 DI 或全局 worker 依赖被误接到所有 agent。
 
 兼容策略：
 

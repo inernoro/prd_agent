@@ -46,6 +46,11 @@
 8. Visual run：打开 `/cds-agent`，截图记录真实 run 状态。
 9. Remote run：部署到 CDS preview，重复最小 run 和截图。
 
+辅助诊断入口：
+
+- `scripts/doctor-cds-agent-runtime.sh`：读取 `runtime-status?refreshDiscovery=true`，分层输出 `desiredRuntimeAdapter`、`runtimeTransport`、实例数、healthy 数、`blockers`、`nextActions` 和实例级 `/readyz` 摘要。它用于排障，不会把 `instanceCount=0` 当成脚本自身失败。
+- `scripts/smoke-cds-agent-runtime-status.sh`：验收门禁，要求 `instanceCount > 0`、`healthyCount > 0` 且至少一个实例证明 `agentAdapter/loopOwner=claude-agent-sdk`。
+
 ## 4. 首轮调试用例
 
 | 用例 | Prompt | 成功标准 |
@@ -167,6 +172,7 @@
 - `bash claude-sdk-sidecar/smoke.sh` 已升级为 official SDK adapter smoke：默认校验 `claude-agent-sdk` 包、`loopOwner=claude-agent-sdk`、无 token 401、无 provider key 时的 `provider_key_missing` SSE error；设置 `ANTHROPIC_API_KEY` 后才继续真实 Anthropic run。
 - 2026-05-17 本地重跑 `bash claude-sdk-sidecar/smoke.sh` 通过结构性 official adapter smoke：`/readyz` 返回 `sdkInstalled=true`、`sdkVersion=0.2.82`、`agentAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk`、默认只读工具 `Read/Grep/Glob`、`approvalBridge=sdk-can-use-tool`；无 `ANTHROPIC_API_KEY` 时 `/v1/agent/run` 返回结构化 `provider_key_missing` 和 MAP runtime profile 修复建议。该证据仍不等同真实 Anthropic run，设置 provider key 后还需跑 S1/S2/S3。
 - 2026-05-17 远程 preview 重跑 `scripts/smoke-cds-agent-runtime-status.sh`：鉴权、`runtime-status`、`desiredRuntimeAdapter=claude-agent-sdk`、`runtimeTransport=sidecar-runtime-adapter` 均通过，但在 `instanceCount=0` 失败。真实 blocker 为 `paired-connections total=12 activeCds=1 usable=1 ... emptyEndpoints=1 endpointsWithInstances=0; paired-empty-endpoints 061b88ea shared-sidecar-pool-mp4anabh empty_instances; configured-cds disabled`，下一步仍是更新共享 CDS 控制面的 `/api/projects/{id}/instances` 或配置静态 official SDK sidecar 旁路。
+- 2026-05-17 新增并验证 `scripts/doctor-cds-agent-runtime.sh`：远程 preview 输出 `desiredRuntimeAdapter=claude-agent-sdk runtimeTransport=sidecar-runtime-adapter instanceCount=0 healthyCount=0`，诊断结论为 `MAP/CDS 控制面未发现可路由 sidecar 实例`；该脚本用于日常排障，`scripts/smoke-cds-agent-runtime-status.sh` 继续作为必须发现 official SDK sidecar 的硬验收门禁。
 - `claude-sdk-sidecar/tests/test_sidecar_readiness.py` 覆盖 `/readyz` 背后的 adapter diagnostics：legacy 默认 ready、official 缺 SDK 包时报告 missing、外部 `claude` PATH 命令缺失不阻塞、写工具 opt-in 时报告 `builtinWriteToolsEnabled`。
 - `PYTHONPATH=/tmp/codex-sidecar-req-check-2:claude-sdk-sidecar python3 ...` 真实 SDK shape check 通过，`runtime_init` 显示 `approvalBridge=sdk-can-use-tool`、默认 tools 为 `Read/Grep/Glob`、`permissionMode=default`。
 - 临时安装真实 `claude-agent-sdk` 到 `/tmp/codex-claude-agent-sdk` 后，API 形状验证通过：`ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 可导入且签名匹配当前 adapter 用法。
