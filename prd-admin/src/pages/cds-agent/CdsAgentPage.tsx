@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
+import { Archive, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, ListChecks, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
@@ -1236,6 +1236,7 @@ export default function CdsAgentPage() {
       : defaultProfileReady
         ? 'provider-smokes-required'
         : 'profile-blocked';
+    const nextCyclePlan = runtimeStatus?.nextCyclePlan ?? null;
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1314,6 +1315,7 @@ export default function CdsAgentPage() {
       commercialTotal,
       commercialPending,
       commercialState,
+      nextCyclePlan,
       readinessGates,
       rows: [
         ['Adapter', adapterLabel],
@@ -1478,6 +1480,7 @@ export default function CdsAgentPage() {
       commercialTotal: runtimeDiagnostics.commercialTotal,
       commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
       commercialPending: runtimeDiagnostics.commercialPending,
+      nextCyclePlan: runtimeDiagnostics.nextCyclePlan,
       readinessGates: runtimeDiagnostics.readinessGates,
       rows: runtimeDiagnostics.rows,
       blockers: runtimeDiagnostics.blockers,
@@ -3447,6 +3450,71 @@ export default function CdsAgentPage() {
                         </div>
                       )}
                     </div>
+                    {runtimeDiagnostics.nextCyclePlan && (
+                      <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(8,13,28,0.5)', border: '1px solid rgba(125,211,252,0.16)' }}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-sky-100/58">
+                              <ListChecks size={13} />
+                              下一周期最小闭环
+                            </div>
+                            <div className="mt-1 break-words text-xs leading-relaxed text-white/48">
+                              {runtimeDiagnostics.nextCyclePlan.cycle} · {runtimeDiagnostics.nextCyclePlan.state}
+                            </div>
+                          </div>
+                          <span className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-semibold text-sky-100/78" style={{ background: 'rgba(56,189,248,0.1)', border: '1px solid rgba(56,189,248,0.2)' }}>
+                            {runtimeDiagnostics.nextCyclePlan.items.filter((item) => item.status === 'pass').length}/{runtimeDiagnostics.nextCyclePlan.items.length}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                          {runtimeDiagnostics.nextCyclePlan.items.map((item) => {
+                            const isPass = item.status === 'pass';
+                            const isBlocked = item.status === 'blocked';
+                            return (
+                              <div
+                                key={item.code}
+                                className="min-h-[126px] rounded-md px-3 py-2"
+                                style={{
+                                  background: isPass ? 'rgba(34,197,94,0.08)' : isBlocked ? 'rgba(245,158,11,0.09)' : 'rgba(15,23,42,0.72)',
+                                  border: isPass ? '1px solid rgba(34,197,94,0.22)' : isBlocked ? '1px solid rgba(245,158,11,0.22)' : '1px solid rgba(148,163,184,0.14)',
+                                }}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[11px] font-semibold text-white/40">{item.code}</div>
+                                    <div className="mt-0.5 text-xs font-semibold text-white/76">{item.title}</div>
+                                  </div>
+                                  <span
+                                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                                    style={{
+                                      background: isPass ? 'rgba(34,197,94,0.14)' : isBlocked ? 'rgba(245,158,11,0.14)' : 'rgba(56,189,248,0.1)',
+                                      color: isPass ? 'rgba(134,239,172,0.92)' : isBlocked ? 'rgba(253,230,138,0.92)' : 'rgba(186,230,253,0.86)',
+                                    }}
+                                  >
+                                    {isPass ? 'PASS' : isBlocked ? `BLOCK ${item.blockedBy || ''}`.trim() : 'NEXT'}
+                                  </span>
+                                </div>
+                                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/56">{item.goal}</div>
+                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/40">{item.evidence}</div>
+                                {item.nextActions && item.nextActions.length > 0 && (
+                                  <div className="mt-2 text-xs leading-relaxed text-sky-50/68">{item.nextActions[0]}</div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {runtimeDiagnostics.nextCyclePlan.stopConditions.length > 0 && (
+                          <div className="mt-3 rounded-md px-3 py-2" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-white/40">停止条件</div>
+                            <div className="mt-1 grid gap-1 md:grid-cols-2">
+                              {runtimeDiagnostics.nextCyclePlan.stopConditions.map((item) => (
+                                <div key={item} className="text-xs leading-relaxed text-white/55">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">技术诊断门禁</div>

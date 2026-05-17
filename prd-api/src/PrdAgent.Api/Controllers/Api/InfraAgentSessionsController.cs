@@ -72,6 +72,7 @@ public class InfraAgentSessionsController : ControllerBase
             desiredRuntimeAdapter,
             profileDiagnostics);
         var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profileDiagnostics);
+        var nextCyclePlan = BuildNextCyclePlan(profileDiagnostics, runtimeProfileRepairPlan);
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
@@ -79,6 +80,7 @@ public class InfraAgentSessionsController : ControllerBase
             DefaultRuntimeProfile = profileDiagnostics,
             CommercialReadiness = commercialReadiness,
             RuntimeProfileRepairPlan = runtimeProfileRepairPlan,
+            NextCyclePlan = nextCyclePlan,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
                 profileDiagnostics)
@@ -123,6 +125,95 @@ public class InfraAgentSessionsController : ControllerBase
             template.Model,
             template.IsDefaultRecommended,
             nextActions);
+    }
+
+    private static SidecarNextCyclePlan BuildNextCyclePlan(
+        SidecarRuntimeProfileDiagnostics? profile,
+        SidecarRuntimeProfileRepairPlan repairPlan)
+    {
+        var r1Ready = profile is
+        {
+            HasApiKey: true,
+            CompatibleWithDesiredRuntimeAdapter: true
+        };
+        var state = r1Ready ? "provider-smokes-required" : "profile-blocked";
+        var providerRunStatus = r1Ready ? "ready-to-run" : "blocked";
+        var providerBlockedBy = r1Ready ? null : "R1";
+        var providerRunActions = new[]
+        {
+            "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-run.sh"
+        };
+        var providerControlActions = new[]
+        {
+            "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh"
+        };
+        var items = new List<SidecarNextCyclePlanItem>
+        {
+            new(
+                1,
+                "N1",
+                "配置真实 Claude/Anthropic runtime profile",
+                "用后端 Anthropic 官方模板创建默认 profile，API key 只存 MAP profile。",
+                "runtime-status.defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter=true 且 hasApiKey=true。",
+                r1Ready ? "pass" : "blocked",
+                r1Ready ? null : "R1",
+                r1Ready ? Array.Empty<string>() : repairPlan.NextActions),
+            new(
+                2,
+                "N2",
+                "S1 只读远程审查",
+                "官方 SDK 在 CDS preview 中读取目标 repo/ref 并返回审查结论，不修改文件。",
+                "smoke-cds-agent-official-sdk-run.sh 在 provider 模式下通过，并保留 assistant/repo/workspace 证据。",
+                providerRunStatus,
+                providerBlockedBy,
+                r1Ready ? providerRunActions : Array.Empty<string>()),
+            new(
+                3,
+                "N3",
+                "S2 MAP 审批",
+                "危险工具请求进入 MAP approval，拒绝后回写 SDK tool result。",
+                "smoke-cds-agent-official-sdk-controls.sh 的 approval 分支通过，事件含 tool_result.source=map-tool-approval。",
+                providerRunStatus,
+                providerBlockedBy,
+                r1Ready ? providerControlActions : Array.Empty<string>()),
+            new(
+                4,
+                "N4",
+                "S3 Stop / interrupt",
+                "长任务 Stop 调到底层 Claude Agent SDK interrupt/cancel。",
+                "controls smoke 的 Stop 分支通过，事件含 stop/cancel/interrupt 证据。",
+                providerRunStatus,
+                providerBlockedBy,
+                r1Ready ? providerControlActions : Array.Empty<string>()),
+            new(
+                5,
+                "N5",
+                "V1 真实运行态视觉证据",
+                "远程 /cds-agent 展示真实 run 的 session、trace、adapter、workspace、event/error。",
+                "远程截图必须来自真实 session，不接受空态、mock 或仅登录页。",
+                "blocked",
+                r1Ready ? "S1/S2/S3" : "R1",
+                Array.Empty<string>()),
+            new(
+                6,
+                "N6",
+                "非代码智能体兼容回归",
+                "PRD/defect/literary/visual 不被 CDS sidecar pool 或 profile gate 阻断。",
+                "CdsAgentRuntimeCompatibilityTests 通过，并补对应业务最小 smoke 后再放宽路由。",
+                "ready-to-run",
+                null,
+                new[] { "dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter FullyQualifiedName~CdsAgentRuntimeCompatibilityTests" })
+        };
+        return new SidecarNextCyclePlan(
+            "official-sdk-provider-closure",
+            state,
+            items,
+            new[]
+            {
+                "N1-N5 未全部有真实证据前，不宣称 CDS Agent 商业级上手即用。",
+                "其他官方 SDK 候选在未补 adapter contract 和 S1/S2/S3 smokes 前保持 planned-not-routable。",
+                "视觉验收必须绑定真实 sessionId/traceId/runtimeAdapter/workspace，而不是静态页面。"
+            });
     }
 
     private static SidecarCommercialReadinessDiagnostics BuildCommercialReadiness(

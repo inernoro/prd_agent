@@ -52,6 +52,8 @@
 
 R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true` 返回的 `diagnostics.runtimeProfileRepairPlan` 为准。页面上的 “R1 默认 Claude profile” 卡片、复制诊断包和 readiness smoke 都应消费这个后端字段；不要在前端或文档里另写一套默认模型、协议或下一步判断。
 
+下一周期 N1-N6 的最小闭环以同一个接口返回的 `diagnostics.nextCyclePlan` 为准。它会明确每一步的状态、阻塞项、验收证据和停止条件；页面 Runtime 调试区只展示该计划，不能把文档里的表格复制成另一套前端逻辑。
+
 ## 给自己或其他仓库做审查
 
 一次正常审查建议按这个流程走：

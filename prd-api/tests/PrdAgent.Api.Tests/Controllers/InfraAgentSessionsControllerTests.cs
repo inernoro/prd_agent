@@ -378,6 +378,12 @@ public class InfraAgentSessionsControllerTests
             repairPlan.TargetModel.ShouldBe("claude-sonnet-4-20250514");
             repairPlan.CurrentProfile.ShouldNotBeNull().Name.ShouldBe("OpenRouter DeepSeek");
             repairPlan.NextActions.ShouldContain(x => x.Contains("准备默认 Claude 配置", StringComparison.Ordinal));
+            var nextCyclePlan = diagnostics.NextCyclePlan.ShouldNotBeNull();
+            nextCyclePlan.Cycle.ShouldBe("official-sdk-provider-closure");
+            nextCyclePlan.State.ShouldBe("profile-blocked");
+            nextCyclePlan.Items.Single(x => x.Code == "N1").Status.ShouldBe("blocked");
+            nextCyclePlan.Items.Single(x => x.Code == "N2").BlockedBy.ShouldBe("R1");
+            nextCyclePlan.StopConditions.ShouldContain(x => x.Contains("N1-N5", StringComparison.Ordinal));
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         }
@@ -463,6 +469,9 @@ public class InfraAgentSessionsControllerTests
             var repairPlan = diagnostics.RuntimeProfileRepairPlan.ShouldNotBeNull();
             repairPlan.State.ShouldBe("blocked");
             repairPlan.TargetBaseUrl.ShouldBe("https://api.anthropic.com");
+            var nextCyclePlan = diagnostics.NextCyclePlan.ShouldNotBeNull();
+            nextCyclePlan.Items.Select(x => x.Code).ShouldBe(new[] { "N1", "N2", "N3", "N4", "N5", "N6" });
+            nextCyclePlan.Items.Single(x => x.Code == "N6").Status.ShouldBe("ready-to-run");
         }
         finally
         {

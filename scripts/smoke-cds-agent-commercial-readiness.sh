@@ -144,6 +144,12 @@ smoke_assert_nonempty "$repair_plan" "diagnostics.runtimeProfileRepairPlan"
 smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.gate')" "R1" "runtimeProfileRepairPlan.gate"
 smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.targetTemplateId')" "anthropic-official-claude-sonnet-4" "runtimeProfileRepairPlan.targetTemplateId"
 smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.targetProtocol')" "anthropic" "runtimeProfileRepairPlan.targetProtocol"
+next_cycle_plan=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.nextCyclePlan // empty')
+smoke_assert_nonempty "$next_cycle_plan" "diagnostics.nextCyclePlan"
+smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.cycle')" "official-sdk-provider-closure" "nextCyclePlan.cycle"
+smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '[.items[]? | select(.code == "N1")] | length')" "1" "nextCyclePlan.N1"
+smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '[.items[]? | select(.code == "N6")] | length')" "1" "nextCyclePlan.N6"
+smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
 profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
@@ -154,6 +160,8 @@ printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s
 if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   gate_r1_status="pending"
   smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.state')" "blocked" "runtimeProfileRepairPlan.state"
+  smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.state')" "profile-blocked" "nextCyclePlan.state"
+  smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.items[]? | select(.code == "N2") | .blockedBy')" "R1" "nextCyclePlan.N2.blockedBy"
   repair_actions=$(printf '%s' "$repair_plan" | jq -r '.nextActions[]?')
   smoke_assert_contains "$repair_actions" "准备默认 Claude 配置" "runtimeProfileRepairPlan.nextActions"
   mark_pending "R1: create a default Anthropic/Claude-compatible runtime profile with API key"

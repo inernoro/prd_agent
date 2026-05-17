@@ -250,6 +250,21 @@ export interface InfraAgentRuntimeDiagnostics {
     targetIsDefaultRecommended: boolean;
     nextActions: string[];
   } | null;
+  nextCyclePlan?: {
+    cycle: string;
+    state: string;
+    items: Array<{
+      order: number;
+      code: string;
+      title: string;
+      goal: string;
+      evidence: string;
+      status: string;
+      blockedBy?: string | null;
+      nextActions?: string[] | null;
+    }>;
+    stopConditions: string[];
+  } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;
     activeCdsConnections?: number | null;
