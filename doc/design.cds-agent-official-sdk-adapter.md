@@ -181,6 +181,7 @@ public interface IAgentRuntimeAdapter
 - 官方 adapter 默认只开放 `Read/Grep/Glob` 只读内置工具，`permission_mode=default`。`Bash/Edit/Write` 必须通过 `CLAUDE_AGENT_SDK_ALLOWED_TOOLS` 显式 opt-in，且 `runtime_init` 会记录 `builtinWriteToolsEnabled` 和具体工具名。
 - 第一版官方 permission bridge 已接入 `ClaudeAgentOptions.can_use_tool`：只读内置工具直接 allow；`Bash/Edit/Write` 会向 MAP `POST /api/agent-tools/approvals/{runId}/{approvalId}/request` 创建 `tool_call` 审批事件，再复用 `/wait` 等待 MAP approval，最后返回 `PermissionResultAllow` 或 `PermissionResultDeny`。这仍需要真实 UI 审批和远程 official SDK run 验证。
 - Runtime request 的 MAP/session/workspace 上下文已开始进入 sidecar 协议：`mapSessionId/traceId/workspaceRoot/gitRepository/gitRef` 可随 run 下发，官方 SDK adapter 会把 request `workspaceRoot` 映射到 `ClaudeAgentOptions.cwd`，并在 `runtime_init` 中回报 workspace 来源和 repo/ref。`/cds-agent` 新建会话已能录入 repo/ref/workspace 并在审计摘要、诊断包和 runtime start 事件中回显；产品级“选择任意仓库/分支后自动准备 workspace”还需要下一轮 CDS clone/checkout 与 GitHub 授权闭环。
+- Official SDK adapter 的 workspace 准备不实现 agent loop：当 MAP 未下发 `workspaceRoot` 但下发 `gitRepository/gitRef` 时，sidecar 只负责把 GitHub 仓库 shallow clone/fetch 到 `SIDECAR_WORKSPACES_ROOT`，把 resulting path 传给 `ClaudeAgentOptions.cwd`，再把后续读代码、上下文管理、工具循环交回官方 Claude Agent SDK。当前实现限制为 GitHub `owner/repo`/`https://github.com/owner/repo`，私有仓库 token、非 GitHub host、workspace GC/锁仍需后续补齐。
 
 依赖校准：
 

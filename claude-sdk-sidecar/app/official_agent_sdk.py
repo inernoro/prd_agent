@@ -7,6 +7,8 @@ the default fallback while MAP/CDS migrates toward the official SDK boundary.
 import logging
 import os
 import asyncio
+import hashlib
+import re
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -15,6 +17,10 @@ from .tool_bridge import ToolBridge
 from .profiles import resolve_profile
 
 logger = logging.getLogger("sidecar.official_agent_sdk")
+
+_REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_GITHUB_URL_RE = re.compile(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?:\.git)?/?$")
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 
 
 def _prompt_from_messages(req: SidecarRunRequest) -> str:
@@ -140,6 +146,90 @@ def _runtime_preflight(cwd: str | None) -> list[str]:
     return missing
 
 
+def _parse_github_repository(value: str | None) -> tuple[str, str] | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if _REPO_SLUG_RE.match(raw):
+        slug = raw
+    else:
+        match = _GITHUB_URL_RE.match(raw)
+        if not match:
+            raise ValueError("gitRepository must be owner/repo or https://github.com/owner/repo")
+        slug = match.group(1)
+    return slug, f"https://github.com/{slug}.git"
+
+
+def _normalize_git_ref(value: str | None) -> str | None:
+    ref = (value or "").strip()
+    if not ref:
+        return None
+    if not _GIT_REF_RE.match(ref) or ".." in ref or ref.endswith(".lock") or "/." in ref:
+        raise ValueError("gitRef contains unsupported characters")
+    return ref
+
+
+def _workspace_slug(repo_slug: str, git_ref: str | None) -> str:
+    digest = hashlib.sha1(f"{repo_slug}@{git_ref or ''}".encode("utf-8")).hexdigest()[:10]
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{repo_slug}-{git_ref or 'default'}").strip("-")
+    return f"{safe}-{digest}"
+
+
+async def _run_git(args: list[str], cwd: Path | None = None) -> str:
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *args,
+        cwd=str(cwd) if cwd else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    out = stdout.decode("utf-8", errors="replace").strip()
+    err = stderr.decode("utf-8", errors="replace").strip()
+    if proc.returncode != 0:
+        detail = err or out or f"git exited with {proc.returncode}"
+        raise RuntimeError(detail[-800:])
+    return out
+
+
+async def _prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, dict[str, Any] | None]:
+    parsed = _parse_github_repository(req.git_repository)
+    if parsed is None:
+        return None, None
+
+    repo_slug, clone_url = parsed
+    git_ref = _normalize_git_ref(req.git_ref)
+    root = Path(os.environ.get("SIDECAR_WORKSPACES_ROOT", "/tmp/cds-agent-workspaces")).expanduser()
+    target = root / _workspace_slug(repo_slug, git_ref)
+    metadata: dict[str, Any] = {
+        "workspacePrepared": True,
+        "workspaceSource": "git",
+        "gitRepository": repo_slug,
+        "gitRef": git_ref,
+        "workspaceRoot": str(target),
+    }
+
+    root.mkdir(parents=True, exist_ok=True)
+    if (target / ".git").exists():
+        if git_ref:
+            await _run_git(["fetch", "--depth", "1", "origin", git_ref], cwd=target)
+            await _run_git(["checkout", "--force", "FETCH_HEAD"], cwd=target)
+        else:
+            await _run_git(["fetch", "--all", "--prune"], cwd=target)
+    else:
+        if target.exists() and any(target.iterdir()):
+            raise RuntimeError(f"workspace target exists and is not a git repository: {target}")
+        clone_args = ["clone", "--depth", "1"]
+        if git_ref:
+            clone_args.extend(["--branch", git_ref])
+        clone_args.extend([clone_url, str(target)])
+        await _run_git(clone_args)
+
+    commit = await _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
+    metadata["gitCommit"] = commit
+    return str(target), metadata
+
+
 def _resolve_upstream(req: SidecarRunRequest) -> tuple[str | None, str | None, str]:
     if req.profile:
         prof = resolve_profile(req.profile)
@@ -229,8 +319,23 @@ async def run_official_agent(
     permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
     request_cwd = (req.workspace_root or "").strip() or None
     env_cwd = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip() or None
-    cwd = request_cwd or env_cwd
-    workspace_source = "request" if request_cwd else ("env" if env_cwd else "unset")
+    git_workspace_metadata: dict[str, Any] | None = None
+    try:
+        git_cwd, git_workspace_metadata = await _prepare_git_workspace(req) if not request_cwd else (None, None)
+    except Exception as ex:
+        yield SidecarEvent(
+            type="error",
+            error_code="workspace_prepare_failed",
+            message=str(ex),
+            content={
+                "adapter": "claude-agent-sdk",
+                "gitRepository": req.git_repository,
+                "gitRef": req.git_ref,
+            },
+        )
+        return
+    cwd = request_cwd or git_cwd or env_cwd
+    workspace_source = "request" if request_cwd else ("git" if git_cwd else ("env" if env_cwd else "unset"))
     missing_runtime = _runtime_preflight(cwd)
     if missing_runtime:
         yield SidecarEvent(
@@ -337,6 +442,7 @@ async def run_official_agent(
             "workspaceSource": workspace_source,
             "gitRepository": req.git_repository,
             "gitRef": req.git_ref,
+            "workspace": git_workspace_metadata,
             "client": "ClaudeSDKClient",
             "loopOwner": "claude-agent-sdk",
             "sdkLoopEnabled": True,

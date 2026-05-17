@@ -15,6 +15,7 @@ from app.official_agent_sdk import run_official_agent  # noqa: E402
 from app.schemas import SidecarMessage, SidecarRunRequest  # noqa: E402
 
 LAST_OPTIONS: Any = None
+GIT_COMMANDS: list[list[str]] = []
 
 
 class FakeResultMessage:
@@ -66,6 +67,28 @@ class FakeClaudeSDKClient:
                 return
         yield FakeAssistantMessage()
         yield FakeResultMessage(result="adapter ok", usage=FakeUsage())
+
+
+class FakeGitProcess:
+    def __init__(self, args: tuple[Any, ...], cwd: str | None = None):
+        self.args = [str(item) for item in args]
+        self.cwd = cwd
+        self.returncode = 0
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        if self.args[:2] == ["git", "clone"]:
+            target = Path(self.args[-1])
+            target.mkdir(parents=True, exist_ok=True)
+            (target / ".git").mkdir(exist_ok=True)
+            return b"", b""
+        if self.args[:3] == ["git", "rev-parse", "--short"]:
+            return b"abc1234\n", b""
+        return b"", b""
+
+
+async def fake_git_exec(*args: Any, cwd: str | None = None, **_: Any) -> FakeGitProcess:
+    GIT_COMMANDS.append([str(item) for item in args])
+    return FakeGitProcess(args, cwd=cwd)
 
 
 def install_fake_sdk() -> None:
@@ -126,12 +149,14 @@ def build_request() -> SidecarRunRequest:
 
 class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        global LAST_OPTIONS
+        global LAST_OPTIONS, GIT_COMMANDS
         LAST_OPTIONS = None
+        GIT_COMMANDS = []
         install_fake_sdk()
         os.environ.pop("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", None)
         os.environ.pop("CLAUDE_AGENT_SDK_PERMISSION_MODE", None)
         os.environ.pop("AGENT_WORKSPACE_ROOT", None)
+        os.environ.pop("SIDECAR_WORKSPACES_ROOT", None)
 
     async def test_streams_runtime_text_usage_and_done(self) -> None:
         events = [event async for event in run_official_agent(build_request())]
@@ -273,6 +298,43 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(first.content["gitRepository"], "inernoro/prd_agent")
             self.assertEqual(first.content["gitRef"], "codex/cds-agent-workbench-ui")
             self.assertEqual(LAST_OPTIONS.kwargs["cwd"], workspace)
+
+    async def test_git_repository_prepares_workspace_and_sets_sdk_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": "main",
+            })
+
+            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspaceSource"], "git")
+        self.assertEqual(first.content["workspace"]["workspacePrepared"], True)
+        self.assertEqual(first.content["workspace"]["gitRepository"], "inernoro/prd_agent")
+        self.assertEqual(first.content["workspace"]["gitRef"], "main")
+        self.assertEqual(first.content["workspace"]["gitCommit"], "abc1234")
+        self.assertIn(workspaces_root, first.content["cwd"])
+        self.assertEqual(LAST_OPTIONS.kwargs["cwd"], first.content["cwd"])
+        self.assertEqual(GIT_COMMANDS[0][:5], ["git", "clone", "--depth", "1", "--branch"])
+        self.assertEqual(GIT_COMMANDS[0][5], "main")
+
+    async def test_invalid_git_repository_returns_structured_error(self) -> None:
+        req = build_request().model_copy(update={
+            "git_repository": "ssh://github.com/inernoro/prd_agent",
+            "git_ref": "main",
+        })
+
+        events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["gitRepository"], "ssh://github.com/inernoro/prd_agent")
+        self.assertEqual(events[0].content["gitRef"], "main")
 
 
 if __name__ == "__main__":

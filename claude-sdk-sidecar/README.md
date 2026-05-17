@@ -120,6 +120,15 @@ CLAUDE_AGENT_SDK_ALLOWED_TOOLS=Read,Grep,Glob,Bash,Edit,Write
 CLAUDE_AGENT_SDK_PERMISSION_MODE=acceptEdits
 ```
 
+官方 adapter 工作区准备：
+
+- 请求带 `workspaceRoot` 时，sidecar 直接把它作为 `ClaudeAgentOptions.cwd`，并要求该目录存在。
+- 请求未带 `workspaceRoot` 但带 `gitRepository` 时，sidecar 会在
+  `SIDECAR_WORKSPACES_ROOT`（默认 `/tmp/cds-agent-workspaces`）下准备 GitHub 工作区，
+  支持 `owner/repo` 或 `https://github.com/owner/repo`，再把准备好的目录作为 SDK cwd。
+- `gitRef` 会作为 shallow clone/fetch 的 ref；当前只支持安全字符集，不支持任意 shell 片段。
+- 这一步只负责 workspace/control-plane 准备，不接管 Claude Agent SDK 的 agent loop。
+
 官方 adapter 就绪诊断：
 
 ```bash
