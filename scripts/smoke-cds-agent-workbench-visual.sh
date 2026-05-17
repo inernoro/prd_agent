@@ -377,7 +377,18 @@ async function main() {
       returnByValue: true
     });
     const text = textResult.result?.value || '';
-    const required = ['CDS Agent', 'Runtime 调试', '当前执行结论', '商业级', 'READINESS LEDGER', '下一周期最小闭环'];
+    const required = [
+      'CDS Agent',
+      'Runtime 调试',
+      '当前执行结论',
+      '商业级',
+      'READINESS LEDGER',
+      '下一周期最小闭环',
+      'Adapter 兼容性',
+      '默认路由',
+      '缺失 adapter contract',
+      '候选 adapter 边界'
+    ];
     const missing = required.filter((item) => !text.includes(item));
     if (missing.length) {
       throw new Error(`Workbench missing expected text: ${missing.join(', ')}`);
@@ -438,7 +449,11 @@ async function waitForWorkbench(send) {
       && text.includes('商业级')
       && text.includes('当前执行结论')
       && text.includes('READINESS LEDGER')
-      && text.includes('下一周期最小闭环')) return;
+      && text.includes('下一周期最小闭环')
+      && text.includes('Adapter 兼容性')
+      && text.includes('默认路由')
+      && text.includes('缺失 adapter contract')
+      && text.includes('候选 adapter 边界')) return;
     if (text.includes('无权限访问')) throw new Error('Authenticated user lacks permission for /cds-agent');
     if (text.includes('登录') && text.includes('密码') && !text.includes('CDS Agent')) {
       throw new Error('Auth store injection failed; still on login page');
