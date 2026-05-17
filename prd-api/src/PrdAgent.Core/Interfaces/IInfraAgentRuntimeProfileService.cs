@@ -6,6 +6,8 @@ public interface IInfraAgentRuntimeProfileService
 {
     Task<List<InfraAgentRuntimeProfileView>> ListAsync(CancellationToken ct);
 
+    Task<List<InfraAgentRuntimeProfileTemplateView>> ListTemplatesAsync(CancellationToken ct);
+
     Task<InfraAgentRuntimeProfileView> CreateAsync(string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileView> UpdateAsync(string id, string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
@@ -50,6 +52,23 @@ public record InfraAgentRuntimeProfileView(
     bool IsDefault,
     DateTime CreatedAt,
     DateTime UpdatedAt
+);
+
+public record InfraAgentRuntimeProfileTemplateView(
+    string Id,
+    string Name,
+    string Description,
+    string Runtime,
+    string Protocol,
+    string BaseUrl,
+    string Model,
+    double ResourceCpuCores,
+    int ResourceMemoryMb,
+    int TimeoutSeconds,
+    string NetworkPolicy,
+    int AutoCleanupMinutes,
+    bool IsDefaultRecommended,
+    IReadOnlyList<string> CompatibleRuntimeAdapters
 );
 
 public record InfraAgentRuntimeProfileSecretView(
@@ -100,6 +119,30 @@ public static class InfraAgentRuntimeProfileCompatibility
 
     public static string BuildIncompatibleMessage(string profileName, string model) =>
         $"Claude Agent SDK 路径需要 Claude/Anthropic 兼容 runtime profile；当前配置 {profileName} / {model} 可能只适合普通 OpenAI-compatible gateway。请切换到 Claude/Anthropic profile，或将该任务改走普通 OpenAI-compatible gateway。";
+}
+
+public static class InfraAgentRuntimeProfileTemplates
+{
+    public const string AnthropicOfficialClaudeSonnet4 = "anthropic-official-claude-sonnet-4";
+
+    public static IReadOnlyList<InfraAgentRuntimeProfileTemplateView> All { get; } =
+    [
+        new(
+            AnthropicOfficialClaudeSonnet4,
+            "Anthropic Claude Sonnet 4",
+            "官方 Anthropic Messages profile；用于 Claude Agent SDK adapter 的默认推荐模板，只需补入 Anthropic API key。",
+            InfraAgentRuntimes.ClaudeSdk,
+            InfraAgentRuntimeProtocols.Anthropic,
+            "https://api.anthropic.com",
+            "claude-sonnet-4-20250514",
+            2,
+            4096,
+            900,
+            InfraAgentRuntimeNetworkPolicies.Restricted,
+            30,
+            true,
+            [InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk])
+    ];
 }
 
 public static class InfraAgentRuntimeProfileErrorCodes

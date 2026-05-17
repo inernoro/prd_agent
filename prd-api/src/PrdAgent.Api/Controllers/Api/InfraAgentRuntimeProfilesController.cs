@@ -26,6 +26,13 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    [HttpGet("templates")]
+    public async Task<IActionResult> ListTemplates(CancellationToken ct)
+    {
+        var items = await _service.ListTemplatesAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UpsertInfraAgentRuntimeProfileRequest req, CancellationToken ct)
     {

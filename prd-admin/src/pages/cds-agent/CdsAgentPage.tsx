@@ -16,6 +16,7 @@ import {
   getInfraAgentLogs,
   getInfraAgentRuntimeStatus,
   importDefaultInfraAgentRuntimeProfile,
+  listInfraAgentRuntimeProfileTemplates,
   listInfraAgentEvents,
   listInfraAgentMessages,
   listInfraAgentRuntimeProfiles,
@@ -33,25 +34,14 @@ import {
   type InfraAgentEventView,
   type InfraAgentMessageView,
   type InfraAgentRuntimeDiagnostics,
+  type InfraAgentRuntimeProfileTemplateView,
   type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
 } from '@/services/real/infraAgentSessions';
 
 const EVENT_PAGE_LIMIT = 500;
 const EVENT_MAX_BATCHES_PER_REFRESH = 20;
-const ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE = {
-  name: 'Anthropic Claude Sonnet 4',
-  runtime: 'claude-sdk',
-  protocol: 'anthropic',
-  baseUrl: 'https://api.anthropic.com',
-  model: 'claude-sonnet-4-20250514',
-  resourceCpuCores: 2,
-  resourceMemoryMb: 4096,
-  timeoutSeconds: 900,
-  networkPolicy: 'restricted',
-  autoCleanupMinutes: 30,
-  isDefault: true,
-};
+const ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID = 'anthropic-official-claude-sonnet-4';
 
 function statusLabel(status: string): string {
   if (status === 'creating') return '准备中';
@@ -597,6 +587,7 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
 export default function CdsAgentPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [profiles, setProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
+  const [profileTemplates, setProfileTemplates] = useState<InfraAgentRuntimeProfileTemplateView[]>([]);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
@@ -639,18 +630,18 @@ export default function CdsAgentPage() {
     workspaceRoot: '',
   });
   const [profileDraft, setProfileDraft] = useState({
-    name: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.name,
-    runtime: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.runtime,
-    protocol: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.protocol,
-    baseUrl: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.baseUrl,
-    model: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.model,
+    name: '',
+    runtime: 'claude-sdk',
+    protocol: 'anthropic',
+    baseUrl: '',
+    model: '',
     apiKey: '',
-    resourceCpuCores: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.resourceCpuCores,
-    resourceMemoryMb: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.resourceMemoryMb,
-    timeoutSeconds: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.timeoutSeconds,
-    networkPolicy: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.networkPolicy,
-    autoCleanupMinutes: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.autoCleanupMinutes,
-    isDefault: ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE.isDefault,
+    resourceCpuCores: 2,
+    resourceMemoryMb: 4096,
+    timeoutSeconds: 900,
+    networkPolicy: 'restricted',
+    autoCleanupMinutes: 30,
+    isDefault: true,
   });
 
   const activeConnection = useMemo(
@@ -660,6 +651,10 @@ export default function CdsAgentPage() {
   const activeProfile = useMemo(
     () => profiles.find((item) => item.id === draft.runtimeProfileId) ?? profiles.find((item) => item.isDefault) ?? profiles[0] ?? null,
     [profiles, draft.runtimeProfileId],
+  );
+  const anthropicOfficialProfileTemplate = useMemo(
+    () => profileTemplates.find((item) => item.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID) ?? null,
+    [profileTemplates],
   );
   const sortedSessions = useMemo(() => sortSessions(sessions), [sessions]);
   const visibleSessions = useMemo(() => {
@@ -1614,11 +1609,32 @@ export default function CdsAgentPage() {
     }));
   }, [activeProfile, profileDraft.apiKey]);
 
+  useEffect(() => {
+    if (!anthropicOfficialProfileTemplate || activeProfile || profileDraft.apiKey.trim() || profileDraft.baseUrl.trim() || profileDraft.model.trim()) {
+      return;
+    }
+    setProfileDraft((prev) => ({
+      ...prev,
+      name: anthropicOfficialProfileTemplate.name,
+      runtime: anthropicOfficialProfileTemplate.runtime,
+      protocol: anthropicOfficialProfileTemplate.protocol,
+      baseUrl: anthropicOfficialProfileTemplate.baseUrl,
+      model: anthropicOfficialProfileTemplate.model,
+      resourceCpuCores: anthropicOfficialProfileTemplate.resourceCpuCores,
+      resourceMemoryMb: anthropicOfficialProfileTemplate.resourceMemoryMb,
+      timeoutSeconds: anthropicOfficialProfileTemplate.timeoutSeconds,
+      networkPolicy: anthropicOfficialProfileTemplate.networkPolicy,
+      autoCleanupMinutes: anthropicOfficialProfileTemplate.autoCleanupMinutes,
+      isDefault: anthropicOfficialProfileTemplate.isDefaultRecommended,
+    }));
+  }, [activeProfile, anthropicOfficialProfileTemplate, profileDraft.apiKey, profileDraft.baseUrl, profileDraft.model]);
+
   async function loadAll() {
     const requestedSessionId = readRequestedSessionId();
-    const [connRes, profileRes, sessionRes, runtimeRes] = await Promise.all([
+    const [connRes, profileRes, profileTemplateRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
+      listInfraAgentRuntimeProfileTemplates(),
       listInfraAgentSessions(100),
       getInfraAgentRuntimeStatus(true),
     ]);
@@ -1633,6 +1649,9 @@ export default function CdsAgentPage() {
       setProfiles(items);
       const preferred = items.find((item) => item.isDefault) ?? items[0];
       if (preferred) setDraft((prev) => ({ ...prev, runtimeProfileId: prev.runtimeProfileId || preferred.id }));
+    }
+    if (profileTemplateRes.success) {
+      setProfileTemplates(profileTemplateRes.data?.items ?? []);
     }
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
@@ -1993,9 +2012,24 @@ export default function CdsAgentPage() {
   }
 
   function applyAnthropicOfficialTemplate() {
+    const template = anthropicOfficialProfileTemplate;
+    if (!template) {
+      toast.warning('官方模板未加载', '请刷新运行状态后重试');
+      return;
+    }
     setProfileDraft((prev) => ({
       ...prev,
-      ...ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE,
+      name: template.name,
+      runtime: template.runtime,
+      protocol: template.protocol,
+      baseUrl: template.baseUrl,
+      model: template.model,
+      resourceCpuCores: template.resourceCpuCores,
+      resourceMemoryMb: template.resourceMemoryMb,
+      timeoutSeconds: template.timeoutSeconds,
+      networkPolicy: template.networkPolicy,
+      autoCleanupMinutes: template.autoCleanupMinutes,
+      isDefault: template.isDefaultRecommended,
       apiKey: prev.apiKey,
     }));
     setProfileTest('');

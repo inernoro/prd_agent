@@ -86,6 +86,8 @@
 
 `claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层，用来把官方 SDK 的事件、权限、取消和结果映射进 MAP/CDS。
 
+模型配置里的 “Anthropic 官方模板” 来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates`，不是页面硬编码。它会预填 Anthropic Messages 协议、官方 baseUrl、Claude Sonnet 模型和资源默认值；用户仍需手动填入自己的 API key 并保存为 runtime profile。
+
 ## 失败先看哪里
 
 | 现象 | 优先查看 |
@@ -101,10 +103,10 @@
 
 ## 当前未完成的商业级验收
 
-截至 2026-05-17，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄和 run bundle 导出。但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
+截至 2026-05-17，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke 和 profile preflight gate。但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
 
-- CDS runtime pool 至少发现 1 个 healthy sidecar instance。
-- 远程 S1 只读 run 真实通过。
+- 配置真实 Claude/Anthropic-compatible runtime profile 和 API key。
+- 远程 S1 只读 run 用该 profile 真实通过。
 - 远程 S2 MAP 审批真实通过。
 - 远程 S3 Stop 能真实 interrupt SDK run。
 - `/cds-agent` 截图显示真实运行态字段，而不是静态或空态。

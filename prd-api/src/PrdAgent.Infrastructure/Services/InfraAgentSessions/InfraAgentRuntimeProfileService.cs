@@ -45,6 +45,11 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return items.Select(ToView).ToList();
     }
 
+    public Task<List<InfraAgentRuntimeProfileTemplateView>> ListTemplatesAsync(CancellationToken ct)
+    {
+        return Task.FromResult(InfraAgentRuntimeProfileTemplates.All.ToList());
+    }
+
     public async Task<InfraAgentRuntimeProfileView> CreateAsync(
         string userId,
         UpsertInfraAgentRuntimeProfileRequest request,

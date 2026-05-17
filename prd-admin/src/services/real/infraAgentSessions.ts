@@ -115,6 +115,23 @@ export interface InfraAgentRuntimeProfileView {
   updatedAt: string;
 }
 
+export interface InfraAgentRuntimeProfileTemplateView {
+  id: string;
+  name: string;
+  description: string;
+  runtime: string;
+  protocol: string;
+  baseUrl: string;
+  model: string;
+  resourceCpuCores: number;
+  resourceMemoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: string;
+  autoCleanupMinutes: number;
+  isDefaultRecommended: boolean;
+  compatibleRuntimeAdapters: string[];
+}
+
 export interface InfraAgentRuntimeProfileTestResult {
   id: string;
   success: boolean;
@@ -244,6 +261,10 @@ interface HookProfileResp {
 
 interface RuntimeProfilesResp {
   items: InfraAgentRuntimeProfileView[];
+}
+
+interface RuntimeProfileTemplatesResp {
+  items: InfraAgentRuntimeProfileTemplateView[];
 }
 
 interface RuntimeProfileResp {
@@ -486,6 +507,10 @@ export async function createInfraAgentHookProfile(input: {
 
 export async function listInfraAgentRuntimeProfiles(): Promise<ApiResponse<RuntimeProfilesResp>> {
   return await apiRequest<RuntimeProfilesResp>(api.infraAgentRuntimeProfiles.list(), { method: 'GET' });
+}
+
+export async function listInfraAgentRuntimeProfileTemplates(): Promise<ApiResponse<RuntimeProfileTemplatesResp>> {
+  return await apiRequest<RuntimeProfileTemplatesResp>(api.infraAgentRuntimeProfiles.templates(), { method: 'GET' });
 }
 
 export async function createInfraAgentRuntimeProfile(input: {

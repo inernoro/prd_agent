@@ -224,3 +224,4 @@ public interface IAgentRuntimeAdapter
 - 临时安装真实 `claude-agent-sdk` 验证到当前解析版本 `0.2.82`，并确认 `ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 的签名与 adapter 使用方式匹配。
 - `claude-agent-sdk` 依赖链需要 `pydantic>=2.11`，因此 sidecar requirements 已从 `pydantic==2.9.2` 升到 `2.13.4`。
 - 为避免 pip 把 `starlette` 解到与 `fastapi==0.115.0` 不兼容的 `1.0.0`，requirements 固定 `starlette==0.38.6` 和 `sse-starlette==3.0.3`。
+- Anthropic 官方 profile 模板由 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates` 暴露，前端只按模板 id 套用。模型 id、协议、baseUrl 和资源默认值都应在后端模板里维护，避免 UI、脚本和运行前兼容性校验各自保存一份 provider 事实。
