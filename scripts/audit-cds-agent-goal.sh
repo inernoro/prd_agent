@@ -30,6 +30,9 @@ N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
 cycle_summary="${CDS_AGENT_GOAL_CYCLE_SUMMARY:-}"
 
 failures=()
+timing_names=()
+timing_statuses=()
+timing_seconds=()
 
 run_step() {
   local label="$1"
@@ -41,11 +44,17 @@ run_step() {
     ended=$(date +%s)
     duration=$((ended - started))
     printf 'PASS %s (%ss)\n' "$label" "$duration"
+    timing_names+=("$label")
+    timing_statuses+=("pass")
+    timing_seconds+=("$duration")
     return 0
   fi
   ended=$(date +%s)
   duration=$((ended - started))
   printf 'FAIL %s (%ss)\n' "$label" "$duration" >&2
+  timing_names+=("$label")
+  timing_statuses+=("failed")
+  timing_seconds+=("$duration")
   failures+=("$label")
   return 1
 }
@@ -185,6 +194,22 @@ failures_json='[]'
 if (( ${#failures[@]} > 0 )); then
   failures_json=$(printf '%s\n' "${failures[@]}" | jq -R . | jq -s .)
 fi
+timing_json='[]'
+timing_slowest_json='[]'
+timing_total_seconds=0
+if (( ${#timing_names[@]} > 0 )); then
+  timing_json=$(
+    for i in "${!timing_names[@]}"; do
+      jq -n \
+        --arg name "${timing_names[$i]}" \
+        --arg status "${timing_statuses[$i]}" \
+        --argjson durationSeconds "${timing_seconds[$i]}" \
+        '{name:$name,status:$status,durationSeconds:$durationSeconds}'
+    done | jq -s .
+  )
+  timing_slowest_json=$(jq -c 'sort_by(.durationSeconds) | reverse | .[:3]' <<< "$timing_json")
+  timing_total_seconds=$(jq -r '[.[].durationSeconds] | add // 0' <<< "$timing_json")
+fi
 
 audit_json=$(
   jq -n \
@@ -217,6 +242,9 @@ audit_json=$(
     --argjson legacyLines "$legacy_lines" \
     --argjson cycleTotalSeconds "$cycle_total_seconds" \
     --argjson cycleSlowest "$cycle_slowest" \
+    --argjson localTiming "$timing_json" \
+    --argjson localSlowest "$timing_slowest_json" \
+    --argjson localTotalSeconds "$timing_total_seconds" \
     --argjson missing "$missing_json" \
     --argjson failures "$failures_json" \
     '{
@@ -227,6 +255,11 @@ audit_json=$(
         boundaryReport: $boundaryReport,
         nonCodeCompatibilityLog: $n6Log,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end)
+      },
+      localTiming: {
+        totalSeconds: $localTotalSeconds,
+        steps: $localTiming,
+        slowest: $localSlowest
       },
       requirements: {
         mapCdsControlPlane: {
@@ -310,6 +343,11 @@ printf 'Deploy/build advice: %s\n' "$deployment_advice"
 printf 'Next command: %s\n' "$next_command"
 printf 'Gates: R0=%s A0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
   "$gate_r0" "$gate_a0" "$gate_r1" "$gate_s1" "$gate_s2s3" "$gate_v1" "$gate_n6"
+printf 'Local guardrail time: %ss\n' "$timing_total_seconds"
+if (( ${#timing_names[@]} > 0 )); then
+  printf 'Slowest local guardrails:\n'
+  jq -r '.[] | "  - " + .name + " · " + (.durationSeconds|tostring) + "s · " + .status' <<< "$timing_slowest_json"
+fi
 printf 'Audit dir: %s\n' "$AUDIT_DIR"
 if [[ -n "$REPORT" ]]; then
   printf 'Audit report: %s\n' "$REPORT"
