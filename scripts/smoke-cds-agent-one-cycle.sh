@@ -23,6 +23,9 @@ SMOKE_CDS_AGENT_CYCLE_DIR="${SMOKE_CDS_AGENT_CYCLE_DIR:-/tmp/cds-agent-cycle-$CY
 
 mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
 
+export SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/readiness-report.json}"
+SMOKE_CDS_AGENT_CYCLE_SUMMARY="${SMOKE_CDS_AGENT_CYCLE_SUMMARY:-$SMOKE_CDS_AGENT_CYCLE_DIR/cycle-summary.json}"
+
 passed_arr=()
 failed_arr=()
 skipped_arr=()
@@ -82,10 +85,98 @@ fi
 
 run_step "n6-non-code-boundary" "N6 non-code agent compatibility boundary" "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || exit 1
 
+readiness_overall="unknown"
+readiness_pending_json="[]"
+readiness_pending_count=0
+if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
+  readiness_overall=$(jq -r '.overall // "unknown"' "$SMOKE_CDS_AGENT_READINESS_REPORT")
+  readiness_pending_json=$(jq -c '.pending // []' "$SMOKE_CDS_AGENT_READINESS_REPORT")
+  readiness_pending_count=$(jq -r '.pending // [] | length' "$SMOKE_CDS_AGENT_READINESS_REPORT")
+fi
+
+s1_status="missing"
+if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
+  s1_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_S1_REPORT")
+fi
+
+provider_calls_enabled=false
+if [[ "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-}" == "1" ]]; then
+  provider_calls_enabled=true
+fi
+
+r1_repair_apply=false
+if [[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
+  r1_repair_apply=true
+fi
+
+cycle_status="pending"
+if [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" ]]; then
+  cycle_status="provider_smokes_started"
+fi
+if [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" != "true" ]]; then
+  cycle_status="ready_for_provider_smokes"
+fi
+
+passed_json=$(printf '%s\n' "${passed_arr[@]}" | jq -R . | jq -s .)
+skipped_json='[]'
+if (( ${#skipped_arr[@]} > 0 )); then
+  skipped_json=$(printf '%s\n' "${skipped_arr[@]}" | jq -R . | jq -s .)
+fi
+failed_json='[]'
+if (( ${#failed_arr[@]} > 0 )); then
+  failed_json=$(printf '%s\n' "${failed_arr[@]}" | jq -R . | jq -s .)
+fi
+
+jq -n \
+  --arg cycleId "$CYCLE_ID" \
+  --arg cycleStatus "$cycle_status" \
+  --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
+  --arg host "${SMOKE_TEST_HOST:-http://localhost:5000}" \
+  --arg readinessOverall "$readiness_overall" \
+  --arg readinessReport "$SMOKE_CDS_AGENT_READINESS_REPORT" \
+  --arg s1Status "$s1_status" \
+  --arg s1Report "$SMOKE_CDS_AGENT_S1_REPORT" \
+  --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
+  --argjson providerCallsEnabled "$provider_calls_enabled" \
+  --argjson r1RepairApply "$r1_repair_apply" \
+  --argjson readinessPending "$readiness_pending_json" \
+  --argjson passed "$passed_json" \
+  --argjson skipped "$skipped_json" \
+  --argjson failed "$failed_json" \
+  '{
+    cycleId: $cycleId,
+    status: $cycleStatus,
+    host: $host,
+    evidenceDir: $evidenceDir,
+    providerCallsEnabled: $providerCallsEnabled,
+    r1RepairApply: $r1RepairApply,
+    readiness: {
+      overall: $readinessOverall,
+      report: $readinessReport,
+      pending: $readinessPending
+    },
+    s1: {
+      status: $s1Status,
+      report: $s1Report
+    },
+    visual: {
+      screenshot: $screenshot
+    },
+    steps: {
+      passed: $passed,
+      skipped: $skipped,
+      failed: $failed
+    }
+  }' > "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
+
 printf '\n##########################################\n'
 printf '# CDS Agent one-cycle summary\n'
 printf '##########################################\n'
 printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
+printf 'Cycle status: %s\n' "$cycle_status"
+printf 'Readiness overall: %s\n' "$readiness_overall"
+printf 'S1 status: %s\n' "$s1_status"
+printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
 printf 'Passed: %s\n' "${#passed_arr[@]}"
 if (( ${#passed_arr[@]} > 0 )); then
   for name in "${passed_arr[@]}"; do printf '  - %s\n' "$name"; done
@@ -102,6 +193,11 @@ fi
 if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
   printf '\nS1 report:\n'
   jq . "$SMOKE_CDS_AGENT_S1_REPORT"
+fi
+
+if (( readiness_pending_count > 0 )); then
+  printf '\nPending gates:\n'
+  jq -r '.[] | "  - " + .' <<< "$readiness_pending_json"
 fi
 
 printf '\nNext: inspect readiness.log. The goal is not commercially complete until R1 is pass and S1/S2/S3 provider smokes run with SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1.\n'
