@@ -1,6 +1,6 @@
 # CDS Agent 代码审查上手指南
 
-> 版本：v1.0 | 日期：2026-05-17 | 状态：面向使用者的 quickstart
+> 版本：v1.1 | 日期：2026-05-18 | 状态：面向使用者的 quickstart（R1/S1/S2/S3 仍需真实 provider 证据）
 
 ## 目标
 
@@ -47,9 +47,11 @@
 6. 需要命令、编辑或 PR 时，再把任务拆成一个小改动，并通过 MAP approval 逐项确认。
 7. 失败或结果重要时，导出诊断包；提交问题时只给 sessionId、traceId、事件摘要和错误码，不要提供 API key。
 
-如果第 2 步没通过，先不要发审查 prompt；应该先运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
+如果第 2 步没通过，先不要发审查 prompt；应该先看页面“当前执行结论”的 `currentBlockingGate`、`blockingReason`、`deploymentAdvice` 和 `nextCommand`，再运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
-当前远程 preview 的最新状态是：R0 控制面已通过，R1 仍阻塞。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
+当前远程 preview 的最新状态是：R0/A0/T1/V1 已通过，R1/S1/S2/S3 仍阻塞或 pending，页面 ledger 显示 `4/8 passed`。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
+
+页面上如果出现历史会话的 approval、cancel 或 assistant 事件，也不能直接算作 S1/S2/S3 商业证据。前端现在要求 `defaultProfileReady && officialLoopReady` 后，才允许当前页面事件作为 provider gate 证据；R1 未过时，S1/S2/S3 必须保持 WAIT/pending。
 
 ## 最小可用闭环
 
@@ -71,6 +73,8 @@ R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDisco
 同一个接口还会返回 `diagnostics.debugCommands`，页面的“调试命令”区域直接展示这些后端生成的命令。日常排障优先按该列表执行：先跑 doctor / R1 dry-run；拿到真实 Anthropic/Claude-compatible key 后再跑 R1 test-before-promote；R1 通过后才显式打开 provider 调用跑 one-cycle。
 
 `diagnostics.executionPanel` 是当前执行结论的机器事实源：它给出 `status`、`commercialComplete`、`currentBlockingGate`、`blockingReason`、`nextCommand` 和 gate 计数。页面的“当前执行结论”和 readiness smoke 都应优先消费这个字段；如果 `currentBlockingGate=R0`，下一步应先跑 doctor；如果是 `R1`，再跑 R1 dry-run/test-before-promote，避免跳过真实阻塞。
+
+同一个 execution panel 还会给出 `deploymentAdvice`。它的用途是减少无意义构建/部署：`blocked_r1` 或 `profile-blocked` 不靠 redeploy 解决，应该保存 Anthropic/Claude-compatible profile；S1/S2/S3 pending 不靠 redeploy 解决，应该显式打开 provider smoke；只有代码改动、远程容器网络/鉴权变化、视觉证据或 promotion 需要重新部署。
 
 需要给人类或 CI 留证据时，doctor 可以输出机器可读报告：
 
@@ -109,6 +113,28 @@ N6 的最小自动化入口是 `bash scripts/smoke-cds-agent-non-code-compatibil
 | 4. 看证据 | 检查文件路径、风险说明、事件流、usage、workspace | 结论能追溯到具体 repo/ref 和文件 |
 | 5. 再放开动作 | 需要命令/编辑/PR 时打开对应工具和审批 | 每个危险动作都有 MAP approval 记录 |
 | 6. 导出复盘 | 失败或重要结果导出诊断包 | 包含 session、trace、events、logs、adapter/profile，不含 API key |
+
+最小 prompt 建议先从只读开始，不要一步到位要求修改和 PR：
+
+```text
+请只读审查 <owner/repo>@<ref> 中最可能影响稳定性的 3 个风险。
+要求：
+1. 不修改文件；
+2. 不运行危险命令；
+3. 每个风险给出文件路径、触发条件、影响、最小验证方式；
+4. 如果证据不足，明确说明还需要读哪些文件。
+```
+
+如果要让它改代码，把任务缩到一个文件或一个小 bug：
+
+```text
+在完成只读分析后，只修复你认为风险最高且影响范围最小的一个问题。
+要求：
+1. 修改前说明计划；
+2. 需要命令或写文件时等待 MAP approval；
+3. 只运行最小相关测试；
+4. 输出 diff 摘要和剩余风险。
+```
 
 ## 审查当前仓库
 

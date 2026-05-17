@@ -37,6 +37,10 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 
 ## 快速上手
 
+如果目标是“用 CDS Agent 审查当前仓库或其他仓库”，先看
+`doc/guide.cds-agent-code-review-quickstart.md`。本文件只解释 smoke 怎么跑、
+证据怎么读、何时不该把 readiness/skip 当作商业级通过。
+
 ### 1. 本地跑
 
 ```bash

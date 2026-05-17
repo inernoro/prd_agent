@@ -81,6 +81,8 @@
 
 ## 商业级就绪门禁
 
+面向“我怎么审自己的仓库或其他仓库”的上手流程，先读 `doc/guide.cds-agent-code-review-quickstart.md`。本 runbook 只保留运行和排障口径；不要在两份文档里维护两套门禁定义。
+
 不要只看 `smoke-all.sh` 退出码。默认 smoke-all 会把尚未配置真实 provider 的 S1/S2/S3 识别为 readiness/skip，以便部署不断；商业级验收必须单独看 readiness pending。
 
 远程 preview 的默认入口是：
