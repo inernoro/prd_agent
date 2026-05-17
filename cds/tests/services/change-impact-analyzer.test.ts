@@ -49,17 +49,31 @@ describe('analyzeChangeImpact', () => {
     expect(analyzeChangeImpact(['cds/systemd/cds-master.service']).needsRestart).toBe(true);
   });
 
-  it('纯文档/changelogs → 全部 irrelevant', () => {
+  it('纯文档/changelogs/验证脚本/测试 → 全部 irrelevant', () => {
     const r = analyzeChangeImpact([
       'README.md',
       'CHANGELOG.md',
       'doc/design.foo.md',
       'changelogs/2026-05-06_x.md',
       '.claude/rules/x.md',
+      'scripts/smoke-cds-agent-one-cycle.sh',
+      'scripts/audit-cds-agent-goal.sh',
+      'scripts/doctor-cds-agent-runtime.sh',
+      'scripts/preflight-cds-agent-cds-self-update.sh',
+      'scripts/verify-cds-agent-r0-after-self-update.sh',
+      'cds/tests/services/github-webhook-dispatcher.test.ts',
+      'prd-admin/src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts',
+      'e2e/specs/cds-branch-runtime-visual.spec.ts',
     ]);
     expect(r.needsRestart).toBe(false);
     expect(r.hotReloadablePaths).toHaveLength(0);
-    expect(r.irrelevantPaths).toHaveLength(5);
+    expect(r.irrelevantPaths).toHaveLength(13);
+  });
+
+  it('未知普通脚本仍保守判定为重启', () => {
+    const r = analyzeChangeImpact(['scripts/deploy-production.sh']);
+    expect(r.needsRestart).toBe(true);
+    expect(r.restartTriggers[0].reason).toMatch(/未知改动/);
   });
 
   it('混合改动:应用代码 + 文档 → 仍是热重载', () => {

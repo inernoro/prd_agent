@@ -741,7 +741,7 @@ export class GitHubWebhookDispatcher {
       }
       return {
         action: 'ignored-doc-only',
-        message: `${dryRun ? '[dry-run] ' : ''}Push ${commitSha.slice(0, 7)} only changed ${docsOnly.changedPaths.length} doc/metadata file(s); refreshed branch metadata without deploy.`,
+        message: `${dryRun ? '[dry-run] ' : ''}Push ${commitSha.slice(0, 7)} only changed ${docsOnly.changedPaths.length} non-runtime file(s); refreshed branch metadata without deploy.`,
         branchId,
       };
     }

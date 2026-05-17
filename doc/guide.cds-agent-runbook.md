@@ -136,6 +136,11 @@ SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 \
 MSBuild named pipe/socket 权限不足。目标审计会把这种情况标成 `N6=infra_failed`；应在有 dotnet
 权限的本地环境重跑 audit，再判断 N6 是否真的失败。
 
+CDS GitHub webhook 会把纯文档、changelog、`.claude`、GitHub metadata、`e2e`、`cds/tests`、
+前端 `__tests__`、以及 `scripts/smoke-*`/`audit-*`/`doctor-*`/`preflight-*`/`verify-*`
+归为 non-runtime change。已有 preview 分支收到这类 push 时只刷新 commit 元数据，不应触发
+api/admin/runtime 重新部署；如果看到这类提交仍在 building，优先检查 change-impact 分类。
+
 ## 会话无法恢复
 
 症状：
