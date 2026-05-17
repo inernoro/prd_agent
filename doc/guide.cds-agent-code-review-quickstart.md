@@ -68,6 +68,16 @@ R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDisco
 
 同一个接口还会返回 `diagnostics.debugCommands`，页面的“调试命令”区域直接展示这些后端生成的命令。日常排障优先按该列表执行：先跑 doctor / R1 dry-run；拿到真实 Anthropic/Claude-compatible key 后再跑 R1 test-before-promote；R1 通过后才显式打开 provider 调用跑 one-cycle。
 
+需要给人类或 CI 留证据时，doctor 可以输出机器可读报告：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_DOCTOR_REPORT=/tmp/cds-agent-doctor.json \
+  bash scripts/doctor-cds-agent-runtime.sh
+```
+
+报告里的 `diagnosis` 是当前结论，`nextRecommended` 是下一步动作，`aliasCheck` 证明 API 容器访问 sidecar 是否稳定，`defaultProfile.compatibleWithDesiredRuntimeAdapter` 判断 R1 是否仍阻塞。这样每次排障都能明确时间花在 runtime pool、profile、provider 真调用、视觉截图还是非代码兼容回归。
+
 R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本。脚本和页面都会调用后端 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile`，由后端创建非默认 Anthropic 候选 profile，调用 `/test` 验证上游可用，成功后才提升为默认 profile，并复查 `commercialReadiness.R1=pass`。页面的“保存配置 + 设为默认”和“更新当前配置 + 设为默认”都走同样的 test-before-promote 流程；测试失败时会清理候选 profile，不会覆盖当前默认配置。
 设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。
 
@@ -185,7 +195,9 @@ CDS Agent 迁移官方 SDK 时，不能把非代码智能体也绑到 sidecar ru
 
 ## 当前未完成的商业级验收
 
-截至 2026-05-17，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、profile preflight gate、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
+截至 2026-05-18，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、sidecar alias 稳定性 smoke、profile preflight gate、doctor JSON 报告、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。远程 preview 已能证明 `desiredRuntimeAdapter=claude-agent-sdk`、`runtimeTransport=sidecar-runtime-adapter`、`loopOwner=claude-agent-sdk`、`aliasCheck.status=stable`。
+
+但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
 
 - 配置真实 Claude/Anthropic-compatible runtime profile 和 API key。
 - 远程 S1 只读 run 用该 profile 真实通过。

@@ -27,9 +27,9 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-cds-agent-profile-preflight.sh` | CDS Agent profile preflight：验证不兼容默认 profile 会在 `SendMessage` 前被 `runtime_profile_incompatible` 拦截，且不会写入消息或入队 |
 | `scripts/smoke-cds-agent-official-sdk-run.sh` | CDS Agent official SDK S1 run：默认只做 readiness；显式允许 provider 调用后才创建临时只读审查会话并等待 assistant 响应 |
 | `scripts/smoke-cds-agent-official-sdk-controls.sh` | CDS Agent official SDK S2/S3 controls：默认只做 readiness；显式允许 provider 调用后才验证 MAP 审批和 Stop |
-| `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令 |
+| `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、sidecar alias、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令；可输出 JSON 诊断包 |
 | `scripts/smoke-cds-agent-commercial-readiness.sh` | CDS Agent 商业级 readiness 总账：不调用 provider，审计 R0/R1/T1/S1/S2/S3/V1 当前证据和 pending gate |
-| `scripts/smoke-cds-agent-one-cycle.sh` | CDS Agent 一个周期最小闭环：按 R0/R1/S1/S2/S3/V1/N6 顺序串联脚本，保存日志、S1 JSON 报告和视觉截图 |
+| `scripts/smoke-cds-agent-one-cycle.sh` | CDS Agent 一个周期最小闭环：按 doctor/R0/R1/S1/S2/S3/V1/N6 顺序串联脚本，保存日志、JSON 报告和视觉截图 |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -153,6 +153,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_ALIAS_ATTEMPTS` | `6` | sidecar alias stability 专用；连续 `/readyz` 采样次数 |
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
+| `SMOKE_CDS_AGENT_DOCTOR_REPORT` | _(空)_ | doctor / one-cycle 专用；指定 JSON 诊断包输出路径，包含 diagnosis、nextRecommended、aliasCheck、默认 profile 和 adapter compatibility |
 | `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
 | `SMOKE_CDS_AGENT_ACCESS_TOKEN` | _(空)_ | workbench visual 专用；已有 JWT 时可替代用户名密码 |
 | `SMOKE_CDS_AGENT_SCREENSHOT` | `/tmp/cds-agent-workbench-visual.png` | workbench visual 专用；截图输出路径 |
@@ -217,7 +218,8 @@ readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后会触发一次危
 真实 Claude/Anthropic profile 已配置后运行。
 
 `doctor-cds-agent-runtime.sh` 是排障入口，不替代 smoke gate。它会读取
-`runtime-status`、默认 runtime profile、后端官方模板和 adapter 兼容矩阵，然后按
+`runtime-status`、默认 runtime profile、后端官方模板和 adapter 兼容矩阵；设置
+`CDS_HOST` 时还会从远程 API 容器内连续采样 sidecar DNS alias，然后按
 当前状态输出下一步命令：
 - runtime pool 未就绪时，优先修 CDS discovery / static sidecar / `/readyz`
 - 默认 profile 不兼容或缺 key 时，提示用 Anthropic official template 创建默认 profile
@@ -227,6 +229,20 @@ readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后会触发一次危
 这条脚本的定位是"把问题定位到下一条命令"，所以它默认不失败于
 `instanceCount=0` 这类业务配置缺口；真正的验收仍看 runtime/profile/S1/controls
 smoke gate 是否通过。
+
+如果需要把 doctor 结果放进执行面板或诊断包：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_DOCTOR_REPORT=/tmp/cds-agent-doctor.json \
+  bash scripts/doctor-cds-agent-runtime.sh
+```
+
+报告会包含 `diagnosis`、`nextRecommended`、`runtime`、`aliasCheck`、
+`defaultProfile`、`officialTemplate` 和 `adapterCompatibility`。当前远程 preview 的
+典型阻塞会表现为 `aliasCheck.status=stable`、`loopOwner=claude-agent-sdk`，但
+`defaultProfile.compatibleWithDesiredRuntimeAdapter=false`；这说明应先修 R1 profile，
+而不是继续改页面。
 
 `smoke-cds-agent-commercial-readiness.sh` 是验收总账入口，不触发 provider 调用。
 它会检查：
@@ -289,8 +305,9 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
 它会把证据写到 `SMOKE_CDS_AGENT_CYCLE_DIR`，默认是
-`/tmp/cds-agent-cycle-<timestamp>`，包括每一步日志、`readiness-report.json`、
-`r1-report.json`、`s1-report.json`、`controls-report.json`、`cycle-summary.json` 和可选视觉截图。终端汇总里的 `Passed`
+`/tmp/cds-agent-cycle-<timestamp>`，包括每一步日志、`doctor-report.json`、
+`readiness-report.json`、`r1-report.json`、`s1-report.json`、`controls-report.json`、
+`cycle-summary.json` 和可选视觉截图。终端汇总里的 `Passed`
 只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`Readiness overall` 和 pending
 gates 为准。
 

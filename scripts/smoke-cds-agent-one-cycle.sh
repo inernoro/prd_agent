@@ -4,8 +4,8 @@
 # ============================================
 #
 # Runs the smallest useful CDS Agent cycle in dependency order:
-#   R0 runtime pool -> sidecar alias stability -> templates -> R1 repair dry-run/apply -> readiness ledger
-#   -> S1 official SDK run -> S2/S3 controls -> V1 visual -> N6 non-code boundary
+#   doctor -> R0 runtime pool -> sidecar alias stability -> templates -> R1 repair dry-run/apply
+#   -> readiness ledger -> S1 official SDK run -> S2/S3 controls -> V1 visual -> N6 non-code boundary
 #
 # This script does not make provider calls unless the caller explicitly sets
 # SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1. R1 only writes a real default profile
@@ -24,6 +24,7 @@ SMOKE_CDS_AGENT_CYCLE_DIR="${SMOKE_CDS_AGENT_CYCLE_DIR:-/tmp/cds-agent-cycle-$CY
 mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
 
 export SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/readiness-report.json}"
+export SMOKE_CDS_AGENT_DOCTOR_REPORT="${SMOKE_CDS_AGENT_DOCTOR_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/doctor-report.json}"
 export SMOKE_CDS_AGENT_R1_REPORT="${SMOKE_CDS_AGENT_R1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/r1-report.json}"
 export SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/s1-report.json}"
 export SMOKE_CDS_AGENT_CONTROLS_REPORT="${SMOKE_CDS_AGENT_CONTROLS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/controls-report.json}"
@@ -93,6 +94,9 @@ finish_cycle() {
   local r1_status="missing"
   local s1_status="missing"
   local controls_status="missing"
+  local doctor_diagnosis="missing"
+  local doctor_next="missing"
+  local doctor_alias_status="unknown"
   local provider_calls_enabled=false
   local r1_repair_apply=false
   local cycle_status="pending"
@@ -105,6 +109,12 @@ finish_cycle() {
     readiness_overall=$(jq -r '.overall // "unknown"' "$SMOKE_CDS_AGENT_READINESS_REPORT")
     readiness_pending_json=$(jq -c '.pending // []' "$SMOKE_CDS_AGENT_READINESS_REPORT")
     readiness_pending_count=$(jq -r '.pending // [] | length' "$SMOKE_CDS_AGENT_READINESS_REPORT")
+  fi
+
+  if [[ -f "$SMOKE_CDS_AGENT_DOCTOR_REPORT" ]]; then
+    doctor_diagnosis=$(jq -r '.diagnosis // "unknown"' "$SMOKE_CDS_AGENT_DOCTOR_REPORT")
+    doctor_next=$(jq -r '.nextRecommended // "unknown"' "$SMOKE_CDS_AGENT_DOCTOR_REPORT")
+    doctor_alias_status=$(jq -r '.aliasCheck.status // "unknown"' "$SMOKE_CDS_AGENT_DOCTOR_REPORT")
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_R1_REPORT" ]]; then
@@ -206,6 +216,10 @@ finish_cycle() {
     --arg host "${SMOKE_TEST_HOST:-http://localhost:5000}" \
     --arg readinessOverall "$readiness_overall" \
     --arg readinessReport "$SMOKE_CDS_AGENT_READINESS_REPORT" \
+    --arg doctorDiagnosis "$doctor_diagnosis" \
+    --arg doctorNext "$doctor_next" \
+    --arg doctorAliasStatus "$doctor_alias_status" \
+    --arg doctorReport "$SMOKE_CDS_AGENT_DOCTOR_REPORT" \
     --arg r1Status "$r1_status" \
     --arg r1Report "$SMOKE_CDS_AGENT_R1_REPORT" \
     --arg s1Status "$s1_status" \
@@ -236,6 +250,12 @@ finish_cycle() {
         overall: $readinessOverall,
         report: $readinessReport,
         pending: $readinessPending
+      },
+      doctor: {
+        diagnosis: $doctorDiagnosis,
+        nextRecommended: $doctorNext,
+        aliasStatus: $doctorAliasStatus,
+        report: $doctorReport
       },
       r1: {
         status: $r1Status,
@@ -271,6 +291,9 @@ finish_cycle() {
   printf 'Cycle status: %s\n' "$cycle_status"
   printf 'Next command: %s\n' "$next_command"
   printf 'Readiness overall: %s\n' "$readiness_overall"
+  printf 'Doctor diagnosis: %s\n' "$doctor_diagnosis"
+  printf 'Doctor next: %s\n' "$doctor_next"
+  printf 'Doctor report: %s\n' "$SMOKE_CDS_AGENT_DOCTOR_REPORT"
   printf 'R1 status: %s\n' "$r1_status"
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Controls status: %s\n' "$controls_status"
@@ -325,6 +348,8 @@ printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
 printf 'Host: %s\n' "${SMOKE_TEST_HOST:-http://localhost:5000}"
 printf 'Provider calls: %s\n' "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-0}"
 printf 'R1 repair apply: %s\n' "$([[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]] && printf yes || printf no)"
+
+run_step "doctor" "Runtime doctor and next action report" "$SCRIPT_DIR/doctor-cds-agent-runtime.sh" || finish_cycle 1
 
 run_step "r0-runtime" "R0 runtime pool official SDK ownership" "$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh" || finish_cycle 1
 if [[ -n "${CDS_HOST:-}" ]]; then

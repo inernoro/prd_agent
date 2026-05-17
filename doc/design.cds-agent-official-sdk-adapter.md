@@ -246,3 +246,10 @@ public interface IAgentRuntimeAdapter
 - Anthropic 官方 profile 模板由 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates` 暴露，前端只按模板 id 套用。模型 id、协议、baseUrl 和资源默认值都应在后端模板里维护，避免 UI、脚本和运行前兼容性校验各自保存一份 provider 事实。
 - 由模板创建 profile 时走 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/profiles`。该入口只接收名称、API key 和默认标记，其他字段全部从后端模板复制；这样 UI 不需要重新提交 `model/baseUrl/protocol/resource`，也不会因为页面字段漂移而创建出“看似官方模板、实际不兼容”的 profile。
 - Adapter 兼容边界由 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapter-compatibility` 暴露：当前 `claude-agent-sdk` 是默认支持路径，`loopOwner=claude-agent-sdk`、`mapRole=control-plane-only`；`legacy-sidecar` 仅是显式 fallback；`codex` 目前为 `planned-not-routable`，不能因为页面能保存 `runtime=codex` profile 就把代码审查任务默认路由过去。前端 Runtime 调试区和 smoke 均读取该矩阵，避免再次把普通 OpenAI-compatible profile 当成官方 Claude SDK 可运行配置。
+
+2026-05-18 运行时证据和执行面板校准：
+
+- preview sidecar 已迁到唯一 scoped alias `claude-agent-sdk-runtime-v2-prd-agent`，doctor 和 alias smoke 都从 API 容器内部验证该 alias 只解析到一个 ready official SDK sidecar。
+- `scripts/doctor-cds-agent-runtime.sh` 可输出 JSON 诊断包，字段包含 `diagnosis`、`nextRecommended`、`runtime`、`aliasCheck`、默认 profile、官方模板和 adapter compatibility。它是排障入口，不替代 S1/S2/S3 provider smoke。
+- `scripts/smoke-cds-agent-one-cycle.sh` 会把 doctor 作为第一步，并把 doctor 结论、下一步建议、逐步耗时和最慢步骤写入 `cycle-summary.json`。这用于回答“时间花在哪里”和“下一步到底是什么”。
+- 当前远程诊断已经证明 MAP/CDS 控制面、sidecar transport 和 `loopOwner=claude-agent-sdk` 的最小运行前置条件；仍未证明商业级完成，因为默认 profile 是 OpenRouter DeepSeek V4 Pro，不兼容官方 Claude Agent SDK。R1 通过前，不允许把 S1/S2/S3 readiness 当作真实代码审查验收。
