@@ -18,13 +18,16 @@ public class InfraAgentSessionsController : ControllerBase
 {
     private readonly IInfraAgentSessionService _service;
     private readonly IClaudeSidecarRouter? _sidecarRouter;
+    private readonly IDynamicSidecarRegistry? _sidecarRegistry;
 
     public InfraAgentSessionsController(
         IInfraAgentSessionService service,
-        IClaudeSidecarRouter? sidecarRouter = null)
+        IClaudeSidecarRouter? sidecarRouter = null,
+        IDynamicSidecarRegistry? sidecarRegistry = null)
     {
         _service = service;
         _sidecarRouter = sidecarRouter;
+        _sidecarRegistry = sidecarRegistry;
     }
 
     [HttpGet("event-schema")]
@@ -34,7 +37,7 @@ public class InfraAgentSessionsController : ControllerBase
     }
 
     [HttpGet("runtime-status")]
-    public async Task<IActionResult> RuntimeStatus(CancellationToken ct)
+    public async Task<IActionResult> RuntimeStatus([FromQuery] bool refreshDiscovery = false, CancellationToken ct = default)
     {
         if (_sidecarRouter == null)
         {
@@ -48,8 +51,13 @@ public class InfraAgentSessionsController : ControllerBase
             }));
         }
 
+        if (refreshDiscovery && _sidecarRegistry != null)
+        {
+            await _sidecarRegistry.RefreshAsync(ct);
+        }
+
         var diagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { diagnostics }));
+        return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
     }
 
     [HttpGet]

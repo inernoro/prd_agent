@@ -1046,7 +1046,7 @@ export default function CdsAgentPage() {
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentSessions(100),
-      getInfraAgentRuntimeStatus(),
+      getInfraAgentRuntimeStatus(true),
     ]);
     if (connRes.success) {
       const items = (connRes.data?.items ?? []).filter((item) => item.status !== 'revoked');

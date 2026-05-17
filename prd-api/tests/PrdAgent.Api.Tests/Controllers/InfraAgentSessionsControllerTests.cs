@@ -259,9 +259,36 @@ public class InfraAgentSessionsControllerTests
         service.Verify(x => x.ListMessagesAsync("user-1", "session-1", 50, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task RuntimeStatus_ShouldRefreshDiscovery_WhenRequested()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var router = new Mock<IClaudeSidecarRouter>();
+        var registry = new Mock<IDynamicSidecarRegistry>();
+        router
+            .Setup(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SidecarPoolDiagnostics(
+                false,
+                0,
+                0,
+                Array.Empty<SidecarInstanceDiagnostics>()));
+        registry
+            .Setup(x => x.RefreshAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var controller = BuildController(service.Object, "user-1", router.Object, registry.Object);
+
+        var result = await controller.RuntimeStatus(refreshDiscovery: true, CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        registry.Verify(x => x.RefreshAsync(It.IsAny<CancellationToken>()), Times.Once);
+        router.Verify(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
-        string userId)
+        string userId,
+        IClaudeSidecarRouter? sidecarRouter = null,
+        IDynamicSidecarRegistry? sidecarRegistry = null)
     {
         var claims = new List<Claim>
         {
@@ -270,7 +297,7 @@ public class InfraAgentSessionsControllerTests
         var identity = new ClaimsIdentity(claims, "test");
         var principal = new ClaimsPrincipal(identity);
 
-        return new InfraAgentSessionsController(service)
+        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry)
         {
             ControllerContext = new ControllerContext
             {

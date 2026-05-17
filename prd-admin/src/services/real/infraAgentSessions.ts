@@ -169,6 +169,7 @@ interface EventSchemaResp {
 
 interface RuntimeStatusResp {
   diagnostics: InfraAgentRuntimeDiagnostics;
+  discoveryRefreshed?: boolean;
 }
 
 interface MessagesResp {
@@ -207,8 +208,9 @@ export async function getInfraAgentEventSchema(): Promise<ApiResponse<EventSchem
   return await apiRequest<EventSchemaResp>(api.infraAgentSessions.eventSchema(), { method: 'GET' });
 }
 
-export async function getInfraAgentRuntimeStatus(): Promise<ApiResponse<RuntimeStatusResp>> {
-  return await apiRequest<RuntimeStatusResp>(api.infraAgentSessions.runtimeStatus(), { method: 'GET' });
+export async function getInfraAgentRuntimeStatus(refreshDiscovery = false): Promise<ApiResponse<RuntimeStatusResp>> {
+  const suffix = refreshDiscovery ? '?refreshDiscovery=true' : '';
+  return await apiRequest<RuntimeStatusResp>(`${api.infraAgentSessions.runtimeStatus()}${suffix}`, { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {
