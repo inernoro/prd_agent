@@ -14,7 +14,7 @@
 # Optional:
 #   SMOKE_CDS_BRANCH_ID                  default: prd-agent-codex-cds-agent-workbench-ui
 #   SMOKE_CDS_AGENT_API_PROFILE          default: api-prd-agent
-#   SMOKE_CDS_AGENT_SIDECAR_ALIAS        default: claude-agent-sdk-runtime-prd-agent
+#   SMOKE_CDS_AGENT_SIDECAR_ALIAS        default: claude-agent-sdk-runtime-v2-prd-agent
 #   SMOKE_CDS_AGENT_SIDECAR_PORT         default: 7400
 #   SMOKE_CDS_AGENT_ALIAS_ATTEMPTS       default: 6
 # ============================================
@@ -27,7 +27,7 @@ source "$SCRIPT_DIR/smoke-lib.sh"
 
 SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
 SMOKE_CDS_AGENT_API_PROFILE="${SMOKE_CDS_AGENT_API_PROFILE:-api-prd-agent}"
-SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-prd-agent}"
+SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-v2-prd-agent}"
 SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
 SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-6}"
 SMOKE_STEP_TOTAL=4

@@ -149,7 +149,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS` | `3` | CDS Agent runtime-status R0/readiness 每次重试间隔秒数 |
 | `SMOKE_CDS_BRANCH_ID` | `prd-agent-codex-cds-agent-workbench-ui` | sidecar alias stability 专用；要 exec 的 CDS branch id |
 | `SMOKE_CDS_AGENT_API_PROFILE` | `api-prd-agent` | sidecar alias stability 专用；从哪个 API 容器内访问 sidecar alias |
-| `SMOKE_CDS_AGENT_SIDECAR_ALIAS` | `claude-agent-sdk-runtime-prd-agent` | sidecar alias stability 专用；被 API 容器访问的 sidecar DNS alias |
+| `SMOKE_CDS_AGENT_SIDECAR_ALIAS` | `claude-agent-sdk-runtime-v2-prd-agent` | sidecar alias stability 专用；被 API 容器访问的 sidecar DNS alias |
 | `SMOKE_CDS_AGENT_ALIAS_ATTEMPTS` | `6` | sidecar alias stability 专用；连续 `/readyz` 采样次数 |
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
@@ -174,7 +174,7 @@ bash scripts/smoke-cds-agent-sidecar-alias-stability.sh
 ```
 
 它不是模型 smoke；它从 API 容器内部连续访问
-`http://claude-agent-sdk-runtime-prd-agent:7400/readyz`。所有采样都必须是
+`http://claude-agent-sdk-runtime-v2-prd-agent:7400/readyz`。所有采样都必须是
 `ready=true`、`agentAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk`。如果任意一次
 返回旧版 `/readyz` 503，说明 CDS/Docker DNS alias 仍污染，需要更换唯一 profile alias
 或清理 stale service。

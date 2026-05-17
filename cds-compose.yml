@@ -95,7 +95,7 @@ services:
       ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
       # Preview 内置 official SDK sidecar 旁路：共享 CDS discovery 为空时，MAP 仍能发现本分支 sidecar。
       # provider key 默认由 MAP runtime profile/request 按次下发，不要求 api 容器持有 ANTHROPIC_API_KEY。
-      CLAUDE_SIDECAR_BASE_URL: "http://claude-agent-sdk-runtime-prd-agent:7400"
+      CLAUDE_SIDECAR_BASE_URL: "http://claude-agent-sdk-runtime-v2-prd-agent:7400"
       CLAUDE_SIDECAR_TOKEN: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
       ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
@@ -129,7 +129,7 @@ services:
       cds.readiness-timeout: "600"
       cds.readiness-interval: "3"
 
-  claude-agent-sdk-runtime:
+  claude-agent-sdk-runtime-v2:
     image: python:3.12-slim
     working_dir: /app
     volumes:
