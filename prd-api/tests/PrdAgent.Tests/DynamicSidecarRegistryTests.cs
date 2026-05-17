@@ -374,6 +374,7 @@ public class DynamicSidecarRegistryTests
                 {
                   "ready": false,
                   "anthropicKey": false,
+                  "providerKeyRequiredForReady": false,
                   "sidecarToken": true,
                   "agentAdapter": "claude-agent-sdk",
                   "adapterDiagnostics": {
@@ -397,15 +398,16 @@ public class DynamicSidecarRegistryTests
         Assert.Equal(1, diagnostics.InstanceCount);
         Assert.Equal(0, diagnostics.HealthyCount);
         Assert.False(diagnostics.Instances[0].AnthropicKeyConfigured);
+        Assert.False(diagnostics.Instances[0].ProviderKeyRequiredForReady);
         Assert.True(diagnostics.Instances[0].SidecarTokenConfigured);
         Assert.Contains("所有已发现的 sidecar runtime 实例当前都不可用", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: /readyz 返回 HTTP 503", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: /readyz ready=false", diagnostics.Blockers ?? Array.Empty<string>());
-        Assert.Contains("cds-pairing:conn-1:host-a: 缺少 ANTHROPIC_API_KEY", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.DoesNotContain("cds-pairing:conn-1:host-a: 缺少 ANTHROPIC_API_KEY", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: 缺少 claude_cli", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: 缺少 workspace_root", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains(
-            "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk",
+            "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.Contains(
             "官方 SDK 模式下保持 MAP/CDS 只做控制面，工具执行和 turn loop 继续走 claude-agent-sdk",

@@ -1,13 +1,15 @@
 import os
 import sys
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.main import _adapter_diagnostics  # noqa: E402
+import app.main as sidecar_main  # noqa: E402
+from app.main import _adapter_diagnostics, readyz  # noqa: E402
 
 
 class SidecarReadinessTests(unittest.TestCase):
@@ -43,6 +45,48 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(diagnostics["permissionMode"], "acceptEdits")
         self.assertEqual(diagnostics["builtinWriteToolsEnabled"], True)
         self.assertEqual(diagnostics["builtinWriteTools"], ["Bash", "Write"])
+
+    def test_readyz_defaults_to_runtime_profile_or_env_provider_key(self) -> None:
+        previous_token = sidecar_main.SIDECAR_TOKEN
+        sidecar_main.SIDECAR_TOKEN = "test-token"
+        try:
+            with patch.dict(os.environ, {
+                "SIDECAR_AGENT_ADAPTER": "legacy-sidecar",
+            }, clear=True):
+                response = self._run_readyz()
+        finally:
+            sidecar_main.SIDECAR_TOKEN = previous_token
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["ready"], True)
+        self.assertEqual(payload["anthropicKey"], False)
+        self.assertEqual(payload["providerKeyMode"], "runtime-profile-or-env")
+        self.assertEqual(payload["providerKeyRequiredForReady"], False)
+
+    def test_readyz_can_require_env_provider_key_for_standalone_sidecar(self) -> None:
+        previous_token = sidecar_main.SIDECAR_TOKEN
+        sidecar_main.SIDECAR_TOKEN = "test-token"
+        try:
+            with patch.dict(os.environ, {
+                "SIDECAR_AGENT_ADAPTER": "legacy-sidecar",
+                "SIDECAR_PROVIDER_KEY_MODE": "env",
+            }, clear=True):
+                response = self._run_readyz()
+        finally:
+            sidecar_main.SIDECAR_TOKEN = previous_token
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(payload["ready"], False)
+        self.assertEqual(payload["providerKeyMode"], "env")
+        self.assertEqual(payload["providerKeyRequiredForReady"], True)
+
+    @staticmethod
+    def _run_readyz():
+        import asyncio
+
+        return asyncio.run(readyz())
 
 
 if __name__ == "__main__":

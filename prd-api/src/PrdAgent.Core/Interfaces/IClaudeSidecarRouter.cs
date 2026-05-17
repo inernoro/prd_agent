@@ -164,6 +164,7 @@ public sealed record SidecarInstanceDiagnostics(
     int? HttpStatus,
     bool? Ready,
     bool? AnthropicKeyConfigured,
+    bool? ProviderKeyRequiredForReady,
     bool? SidecarTokenConfigured,
     string? AgentAdapter,
     string? AdapterDiagnosticsJson,

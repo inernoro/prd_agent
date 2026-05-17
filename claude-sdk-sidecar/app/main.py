@@ -66,7 +66,9 @@ async def healthz() -> JSONResponse:
 async def readyz() -> JSONResponse:
     has_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
     has_token = bool(SIDECAR_TOKEN)
-    ready = has_key and has_token
+    provider_key_mode = os.environ.get("SIDECAR_PROVIDER_KEY_MODE", "runtime-profile-or-env").strip().lower()
+    provider_key_required = provider_key_mode in ("env", "environment", "env-required")
+    ready = has_token and (has_key or not provider_key_required)
     adapter = DEFAULT_AGENT_ADAPTER or "legacy-sidecar"
     diagnostics = _adapter_diagnostics(adapter)
     if adapter.strip().lower() in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
@@ -75,6 +77,8 @@ async def readyz() -> JSONResponse:
         {
             "ready": ready,
             "anthropicKey": has_key,
+            "providerKeyMode": provider_key_mode,
+            "providerKeyRequiredForReady": provider_key_required,
             "sidecarToken": has_token,
             "activeRuns": len(_active_runs),
             "agentAdapter": adapter,
@@ -131,6 +135,7 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
         "claudeCliPath": cli_path,
         "workspaceRoot": cwd or None,
         "workspaceRootExists": cwd_exists if cwd else None,
+        "providerKeyMode": os.environ.get("SIDECAR_PROVIDER_KEY_MODE", "runtime-profile-or-env").strip().lower(),
         "allowedTools": allowed_tools,
         "permissionMode": permission_mode,
         "builtinWriteToolsEnabled": bool(write_tools),

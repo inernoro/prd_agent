@@ -220,6 +220,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     (int)resp.StatusCode,
                     parsed.Ready,
                     parsed.AnthropicKey,
+                    parsed.ProviderKeyRequiredForReady,
                     parsed.SidecarToken,
                     parsed.AgentAdapter,
                     parsed.AdapterDiagnosticsJson,
@@ -235,6 +236,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     instance.Tags,
                     !string.IsNullOrWhiteSpace(token),
                     _state.IsHealthy(instance.Name),
+                    null,
                     null,
                     null,
                     null,
@@ -288,7 +290,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             {
                 blockers.Add($"{instance.Name}: /readyz ready=false");
             }
-            if (instance.AnthropicKeyConfigured == false)
+            if (instance.ProviderKeyRequiredForReady != false && instance.AnthropicKeyConfigured == false)
             {
                 blockers.Add($"{instance.Name}: 缺少 ANTHROPIC_API_KEY");
             }
@@ -319,6 +321,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 instance.Tags,
                 !string.IsNullOrWhiteSpace(ResolveToken(instance)),
                 _state.IsHealthy(instance.Name),
+                null,
                 null,
                 null,
                 null,
@@ -360,7 +363,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
         else if (HealthyCount <= 0)
         {
-            actions.Add("进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk");
+            var providerKeyRequired = instances.Any(x => x.ProviderKeyRequiredForReady != false);
+            actions.Add(providerKeyRequired
+                ? "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk"
+                : "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN、claude CLI 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发");
             actions.Add("确认 SIDECAR_AGENT_ADAPTER=claude-agent-sdk 时，AGENT_WORKSPACE_ROOT 存在且可读写");
             actions.Add("修复后刷新 runtime-status，再启动 CDS Agent 会话");
         }
@@ -412,10 +418,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, bool? AnthropicKey, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null, null, null);
+            return (null, null, null, null, null, null);
 
         try
         {
@@ -429,6 +435,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 && (anthropicKeyElement.ValueKind == JsonValueKind.True || anthropicKeyElement.ValueKind == JsonValueKind.False)
                 ? anthropicKeyElement.GetBoolean()
                 : null;
+            bool? providerKeyRequiredForReady = root.TryGetProperty("providerKeyRequiredForReady", out var providerKeyElement)
+                && (providerKeyElement.ValueKind == JsonValueKind.True || providerKeyElement.ValueKind == JsonValueKind.False)
+                ? providerKeyElement.GetBoolean()
+                : null;
             bool? sidecarToken = root.TryGetProperty("sidecarToken", out var sidecarTokenElement)
                 && (sidecarTokenElement.ValueKind == JsonValueKind.True || sidecarTokenElement.ValueKind == JsonValueKind.False)
                 ? sidecarTokenElement.GetBoolean()
@@ -440,11 +450,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             string? adapterDiagnostics = root.TryGetProperty("adapterDiagnostics", out var diagElement)
                 ? diagElement.GetRawText()
                 : null;
-            return (ready, anthropicKey, sidecarToken, adapter, adapterDiagnostics);
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics);
         }
         catch (JsonException)
         {
-            return (null, null, null, null, null);
+            return (null, null, null, null, null, null);
         }
     }
 
