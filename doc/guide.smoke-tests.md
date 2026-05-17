@@ -145,6 +145,9 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL` | _(空)_ | `smoke-cds-agent-commercial-readiness.sh` 专用；设为 `1` 时 R1 profile 不兼容/缺 key 直接失败 |
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
+| `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
+| `SMOKE_CDS_AGENT_ACCESS_TOKEN` | _(空)_ | workbench visual 专用；已有 JWT 时可替代用户名密码 |
+| `SMOKE_CDS_AGENT_SCREENSHOT` | `/tmp/cds-agent-workbench-visual.png` | workbench visual 专用；截图输出路径 |
 | `SMOKE_CDS_AGENT_REPO` | `inernoro/prd_agent` | S1 只读审查目标仓库 |
 | `SMOKE_CDS_AGENT_REF` | `main` | S1 只读审查目标 ref |
 | `SMOKE_CDS_AGENT_POLL_SECONDS` | `120` | 等待 assistant 消息或 failed 状态的秒数 |
@@ -222,6 +225,23 @@ SMOKE_CDS_AGENT_READINESS_REPORT=/tmp/cds-agent-readiness.json \
 gate 状态和 pending 列表；不会包含 API key。
 如果同时设置 `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1`，脚本会在失败前先写出报告；
 此时失败点之后尚未执行的 gate 会显示为 `unknown`。
+
+`smoke-cds-agent-workbench-visual.sh` 是更强的 V1 视觉入口。它需要真实登录 token
+或用户名密码，不调用 provider，只用 headless Chrome 打开 `/cds-agent`，把 JWT 注入
+前端持久化 auth store，等待页面出现 `Runtime 调试`、`商业级 READINESS LEDGER` 和
+`下一周期最小闭环`，然后保存截图。它用于证明用户看到的是 authenticated workbench
+和 runtime 诊断面板，而不是仅仅 `HEAD /cds-agent = 200`。
+
+```bash
+SMOKE_CDS_AGENT_LOGIN_USERNAME=admin \
+SMOKE_CDS_AGENT_LOGIN_PASSWORD='...' \
+SMOKE_CDS_AGENT_SCREENSHOT=/tmp/cds-agent-workbench-visual.png \
+  bash scripts/smoke-cds-agent-workbench-visual.sh
+```
+
+也可以直接传 `SMOKE_CDS_AGENT_ACCESS_TOKEN`；此时可选传
+`SMOKE_CDS_AGENT_AUTH_USER_JSON` 用于填充前端 auth store 的用户信息。截图不会包含
+API key，但它会显示当前默认 profile 是否仍阻塞 R1。
 
 ---
 
