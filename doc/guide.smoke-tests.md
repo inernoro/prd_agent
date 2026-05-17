@@ -22,6 +22,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-defect-agent.sh` | 缺陷 CRUD + 讨论消息追加 |
 | `scripts/smoke-report-agent.sh` | 团队/模板/周报 CRUD |
 | `scripts/smoke-cds-agent-runtime-status.sh` | CDS Agent runtime pool：验证 MAP runtime-status、sidecar discovery、`/readyz` healthy 与 `loopOwner=claude-agent-sdk`；不触发模型 run |
+| `scripts/smoke-cds-agent-sidecar-alias-stability.sh` | CDS Agent sidecar alias 稳定性：通过 `cdscli branch exec` 从 API 容器内连续访问 sidecar `/readyz`，防止 stale DNS alias 命中新旧 sidecar |
 | `scripts/smoke-cds-agent-profile-templates.sh` | CDS Agent runtime profile 模板与 adapter 兼容矩阵：验证 MAP 后端暴露 Anthropic 官方 Claude Agent SDK profile 模板，并声明官方 SDK / legacy / Codex-like 边界 |
 | `scripts/smoke-cds-agent-profile-preflight.sh` | CDS Agent profile preflight：验证不兼容默认 profile 会在 `SendMessage` 前被 `runtime_profile_incompatible` 拦截，且不会写入消息或入队 |
 | `scripts/smoke-cds-agent-official-sdk-run.sh` | CDS Agent official SDK S1 run：默认只做 readiness；显式允许 provider 调用后才创建临时只读审查会话并等待 assistant 响应 |
@@ -146,6 +147,10 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL` | _(空)_ | `smoke-cds-agent-commercial-readiness.sh` 专用；设为 `1` 时 R1 profile 不兼容/缺 key 直接失败 |
 | `SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES` | `3` | CDS Agent runtime-status R0/readiness 短重试次数；用于部署刚切换时 `/readyz` 健康状态短暂抖动 |
 | `SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS` | `3` | CDS Agent runtime-status R0/readiness 每次重试间隔秒数 |
+| `SMOKE_CDS_BRANCH_ID` | `prd-agent-codex-cds-agent-workbench-ui` | sidecar alias stability 专用；要 exec 的 CDS branch id |
+| `SMOKE_CDS_AGENT_API_PROFILE` | `api-prd-agent` | sidecar alias stability 专用；从哪个 API 容器内访问 sidecar alias |
+| `SMOKE_CDS_AGENT_SIDECAR_ALIAS` | `claude-agent-sdk-runtime-prd-agent` | sidecar alias stability 专用；被 API 容器访问的 sidecar DNS alias |
+| `SMOKE_CDS_AGENT_ALIAS_ATTEMPTS` | `6` | sidecar alias stability 专用；连续 `/readyz` 采样次数 |
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
 | `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
@@ -159,6 +164,20 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 `smoke-cds-agent-runtime-status.sh` 还要求目标环境已配置共享 CDS sidecar discovery，或
 通过 `CLAUDE_SIDECAR_BASE_URL` / `CLAUDE_SIDECAR_TOKEN` 配好静态 official SDK
 sidecar。该脚本只读 `runtime-status`，不会消耗模型 provider token。
+
+如果 R0 偶发在 `healthyCount=0` 和 `healthyCount=1` 之间跳，先跑 sidecar alias 稳定性：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+AI_ACCESS_KEY=xxx \
+bash scripts/smoke-cds-agent-sidecar-alias-stability.sh
+```
+
+它不是模型 smoke；它从 API 容器内部连续访问
+`http://claude-agent-sdk-runtime-prd-agent:7400/readyz`。所有采样都必须是
+`ready=true`、`agentAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk`。如果任意一次
+返回旧版 `/readyz` 503，说明 CDS/Docker DNS alias 仍污染，需要更换唯一 profile alias
+或清理 stale service。
 
 `smoke-cds-agent-profile-templates.sh` 只读 MAP 模板与 adapter compatibility API，
 确认 Anthropic 官方 profile 模板仍由后端提供，并声明兼容 `claude-agent-sdk`；

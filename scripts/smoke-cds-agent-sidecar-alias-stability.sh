@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# ============================================
+# 冒烟测试: CDS Agent sidecar alias stability
+# ============================================
+#
+# Runs inside the remote API container through cdscli branch exec and curls the
+# configured sidecar DNS alias repeatedly. This catches stale Docker/CDS aliases
+# that can make MAP alternate between a new healthy sidecar and an old /readyz
+# 503 instance.
+#
+# Required:
+#   CDS_HOST
+#
+# Optional:
+#   SMOKE_CDS_BRANCH_ID                  default: prd-agent-codex-cds-agent-workbench-ui
+#   SMOKE_CDS_AGENT_API_PROFILE          default: api-prd-agent
+#   SMOKE_CDS_AGENT_SIDECAR_ALIAS        default: claude-agent-sdk-runtime-prd-agent
+#   SMOKE_CDS_AGENT_SIDECAR_PORT         default: 7400
+#   SMOKE_CDS_AGENT_ALIAS_ATTEMPTS       default: 6
+# ============================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=smoke-lib.sh
+source "$SCRIPT_DIR/smoke-lib.sh"
+
+SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
+SMOKE_CDS_AGENT_API_PROFILE="${SMOKE_CDS_AGENT_API_PROFILE:-api-prd-agent}"
+SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-prd-agent}"
+SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
+SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-6}"
+SMOKE_STEP_TOTAL=4
+
+smoke_init "CDS Agent Sidecar Alias Stability"
+
+if [[ -z "${CDS_HOST:-}" ]]; then
+  smoke_fail "CDS_HOST is required so cdscli can exec inside the remote API container"
+fi
+
+smoke_step "确认 cdscli 可用"
+if [[ ! -f ".claude/skills/cds/cli/cdscli.py" ]]; then
+  smoke_fail ".claude/skills/cds/cli/cdscli.py not found"
+fi
+smoke_ok "cdscli found"
+
+smoke_step "从 API 容器连续访问 sidecar alias"
+remote_url="http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/readyz"
+remote_cmd=""
+for attempt in $(seq 1 "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS"); do
+  remote_cmd="${remote_cmd}echo sample=${attempt}; curl -sS --max-time 10 ${remote_url} || true; printf '\\n---cds-agent-alias-sample---\\n'; sleep 1; "
+done
+exec_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$remote_cmd")
+smoke_verbose "$exec_resp"
+smoke_assert_eq "$(printf '%s' "$exec_resp" | jq -r '.ok')" "true" "cdscli.branch.exec.ok"
+smoke_assert_eq "$(printf '%s' "$exec_resp" | jq -r '.data.exitCode')" "0" "cdscli.branch.exec.exitCode"
+stdout=$(printf '%s' "$exec_resp" | jq -r '.data.stdout // ""')
+stderr=$(printf '%s' "$exec_resp" | jq -r '.data.stderr // ""')
+smoke_assert_nonempty "$stdout" "cdscli.branch.exec.stdout"
+printf '%s\n' "$stdout"
+if [[ -n "$stderr" ]]; then
+  smoke_fail "remote sidecar alias curl wrote stderr: $stderr"
+fi
+
+smoke_step "确认每次 /readyz 都是 official SDK adapter"
+sample_count=$(printf '%s' "$stdout" | grep -c '^---cds-agent-alias-sample---$' || true)
+ready_count=$(printf '%s' "$stdout" | grep -o '"ready":true,"anthropicKey"' | wc -l | tr -d ' ')
+adapter_count=$(printf '%s' "$stdout" | grep -o '"agentAdapter":"claude-agent-sdk"' | wc -l | tr -d ' ')
+loop_count=$(printf '%s' "$stdout" | grep -o '"loopOwner":"claude-agent-sdk"' | wc -l | tr -d ' ')
+smoke_assert_eq "$sample_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "readyz sample count"
+smoke_assert_eq "$ready_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "ready=true count"
+smoke_assert_eq "$adapter_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "agentAdapter=claude-agent-sdk count"
+smoke_assert_eq "$loop_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "loopOwner=claude-agent-sdk count"
+smoke_ok "all ${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS} attempts returned ready=true and loopOwner=claude-agent-sdk"
+
+smoke_step "输出证据摘要"
+jq -n \
+  --arg branch "$SMOKE_CDS_BRANCH_ID" \
+  --arg apiProfile "$SMOKE_CDS_AGENT_API_PROFILE" \
+  --arg alias "$SMOKE_CDS_AGENT_SIDECAR_ALIAS" \
+  --arg url "$remote_url" \
+  --argjson attempts "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" \
+  '{
+    branch: $branch,
+    apiProfile: $apiProfile,
+    sidecarAlias: $alias,
+    readyzUrl: $url,
+    attempts: $attempts,
+    expected: {
+      ready: true,
+      agentAdapter: "claude-agent-sdk",
+      loopOwner: "claude-agent-sdk"
+    }
+  }'
+
+smoke_done
