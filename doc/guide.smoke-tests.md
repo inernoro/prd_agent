@@ -355,6 +355,13 @@ deploy 后的 readiness、视觉截图，还是 provider 调用。
 但会在 `r1-report.json` 里写出当前默认 profile、后端 R1 修复计划、缺 key 保护结果和
 不含真实密钥的下一条修复命令。
 
+V1 视觉 smoke 可以使用真实 JWT、登录用户名/密码，或 `AI_ACCESS_KEY + SMOKE_USER`
+的 smoke-only 浏览器请求头注入。后一种路径只给同源 `/api/` 请求注入
+`X-AI-Access-Key` / `X-AI-Impersonate`，并移除 dummy Bearer token；截图和 text dump
+不会包含真实 `AI_ACCESS_KEY`。V1 断言会检查 `/cds-agent` 页面包含
+`Runtime 调试`、`当前执行结论`、`商业级 READINESS LEDGER` 和
+`下一周期最小闭环`。
+
 要真正关闭 R1 并进入 provider smoke，必须显式提供 Anthropic/Claude-compatible key：
 
 ```bash

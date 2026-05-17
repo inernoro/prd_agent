@@ -11,6 +11,7 @@
 # Required auth, choose one:
 #   SMOKE_CDS_AGENT_ACCESS_TOKEN=<jwt>
 #   SMOKE_CDS_AGENT_LOGIN_USERNAME=<username> SMOKE_CDS_AGENT_LOGIN_PASSWORD=<password>
+#   AI_ACCESS_KEY=<key> [SMOKE_USER=admin]  # smoke-only browser API header injection
 #
 # Optional:
 #   SMOKE_TEST_HOST=http://localhost:5000
@@ -27,12 +28,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
 SMOKE_STEP_TOTAL=5
-SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL:-${SMOKE_HOST%/}/cds-agent}"
+SMOKE_CDS_AGENT_WORKBENCH_URL_INPUT="${SMOKE_CDS_AGENT_WORKBENCH_URL:-}"
+SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL_INPUT:-${SMOKE_HOST%/}/cds-agent}"
 SMOKE_CDS_AGENT_SCREENSHOT="${SMOKE_CDS_AGENT_SCREENSHOT:-/tmp/cds-agent-workbench-visual.png}"
 SMOKE_CDS_AGENT_TEXT_DUMP="${SMOKE_CDS_AGENT_TEXT_DUMP:-/tmp/cds-agent-workbench-visual.txt}"
 SMOKE_CDS_AGENT_ACCESS_TOKEN="${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}"
 SMOKE_CDS_AGENT_LOGIN_USERNAME="${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}"
 SMOKE_CDS_AGENT_LOGIN_PASSWORD="${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}"
+SMOKE_CDS_AGENT_AUTH_MODE="jwt"
 CHROME_BIN="${CHROME_BIN:-}"
 
 find_chrome() {
@@ -56,13 +59,26 @@ find_chrome() {
 }
 
 smoke_init "CDS Agent Workbench Visual"
+SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL_INPUT:-${SMOKE_HOST%/}/cds-agent}"
 
 smoke_step "准备认证 token"
 auth_user_json='{"userId":"smoke","username":"smoke","displayName":"Smoke User","role":"ADMIN"}'
 if [[ -z "$SMOKE_CDS_AGENT_ACCESS_TOKEN" ]]; then
-  if [[ -z "$SMOKE_CDS_AGENT_LOGIN_USERNAME" || -z "$SMOKE_CDS_AGENT_LOGIN_PASSWORD" ]]; then
-    smoke_fail "需要 SMOKE_CDS_AGENT_ACCESS_TOKEN，或 SMOKE_CDS_AGENT_LOGIN_USERNAME/SMOKE_CDS_AGENT_LOGIN_PASSWORD"
+  if [[ -n "$SMOKE_CDS_AGENT_LOGIN_USERNAME" || -n "$SMOKE_CDS_AGENT_LOGIN_PASSWORD" ]]; then
+    if [[ -z "$SMOKE_CDS_AGENT_LOGIN_USERNAME" || -z "$SMOKE_CDS_AGENT_LOGIN_PASSWORD" ]]; then
+      smoke_fail "SMOKE_CDS_AGENT_LOGIN_USERNAME/SMOKE_CDS_AGENT_LOGIN_PASSWORD 必须同时设置"
+    fi
+    SMOKE_CDS_AGENT_AUTH_MODE="login"
+  elif [[ -n "${AI_ACCESS_KEY:-}" ]]; then
+    SMOKE_CDS_AGENT_AUTH_MODE="ai-access-key"
+    SMOKE_CDS_AGENT_ACCESS_TOKEN="ai-access-key-smoke-token"
+    auth_user_json=$(jq -cn --arg username "$SMOKE_USER" '{userId:$username,username:$username,displayName:$username,role:"ADMIN"}')
+  else
+    smoke_fail "需要 SMOKE_CDS_AGENT_ACCESS_TOKEN、登录用户名/密码，或 AI_ACCESS_KEY + SMOKE_USER"
   fi
+fi
+
+if [[ "$SMOKE_CDS_AGENT_AUTH_MODE" == "login" ]]; then
   login_body=$(jq -n \
     --arg username "$SMOKE_CDS_AGENT_LOGIN_USERNAME" \
     --arg password "$SMOKE_CDS_AGENT_LOGIN_PASSWORD" \
@@ -81,16 +97,16 @@ if [[ -z "$SMOKE_CDS_AGENT_ACCESS_TOKEN" ]]; then
   smoke_assert_eq "$(printf '%s' "$login_resp" | jq -r '.success')" "true" "Login.success"
   SMOKE_CDS_AGENT_ACCESS_TOKEN=$(printf '%s' "$login_resp" | jq -r '.data.accessToken')
   auth_user_json=$(printf '%s' "$login_resp" | jq -c '.data.user')
-else
+elif [[ "$SMOKE_CDS_AGENT_AUTH_MODE" == "jwt" ]]; then
   if [[ -n "${SMOKE_CDS_AGENT_AUTH_USER_JSON:-}" ]]; then
     auth_user_json="$SMOKE_CDS_AGENT_AUTH_USER_JSON"
   fi
 fi
 smoke_assert_nonempty "$SMOKE_CDS_AGENT_ACCESS_TOKEN" "accessToken"
-smoke_ok "认证 token 已准备"
+smoke_ok "认证已准备: $SMOKE_CDS_AGENT_AUTH_MODE"
 
 smoke_step "检查页面 HTTP 可达"
-page_code=$(curl --max-time "$SMOKE_TIMEOUT" --show-error --silent --output /dev/null --write-out '%{http_code}' -I "$SMOKE_CDS_AGENT_WORKBENCH_URL" || true)
+page_code=$(curl --max-time "$SMOKE_TIMEOUT" --show-error --silent --output /dev/null --write-out '%{http_code}' "$SMOKE_CDS_AGENT_WORKBENCH_URL" || true)
 smoke_assert_eq "$page_code" "200" "workbench HTTP status"
 smoke_ok "workbench HTTP 200: $SMOKE_CDS_AGENT_WORKBENCH_URL"
 
@@ -110,6 +126,9 @@ const chromePath = process.env.CHROME_BIN_RESOLVED;
 const url = process.env.SMOKE_CDS_AGENT_WORKBENCH_URL;
 const token = process.env.SMOKE_CDS_AGENT_ACCESS_TOKEN;
 const user = JSON.parse(process.env.SMOKE_CDS_AGENT_AUTH_USER_JSON || '{}');
+const aiAccessKey = process.env.AI_ACCESS_KEY || '';
+const aiImpersonate = process.env.SMOKE_USER || 'admin';
+const authMode = process.env.SMOKE_CDS_AGENT_AUTH_MODE || 'jwt';
 const screenshot = process.env.SMOKE_CDS_AGENT_SCREENSHOT;
 const textDump = process.env.SMOKE_CDS_AGENT_TEXT_DUMP;
 const userDataDir = process.env.SMOKE_CDS_AGENT_CHROME_PROFILE;
@@ -286,6 +305,38 @@ async function main() {
     const send = (method, params = {}) => cdp.send(method, params, sessionId);
     await send('Page.enable');
     await send('Runtime.enable');
+    if (authMode === 'ai-access-key') {
+      await send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `
+          (() => {
+            const aiAccessKey = ${JSON.stringify(aiAccessKey)};
+            const aiImpersonate = ${JSON.stringify(aiImpersonate)};
+            const shouldPatch = (value) => {
+              try {
+                const target = new URL(value, window.location.origin);
+                return target.origin === window.location.origin && target.pathname.startsWith('/api/');
+              } catch {
+                return false;
+              }
+            };
+            const originalFetch = window.fetch.bind(window);
+            window.fetch = (input, init = {}) => {
+              const rawUrl = typeof input === 'string' ? input : input && input.url;
+              if (!shouldPatch(rawUrl || '')) return originalFetch(input, init);
+              const sourceHeaders = init.headers || (input instanceof Request ? input.headers : undefined);
+              const headers = new Headers(sourceHeaders || {});
+              headers.set('X-AI-Access-Key', aiAccessKey);
+              headers.set('X-AI-Impersonate', aiImpersonate);
+              headers.delete('Authorization');
+              if (input instanceof Request) {
+                return originalFetch(new Request(input, { headers }), init);
+              }
+              return originalFetch(input, { ...init, headers });
+            };
+          })();
+        `
+      });
+    }
     await send('Emulation.setDeviceMetricsOverride', {
       width: 1600,
       height: 1000,
@@ -334,11 +385,11 @@ async function main() {
     await send('Runtime.evaluate', {
       expression: `(() => {
         const nodes = Array.from(document.querySelectorAll('section, div, article'))
-          .filter((node) => (node.innerText || '').includes('Runtime 调试'))
+          .filter((node) => (node.innerText || '').includes('当前执行结论'))
           .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
         const el = nodes[0];
         if (el) {
-          el.scrollIntoView({ block: 'start', inline: 'nearest' });
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
           return true;
         }
         return false;
@@ -413,6 +464,9 @@ SMOKE_CDS_AGENT_SCREENSHOT="$SMOKE_CDS_AGENT_SCREENSHOT" \
 SMOKE_CDS_AGENT_TEXT_DUMP="$SMOKE_CDS_AGENT_TEXT_DUMP" \
 SMOKE_CDS_AGENT_ACCESS_TOKEN="$SMOKE_CDS_AGENT_ACCESS_TOKEN" \
 SMOKE_CDS_AGENT_AUTH_USER_JSON="$auth_user_json" \
+SMOKE_CDS_AGENT_AUTH_MODE="$SMOKE_CDS_AGENT_AUTH_MODE" \
+AI_ACCESS_KEY="${AI_ACCESS_KEY:-}" \
+SMOKE_USER="$SMOKE_USER" \
 SMOKE_CDS_AGENT_CHROME_PROFILE="$tmp_dir/profile" \
 SMOKE_CDS_AGENT_CDP_PORT="${SMOKE_CDS_AGENT_CDP_PORT:-$(( 9223 + RANDOM % 1000 ))}" \
 node "$node_script"
