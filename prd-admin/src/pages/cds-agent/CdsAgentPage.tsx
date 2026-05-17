@@ -159,6 +159,7 @@ function runtimeDiscoveryBlockReason(status: InfraAgentRuntimeDiagnostics): stri
 
 function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): string {
   if (!status) return '正在检测 CDS runtime pool，请稍后刷新。';
+  if (status.instanceCount > 0 && status.healthyCount > 0) return '';
   const discoveryReason = runtimeDiscoveryBlockReason(status);
   if (discoveryReason) return discoveryReason;
   const firstBlocker = status.blockers?.find((item) => item.trim());
