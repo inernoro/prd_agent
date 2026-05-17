@@ -80,6 +80,19 @@ HEAD 匹配时，才进入“等待用户批准”的状态。
 CDS_HOST=https://cds.miduo.org python3 .claude/skills/cds/cli/cdscli.py branch status prd-agent-codex-cds-agent-workbench-ui
 ```
 
+推荐直接跑批准后验证脚本。它不会执行 `cdscli self update`，只在 self update 已完成后
+负责 redeploy preview、R0 alias smoke 和 one-cycle：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+bash scripts/verify-cds-agent-r0-after-self-update.sh
+```
+
+脚本会把证据写到 `/tmp/cds-agent-post-self-update-<timestamp>`，包括 self branches、
+branch deploy、branch status、sidecar alias、one-cycle 日志和
+`post-self-update-summary.json`。如果不想自动 redeploy，设置
+`SMOKE_CDS_AGENT_RUN_DEPLOY=0`。
+
 然后在 MAP preview 登录态下调用：
 
 ```text
