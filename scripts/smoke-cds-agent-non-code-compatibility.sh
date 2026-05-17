@@ -14,13 +14,15 @@
 #   2. 构造函数反射: 只有 CdsAgentAdapter 注入 CDS runtime adapter。
 #   3. 最小业务路径: PRD/Defect/Literary 通过 fake gateway 产出 artifact,
 #      Visual 走不调用 provider 的 compose MVP 路径。
+#   4. Adapter 兼容矩阵: codex/openai-agents-sdk/google-adk 等候选官方
+#      SDK 仍保持 planned-not-routable,不能误进入代码审查默认路径。
 # ==========================================
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_PROJECT="$ROOT_DIR/prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj"
-FILTER="FullyQualifiedName~CdsAgentRuntimeCompatibilityTests"
+FILTER="FullyQualifiedName~CdsAgentRuntimeCompatibilityTests|FullyQualifiedName~InfraAgentRuntimeProfilesControllerTests"
 
 printf '==========================================\n'
 printf '冒烟测试: CDS Agent Non-code Compatibility\n'
@@ -30,4 +32,4 @@ printf '==========================================\n\n'
 
 dotnet test "$TEST_PROJECT" --filter "$FILTER"
 
-printf '\n✅ N6 ready: non-code Toolbox agents remain independent from CDS sidecar runtime pool and pass minimal adapter business paths\n'
+printf '\n✅ N6 ready: non-code Toolbox agents remain independent from CDS sidecar runtime pool; candidate official SDK adapters remain planned-not-routable until contracts and provider smokes pass\n'

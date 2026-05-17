@@ -79,7 +79,7 @@
 | N3 | S2 MAP 审批 | 危险工具请求进入 MAP approval，拒绝后回写 SDK tool result | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 scripts/smoke-cds-agent-official-sdk-controls.sh` 的 S2 通过 |
 | N4 | S3 Stop | 长任务 Stop 调到底层 SDK interrupt/cancel | controls 脚本 S3 通过，事件含 stop/cancel 证据 |
 | N5 | V1 视觉证据 | `/cds-agent` 展示真实 run 的 session/trace/adapter/workspace/event/error | 远程截图，不接受空态或 mock |
-| N6 | 非代码兼容回归 | PRD/defect/literary/visual 不被 sidecar pool/profile gate 阻断 | `CdsAgentRuntimeCompatibilityTests` + 最小业务 smoke |
+| N6 | 非代码兼容回归 | PRD/defect/literary/visual 不被 sidecar pool/profile gate 阻断；候选官方 SDK 不被误标为默认可路由 | `CdsAgentRuntimeCompatibilityTests` + `InfraAgentRuntimeProfilesControllerTests` + 最小业务 smoke |
 
 如果 N1 没完成，S1/S2/S3 脚本只能作为 readiness 或 preflight 证据，不能算真实代码审查验收。
 
@@ -253,7 +253,7 @@
 - R1 默认 profile 修复路径已下沉到 MAP runtime-status：`diagnostics.runtimeProfileRepairPlan` 返回当前 profile、目标 Anthropic 官方模板和下一步动作；`/cds-agent` 页面只展示该计划并调用后端模板套用入口，readiness smoke 也断言该字段，避免 UI、文档和后端各自维护一套 R1 判断。新增 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile` 作为后端 test-before-promote 事实入口：它先用官方模板创建非默认 Anthropic 候选 profile，调用 profile `/test` 验证上游可用后再提升为默认，测试失败会删除候选 profile。`scripts/smoke-cds-agent-r1-profile-repair.sh` 和 `/cds-agent` 页面保存/更新默认 profile 均调用该入口，避免坏 key 覆盖当前默认配置，并在有 key 时复查 `commercialReadiness.R1=pass`。
 - 下一周期 N1-N6 最小闭环也已下沉到 MAP runtime-status：`diagnostics.nextCyclePlan` 返回周期名、整体状态、每项交付/证据/阻塞项和停止条件；`/cds-agent` Runtime 调试区、复制诊断包和 commercial readiness smoke 均消费它，避免计划只存在文档中而页面无法指导用户继续调试。
 - 当前执行结论也已下沉到 MAP runtime-status：`diagnostics.executionPanel` 返回 `status`、`commercialComplete`、`currentBlockingGate`、`blockingReason`、`nextCommand` 和 gate 计数；页面“当前执行结论”优先消费这个字段。命令选择按阻塞门收敛：R0 先 doctor，R1 再 profile repair，S1/S2/S3 才进入 provider cycle，避免跳过真实阻塞去反复部署或跑错 smoke。
-- N6 非代码兼容已补独立 smoke：`scripts/smoke-cds-agent-non-code-compatibility.sh` 运行 `CdsAgentRuntimeCompatibilityTests`，覆盖源码扫描、构造函数反射和 fake gateway 最小业务路径，证明 PRD/Defect/Literary/Visual 等非代码 Toolbox agent 不依赖 `IInfraAgentRuntimeAdapter`、`IClaudeSidecarRouter`、`InfraAgentRuntimes` 或 `ClaudeSidecar`，且各自 adapter 仍能走最小动作。`scripts/smoke-all.sh` 已将它纳入默认套件，避免 CDS Agent 迁移时误伤其他智能体。
+- N6 非代码兼容已补独立 smoke：`scripts/smoke-cds-agent-non-code-compatibility.sh` 运行 `CdsAgentRuntimeCompatibilityTests` 和 `InfraAgentRuntimeProfilesControllerTests`，覆盖源码扫描、构造函数反射、fake gateway 最小业务路径，以及 `codex`/`openai-agents-sdk`/`google-adk` 候选官方 SDK 的 `planned-not-routable` 兼容矩阵，证明 PRD/Defect/Literary/Visual 等非代码 Toolbox agent 不依赖 `IInfraAgentRuntimeAdapter`、`IClaudeSidecarRouter`、`InfraAgentRuntimes` 或 `ClaudeSidecar`，且其他官方 SDK 候选不会被误路由到代码审查默认路径。`scripts/smoke-all.sh` 已将它纳入默认套件，避免 CDS Agent 迁移时误伤其他智能体。
 - `scripts/smoke-cds-agent-profile-preflight.sh` 已固化运行前拦截验收：远程不兼容默认 profile 会创建临时 idle session，调用 SendMessage 得到 400 / `runtime_profile_incompatible`，消息列表保持 0 条，然后归档临时 session。该 smoke 防止以后回归成“先写用户消息/入队 runtime job，再让官方 SDK 报模型错误”。
 - `scripts/smoke-cds-agent-official-sdk-run.sh` 已固化 S1 真运行验收入口：无 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时只做 readiness；默认 profile 不兼容时默认跳过、`SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1` 时失败。配置真实 Claude/Anthropic profile 后，该脚本就是远程 S1 只读审查的第一条硬证据入口。
 - `scripts/smoke-cds-agent-official-sdk-controls.sh` 已固化 S2/S3 验收入口：有 provider key 后先等官方 SDK 产生 MAP approval request，再通过 MAP 拒绝并确认 `tool_result.source=map-tool-approval`；随后跑长任务并调用 Stop。该脚本默认不发 prompt，避免无 key 环境误消耗 provider token。
