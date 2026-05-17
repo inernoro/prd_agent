@@ -70,6 +70,8 @@ R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDisco
 
 同一个接口还会返回 `diagnostics.debugCommands`，页面的“调试命令”区域直接展示这些后端生成的命令。日常排障优先按该列表执行：先跑 doctor / R1 dry-run；拿到真实 Anthropic/Claude-compatible key 后再跑 R1 test-before-promote；R1 通过后才显式打开 provider 调用跑 one-cycle。
 
+`diagnostics.executionPanel` 是当前执行结论的机器事实源：它给出 `status`、`commercialComplete`、`currentBlockingGate`、`blockingReason`、`nextCommand` 和 gate 计数。页面的“当前执行结论”和 readiness smoke 都应优先消费这个字段；如果 `currentBlockingGate=R0`，下一步应先跑 doctor；如果是 `R1`，再跑 R1 dry-run/test-before-promote，避免跳过真实阻塞。
+
 需要给人类或 CI 留证据时，doctor 可以输出机器可读报告：
 
 ```bash

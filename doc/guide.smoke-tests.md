@@ -253,6 +253,8 @@ SMOKE_CDS_AGENT_DOCTOR_REPORT=/tmp/cds-agent-doctor.json \
 - S1/S2/S3：当前是否已经解除 provider 真调用的前置阻塞，并打印下一步命令
 - V1：`/cds-agent` 页面是否返回 HTTP 200
 
+该脚本还会校验 `runtime-status.diagnostics.executionPanel`。这是后端生成的执行面板事实源，用来统一页面、CI 和人工排障的当前阻塞门、阻塞原因、下一条命令和 gate 计数，避免前端与 smoke 各自推导出不同结论。
+
 默认模式下，R1/S1/S2/S3 不满足时会列为 pending，但脚本仍可完成，用于说明当前离
 商业级可用还差什么。验收环境应设置 `SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1`，
 这样默认 profile 不兼容或缺 key 时会直接失败。即便该脚本全绿，仍需要显式运行

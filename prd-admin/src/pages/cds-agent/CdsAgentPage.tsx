@@ -1240,6 +1240,7 @@ export default function CdsAgentPage() {
         : 'profile-blocked';
     const nextCyclePlan = runtimeStatus?.nextCyclePlan ?? null;
     const debugCommands = runtimeStatus?.debugCommands ?? [];
+    const backendExecutionPanel = runtimeStatus?.executionPanel ?? null;
     const firstBlockedCycleItem = nextCyclePlan?.items.find((item) => item.status !== 'pass') ?? null;
     const primaryDebugCommand = debugCommands.find((item) => item.status === 'blocked')
       ?? debugCommands.find((item) => item.status !== 'pass')
@@ -1256,6 +1257,10 @@ export default function CdsAgentPage() {
       || primaryDebugCommand?.purpose
       || (commercialState === 'commercial-ready' ? '商业级门禁已通过。' : '等待 runtime-status 返回下一步建议。');
     const commercialNextCommand = primaryDebugCommand?.command ?? '';
+    const executionCommercialState = backendExecutionPanel?.status || commercialState;
+    const executionBlockingCode = backendExecutionPanel?.currentBlockingGate || commercialBlockingCode;
+    const executionNextAction = backendExecutionPanel?.blockingReason || commercialNextAction;
+    const executionNextCommand = backendExecutionPanel?.nextCommand || commercialNextCommand;
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1333,10 +1338,10 @@ export default function CdsAgentPage() {
       commercialPassed,
       commercialTotal,
       commercialPending,
-      commercialState,
-      commercialBlockingCode,
-      commercialNextAction,
-      commercialNextCommand,
+      commercialState: executionCommercialState,
+      commercialBlockingCode: executionBlockingCode,
+      commercialNextAction: executionNextAction,
+      commercialNextCommand: executionNextCommand,
       nextCyclePlan,
       debugCommands,
       readinessGates,
@@ -1367,6 +1372,7 @@ export default function CdsAgentPage() {
         ['Ready', readyState],
         ['HTTP', httpState],
         ['Default profile', profileCompatibilityState],
+        ['Execution panel', backendExecutionPanel ? `${backendExecutionPanel.status} · ${backendExecutionPanel.currentBlockingGate || 'clear'}` : 'page-derived'],
         ['Profile warning', profileCompatibilityWarning || '无兼容性提示'],
         ['Provider key', providerKeyState],
         ['Provider key error', providerKeyErrorState],

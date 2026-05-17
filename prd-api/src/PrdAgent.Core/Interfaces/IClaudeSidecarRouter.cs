@@ -174,7 +174,8 @@ public sealed record SidecarPoolDiagnostics(
     SidecarCommercialReadinessDiagnostics? CommercialReadiness = null,
     SidecarRuntimeProfileRepairPlan? RuntimeProfileRepairPlan = null,
     SidecarNextCyclePlan? NextCyclePlan = null,
-    IReadOnlyList<SidecarDebugCommand>? DebugCommands = null
+    IReadOnlyList<SidecarDebugCommand>? DebugCommands = null,
+    SidecarExecutionPanel? ExecutionPanel = null
 );
 
 public sealed record SidecarRuntimeProfileDiagnostics(
@@ -242,6 +243,15 @@ public sealed record SidecarDebugCommand(
     string Purpose,
     string Status,
     string? BlockedBy = null
+);
+
+public sealed record SidecarExecutionPanel(
+    string Status,
+    bool CommercialComplete,
+    string CurrentBlockingGate,
+    string BlockingReason,
+    string NextCommand,
+    IReadOnlyDictionary<string, int> GateCounts
 );
 
 public sealed record SidecarWorkspacePreparationDiagnostics(

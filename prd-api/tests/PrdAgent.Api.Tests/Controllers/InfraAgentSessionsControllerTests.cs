@@ -388,6 +388,13 @@ public class InfraAgentSessionsControllerTests
             debugCommands.Single(x => x.Code == "r1-apply").BlockedBy.ShouldBe("Anthropic API key");
             debugCommands.Single(x => x.Code == "provider-cycle").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "provider-cycle").BlockedBy.ShouldBe("R1");
+            var executionPanel = diagnostics.ExecutionPanel.ShouldNotBeNull();
+            executionPanel.Status.ShouldBe("profile-blocked");
+            executionPanel.CommercialComplete.ShouldBeFalse();
+            executionPanel.CurrentBlockingGate.ShouldBe("R0");
+            executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
+            executionPanel.NextCommand.ShouldBe("bash scripts/doctor-cds-agent-runtime.sh");
+            executionPanel.GateCounts["pending"].ShouldBe(5);
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         }
@@ -481,6 +488,14 @@ public class InfraAgentSessionsControllerTests
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
             debugCommands.Select(x => x.Code).ShouldContain("doctor");
             debugCommands.Single(x => x.Code == "non-code-compat").Command.ShouldBe("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
+            var executionPanel = diagnostics.ExecutionPanel.ShouldNotBeNull();
+            executionPanel.Status.ShouldBe("profile-blocked");
+            executionPanel.CommercialComplete.ShouldBeFalse();
+            executionPanel.CurrentBlockingGate.ShouldBe("R1");
+            executionPanel.BlockingReason.ShouldContain("Anthropic/Claude-compatible");
+            executionPanel.NextCommand.ShouldBe("bash scripts/smoke-cds-agent-r1-profile-repair.sh");
+            executionPanel.GateCounts["pass"].ShouldBe(2);
+            executionPanel.GateCounts["pending"].ShouldBe(4);
         }
         finally
         {

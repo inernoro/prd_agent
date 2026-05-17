@@ -74,6 +74,7 @@ public class InfraAgentSessionsController : ControllerBase
         var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profileDiagnostics);
         var nextCyclePlan = BuildNextCyclePlan(profileDiagnostics, runtimeProfileRepairPlan);
         var debugCommands = BuildDebugCommands(profileDiagnostics);
+        var executionPanel = BuildExecutionPanel(commercialReadiness, nextCyclePlan, debugCommands);
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
@@ -83,11 +84,67 @@ public class InfraAgentSessionsController : ControllerBase
             RuntimeProfileRepairPlan = runtimeProfileRepairPlan,
             NextCyclePlan = nextCyclePlan,
             DebugCommands = debugCommands,
+            ExecutionPanel = executionPanel,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
                 profileDiagnostics)
         };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
+    }
+
+    private static SidecarExecutionPanel BuildExecutionPanel(
+        SidecarCommercialReadinessDiagnostics readiness,
+        SidecarNextCyclePlan nextCyclePlan,
+        IReadOnlyList<SidecarDebugCommand> debugCommands)
+    {
+        var commercialComplete = readiness.Gates.All(x =>
+            string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
+        var blockingGate = readiness.Gates.FirstOrDefault(x =>
+            !string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
+        var blockedCycleItem = nextCyclePlan.Items.FirstOrDefault(x =>
+            !string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
+        var blockingCode = blockingGate?.Code ?? blockedCycleItem?.BlockedBy ?? blockedCycleItem?.Code ?? string.Empty;
+        var command = SelectExecutionCommand(blockingCode, debugCommands);
+        var gateCounts = readiness.Gates
+            .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
+
+        return new SidecarExecutionPanel(
+            readiness.Overall,
+            commercialComplete,
+            blockingCode,
+            blockingGate?.Message
+                ?? blockedCycleItem?.NextActions?.FirstOrDefault()
+                ?? "商业级门禁已通过。",
+            command?.Command ?? string.Empty,
+            gateCounts);
+    }
+
+    private static SidecarDebugCommand? SelectExecutionCommand(
+        string blockingCode,
+        IReadOnlyList<SidecarDebugCommand> debugCommands)
+    {
+        if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
+        {
+            return debugCommands.FirstOrDefault(x => x.Code == "doctor");
+        }
+
+        if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
+        {
+            return debugCommands.FirstOrDefault(x => x.Code == "r1-dry-run")
+                ?? debugCommands.FirstOrDefault(x => x.Code == "r1-apply");
+        }
+
+        if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase))
+        {
+            return debugCommands.FirstOrDefault(x => x.Code == "provider-cycle");
+        }
+
+        return debugCommands.FirstOrDefault(x =>
+                string.Equals(x.Status, "blocked", StringComparison.OrdinalIgnoreCase))
+            ?? debugCommands.FirstOrDefault(x =>
+                !string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase))
+            ?? debugCommands.FirstOrDefault();
     }
 
     private static IReadOnlyList<SidecarDebugCommand> BuildDebugCommands(

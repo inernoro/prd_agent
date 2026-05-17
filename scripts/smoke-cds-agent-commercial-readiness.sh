@@ -38,6 +38,7 @@ gate_candidate_status="unknown"
 gate_provider_status="unknown"
 gate_v1_status="unknown"
 page_code="not_checked"
+execution_panel="null"
 
 mark_pending() {
   audit_pending+=("$1")
@@ -79,6 +80,7 @@ write_report() {
     --argjson officialInstances "${official_instances:-0}" \
     --argjson profileHasKey "${profile_has_key:-false}" \
     --argjson profileCompatible "${profile_compatible:-false}" \
+    --argjson executionPanel "${execution_panel:-null}" \
     --argjson pending "$pending_json" \
     --argjson elapsedSeconds "$elapsed" \
     '{
@@ -112,6 +114,7 @@ write_report() {
         S1S2S3: $gateProvider,
         V1: $gateV1
       },
+      executionPanel: $executionPanel,
       pending: $pending
     }' > "$SMOKE_CDS_AGENT_READINESS_REPORT"
   printf 'Readiness report: %s\n' "$SMOKE_CDS_AGENT_READINESS_REPORT"
@@ -169,6 +172,9 @@ smoke_assert_contains "$n6_evidence" "源码扫描" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$n6_evidence" "构造函数反射" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$n6_evidence" "最小业务路径" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
+execution_panel=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.executionPanel // empty')
+smoke_assert_nonempty "$execution_panel" "diagnostics.executionPanel"
+smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.commercialComplete')" "false" "executionPanel.commercialComplete"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
 profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
@@ -184,6 +190,8 @@ if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   repair_actions=$(printf '%s' "$repair_plan" | jq -r '.nextActions[]?')
   smoke_assert_contains "$repair_actions" "准备默认 Claude 配置" "runtimeProfileRepairPlan.nextActions"
   mark_pending "R1: create a default Anthropic/Claude-compatible runtime profile with API key"
+  smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.currentBlockingGate')" "R1" "executionPanel.currentBlockingGate"
+  smoke_assert_contains "$(printf '%s' "$execution_panel" | jq -r '.nextCommand')" "smoke-cds-agent-r1-profile-repair.sh" "executionPanel.nextCommand"
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL" ]]; then
     require_commercial_failed="R1 not ready and SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL is set"
   fi

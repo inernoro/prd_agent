@@ -273,6 +273,14 @@ export interface InfraAgentRuntimeDiagnostics {
     status: string;
     blockedBy?: string | null;
   }> | null;
+  executionPanel?: {
+    status: string;
+    commercialComplete: boolean;
+    currentBlockingGate: string;
+    blockingReason: string;
+    nextCommand: string;
+    gateCounts: Record<string, number>;
+  } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;
     activeCdsConnections?: number | null;
