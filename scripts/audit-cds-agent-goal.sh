@@ -61,13 +61,19 @@ run_step() {
 
 find_latest_cycle_summary() {
   local latest search_roots
-  search_roots=$(printf '%s\n/tmp\n' "${TMPDIR:-/tmp}" | awk '!seen[$0]++')
+  search_roots=$(printf '%s\n/tmp\n/private/tmp\n' "${TMPDIR:-/tmp}" | awk '!seen[$0]++')
   latest=$(while IFS= read -r root; do
     [[ -d "$root" ]] || continue
-    find "$root" -maxdepth 2 -path '*/cds-agent-cycle-*/cycle-summary.json' -type f -print 2>/dev/null || true
-  done <<< "$search_roots" | sort | tail -n 1 || true)
+    find "$root" -maxdepth 2 -path '*/cds-agent-cycle-*/cycle-summary.json' -type f -print 2>/dev/null | while IFS= read -r file; do
+      printf '%s\t%s\n' "$(file_mtime "$file")" "$file"
+    done || true
+  done <<< "$search_roots" | sort -n | tail -n 1 | cut -f2- || true)
   [[ -n "$latest" ]] && printf '%s' "$latest"
   return 0
+}
+
+file_mtime() {
+  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null || printf '0'
 }
 
 json_bool() {
