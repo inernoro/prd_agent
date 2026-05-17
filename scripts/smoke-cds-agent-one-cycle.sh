@@ -46,33 +46,44 @@ timing_keys=()
 timing_names=()
 timing_statuses=()
 timing_seconds=()
+timing_phases=()
+SMOKE_STEP_TOTAL="${SMOKE_STEP_TOTAL:-11}"
+SMOKE_STEP_CURRENT=0
 
 record_timing() {
   local key="$1"
   local name="$2"
   local status="$3"
   local seconds="$4"
+  local phase="${5:-unspecified}"
   timing_keys+=("$key")
   timing_names+=("$name")
   timing_statuses+=("$status")
   timing_seconds+=("$seconds")
+  timing_phases+=("$phase")
+}
+
+next_step() {
+  SMOKE_STEP_CURRENT=$((SMOKE_STEP_CURRENT + 1))
+  printf '\n[%02d/%02d] %s · %s\n' "$SMOKE_STEP_CURRENT" "$SMOKE_STEP_TOTAL" "$1" "$2"
 }
 
 run_step() {
   local key="$1"
   local name="$2"
   local script="$3"
+  local phase="${4:-remote-api}"
   local log="$SMOKE_CDS_AGENT_CYCLE_DIR/${key}.log"
   local start_ts end_ts duration
 
-  printf '\n>>> %s\n' "$name"
+  next_step "$phase" "$name"
   start_ts=$(date +%s)
   if bash "$script" >"$log" 2>&1; then
     end_ts=$(date +%s)
     duration=$((end_ts - start_ts))
     passed_arr+=("$name")
-    record_timing "$key" "$name" "passed" "$duration"
-    printf 'Step duration: %ss\n' "$duration"
+    record_timing "$key" "$name" "passed" "$duration" "$phase"
+    printf 'Result: passed · duration=%ss · log=%s\n' "$duration" "$log"
     tail -n 8 "$log"
     return 0
   fi
@@ -80,8 +91,8 @@ run_step() {
   end_ts=$(date +%s)
   duration=$((end_ts - start_ts))
   failed_arr+=("$name")
-  record_timing "$key" "$name" "failed" "$duration"
-  printf 'Step failed after %ss. Log: %s\n' "$duration" "$log" >&2
+  record_timing "$key" "$name" "failed" "$duration" "$phase"
+  printf 'Result: failed · duration=%ss · log=%s\n' "$duration" "$log" >&2
   tail -n 40 "$log" >&2
   return 1
 }
@@ -89,10 +100,11 @@ run_step() {
 skip_step() {
   local name="$1"
   local reason="$2"
-  printf '\n>>> %s\n' "$name"
-  printf 'Skipped: %s\n' "$reason"
+  local phase="${3:-skipped}"
+  next_step "$phase" "$name"
+  printf 'Result: skipped · reason=%s\n' "$reason"
   skipped_arr+=("$name")
-  record_timing "skipped-${#skipped_arr[@]}" "$name" "skipped" "0"
+  record_timing "skipped-${#skipped_arr[@]}" "$name" "skipped" "0" "$phase"
 }
 
 finish_cycle() {
@@ -123,6 +135,7 @@ finish_cycle() {
   local gate_n6_status="pass"
   local commercial_complete=false
   local blocking_reason=""
+  local deployment_advice=""
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
   local passed_count skipped_count failed_count
   local doctor_log="$SMOKE_CDS_AGENT_CYCLE_DIR/doctor.log"
@@ -275,6 +288,27 @@ finish_cycle() {
     next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
   fi
 
+  case "$cycle_status" in
+    blocked_r1)
+      deployment_advice="Do not redeploy for this state. The code/runtime plane is already reachable; provide an Anthropic/Claude-compatible provider key and rerun one-cycle with provider calls enabled."
+      ;;
+    preview_not_ready)
+      deployment_advice="Do not change code for this state. Wait for the CDS preview to become ready, then rerun one-cycle against the same branch."
+      ;;
+    ready_for_provider_smokes|blocked_provider_smokes|provider_smokes_incomplete)
+      deployment_advice="Do not redeploy unless code changed. The next useful validation is provider-backed S1/S2/S3 with SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1."
+      ;;
+    provider_smokes_passed)
+      deployment_advice="Provider gates passed. A deploy is only useful after a new code change or when promoting the validated branch."
+      ;;
+    failed)
+      deployment_advice="Do not deploy to fix an unknown failure. Inspect the failed step log first, reproduce locally when the failed phase is local or static, then rerun the narrow smoke."
+      ;;
+    *)
+      deployment_advice="Prefer local/static smokes first. Deploy only when validating remote runtime behavior, auth, container networking, or visual evidence."
+      ;;
+  esac
+
   passed_json='[]'
   if (( ${#passed_arr[@]} > 0 )); then
     passed_json=$(printf '%s\n' "${passed_arr[@]}" | jq -R . | jq -s .)
@@ -301,8 +335,9 @@ finish_cycle() {
           --arg key "${timing_keys[$i]}" \
           --arg name "${timing_names[$i]}" \
           --arg status "${timing_statuses[$i]}" \
+          --arg phase "${timing_phases[$i]}" \
           --argjson durationSeconds "${timing_seconds[$i]}" \
-          '{key:$key,name:$name,status:$status,durationSeconds:$durationSeconds}'
+          '{key:$key,name:$name,status:$status,phase:$phase,durationSeconds:$durationSeconds}'
       done | jq -s .
     )
     slowest_json=$(jq -c 'sort_by(.durationSeconds) | reverse | .[:3]' <<< "$timing_json")
@@ -314,6 +349,7 @@ finish_cycle() {
     --arg cycleStatus "$cycle_status" \
     --arg nextCommand "$next_command" \
     --arg blockingReason "$blocking_reason" \
+    --arg deploymentAdvice "$deployment_advice" \
     --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
     --arg host "$SMOKE_TEST_HOST" \
     --arg readinessOverall "$readiness_overall" \
@@ -394,6 +430,7 @@ finish_cycle() {
       status: $cycleStatus,
       commercialComplete: $commercialComplete,
       blockingReason: $blockingReason,
+      deploymentAdvice: $deploymentAdvice,
       nextCommand: $nextCommand,
       host: $host,
       evidenceDir: $evidenceDir,
@@ -437,6 +474,7 @@ finish_cycle() {
         status: $cycleStatus,
         commercialComplete: $commercialComplete,
         blockingReason: $blockingReason,
+        deploymentAdvice: $deploymentAdvice,
         nextCommand: $nextCommand,
         currentBlockingGate: (($gatesNotPass | map(select(.status == "pending")) | .[0].gate) // ($gatesNotPass[0].gate // "")),
         stepCounts: {
@@ -477,6 +515,7 @@ finish_cycle() {
   if [[ -n "$blocking_reason" ]]; then
     printf 'Blocking reason: %s\n' "$blocking_reason"
   fi
+  printf 'Deploy/build advice: %s\n' "$deployment_advice"
   printf 'Next command: %s\n' "$next_command"
   printf 'Readiness overall: %s\n' "$readiness_overall"
   printf 'Doctor diagnosis: %s\n' "$doctor_diagnosis"
@@ -502,7 +541,7 @@ finish_cycle() {
   printf 'Total measured step time: %ss\n' "$total_seconds"
   if (( ${#timing_keys[@]} > 0 )); then
     printf 'Slowest steps:\n'
-    jq -r '.[] | "  - " + .name + " · " + (.durationSeconds|tostring) + "s · " + .status' <<< "$slowest_json"
+    jq -r '.[] | "  - [" + .phase + "] " + .name + " · " + (.durationSeconds|tostring) + "s · " + .status' <<< "$slowest_json"
   fi
   printf 'Script steps passed (exit 0; may still be readiness-only): %s\n' "${#passed_arr[@]}"
   if (( ${#passed_arr[@]} > 0 )); then
@@ -549,33 +588,34 @@ printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
 printf 'Host: %s\n' "$SMOKE_TEST_HOST"
 printf 'Provider calls: %s\n' "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-0}"
 printf 'R1 repair apply: %s\n' "$([[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]] && printf yes || printf no)"
+printf 'Step panel: total=%s, phases=local-static/remote-api/remote-container/provider-gated/visual\n' "$SMOKE_STEP_TOTAL"
 
-run_step "doctor" "Runtime doctor and next action report" "$SCRIPT_DIR/doctor-cds-agent-runtime.sh" || finish_cycle 1
+run_step "doctor" "Runtime doctor and next action report" "$SCRIPT_DIR/doctor-cds-agent-runtime.sh" "remote-api" || finish_cycle 1
 
-run_step "r0-runtime" "R0 runtime pool official SDK ownership" "$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh" || finish_cycle 1
+run_step "r0-runtime" "R0 runtime pool official SDK ownership" "$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh" "remote-api" || finish_cycle 1
 if [[ -n "${CDS_HOST:-}" ]]; then
-  run_step "r0-sidecar-alias" "R0 sidecar alias stability from API container" "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" || finish_cycle 1
+  run_step "r0-sidecar-alias" "R0 sidecar alias stability from API container" "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" "remote-container" || finish_cycle 1
 else
-  skip_step "R0 sidecar alias stability from API container" "set CDS_HOST to exec inside the remote CDS API container"
+  skip_step "R0 sidecar alias stability from API container" "set CDS_HOST to exec inside the remote CDS API container" "remote-container"
 fi
-run_step "t1-templates" "T1 official templates and adapter matrix" "$SCRIPT_DIR/smoke-cds-agent-profile-templates.sh" || finish_cycle 1
-run_step "a0-official-sdk-boundary" "A0 official SDK adapter boundary" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || finish_cycle 1
-run_step "r1-repair" "R1 profile repair dry-run or test-before-promote" "$SCRIPT_DIR/smoke-cds-agent-r1-profile-repair.sh" || finish_cycle 1
-run_step "readiness" "Commercial readiness ledger" "$SCRIPT_DIR/smoke-cds-agent-commercial-readiness.sh" || finish_cycle 1
+run_step "t1-templates" "T1 official templates and adapter matrix" "$SCRIPT_DIR/smoke-cds-agent-profile-templates.sh" "remote-api" || finish_cycle 1
+run_step "a0-official-sdk-boundary" "A0 official SDK adapter boundary" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" "local-static" || finish_cycle 1
+run_step "r1-repair" "R1 profile repair dry-run or test-before-promote" "$SCRIPT_DIR/smoke-cds-agent-r1-profile-repair.sh" "remote-api" || finish_cycle 1
+run_step "readiness" "Commercial readiness ledger" "$SCRIPT_DIR/smoke-cds-agent-commercial-readiness.sh" "remote-api" || finish_cycle 1
 
-run_step "s1-official-sdk-run" "S1 official SDK run evidence" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-run.sh" || finish_cycle 1
+run_step "s1-official-sdk-run" "S1 official SDK run evidence" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-run.sh" "provider-gated" || finish_cycle 1
 
-run_step "s2-s3-controls" "S2/S3 approval and stop controls" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-controls.sh" || finish_cycle 1
+run_step "s2-s3-controls" "S2/S3 approval and stop controls" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-controls.sh" "provider-gated" || finish_cycle 1
 
 if [[ -n "${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}" \
   || ( -n "${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}" && -n "${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}" ) \
   || -n "${AI_ACCESS_KEY:-}" ]]; then
   export SMOKE_CDS_AGENT_SCREENSHOT="${SMOKE_CDS_AGENT_SCREENSHOT:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.png}"
-  run_step "v1-visual" "V1 authenticated workbench visual" "$SCRIPT_DIR/smoke-cds-agent-workbench-visual.sh" || finish_cycle 1
+  run_step "v1-visual" "V1 authenticated workbench visual" "$SCRIPT_DIR/smoke-cds-agent-workbench-visual.sh" "visual" || finish_cycle 1
 else
-  skip_step "V1 authenticated workbench visual" "set SMOKE_CDS_AGENT_ACCESS_TOKEN, login username/password, or AI_ACCESS_KEY"
+  skip_step "V1 authenticated workbench visual" "set SMOKE_CDS_AGENT_ACCESS_TOKEN, login username/password, or AI_ACCESS_KEY" "visual"
 fi
 
-run_step "n6-non-code-boundary" "N6 non-code agent compatibility boundary" "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || finish_cycle 1
+run_step "n6-non-code-boundary" "N6 non-code agent compatibility boundary" "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" "local-static" || finish_cycle 1
 
 finish_cycle 0

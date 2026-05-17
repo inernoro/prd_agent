@@ -91,6 +91,12 @@ CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 
 不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、A0 官方 SDK 边界、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 `blocked_r1`，不要继续 self update 或 redeploy；这表示 MAP/CDS/sidecar pool 已经到位，下一步是修 runtime profile。
 
+one-cycle 终端输出就是执行面板：`[当前/总数] phase · step` 展示当前跑到第几个任务，
+phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-gated`、
+`visual`。汇总里的 `Deploy/build advice` 是是否需要重新部署的判定；`blocked_r1`、
+`ready_for_provider_smokes`、`blocked_provider_smokes`、`provider_smokes_incomplete`
+都不应该靠重复部署解决，先补 provider key 或跑 provider smoke。
+
 注意凭据边界：`AI_ACCESS_KEY` 是 MAP/CDS API 的 `X-AI-Access-Key` 鉴权，不是 Anthropic provider key。真实 provider key 只应通过 runtime profile、页面 R1 修复入口，或 smoke 里的 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 提供。
 
 | 门禁 | 证明什么 | 命令或入口 |

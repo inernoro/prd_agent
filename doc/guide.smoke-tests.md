@@ -348,10 +348,12 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 仍失败时 `commercialGates` 只会把尚未证明的 gate 标成 `unknown`，不会把未执行的
 S1/S2/S3 误标成 pending 或 pass。
 
-`cycle-summary.json` 会写出 `status`、`nextCommand` 和 `timing`。`timing.steps`
-记录每个阶段的耗时，`timing.slowest` 给出最慢 3 个阶段；终端汇总也会打印
-`Total measured step time` 和 `Slowest steps`，用于判断时间花在本地检查、远程
-deploy 后的 readiness、视觉截图，还是 provider 调用。
+`cycle-summary.json` 会写出 `status`、`nextCommand`、`deploymentAdvice` 和
+`timing`。终端也会按 `[当前/总数] phase · step` 打印执行面板，phase 用来区分
+`local-static`、`remote-api`、`remote-container`、`provider-gated`、`visual`。
+`timing.steps` 记录每个阶段的耗时和 phase，`timing.slowest` 给出最慢 3 个阶段；
+终端汇总也会打印 `Total measured step time` 和 `Slowest steps`，用于判断时间花在
+本地静态检查、远程 API、远程容器 exec、视觉截图，还是真实 provider 调用。
 
 常见状态含义：
 
@@ -364,6 +366,12 @@ deploy 后的 readiness、视觉截图，还是 provider 调用。
 | `provider_smokes_passed` | R1 和 S1/S2/S3 都有通过证据，可进入更高层业务验收 |
 | `preview_not_ready` | 远程 CDS preview 仍在 `starting`，等待 ready 后重跑 one-cycle，不需要先改代码或 self update |
 | `failed` | 某个脚本步骤失败，先看 `cycle-summary.json` 和对应 step log |
+
+部署策略按 `deploymentAdvice` 执行：`blocked_r1`、`ready_for_provider_smokes`、
+`blocked_provider_smokes`、`provider_smokes_incomplete` 通常不需要重新部署；这些状态的
+下一步是补 provider key 或打开 provider smoke。`preview_not_ready` 也不是代码问题，
+等待当前 preview ready 后重跑即可。只有改了代码、需要验证远程容器网络/鉴权/视觉，
+或要 promotion 时才做新的 CDS self update / deploy。
 
 面向执行面板或 CI 时，优先读 `cycle-summary.json.executionPanel`。它已经聚合了
 `status`、`commercialComplete`、`blockingReason`、`currentBlockingGate`、
