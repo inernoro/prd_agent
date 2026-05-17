@@ -5,9 +5,11 @@
 #
 # 按依赖顺序串行执行所有 smoke-*.sh:
 #   1. smoke-health.sh        — 连通 + 鉴权,失败就不用跑后面
-#   2. smoke-prd-agent.sh     — PRD 会话/Run 链路
-#   3. smoke-defect-agent.sh  — 缺陷 CRUD
-#   4. smoke-report-agent.sh  — 周报 CRUD
+#   2. smoke-cds-agent-runtime-status.sh    — CDS Agent official SDK runtime pool
+#   3. smoke-cds-agent-profile-preflight.sh — CDS Agent profile preflight gate
+#   4. smoke-prd-agent.sh     — PRD 会话/Run 链路
+#   5. smoke-defect-agent.sh  — 缺陷 CRUD
+#   6. smoke-report-agent.sh  — 周报 CRUD
 #
 # 每个子脚本独立返回 0/非 0;本脚本累计失败数,最后汇总。
 # 任意子脚本失败不中断后续 —— 让使用者一次跑完能看到所有问题,而
@@ -20,7 +22,7 @@
 #     bash scripts/smoke-all.sh
 #
 # 跳过某个子 Agent (例如本地没配周报):
-#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,prd-agent,defect,report
+#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-preflight,prd-agent,defect,report
 #
 # CI 环境建议: fail-fast 的话把 SMOKE_FAIL_FAST=1 设上,首次失败即退出。
 # ============================================
@@ -35,6 +37,8 @@ SMOKE_FAIL_FAST="${SMOKE_FAIL_FAST:-}"
 # 按顺序声明 (key, script, human_name); 新增子冒烟在这里加一行即可。
 declare -a SMOKES=(
   "health|$SCRIPT_DIR/smoke-health.sh|Health & Auth"
+  "cds-agent-runtime|$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh|CDS Agent Runtime"
+  "cds-agent-preflight|$SCRIPT_DIR/smoke-cds-agent-profile-preflight.sh|CDS Agent Profile Preflight"
   "prd-agent|$SCRIPT_DIR/smoke-prd-agent.sh|PRD Agent"
   "defect|$SCRIPT_DIR/smoke-defect-agent.sh|Defect Agent"
   "report|$SCRIPT_DIR/smoke-report-agent.sh|Report Agent"
@@ -94,11 +98,17 @@ printf '\n##########################################\n'
 printf '# 冒烟测试汇总 (总耗时 %s 秒)\n' "$total_elapsed"
 printf '##########################################\n'
 printf '✅ 通过: %s 项\n' "${#passed_arr[@]}"
-for name in "${passed_arr[@]}"; do printf '    · %s\n' "$name"; done
+if [[ "${#passed_arr[@]}" -gt 0 ]]; then
+  for name in "${passed_arr[@]}"; do printf '    · %s\n' "$name"; done
+fi
 printf '❌ 失败: %s 项\n' "${#failed_arr[@]}"
-for name in "${failed_arr[@]}"; do printf '    · %s\n' "$name"; done
+if [[ "${#failed_arr[@]}" -gt 0 ]]; then
+  for name in "${failed_arr[@]}"; do printf '    · %s\n' "$name"; done
+fi
 printf '⏭  跳过: %s 项\n' "${#skipped_arr[@]}"
-for name in "${skipped_arr[@]}"; do printf '    · %s\n' "$name"; done
+if [[ "${#skipped_arr[@]}" -gt 0 ]]; then
+  for name in "${skipped_arr[@]}"; do printf '    · %s\n' "$name"; done
+fi
 
 if [[ "${#failed_arr[@]}" -gt 0 ]]; then
   exit 1
