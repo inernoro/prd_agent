@@ -750,6 +750,20 @@ export default function CdsAgentPage() {
       '点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。',
     ],
   }), [anthropicOfficialProfileTemplate, backendR1RepairPlan, defaultRuntimeProfileDiagnostics, r1DefaultProfileBlocked]);
+  const r1RepairNeedsAttention = r1RepairPlan.state !== 'ready';
+  const r1RepairCurrentLabel = r1RepairPlan.currentProfile
+    ? [
+        r1RepairPlan.currentProfile.name,
+        r1RepairPlan.currentProfile.protocol,
+        r1RepairPlan.currentProfile.model,
+      ].filter(Boolean).join(' / ')
+    : '未找到默认 runtime profile';
+  const r1RepairTargetLabel = r1RepairPlan.targetTemplate
+    ? [
+        r1RepairPlan.targetTemplate.protocol,
+        r1RepairPlan.targetTemplate.model,
+      ].filter(Boolean).join(' / ')
+    : '等待后端官方模板';
 
   const fetchEventsSince = useCallback(async (sessionId: string, afterSeq: number): Promise<InfraAgentEventView[]> => {
     const collected: InfraAgentEventView[] = [];
@@ -2914,21 +2928,29 @@ export default function CdsAgentPage() {
                     </button>
                   </div>
                 )}
-                {(r1DefaultProfileBlocked || !defaultRuntimeProfileDiagnostics) && (
+                {r1RepairNeedsAttention && (
                   <div className="mt-2 rounded-md px-2 py-2 text-xs leading-relaxed text-amber-100/82" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}>
-                    <div className="inline-flex items-center gap-1.5 font-semibold text-amber-100/90">
-                      <KeyRound size={12} /> R1 默认 Claude profile
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="inline-flex items-center gap-1.5 font-semibold text-amber-100/90">
+                        <KeyRound size={12} /> R1 默认 Claude profile
+                      </div>
+                      <span className="rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-normal text-amber-100/70" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.18)' }}>
+                        {r1RepairPlan.source}
+                      </span>
                     </div>
                     <div className="mt-1 break-words text-amber-50/72">
-                      当前: {defaultRuntimeProfileDiagnostics
-                        ? `${defaultRuntimeProfileDiagnostics.name} / ${defaultRuntimeProfileDiagnostics.protocol} / ${defaultRuntimeProfileDiagnostics.model}`
-                        : '未找到默认 runtime profile'}
+                      当前: {r1RepairCurrentLabel}
                     </div>
                     <div className="mt-1 break-words text-amber-50/72">
-                      目标: {anthropicOfficialProfileTemplate
-                        ? `${anthropicOfficialProfileTemplate.protocol} / ${anthropicOfficialProfileTemplate.model}`
-                        : '等待后端官方模板'}
+                      目标: {r1RepairTargetLabel}
                     </div>
+                    {r1RepairPlan.nextActions.length > 0 && (
+                      <ul className="mt-2 space-y-1 text-amber-50/66">
+                        {r1RepairPlan.nextActions.slice(0, 3).map((item) => (
+                          <li key={item} className="break-words">- {item}</li>
+                        ))}
+                      </ul>
+                    )}
                     <button
                       type="button"
                       onClick={() => void applyAnthropicOfficialTemplate()}

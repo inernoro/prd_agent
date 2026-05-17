@@ -50,6 +50,8 @@
 
 没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 脚本只是 readiness gate 或跳过真调用；它们通过只能证明控制面没有明显配置错误，不能证明"上手就能审查代码"。
 
+R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true` 返回的 `diagnostics.runtimeProfileRepairPlan` 为准。页面上的 “R1 默认 Claude profile” 卡片、复制诊断包和 readiness smoke 都应消费这个后端字段；不要在前端或文档里另写一套默认模型、协议或下一步判断。
+
 ## 给自己或其他仓库做审查
 
 一次正常审查建议按这个流程走：
