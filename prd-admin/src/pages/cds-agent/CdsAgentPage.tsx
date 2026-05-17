@@ -1269,6 +1269,12 @@ export default function CdsAgentPage() {
     const executionCommercialState = backendExecutionPanel?.status || commercialState;
     const executionBlockingCode = backendExecutionPanel?.currentBlockingGate || commercialBlockingCode;
     const executionNextAction = backendExecutionPanel?.blockingReason || commercialNextAction;
+    const executionDeploymentAdvice = backendExecutionPanel?.deploymentAdvice
+      || (executionCommercialState === 'commercial-ready'
+        ? '商业级门禁已通过；只有新代码变更、promotion 或环境切换时才需要重新部署。'
+        : defaultProfileReady
+          ? '不要重复部署；下一步是显式开启 provider smoke，补齐 S1/S2/S3 的真实调用证据。'
+          : '不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile。');
     const executionNextCommand = backendExecutionPanel?.nextCommand || commercialNextCommand;
     const readinessGates: RuntimeReadinessGate[] = [
       {
@@ -1350,6 +1356,7 @@ export default function CdsAgentPage() {
       commercialState: executionCommercialState,
       commercialBlockingCode: executionBlockingCode,
       commercialNextAction: executionNextAction,
+      commercialDeploymentAdvice: executionDeploymentAdvice,
       commercialNextCommand: executionNextCommand,
       nextCyclePlan,
       debugCommands,
@@ -3601,6 +3608,10 @@ export default function CdsAgentPage() {
                           </div>
                           <div className="mt-1 max-w-4xl text-xs leading-relaxed text-white/58">
                             {runtimeDiagnostics.commercialNextAction}
+                          </div>
+                          <div className="mt-2 inline-flex max-w-4xl items-start gap-2 rounded-md px-2 py-1.5 text-xs leading-relaxed text-white/64" style={{ background: 'rgba(15,23,42,0.54)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                            <GitPullRequest size={13} className="mt-0.5 shrink-0 text-white/42" />
+                            <span>{runtimeDiagnostics.commercialDeploymentAdvice}</span>
                           </div>
                         </div>
                         <div className="grid min-w-[220px] gap-1 text-right text-xs text-white/58">

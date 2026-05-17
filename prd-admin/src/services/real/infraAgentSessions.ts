@@ -282,6 +282,7 @@ export interface InfraAgentRuntimeDiagnostics {
     commercialComplete: boolean;
     currentBlockingGate: string;
     blockingReason: string;
+    deploymentAdvice?: string | null;
     nextCommand: string;
     gateCounts: Record<string, number>;
   } | null;

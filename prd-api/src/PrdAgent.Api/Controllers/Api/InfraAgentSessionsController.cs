@@ -105,6 +105,7 @@ public class InfraAgentSessionsController : ControllerBase
             !string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
         var blockingCode = blockingGate?.Code ?? blockedCycleItem?.BlockedBy ?? blockedCycleItem?.Code ?? string.Empty;
         var command = SelectExecutionCommand(blockingCode, debugCommands);
+        var deploymentAdvice = BuildDeploymentAdvice(readiness.Overall, blockingCode, commercialComplete);
         var gateCounts = readiness.Gates
             .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
@@ -116,8 +117,53 @@ public class InfraAgentSessionsController : ControllerBase
             blockingGate?.Message
                 ?? blockedCycleItem?.NextActions?.FirstOrDefault()
                 ?? "商业级门禁已通过。",
+            deploymentAdvice,
             command?.Command ?? string.Empty,
             gateCounts);
+    }
+
+    private static string BuildDeploymentAdvice(
+        string readinessOverall,
+        string blockingCode,
+        bool commercialComplete)
+    {
+        if (commercialComplete)
+        {
+            return "商业级门禁已通过；只有新代码变更、promotion 或环境切换时才需要重新部署。";
+        }
+
+        if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
+        {
+            return "先跑 doctor 定位 runtime pool/sidecar 发现问题；只有确认远程容器、授权或服务版本不匹配时才需要 self update 或 redeploy。";
+        }
+
+        if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase)
+            || (string.IsNullOrWhiteSpace(blockingCode)
+                && string.Equals(readinessOverall, "profile-blocked", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile 后重跑 one-cycle。";
+        }
+
+        if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(readinessOverall, "ready_for_provider_smokes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(readinessOverall, "provider-smokes-required", StringComparison.OrdinalIgnoreCase))
+        {
+            return "不要重复部署；下一步是显式开启 provider smoke，补齐 S1/S2/S3 的真实调用证据。";
+        }
+
+        if (string.Equals(blockingCode, "A0", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(blockingCode, "T1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(blockingCode, "N6", StringComparison.OrdinalIgnoreCase))
+        {
+            return "优先本地修代码并跑对应静态 smoke；通过后再决定是否需要部署验证远程行为。";
+        }
+
+        if (string.Equals(blockingCode, "V1", StringComparison.OrdinalIgnoreCase))
+        {
+            return "V1 是页面/登录态/截图证据；先本地或当前 preview 截图验证，避免为了截图证据重复部署。";
+        }
+
+        return "先运行页面给出的窄口径命令并查看诊断包；部署只用于验证远程 runtime、鉴权、容器网络或已完成的代码变更。";
     }
 
     private static SidecarDebugCommand? SelectExecutionCommand(

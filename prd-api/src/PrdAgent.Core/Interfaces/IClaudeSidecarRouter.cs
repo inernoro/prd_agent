@@ -250,6 +250,7 @@ public sealed record SidecarExecutionPanel(
     bool CommercialComplete,
     string CurrentBlockingGate,
     string BlockingReason,
+    string DeploymentAdvice,
     string NextCommand,
     IReadOnlyDictionary<string, int> GateCounts
 );
