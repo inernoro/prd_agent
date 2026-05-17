@@ -54,6 +54,43 @@ public sealed class ClaudeSidecarOptions
     public CdsDiscoveryConfig CdsDiscovery { get; set; } = new();
 }
 
+public static class ClaudeSidecarEnvAutoConfigurator
+{
+    public static void Apply(ClaudeSidecarOptions opts, Func<string, string?>? getEnv = null)
+    {
+        if (!opts.AutoConfigureFromEnv) return;
+
+        getEnv ??= Environment.GetEnvironmentVariable;
+        var anthropicKey = getEnv("ANTHROPIC_API_KEY");
+        var sidecarBaseUrl = getEnv("CLAUDE_SIDECAR_BASE_URL");
+        var sidecarToken = getEnv("CLAUDE_SIDECAR_TOKEN");
+        var hasProviderEnv = !string.IsNullOrWhiteSpace(anthropicKey);
+        var hasExplicitSidecarEnv =
+            !string.IsNullOrWhiteSpace(sidecarBaseUrl)
+            || !string.IsNullOrWhiteSpace(sidecarToken);
+
+        if (!hasProviderEnv && !hasExplicitSidecarEnv) return;
+
+        if (opts.Sidecars.Count == 0)
+        {
+            opts.Sidecars.Add(new SidecarInstanceConfig
+            {
+                Name = hasExplicitSidecarEnv ? "env-sidecar" : "default",
+                BaseUrl = !string.IsNullOrWhiteSpace(sidecarBaseUrl)
+                    ? sidecarBaseUrl!
+                    : opts.DefaultSidecarBaseUrl,
+                Token = !string.IsNullOrWhiteSpace(sidecarToken)
+                    ? sidecarToken!
+                    : opts.DefaultSidecarToken,
+                Weight = 1,
+                Tags = new List<string> { "default", hasExplicitSidecarEnv ? "env" : "auto" },
+            });
+        }
+
+        if (!opts.Enabled) opts.Enabled = true;
+    }
+}
+
 public sealed class CdsDiscoveryConfig
 {
     /// <summary>开关。未启用时 prd-api 仅消费 appsettings.Sidecars 静态配置。</summary>

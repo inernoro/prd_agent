@@ -15,6 +15,51 @@ namespace PrdAgent.Tests;
 public class DynamicSidecarRegistryTests
 {
     [Fact]
+    public void EnvAutoConfigurator_ShouldEnableExplicitSidecarWithoutProviderKey()
+    {
+        var options = new ClaudeSidecarOptions
+        {
+            Enabled = false,
+            DefaultSidecarBaseUrl = "http://claude-sidecar:7400",
+            DefaultSidecarToken = "dev-skip",
+        };
+
+        ClaudeSidecarEnvAutoConfigurator.Apply(options, key => key switch
+        {
+            "CLAUDE_SIDECAR_BASE_URL" => "http://127.0.0.1:7400",
+            "CLAUDE_SIDECAR_TOKEN" => "manual-token",
+            _ => null,
+        });
+
+        Assert.True(options.Enabled);
+        var sidecar = Assert.Single(options.Sidecars);
+        Assert.Equal("env-sidecar", sidecar.Name);
+        Assert.Equal("http://127.0.0.1:7400", sidecar.BaseUrl);
+        Assert.Equal("manual-token", sidecar.Token);
+        Assert.Contains("env", sidecar.Tags);
+    }
+
+    [Fact]
+    public void EnvAutoConfigurator_ShouldStillSupportProviderKeyOnlyDefaultSidecar()
+    {
+        var options = new ClaudeSidecarOptions
+        {
+            Enabled = false,
+            DefaultSidecarBaseUrl = "http://claude-sidecar:7400",
+            DefaultSidecarToken = "dev-skip",
+        };
+
+        ClaudeSidecarEnvAutoConfigurator.Apply(options, key => key == "ANTHROPIC_API_KEY" ? "sk-ant-test" : null);
+
+        Assert.True(options.Enabled);
+        var sidecar = Assert.Single(options.Sidecars);
+        Assert.Equal("default", sidecar.Name);
+        Assert.Equal("http://claude-sidecar:7400", sidecar.BaseUrl);
+        Assert.Equal("dev-skip", sidecar.Token);
+        Assert.Contains("auto", sidecar.Tags);
+    }
+
+    [Fact]
     public async Task RefreshAsync_DiscoversPairedCdsInstances()
     {
         var options = new ClaudeSidecarOptions
