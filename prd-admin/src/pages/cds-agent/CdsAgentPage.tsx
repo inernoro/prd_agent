@@ -693,6 +693,8 @@ export default function CdsAgentPage() {
     const registryIssue = runtimeStatus?.registryLastRefreshError || '';
     const blockers = runtimeStatus?.blockers?.filter(Boolean) ?? [];
     const nextActions = runtimeStatus?.nextActions?.filter(Boolean) ?? [];
+    const readyzBlockers = primaryRuntime?.readyzBlockers?.filter(Boolean) ?? [];
+    const readyzNextActions = primaryRuntime?.readyzNextActions?.filter(Boolean) ?? [];
     const providerKeyState = primaryRuntime
       ? boolStatus(primaryRuntime.anthropicKeyConfigured, '已配置', '缺失')
       : '无实例';
@@ -752,12 +754,32 @@ export default function CdsAgentPage() {
         ['Discovery', registryIssue || '无发现异常'],
         ['Blocker', blockers[0] || '无阻塞项'],
         ['Next', nextActions[0] || '无建议动作'],
+        ['Readyz blocker', readyzBlockers[0] || '无实例级阻塞'],
+        ['Readyz next', readyzNextActions[0] || '无实例级建议'],
         ['Cancel', cancelState],
       ],
       blockers,
       nextActions,
+      readyzBlockers,
+      readyzNextActions,
     };
   }, [activeSession, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
+  const sidecarInstanceSummaries = useMemo(() => (
+    (runtimeStatus?.instances ?? []).map((item) => ({
+      name: item.name,
+      source: item.source,
+      tags: item.tags,
+      ready: item.ready,
+      httpStatus: item.httpStatus,
+      agentAdapter: item.agentAdapter,
+      providerKeyRequiredForReady: item.providerKeyRequiredForReady,
+      anthropicKeyConfigured: item.anthropicKeyConfigured,
+      sidecarTokenConfigured: item.sidecarTokenConfigured,
+      readyzBlockers: item.readyzBlockers,
+      readyzNextActions: item.readyzNextActions,
+      error: item.error,
+    }))
+  ), [runtimeStatus?.instances]);
   const runtimeDiagnosticBundle = useMemo(() => ({
     generatedAt: new Date().toISOString(),
     session: activeSession ? {
@@ -791,6 +813,7 @@ export default function CdsAgentPage() {
       refreshed: runtimeDiscoveryRefreshed,
       loadedAt: runtimeStatusLoadedAt,
     },
+    sidecarInstances: sidecarInstanceSummaries,
     runtimeStatus,
     summary: {
       adapter: runtimeDiagnostics.adapter,
@@ -802,8 +825,10 @@ export default function CdsAgentPage() {
       rows: runtimeDiagnostics.rows,
       blockers: runtimeDiagnostics.blockers,
       nextActions: runtimeDiagnostics.nextActions,
+      readyzBlockers: runtimeDiagnostics.readyzBlockers,
+      readyzNextActions: runtimeDiagnostics.readyzNextActions,
     },
-  }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
+  }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;

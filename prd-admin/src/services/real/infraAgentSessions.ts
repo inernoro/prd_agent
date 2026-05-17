@@ -134,6 +134,7 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   httpStatus?: number | null;
   ready?: boolean | null;
   anthropicKeyConfigured?: boolean | null;
+  providerKeyRequiredForReady?: boolean | null;
   sidecarTokenConfigured?: boolean | null;
   agentAdapter?: string | null;
   adapterDiagnosticsJson?: string | null;
