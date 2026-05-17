@@ -1149,11 +1149,15 @@ export default function CdsAgentPage() {
     };
     const backendGateValue = (code: string, fallback: string): string => backendCommercialGates.get(code)?.status || fallback;
     const backendGateDetail = (code: string, fallback: string): string => backendCommercialGates.get(code)?.message || fallback;
-    const s1EvidenceReady = officialLoopReady
+    const providerEvidenceEligible = defaultProfileReady && officialLoopReady;
+    const providerEvidenceBlockedDetail = defaultProfileReady
+      ? '等待官方 SDK 真实 run 产生证据；旧会话事件不能证明当前 provider gate。'
+      : '等待 R1 默认 Claude profile 通过后再运行真实 provider smoke；旧会话事件不能证明当前 provider gate。';
+    const s1EvidenceReady = providerEvidenceEligible
       && events.some((event) => event.type === 'done' || event.type === 'text_delta')
       && messages.some((message) => message.role === 'assistant' && message.content.trim());
-    const s2EvidenceReady = approvalEvidence.requestCount > 0 && approvalEvidence.decisionCount > 0;
-    const s3EvidenceReady = cancelEvidence.runtimeCancelRequested || cancelEvidence.sdkCancelled;
+    const s2EvidenceReady = providerEvidenceEligible && approvalEvidence.requestCount > 0 && approvalEvidence.decisionCount > 0;
+    const s3EvidenceReady = providerEvidenceEligible && (cancelEvidence.runtimeCancelRequested || cancelEvidence.sdkCancelled);
     const v1EvidenceReady = Boolean(runtimeStatus && runtimeStatusLoadedAt);
     const commercialReadinessGates: CommercialReadinessGate[] = [
       {
@@ -1204,7 +1208,7 @@ export default function CdsAgentPage() {
           ? '当前会话已有 assistant 输出或 done 事件，可作为只读 run 的页面证据。'
           : backendGateDetail('S1', defaultProfileReady
           ? '配置已解锁；还需运行 S1 smoke，证明官方 SDK 能真实审查仓库。'
-          : '等待 R1 默认 Claude profile 通过后再运行 S1.'),
+          : providerEvidenceBlockedDetail),
         state: s1EvidenceReady ? 'pass' : backendGateState('S1', defaultProfileReady ? 'warn' : 'pending'),
       },
       {
@@ -1215,7 +1219,7 @@ export default function CdsAgentPage() {
           ? '当前会话已有 approval request 和 MAP decision 证据。'
           : backendGateDetail('S2', defaultProfileReady
           ? '还需运行 S2 controls，证明危险工具会回到 MAP 审批。'
-          : '等待 R1 默认 Claude profile 通过后再运行 S2.'),
+          : providerEvidenceBlockedDetail),
         state: s2EvidenceReady ? 'pass' : backendGateState('S2', defaultProfileReady ? 'warn' : 'pending'),
       },
       {
@@ -1226,7 +1230,7 @@ export default function CdsAgentPage() {
           ? '当前会话已有 runtime cancel 或 SDK cancelled 证据。'
           : backendGateDetail('S3', defaultProfileReady
           ? '还需运行 S3 controls，证明 Stop 能触达底层 SDK run。'
-          : '等待 R1 默认 Claude profile 通过后再运行 S3.'),
+          : providerEvidenceBlockedDetail),
         state: s3EvidenceReady ? 'pass' : backendGateState('S3', defaultProfileReady ? 'warn' : 'pending'),
       },
       {
