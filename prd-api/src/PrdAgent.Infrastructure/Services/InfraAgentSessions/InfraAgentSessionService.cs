@@ -1460,7 +1460,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         retryable = true,
                         source = eventSource,
                         runtimeAdapter = selectedRuntimeAdapter,
-                        runtimeInstance = ev.RuntimeInstanceName
+                        runtimeInstance = ev.RuntimeInstanceName,
+                        content = ev.Content
                     }), ct);
                     await MarkRuntimeFailedAsync(session, $"Claude SDK sidecar 执行失败：{errorMessage}", ct);
                     return false;
