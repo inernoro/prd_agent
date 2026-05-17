@@ -498,6 +498,8 @@ export default function CdsAgentPage() {
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
   const [runtimeStatus, setRuntimeStatus] = useState<InfraAgentRuntimeDiagnostics | null>(null);
+  const [runtimeDiscoveryRefreshed, setRuntimeDiscoveryRefreshed] = useState<boolean | null>(null);
+  const [runtimeStatusLoadedAt, setRuntimeStatusLoadedAt] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -746,6 +748,7 @@ export default function CdsAgentPage() {
         ['HTTP', httpState],
         ['Provider key', providerKeyState],
         ['Sidecar token', sidecarTokenState],
+        ['Discovery refresh', runtimeDiscoveryRefreshed === null ? '未请求' : runtimeDiscoveryRefreshed ? `已触发 · ${formatTime(runtimeStatusLoadedAt)}` : `未触发 · ${formatTime(runtimeStatusLoadedAt)}`],
         ['Discovery', registryIssue || '无发现异常'],
         ['Blocker', blockers[0] || '无阻塞项'],
         ['Next', nextActions[0] || '无建议动作'],
@@ -754,7 +757,7 @@ export default function CdsAgentPage() {
       blockers,
       nextActions,
     };
-  }, [activeSession, events, runtimeStatus]);
+  }, [activeSession, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const runtimeDiagnosticBundle = useMemo(() => ({
     generatedAt: new Date().toISOString(),
     session: activeSession ? {
@@ -783,6 +786,11 @@ export default function CdsAgentPage() {
       hasApiKey: activeSessionProfile.hasApiKey,
       baseUrlConfigured: Boolean(activeSessionProfile.baseUrl),
     } : null,
+    runtimeDiscovery: {
+      refreshRequested: true,
+      refreshed: runtimeDiscoveryRefreshed,
+      loadedAt: runtimeStatusLoadedAt,
+    },
     runtimeStatus,
     summary: {
       adapter: runtimeDiagnostics.adapter,
@@ -795,7 +803,7 @@ export default function CdsAgentPage() {
       blockers: runtimeDiagnostics.blockers,
       nextActions: runtimeDiagnostics.nextActions,
     },
-  }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeStatus]);
+  }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
@@ -1070,6 +1078,8 @@ export default function CdsAgentPage() {
     }
     if (runtimeRes.success && runtimeRes.data?.diagnostics) {
       setRuntimeStatus(runtimeRes.data.diagnostics);
+      setRuntimeDiscoveryRefreshed(Boolean(runtimeRes.data.discoveryRefreshed));
+      setRuntimeStatusLoadedAt(new Date().toISOString());
     }
   }
 
