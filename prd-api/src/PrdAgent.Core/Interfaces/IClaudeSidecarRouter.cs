@@ -157,6 +157,8 @@ public sealed record SidecarInstanceDiagnostics(
     bool HealthRegistryHealthy,
     int? HttpStatus,
     bool? Ready,
+    bool? AnthropicKeyConfigured,
+    bool? SidecarTokenConfigured,
     string? AgentAdapter,
     string? AdapterDiagnosticsJson,
     string? Error

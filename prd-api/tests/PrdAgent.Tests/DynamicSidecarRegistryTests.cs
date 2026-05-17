@@ -168,6 +168,8 @@ public class DynamicSidecarRegistryTests
                 Content = new StringContent("""
                 {
                   "ready": false,
+                  "anthropicKey": false,
+                  "sidecarToken": true,
                   "agentAdapter": "claude-agent-sdk",
                   "adapterDiagnostics": {
                     "adapter": "claude-agent-sdk",
@@ -189,9 +191,12 @@ public class DynamicSidecarRegistryTests
         Assert.True(diagnostics.IsConfigured);
         Assert.Equal(1, diagnostics.InstanceCount);
         Assert.Equal(0, diagnostics.HealthyCount);
+        Assert.False(diagnostics.Instances[0].AnthropicKeyConfigured);
+        Assert.True(diagnostics.Instances[0].SidecarTokenConfigured);
         Assert.Contains("所有已发现的 sidecar runtime 实例当前都不可用", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: /readyz 返回 HTTP 503", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: /readyz ready=false", diagnostics.Blockers ?? Array.Empty<string>());
+        Assert.Contains("cds-pairing:conn-1:host-a: 缺少 ANTHROPIC_API_KEY", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: 缺少 claude_cli", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("cds-pairing:conn-1:host-a: 缺少 workspace_root", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains(

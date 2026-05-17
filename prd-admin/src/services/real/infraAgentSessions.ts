@@ -133,6 +133,8 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   healthRegistryHealthy: boolean;
   httpStatus?: number | null;
   ready?: boolean | null;
+  anthropicKeyConfigured?: boolean | null;
+  sidecarTokenConfigured?: boolean | null;
   agentAdapter?: string | null;
   adapterDiagnosticsJson?: string | null;
   error?: string | null;

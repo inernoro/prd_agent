@@ -215,6 +215,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     _state.IsHealthy(instance.Name),
                     (int)resp.StatusCode,
                     parsed.Ready,
+                    parsed.AnthropicKey,
+                    parsed.SidecarToken,
                     parsed.AgentAdapter,
                     parsed.AdapterDiagnosticsJson,
                     resp.IsSuccessStatusCode ? null : Truncate(body, 800)));
@@ -229,6 +231,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     instance.Tags,
                     !string.IsNullOrWhiteSpace(token),
                     _state.IsHealthy(instance.Name),
+                    null,
+                    null,
                     null,
                     null,
                     null,
@@ -279,6 +283,14 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             if (instance.Ready == false)
             {
                 blockers.Add($"{instance.Name}: /readyz ready=false");
+            }
+            if (instance.AnthropicKeyConfigured == false)
+            {
+                blockers.Add($"{instance.Name}: 缺少 ANTHROPIC_API_KEY");
+            }
+            if (instance.SidecarTokenConfigured == false)
+            {
+                blockers.Add($"{instance.Name}: 缺少 SIDECAR_TOKEN");
             }
             foreach (var missing in ReadMissingAdapterDependencies(instance.AdapterDiagnosticsJson))
             {
@@ -344,10 +356,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null);
+            return (null, null, null, null, null);
 
         try
         {
@@ -357,6 +369,14 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 && (readyElement.ValueKind == JsonValueKind.True || readyElement.ValueKind == JsonValueKind.False)
                 ? readyElement.GetBoolean()
                 : null;
+            bool? anthropicKey = root.TryGetProperty("anthropicKey", out var anthropicKeyElement)
+                && (anthropicKeyElement.ValueKind == JsonValueKind.True || anthropicKeyElement.ValueKind == JsonValueKind.False)
+                ? anthropicKeyElement.GetBoolean()
+                : null;
+            bool? sidecarToken = root.TryGetProperty("sidecarToken", out var sidecarTokenElement)
+                && (sidecarTokenElement.ValueKind == JsonValueKind.True || sidecarTokenElement.ValueKind == JsonValueKind.False)
+                ? sidecarTokenElement.GetBoolean()
+                : null;
             string? adapter = root.TryGetProperty("agentAdapter", out var adapterElement)
                 && adapterElement.ValueKind == JsonValueKind.String
                 ? adapterElement.GetString()
@@ -364,11 +384,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             string? adapterDiagnostics = root.TryGetProperty("adapterDiagnostics", out var diagElement)
                 ? diagElement.GetRawText()
                 : null;
-            return (ready, adapter, adapterDiagnostics);
+            return (ready, anthropicKey, sidecarToken, adapter, adapterDiagnostics);
         }
         catch (JsonException)
         {
-            return (null, null, null);
+            return (null, null, null, null, null);
         }
     }
 
