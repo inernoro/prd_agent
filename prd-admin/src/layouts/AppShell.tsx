@@ -456,6 +456,7 @@ export default function AppShell() {
 
   const activeKey = location.pathname === '/' ? '/' : `/${location.pathname.split('/')[1]}`;
   const isLabPage = location.pathname.startsWith('/lab');
+  const suppressFloatingDock = location.pathname.startsWith('/cds-agent');
 
   // 读取主题配置中的侧边栏玻璃效果设置
   const sidebarGlass = useThemeStore((s) => s.config.sidebarGlass);
@@ -601,10 +602,10 @@ export default function AppShell() {
     >
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
-      <TipsDrawer />
+      {!suppressFloatingDock && <TipsDrawer />}
       <CommandPalette />
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
-      {!isMobile && toastNotification && (
+      {!suppressFloatingDock && !isMobile && toastNotification && (
         toastCollapsed ? (
           // 收缩状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
           <button
