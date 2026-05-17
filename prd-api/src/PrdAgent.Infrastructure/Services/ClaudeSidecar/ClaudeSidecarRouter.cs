@@ -230,7 +230,9 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     parsed.LoopOwner,
                     parsed.SdkLoopEnabled,
                     parsed.MapRole,
-                    parsed.CdsRole));
+                    parsed.CdsRole,
+                    parsed.ClaudeCliPath,
+                    parsed.ClaudeCliBundled));
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -432,10 +434,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? MapRole, string? CdsRole) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? MapRole, string? CdsRole, string? ClaudeCliPath, bool? ClaudeCliBundled) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null, null, null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
         try
         {
@@ -468,13 +470,15 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             bool? sdkLoopEnabled = TryReadBool(diagElement, "sdkLoopEnabled");
             string? mapRole = TryReadString(diagElement, "mapRole");
             string? cdsRole = TryReadString(diagElement, "cdsRole");
+            string? claudeCliPath = TryReadString(diagElement, "claudeCliPath");
+            bool? claudeCliBundled = TryReadBool(diagElement, "claudeCliBundled");
             var blockers = ReadStringArray(root, "blockers");
             var nextActions = ReadStringArray(root, "nextActions");
-            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, mapRole, cdsRole);
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, mapRole, cdsRole, claudeCliPath, claudeCliBundled);
         }
         catch (JsonException)
         {
-            return (null, null, null, null, null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
     }
 

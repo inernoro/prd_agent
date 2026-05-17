@@ -32,7 +32,7 @@ MAP/prd-api 侧也可以设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent
 | POST | `/v1/agent/run` | SSE 流式，body 见 `app/schemas.py::SidecarRunRequest` |
 | POST | `/v1/agent/cancel/{runId}` | 取消运行 |
 | GET  | `/healthz` | 存活探针 |
-| GET  | `/readyz` | 就绪探针（探测 ANTHROPIC_API_KEY、当前 adapter、官方 SDK/CLI/workspace 诊断） |
+| GET  | `/readyz` | 就绪探针（探测 ANTHROPIC_API_KEY、当前 adapter、官方 SDK 包、外部 CLI 路径观测和 workspace 诊断） |
 
 所有 `/v1/*` 请求需 `Authorization: Bearer ${SIDECAR_TOKEN}`。开发期可设
 `SIDECAR_TOKEN=dev-skip` 跳过校验。

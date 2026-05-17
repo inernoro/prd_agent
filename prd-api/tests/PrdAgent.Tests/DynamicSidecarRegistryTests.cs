@@ -412,6 +412,8 @@ public class DynamicSidecarRegistryTests
         Assert.True(diagnostics.Instances[0].SdkLoopEnabled);
         Assert.Equal("control-plane", diagnostics.Instances[0].MapRole);
         Assert.Equal("sandbox-runtime", diagnostics.Instances[0].CdsRole);
+        Assert.Null(diagnostics.Instances[0].ClaudeCliPath);
+        Assert.False(diagnostics.Instances[0].ClaudeCliBundled);
         Assert.Contains("missing claude_agent_sdk", diagnostics.Instances[0].ReadyzBlockers ?? Array.Empty<string>());
         Assert.Contains(
             "install the official SDK: pip install claude-agent-sdk",

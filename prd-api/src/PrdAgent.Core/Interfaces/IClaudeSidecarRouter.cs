@@ -176,5 +176,7 @@ public sealed record SidecarInstanceDiagnostics(
     string? LoopOwner = null,
     bool? SdkLoopEnabled = null,
     string? MapRole = null,
-    string? CdsRole = null
+    string? CdsRole = null,
+    string? ClaudeCliPath = null,
+    bool? ClaudeCliBundled = null
 );

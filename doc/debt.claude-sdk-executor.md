@@ -28,7 +28,7 @@
 | D-14 | `repo_run_command` 单次命令上限 180 秒，不适合大型测试套件；需要长命令后台化、stdout/stderr 增量事件和取消。 | P1 | dotnet test / npm build / 集成测试较慢 | open |
 | D-15 | `repo_create_pull_request` 默认创建 draft PR；应改为 runtime profile 或任务级策略，低风险测试/文档修复默认 ready PR。 | P2 | 自动修复和 PR 闭环稳定后 | open |
 | D-16 | 历史名 `claude-sdk` 容易让人误以为完整接入官方 Claude Code SDK / Claude Agent SDK；需要逐步把产品文案改成 `Claude sidecar runtime` 或 `CDS Agent runtime`。 | P1 | 文档、UI、对外沟通 | open |
-| D-17 | 官方 Claude Agent SDK adapter 仍是 spike：本机未安装 `claude_agent_sdk`，虽然 adapter 已改用 `ClaudeSDKClient.interrupt()` 结构，但还没跑真实 SDK/CLI/key 的远程 smoke。 | P1 | 想达到商业级取消、续跑、真实远程 smoke 时 | open |
+| D-17 | 官方 Claude Agent SDK adapter 仍是 spike：虽然 adapter 已改用 `ClaudeSDKClient.interrupt()` 结构，但还没跑真实 SDK 包、provider key、workspace 和远程 CDS sidecar pool 的 smoke；外部 PATH 上的 `claude` 命令只做诊断观测，不是默认 ready gate。 | P1 | 想达到商业级取消、续跑、真实远程 smoke 时 | open |
 | D-18 | 官方 Claude Code 内置 `Bash/Edit/Write` 工具还没接 MAP permission callback / approval bridge；当前默认只读，写入/命令需显式 opt-in。 | P1 | 想让 official adapter 执行修改、测试、PR 前 | partially done: 已接 `can_use_tool` -> MAP approval request/wait 骨架；真实 UI 审批和远程 official SDK run 未验证 |
 | D-19 | Toolbox `cds-agent` 已能产出远程运行句柄并重新附着远程会话事件流，但真实远程 official SDK run 的审批闭环还没验证。 | P1 | 从 AI 百宝箱发起长代码任务时 | partially done: adapter 已返回 `sessionId/workbenchPath/eventStreamPath/logsPath` 句柄，Toolbox 运行页已渲染句柄卡片、“打开工作台”和“停止”按钮，并订阅远程 SSE/轮询兜底展示最近事件；等待审批的工具调用会在 Toolbox 内联显示允许/拒绝 |
 

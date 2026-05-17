@@ -142,6 +142,8 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   sdkLoopEnabled?: boolean | null;
   mapRole?: string | null;
   cdsRole?: string | null;
+  claudeCliPath?: string | null;
+  claudeCliBundled?: boolean | null;
   error?: string | null;
   readyzBlockers?: string[] | null;
   readyzNextActions?: string[] | null;

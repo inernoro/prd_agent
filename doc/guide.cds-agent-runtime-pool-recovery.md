@@ -145,7 +145,7 @@ Prompt：
 | --- | --- | --- |
 | `instanceCount=0` 且无 `discovery(...)` | 共享 CDS 控制面仍未更新 | 回到共享 CDS 发布 |
 | `instanceCount=0` 但有 `runningBranchServiceCount=0` | CDS 可观测已更新，但 sidecar pool 没有 running 服务 | 修 sidecar pool 部署 |
-| `healthyCount=0` | MAP 发现实例但 `/readyz` 不健康 | 查 `claude-agent-sdk`、Claude CLI、provider key、workspaceRoot |
+| `healthyCount=0` | MAP 发现实例但 `/readyz` 不健康 | 查 `claude-agent-sdk`、provider key、workspaceRoot、SIDECAR_TOKEN；外部 `claude` PATH 命令只做观测 |
 | `/readyz.blockers` 或 `runtime-status.instances[].readyzBlockers` 非空 | sidecar 自检已明确缺失项 | 按 `/readyz.nextActions` 或 `runtime-status.instances[].readyzNextActions` 逐项修复；默认 provider key 可由 MAP runtime profile/per-request 下发 |
 | `runtimeAdapter=legacy-sidecar` | 运行时 profile 或 env 未切到官方 adapter | 检查 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER` / request payload |
 | approval 不出现 | official `can_use_tool` 没接到 MAP bridge | 查 `/api/agent-tools/approvals/.../request` 和 sidecar logs |

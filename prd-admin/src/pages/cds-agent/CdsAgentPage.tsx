@@ -148,7 +148,7 @@ function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): st
     const firstError = status.instances.find((item) => item.error)?.error;
     return firstError
       ? `sidecar 实例均不健康：${firstError}`
-      : 'sidecar 实例均不健康，请检查 /readyz、SDK/CLI、workspace 和 token 配置。';
+      : 'sidecar 实例均不健康，请检查 /readyz、官方 SDK 包、workspace、token 和 provider key 配置。';
   }
   return '';
 }
@@ -750,6 +750,15 @@ export default function CdsAgentPage() {
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'cdsRole') : '');
     const approvalBridge = (latestRuntimeContent ? readString(latestRuntimeContent, 'approvalBridge') : '')
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'approvalBridge') : '');
+    const claudeCliPath = primaryRuntime?.claudeCliPath
+      || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'claudeCliPath') : '');
+    const claudeCliBundled = primaryRuntime?.claudeCliBundled
+      ?? readBoolean(primaryAdapterDiagnostics, 'claudeCliBundled');
+    const claudeCliState = claudeCliBundled === true
+      ? (claudeCliPath ? `SDK bundled · PATH ${claudeCliPath}` : 'SDK bundled · PATH 未配置')
+      : claudeCliBundled === false
+        ? 'SDK 未安装'
+        : claudeCliPath || '未上报';
     const runId = activeSession?.currentRuntimeRunId
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeRunId') || readString(latestRuntimePayload, 'messageId') : '');
     const instance = latestRuntimePayload
@@ -855,6 +864,7 @@ export default function CdsAgentPage() {
         ['SDK loop', sdkLoopState],
         ['MAP role', mapRole || '未上报'],
         ['CDS role', cdsRole || '未上报'],
+        ['External CLI', claudeCliState],
         ['Run ID', shortId(runId)],
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
@@ -892,6 +902,8 @@ export default function CdsAgentPage() {
       sdkLoopEnabled: item.sdkLoopEnabled,
       mapRole: item.mapRole,
       cdsRole: item.cdsRole,
+      claudeCliPath: item.claudeCliPath,
+      claudeCliBundled: item.claudeCliBundled,
       readyzBlockers: item.readyzBlockers,
       readyzNextActions: item.readyzNextActions,
       error: item.error,
