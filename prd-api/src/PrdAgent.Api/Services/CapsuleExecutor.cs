@@ -19,7 +19,16 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public static class CapsuleExecutor
 {
+    private const int CdsAgentEventPageSize = 500;
+    private const int CdsAgentMaxEventPages = 20;
+
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
+
+    internal sealed record CdsAgentEventCursorResult(
+        List<InfraAgentEventView> Events,
+        bool IsComplete,
+        long LastSeq
+    );
 
     public sealed class CapsulePauseException : Exception
     {
@@ -4712,9 +4721,12 @@ function safeChart(canvasId, config) {
                     "dangerous"),
                 CancellationToken.None);
 
-            var approvalEvents = await sessions.ListEventsAsync(userId, session.Id, 0, 1000, CancellationToken.None);
+            var approvalCursor = await ListCdsAgentEventsByCursorAsync(
+                (afterSeq, limit, ct) => sessions.ListEventsAsync(userId, session.Id, afterSeq, limit, ct),
+                CancellationToken.None);
+            var approvalEvents = approvalCursor.Events;
             var pendingApproval = FindFirstPendingApproval(approvalEvents);
-            var approvalLogs = $"[CDS Agent] 工作流等待危险工具审批\n会话: {session.Id}\n审批: {pendingApproval?.ApprovalId ?? "(unknown)"}\n工具: {pendingApproval?.ToolName ?? "repo_run_command"}";
+            var approvalLogs = $"[CDS Agent] 工作流等待危险工具审批\n会话: {session.Id}\n审批: {pendingApproval?.ApprovalId ?? "(unknown)"}\n工具: {pendingApproval?.ToolName ?? "repo_run_command"}\n事件读取: {FormatCdsAgentEventCursorSummary(approvalCursor)}";
             var approvalRendered = RenderCdsAgentEvents(approvalEvents);
             var approvalEventsJson = JsonSerializer.Serialize(approvalEvents, JsonPretty);
             throw new CapsulePauseException(
@@ -4739,10 +4751,13 @@ function safeChart(canvasId, config) {
 
         session = await sessions.SendMessageAsync(userId, session.Id, new SendInfraAgentMessageRequest(prompt), CancellationToken.None) ?? session;
 
-        var events = await sessions.ListEventsAsync(userId, session.Id, 0, 1000, CancellationToken.None);
+        var eventCursor = await ListCdsAgentEventsByCursorAsync(
+            (afterSeq, limit, ct) => sessions.ListEventsAsync(userId, session.Id, afterSeq, limit, ct),
+            CancellationToken.None);
+        var events = eventCursor.Events;
         var logs = await sessions.GetLogsAsync(userId, session.Id, CancellationToken.None) ?? "";
         var rendered = RenderCdsAgentEvents(events);
-        sb.AppendLine($"事件数: {events.Count()}");
+        sb.AppendLine($"事件读取: {FormatCdsAgentEventCursorSummary(eventCursor)}");
         sb.AppendLine($"日志长度: {logs.Length}");
 
         var stopAfterRun = !string.Equals(
@@ -4791,6 +4806,50 @@ function safeChart(canvasId, config) {
             }
         }
         return sb.ToString().Trim();
+    }
+
+    internal static async Task<CdsAgentEventCursorResult> ListCdsAgentEventsByCursorAsync(
+        Func<long, int, CancellationToken, Task<List<InfraAgentEventView>>> listEventsAsync,
+        CancellationToken ct)
+    {
+        var all = new List<InfraAgentEventView>();
+        var afterSeq = 0L;
+
+        for (var page = 0; page < CdsAgentMaxEventPages; page++)
+        {
+            var batch = await listEventsAsync(afterSeq, CdsAgentEventPageSize, ct);
+            if (batch.Count == 0)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+
+            var progressed = false;
+            foreach (var item in batch.OrderBy(x => x.Seq))
+            {
+                if (item.Seq <= afterSeq) continue;
+                all.Add(item);
+                afterSeq = item.Seq;
+                progressed = true;
+            }
+
+            if (!progressed)
+            {
+                return new CdsAgentEventCursorResult(all, false, afterSeq);
+            }
+
+            if (batch.Count < CdsAgentEventPageSize)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+        }
+
+        return new CdsAgentEventCursorResult(all, false, afterSeq);
+    }
+
+    private static string FormatCdsAgentEventCursorSummary(CdsAgentEventCursorResult cursor)
+    {
+        var status = cursor.IsComplete ? "complete" : "truncated_or_stalled";
+        return $"{cursor.Events.Count} events, lastSeq={cursor.LastSeq}, cursor={status}";
     }
 
     private static (string? ApprovalId, string? ToolName, string? Risk)? FindFirstPendingApproval(List<InfraAgentEventView> events)
