@@ -340,7 +340,7 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 | Gate | 通过含义 |
 | --- | --- |
 | R0 | runtime-status 和 sidecar alias 都证明 `loopOwner=claude-agent-sdk` |
-| A0 | 本地代码边界证明默认路径使用官方 Claude Agent SDK adapter，legacy loop 仅显式 fallback |
+| A0 | 本地代码边界证明默认路径使用官方 Claude Agent SDK adapter，legacy loop 仅显式 fallback，且官方 adapter 仍在薄接入层预算内 |
 | R1 | 默认 runtime profile 已是 Anthropic/Claude-compatible 且有 key |
 | S1 | 已显式允许 provider 调用，并完成真实只读 repo run |
 | S2S3 | 已完成真实 MAP approval 和 Stop/cancel 控制验证 |

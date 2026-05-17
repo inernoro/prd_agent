@@ -20,10 +20,16 @@ LEGACY_FILE="$ROOT_DIR/claude-sdk-sidecar/app/agent_loop.py"
 REQ_FILE="$ROOT_DIR/claude-sdk-sidecar/requirements.txt"
 REPORT="${SMOKE_CDS_AGENT_BOUNDARY_REPORT:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+OFFICIAL_ADAPTER_MAX_LINES="${SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES:-800}"
 ROUTING_TEST="claude-sdk-sidecar/tests/test_sidecar_readiness.py"
 ROUTING_TEST_LOG=""
 
 failures=()
+
+if ! [[ "$OFFICIAL_ADAPTER_MAX_LINES" =~ ^[0-9]+$ ]]; then
+  printf 'Invalid SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES: %s\n' "$OFFICIAL_ADAPTER_MAX_LINES" >&2
+  exit 2
+fi
 
 require_contains() {
   local file="$1"
@@ -65,6 +71,10 @@ require_contains "$OFFICIAL_FILE" 'create_sdk_mcp_server' \
   "MAP tools must be exposed through SDK MCP server"
 require_contains "$OFFICIAL_FILE" 'can_use_tool' \
   "MAP approval must bridge through SDK permission callback"
+require_contains "$OFFICIAL_FILE" 'await client.query(' \
+  "official adapter must delegate turn execution through ClaudeSDKClient.query"
+require_contains "$OFFICIAL_FILE" 'async for message in client.receive_response():' \
+  "official adapter must consume the official SDK response stream"
 require_contains "$OFFICIAL_FILE" '"loopOwner": "claude-agent-sdk"' \
   "runtime_init must report official loop owner"
 require_contains "$OFFICIAL_FILE" '"sdkLoopEnabled": True' \
@@ -80,8 +90,15 @@ require_not_contains "$OFFICIAL_FILE" 'client.messages.stream' \
   "official adapter must not rebuild Anthropic message streaming"
 require_not_contains "$OFFICIAL_FILE" 'chat/completions' \
   "official adapter must not rebuild OpenAI-compatible chat loop"
+require_not_contains "$OFFICIAL_FILE" 'run_agent' \
+  "official adapter must not call the legacy sidecar loop"
 
-ROUTING_TEST_LOG="$(mktemp "${TMPDIR:-/tmp}/cds-agent-boundary-routing.XXXXXX.log")"
+if (( official_lines > OFFICIAL_ADAPTER_MAX_LINES )); then
+  failures+=("official adapter should stay thin: ${official_lines} lines exceeds budget ${OFFICIAL_ADAPTER_MAX_LINES}; split MAP/CDS bridge helpers before growing a second loop")
+fi
+
+ROUTING_TEST_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cds-agent-boundary-routing.XXXXXX")"
+ROUTING_TEST_LOG="$ROUTING_TEST_TMP_DIR/unittest.log"
 if ! (cd "$ROOT_DIR" && "$PYTHON_BIN" -m unittest "$ROUTING_TEST") >"$ROUTING_TEST_LOG" 2>&1; then
   routing_test_status="failed"
   failures+=("sidecar routing unit tests must prove default official adapter and explicit legacy fallback")
@@ -107,6 +124,7 @@ if [[ -n "$REPORT" ]]; then
     --arg routingTestStatus "$routing_test_status" \
     --argjson officialLines "$official_lines" \
     --argjson legacyLines "$legacy_lines" \
+    --argjson officialMaxLines "$OFFICIAL_ADAPTER_MAX_LINES" \
     --argjson failures "$failures_json" \
     '{
       status: $status,
@@ -117,7 +135,9 @@ if [[ -n "$REPORT" ]]; then
         officialFile: $officialFile,
         legacyFile: $legacyFile,
         officialAdapterLines: $officialLines,
-        legacyLoopLines: $legacyLines
+        legacyLoopLines: $legacyLines,
+        officialAdapterMaxLines: $officialMaxLines,
+        officialAdapterWithinBudget: ($officialLines <= $officialMaxLines)
       },
       executableEvidence: {
         routingTest: $routingTest,
@@ -128,7 +148,7 @@ if [[ -n "$REPORT" ]]; then
 fi
 
 printf 'Official SDK boundary: %s\n' "$status"
-printf 'Official adapter lines: %s\n' "$official_lines"
+printf 'Official adapter lines: %s/%s\n' "$official_lines" "$OFFICIAL_ADAPTER_MAX_LINES"
 printf 'Legacy loop lines: %s\n' "$legacy_lines"
 printf 'Routing unit test: %s (%s)\n' "$routing_test_status" "$ROUTING_TEST"
 if (( ${#failures[@]} > 0 )); then
