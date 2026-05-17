@@ -119,7 +119,7 @@ phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-g
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
 ```
 
-截至 2026-05-18，远程 preview 的最新 one-cycle 证据是 `/tmp/cds-agent-cycle-20260518-running`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`A0=pass`、`V1=pass`、`N6=pass`、`R1/S1/S2/S3=pending`，总耗时 86s，最慢步骤是 V1 视觉 30s、N6 非代码兼容 17s、doctor 11s。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
+截至 2026-05-18，远程 preview 已部署到 `ef724771`，最新 one-cycle 证据是 `/tmp/cds-agent-cycle-ef724771`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`A0=pass`、`V1=pass`、`N6=pass`、`R1/S1/S2/S3=pending`，总耗时 84s，最慢步骤是 V1 视觉 29s、N6 非代码兼容 18s、R0 sidecar alias 10s。目标审计报告是 `/tmp/cds-agent-goal-audit-ef724771.json`，结论仍是 `goalStatus=not_complete`。这次远程自动部署从 GitHub check `23:17:57` in_progress 到 CDS `23:21:28` running，主要耗时在 CDS 构建/启动；一旦 preview 进入 running，`blocked_r1` 不需要继续 redeploy。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
 
 ```bash
 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \
