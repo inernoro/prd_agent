@@ -95,6 +95,42 @@ describe('ContainerService', () => {
       writeSpy.mockRestore();
     });
 
+    it('should remove stale same branch/profile app containers before attaching service aliases', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
+        stdout: [
+          'cds-feature-a-api',
+          'cds-feature-a-api-old',
+          'cds-other-branch-api',
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*cds-feature-a-api-old/, () => ({
+        stdout: 'feature-a|api|["api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*cds-other-branch-api/, () => ({
+        stdout: 'feature-b|api|["api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
+      expect(rmCommands.some(c => c.includes("'cds-feature-a-api-old'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'cds-other-branch-api'"))).toBe(false);
+      expect(rmCommands.some(c => c.includes('docker rm -f cds-feature-a-api'))).toBe(true);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'cds-feature-a-api-old'"));
+      const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
+      expect(staleRmIndex).toBeGreaterThanOrEqual(0);
+      expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
+    });
+
     it('should run a single docker command (no 3-step)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
