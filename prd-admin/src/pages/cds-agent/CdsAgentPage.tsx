@@ -2231,6 +2231,16 @@ export default function CdsAgentPage() {
             {!canCreateSession && (
               <div className="mb-2 rounded-md px-2 py-1.5 text-xs leading-relaxed text-amber-100/80" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.24)' }}>
                 {activeProfileBlockReason || activeRuntimePoolBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
+                {activeProfileBlockReason && (
+                  <button
+                    type="button"
+                    onClick={() => void applyAnthropicOfficialTemplate()}
+                    className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs"
+                    style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
+                  >
+                    <Server size={12} /> Anthropic 官方模板
+                  </button>
+                )}
               </div>
             )}
             <label className="mb-3 flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.14)' }}>
