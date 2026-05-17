@@ -194,14 +194,14 @@ finish_cycle() {
   fi
   if [[ "$s1_status" == "pass" ]]; then
     gate_s1_status="pass"
-  elif [[ "$s1_status" == skipped_* || "$pending_has_provider" == "true" ]]; then
+  elif [[ "$s1_status" == "readiness_only" || "$s1_status" == skipped_* || "$pending_has_provider" == "true" ]]; then
     gate_s1_status="pending"
   else
     gate_s1_status="unknown"
   fi
   if [[ "$controls_status" == "pass" ]]; then
     gate_s2s3_status="pass"
-  elif [[ "$controls_status" == skipped_* || "$pending_has_provider" == "true" ]]; then
+  elif [[ "$controls_status" == "readiness_only" || "$controls_status" == skipped_* || "$pending_has_provider" == "true" ]]; then
     gate_s2s3_status="pending"
   else
     gate_s2s3_status="unknown"

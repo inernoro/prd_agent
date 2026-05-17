@@ -339,7 +339,8 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 | N6 | 非代码 Toolbox agent 不依赖 CDS sidecar runtime pool |
 
 因此 S1/S2/S3 脚本在 R1 未通过时可以退出 0 并写出 `skipped_incompatible_profile`，
-但 `commercialGates.S1/S2S3` 仍会是 `pending`，不能把它们算作商业级通过。
+或在 R1 已通过但未开启 provider 调用时写出 `readiness_only`；这两种情况下
+`commercialGates.S1/S2S3` 仍会是 `pending`，不能把它们算作商业级通过。
 如果 preview 正在冷启动，doctor 会在 one-cycle 中默认重试 10 次、每次间隔 3 秒；
 仍失败时 `commercialGates` 只会把尚未证明的 gate 标成 `unknown`，不会把未执行的
 S1/S2/S3 误标成 pending 或 pass。
