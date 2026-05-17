@@ -1502,7 +1502,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return "CDS Agent runtime adapter 未注册，不能启动真实 Agent 任务";
         }
 
-        return $"CDS Agent runtime pool 不可用：adapter={_runtimeAdapter.AdapterKind}, instances={_runtimeAdapter.InstanceCount}, healthy={_runtimeAdapter.HealthyCount}";
+        var parts = new List<string>
+        {
+            $"CDS Agent runtime pool 不可用：adapter={_runtimeAdapter.AdapterKind}",
+            $"instances={_runtimeAdapter.InstanceCount}",
+            $"healthy={_runtimeAdapter.HealthyCount}"
+        };
+        parts.AddRange(_runtimeAdapter.Blockers.Take(3).Select(x => $"blocker={x}"));
+        parts.AddRange(_runtimeAdapter.NextActions.Take(2).Select(x => $"next={x}"));
+        return string.Join("; ", parts);
     }
 
     private static bool RequiresManagedRuntime(string? runtime)

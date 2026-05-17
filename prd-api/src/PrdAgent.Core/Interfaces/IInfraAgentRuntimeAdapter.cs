@@ -19,6 +19,10 @@ public interface IInfraAgentRuntimeAdapter
 
     int HealthyCount { get; }
 
+    IReadOnlyList<string> Blockers { get; }
+
+    IReadOnlyList<string> NextActions { get; }
+
     IAsyncEnumerable<InfraAgentRuntimeEvent> RunStreamAsync(
         InfraAgentRuntimeRunRequest request,
         CancellationToken ct);

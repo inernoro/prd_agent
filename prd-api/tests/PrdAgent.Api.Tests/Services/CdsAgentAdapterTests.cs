@@ -29,11 +29,16 @@ public class CdsAgentAdapterTests
     [Fact]
     public void BuildRuntimeUnavailableMessage_ShouldExposeAdapterPoolCounts()
     {
-        var adapter = new FakeRuntimeAdapter(isConfigured: false, instanceCount: 2, healthyCount: 0);
+        var adapter = new FakeRuntimeAdapter(
+            isConfigured: false,
+            instanceCount: 2,
+            healthyCount: 0,
+            blockers: new[] { "所有已发现的 sidecar runtime 实例当前都不可用" },
+            nextActions: new[] { "进入 sidecar 容器检查 /readyz" });
 
         var message = CdsAgentAdapter.BuildRuntimeUnavailableMessage(InfraAgentRuntimes.ClaudeSdk, adapter);
 
-        message.ShouldBe("adapter=fake-official-adapter, instances=2, healthy=0");
+        message.ShouldBe("adapter=fake-official-adapter; instances=2; healthy=0; blocker=所有已发现的 sidecar runtime 实例当前都不可用; next=进入 sidecar 容器检查 /readyz");
     }
 
     [Fact]
@@ -93,10 +98,22 @@ public class CdsAgentAdapterTests
     private sealed class FakeRuntimeAdapter : IInfraAgentRuntimeAdapter
     {
         public FakeRuntimeAdapter(bool isConfigured, int instanceCount, int healthyCount)
+            : this(isConfigured, instanceCount, healthyCount, Array.Empty<string>(), Array.Empty<string>())
+        {
+        }
+
+        public FakeRuntimeAdapter(
+            bool isConfigured,
+            int instanceCount,
+            int healthyCount,
+            IReadOnlyList<string> blockers,
+            IReadOnlyList<string> nextActions)
         {
             IsConfigured = isConfigured;
             InstanceCount = instanceCount;
             HealthyCount = healthyCount;
+            Blockers = blockers;
+            NextActions = nextActions;
         }
 
         public string RuntimeKey => InfraAgentRuntimes.ClaudeSdk;
@@ -104,6 +121,8 @@ public class CdsAgentAdapterTests
         public bool IsConfigured { get; }
         public int InstanceCount { get; }
         public int HealthyCount { get; }
+        public IReadOnlyList<string> Blockers { get; }
+        public IReadOnlyList<string> NextActions { get; }
 
         public async IAsyncEnumerable<InfraAgentRuntimeEvent> RunStreamAsync(
             InfraAgentRuntimeRunRequest request,

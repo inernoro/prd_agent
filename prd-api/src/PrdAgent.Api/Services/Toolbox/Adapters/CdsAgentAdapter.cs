@@ -408,9 +408,20 @@ public class CdsAgentAdapter : IAgentAdapter
         if (!RequiresManagedRuntime(runtime)) return null;
         if (runtimeAdapter?.IsConfigured == true) return null;
 
-        return runtimeAdapter == null
-            ? "runtime adapter 未注册"
-            : $"adapter={runtimeAdapter.AdapterKind}, instances={runtimeAdapter.InstanceCount}, healthy={runtimeAdapter.HealthyCount}";
+        if (runtimeAdapter == null)
+        {
+            return "runtime adapter 未注册";
+        }
+
+        var parts = new List<string>
+        {
+            $"adapter={runtimeAdapter.AdapterKind}",
+            $"instances={runtimeAdapter.InstanceCount}",
+            $"healthy={runtimeAdapter.HealthyCount}"
+        };
+        parts.AddRange(runtimeAdapter.Blockers.Take(3).Select(x => $"blocker={x}"));
+        parts.AddRange(runtimeAdapter.NextActions.Take(2).Select(x => $"next={x}"));
+        return string.Join("; ", parts);
     }
 
     internal static bool RequiresManagedRuntime(string? runtime)

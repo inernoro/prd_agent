@@ -28,6 +28,10 @@ public sealed class LegacySidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
 
     public int HealthyCount => _router.HealthyCount;
 
+    public IReadOnlyList<string> Blockers => _router.Blockers;
+
+    public IReadOnlyList<string> NextActions => _router.NextActions;
+
     public async IAsyncEnumerable<InfraAgentRuntimeEvent> RunStreamAsync(
         InfraAgentRuntimeRunRequest request,
         [EnumeratorCancellation] CancellationToken ct)

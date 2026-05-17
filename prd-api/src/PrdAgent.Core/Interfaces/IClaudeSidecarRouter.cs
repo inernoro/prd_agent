@@ -17,6 +17,12 @@ public interface IClaudeSidecarRouter
     /// <summary>已通过最近一次健康检查的实例数。</summary>
     int HealthyCount { get; }
 
+    /// <summary>Current known blockers without probing remote /readyz.</summary>
+    IReadOnlyList<string> Blockers { get; }
+
+    /// <summary>Current recommended recovery actions without probing remote /readyz.</summary>
+    IReadOnlyList<string> NextActions { get; }
+
     /// <summary>
     /// 流式执行一次 agent run。调用方应在 await foreach 中消费事件，
     /// 直到收到 <c>done</c> 或 <c>error</c> 类型的事件。

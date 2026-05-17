@@ -60,6 +60,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
 
     public int HealthyCount => _state.CountHealthy();
 
+    public IReadOnlyList<string> Blockers => BuildPoolBlockers(BuildSnapshotDiagnostics());
+
+    public IReadOnlyList<string> NextActions => BuildPoolNextActions(BuildSnapshotDiagnostics());
+
     public async IAsyncEnumerable<SidecarEvent> RunStreamAsync(
         SidecarRunRequest request,
         [EnumeratorCancellation] CancellationToken ct)
@@ -303,6 +307,26 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
 
         return blockers.Distinct(StringComparer.Ordinal).Take(12).ToList();
+    }
+
+    private IReadOnlyList<SidecarInstanceDiagnostics> BuildSnapshotDiagnostics()
+    {
+        return GetRoutableInstances(_options.CurrentValue)
+            .Select(instance => new SidecarInstanceDiagnostics(
+                instance.Name,
+                instance.BaseUrl,
+                instance.Source,
+                instance.Tags,
+                !string.IsNullOrWhiteSpace(ResolveToken(instance)),
+                _state.IsHealthy(instance.Name),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null))
+            .ToList();
     }
 
     private IReadOnlyList<string> BuildPoolNextActions(IReadOnlyList<SidecarInstanceDiagnostics> instances)
