@@ -79,6 +79,50 @@ GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true
 | `branchCount=0` | shared sidecar pool project 没有可发现分支 |
 | 没有 `discovery(...)` | 共享 CDS 控制面仍是旧版本，发布未生效 |
 
+## R0 stale sidecar alias 排查
+
+如果 `runtime-status` 偶尔通过，但 `scripts/smoke-cds-agent-sidecar-alias-stability.sh`
+失败，优先怀疑 Docker/CDS 旧 endpoint 残留。典型现象是同一个 sidecar alias 在 API
+容器内解析出多个 IP，其中一个返回旧版 minimal `/readyz`：
+
+```text
+172.20.0.14 claude-agent-sdk-runtime-v2-prd-agent
+172.20.0.8  claude-agent-sdk-runtime-v2-prd-agent
+
+172.20.0.14 -> {"ready":false,"anthropicKey":false,"sidecarToken":true,"activeRuns":0}
+172.20.0.8  -> {"ready":true,...,"agentAdapter":"claude-agent-sdk","loopOwner":"claude-agent-sdk"}
+```
+
+这不是 provider key 或 R1 profile 问题，而是 R0 runtime routing 不稳定。此时不要继续跑
+S1/S2/S3 provider smoke，因为 MAP 可能在同一轮里交替命中新旧 sidecar。
+
+诊断命令：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+bash scripts/smoke-cds-agent-sidecar-alias-stability.sh
+```
+
+脚本会从远程 API 容器内部输出：
+
+- `getent hosts <sidecar alias>` 的全部解析 IP。
+- 连续 alias `/readyz` 采样。
+- 每个解析 IP 的 direct `/readyz` 结果。
+- `unique DNS host count`、`ready=true`、`agentAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk` 断言。
+
+恢复路径：
+
+1. 确认 CDS 控制面已包含 `ContainerService.pruneStaleAppContainersForProfile` 这类 stale app
+   container 清理逻辑。
+2. 只有用户明确批准后，才能对共享 `https://cds.miduo.org` 执行 `cdscli self update`。
+3. 控制面更新后，重新部署受影响 preview 分支，让新部署路径先清理同 branch/profile/alias
+   的旧 app container，再创建当前 sidecar。
+4. 重跑 alias stability smoke。只有 `unique DNS host count=1` 且所有采样都是
+   `loopOwner=claude-agent-sdk`，R0 才能算恢复。
+
+临时改 sidecar profile 名只能作为短期隔离手段；如果 CDS 控制面没有清理旧 endpoint，
+新 alias 也可能在后续部署后再次污染。
+
 ## 静态 Sidecar 旁路恢复
 
 如果共享 CDS 控制面暂时不能更新，或需要先证明 official SDK adapter 的 S1 smoke，可以把 MAP 临时指向一个显式 sidecar。这个路径不替代共享 runtime pool，只用于恢复、演示和最小闭环验证。
