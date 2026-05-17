@@ -148,6 +148,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
 | `SMOKE_CDS_AGENT_ACCESS_TOKEN` | _(空)_ | workbench visual 专用；已有 JWT 时可替代用户名密码 |
 | `SMOKE_CDS_AGENT_SCREENSHOT` | `/tmp/cds-agent-workbench-visual.png` | workbench visual 专用；截图输出路径 |
+| `SMOKE_CDS_AGENT_S1_REPORT` | _(空)_ | S1 official SDK run 专用；指定 JSON 证据报告输出路径 |
 | `SMOKE_CDS_AGENT_REPO` | `inernoro/prd_agent` | S1 只读审查目标仓库 |
 | `SMOKE_CDS_AGENT_REF` | `main` | S1 只读审查目标 ref |
 | `SMOKE_CDS_AGENT_POLL_SECONDS` | `120` | 等待 assistant 消息或 failed 状态的秒数 |
@@ -179,6 +180,12 @@ commercial readiness 有 pending gate 时仍返回 0，因此它会出现在 smo
 如果默认 profile 仍是普通 OpenAI-compatible 模型，它会跳过；设置
 `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1` 时则直接失败，适合配置好 Anthropic key
 后的验收环境。
+真调用成功后，它还会断言 `runtime_init.loopOwner=claude-agent-sdk`、
+`sdkLoopEnabled=true`、workspace 已按 `SMOKE_CDS_AGENT_REPO/REF` 准备完成，并且
+S1 只读审查没有触发 `Bash/Edit/Write` 这类危险审批。设置
+`SMOKE_CDS_AGENT_S1_REPORT=/tmp/cds-agent-s1.json` 可输出 sessionId、traceId、
+repo/ref、runtime_init 和 assistant 摘要，用作商业级验收证据；当 profile
+不兼容或仅 readiness 模式跳过真调用时，也会输出跳过原因和默认 profile 信息。
 
 `smoke-cds-agent-official-sdk-controls.sh` 是 S2/S3 真控制入口。默认同样只做
 readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后会触发一次危险工具

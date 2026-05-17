@@ -13,6 +13,7 @@
 #   SMOKE_CDS_AGENT_REPO=inernoro/prd_agent 目标仓库
 #   SMOKE_CDS_AGENT_REF=main                目标 ref
 #   SMOKE_CDS_AGENT_POLL_SECONDS=120        等待 assistant 消息/失败状态秒数
+#   SMOKE_CDS_AGENT_S1_REPORT=/tmp/s1.json  可选: 输出 S1 证据 JSON
 # ============================================
 
 set -euo pipefail
@@ -27,6 +28,7 @@ SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE="${SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE:-}"
 SMOKE_CDS_AGENT_REPO="${SMOKE_CDS_AGENT_REPO:-inernoro/prd_agent}"
 SMOKE_CDS_AGENT_REF="${SMOKE_CDS_AGENT_REF:-main}"
 SMOKE_CDS_AGENT_POLL_SECONDS="${SMOKE_CDS_AGENT_POLL_SECONDS:-120}"
+SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-}"
 
 created_session_id=""
 cleanup_session() {
@@ -35,6 +37,34 @@ cleanup_session() {
   fi
 }
 trap cleanup_session EXIT
+
+write_s1_report() {
+  [[ -z "$SMOKE_CDS_AGENT_S1_REPORT" ]] && return
+  local status="$1"
+  local evidence_json="${2:-{}}"
+  jq -n \
+    --arg status "$status" \
+    --arg host "$SMOKE_HOST" \
+    --arg sessionId "${created_session_id:-}" \
+    --arg traceId "${trace:-}" \
+    --arg repo "$SMOKE_CDS_AGENT_REPO" \
+    --arg ref "$SMOKE_CDS_AGENT_REF" \
+    --arg evidenceRaw "$evidence_json" \
+    '{
+      status: $status,
+      host: $host,
+      sessionId: $sessionId,
+      traceId: $traceId,
+      target: { repo: $repo, ref: $ref },
+      evidence: (
+        $evidenceRaw
+        | fromjson?
+          // (sub("}$"; "") | fromjson?)
+          // { reportError: "invalid evidence json", rawEvidence: $evidenceRaw }
+      )
+    }' > "$SMOKE_CDS_AGENT_S1_REPORT"
+  printf 'S1 report: %s\n' "$SMOKE_CDS_AGENT_S1_REPORT"
+}
 
 smoke_init "CDS Agent Official SDK S1 Run"
 
@@ -65,8 +95,10 @@ profile_runtime=$(printf '%s' "$default_profile" | jq -r '.runtime // "claude-sd
 profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end')
 smoke_assert_nonempty "$profile_id" "defaultProfile.id"
 printf 'Default profile: %s / %s compatible=%s\n' "$profile_name" "$profile_model" "$profile_compatible"
+profile_evidence=$(printf '%s' "$default_profile" | jq -c '{defaultProfile:{id:(.id // ""),name:(.name // ""),model:(.model // ""),runtime:(.runtime // "claude-sdk"),compatibleWithDesiredRuntimeAdapter:(if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end)}}')
 if [[ "$profile_compatible" != "true" ]]; then
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE" ]]; then
+    write_s1_report "failed_incompatible_profile" "$profile_evidence"
     smoke_fail "default runtime profile is incompatible with claude-agent-sdk"
   fi
   smoke_step "默认 profile 不兼容，跳过 provider run"
@@ -81,6 +113,7 @@ if [[ "$profile_compatible" != "true" ]]; then
   smoke_ok "not applicable"
   smoke_step "跳过等待 assistant 结果"
   smoke_ok "not applicable"
+  write_s1_report "skipped_incompatible_profile" "$profile_evidence"
   smoke_done
   exit 0
 fi
@@ -99,6 +132,7 @@ if [[ "$SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL" != "1" ]]; then
   smoke_ok "not applicable"
   smoke_step "跳过等待 assistant 结果"
   smoke_ok "not applicable"
+  write_s1_report "readiness_only" "$profile_evidence"
   smoke_done
   exit 0
 fi
@@ -167,14 +201,78 @@ while (( $(date +%s) < deadline )); do
   assistant_count=$(printf '%s' "$messages_resp" | jq -r '[.data.items[]? | select(.role == "assistant")] | length')
   if (( assistant_count > 0 )); then
     smoke_ok "assistant messages=$assistant_count status=$last_status"
+    events_resp=$(smoke_get "/api/infra-agent-sessions/${created_session_id}/events?afterSeq=0&limit=1000")
+    runtime_init=$(printf '%s' "$events_resp" | jq -c '
+      def contentObj:
+        if (.content | type) == "string" then (.content | fromjson? // {})
+        elif (.content | type) == "object" then .content
+        else {} end;
+      .data.items[]?
+      | select(.type == "log")
+      | (.payloadJson | fromjson? // {})
+      | select((.runtimeAdapter // "") == "claude-agent-sdk")
+      | select((contentObj.loopOwner // "") == "claude-agent-sdk" or (.source // "") == "claude-agent-sdk")
+      | .
+    ' | head -n 1)
+    smoke_assert_nonempty "$runtime_init" "S1 runtime_init official SDK evidence"
+    runtime_init_content=$(printf '%s' "$runtime_init" | jq -c '
+      if (.content | type) == "string" then (.content | fromjson? // {})
+      elif (.content | type) == "object" then .content
+      else {} end
+    ')
+    loop_owner=$(printf '%s' "$runtime_init_content" | jq -r '.loopOwner // ""')
+    sdk_loop_enabled=$(printf '%s' "$runtime_init_content" | jq -r '.sdkLoopEnabled // false')
+    workspace_prepared=$(printf '%s' "$runtime_init_content" | jq -r '(.workspace.workspacePrepared // .workspacePrepared // false)')
+    evidence_repo=$(printf '%s' "$runtime_init_content" | jq -r '(.workspace.gitRepository // .gitRepository // "")')
+    evidence_ref=$(printf '%s' "$runtime_init_content" | jq -r '(.workspace.gitRef // .gitRef // "")')
+    smoke_assert_eq "$loop_owner" "claude-agent-sdk" "runtime_init.loopOwner"
+    smoke_assert_eq "$sdk_loop_enabled" "true" "runtime_init.sdkLoopEnabled"
+    smoke_assert_eq "$workspace_prepared" "true" "runtime_init.workspacePrepared"
+    smoke_assert_eq "$evidence_repo" "$SMOKE_CDS_AGENT_REPO" "runtime_init.gitRepository"
+    smoke_assert_eq "$evidence_ref" "$SMOKE_CDS_AGENT_REF" "runtime_init.gitRef"
+    dangerous_approval_count=$(printf '%s' "$events_resp" | jq -r '
+      [
+        .data.items[]?
+        | select(.type == "tool_call")
+        | (.payloadJson | fromjson? // {})
+        | select((.status // "") == "waiting")
+        | select((.toolName // "" | ascii_downcase) | test("bash|edit|write"))
+      ] | length
+    ')
+    smoke_assert_eq "$dangerous_approval_count" "0" "S1 dangerous approval count"
+    assistant_preview=$(printf '%s' "$messages_resp" | jq -r '[.data.items[]? | select(.role == "assistant") | .content] | join("\n---\n") | .[0:1000]')
+    evidence_json=$(jq -n \
+      --arg runtimeAdapter "claude-agent-sdk" \
+      --arg loopOwner "$loop_owner" \
+      --argjson sdkLoopEnabled "$sdk_loop_enabled" \
+      --argjson workspacePrepared "$workspace_prepared" \
+      --arg gitRepository "$evidence_repo" \
+      --arg gitRef "$evidence_ref" \
+      --argjson assistantMessages "$assistant_count" \
+      --argjson dangerousApprovals "$dangerous_approval_count" \
+      --arg assistantPreview "$assistant_preview" \
+      '{
+        runtimeAdapter: $runtimeAdapter,
+        loopOwner: $loopOwner,
+        sdkLoopEnabled: $sdkLoopEnabled,
+        workspacePrepared: $workspacePrepared,
+        gitRepository: $gitRepository,
+        gitRef: $gitRef,
+        assistantMessages: $assistantMessages,
+        dangerousApprovals: $dangerousApprovals,
+        assistantPreview: $assistantPreview
+      }')
+    write_s1_report "pass" "$evidence_json"
     created_session_id=""
     smoke_done
     exit 0
   fi
   if [[ "$last_status" == "failed" ]]; then
+    write_s1_report "failed_session" "$(jq -n --arg status "$last_status" --arg lastError "$last_error" --argjson assistantMessages "$assistant_count" '{lastStatus:$status,lastError:$lastError,assistantMessages:$assistantMessages}')"
     smoke_fail "session failed before assistant response: ${last_error}"
   fi
   sleep 5
 done
 
+write_s1_report "timeout" "$(jq -n --arg status "$last_status" --arg lastError "$last_error" --argjson assistantMessages "$assistant_count" '{lastStatus:$status,lastError:$lastError,assistantMessages:$assistantMessages}')"
 smoke_fail "timed out waiting for assistant response; status=${last_status} assistantMessages=${assistant_count} lastError=${last_error}"
