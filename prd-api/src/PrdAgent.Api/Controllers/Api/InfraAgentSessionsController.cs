@@ -243,7 +243,7 @@ public class InfraAgentSessionsController : ControllerBase
                 "non-code-compat",
                 "非代码智能体回归",
                 "bash scripts/smoke-cds-agent-non-code-compatibility.sh",
-                "验证 PRD/defect/literary/visual 等非代码智能体不被 CDS runtime pool 污染。",
+                "验证 PRD/defect/literary/visual 等非代码智能体不被 CDS runtime pool 污染，并确认其他官方 SDK 候选仍是 planned-not-routable。",
                 "ready")
         };
     }
@@ -358,8 +358,8 @@ public class InfraAgentSessionsController : ControllerBase
                 6,
                 "N6",
                 "非代码智能体兼容回归",
-                "PRD/defect/literary/visual 不被 CDS sidecar pool 或 profile gate 阻断。",
-                "scripts/smoke-cds-agent-non-code-compatibility.sh 通过；它覆盖源码扫描、构造函数反射和非代码 adapter 最小业务路径。",
+                "PRD/defect/literary/visual 不被 CDS sidecar pool 或 profile gate 阻断；候选官方 SDK 不被误标为默认可路由。",
+                "scripts/smoke-cds-agent-non-code-compatibility.sh 通过；它覆盖源码扫描、构造函数反射、非代码 adapter 最小业务路径，以及 codex/openai-agents-sdk/google-adk planned-not-routable 兼容矩阵。",
                 "ready-to-run",
                 null,
                 new[] { "bash scripts/smoke-cds-agent-non-code-compatibility.sh" })

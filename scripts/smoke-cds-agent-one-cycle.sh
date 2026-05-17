@@ -417,7 +417,7 @@ finish_cycle() {
       },
       N6: {
         status: $gateN6,
-        evidence: "non-code Toolbox agents remain independent from CDS sidecar runtime pool"
+        evidence: "non-code Toolbox agents remain independent from CDS sidecar runtime pool; codex/openai-agents-sdk/google-adk remain planned-not-routable until adapter contracts and provider smokes pass"
       }
     } as $gates |
     ($gates | to_entries | map(select(.value.status != "pass") | {

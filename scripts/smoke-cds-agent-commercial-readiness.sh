@@ -188,6 +188,7 @@ n6_evidence=$(printf '%s' "$next_cycle_plan" | jq -r '.items[]? | select(.code =
 smoke_assert_contains "$n6_evidence" "源码扫描" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$n6_evidence" "构造函数反射" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$n6_evidence" "最小业务路径" "nextCyclePlan.N6.evidence"
+smoke_assert_contains "$n6_evidence" "planned-not-routable" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
 smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.commercialComplete')" "false" "executionPanel.commercialComplete"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')

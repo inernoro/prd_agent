@@ -345,7 +345,7 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 | S1 | 已显式允许 provider 调用，并完成真实只读 repo run |
 | S2S3 | 已完成真实 MAP approval 和 Stop/cancel 控制验证 |
 | V1 | 已用登录态截图证明页面显示真实 runtime 状态 |
-| N6 | 非代码 Toolbox agent 不依赖 CDS sidecar runtime pool |
+| N6 | 非代码 Toolbox agent 不依赖 CDS sidecar runtime pool；`codex`/`openai-agents-sdk`/`google-adk` 等候选官方 SDK 仍是 `planned-not-routable` |
 
 因此 S1/S2/S3 脚本在 R1 未通过时可以退出 0 并写出 `skipped_incompatible_profile`，
 或在 R1 已通过但未开启 provider 调用时写出 `readiness_only`；这两种情况下
