@@ -116,12 +116,10 @@ public class CdsAgentAdapter : IAgentAdapter
             yield break;
         }
 
-        if (RequiresManagedRuntime(runtimeProfile.Runtime) && _runtimeAdapter?.IsConfigured != true)
+        var runtimeUnavailable = BuildRuntimeUnavailableMessage(runtimeProfile.Runtime, _runtimeAdapter);
+        if (!string.IsNullOrWhiteSpace(runtimeUnavailable))
         {
-            var detail = _runtimeAdapter == null
-                ? "runtime adapter 未注册"
-                : $"adapter={_runtimeAdapter.AdapterKind}, instances={_runtimeAdapter.InstanceCount}, healthy={_runtimeAdapter.HealthyCount}";
-            yield return AgentStreamChunk.Error($"CDS Agent runtime pool 不可用，已阻止 Toolbox 委托：{detail}");
+            yield return AgentStreamChunk.Error($"CDS Agent runtime pool 不可用，已阻止 Toolbox 委托：{runtimeUnavailable}");
             yield break;
         }
 
@@ -363,7 +361,17 @@ public class CdsAgentAdapter : IAgentAdapter
         bool IsDefault,
         DateTime UpdatedAt);
 
-    private static bool RequiresManagedRuntime(string? runtime)
+    internal static string? BuildRuntimeUnavailableMessage(string? runtime, IInfraAgentRuntimeAdapter? runtimeAdapter)
+    {
+        if (!RequiresManagedRuntime(runtime)) return null;
+        if (runtimeAdapter?.IsConfigured == true) return null;
+
+        return runtimeAdapter == null
+            ? "runtime adapter 未注册"
+            : $"adapter={runtimeAdapter.AdapterKind}, instances={runtimeAdapter.InstanceCount}, healthy={runtimeAdapter.HealthyCount}";
+    }
+
+    internal static bool RequiresManagedRuntime(string? runtime)
     {
         return string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
             || string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase);
