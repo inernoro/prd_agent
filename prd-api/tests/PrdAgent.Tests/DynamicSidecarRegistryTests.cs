@@ -344,6 +344,17 @@ public class DynamicSidecarRegistryTests
         Assert.DoesNotContain(
             "确认 shared sidecar pool 分支服务正在运行；当前 discovery 未看到 running branch service",
             diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.NotNull(diagnostics.DiscoveryMetrics);
+        Assert.Equal(12, diagnostics.DiscoveryMetrics!.TotalConnections);
+        Assert.Equal(1, diagnostics.DiscoveryMetrics.ActiveCdsConnections);
+        Assert.Equal(1, diagnostics.DiscoveryMetrics.UsableConnections);
+        Assert.Equal(1, diagnostics.DiscoveryMetrics.EmptyEndpoints);
+        Assert.Equal(0, diagnostics.DiscoveryMetrics.EndpointsWithInstances);
+        Assert.Equal("shared-service", diagnostics.DiscoveryMetrics.ProjectKind);
+        Assert.Equal(1, diagnostics.DiscoveryMetrics.RunningBranchServiceCount);
+        Assert.Equal(0, diagnostics.DiscoveryMetrics.RuntimeBranchServiceCount);
+        Assert.Equal(1, diagnostics.DiscoveryMetrics.SkippedBranchServiceCount);
+        Assert.True(diagnostics.DiscoveryMetrics.PreviewRootConfigured);
     }
 
     [Fact]

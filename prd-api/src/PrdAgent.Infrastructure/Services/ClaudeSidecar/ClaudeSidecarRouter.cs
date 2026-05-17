@@ -263,7 +263,8 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             _registry.LastRefreshedAt,
             _registry.LastRefreshError,
             BuildPoolBlockers(results),
-            BuildPoolNextActions(results));
+            BuildPoolNextActions(results),
+            DiscoveryMetrics: ParseDiscoveryMetrics(_registry.LastRefreshError));
     }
 
     private IReadOnlyList<string> BuildPoolBlockers(IReadOnlyList<SidecarInstanceDiagnostics> instances)
@@ -409,14 +410,59 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
 
     private static bool HasPositiveDiscoveryMetric(string value, string metric)
     {
+        return ReadDiscoveryInt(value, metric) > 0;
+    }
+
+    private static int? ReadDiscoveryInt(string value, string metric)
+    {
         var index = value.IndexOf(metric + "=", StringComparison.OrdinalIgnoreCase);
-        if (index < 0) return false;
+        if (index < 0) return null;
         var start = index + metric.Length + 1;
         var end = start;
         while (end < value.Length && char.IsDigit(value[end])) end += 1;
-        return end > start
-            && int.TryParse(value[start..end], out var count)
-            && count > 0;
+        return end > start && int.TryParse(value[start..end], out var count) ? count : null;
+    }
+
+    private static string? ReadDiscoveryString(string value, string metric)
+    {
+        var index = value.IndexOf(metric + "=", StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return null;
+        var start = index + metric.Length + 1;
+        var end = start;
+        while (end < value.Length && !char.IsWhiteSpace(value[end]) && value[end] != ')') end += 1;
+        return end > start ? value[start..end] : null;
+    }
+
+    private static bool? ReadDiscoveryBool(string value, string metric)
+    {
+        var raw = ReadDiscoveryString(value, metric);
+        if (string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(raw, "False", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
+
+    private static SidecarDiscoveryMetrics? ParseDiscoveryMetrics(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var metrics = new SidecarDiscoveryMetrics(
+            TotalConnections: ReadDiscoveryInt(value, "total"),
+            ActiveCdsConnections: ReadDiscoveryInt(value, "activeCds"),
+            UsableConnections: ReadDiscoveryInt(value, "usable"),
+            TokenFailures: ReadDiscoveryInt(value, "tokenFailures"),
+            EndpointFailures: ReadDiscoveryInt(value, "endpointFailures"),
+            EmptyEndpoints: ReadDiscoveryInt(value, "emptyEndpoints"),
+            EndpointsWithInstances: ReadDiscoveryInt(value, "endpointsWithInstances"),
+            ProjectKind: ReadDiscoveryString(value, "projectKind"),
+            DeploymentCount: ReadDiscoveryInt(value, "deployments"),
+            RunningDeploymentCount: ReadDiscoveryInt(value, "runningDeployments"),
+            DisabledHostDeploymentCount: ReadDiscoveryInt(value, "disabledHostDeployments"),
+            BranchCount: ReadDiscoveryInt(value, "branches"),
+            RunningBranchCount: ReadDiscoveryInt(value, "runningBranches"),
+            RunningBranchServiceCount: ReadDiscoveryInt(value, "runningBranchServices"),
+            RuntimeBranchServiceCount: ReadDiscoveryInt(value, "runtimeBranchServices"),
+            SkippedBranchServiceCount: ReadDiscoveryInt(value, "skippedBranchServices"),
+            PreviewRootConfigured: ReadDiscoveryBool(value, "previewRootConfigured"));
+        return metrics == new SidecarDiscoveryMetrics() ? null : metrics;
     }
 
     private static IEnumerable<string> ReadMissingAdapterDependencies(string? diagnosticsJson)

@@ -702,6 +702,16 @@ export default function CdsAgentPage() {
     const sidecarAdapter = primaryRuntime?.agentAdapter || '';
     const desiredRuntimeAdapter = runtimeStatus?.desiredRuntimeAdapter || '';
     const runtimeTransport = runtimeStatus?.runtimeTransport || '';
+    const discoveryMetrics = runtimeStatus?.discoveryMetrics ?? null;
+    const discoveryMetricSummary = discoveryMetrics
+      ? [
+          discoveryMetrics.projectKind ? `kind ${discoveryMetrics.projectKind}` : '',
+          discoveryMetrics.activeCdsConnections != null ? `active ${discoveryMetrics.activeCdsConnections}` : '',
+          discoveryMetrics.emptyEndpoints != null ? `empty ${discoveryMetrics.emptyEndpoints}` : '',
+          discoveryMetrics.runtimeBranchServiceCount != null ? `runtime ${discoveryMetrics.runtimeBranchServiceCount}` : '',
+          discoveryMetrics.skippedBranchServiceCount != null ? `skipped ${discoveryMetrics.skippedBranchServiceCount}` : '',
+        ].filter(Boolean).join(' · ') || '已解析'
+      : '未上报';
     const sidecarState = runtimeStatus
       ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount} healthy`
       : '未检测';
@@ -874,6 +884,7 @@ export default function CdsAgentPage() {
         ['Provider key', providerKeyState],
         ['Sidecar token', sidecarTokenState],
         ['Discovery refresh', runtimeDiscoveryRefreshed === null ? '未请求' : runtimeDiscoveryRefreshed ? `已触发 · ${formatTime(runtimeStatusLoadedAt)}` : `未触发 · ${formatTime(runtimeStatusLoadedAt)}`],
+        ['Discovery metrics', discoveryMetricSummary],
         ['Discovery', registryIssue || '无发现异常'],
         ['Blocker', blockers[0] || '无阻塞项'],
         ['Next', nextActions[0] || '无建议动作'],

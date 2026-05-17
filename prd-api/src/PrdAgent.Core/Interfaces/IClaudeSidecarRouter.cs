@@ -153,7 +153,28 @@ public sealed record SidecarPoolDiagnostics(
     IReadOnlyList<string>? Blockers = null,
     IReadOnlyList<string>? NextActions = null,
     string? DesiredRuntimeAdapter = null,
-    string? RuntimeTransport = null
+    string? RuntimeTransport = null,
+    SidecarDiscoveryMetrics? DiscoveryMetrics = null
+);
+
+public sealed record SidecarDiscoveryMetrics(
+    int? TotalConnections = null,
+    int? ActiveCdsConnections = null,
+    int? UsableConnections = null,
+    int? TokenFailures = null,
+    int? EndpointFailures = null,
+    int? EmptyEndpoints = null,
+    int? EndpointsWithInstances = null,
+    string? ProjectKind = null,
+    int? DeploymentCount = null,
+    int? RunningDeploymentCount = null,
+    int? DisabledHostDeploymentCount = null,
+    int? BranchCount = null,
+    int? RunningBranchCount = null,
+    int? RunningBranchServiceCount = null,
+    int? RuntimeBranchServiceCount = null,
+    int? SkippedBranchServiceCount = null,
+    bool? PreviewRootConfigured = null
 );
 
 public sealed record SidecarInstanceDiagnostics(

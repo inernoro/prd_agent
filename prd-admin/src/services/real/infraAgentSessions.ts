@@ -160,6 +160,25 @@ export interface InfraAgentRuntimeDiagnostics {
   nextActions?: string[] | null;
   desiredRuntimeAdapter?: string | null;
   runtimeTransport?: string | null;
+  discoveryMetrics?: {
+    totalConnections?: number | null;
+    activeCdsConnections?: number | null;
+    usableConnections?: number | null;
+    tokenFailures?: number | null;
+    endpointFailures?: number | null;
+    emptyEndpoints?: number | null;
+    endpointsWithInstances?: number | null;
+    projectKind?: string | null;
+    deploymentCount?: number | null;
+    runningDeploymentCount?: number | null;
+    disabledHostDeploymentCount?: number | null;
+    branchCount?: number | null;
+    runningBranchCount?: number | null;
+    runningBranchServiceCount?: number | null;
+    runtimeBranchServiceCount?: number | null;
+    skippedBranchServiceCount?: number | null;
+    previewRootConfigured?: boolean | null;
+  } | null;
 }
 
 interface ListResp {
