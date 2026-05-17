@@ -25,6 +25,8 @@ mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
 
 export SMOKE_CDS_AGENT_READINESS_REPORT="${SMOKE_CDS_AGENT_READINESS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/readiness-report.json}"
 export SMOKE_CDS_AGENT_DOCTOR_REPORT="${SMOKE_CDS_AGENT_DOCTOR_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/doctor-report.json}"
+export SMOKE_CDS_AGENT_DOCTOR_RETRIES="${SMOKE_CDS_AGENT_DOCTOR_RETRIES:-10}"
+export SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS="${SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS:-3}"
 export SMOKE_CDS_AGENT_R1_REPORT="${SMOKE_CDS_AGENT_R1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/r1-report.json}"
 export SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/s1-report.json}"
 export SMOKE_CDS_AGENT_CONTROLS_REPORT="${SMOKE_CDS_AGENT_CONTROLS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/controls-report.json}"
@@ -103,6 +105,12 @@ finish_cycle() {
   local next_command=""
   local pending_has_r1=false
   local pending_has_provider=false
+  local gate_r0_status="unknown"
+  local gate_r1_status="unknown"
+  local gate_s1_status="unknown"
+  local gate_s2s3_status="unknown"
+  local gate_v1_status="skipped"
+  local gate_n6_status="pass"
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
 
   if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
@@ -142,6 +150,46 @@ finish_cycle() {
   fi
   if jq -e 'any(.[]?; test("S1|S2|S3|provider smoke"; "i"))' <<< "$readiness_pending_json" >/dev/null; then
     pending_has_provider=true
+  fi
+
+  if printf '%s\n' "${passed_arr[@]:-}" | grep -qx 'R0 runtime pool official SDK ownership'; then
+    if [[ -z "${CDS_HOST:-}" ]] || printf '%s\n' "${passed_arr[@]:-}" | grep -qx 'R0 sidecar alias stability from API container'; then
+      gate_r0_status="pass"
+    fi
+  fi
+  if printf '%s\n' "${failed_arr[@]:-}" | grep -Eq 'R0 runtime pool official SDK ownership|R0 sidecar alias stability from API container'; then
+    gate_r0_status="failed"
+  fi
+  if [[ "$r1_status" == "pass" || "$readiness_overall" == "ready_for_provider_smokes" ]]; then
+    gate_r1_status="pass"
+  elif [[ "$r1_status" == "dry_run_requires_api_key" || "$pending_has_r1" == "true" ]]; then
+    gate_r1_status="pending"
+  else
+    gate_r1_status="unknown"
+  fi
+  if [[ "$s1_status" == "pass" ]]; then
+    gate_s1_status="pass"
+  elif [[ "$s1_status" == skipped_* || "$pending_has_provider" == "true" ]]; then
+    gate_s1_status="pending"
+  else
+    gate_s1_status="unknown"
+  fi
+  if [[ "$controls_status" == "pass" ]]; then
+    gate_s2s3_status="pass"
+  elif [[ "$controls_status" == skipped_* || "$pending_has_provider" == "true" ]]; then
+    gate_s2s3_status="pending"
+  else
+    gate_s2s3_status="unknown"
+  fi
+  if printf '%s\n' "${passed_arr[@]:-}" | grep -qx 'V1 authenticated workbench visual'; then
+    gate_v1_status="pass"
+  elif printf '%s\n' "${failed_arr[@]:-}" | grep -qx 'V1 authenticated workbench visual'; then
+    gate_v1_status="failed"
+  fi
+  if printf '%s\n' "${failed_arr[@]:-}" | grep -qx 'N6 non-code agent compatibility boundary'; then
+    gate_n6_status="failed"
+  elif ! printf '%s\n' "${passed_arr[@]:-}" | grep -qx 'N6 non-code agent compatibility boundary'; then
+    gate_n6_status="unknown"
   fi
 
   if (( exit_code != 0 || ${#failed_arr[@]} > 0 )); then
@@ -227,6 +275,12 @@ finish_cycle() {
     --arg controlsStatus "$controls_status" \
     --arg controlsReport "$SMOKE_CDS_AGENT_CONTROLS_REPORT" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
+    --arg gateR0 "$gate_r0_status" \
+    --arg gateR1 "$gate_r1_status" \
+    --arg gateS1 "$gate_s1_status" \
+    --arg gateS2S3 "$gate_s2s3_status" \
+    --arg gateV1 "$gate_v1_status" \
+    --arg gateN6 "$gate_n6_status" \
     --argjson providerCallsEnabled "$provider_calls_enabled" \
     --argjson r1RepairApply "$r1_repair_apply" \
     --argjson readinessPending "$readiness_pending_json" \
@@ -272,6 +326,32 @@ finish_cycle() {
       visual: {
         screenshot: $screenshot
       },
+      commercialGates: {
+        R0: {
+          status: $gateR0,
+          evidence: "runtime-status and sidecar alias prove claude-agent-sdk loop ownership"
+        },
+        R1: {
+          status: $gateR1,
+          evidence: "default runtime profile is Anthropic/Claude-compatible and keyed"
+        },
+        S1: {
+          status: $gateS1,
+          evidence: "provider-backed read-only official SDK repo run"
+        },
+        S2S3: {
+          status: $gateS2S3,
+          evidence: "provider-backed MAP approval and SDK stop/cancel controls"
+        },
+        V1: {
+          status: $gateV1,
+          evidence: "authenticated workbench screenshot with real runtime state"
+        },
+        N6: {
+          status: $gateN6,
+          evidence: "non-code Toolbox agents remain independent from CDS sidecar runtime pool"
+        }
+      },
       steps: {
         passed: $passed,
         skipped: $skipped,
@@ -297,6 +377,8 @@ finish_cycle() {
   printf 'R1 status: %s\n' "$r1_status"
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Controls status: %s\n' "$controls_status"
+  printf 'Commercial gates: R0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
+    "$gate_r0_status" "$gate_r1_status" "$gate_s1_status" "$gate_s2s3_status" "$gate_v1_status" "$gate_n6_status"
   printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
   printf 'Total measured step time: %ss\n' "$total_seconds"
   if (( ${#timing_keys[@]} > 0 )); then

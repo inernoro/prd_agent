@@ -308,8 +308,25 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 `/tmp/cds-agent-cycle-<timestamp>`，包括每一步日志、`doctor-report.json`、
 `readiness-report.json`、`r1-report.json`、`s1-report.json`、`controls-report.json`、
 `cycle-summary.json` 和可选视觉截图。终端汇总里的 `Passed`
-只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`Readiness overall` 和 pending
-gates 为准。
+只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`commercialGates`、
+`Readiness overall` 和 pending gates 为准。
+
+`cycle-summary.json.commercialGates` 会把验收语义拆开：
+
+| Gate | 通过含义 |
+| --- | --- |
+| R0 | runtime-status 和 sidecar alias 都证明 `loopOwner=claude-agent-sdk` |
+| R1 | 默认 runtime profile 已是 Anthropic/Claude-compatible 且有 key |
+| S1 | 已显式允许 provider 调用，并完成真实只读 repo run |
+| S2S3 | 已完成真实 MAP approval 和 Stop/cancel 控制验证 |
+| V1 | 已用登录态截图证明页面显示真实 runtime 状态 |
+| N6 | 非代码 Toolbox agent 不依赖 CDS sidecar runtime pool |
+
+因此 S1/S2/S3 脚本在 R1 未通过时可以退出 0 并写出 `skipped_incompatible_profile`，
+但 `commercialGates.S1/S2S3` 仍会是 `pending`，不能把它们算作商业级通过。
+如果 preview 正在冷启动，doctor 会在 one-cycle 中默认重试 10 次、每次间隔 3 秒；
+仍失败时 `commercialGates` 只会把尚未证明的 gate 标成 `unknown`，不会把未执行的
+S1/S2/S3 误标成 pending 或 pass。
 
 `cycle-summary.json` 会写出 `status`、`nextCommand` 和 `timing`。`timing.steps`
 记录每个阶段的耗时，`timing.slowest` 给出最慢 3 个阶段；终端汇总也会打印
