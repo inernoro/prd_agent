@@ -106,6 +106,7 @@
 - P1.4 官方路径已有第一步取消语义：adapter 使用 `ClaudeSDKClient`，sidecar cancel event 会调用官方 `client.interrupt()`；下一步还要用真实 SDK/CLI/key 证明远程 run 能被停止。
 - P1.5 已有第二步事件游标：后端 `ListEventsAsync(afterSeq, limit)` 和 `/stream?afterSeq=&limit=` 已存在，`/stream` 已改为长连接 SSE + keepalive；`/cds-agent` 页面改为 SSE 优先续读、JSON 分页兜底，并按 `seq` 去重合并事件；Toolbox `cds-agent` 回放改为游标批量读取，避免固定 500 条覆盖长任务审计。
 - P1.5 已补 workflow/capsule 路径：`CapsuleExecutor` 的 CDS Agent 审批暂停和完成产物不再固定读取前 1000 条事件，改为 500 条分页、最多 20 页的 `afterSeq` 游标读取，并在日志里标记 `complete` 或 `truncated_or_stalled`，避免工作流长任务静默丢失审计上下文。
+- P1.5 已补 Toolbox 证据包完整性：`CdsAgentAdapter` 的事件读取会按 seq 去重推进，遇到分页不前进会停止并标记 `truncated_or_stalled`；Toolbox 输出会显示事件数、lastSeq 和 cursor 状态，避免远程委托的证据包看起来完整但实际已截断。
 - P1.6 后台运行已有第一步：`SendMessageAsync` 不再等待 sidecar runtime 跑完，而是写入用户消息、导入 CDS 事件、入队 `InfraAgentRuntimeJob`；`InfraAgentRuntimeWorker` 在后台 scope 中执行 adapter run，并把异常写回 MAP 事件。
 - P1.7 Toolbox 入口已有第二步异步语义：`CdsAgentAdapter` 在创建并发送远程任务后立即产出 `CDS Agent 远程运行句柄` JSON artifact，包含 `sessionId/traceId/runtimeAdapter/currentRuntimeRunId/workbenchPath/eventStreamPath/logsPath`；Toolbox 运行页已识别该 artifact 并渲染“打开工作台”和“停止”卡片操作，同时会重新附着远程 SSE 事件流、轮询兜底展示最近事件，并对等待中的 MAP 工具审批提供内联允许/拒绝；不再把 Toolbox step 的完成误写成远程 run 已完成。
 - P1.7 权限边界已有第二步：官方 adapter 默认仅开放 `Read/Grep/Glob`，`Bash/Edit/Write` 必须显式 opt-in；已接 `ClaudeAgentOptions.can_use_tool`，危险内置工具会创建 MAP approval request 并等待 approval，再返回官方 `PermissionResultAllow/Deny`。
@@ -122,6 +123,7 @@
 - `dotnet build prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj --no-restore` 通过；仅有既有 nullable/unused warning。
 - `dotnet build prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj --no-restore` 顺序重跑通过；仅有既有 MailKit NU1902。
 - `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~CapsuleExecutorCdsAgentEventCursorTests` 通过，2 个测试；覆盖 workflow/capsule 的 CDS Agent 事件游标跨页读取和无进展防死循环。
+- `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~CdsAgentAdapterTests` 通过，10 个测试；覆盖 Toolbox CDS Agent runtime pool gate、事件游标跨页读取、完整性摘要和无进展防死循环。
 - `python3 -m py_compile claude-sdk-sidecar/app/main.py claude-sdk-sidecar/app/agent_loop.py claude-sdk-sidecar/app/official_agent_sdk.py claude-sdk-sidecar/app/schemas.py` 通过。
 - `python3 -m unittest discover -s claude-sdk-sidecar/tests` 通过；该测试使用 fake `claude_agent_sdk`，只验证 adapter 事件映射和 cancel/interrupt 结构，不代表真实 Claude 端到端调用通过。
 - `claude-sdk-sidecar/tests/test_sidecar_readiness.py` 覆盖 `/readyz` 背后的 adapter diagnostics：legacy 默认 ready、official 缺 SDK/CLI 时报告 missing、写工具 opt-in 时报告 `builtinWriteToolsEnabled`。

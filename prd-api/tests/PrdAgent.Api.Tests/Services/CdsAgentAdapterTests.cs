@@ -56,6 +56,40 @@ public class CdsAgentAdapterTests
         message.ShouldBeNull();
     }
 
+    [Fact]
+    public async Task ListEventsByCursorAsync_ShouldReadMultiplePagesAndReportComplete()
+    {
+        var events = Enumerable.Range(1, 1200)
+            .Select(seq => MakeEvent(seq))
+            .ToList();
+
+        var result = await CdsAgentAdapter.ListEventsByCursorAsync(
+            (afterSeq, limit, _) => Task.FromResult(events
+                .Where(x => x.Seq > afterSeq)
+                .OrderBy(x => x.Seq)
+                .Take(limit)
+                .ToList()),
+            CancellationToken.None);
+
+        result.IsComplete.ShouldBeTrue();
+        result.Events.Count.ShouldBe(1200);
+        result.LastSeq.ShouldBe(1200);
+        CdsAgentAdapter.FormatEventCursorSummary(result).ShouldBe("1200 events, lastSeq=1200, cursor=complete");
+    }
+
+    [Fact]
+    public async Task ListEventsByCursorAsync_ShouldStopWhenPageDoesNotProgress()
+    {
+        var result = await CdsAgentAdapter.ListEventsByCursorAsync(
+            (_, _, _) => Task.FromResult(new List<InfraAgentEventView> { MakeEvent(0) }),
+            CancellationToken.None);
+
+        result.IsComplete.ShouldBeFalse();
+        result.Events.ShouldBeEmpty();
+        result.LastSeq.ShouldBe(0);
+        CdsAgentAdapter.FormatEventCursorSummary(result).ShouldBe("0 events, lastSeq=0, cursor=truncated_or_stalled");
+    }
+
     private sealed class FakeRuntimeAdapter : IInfraAgentRuntimeAdapter
     {
         public FakeRuntimeAdapter(bool isConfigured, int instanceCount, int healthyCount)
@@ -86,4 +120,14 @@ public class CdsAgentAdapterTests
         public Task<InfraAgentRuntimeCancelResult> CancelAsync(string runId, CancellationToken ct) =>
             Task.FromResult(new InfraAgentRuntimeCancelResult(true, AdapterKind: AdapterKind));
     }
+
+    private static InfraAgentEventView MakeEvent(long seq) =>
+        new(
+            $"evt-{seq}",
+            "session-1",
+            seq,
+            "trace-1",
+            InfraAgentEventTypes.Log,
+            "{}",
+            DateTime.UtcNow);
 }

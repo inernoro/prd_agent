@@ -18,6 +18,12 @@ public class CdsAgentAdapter : IAgentAdapter
     private const int EventPageSize = 500;
     private const int MaxEventPages = 20;
 
+    internal sealed record CdsAgentEventCursorResult(
+        List<InfraAgentEventView> Events,
+        bool IsComplete,
+        long LastSeq
+    );
+
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
@@ -194,7 +200,8 @@ public class CdsAgentAdapter : IAgentAdapter
             $"远程任务已委托给 CDS Agent，会话 {session.Id} 正在后台运行。\n" +
             $"打开工作台继续观察、审批和停止：{workbenchPath}\n");
 
-        var events = await ListSessionEventsByCursorAsync(context.UserId, session.Id, ct);
+        var eventCursor = await ListSessionEventsByCursorAsync(context.UserId, session.Id, ct);
+        var events = eventCursor.Events;
         foreach (var evt in events)
         {
             var text = RenderEvent(evt);
@@ -206,6 +213,7 @@ public class CdsAgentAdapter : IAgentAdapter
 
         var eventsJson = JsonSerializer.Serialize(events, new JsonSerializerOptions { WriteIndented = true });
         var logs = await _sessions.GetLogsAsync(context.UserId, session.Id, ct) ?? string.Empty;
+        yield return AgentStreamChunk.Text($"事件读取：{FormatEventCursorSummary(eventCursor)}。\n");
         yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
         {
             Type = ToolboxArtifactType.Json,
@@ -236,22 +244,56 @@ public class CdsAgentAdapter : IAgentAdapter
         yield return AgentStreamChunk.Done();
     }
 
-    private async Task<List<InfraAgentEventView>> ListSessionEventsByCursorAsync(
+    private async Task<CdsAgentEventCursorResult> ListSessionEventsByCursorAsync(
         string userId,
         string sessionId,
+        CancellationToken ct)
+    {
+        return await ListEventsByCursorAsync(
+            (afterSeq, limit, token) => _sessions.ListEventsAsync(userId, sessionId, afterSeq, limit, token),
+            ct);
+    }
+
+    internal static async Task<CdsAgentEventCursorResult> ListEventsByCursorAsync(
+        Func<long, int, CancellationToken, Task<List<InfraAgentEventView>>> listEventsAsync,
         CancellationToken ct)
     {
         var all = new List<InfraAgentEventView>();
         var afterSeq = 0L;
         for (var page = 0; page < MaxEventPages; page++)
         {
-            var batch = await _sessions.ListEventsAsync(userId, sessionId, afterSeq, EventPageSize, ct);
-            if (batch.Count == 0) break;
-            all.AddRange(batch);
-            afterSeq = batch.Max(x => x.Seq);
-            if (batch.Count < EventPageSize) break;
+            var batch = await listEventsAsync(afterSeq, EventPageSize, ct);
+            if (batch.Count == 0)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+
+            var progressed = false;
+            foreach (var item in batch.OrderBy(x => x.Seq))
+            {
+                if (item.Seq <= afterSeq) continue;
+                all.Add(item);
+                afterSeq = item.Seq;
+                progressed = true;
+            }
+
+            if (!progressed)
+            {
+                return new CdsAgentEventCursorResult(all, false, afterSeq);
+            }
+
+            if (batch.Count < EventPageSize)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
         }
-        return all;
+        return new CdsAgentEventCursorResult(all, false, afterSeq);
+    }
+
+    internal static string FormatEventCursorSummary(CdsAgentEventCursorResult cursor)
+    {
+        var status = cursor.IsComplete ? "complete" : "truncated_or_stalled";
+        return $"{cursor.Events.Count} events, lastSeq={cursor.LastSeq}, cursor={status}";
     }
 
     private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(CancellationToken ct)
