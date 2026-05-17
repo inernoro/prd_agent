@@ -15,6 +15,7 @@ from .schemas import SidecarEvent, SidecarRunRequest
 from .tool_bridge import ToolBridge
 from .profiles import resolve_profile
 from .workspace import prepare_git_workspace, workspace_diagnostics, workspace_error_diagnostics
+from .sdk_events import SdkEventAccumulator, handle_sdk_message
 
 logger = logging.getLogger("sidecar.official_agent_sdk")
 
@@ -33,106 +34,6 @@ def _prompt_from_messages(req: SidecarRunRequest) -> str:
 def _csv_env(name: str, default: str) -> list[str]:
     raw = os.environ.get(name, default)
     return [item.strip() for item in raw.split(",") if item.strip()]
-
-
-def _block_type(block: Any) -> str:
-    value = getattr(block, "type", None)
-    if isinstance(value, str):
-        return value
-    name = type(block).__name__
-    if name.endswith("Block"):
-        return name[:-5].lower()
-    return name.lower()
-
-
-def _block_text(block: Any) -> str:
-    value = getattr(block, "text", None)
-    if isinstance(value, str):
-        return value
-    if isinstance(block, dict):
-        text = block.get("text")
-        return text if isinstance(text, str) else ""
-    return ""
-
-
-def _block_tool_name(block: Any) -> str:
-    value = getattr(block, "name", None)
-    if isinstance(value, str):
-        return value
-    if isinstance(block, dict):
-        name = block.get("name")
-        return name if isinstance(name, str) else ""
-    return ""
-
-
-def _block_tool_id(block: Any) -> str:
-    value = getattr(block, "id", None) or getattr(block, "tool_use_id", None)
-    if isinstance(value, str):
-        return value
-    if isinstance(block, dict):
-        for key in ("id", "tool_use_id", "toolUseId"):
-            item = block.get(key)
-            if isinstance(item, str):
-                return item
-    return ""
-
-
-def _block_tool_input(block: Any) -> dict[str, Any]:
-    value = getattr(block, "input", None) or getattr(block, "tool_input", None)
-    if isinstance(value, dict):
-        return value
-    if isinstance(block, dict):
-        for key in ("input", "tool_input", "toolInput"):
-            item = block.get(key)
-            if isinstance(item, dict):
-                return item
-    return {}
-
-
-def _block_tool_result_content(block: Any) -> Any:
-    for name in ("content", "result"):
-        value = getattr(block, name, None)
-        if value is not None:
-            return value
-    if isinstance(block, dict):
-        return block.get("content") or block.get("result")
-    return None
-
-
-def _usage_value(usage: Any, name: str, fallback: int = 0) -> int:
-    if usage is None:
-        return fallback
-    if isinstance(usage, dict):
-        value = usage.get(name)
-    else:
-        value = getattr(usage, name, None)
-    try:
-        return int(value or fallback)
-    except (TypeError, ValueError):
-        return fallback
-
-
-def _safe_result_metadata(message: Any) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    fields = (
-        "subtype",
-        "session_id",
-        "sessionId",
-        "model",
-        "stop_reason",
-        "stopReason",
-        "total_cost_usd",
-        "totalCostUsd",
-        "duration_ms",
-        "durationMs",
-        "num_turns",
-        "numTurns",
-    )
-    for name in fields:
-        value = getattr(message, name, None)
-        if isinstance(value, (str, int, float, bool)):
-            metadata[name] = value
-    return metadata
 
 
 def _runtime_preflight(cwd: str | None) -> list[str]:
@@ -400,12 +301,8 @@ async def run_official_agent(
         },
     )
 
-    final_text = ""
-    total_in = 0
-    total_out = 0
+    sdk_state = SdkEventAccumulator()
     cancelled = False
-    result_error: str | None = None
-    result_metadata: dict[str, Any] = {}
     interrupt_task: asyncio.Task | None = None
     try:
         async with ClaudeSDKClient(options=options) as client:
@@ -417,41 +314,8 @@ async def run_official_agent(
                 if cancel_event is not None and cancel_event.is_set():
                     cancelled = True
 
-                if isinstance(message, ResultMessage):
-                    result_metadata = _safe_result_metadata(message)
-                    result = getattr(message, "result", None)
-                    if isinstance(result, str) and result and not cancelled:
-                        final_text = result
-                    usage = getattr(message, "usage", None)
-                    total_in = _usage_value(usage, "input_tokens", total_in)
-                    total_out = _usage_value(usage, "output_tokens", total_out)
-                    subtype = getattr(message, "subtype", None)
-                    if cancelled:
-                        cancelled = True
-                    elif isinstance(subtype, str) and subtype.startswith("error"):
-                        result_error = subtype
-                    continue
-
-                for block in getattr(message, "content", []) or []:
-                    btype = _block_type(block)
-                    if btype in ("text", "textblock"):
-                        text = _block_text(block)
-                        if text:
-                            final_text += text
-                            yield SidecarEvent(type="text_delta", text=text)
-                    elif btype in ("tooluse", "tool_use", "tooluseblock"):
-                        yield SidecarEvent(
-                            type="tool_use",
-                            tool_name=_block_tool_name(block),
-                            tool_input=_block_tool_input(block),
-                            tool_use_id=_block_tool_id(block),
-                        )
-                    elif btype in ("toolresult", "tool_result", "toolresultblock"):
-                        yield SidecarEvent(
-                            type="tool_result",
-                            tool_use_id=_block_tool_id(block),
-                            content=_block_tool_result_content(block),
-                        )
+                for event in handle_sdk_message(message, ResultMessage, sdk_state, cancelled=cancelled):
+                    yield event
     except Exception as ex:
         logger.exception("official Claude Agent SDK adapter failed run_id=%s", req.run_id)
         yield SidecarEvent(
@@ -464,28 +328,28 @@ async def run_official_agent(
         if interrupt_task is not None:
             interrupt_task.cancel()
 
-    if total_in or total_out:
+    if sdk_state.input_tokens or sdk_state.output_tokens:
         yield SidecarEvent(
             type="usage",
-            input_tokens=total_in,
-            output_tokens=total_out,
-            content={"sdkResult": result_metadata} if result_metadata else None,
+            input_tokens=sdk_state.input_tokens,
+            output_tokens=sdk_state.output_tokens,
+            content={"sdkResult": sdk_state.result_metadata} if sdk_state.result_metadata else None,
         )
     if cancelled:
         yield SidecarEvent(type="error", error_code="cancelled", message="run cancelled")
         return
-    if result_error:
+    if sdk_state.result_error:
         yield SidecarEvent(
             type="error",
             error_code="claude_agent_sdk_result_error",
-            message=result_error,
-            content={"sdkResult": result_metadata} if result_metadata else None,
+            message=sdk_state.result_error,
+            content={"sdkResult": sdk_state.result_metadata} if sdk_state.result_metadata else None,
         )
         return
     yield SidecarEvent(
         type="done",
-        final_text=final_text,
-        input_tokens=total_in,
-        output_tokens=total_out,
-        content={"sdkResult": result_metadata} if result_metadata else None,
+        final_text=sdk_state.final_text,
+        input_tokens=sdk_state.input_tokens,
+        output_tokens=sdk_state.output_tokens,
+        content={"sdkResult": sdk_state.result_metadata} if sdk_state.result_metadata else None,
     )
