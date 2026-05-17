@@ -301,6 +301,13 @@ type AgentArtifact = {
   count?: number;
 };
 
+type RuntimeReadinessGate = {
+  label: string;
+  value: string;
+  detail: string;
+  state: 'pass' | 'warn' | 'pending';
+};
+
 function artifactIcon(kind: AgentArtifact['kind']) {
   if (kind === 'diff') return <GitCompare size={13} />;
   if (kind === 'browser') return <Globe2 size={13} />;
@@ -738,6 +745,8 @@ export default function CdsAgentPage() {
     const cdsRole = (latestRuntimeContent ? readString(latestRuntimeContent, 'cdsRole') : '')
       || primaryRuntime?.cdsRole
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'cdsRole') : '');
+    const approvalBridge = (latestRuntimeContent ? readString(latestRuntimeContent, 'approvalBridge') : '')
+      || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'approvalBridge') : '');
     const runId = activeSession?.currentRuntimeRunId
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeRunId') || readString(latestRuntimePayload, 'messageId') : '');
     const instance = latestRuntimePayload
@@ -760,6 +769,68 @@ export default function CdsAgentPage() {
       : activeSession?.status === 'running'
         ? '等待 run id'
         : '无活动 run';
+    const selectedProfile = activeSessionProfile ?? activeProfile;
+    const profileReady = Boolean(selectedProfile?.hasApiKey && selectedProfile.baseUrl && selectedProfile.model);
+    const runtimePoolReady = Boolean(runtimeStatus && runtimeStatus.instanceCount > 0 && runtimeStatus.healthyCount > 0);
+    const officialLoopReady = adapterMode === 'Official SDK adapter'
+      && loopOwner === 'claude-agent-sdk'
+      && sdkLoopEnabled === true;
+    const approvalBridgeReady = approvalBridge === 'sdk-can-use-tool';
+    const eventStreamState = activeSession?.status === 'running'
+      ? (eventStreamHealthy ? 'SSE live' : '等待 SSE 心跳')
+      : events.length > 0
+        ? '可回放'
+        : '待运行';
+    const readinessGates: RuntimeReadinessGate[] = [
+      {
+        label: '官方 loop 边界',
+        value: officialLoopReady ? '已切到官方 SDK' : adapterMode,
+        detail: officialLoopReady
+          ? 'MAP/CDS 只保留控制面，turn loop 由 claude-agent-sdk 承担。'
+          : '还不能证明 turn loop 已从自研路径收缩到官方 SDK adapter。',
+        state: officialLoopReady ? 'pass' : adapter ? 'warn' : 'pending',
+      },
+      {
+        label: 'Runtime pool',
+        value: runtimeStatus ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount} healthy` : '检测中',
+        detail: runtimePoolReady
+          ? 'MAP 已发现可路由 sidecar 实例。'
+          : blockers[0] || registryIssue || '需要 CDS sidecar pool 实例发现返回可用实例。',
+        state: runtimePoolReady ? 'pass' : runtimeStatus ? 'warn' : 'pending',
+      },
+      {
+        label: '模型凭据',
+        value: profileReady ? '可按请求下发' : '未就绪',
+        detail: profileReady
+          ? 'Runtime profile 已具备 baseUrl、model 和可用 API key。'
+          : profileBlockReason(selectedProfile),
+        state: profileReady ? 'pass' : selectedProfile ? 'warn' : 'pending',
+      },
+      {
+        label: '审批桥',
+        value: approvalBridgeReady ? 'SDK can_use_tool' : approvalBridge || '未上报',
+        detail: approvalBridgeReady
+          ? '危险内置工具会进入 MAP approval request，再返回官方 SDK PermissionResult。'
+          : '需要真实 runtime_init 或 readyz 证明官方 SDK can_use_tool 已接入 MAP 审批。',
+        state: approvalBridgeReady ? 'pass' : adapterMode === 'Official SDK adapter' ? 'warn' : 'pending',
+      },
+      {
+        label: '取消句柄',
+        value: runId ? shortId(runId) : '无活动 run',
+        detail: runId
+          ? 'Stop 会调用 sidecar cancel，并在官方路径触发 ClaudeSDKClient.interrupt()。'
+          : '需要启动真实 run 后验证 Stop 能取消底层 SDK 调用。',
+        state: runId ? 'pass' : activeSession?.status === 'running' ? 'warn' : 'pending',
+      },
+      {
+        label: '事件恢复',
+        value: eventStreamState,
+        detail: eventStreamHealthy
+          ? 'SSE afterSeq 正在续读，断线后仍可按游标回放。'
+          : '未处于 live SSE 时，仍保留 JSON 分页回放兜底。',
+        state: eventStreamHealthy || events.length > 0 ? 'pass' : activeSession ? 'pending' : 'warn',
+      },
+    ];
     return {
       adapter: adapterLabel,
       adapterMode,
@@ -771,6 +842,7 @@ export default function CdsAgentPage() {
       instance,
       source,
       cancelState,
+      readinessGates,
       rows: [
         ['Adapter', adapterLabel],
         ['Mode', adapterMode],
@@ -799,7 +871,7 @@ export default function CdsAgentPage() {
       readyzBlockers,
       readyzNextActions,
     };
-  }, [activeSession, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
+  }, [activeProfile, activeSession, activeSessionProfile, eventStreamHealthy, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const sidecarInstanceSummaries = useMemo(() => (
     (runtimeStatus?.instances ?? []).map((item) => ({
       name: item.name,
@@ -866,6 +938,7 @@ export default function CdsAgentPage() {
       instance: runtimeDiagnostics.instance,
       source: runtimeDiagnostics.source,
       cancelState: runtimeDiagnostics.cancelState,
+      readinessGates: runtimeDiagnostics.readinessGates,
       rows: runtimeDiagnostics.rows,
       blockers: runtimeDiagnostics.blockers,
       nextActions: runtimeDiagnostics.nextActions,
@@ -2502,6 +2575,47 @@ export default function CdsAgentPage() {
                           <div className="mt-1 break-all text-xs leading-relaxed text-white/72">{value}</div>
                         </div>
                       ))}
+                    </div>
+                    <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold uppercase tracking-normal text-white/42">商业级就绪门禁</div>
+                        <div className="text-xs text-white/38">
+                          {runtimeDiagnostics.readinessGates.filter((gate) => gate.state === 'pass').length}/{runtimeDiagnostics.readinessGates.length} passed
+                        </div>
+                      </div>
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        {runtimeDiagnostics.readinessGates.map((gate) => {
+                          const isPass = gate.state === 'pass';
+                          const isWarn = gate.state === 'warn';
+                          return (
+                            <div
+                              key={gate.label}
+                              className="min-h-[82px] rounded-md px-3 py-2"
+                              style={{
+                                background: isPass ? 'rgba(34,197,94,0.08)' : isWarn ? 'rgba(245,158,11,0.09)' : 'rgba(15,23,42,0.68)',
+                                border: isPass ? '1px solid rgba(34,197,94,0.22)' : isWarn ? '1px solid rgba(245,158,11,0.2)' : '1px solid rgba(148,163,184,0.14)',
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-xs font-semibold text-white/70">{gate.label}</div>
+                                  <div className="mt-1 break-all text-xs font-medium text-white/84">{gate.value}</div>
+                                </div>
+                                <span
+                                  className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                                  style={{
+                                    background: isPass ? 'rgba(34,197,94,0.14)' : isWarn ? 'rgba(245,158,11,0.14)' : 'rgba(148,163,184,0.1)',
+                                    color: isPass ? 'rgba(134,239,172,0.92)' : isWarn ? 'rgba(253,230,138,0.92)' : 'rgba(203,213,225,0.76)',
+                                  }}
+                                >
+                                  {isPass ? 'PASS' : isWarn ? 'ACTION' : 'WAIT'}
+                                </span>
+                              </div>
+                              <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/44">{gate.detail}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                     {(runtimeDiagnostics.blockers.length > 0 || runtimeDiagnostics.nextActions.length > 0) && (
                       <div className="mt-3 grid gap-2 xl:grid-cols-2">
