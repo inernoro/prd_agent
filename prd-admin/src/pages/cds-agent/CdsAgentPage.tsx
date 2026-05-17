@@ -825,6 +825,54 @@ export default function CdsAgentPage() {
     const providerKeyErrorState = providerKeyErrorCode
       ? `${providerKeyErrorCode}${providerKeyErrorActions[0] ? ` · ${providerKeyErrorActions[0]}` : ''}`
       : '无 provider key 错误';
+    const latestRuntimeErrorEntry = events
+      .map((event) => ({ event, payload: parsePayload(event) }))
+      .reverse()
+      .find(({ event, payload }) => (
+        event.type === 'error'
+        && (
+          readString(payload, 'runtimeAdapter')
+          || readString(payload, 'runtimeInstance')
+          || readString(payload, 'source').includes('sidecar')
+          || readString(payload, 'source').includes('runtime')
+          || readString(payload, 'code').includes('claude_agent_sdk')
+          || readString(payload, 'code') === 'provider_key_missing'
+          || readString(payload, 'code') === 'workspace_prepare_failed'
+          || readString(payload, 'recoveryKind')
+        )
+      )) ?? null;
+    const latestRuntimeErrorPayload = latestRuntimeErrorEntry?.payload ?? null;
+    const latestRuntimeErrorContent = latestRuntimeErrorPayload ? parseJsonString(latestRuntimeErrorPayload.content) : null;
+    const runtimeErrorCode = latestRuntimeErrorPayload
+      ? readString(latestRuntimeErrorPayload, 'code')
+        || readString(latestRuntimeErrorPayload, 'errorCode')
+        || readString(latestRuntimeErrorPayload, 'error_code')
+        || readString(latestRuntimeErrorContent, 'errorCode')
+        || readString(latestRuntimeErrorContent, 'error_code')
+      : '';
+    const runtimeErrorMessage = latestRuntimeErrorPayload
+      ? readString(latestRuntimeErrorPayload, 'message') || readString(latestRuntimeErrorContent, 'message')
+      : '';
+    const runtimeErrorRecoveryKind = latestRuntimeErrorPayload
+      ? readString(latestRuntimeErrorPayload, 'recoveryKind') || readString(latestRuntimeErrorContent, 'recoveryKind')
+      : '';
+    const runtimeErrorRetryable = latestRuntimeErrorPayload
+      ? readBoolean(latestRuntimeErrorPayload, 'retryable') ?? readBoolean(latestRuntimeErrorContent, 'retryable')
+      : null;
+    const runtimeErrorActions = latestRuntimeErrorPayload
+      ? [
+          ...readStringArray(latestRuntimeErrorPayload, 'nextActions'),
+          ...readStringArray(latestRuntimeErrorContent, 'nextActions'),
+        ]
+      : [];
+    const runtimeErrorState = runtimeErrorCode
+      ? [
+          runtimeErrorCode,
+          runtimeErrorRecoveryKind ? `kind=${runtimeErrorRecoveryKind}` : '',
+          runtimeErrorRetryable === null ? '' : `retryable=${runtimeErrorRetryable ? 'yes' : 'no'}`,
+          runtimeErrorActions[0] || runtimeErrorMessage,
+        ].filter(Boolean).join(' · ')
+      : '无 runtime 错误';
     const approvalRequests = events
       .map((event) => ({ event, payload: parsePayload(event) }))
       .filter(({ event, payload }) => event.type === 'tool_call' && readString(payload, 'approvalId'));
@@ -1005,6 +1053,14 @@ export default function CdsAgentPage() {
           : '未处于 live SSE 时，仍保留 JSON 分页回放兜底。',
         state: eventStreamHealthy || events.length > 0 ? 'pass' : activeSession ? 'pending' : 'warn',
       },
+      {
+        label: '错误归因',
+        value: runtimeErrorCode ? (runtimeErrorRetryable === false ? '需修配置' : '可诊断') : '无错误',
+        detail: runtimeErrorCode
+          ? (runtimeErrorActions[0] || runtimeErrorMessage || `recoveryKind=${runtimeErrorRecoveryKind || '未上报'}`)
+          : 'Runtime error 会上提 code、recoveryKind、retryable 和 nextActions 到诊断包。',
+        state: runtimeErrorCode ? 'warn' : events.length > 0 ? 'pass' : 'pending',
+      },
     ];
     return {
       adapter: adapterLabel,
@@ -1032,6 +1088,7 @@ export default function CdsAgentPage() {
         ['Workspace root', workspaceRoot || '未上报'],
         ['Private repo auth', privateRepositoryAuthConfigured === true ? '已配置' : privateRepositoryAuthConfigured === false ? '未配置' : '未上报'],
         ['Workspace error', workspaceErrorState],
+        ['Runtime error', runtimeErrorState],
         ['Approval evidence', approvalEvidenceState],
         ['Cancel evidence', cancelEvidenceState],
         ['Run ID', shortId(runId)],
@@ -1058,6 +1115,16 @@ export default function CdsAgentPage() {
       readyzNextActions,
       approvalEvidence,
       cancelEvidence,
+      runtimeError: runtimeErrorCode ? {
+        code: runtimeErrorCode,
+        message: runtimeErrorMessage,
+        recoveryKind: runtimeErrorRecoveryKind,
+        retryable: runtimeErrorRetryable,
+        nextActions: runtimeErrorActions,
+        source: latestRuntimeErrorPayload ? readString(latestRuntimeErrorPayload, 'source') : '',
+        runtimeAdapter: latestRuntimeErrorPayload ? readString(latestRuntimeErrorPayload, 'runtimeAdapter') : '',
+        runtimeInstance: latestRuntimeErrorPayload ? readString(latestRuntimeErrorPayload, 'runtimeInstance') : '',
+      } : null,
       workspaceError: workspaceErrorCode ? {
         code: workspaceErrorCode,
         nextActions: workspaceErrorActions,
@@ -1166,6 +1233,7 @@ export default function CdsAgentPage() {
       readyzNextActions: runtimeDiagnostics.readyzNextActions,
       approvalEvidence: runtimeDiagnostics.approvalEvidence,
       cancelEvidence: runtimeDiagnostics.cancelEvidence,
+      runtimeError: runtimeDiagnostics.runtimeError,
       workspaceError: runtimeDiagnostics.workspaceError,
       providerKeyError: runtimeDiagnostics.providerKeyError,
     },
