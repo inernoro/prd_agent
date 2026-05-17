@@ -84,18 +84,19 @@ _smoke_curl() {
   local method="$1"
   local path="$2"
   local body="${3:-}"
-  local extra_args=()
+  local cmd=(
+    curl --max-time "$SMOKE_TIMEOUT"
+         --show-error
+         --silent
+         --fail-with-body
+         -X "$method"
+         "${SMOKE_AUTH[@]}"
+  )
   if [[ -n "$body" ]]; then
-    extra_args+=("-d" "$body")
+    cmd+=("-d" "$body")
   fi
-  curl --max-time "$SMOKE_TIMEOUT" \
-       --show-error \
-       --silent \
-       --fail-with-body \
-       -X "$method" \
-       "${SMOKE_AUTH[@]}" \
-       "${extra_args[@]}" \
-       "$SMOKE_HOST$path"
+  cmd+=("$SMOKE_HOST$path")
+  "${cmd[@]}"
 }
 
 smoke_get()    { _smoke_curl GET    "$1"; }

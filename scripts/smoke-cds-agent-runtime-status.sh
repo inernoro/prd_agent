@@ -45,18 +45,18 @@ instance_count=$(smoke_get_data "$resp" '.diagnostics.instanceCount // 0')
 if (( instance_count <= 0 )); then
   blockers=$(smoke_get_data "$resp" '.diagnostics.blockers // [] | join(" | ")')
   next_actions=$(smoke_get_data "$resp" '.diagnostics.nextActions // [] | join(" | ")')
-  smoke_fail "instanceCount=$instance_count；blockers=$blockers；next=$next_actions"
+  smoke_fail "instanceCount=${instance_count}; blockers=${blockers}; next=${next_actions}"
 fi
-smoke_ok "instanceCount=$instance_count"
+smoke_ok "instanceCount=${instance_count}"
 
 smoke_step "确认至少一个实例 readyz healthy"
 healthy_count=$(smoke_get_data "$resp" '.diagnostics.healthyCount // 0')
 if (( healthy_count <= 0 )); then
   blockers=$(smoke_get_data "$resp" '.diagnostics.blockers // [] | join(" | ")')
   readyz=$(smoke_get_data "$resp" '.diagnostics.instances // [] | map({name, httpStatus, ready, readyzBlockers, readyzNextActions})')
-  smoke_fail "healthyCount=$healthy_count；blockers=$blockers；readyz=$readyz"
+  smoke_fail "healthyCount=${healthy_count}; blockers=${blockers}; readyz=${readyz}"
 fi
-smoke_ok "healthyCount=$healthy_count"
+smoke_ok "healthyCount=${healthy_count}"
 
 smoke_step "确认实例 loopOwner 指向官方 SDK"
 official_instances=$(smoke_get_data "$resp" '[.diagnostics.instances[]? | select((.agentAdapter // "") == "claude-agent-sdk" or (.loopOwner // "") == "claude-agent-sdk")] | length')
