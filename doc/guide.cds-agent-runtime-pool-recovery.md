@@ -133,6 +133,11 @@ Anthropic provider key。处理顺序：
 2. MAP 控制面运行：在 CDS Agent 页面选择带有效 API key 的 runtime profile。
 3. 自动化调用：确认请求里传了 `profile`，或显式传 `apiKey/baseUrl` request override。
 
+MAP 导入 sidecar runtime error 时，会把 `recoveryKind`、`retryable` 和 `nextActions`
+写到 error 事件顶层。配置类错误（如 `provider_key_missing`、`upstream_resolve_failed`、
+`claude_agent_sdk_not_available`、明确的 workspace 配置错误）不会再显示为可直接重试；
+先按 `nextActions` 修配置，再启动新的 run。
+
 验证入口仍然是：
 
 ```text

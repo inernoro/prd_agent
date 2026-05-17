@@ -1,5 +1,6 @@
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Services.AgentRuntime;
+using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
 using Xunit;
 
@@ -66,6 +67,50 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         router.LastRequest.GitRepository.ShouldBe("inernoro/prd_agent");
         router.LastRequest.GitRef.ShouldBe("codex/cds-agent-workbench-ui");
         router.LastRequest.RuntimeAdapter.ShouldBe("claude-agent-sdk");
+    }
+
+    [Fact]
+    public void BuildRuntimeErrorStatus_ShouldClassifyProviderKeyMissingAsConfigIssue()
+    {
+        var status = InfraAgentSessionService.BuildRuntimeErrorStatus(
+            "provider_key_missing",
+            "ANTHROPIC_API_KEY is required",
+            """
+            {"nextActions":["select or create a MAP runtime profile with a valid provider apiKey"]}
+            """);
+
+        status.Retryable.ShouldBeFalse();
+        status.RecoveryKind.ShouldBe("provider_config");
+        status.SessionError.ShouldBe("Claude SDK sidecar 执行失败(provider_key_missing)：ANTHROPIC_API_KEY is required");
+        status.NextActions.ShouldContain("select or create a MAP runtime profile with a valid provider apiKey");
+    }
+
+    [Fact]
+    public void BuildRuntimeErrorStatus_ShouldClassifyNonRetryableWorkspaceConfigErrors()
+    {
+        var status = InfraAgentSessionService.BuildRuntimeErrorStatus(
+            "workspace_prepare_failed",
+            "remote branch not found",
+            """
+            {"workspaceErrorCode":"git_ref_not_found","nextActions":["verify gitRef exists on the target repository"]}
+            """);
+
+        status.Retryable.ShouldBeFalse();
+        status.RecoveryKind.ShouldBe("workspace_config");
+        status.NextActions.ShouldContain("verify gitRef exists on the target repository");
+    }
+
+    [Fact]
+    public void BuildRuntimeErrorStatus_ShouldKeepSdkResultErrorsRetryable()
+    {
+        var status = InfraAgentSessionService.BuildRuntimeErrorStatus(
+            "claude_agent_sdk_result_error",
+            "error_during_execution",
+            """{"sdkResult":{"subtype":"error_during_execution"}}""");
+
+        status.Retryable.ShouldBeTrue();
+        status.RecoveryKind.ShouldBe("sdk_result_error");
+        status.NextActions.ShouldContain("查看 usage/done content.sdkResult 中的官方 SDK subtype/session 信息");
     }
 
     private sealed class CapturingSidecarRouter : IClaudeSidecarRouter

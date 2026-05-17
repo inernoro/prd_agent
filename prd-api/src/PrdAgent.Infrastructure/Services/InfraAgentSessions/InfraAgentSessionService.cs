@@ -1453,17 +1453,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     return true;
                 case InfraAgentRuntimeEventType.Error:
                     var errorMessage = ev.Message ?? ev.ErrorCode ?? "unknown";
+                    var errorStatus = BuildRuntimeErrorStatus(ev.ErrorCode, errorMessage, ev.Content);
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Error, JsonSerializer.Serialize(new
                     {
                         code = ev.ErrorCode,
                         message = errorMessage,
-                        retryable = true,
+                        retryable = errorStatus.Retryable,
+                        recoveryKind = errorStatus.RecoveryKind,
+                        nextActions = errorStatus.NextActions,
                         source = eventSource,
                         runtimeAdapter = selectedRuntimeAdapter,
                         runtimeInstance = ev.RuntimeInstanceName,
                         content = ev.Content
                     }), ct);
-                    await MarkRuntimeFailedAsync(session, $"Claude SDK sidecar 执行失败：{errorMessage}", ct);
+                    await MarkRuntimeFailedAsync(session, errorStatus.SessionError, ct);
                     return false;
             }
         }
@@ -1479,6 +1482,141 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             当任务要求巡检仓库并提交 PR 时，你需要在远程环境完成分支、提交、推送和 PR 创建，并返回 PR 链接。
             不要把计划当作完成结果；只有真实执行过的动作才算完成。
             """;
+    }
+
+    public static InfraAgentRuntimeErrorStatus BuildRuntimeErrorStatus(
+        string? errorCode,
+        string errorMessage,
+        string? contentJson)
+    {
+        var code = (errorCode ?? string.Empty).Trim();
+        var actions = ExtractRuntimeErrorNextActions(contentJson);
+        var retryable = true;
+        var recoveryKind = "runtime_retry";
+
+        switch (code)
+        {
+            case "provider_key_missing":
+                retryable = false;
+                recoveryKind = "provider_config";
+                if (actions.Count == 0)
+                {
+                    actions.Add("在 CDS Agent 页面选择带有效 API key 的 runtime profile");
+                    actions.Add("或在 sidecar 环境设置 ANTHROPIC_API_KEY 后重启 sidecar");
+                }
+                break;
+            case "upstream_resolve_failed":
+                retryable = false;
+                recoveryKind = "runtime_profile_config";
+                if (actions.Count == 0)
+                {
+                    actions.Add("检查本次会话选择的 runtime profile 是否存在且可被 MAP 解析");
+                }
+                break;
+            case "claude_agent_sdk_not_available":
+                retryable = false;
+                recoveryKind = "sidecar_dependency";
+                if (actions.Count == 0)
+                {
+                    actions.Add("在 sidecar 镜像或环境中安装官方 claude-agent-sdk");
+                    actions.Add("重启 sidecar 后刷新 runtime-status");
+                }
+                break;
+            case "workspace_prepare_failed":
+                retryable = IsGenericRetryableWorkspaceError(contentJson);
+                recoveryKind = "workspace_config";
+                if (actions.Count == 0)
+                {
+                    actions.Add("检查 gitRepository/gitRef、私有仓库授权和 SIDECAR_WORKSPACES_ROOT");
+                }
+                break;
+            case "cancelled":
+                retryable = false;
+                recoveryKind = "user_cancelled";
+                if (actions.Count == 0)
+                {
+                    actions.Add("用户已请求停止；需要继续时重新启动会话 run");
+                }
+                break;
+            case "claude_agent_sdk_result_error":
+                retryable = true;
+                recoveryKind = "sdk_result_error";
+                if (actions.Count == 0)
+                {
+                    actions.Add("查看 usage/done content.sdkResult 中的官方 SDK subtype/session 信息");
+                }
+                break;
+        }
+
+        var suffix = string.IsNullOrWhiteSpace(code) ? string.Empty : $"({code})";
+        return new InfraAgentRuntimeErrorStatus(
+            $"Claude SDK sidecar 执行失败{suffix}：{errorMessage}",
+            retryable,
+            recoveryKind,
+            actions);
+    }
+
+    private static List<string> ExtractRuntimeErrorNextActions(string? contentJson)
+    {
+        if (string.IsNullOrWhiteSpace(contentJson))
+        {
+            return new List<string>();
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(contentJson);
+            if (!doc.RootElement.TryGetProperty("nextActions", out var nextActions)
+                || nextActions.ValueKind != JsonValueKind.Array)
+            {
+                return new List<string>();
+            }
+
+            return nextActions.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .Distinct(StringComparer.Ordinal)
+                .Take(8)
+                .ToList();
+        }
+        catch (JsonException)
+        {
+            return new List<string>();
+        }
+    }
+
+    private static bool IsGenericRetryableWorkspaceError(string? contentJson)
+    {
+        if (string.IsNullOrWhiteSpace(contentJson))
+        {
+            return true;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(contentJson);
+            if (!doc.RootElement.TryGetProperty("workspaceErrorCode", out var codeElement)
+                || codeElement.ValueKind != JsonValueKind.String)
+            {
+                return true;
+            }
+
+            return codeElement.GetString() switch
+            {
+                "unsupported_git_repository" => false,
+                "unsupported_git_ref" => false,
+                "github_repository_auth_or_not_found" => false,
+                "git_ref_not_found" => false,
+                "workspace_target_conflict" => false,
+                _ => true
+            };
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
     }
 
     private static int ResolveMaxTurns(string content)
@@ -2076,3 +2214,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         };
     }
 }
+
+public sealed record InfraAgentRuntimeErrorStatus(
+    string SessionError,
+    bool Retryable,
+    string RecoveryKind,
+    IReadOnlyList<string> NextActions);
