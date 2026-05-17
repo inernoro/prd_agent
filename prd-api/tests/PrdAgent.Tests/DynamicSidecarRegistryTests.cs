@@ -296,8 +296,37 @@ public class DynamicSidecarRegistryTests
         Assert.Contains(
             "当前 CDS 授权可用但实例列表为空：优先更新共享 CDS 控制面的 /api/projects/{id}/instances，使其暴露 running 的 branch-service sidecar 实例",
             diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.Contains(
+            "当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布",
+            diagnostics.NextActions ?? Array.Empty<string>());
         Assert.DoesNotContain(
             "在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接",
+            diagnostics.NextActions ?? Array.Empty<string>());
+    }
+
+    [Fact]
+    public async Task Router_Diagnostics_ShouldNotAskForControlPlaneUpgrade_WhenDiscoverySummaryExists()
+    {
+        var options = new ClaudeSidecarOptions { Enabled = false };
+        var registry = new FakeDynamicRegistry(
+            Array.Empty<DynamicSidecarInstance>(),
+            "paired-connections total=12 activeCds=1 usable=1 tokenFailures=0 endpointFailures=0 emptyEndpoints=1 endpointsWithInstances=0; paired-empty-endpoints conn-1 shared-sidecar-pool empty_instances discovery(projectKind=shared-service deployments=0 runningDeployments=0 disabledHostDeployments=0 branches=1 runningBranches=1 runningBranchServices=0 previewRootConfigured=True)");
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            new InstanceStateRegistry(),
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(
+            "当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布",
+            diagnostics.NextActions ?? Array.Empty<string>());
+        Assert.Contains(
+            "确认 shared sidecar pool 分支服务正在运行，并且服务标签/来源允许 MAP 作为 cds-sidecar 发现",
             diagnostics.NextActions ?? Array.Empty<string>());
     }
 

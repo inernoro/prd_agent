@@ -315,6 +315,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 || refreshError.Contains("empty_instances", StringComparison.OrdinalIgnoreCase))
             {
                 actions.Add("当前 CDS 授权可用但实例列表为空：优先更新共享 CDS 控制面的 /api/projects/{id}/instances，使其暴露 running 的 branch-service sidecar 实例");
+                if (!refreshError.Contains("discovery(", StringComparison.OrdinalIgnoreCase))
+                {
+                    actions.Add("当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布");
+                }
                 actions.Add("确认 shared sidecar pool 分支服务正在运行，并且服务标签/来源允许 MAP 作为 cds-sidecar 发现");
             }
             else
