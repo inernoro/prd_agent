@@ -105,7 +105,7 @@ Adapter 兼容性来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapte
 
 ## 当前未完成的商业级验收
 
-截至 2026-05-17，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、profile preflight gate 和 S1 official SDK run 脚本入口。但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
+截至 2026-05-17，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、profile preflight gate、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
 
 - 配置真实 Claude/Anthropic-compatible runtime profile 和 API key。
 - 远程 S1 只读 run 用该 profile 真实通过。
@@ -117,6 +117,7 @@ Adapter 兼容性来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapte
 
 ```bash
 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh
+SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh
 ```
 
 完成这些后，才可以把“上手即用”从诊断可用推进到商业级可用。

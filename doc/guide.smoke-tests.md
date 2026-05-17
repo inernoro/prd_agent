@@ -25,6 +25,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-cds-agent-profile-templates.sh` | CDS Agent runtime profile 模板与 adapter 兼容矩阵：验证 MAP 后端暴露 Anthropic 官方 Claude Agent SDK profile 模板，并声明官方 SDK / legacy / Codex-like 边界 |
 | `scripts/smoke-cds-agent-profile-preflight.sh` | CDS Agent profile preflight：验证不兼容默认 profile 会在 `SendMessage` 前被 `runtime_profile_incompatible` 拦截，且不会写入消息或入队 |
 | `scripts/smoke-cds-agent-official-sdk-run.sh` | CDS Agent official SDK S1 run：默认只做 readiness；显式允许 provider 调用后才创建临时只读审查会话并等待 assistant 响应 |
+| `scripts/smoke-cds-agent-official-sdk-controls.sh` | CDS Agent official SDK S2/S3 controls：默认只做 readiness；显式允许 provider 调用后才验证 MAP 审批和 Stop |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -92,6 +93,9 @@ bash scripts/smoke-cds-agent-official-sdk-run.sh
 
 # 明确允许消耗 provider token 后，再跑 S1 只读 official SDK 真运行
 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh
+
+# 再跑 S2 审批 + S3 Stop 控制面真运行
+SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh
 ```
 
 ### 3. CI fail-fast 模式
@@ -123,7 +127,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_VERBOSE` | _(空)_ | 非空时打印完整 JSON 响应摘要 |
 | `SMOKE_SKIP` | _(空)_ | 逗号/空格分隔要跳过的 key（`health`/`cds-agent-runtime`/`cds-agent-templates`/`cds-agent-preflight`/`prd-agent`/`defect`/`report`） |
 | `SMOKE_FAIL_FAST` | _(空)_ | 非空时首次失败即退出 |
-| `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL` | _(空)_ | `smoke-cds-agent-official-sdk-run.sh` 专用；设为 `1` 才真实发送 S1 prompt |
+| `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL` | _(空)_ | official SDK run/control 脚本专用；设为 `1` 才真实发送 prompt |
 | `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE` | _(空)_ | 默认 profile 不兼容时是否失败；默认只跳过 provider run |
 | `SMOKE_CDS_AGENT_REPO` | `inernoro/prd_agent` | S1 只读审查目标仓库 |
 | `SMOKE_CDS_AGENT_REF` | `main` | S1 只读审查目标 ref |
@@ -150,6 +154,13 @@ profile 已兼容 Claude/Anthropic，该脚本会跳过不兼容分支。
 如果默认 profile 仍是普通 OpenAI-compatible 模型，它会跳过；设置
 `SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1` 时则直接失败，适合配置好 Anthropic key
 后的验收环境。
+
+`smoke-cds-agent-official-sdk-controls.sh` 是 S2/S3 真控制入口。默认同样只做
+readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后会触发一次危险工具
+审批 prompt，等待 `tool_call.status=waiting`，调用 MAP `tool-approvals/{id}`
+拒绝审批并确认 `tool_result.source=map-tool-approval`；随后创建长任务会话并调用
+`stop`，确认 MAP 接受停止请求。该脚本会触发 provider 调用和临时会话，只应在
+真实 Claude/Anthropic profile 已配置后运行。
 
 ---
 

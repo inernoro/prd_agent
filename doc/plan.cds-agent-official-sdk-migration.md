@@ -52,6 +52,7 @@
 - `scripts/smoke-cds-agent-runtime-status.sh`：验收门禁，要求 `instanceCount > 0`、`healthyCount > 0` 且至少一个实例证明 `agentAdapter/loopOwner=claude-agent-sdk`。
 - `scripts/smoke-cds-agent-profile-preflight.sh`：验收门禁，要求不兼容默认 profile 在 `SendMessage` 前被 `runtime_profile_incompatible` 拦截，且不会写入用户消息或入队 runtime job；当默认 profile 已兼容 Claude/Anthropic 时跳过拦截分支。
 - `scripts/smoke-cds-agent-official-sdk-run.sh`：S1 真运行入口。默认只做 official SDK runtime/profile readiness，不消耗 provider token；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后才创建临时只读审查会话、启动 runtime、发送 prompt 并等待 assistant 消息。
+- `scripts/smoke-cds-agent-official-sdk-controls.sh`：S2/S3 真控制入口。默认只做 readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后才触发危险工具审批、拒绝审批并确认 MAP 审计，再创建长任务会话验证 Stop。
 
 ## 4. 首轮调试用例
 
@@ -189,6 +190,7 @@
 - adapter 兼容边界已机器可读：`GET /api/infra-agent-runtime-profiles/adapter-compatibility` 声明 `claude-agent-sdk` 为默认支持路径、`legacy-sidecar` 为显式 fallback、`codex` 为 planned-not-routable，并把普通 `deepseek/*` 这类 OpenAI-compatible profile 标成不适合官方 Claude SDK。`/cds-agent` Runtime 调试区会展示该矩阵，`smoke-cds-agent-profile-templates.sh` 会校验它，防止后续接其他智能体时把“可保存 profile”误解成“已有可路由官方 adapter”。
 - `scripts/smoke-cds-agent-profile-preflight.sh` 已固化运行前拦截验收：远程不兼容默认 profile 会创建临时 idle session，调用 SendMessage 得到 400 / `runtime_profile_incompatible`，消息列表保持 0 条，然后归档临时 session。该 smoke 防止以后回归成“先写用户消息/入队 runtime job，再让官方 SDK 报模型错误”。
 - `scripts/smoke-cds-agent-official-sdk-run.sh` 已固化 S1 真运行验收入口：无 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时只做 readiness；默认 profile 不兼容时默认跳过、`SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE=1` 时失败。配置真实 Claude/Anthropic profile 后，该脚本就是远程 S1 只读审查的第一条硬证据入口。
+- `scripts/smoke-cds-agent-official-sdk-controls.sh` 已固化 S2/S3 验收入口：有 provider key 后先等官方 SDK 产生 MAP approval request，再通过 MAP 拒绝并确认 `tool_result.source=map-tool-approval`；随后跑长任务并调用 Stop。该脚本默认不发 prompt，避免无 key 环境误消耗 provider token。
 - `claude-sdk-sidecar/tests/test_sidecar_readiness.py` 覆盖 `/readyz` 背后的 adapter diagnostics：legacy 默认 ready、official 缺 SDK 包时报告 missing、外部 `claude` PATH 命令缺失不阻塞、写工具 opt-in 时报告 `builtinWriteToolsEnabled`。
 - `PYTHONPATH=/tmp/codex-sidecar-req-check-2:claude-sdk-sidecar python3 ...` 真实 SDK shape check 通过，`runtime_init` 显示 `approvalBridge=sdk-can-use-tool`、默认 tools 为 `Read/Grep/Glob`、`permissionMode=default`。
 - 临时安装真实 `claude-agent-sdk` 到 `/tmp/codex-claude-agent-sdk` 后，API 形状验证通过：`ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 可导入且签名匹配当前 adapter 用法。
