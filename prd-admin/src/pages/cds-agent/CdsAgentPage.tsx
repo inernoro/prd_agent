@@ -1239,6 +1239,7 @@ export default function CdsAgentPage() {
         ? 'provider-smokes-required'
         : 'profile-blocked';
     const nextCyclePlan = runtimeStatus?.nextCyclePlan ?? null;
+    const debugCommands = runtimeStatus?.debugCommands ?? [];
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1318,6 +1319,7 @@ export default function CdsAgentPage() {
       commercialPending,
       commercialState,
       nextCyclePlan,
+      debugCommands,
       readinessGates,
       rows: [
         ['Adapter', adapterLabel],
@@ -1483,6 +1485,7 @@ export default function CdsAgentPage() {
       commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
       commercialPending: runtimeDiagnostics.commercialPending,
       nextCyclePlan: runtimeDiagnostics.nextCyclePlan,
+      debugCommands: runtimeDiagnostics.debugCommands,
       readinessGates: runtimeDiagnostics.readinessGates,
       rows: runtimeDiagnostics.rows,
       blockers: runtimeDiagnostics.blockers,
@@ -3678,6 +3681,74 @@ export default function CdsAgentPage() {
                             </div>
                           </div>
                         )}
+                      </div>
+                    )}
+                    {runtimeDiagnostics.debugCommands.length > 0 && (
+                      <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.32)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/46">
+                              <Terminal size={13} />
+                              调试命令
+                            </div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/48">
+                              由 runtime-status 后端生成，和当前 R1/provider gate 状态一致。
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void copyText('调试命令', runtimeDiagnostics.debugCommands.map((item) => item.command).join('\n'))}
+                            className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-xs text-white/55 hover:text-white/85"
+                            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                          >
+                            <Copy size={12} /> 复制全部
+                          </button>
+                        </div>
+                        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+                          {runtimeDiagnostics.debugCommands.map((item) => {
+                            const blocked = item.status === 'blocked';
+                            const pass = item.status === 'pass';
+                            return (
+                              <div
+                                key={item.code}
+                                className="min-h-[104px] rounded-md px-3 py-2"
+                                style={{
+                                  background: blocked ? 'rgba(245,158,11,0.08)' : pass ? 'rgba(34,197,94,0.07)' : 'rgba(15,23,42,0.68)',
+                                  border: blocked ? '1px solid rgba(245,158,11,0.2)' : pass ? '1px solid rgba(34,197,94,0.18)' : '1px solid rgba(148,163,184,0.14)',
+                                }}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-xs font-semibold text-white/74">{item.label}</div>
+                                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/44">{item.purpose}</div>
+                                  </div>
+                                  <span
+                                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                                    style={{
+                                      background: blocked ? 'rgba(245,158,11,0.14)' : pass ? 'rgba(34,197,94,0.12)' : 'rgba(56,189,248,0.1)',
+                                      color: blocked ? 'rgba(253,230,138,0.9)' : pass ? 'rgba(134,239,172,0.9)' : 'rgba(186,230,253,0.82)',
+                                    }}
+                                  >
+                                    {blocked ? `BLOCK ${item.blockedBy || ''}`.trim() : item.status.toUpperCase()}
+                                  </span>
+                                </div>
+                                <div className="mt-2 flex items-start gap-2">
+                                  <code className="min-w-0 flex-1 break-all rounded px-2 py-1.5 text-[11px] leading-relaxed text-sky-50/76" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                                    {item.command}
+                                  </code>
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyText(item.label, item.command)}
+                                    className="shrink-0 rounded p-1.5 text-white/42 hover:text-white/85"
+                                    aria-label={`复制${item.label}`}
+                                  >
+                                    <Copy size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.07)' }}>

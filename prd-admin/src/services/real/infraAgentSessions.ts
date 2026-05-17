@@ -265,6 +265,14 @@ export interface InfraAgentRuntimeDiagnostics {
     }>;
     stopConditions: string[];
   } | null;
+  debugCommands?: Array<{
+    code: string;
+    label: string;
+    command: string;
+    purpose: string;
+    status: string;
+    blockedBy?: string | null;
+  }> | null;
   discoveryMetrics?: {
     totalConnections?: number | null;
     activeCdsConnections?: number | null;

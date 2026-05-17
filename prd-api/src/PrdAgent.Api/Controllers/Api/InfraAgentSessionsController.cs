@@ -73,6 +73,7 @@ public class InfraAgentSessionsController : ControllerBase
             profileDiagnostics);
         var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profileDiagnostics);
         var nextCyclePlan = BuildNextCyclePlan(profileDiagnostics, runtimeProfileRepairPlan);
+        var debugCommands = BuildDebugCommands(profileDiagnostics);
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
@@ -81,11 +82,61 @@ public class InfraAgentSessionsController : ControllerBase
             CommercialReadiness = commercialReadiness,
             RuntimeProfileRepairPlan = runtimeProfileRepairPlan,
             NextCyclePlan = nextCyclePlan,
+            DebugCommands = debugCommands,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
                 profileDiagnostics)
         };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
+    }
+
+    private static IReadOnlyList<SidecarDebugCommand> BuildDebugCommands(
+        SidecarRuntimeProfileDiagnostics? profile)
+    {
+        var r1Ready = profile is
+        {
+            HasApiKey: true,
+            CompatibleWithDesiredRuntimeAdapter: true
+        };
+        var r1Status = r1Ready ? "pass" : "blocked";
+        var providerStatus = r1Ready ? "ready" : "blocked";
+        var providerBlockedBy = r1Ready ? null : "R1";
+        return new[]
+        {
+            new SidecarDebugCommand(
+                "doctor",
+                "本地诊断",
+                "bash scripts/doctor-cds-agent-runtime.sh",
+                "只读检查 runtime pool、默认 profile、官方模板和下一步建议。",
+                "ready"),
+            new SidecarDebugCommand(
+                "r1-dry-run",
+                "R1 修复预检",
+                "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
+                "不写入远程状态，验证后端 R1 修复计划、模板和缺 key 保护。",
+                r1Status,
+                r1Ready ? null : "Anthropic API key"),
+            new SidecarDebugCommand(
+                "r1-apply",
+                "R1 test-before-promote",
+                "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
+                "创建候选 Anthropic 官方 profile，测试通过后才提升为默认。",
+                r1Status,
+                r1Ready ? null : "Anthropic API key"),
+            new SidecarDebugCommand(
+                "provider-cycle",
+                "一个周期 provider smoke",
+                "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
+                "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用。",
+                providerStatus,
+                providerBlockedBy),
+            new SidecarDebugCommand(
+                "non-code-compat",
+                "非代码智能体回归",
+                "bash scripts/smoke-cds-agent-non-code-compatibility.sh",
+                "验证 PRD/defect/literary/visual 等非代码智能体不被 CDS runtime pool 污染。",
+                "ready")
+        };
     }
 
     private static SidecarRuntimeProfileRepairPlan BuildRuntimeProfileRepairPlan(

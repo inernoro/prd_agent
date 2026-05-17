@@ -66,6 +66,8 @@
 
 R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDiscovery=true` 返回的 `diagnostics.runtimeProfileRepairPlan` 为准。页面上的 “R1 默认 Claude profile” 卡片、复制诊断包和 readiness smoke 都应消费这个后端字段；不要在前端或文档里另写一套默认模型、协议或下一步判断。
 
+同一个接口还会返回 `diagnostics.debugCommands`，页面的“调试命令”区域直接展示这些后端生成的命令。日常排障优先按该列表执行：先跑 doctor / R1 dry-run；拿到真实 Anthropic/Claude-compatible key 后再跑 R1 test-before-promote；R1 通过后才显式打开 provider 调用跑 one-cycle。
+
 R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本。脚本和页面都会调用后端 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile`，由后端创建非默认 Anthropic 候选 profile，调用 `/test` 验证上游可用，成功后才提升为默认 profile，并复查 `commercialReadiness.R1=pass`。页面的“保存配置 + 设为默认”和“更新当前配置 + 设为默认”都走同样的 test-before-promote 流程；测试失败时会清理候选 profile，不会覆盖当前默认配置。
 设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。
 

@@ -384,6 +384,10 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N1").Status.ShouldBe("blocked");
             nextCyclePlan.Items.Single(x => x.Code == "N2").BlockedBy.ShouldBe("R1");
             nextCyclePlan.StopConditions.ShouldContain(x => x.Contains("N1-N5", StringComparison.Ordinal));
+            var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Single(x => x.Code == "r1-apply").BlockedBy.ShouldBe("Anthropic API key");
+            debugCommands.Single(x => x.Code == "provider-cycle").Status.ShouldBe("blocked");
+            debugCommands.Single(x => x.Code == "provider-cycle").BlockedBy.ShouldBe("R1");
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         }
@@ -474,6 +478,9 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N6").Status.ShouldBe("ready-to-run");
             nextCyclePlan.Items.Single(x => x.Code == "N6").NextActions.ShouldNotBeNull()
                 .ShouldContain("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
+            var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Select(x => x.Code).ShouldContain("doctor");
+            debugCommands.Single(x => x.Code == "non-code-compat").Command.ShouldBe("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
         }
         finally
         {

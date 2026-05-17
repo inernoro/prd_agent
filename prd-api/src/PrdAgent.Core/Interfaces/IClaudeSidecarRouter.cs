@@ -173,7 +173,8 @@ public sealed record SidecarPoolDiagnostics(
     SidecarRuntimeProfileDiagnostics? DefaultRuntimeProfile = null,
     SidecarCommercialReadinessDiagnostics? CommercialReadiness = null,
     SidecarRuntimeProfileRepairPlan? RuntimeProfileRepairPlan = null,
-    SidecarNextCyclePlan? NextCyclePlan = null
+    SidecarNextCyclePlan? NextCyclePlan = null,
+    IReadOnlyList<SidecarDebugCommand>? DebugCommands = null
 );
 
 public sealed record SidecarRuntimeProfileDiagnostics(
@@ -232,6 +233,15 @@ public sealed record SidecarNextCyclePlanItem(
     string Status,
     string? BlockedBy = null,
     IReadOnlyList<string>? NextActions = null
+);
+
+public sealed record SidecarDebugCommand(
+    string Code,
+    string Label,
+    string Command,
+    string Purpose,
+    string Status,
+    string? BlockedBy = null
 );
 
 public sealed record SidecarWorkspacePreparationDiagnostics(
