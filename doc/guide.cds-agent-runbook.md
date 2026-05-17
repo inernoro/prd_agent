@@ -109,7 +109,7 @@ CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
 ```
 
-截至 2026-05-18，远程 preview 的最新 one-cycle 证据是 `/tmp/cds-agent-cycle-20260518031829`：`R0=pass`、`N6=pass`、`R1/S1/S2/S3=pending`、`V1=skipped`，总耗时 40s。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
+截至 2026-05-18，远程 preview 的最新 one-cycle 证据是 `/tmp/cds-agent-cycle-20260518032750`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`N6=pass`、`R1/S1/S2/S3=pending`、`V1=skipped`，总耗时 53s。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
 
 ```bash
 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \

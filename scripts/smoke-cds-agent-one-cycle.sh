@@ -117,6 +117,8 @@ finish_cycle() {
   local gate_s2s3_status="unknown"
   local gate_v1_status="skipped"
   local gate_n6_status="pass"
+  local commercial_complete=false
+  local blocking_reason=""
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
 
   if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
@@ -200,16 +202,33 @@ finish_cycle() {
 
   if (( exit_code != 0 || ${#failed_arr[@]} > 0 )); then
     cycle_status="failed"
+    blocking_reason="At least one script step failed; inspect failed step logs."
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" && "$controls_status" == "pass" ]]; then
     cycle_status="provider_smokes_passed"
   elif [[ "$provider_calls_enabled" == "true" ]]; then
     cycle_status="provider_smokes_incomplete"
+    blocking_reason="Provider calls were enabled, but S1/S2/S3 did not all pass."
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" != "true" ]]; then
     cycle_status="ready_for_provider_smokes"
+    blocking_reason="R1 passed, but provider-backed S1/S2/S3 were not run."
   elif [[ "$r1_status" == "dry_run_requires_api_key" || "$pending_has_r1" == "true" ]]; then
     cycle_status="blocked_r1"
+    blocking_reason="Default runtime profile is not yet proven Anthropic/Claude-compatible with a usable provider key."
   elif [[ "$pending_has_provider" == "true" ]]; then
     cycle_status="blocked_provider_smokes"
+    blocking_reason="Provider-backed S1/S2/S3 smokes are still pending."
+  fi
+
+  if [[ "$gate_r0_status" == "pass" \
+    && "$gate_r1_status" == "pass" \
+    && "$gate_s1_status" == "pass" \
+    && "$gate_s2s3_status" == "pass" \
+    && "$gate_v1_status" == "pass" \
+    && "$gate_n6_status" == "pass" ]]; then
+    commercial_complete=true
+    blocking_reason=""
+  elif [[ -z "$blocking_reason" ]]; then
+    blocking_reason="One or more commercial gates are not pass."
   fi
 
   if [[ -z "$next_command" ]]; then
@@ -266,6 +285,7 @@ finish_cycle() {
     --arg cycleId "$CYCLE_ID" \
     --arg cycleStatus "$cycle_status" \
     --arg nextCommand "$next_command" \
+    --arg blockingReason "$blocking_reason" \
     --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
     --arg host "$SMOKE_TEST_HOST" \
     --arg readinessOverall "$readiness_overall" \
@@ -289,6 +309,7 @@ finish_cycle() {
     --arg gateN6 "$gate_n6_status" \
     --argjson providerCallsEnabled "$provider_calls_enabled" \
     --argjson r1RepairApply "$r1_repair_apply" \
+    --argjson commercialComplete "$commercial_complete" \
     --argjson readinessPending "$readiness_pending_json" \
     --argjson passed "$passed_json" \
     --argjson skipped "$skipped_json" \
@@ -300,6 +321,8 @@ finish_cycle() {
     '{
       cycleId: $cycleId,
       status: $cycleStatus,
+      commercialComplete: $commercialComplete,
+      blockingReason: $blockingReason,
       nextCommand: $nextCommand,
       host: $host,
       evidenceDir: $evidenceDir,
@@ -375,6 +398,10 @@ finish_cycle() {
   printf '##########################################\n'
   printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
   printf 'Cycle status: %s\n' "$cycle_status"
+  printf 'Commercial complete: %s\n' "$commercial_complete"
+  if [[ -n "$blocking_reason" ]]; then
+    printf 'Blocking reason: %s\n' "$blocking_reason"
+  fi
   printf 'Next command: %s\n' "$next_command"
   printf 'Readiness overall: %s\n' "$readiness_overall"
   printf 'Doctor diagnosis: %s\n' "$doctor_diagnosis"
@@ -385,13 +412,22 @@ finish_cycle() {
   printf 'Controls status: %s\n' "$controls_status"
   printf 'Commercial gates: R0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
     "$gate_r0_status" "$gate_r1_status" "$gate_s1_status" "$gate_s2s3_status" "$gate_v1_status" "$gate_n6_status"
+  if [[ "$commercial_complete" != "true" ]]; then
+    printf 'Commercial gates not pass:\n'
+    [[ "$gate_r0_status" != "pass" ]] && printf '  - R0=%s\n' "$gate_r0_status"
+    [[ "$gate_r1_status" != "pass" ]] && printf '  - R1=%s\n' "$gate_r1_status"
+    [[ "$gate_s1_status" != "pass" ]] && printf '  - S1=%s\n' "$gate_s1_status"
+    [[ "$gate_s2s3_status" != "pass" ]] && printf '  - S2/S3=%s\n' "$gate_s2s3_status"
+    [[ "$gate_v1_status" != "pass" ]] && printf '  - V1=%s\n' "$gate_v1_status"
+    [[ "$gate_n6_status" != "pass" ]] && printf '  - N6=%s\n' "$gate_n6_status"
+  fi
   printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
   printf 'Total measured step time: %ss\n' "$total_seconds"
   if (( ${#timing_keys[@]} > 0 )); then
     printf 'Slowest steps:\n'
     jq -r '.[] | "  - " + .name + " · " + (.durationSeconds|tostring) + "s · " + .status' <<< "$slowest_json"
   fi
-  printf 'Passed: %s\n' "${#passed_arr[@]}"
+  printf 'Script steps passed (exit 0; may still be readiness-only): %s\n' "${#passed_arr[@]}"
   if (( ${#passed_arr[@]} > 0 )); then
     for name in "${passed_arr[@]}"; do printf '  - %s\n' "$name"; done
   fi

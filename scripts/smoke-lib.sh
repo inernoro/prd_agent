@@ -57,7 +57,7 @@ smoke_infer_preview_host() {
   fi
 
   local branch_id="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
-  local host_no_scheme preview_domain status_json preview_slug
+  local host_no_scheme preview_domain status_json preview_slug project_id branch_slug
   host_no_scheme="${CDS_HOST#http://}"
   host_no_scheme="${host_no_scheme#https://}"
   host_no_scheme="${host_no_scheme%%/*}"
@@ -66,8 +66,18 @@ smoke_infer_preview_host() {
     return 0
   fi
 
-  status_json=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch status "$branch_id" 2>/dev/null || true)
-  preview_slug=$(printf '%s' "$status_json" | jq -r '.data.previewSlug // empty' 2>/dev/null || true)
+  preview_slug="${SMOKE_CDS_PREVIEW_SLUG:-}"
+  if [[ -z "$preview_slug" ]]; then
+    status_json=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch status "$branch_id" 2>/dev/null || true)
+    preview_slug=$(printf '%s' "$status_json" | jq -r '.data.previewSlug // empty' 2>/dev/null || true)
+  fi
+  if [[ -z "$preview_slug" && "$branch_id" == *-codex-* ]]; then
+    project_id="${branch_id%%-codex-*}"
+    branch_slug="${branch_id#"$project_id"-codex-}"
+    if [[ -n "$project_id" && -n "$branch_slug" && "$branch_slug" != "$branch_id" ]]; then
+      preview_slug="${branch_slug}-codex-${project_id}"
+    fi
+  fi
   if [[ -n "$preview_slug" ]]; then
     SMOKE_HOST="https://${preview_slug}.${preview_domain}"
   fi
