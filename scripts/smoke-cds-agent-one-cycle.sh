@@ -47,6 +47,8 @@ timing_names=()
 timing_statuses=()
 timing_seconds=()
 timing_phases=()
+timing_indices=()
+timing_totals=()
 SMOKE_STEP_TOTAL="${SMOKE_STEP_TOTAL:-11}"
 SMOKE_STEP_CURRENT=0
 
@@ -61,6 +63,8 @@ record_timing() {
   timing_statuses+=("$status")
   timing_seconds+=("$seconds")
   timing_phases+=("$phase")
+  timing_indices+=("$SMOKE_STEP_CURRENT")
+  timing_totals+=("$SMOKE_STEP_TOTAL")
 }
 
 next_step() {
@@ -338,8 +342,18 @@ finish_cycle() {
           --arg name "${timing_names[$i]}" \
           --arg status "${timing_statuses[$i]}" \
           --arg phase "${timing_phases[$i]}" \
+          --argjson stepIndex "${timing_indices[$i]}" \
+          --argjson stepTotal "${timing_totals[$i]}" \
           --argjson durationSeconds "${timing_seconds[$i]}" \
-          '{key:$key,name:$name,status:$status,phase:$phase,durationSeconds:$durationSeconds}'
+          '{
+            key:$key,
+            name:$name,
+            status:$status,
+            phase:$phase,
+            stepIndex:$stepIndex,
+            stepTotal:$stepTotal,
+            durationSeconds:$durationSeconds
+          }'
       done | jq -s .
     )
     slowest_json=$(jq -c 'sort_by(.durationSeconds) | reverse | .[:3]' <<< "$timing_json")

@@ -33,13 +33,17 @@ failures=()
 timing_names=()
 timing_statuses=()
 timing_seconds=()
+timing_indices=()
+TIMING_STEP_TOTAL=2
+TIMING_STEP_CURRENT=0
 
 run_step() {
   local label="$1"
   shift
   local started ended duration
+  TIMING_STEP_CURRENT=$((TIMING_STEP_CURRENT + 1))
   started=$(date +%s)
-  printf '>>> %s\n' "$label"
+  printf '>>> [%s/%s] %s\n' "$TIMING_STEP_CURRENT" "$TIMING_STEP_TOTAL" "$label"
   if "$@"; then
     ended=$(date +%s)
     duration=$((ended - started))
@@ -47,6 +51,7 @@ run_step() {
     timing_names+=("$label")
     timing_statuses+=("pass")
     timing_seconds+=("$duration")
+    timing_indices+=("$TIMING_STEP_CURRENT")
     return 0
   fi
   ended=$(date +%s)
@@ -55,6 +60,7 @@ run_step() {
   timing_names+=("$label")
   timing_statuses+=("failed")
   timing_seconds+=("$duration")
+  timing_indices+=("$TIMING_STEP_CURRENT")
   failures+=("$label")
   return 1
 }
@@ -261,8 +267,10 @@ if (( ${#timing_names[@]} > 0 )); then
       jq -n \
         --arg name "${timing_names[$i]}" \
         --arg status "${timing_statuses[$i]}" \
+        --argjson stepIndex "${timing_indices[$i]}" \
+        --argjson stepTotal "$TIMING_STEP_TOTAL" \
         --argjson durationSeconds "${timing_seconds[$i]}" \
-        '{name:$name,status:$status,durationSeconds:$durationSeconds}'
+        '{name:$name,status:$status,stepIndex:$stepIndex,stepTotal:$stepTotal,durationSeconds:$durationSeconds}'
     done | jq -s .
   )
   timing_slowest_json=$(jq -c 'sort_by(.durationSeconds) | reverse | .[:3]' <<< "$timing_json")

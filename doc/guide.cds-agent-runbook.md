@@ -95,7 +95,8 @@ CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 
 one-cycle 终端输出就是执行面板：`[当前/总数] phase · step` 展示当前跑到第几个任务，
 phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-gated`、
-`visual`。汇总里的 `Deploy/build advice` 是是否需要重新部署的判定；`blocked_r1`、
+`visual`；同一份进度也会写入 `cycle-summary.json.timing.steps[].stepIndex/stepTotal`，
+方便页面或 CI 不解析终端日志也能复原时间线。汇总里的 `Deploy/build advice` 是是否需要重新部署的判定；`blocked_r1`、
 `ready_for_provider_smokes`、`blocked_provider_smokes`、`provider_smokes_incomplete`
 都不应该靠重复部署解决，先补 provider key 或跑 provider smoke。
 

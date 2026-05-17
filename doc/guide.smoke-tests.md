@@ -389,6 +389,9 @@ S1/S2/S3 误标成 pending 或 pass。
 `status`、`commercialComplete`、`blockingReason`、`currentBlockingGate`、
 步骤计数、gate 计数、最慢步骤和未通过 gate 列表；不需要再从终端日志里解析
 `Passed`、`Pending gates` 或 `Slowest steps`。
+完整时间线在 `cycle-summary.json.timing.steps`，每步包含 `stepIndex`、`stepTotal`、
+`phase`、`status` 和 `durationSeconds`；页面进度条、执行面板和人工复盘都应该读这里，
+而不是重新猜测“现在跑到第几个任务”。
 
 没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 仍只做 readiness 或跳过真调用；
 没有 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 时，R1 repair 只做 dry-run，不会创建默认 profile，
