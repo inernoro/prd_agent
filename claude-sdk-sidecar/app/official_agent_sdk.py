@@ -555,6 +555,7 @@ async def run_official_agent(
     total_in = 0
     total_out = 0
     cancelled = False
+    result_error: str | None = None
     result_metadata: dict[str, Any] = {}
     interrupt_task: asyncio.Task | None = None
     try:
@@ -576,8 +577,10 @@ async def run_official_agent(
                     total_in = _usage_value(usage, "input_tokens", total_in)
                     total_out = _usage_value(usage, "output_tokens", total_out)
                     subtype = getattr(message, "subtype", None)
-                    if cancelled or subtype == "error_during_execution":
+                    if cancelled:
                         cancelled = True
+                    elif isinstance(subtype, str) and subtype.startswith("error"):
+                        result_error = subtype
                     continue
 
                 for block in getattr(message, "content", []) or []:
@@ -621,6 +624,14 @@ async def run_official_agent(
         )
     if cancelled:
         yield SidecarEvent(type="error", error_code="cancelled", message="run cancelled")
+        return
+    if result_error:
+        yield SidecarEvent(
+            type="error",
+            error_code="claude_agent_sdk_result_error",
+            message=result_error,
+            content={"sdkResult": result_metadata} if result_metadata else None,
+        )
         return
     yield SidecarEvent(
         type="done",

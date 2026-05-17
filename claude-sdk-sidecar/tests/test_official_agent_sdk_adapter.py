@@ -17,6 +17,7 @@ from app.schemas import SidecarMessage, SidecarRunRequest  # noqa: E402
 LAST_OPTIONS: Any = None
 GIT_COMMANDS: list[list[str]] = []
 GIT_ENVS: list[dict[str, str] | None] = []
+FAKE_RESULT_SUBTYPE = "success"
 
 
 class FakeResultMessage:
@@ -66,6 +67,9 @@ class FakeClaudeSDKClient:
             if self.interrupted:
                 yield FakeResultMessage(subtype="error_during_execution", usage=FakeUsage())
                 return
+        if FAKE_RESULT_SUBTYPE != "success":
+            yield FakeResultMessage(subtype=FAKE_RESULT_SUBTYPE, usage=FakeUsage())
+            return
         yield FakeAssistantMessage()
         yield FakeResultMessage(result="adapter ok", usage=FakeUsage())
 
@@ -167,10 +171,11 @@ def build_request() -> SidecarRunRequest:
 
 class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        global LAST_OPTIONS, GIT_COMMANDS, GIT_ENVS
+        global LAST_OPTIONS, GIT_COMMANDS, GIT_ENVS, FAKE_RESULT_SUBTYPE
         LAST_OPTIONS = None
         GIT_COMMANDS = []
         GIT_ENVS = []
+        FAKE_RESULT_SUBTYPE = "success"
         install_fake_sdk()
         os.environ.pop("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", None)
         os.environ.pop("CLAUDE_AGENT_SDK_PERMISSION_MODE", None)
@@ -276,6 +281,17 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         remaining = [event async for event in stream]
         self.assertEqual([event.type for event in remaining], ["usage", "error"])
         self.assertEqual(remaining[-1].error_code, "cancelled")
+
+    async def test_sdk_result_error_is_not_reported_as_cancelled_without_cancel_event(self) -> None:
+        global FAKE_RESULT_SUBTYPE
+        FAKE_RESULT_SUBTYPE = "error_during_execution"
+
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], ["runtime_init", "usage", "error"])
+        self.assertEqual(events[-1].error_code, "claude_agent_sdk_result_error")
+        self.assertEqual(events[-1].message, "error_during_execution")
+        self.assertEqual(events[-1].content["sdkResult"]["subtype"], "error_during_execution")
 
     async def test_preflight_allows_bundled_cli_when_path_command_is_missing(self) -> None:
         events = [event async for event in run_official_agent(build_request())]
