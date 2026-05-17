@@ -207,6 +207,12 @@ function readString(payload: Record<string, unknown>, key: string): string {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
 
+function readBoolean(payload: Record<string, unknown> | null, key: string): boolean | null {
+  if (!payload) return null;
+  const value = payload[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
 function buildPromptWithContext(
   task: string,
   context: { files: string; urls: string; notes: string },
@@ -710,11 +716,24 @@ export default function CdsAgentPage() {
       || readString(payload, 'runtimeRunId')
       || readString(payload, 'messageId')
       || readString(payload, 'sidecar')
+      || readString(payload, 'loopOwner')
     ));
+    const latestRuntimeContent = latestRuntimePayload ? parseJsonString(latestRuntimePayload.content) : null;
+    const primaryAdapterDiagnostics = primaryRuntime ? parseJsonString(primaryRuntime.adapterDiagnosticsJson) : null;
     const adapter = activeSession?.runtimeAdapter
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeAdapter') : '')
       || sidecarAdapter
       || (activeSession?.runtime === 'claude-sdk' ? 'legacy-sidecar-adapter' : '');
+    const loopOwner = (latestRuntimePayload ? readString(latestRuntimePayload, 'loopOwner') : '')
+      || (latestRuntimeContent ? readString(latestRuntimeContent, 'loopOwner') : '')
+      || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'loopOwner') : '')
+      || (adapter.includes('legacy') ? 'sidecar-legacy-loop' : adapter ? 'claude-agent-sdk' : '');
+    const sdkLoopEnabled = readBoolean(latestRuntimeContent, 'sdkLoopEnabled')
+      ?? readBoolean(primaryAdapterDiagnostics, 'sdkLoopEnabled');
+    const mapRole = (latestRuntimeContent ? readString(latestRuntimeContent, 'mapRole') : '')
+      || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'mapRole') : '');
+    const cdsRole = (latestRuntimeContent ? readString(latestRuntimeContent, 'cdsRole') : '')
+      || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'cdsRole') : '');
     const runId = activeSession?.currentRuntimeRunId
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeRunId') || readString(latestRuntimePayload, 'messageId') : '');
     const instance = latestRuntimePayload
@@ -727,6 +746,11 @@ export default function CdsAgentPage() {
       : adapter
         ? 'Official SDK adapter'
         : '待上报';
+    const sdkLoopState = sdkLoopEnabled === null
+      ? '未上报'
+      : sdkLoopEnabled
+        ? '官方 SDK loop'
+        : 'Legacy sidecar loop';
     const cancelState = activeSession?.currentRuntimeRunId
       ? 'Stop 会取消底层 run'
       : activeSession?.status === 'running'
@@ -735,6 +759,10 @@ export default function CdsAgentPage() {
     return {
       adapter: adapterLabel,
       adapterMode,
+      loopOwner: loopOwner || '未上报',
+      sdkLoopEnabled,
+      mapRole: mapRole || '未上报',
+      cdsRole: cdsRole || '未上报',
       runId,
       instance,
       source,
@@ -742,6 +770,10 @@ export default function CdsAgentPage() {
       rows: [
         ['Adapter', adapterLabel],
         ['Mode', adapterMode],
+        ['Loop owner', loopOwner || '未上报'],
+        ['SDK loop', sdkLoopState],
+        ['MAP role', mapRole || '未上报'],
+        ['CDS role', cdsRole || '未上报'],
         ['Run ID', shortId(runId)],
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
@@ -818,6 +850,10 @@ export default function CdsAgentPage() {
     summary: {
       adapter: runtimeDiagnostics.adapter,
       adapterMode: runtimeDiagnostics.adapterMode,
+      loopOwner: runtimeDiagnostics.loopOwner,
+      sdkLoopEnabled: runtimeDiagnostics.sdkLoopEnabled,
+      mapRole: runtimeDiagnostics.mapRole,
+      cdsRole: runtimeDiagnostics.cdsRole,
       runId: runtimeDiagnostics.runId,
       instance: runtimeDiagnostics.instance,
       source: runtimeDiagnostics.source,
