@@ -87,7 +87,10 @@ public class InfraAgentSessionsController : ControllerBase
         var selected = profiles.FirstOrDefault(x => x.IsDefault) ?? profiles.FirstOrDefault();
         if (selected == null) return null;
 
-        var compatible = IsProfileCompatibleWithDesiredRuntimeAdapter(selected, desiredRuntimeAdapter);
+        var compatible = InfraAgentRuntimeProfileCompatibility.IsCompatibleWithDesiredRuntimeAdapter(
+            desiredRuntimeAdapter,
+            selected.Protocol,
+            selected.Model);
         var warning = compatible
             ? null
             : "claude-agent-sdk 通常需要 Claude/Anthropic 兼容模型；当前默认模型可能只适合普通 OpenAI-compatible gateway";
@@ -101,22 +104,6 @@ public class InfraAgentSessionsController : ControllerBase
             selected.IsDefault,
             compatible,
             warning);
-    }
-
-    private static bool IsProfileCompatibleWithDesiredRuntimeAdapter(
-        InfraAgentRuntimeProfileView profile,
-        string desiredRuntimeAdapter)
-    {
-        if (!string.Equals(desiredRuntimeAdapter, "claude-agent-sdk", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var model = profile.Model ?? string.Empty;
-        var protocol = profile.Protocol ?? string.Empty;
-        return protocol.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
-            || model.Contains("claude", StringComparison.OrdinalIgnoreCase)
-            || model.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<string>? MergeNextActions(

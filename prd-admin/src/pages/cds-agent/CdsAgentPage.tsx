@@ -134,6 +134,19 @@ function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): strin
   return '';
 }
 
+function profileCompatibilityBlockReason(profile: InfraAgentRuntimeProfileView | null, desiredRuntimeAdapter?: string | null): string {
+  if (!profile || !desiredRuntimeAdapter) return '';
+  if (!desiredRuntimeAdapter.toLowerCase().includes('claude-agent-sdk')) return '';
+  const protocol = profile.protocol || '';
+  const model = profile.model || '';
+  const compatible = protocol.toLowerCase() === 'anthropic'
+    || model.toLowerCase().includes('claude')
+    || model.toLowerCase().startsWith('anthropic/');
+  return compatible
+    ? ''
+    : 'Claude Agent SDK 路径需要 Claude/Anthropic 兼容模型；当前模型可能只适合普通 OpenAI-compatible gateway。';
+}
+
 function runtimeDiscoveryBlockReason(status: InfraAgentRuntimeDiagnostics): string {
   const metrics = status.discoveryMetrics;
   if (!metrics) return '';
@@ -659,8 +672,13 @@ export default function CdsAgentPage() {
   const activeSessionProfile = activeSession?.runtimeProfileId
     ? profiles.find((item) => item.id === activeSession.runtimeProfileId) ?? null
     : activeProfile;
-  const activeProfileBlockReason = profileBlockReason(activeProfile);
-  const activeSessionProfileBlockReason = activeSession ? profileBlockReason(activeSessionProfile) : '';
+  const desiredRuntimeAdapterForProfile = runtimeStatus?.desiredRuntimeAdapter || '';
+  const activeProfileBlockReason = profileBlockReason(activeProfile)
+    || profileCompatibilityBlockReason(activeProfile, desiredRuntimeAdapterForProfile);
+  const activeSessionProfileBlockReason = activeSession
+    ? profileBlockReason(activeSessionProfile)
+      || profileCompatibilityBlockReason(activeSessionProfile, desiredRuntimeAdapterForProfile)
+    : '';
   const activeRuntimePoolBlockReason = runtimePoolBlockReason(runtimeStatus);
   const canUpdateActiveProfile = Boolean(activeProfile && profileDraft.apiKey.trim());
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason && !activeRuntimePoolBlockReason);
@@ -1336,7 +1354,9 @@ export default function CdsAgentPage() {
   }, [activeSession, artifacts, events, logs, messages, runtimeDiagnosticBundle, runtimeDiagnostics, runtimeStatus, viewMode]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
-  const activeRuntimeProfileWarning = runtimeStatus?.defaultRuntimeProfile?.warning || '';
+  const activeRuntimeProfileWarning = profileCompatibilityBlockReason(activeRuntimeProfile, runtimeStatus?.desiredRuntimeAdapter)
+    || runtimeStatus?.defaultRuntimeProfile?.warning
+    || '';
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
   const runwaySteps = [
     {

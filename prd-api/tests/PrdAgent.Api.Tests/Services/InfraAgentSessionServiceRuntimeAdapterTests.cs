@@ -41,6 +41,24 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         }
     }
 
+    [Theory]
+    [InlineData("claude-agent-sdk", "openai-compatible", "deepseek/deepseek-v4-pro", false)]
+    [InlineData("claude-agent-sdk", "anthropic", "claude-sonnet-4-5", true)]
+    [InlineData("claude-agent-sdk", "openai-compatible", "anthropic/claude-sonnet-4-5", true)]
+    [InlineData("legacy-sidecar", "openai-compatible", "deepseek/deepseek-v4-pro", true)]
+    public void RuntimeProfileCompatibility_ShouldGateOfficialClaudeAgentSdkProfiles(
+        string desiredRuntimeAdapter,
+        string protocol,
+        string model,
+        bool expected)
+    {
+        InfraAgentRuntimeProfileCompatibility.IsCompatibleWithDesiredRuntimeAdapter(
+                desiredRuntimeAdapter,
+                protocol,
+                model)
+            .ShouldBe(expected);
+    }
+
     [Fact]
     public async Task SidecarRuntimeAdapter_ShouldForwardWorkspaceContext()
     {

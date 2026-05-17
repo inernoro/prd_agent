@@ -79,6 +79,29 @@ public record InfraAgentRuntimeProfileTestResult(
     long ElapsedMs
 );
 
+public static class InfraAgentRuntimeProfileCompatibility
+{
+    public static bool IsCompatibleWithDesiredRuntimeAdapter(
+        string? desiredRuntimeAdapter,
+        string? protocol,
+        string? model)
+    {
+        if (!string.Equals(desiredRuntimeAdapter, "claude-agent-sdk", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var normalizedProtocol = protocol ?? string.Empty;
+        var normalizedModel = model ?? string.Empty;
+        return normalizedProtocol.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.Contains("claude", StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string BuildIncompatibleMessage(string profileName, string model) =>
+        $"Claude Agent SDK 路径需要 Claude/Anthropic 兼容 runtime profile；当前配置 {profileName} / {model} 可能只适合普通 OpenAI-compatible gateway。请切换到 Claude/Anthropic profile，或将该任务改走普通 OpenAI-compatible gateway。";
+}
+
 public static class InfraAgentRuntimeProfileErrorCodes
 {
     public const string NameRequired = "name_required";

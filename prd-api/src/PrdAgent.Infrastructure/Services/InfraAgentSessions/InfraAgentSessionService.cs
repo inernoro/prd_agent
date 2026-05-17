@@ -160,6 +160,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
             var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
             EnsureRuntimeAdapterReady(runtime);
+            EnsureRuntimeProfileCompatibleWithAdapter(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
@@ -274,6 +275,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         EnsureRuntimeAdapterReady(session.Runtime);
+        var messageRuntimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
+        EnsureRuntimeProfileCompatibleWithAdapter(
+            session.Runtime,
+            messageRuntimeProfile,
+            ResolveSidecarRuntimeAdapter());
 
         if (string.IsNullOrWhiteSpace(session.CdsSessionId))
         {
@@ -1248,8 +1254,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         string content,
         CancellationToken ct)
     {
-        if (!string.Equals(session.Runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(session.Runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase))
+        if (!IsSidecarRuntime(session.Runtime))
         {
             return true;
         }
@@ -1277,6 +1282,33 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
         var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
         var selectedRuntimeAdapter = ResolveSidecarRuntimeAdapter();
+        try
+        {
+            EnsureRuntimeProfileCompatibleWithAdapter(session.Runtime, runtimeProfile, selectedRuntimeAdapter);
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                await NextEventSeqAsync(session.Id, ct),
+                InfraAgentEventTypes.Error,
+                JsonSerializer.Serialize(new
+                {
+                    code = ex.ErrorCode,
+                    source = "runtime-router",
+                    message = ex.Message,
+                    recoveryKind = "provider_config",
+                    retryable = false,
+                    nextActions = new[]
+                    {
+                        "为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile",
+                        "如果必须使用当前 OpenAI-compatible gateway，请为该任务切换到普通 OpenAI-compatible runtime adapter"
+                    }
+                }),
+                ct);
+            await MarkRuntimeFailedAsync(session, ex.Message, ct);
+            return false;
+        }
         var finalText = new StringBuilder();
         await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == session.Id,
@@ -1633,7 +1665,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return looksLikeLongRunningCodeTask ? 40 : 18;
     }
 
-    private static string? ResolveSidecarRuntimeAdapter()
+    private static string ResolveSidecarRuntimeAdapter()
     {
         return InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter();
     }
@@ -2084,6 +2116,34 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 ex.Message,
                 ex.HttpStatus);
         }
+    }
+
+    private static bool IsSidecarRuntime(string? runtime) =>
+        string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase);
+
+    private static void EnsureRuntimeProfileCompatibleWithAdapter(
+        string? runtime,
+        InfraAgentRuntimeProfileSecretView? profile,
+        string desiredRuntimeAdapter)
+    {
+        if (!IsSidecarRuntime(runtime) || profile == null)
+        {
+            return;
+        }
+
+        if (InfraAgentRuntimeProfileCompatibility.IsCompatibleWithDesiredRuntimeAdapter(
+                desiredRuntimeAdapter,
+                profile.Protocol,
+                profile.Model))
+        {
+            return;
+        }
+
+        throw new InfraAgentSessionException(
+            InfraAgentSessionErrorCodes.RuntimeProfileIncompatible,
+            InfraAgentRuntimeProfileCompatibility.BuildIncompatibleMessage(profile.Name, profile.Model),
+            StatusCodes.Status400BadRequest);
     }
 
     private static InfraAgentSessionView ToView(InfraAgentSession session) => new(
