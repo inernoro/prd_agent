@@ -1336,6 +1336,7 @@ export default function CdsAgentPage() {
   }, [activeSession, artifacts, events, logs, messages, runtimeDiagnosticBundle, runtimeDiagnostics, runtimeStatus, viewMode]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
+  const activeRuntimeProfileWarning = runtimeStatus?.defaultRuntimeProfile?.warning || '';
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
   const runwaySteps = [
     {
@@ -1343,28 +1344,28 @@ export default function CdsAgentPage() {
       value: activeSession ? statusLabel(activeSession.status) : '未创建',
       detail: activeSession ? `trace ${activeSession.traceId.slice(0, 12)}` : '先新建远程任务',
       icon: MessageSquare,
-      active: Boolean(activeSession),
+      state: activeSession ? 'pass' : 'pending',
     },
     {
       label: 'CDS Runtime',
-      value: runtimeReady ? runtimeDiagnostics.adapterMode : '待配置',
-      detail: activeRuntimeProfile ? `${runtimeDiagnostics.adapter} · ${profileSummary(activeRuntimeProfile)}` : '选择模型和 API key',
+      value: activeRuntimeProfileWarning ? '模型需调整' : runtimeReady ? runtimeDiagnostics.adapterMode : '待配置',
+      detail: activeRuntimeProfileWarning || (activeRuntimeProfile ? `${runtimeDiagnostics.adapter} · ${profileSummary(activeRuntimeProfile)}` : '选择模型和 API key'),
       icon: Server,
-      active: runtimeReady,
+      state: activeRuntimeProfileWarning ? 'warn' : runtimeReady ? 'pass' : 'pending',
     },
     {
       label: 'Worker Sandbox',
       value: activeSession ? formatSessionResourcePolicy(activeSession) : formatResourcePolicy(activeRuntimeProfile),
       detail: activeConnection?.partnerName || activeConnection?.partnerId || '等待 CDS 授权连接',
       icon: Cpu,
-      active: Boolean(activeSession && ['creating', 'running'].includes(activeSession.status)),
+      state: activeSession && ['creating', 'running'].includes(activeSession.status) ? 'pass' : 'pending',
     },
     {
       label: 'PR / 证据',
       value: gitContext.prUrl || prArtifact ? '已有 PR 证据' : `${metrics.artifactCount} 个产物`,
       detail: `${metrics.eventCount} 事件 / ${metrics.toolEvents} 工具事件`,
       icon: GitPullRequest,
-      active: Boolean(gitContext.prUrl || prArtifact || metrics.artifactCount > 0),
+      state: gitContext.prUrl || prArtifact || metrics.artifactCount > 0 ? 'pass' : 'pending',
     },
   ];
 
@@ -1397,26 +1398,28 @@ export default function CdsAgentPage() {
         <div className="relative grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           {runwaySteps.map((step, index) => {
             const Icon = step.icon;
+            const isPass = step.state === 'pass';
+            const isWarn = step.state === 'warn';
             return (
               <div
                 key={step.label}
                 className="relative min-h-[100px] rounded-lg p-3"
                 style={{
-                  background: step.active ? 'rgba(34,197,94,0.08)' : 'rgba(15,23,42,0.92)',
-                  border: step.active ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(148,163,184,0.14)',
+                  background: isPass ? 'rgba(34,197,94,0.08)' : isWarn ? 'rgba(245,158,11,0.1)' : 'rgba(15,23,42,0.92)',
+                  border: isPass ? '1px solid rgba(34,197,94,0.28)' : isWarn ? '1px solid rgba(245,158,11,0.32)' : '1px solid rgba(148,163,184,0.14)',
                 }}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-white/48">{step.label}</span>
                   <span
                     className="inline-flex h-7 w-7 items-center justify-center rounded-md"
-                    style={{ background: step.active ? 'rgba(34,197,94,0.13)' : 'rgba(148,163,184,0.08)' }}
+                    style={{ background: isPass ? 'rgba(34,197,94,0.13)' : isWarn ? 'rgba(245,158,11,0.16)' : 'rgba(148,163,184,0.08)' }}
                   >
-                    <Icon size={14} className={step.active ? 'text-emerald-300/85' : 'text-white/36'} />
+                    <Icon size={14} className={isPass ? 'text-emerald-300/85' : isWarn ? 'text-amber-200/85' : 'text-white/36'} />
                   </span>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
-                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: step.active ? 'rgba(34,197,94,0.2)' : 'rgba(148,163,184,0.12)', color: step.active ? 'rgba(134,239,172,0.95)' : 'rgba(148,163,184,0.9)' }}>
+                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold" style={{ background: isPass ? 'rgba(34,197,94,0.2)' : isWarn ? 'rgba(245,158,11,0.2)' : 'rgba(148,163,184,0.12)', color: isPass ? 'rgba(134,239,172,0.95)' : isWarn ? 'rgba(253,230,138,0.95)' : 'rgba(148,163,184,0.9)' }}>
                     {index + 1}
                   </span>
                   <div className="min-w-0 truncate text-sm font-semibold text-white/82">{step.value}</div>
