@@ -1,6 +1,6 @@
 # CDS Agent 工作台完全可用路线 · 计划
 
-> **版本**：v2.1 | **日期**：2026-05-17 | **状态**：MVP 已跑通，生产级限制已重新标注
+> **版本**：v2.2 | **日期**：2026-05-17 | **状态**：MVP 已跑通，官方 SDK adapter 迁移和商业级门禁已重新标注
 
 ## 1. 目标
 
@@ -18,10 +18,12 @@
 
 2026-05-17 校准：
 
-- 文档中的 `claude-sdk` 是历史 runtime 名，不代表完整官方 Claude Code SDK / Claude Agent SDK 接入。
-- 当前实现使用官方 `anthropic` Python SDK，但 agent loop、sidecar 协议、工具审批、repo/PR/Bridge 工具、MAP/CDS 事件转译均为本仓库自研。
-- A10 证明 MVP 链路能完成一次真实自巡检 PR；它不等于生产级能力全部完成。
-- 生产级剩余项包括：后台 run + 真 SSE、停止取消 sidecar run、事件分页/证据包、长命令后台化、其他仓库 workspace 产品化、PR draft/ready 策略。
+- `claude-sdk` 是历史 runtime 名；新的代码审查目标路径是官方 `claude-agent-sdk`。
+- MAP/CDS 必须继续保留控制面职责：登录、连接、workspace、profile、审批、事件、日志、产物、诊断和视觉调试。
+- 自研 agent loop 必须压缩为官方 SDK adapter；除非官方 SDK 没有实现，否则不要继续扩展 legacy sidecar loop。
+- 当前可验证证据是：runtime pool 能发现 `loopOwner=claude-agent-sdk`，profile preflight 能阻断不兼容默认 profile，官方模板和兼容矩阵由后端提供。
+- 当前不可宣称完成的是：远程 preview 还没有配置真实 Anthropic/Claude-compatible 默认 profile，因此 S1/S2/S3 provider run 仍被门禁跳过。
+- A10 证明旧 MVP 链路能完成一次真实自巡检 PR；它不等于官方 SDK adapter 商业级能力全部完成。
 
 ## 2. 完成标准
 
@@ -62,6 +64,46 @@
 | 恢复/继续 | session resume | MAP 会话恢复、CDS worker reconnect |
 
 第一版不追求一次补齐 PR 创建、GitHub Review、完整 IDE 体验；第一版必须先把“远程会话能启动、能对话、能看到过程、能停止”跑通。
+
+## 3.1 官方 SDK 收敛原则
+
+目标不是把 MAP/CDS 做成另一个 Agent SDK，而是把它做成控制面和可观察性层。
+
+| 能力 | 默认归属 | MAP/CDS 允许保留的部分 |
+| --- | --- | --- |
+| Agent turn loop | 官方 `claude-agent-sdk` | adapter lifecycle、runId 映射、错误归档 |
+| 上下文和代码工具 | 官方 SDK | workspace 准备、仓库授权、路径边界 |
+| 权限回调 | 官方 SDK callback | MAP approval UI、审计、允许/拒绝结果持久化 |
+| Stop/cancel | 官方 SDK interrupt/cancel | MAP stop API、状态机、超时和日志证据 |
+| 事件流 | 官方 SDK stream | MAP/CDS 事件标准化、afterSeq 续读、run bundle |
+| Profile/provider | Anthropic/Claude-compatible profile | 模板、key 加密、兼容性 preflight |
+| 其他非代码智能体 | 各自业务链路 | 不因 CDS Agent sidecar pool 不健康而失败 |
+
+兼容性结论：
+
+- `legacy-sidecar` 只保留为显式 fallback，不能继续扩大功能面。
+- OpenAI-compatible、OpenRouter、DeepSeek profile 可以继续服务其他文本/结构化智能体，但不能直接作为 `claude-agent-sdk` 默认 profile。
+- Codex-like adapter 目前是 `planned-not-routable`；没有官方可路由实现和明确权限/事件/cancel 映射前，不接入代码审查默认路径。
+- PRD/Defect/Literary/Visual 等非代码智能体不能被强制迁入 Claude Agent SDK sidecar，否则会引入 workspace、审批、长任务和 provider 兼容性副作用。
+
+## 3.2 下一周期最小开发计划
+
+下一周期只关闭“上手就能真实审查代码”的硬门禁，不扩展新功能。
+
+| 顺序 | 任务 | 完成证据 |
+| --- | --- | --- |
+| N1 | 用 Anthropic 官方模板创建默认 runtime profile，并填入真实 API key | readiness R1 pass，`compatibleWithDesiredRuntimeAdapter=true` |
+| N2 | 运行 S1 只读审查当前仓库 | 远程 session 有 assistant 结果、repo/ref/workspace 证据，无文件变更 |
+| N3 | 运行 S2 工具审批拒绝链路 | 页面出现 MAP approval，拒绝后有 `tool_result` 证据 |
+| N4 | 运行 S3 Stop/cancel 链路 | session 进入 stopped/stopping，并有 cancel/interrupt 事件 |
+| N5 | 捕获远程页面视觉证据 | `/cds-agent?sessionId=...` 显示 sessionId、traceId、adapter、loop owner、workspace、last event/error |
+| N6 | 复跑非代码智能体冒烟 | PRD/Defect/Report 不受 CDS Agent runtime pool 影响 |
+
+本周期不做：
+
+- 不把 OpenAI-compatible profile 硬适配给 Claude Agent SDK。
+- 不把 PRD/Defect/Literary/Visual 强迁到 code sidecar。
+- 不在没有 S1/S2/S3 证据时宣称商业级完成。
 
 ## 4. 总体架构
 

@@ -1,6 +1,6 @@
 # CDS Agent 运行手册 · 指南
 
-> **版本**：v1.2 | **日期**：2026-05-17 | **状态**：active（MVP 可用，生产级限制已标注）
+> **版本**：v1.3 | **日期**：2026-05-17 | **状态**：active（官方 SDK adapter 路径已标注，商业级门禁未全部关闭）
 
 ## 服务组成
 
@@ -10,13 +10,14 @@
 | `prd-api` | long token 保存、会话持久化、事件代理、runtime profile 加密 |
 | `cds` | 创建远程 runtime、执行消息、输出事件和日志 |
 | MongoDB | 保存连接、profile、session、event、hook |
-| runtime 容器或 worker | 执行 Claude sidecar、Codex-like 或 fake runtime |
+| runtime 容器或 worker | 执行官方 SDK sidecar、legacy sidecar 或 fake runtime |
 
 命名边界：
 
-- `claude-sdk` 是历史配置名，当前实现不是完整官方 Claude Code SDK / Claude Agent SDK。
-- sidecar 使用官方 `anthropic` Python SDK；agent loop、审批、repo/PR/Bridge 工具和 MAP/CDS 事件转译由本仓库维护。
-- `claude-agent-sdk` adapter seam 已存在，但真实远程 official SDK run 依赖 MAP 能发现 healthy CDS sidecar runtime pool；恢复步骤见 `doc/guide.cds-agent-runtime-pool-recovery.md`。
+- `claude-sdk` 是历史配置名；新的代码审查目标路径是 `claude-agent-sdk`。
+- `claude-agent-sdk` 是官方 Claude Agent SDK；本仓库不自研这层 agent turn loop，只维护 thin adapter、MAP/CDS 控制面、审批、事件、日志和 workspace 入口。
+- `legacy-sidecar` 是兼容 fallback，只能显式使用，不能作为“官方 SDK 已接入”的证据。
+- 真实远程 official SDK run 依赖 MAP 能发现 healthy CDS sidecar runtime pool；恢复步骤见 `doc/guide.cds-agent-runtime-pool-recovery.md`。
 
 ## 部署后检查
 
@@ -26,8 +27,10 @@
 4. 主分支预览域名可打开。
 5. 从真实路径进入：登录 -> 左侧设置 -> 基础设施服务。
 6. 授权 CDS 后状态为 `active`。
-7. 新建模型运行配置。
-8. 从左侧导航进入 `CDS Agent`，新建会话并发送消息。
+7. 使用 Anthropic 官方模板新建默认模型运行配置。
+8. 确认 runtime-status 显示 `compatibleWithDesiredRuntimeAdapter=true`。
+9. 从左侧导航进入 `CDS Agent`，新建会话并发送只读审查消息。
+10. 跑 S1/S2/S3 smoke 后再宣称“上手可用”。
 
 ## 401 或对端不可达
 
@@ -58,20 +61,43 @@
 - 创建会话失败，提示没有模型运行配置。
 - runtime 启动失败。
 - 只有 fake 输出。
+- 页面或 API 返回 `runtime_profile_incompatible`。
 
 诊断：
 
 1. 确认至少存在一个默认 runtime profile。
-2. 确认 `baseUrl` 是 http 或 https。
+2. 确认 profile 使用 Anthropic/Claude-compatible 协议、baseUrl、model 和 API key。
 3. 确认 API key 已保存且后端可解密。
-4. 确认 runtime 类型与 CDS 支持的 adapter 一致。
-5. 确认 fake runtime 没有被误当成最终验收。
+4. 确认 runtime-status 的 `desiredRuntimeAdapter=claude-agent-sdk`。
+5. 确认 `compatibleWithDesiredRuntimeAdapter=true`。
+6. 确认 fake 或 OpenAI-compatible profile 没有被误当成最终验收。
 
 处理：
 
-1. 新建或修复 runtime profile。
-2. 使用只读任务测试真实 runtime。
-3. 在日志里确认请求进入真实 adapter。
+1. 优先用 Anthropic 官方模板新建或修复 runtime profile。
+2. 运行 `bash scripts/smoke-cds-agent-commercial-readiness.sh` 查看 R0/R1/T1/V1。
+3. 配置真实 key 后，用 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 跑 S1/S2/S3。
+4. 在日志里确认请求进入 `claude-agent-sdk`，而不是 legacy/fake adapter。
+
+## 商业级就绪门禁
+
+不要只看 `smoke-all.sh` 退出码。默认 smoke-all 会把尚未配置真实 provider 的 S1/S2/S3 识别为 readiness/skip，以便部署不断；商业级验收必须单独看 readiness pending。
+
+| 门禁 | 证明什么 | 命令或入口 |
+| --- | --- | --- |
+| R0 | MAP/CDS/sidecar pool 可路由官方 SDK | `bash scripts/doctor-cds-agent-runtime.sh` |
+| R1 | 默认 profile 兼容官方 SDK 且有 key | `/cds-agent` Runtime 调试面板或 readiness audit |
+| T1 | 官方模板和兼容矩阵由后端提供 | `bash scripts/smoke-cds-agent-profile-templates.sh` |
+| S1 | 官方 SDK 能真实只读审查仓库 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh` |
+| S2 | 危险工具能回到 MAP 审批 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh` |
+| S3 | Stop 能触达底层 SDK run | 同 S2 controls 脚本 |
+| V1 | 页面可观察真实运行态 | 打开 `/cds-agent?sessionId=...` 截图 |
+
+需要硬失败时使用：
+
+```bash
+SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
+```
 
 ## 会话无法恢复
 
@@ -125,7 +151,7 @@
 诊断：
 
 1. 当前 `Stop` 会停止 MAP session，并通过 adapter best-effort 调 sidecar cancel。
-2. session 已持久化 `CurrentRuntimeRunId`，但真实 official SDK 路径仍必须验证是否调用到 `ClaudeSDKClient.interrupt()`。
+2. session 已持久化 `CurrentRuntimeRunId`；official SDK 路径必须通过 S3 smoke 验证是否调用到底层 interrupt/cancel。
 
 处理：
 

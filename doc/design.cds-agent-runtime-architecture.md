@@ -74,7 +74,7 @@ flowchart LR
 | 系统级 CDS 授权 | 已完成 | 一次授权后生成长期 token，10 分钟只属于 pairing token，不属于 long token |
 | MAP Agent 页面 | 已完成 | 支持会话、模型配置、事件、工具、日志、产物、远程浏览器入口 |
 | OpenAI-compatible 模型 | 已完成 | 可以配置 baseUrl / model / API key |
-| Claude sidecar runtime | 已跑通 | A10 用真实模型完成了仓库巡检并创建 PR；当前是官方 `anthropic` Python SDK + 自研 sidecar loop，不是完整官方 Claude Code SDK 接入 |
+| Claude Agent SDK runtime | adapter 已跑通，provider 门禁待关闭 | runtime pool 已能发现 `loopOwner=claude-agent-sdk`；A10 证明旧 MVP 能真实巡检并创建 PR；商业级完成还需真实 Anthropic/Claude-compatible profile 跑通 S1/S2/S3 |
 | 工具审批 | 已完成基础链路 | 危险工具可进入审批事件，结果可追踪 |
 | 远程浏览器 Bridge | 已完成基础链路 | 可以通过 CDS 预览页面操作远程浏览器 |
 | 自巡检 PR | 已完成一次 | PR #617 证明“远程 Agent 能读仓库、跑测试、提交 PR” |
@@ -82,13 +82,13 @@ flowchart LR
 
 ## 4.1 官方 SDK 与自研边界
 
-当前实现不要再笼统称为“官方 Claude SDK 完整接入”。准确边界如下：
+当前实现不要再笼统称为“Claude sidecar”。准确边界如下：
 
 | 能力 | 来源 | 是否应继续自研 | 说明 |
 |---|---|---|---|
-| Claude API client / streaming 基础能力 | 官方 `anthropic` Python SDK | 否 | sidecar 通过 `AsyncAnthropic.messages.stream` 调模型 |
-| 多轮工具循环 | 本仓库 `claude-sdk-sidecar/app/agent_loop.py` | 中期可替换 | 当前自研处理 tool_use、tool_result、usage、history |
-| Sidecar HTTP/SSE 协议 | 本仓库 | 需要保留或适配 | 用于跨主机 runtime 调度和事件转译 |
+| Agent turn loop / 上下文 / Claude Code 工具 | 官方 `claude-agent-sdk` | 否 | 新代码审查默认路径；本仓库只保留 adapter 映射 |
+| legacy 多轮工具循环 | 本仓库 `claude-sdk-sidecar/app/agent_loop.py` | 不再扩展 | 只作为显式 fallback，不能作为新能力默认路径 |
+| Sidecar HTTP/SSE 协议 | 本仓库 | 需要保留为薄传输层 | 用于跨主机 runtime 调度、事件转译和 cancel 映射 |
 | 工具审批 | MAP/prd-api 自研 | 必须保留 | 用户权限、危险操作审批和审计归 MAP 管 |
 | repo / PR / browser 工具 | MAP/CDS 自研 | 必须保留 | 与 sandbox、GitHub 凭据、Bridge、产物面板绑定 |
 | Runtime pool / long token / CDS 授权 | CDS/MAP 自研 | 必须保留 | 属于基础设施控制面 |
@@ -178,9 +178,9 @@ sequenceDiagram
 
 | 问题 | 影响 | 当前处理 | 后续动作 |
 |---|---|---|---|
-| `claude-sdk` 命名误导 | 容易误以为完整接入官方 Claude Code SDK | 文档 v2026-05-17 已校准为官方 `anthropic` Python SDK + 自研 sidecar loop | UI 和配置说明逐步改成 `Claude sidecar runtime` |
+| `claude-sdk` 命名误导 | 容易混淆历史 runtime、legacy sidecar 和官方 Agent SDK adapter | 文档 v2026-05-17 已校准为官方 `claude-agent-sdk` 是目标路径，legacy sidecar 只作 fallback | UI 和配置说明逐步改成 `Claude Agent SDK runtime`，并显示 profile 兼容性 |
 | 页面是假实时 | 长任务时用户感知像卡住，不能可靠看到每个增量 | 前端 3 秒轮询刷新运行中会话 | 改成后台 run + 真 SSE / afterSeq 增量订阅 |
-| 停止不等于取消 sidecar run | 用户点停止后模型调用可能继续消耗资源 | 当前只停 CDS session | 持久化 runId，接 `/v1/agent/cancel/{runId}` |
+| 停止必须证明触达 SDK run | 用户点停止后模型调用可能继续消耗资源 | 已有 runId/cancel 映射和 S3 smoke 入口 | 配置真实 provider 后用 S3 证明 interrupt/cancel 事件 |
 | 事件默认最多 500 条 | 大型审查、PR 创建链路会丢后半段证据 | 当前页面拉 `limit=500` | 事件分页、增量去重、证据包导出 |
 | `repo_run_command` 180 秒上限 | 大型测试和 build 容易超时 | 当前适合短命令和最小测试 | 长命令后台化，stdout/stderr 增量事件 |
 | 其他仓库工作区不产品化 | 用户以为输入 URL 就能审任意仓库 | 当前靠 runtime 环境变量 / workspace | UI 增加 repo/branch 选择和 workspace 准备状态 |
