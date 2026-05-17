@@ -227,7 +227,8 @@ function shortId(value?: string | null, head = 12): string {
   return value.length > head + 4 ? `${value.slice(0, head)}...${value.slice(-4)}` : value;
 }
 
-function readString(payload: Record<string, unknown>, key: string): string {
+function readString(payload: Record<string, unknown> | null | undefined, key: string): string {
+  if (!payload) return '';
   const value = payload[key];
   return typeof value === 'string' && value.trim() ? value.trim() : '';
 }
@@ -236,6 +237,12 @@ function readBoolean(payload: Record<string, unknown> | null, key: string): bool
   if (!payload) return null;
   const value = payload[key];
   return typeof value === 'boolean' ? value : null;
+}
+
+function readStringArray(payload: Record<string, unknown> | null, key: string): string[] {
+  if (!payload) return [];
+  const value = payload[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
 }
 
 function buildPromptWithContext(
@@ -772,6 +779,25 @@ export default function CdsAgentPage() {
       || readString(payload, 'loopOwner')
     ));
     const latestRuntimeContent = latestRuntimePayload ? parseJsonString(latestRuntimePayload.content) : null;
+    const latestWorkspaceErrorPayload = payloads.find((payload) => (
+      readString(payload, 'errorCode') === 'workspace_prepare_failed'
+      || readString(payload, 'error_code') === 'workspace_prepare_failed'
+      || readString(payload, 'workspaceErrorCode')
+      || readString(parseJsonString(payload.content), 'workspaceErrorCode')
+    ));
+    const latestWorkspaceErrorContent = latestWorkspaceErrorPayload ? parseJsonString(latestWorkspaceErrorPayload.content) : null;
+    const workspaceErrorCode = latestWorkspaceErrorPayload
+      ? readString(latestWorkspaceErrorPayload, 'workspaceErrorCode') || readString(latestWorkspaceErrorContent, 'workspaceErrorCode')
+      : '';
+    const workspaceErrorActions = latestWorkspaceErrorPayload
+      ? [
+          ...readStringArray(latestWorkspaceErrorPayload, 'nextActions'),
+          ...readStringArray(latestWorkspaceErrorContent, 'nextActions'),
+        ]
+      : [];
+    const workspaceErrorState = workspaceErrorCode
+      ? `${workspaceErrorCode}${workspaceErrorActions[0] ? ` · ${workspaceErrorActions[0]}` : ''}`
+      : '无 workspace 错误';
     const primaryAdapterDiagnostics = primaryRuntime ? parseJsonString(primaryRuntime.adapterDiagnosticsJson) : null;
     const adapter = activeSession?.runtimeAdapter
       || (latestRuntimePayload ? readString(latestRuntimePayload, 'runtimeAdapter') : '')
@@ -932,6 +958,7 @@ export default function CdsAgentPage() {
         ['Workspace prep', workspacePrepState],
         ['Workspace root', workspaceRoot || '未上报'],
         ['Private repo auth', privateRepositoryAuthConfigured === true ? '已配置' : privateRepositoryAuthConfigured === false ? '未配置' : '未上报'],
+        ['Workspace error', workspaceErrorState],
         ['Run ID', shortId(runId)],
         ['Instance', instance || '未上报'],
         ['Source', source || '无 runtime 事件'],
@@ -953,6 +980,19 @@ export default function CdsAgentPage() {
       nextActions,
       readyzBlockers,
       readyzNextActions,
+      workspaceError: workspaceErrorCode ? {
+        code: workspaceErrorCode,
+        nextActions: workspaceErrorActions,
+        gitRepository: latestWorkspaceErrorPayload
+          ? readString(latestWorkspaceErrorPayload, 'gitRepository') || readString(latestWorkspaceErrorContent, 'gitRepository')
+          : '',
+        gitRef: latestWorkspaceErrorPayload
+          ? readString(latestWorkspaceErrorPayload, 'gitRef') || readString(latestWorkspaceErrorContent, 'gitRef')
+          : '',
+        privateRepositoryAuthConfigured: latestWorkspaceErrorPayload
+          ? readBoolean(latestWorkspaceErrorPayload, 'privateRepositoryAuthConfigured') ?? readBoolean(latestWorkspaceErrorContent, 'privateRepositoryAuthConfigured')
+          : null,
+      } : null,
     };
   }, [activeProfile, activeSession, activeSessionProfile, eventStreamHealthy, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const sidecarInstanceSummaries = useMemo(() => (
@@ -1033,6 +1073,7 @@ export default function CdsAgentPage() {
       nextActions: runtimeDiagnostics.nextActions,
       readyzBlockers: runtimeDiagnostics.readyzBlockers,
       readyzNextActions: runtimeDiagnostics.readyzNextActions,
+      workspaceError: runtimeDiagnostics.workspaceError,
     },
   }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
