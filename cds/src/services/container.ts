@@ -398,16 +398,18 @@ export class ContainerService {
   ): Promise<void> {
     if (aliases.length === 0) return;
     const removed = new Set<string>();
-    const removeStale = async (name: string, staleAliases: string[], source: string): Promise<void> => {
-      if (name === service.containerName || removed.has(name)) return;
-      onOutput?.(`── 清理同 branch/profile 的旧 alias endpoint(${source}): ${name} (${staleAliases.join(', ')}) ──\n`);
-      const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(name)}`);
+    const removeStale = async (name: string, staleAliases: string[], source: string, id?: string): Promise<void> => {
+      const cleanName = name.replace(/^\/+/, '');
+      const target = id || cleanName;
+      if (cleanName === service.containerName || removed.has(target)) return;
+      onOutput?.(`── 清理同 alias 的旧 endpoint(${source}): ${cleanName} (${staleAliases.join(', ')}) ──\n`);
+      const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(target)}`);
       if (rm.exitCode !== 0) {
         await this.shell.exec(
-          `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(name)}`,
+          `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(target)}`,
         );
       }
-      removed.add(name);
+      removed.add(target);
     };
 
     const list = await this.shell.exec(
@@ -444,6 +446,36 @@ export class ContainerService {
       }
     }
 
+    const networkContainers = await this.shell.exec(
+      `docker ps -aq --filter ${this.shellQuote(`network=${network}`)}`,
+    );
+    if (networkContainers.exitCode === 0 && networkContainers.stdout.trim()) {
+      const format = [
+        '{{.Id}}',
+        '{{.Name}}',
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
+      ].join('|');
+      for (const id of networkContainers.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
+        const inspect = await this.shell.exec(
+          `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(id)}`,
+        );
+        if (inspect.exitCode !== 0) continue;
+        const [containerId = id, name = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
+        const cleanName = name.replace(/^\/+/, '');
+        if (!cleanName || cleanName === service.containerName || removed.has(containerId)) continue;
+        let staleAliases: string[] = [];
+        try {
+          const parsed = JSON.parse(aliasesJson);
+          if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
+        } catch {
+          staleAliases = [];
+        }
+        if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+        await removeStale(cleanName, staleAliases, 'network-containers', containerId);
+      }
+    }
+
     // Older CDS-created containers may not have cds.* labels. Docker DNS is
     // driven by network endpoints, and a service alias cannot be shared on the
     // same project network without round-robin responses. Inspect the network
@@ -465,13 +497,14 @@ export class ContainerService {
 
     for (const endpoint of Object.values(containers)) {
       const name = typeof endpoint.Name === 'string' ? endpoint.Name : '';
-      if (!name || name === service.containerName || removed.has(name)) continue;
+      const cleanName = name.replace(/^\/+/, '');
+      if (!cleanName || cleanName === service.containerName || removed.has(cleanName)) continue;
       const staleAliases = Array.isArray(endpoint.Aliases)
         ? endpoint.Aliases.filter((item): item is string => typeof item === 'string')
         : [];
       if (!staleAliases.some((item) => aliasSet.has(item))) continue;
 
-      await removeStale(name, staleAliases, 'network');
+      await removeStale(cleanName, staleAliases, 'network');
     }
   }
 

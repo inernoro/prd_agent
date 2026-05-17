@@ -132,6 +132,26 @@ describe('ContainerService', () => {
     });
 
     it('should remove unlabeled stale network endpoints with the same service alias', async () => {
+      mock.addResponsePattern(/docker ps -aq --filter 'network=cds-network'/, () => ({
+        stdout: ['stale-id', 'other-branch-id', 'current-id'].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*stale-id/, () => ({
+        stdout: 'stale-id|/cds-feature-a-api-stale|["api","cds-feature-a-api-stale"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*other-branch-id/, () => ({
+        stdout: 'other-branch-id|/cds-feature-b-api-stale|["api","cds-feature-b-api-stale"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*current-id/, () => ({
+        stdout: 'current-id|/cds-feature-a-api|["api","cds-feature-a-api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
       mock.addResponsePattern(/docker network inspect --format=.*cds-network/, () => ({
         stdout: JSON.stringify({
           stale: {
@@ -162,9 +182,9 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), makeProfile(), makeService());
 
       const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
-      expect(rmCommands.some(c => c.includes("'cds-feature-a-api-stale'"))).toBe(true);
-      expect(rmCommands.some(c => c.includes("'cds-feature-b-api-stale'"))).toBe(true);
-      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'cds-feature-a-api-stale'"));
+      expect(rmCommands.some(c => c.includes("'stale-id'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'other-branch-id'"))).toBe(true);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'stale-id'"));
       const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
       expect(staleRmIndex).toBeGreaterThanOrEqual(0);
       expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
