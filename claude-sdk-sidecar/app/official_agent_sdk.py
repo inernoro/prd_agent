@@ -177,6 +177,30 @@ def _workspace_slug(repo_slug: str, git_ref: str | None) -> str:
     return f"{safe}-{digest}"
 
 
+def _github_token() -> str | None:
+    for name in ("SIDECAR_GITHUB_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _git_auth_env() -> dict[str, str] | None:
+    token = _github_token()
+    if not token:
+        return None
+
+    env = os.environ.copy()
+    try:
+        config_count = int(env.get("GIT_CONFIG_COUNT", "0"))
+    except ValueError:
+        config_count = 0
+    env["GIT_CONFIG_COUNT"] = str(config_count + 1)
+    env[f"GIT_CONFIG_KEY_{config_count}"] = "http.https://github.com/.extraheader"
+    env[f"GIT_CONFIG_VALUE_{config_count}"] = f"AUTHORIZATION: bearer {token}"
+    return env
+
+
 def workspace_diagnostics() -> dict[str, Any]:
     root = Path(os.environ.get("SIDECAR_WORKSPACES_ROOT", "/tmp/cds-agent-workspaces")).expanduser()
     return {
@@ -186,6 +210,8 @@ def workspace_diagnostics() -> dict[str, Any]:
         "gitInstalled": shutil.which("git") is not None,
         "supportedRepositoryHosts": ["github.com"],
         "supportedRepositoryFormats": ["owner/repo", "https://github.com/owner/repo"],
+        "privateRepositoryAuthConfigured": _github_token() is not None,
+        "privateRepositoryAuthSources": ["SIDECAR_GITHUB_TOKEN", "GITHUB_TOKEN"],
         "workspaceLock": "in-process",
     }
 
@@ -199,11 +225,12 @@ def _workspace_lock(target: Path) -> asyncio.Lock:
     return lock
 
 
-async def _run_git(args: list[str], cwd: Path | None = None) -> str:
+async def _run_git(args: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     proc = await asyncio.create_subprocess_exec(
         "git",
         *args,
         cwd=str(cwd) if cwd else None,
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -225,6 +252,7 @@ async def _prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, di
     git_ref = _normalize_git_ref(req.git_ref)
     root = Path(os.environ.get("SIDECAR_WORKSPACES_ROOT", "/tmp/cds-agent-workspaces")).expanduser()
     target = root / _workspace_slug(repo_slug, git_ref)
+    git_auth_env = _git_auth_env()
     metadata: dict[str, Any] = {
         "workspacePrepared": True,
         "workspaceSource": "git",
@@ -232,6 +260,7 @@ async def _prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, di
         "gitRef": git_ref,
         "workspaceRoot": str(target),
         "workspaceLock": "in-process",
+        "privateRepositoryAuthConfigured": git_auth_env is not None,
     }
 
     root.mkdir(parents=True, exist_ok=True)
@@ -239,10 +268,10 @@ async def _prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, di
         if (target / ".git").exists():
             metadata["workspaceAction"] = "fetch"
             if git_ref:
-                await _run_git(["fetch", "--depth", "1", "origin", git_ref], cwd=target)
+                await _run_git(["fetch", "--depth", "1", "origin", git_ref], cwd=target, env=git_auth_env)
                 await _run_git(["checkout", "--force", "FETCH_HEAD"], cwd=target)
             else:
-                await _run_git(["fetch", "--all", "--prune"], cwd=target)
+                await _run_git(["fetch", "--all", "--prune"], cwd=target, env=git_auth_env)
         else:
             metadata["workspaceAction"] = "clone"
             if target.exists() and any(target.iterdir()):
@@ -251,7 +280,7 @@ async def _prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, di
             if git_ref:
                 clone_args.extend(["--branch", git_ref])
             clone_args.extend([clone_url, str(target)])
-            await _run_git(clone_args)
+            await _run_git(clone_args, env=git_auth_env)
 
         commit = await _run_git(["rev-parse", "--short", "HEAD"], cwd=target)
     metadata["gitCommit"] = commit

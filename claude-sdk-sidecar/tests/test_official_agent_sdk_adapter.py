@@ -16,6 +16,7 @@ from app.schemas import SidecarMessage, SidecarRunRequest  # noqa: E402
 
 LAST_OPTIONS: Any = None
 GIT_COMMANDS: list[list[str]] = []
+GIT_ENVS: list[dict[str, str] | None] = []
 
 
 class FakeResultMessage:
@@ -76,7 +77,7 @@ class FakeGitProcess:
         self.returncode = 0
 
     async def communicate(self) -> tuple[bytes, bytes]:
-        if self.args[:2] == ["git", "clone"]:
+        if len(self.args) > 1 and self.args[1] == "clone":
             target = Path(self.args[-1])
             target.mkdir(parents=True, exist_ok=True)
             (target / ".git").mkdir(exist_ok=True)
@@ -86,8 +87,9 @@ class FakeGitProcess:
         return b"", b""
 
 
-async def fake_git_exec(*args: Any, cwd: str | None = None, **_: Any) -> FakeGitProcess:
+async def fake_git_exec(*args: Any, cwd: str | None = None, env: dict[str, str] | None = None, **_: Any) -> FakeGitProcess:
     GIT_COMMANDS.append([str(item) for item in args])
+    GIT_ENVS.append(env)
     return FakeGitProcess(args, cwd=cwd)
 
 
@@ -149,14 +151,17 @@ def build_request() -> SidecarRunRequest:
 
 class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        global LAST_OPTIONS, GIT_COMMANDS
+        global LAST_OPTIONS, GIT_COMMANDS, GIT_ENVS
         LAST_OPTIONS = None
         GIT_COMMANDS = []
+        GIT_ENVS = []
         install_fake_sdk()
         os.environ.pop("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", None)
         os.environ.pop("CLAUDE_AGENT_SDK_PERMISSION_MODE", None)
         os.environ.pop("AGENT_WORKSPACE_ROOT", None)
         os.environ.pop("SIDECAR_WORKSPACES_ROOT", None)
+        os.environ.pop("SIDECAR_GITHUB_TOKEN", None)
+        os.environ.pop("GITHUB_TOKEN", None)
 
     async def test_streams_runtime_text_usage_and_done(self) -> None:
         events = [event async for event in run_official_agent(build_request())]
@@ -325,6 +330,27 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(GIT_COMMANDS[0][:5], ["git", "clone", "--depth", "1", "--branch"])
         self.assertEqual(GIT_COMMANDS[0][5], "main")
 
+    async def test_git_repository_uses_private_github_token_without_leaking_to_command_or_events(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            os.environ["SIDECAR_GITHUB_TOKEN"] = "ghp-private-test"
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/private_repo",
+                "git_ref": "main",
+            })
+
+            with patch("app.official_agent_sdk.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspace"]["privateRepositoryAuthConfigured"], True)
+        self.assertNotIn("ghp-private-test", str(first.content))
+        self.assertNotIn("ghp-private-test", " ".join(GIT_COMMANDS[0]))
+        self.assertEqual(GIT_ENVS[0]["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader")
+        self.assertEqual(GIT_ENVS[0]["GIT_CONFIG_VALUE_0"], "AUTHORIZATION: bearer ghp-private-test")
+
     async def test_existing_git_workspace_fetches_under_same_workspace_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspaces_root:
             os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
@@ -382,6 +408,16 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics["workspaceLock"], "in-process")
         self.assertIn("github.com", diagnostics["supportedRepositoryHosts"])
         self.assertIn("owner/repo", diagnostics["supportedRepositoryFormats"])
+        self.assertEqual(diagnostics["privateRepositoryAuthConfigured"], False)
+
+    def test_workspace_diagnostics_reports_private_github_auth_without_token_value(self) -> None:
+        os.environ["GITHUB_TOKEN"] = "ghp-diagnostic-test"
+
+        diagnostics = workspace_diagnostics()
+
+        self.assertEqual(diagnostics["privateRepositoryAuthConfigured"], True)
+        self.assertIn("GITHUB_TOKEN", diagnostics["privateRepositoryAuthSources"])
+        self.assertNotIn("ghp-diagnostic-test", str(diagnostics))
 
 
 if __name__ == "__main__":

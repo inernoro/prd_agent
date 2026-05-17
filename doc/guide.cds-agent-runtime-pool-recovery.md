@@ -108,6 +108,14 @@ SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env
 SIDECAR_WORKSPACES_ROOT=/tmp/cds-agent-workspaces
 ```
 
+如果要 smoke 私有 GitHub 仓库，再给 sidecar 配置：
+
+```bash
+SIDECAR_GITHUB_TOKEN=<github-token>
+```
+
+也可以复用环境中的 `GITHUB_TOKEN`。该 token 只用于 GitHub `clone/fetch` 的临时 HTTP header，不会写入 `runtime_init`、remote URL 或诊断包；诊断里只显示 `privateRepositoryAuthConfigured=true/false`。
+
 验证入口仍然是：
 
 ```text
