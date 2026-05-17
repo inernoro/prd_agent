@@ -2638,9 +2638,9 @@ export default function CdsAgentPage() {
                       <div className="mt-3 grid gap-2 xl:grid-cols-2">
                         {runtimeDiagnostics.blockers.length > 0 && (
                           <div className="rounded-md px-3 py-2" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}>
-                            <div className="text-[11px] font-semibold uppercase tracking-normal text-amber-100/60">阻塞项</div>
-                            <div className="mt-1 space-y-1">
-                              {runtimeDiagnostics.blockers.slice(0, 4).map((item) => (
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-amber-100/60">阻塞项 · {runtimeDiagnostics.blockers.length}</div>
+                            <div className="mt-1 max-h-40 space-y-1 overflow-auto pr-1">
+                              {runtimeDiagnostics.blockers.map((item) => (
                                 <div key={item} className="text-xs leading-relaxed text-amber-50/78">{item}</div>
                               ))}
                             </div>
@@ -2648,9 +2648,9 @@ export default function CdsAgentPage() {
                         )}
                         {runtimeDiagnostics.nextActions.length > 0 && (
                           <div className="rounded-md px-3 py-2" style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.2)' }}>
-                            <div className="text-[11px] font-semibold uppercase tracking-normal text-sky-100/60">下一步</div>
-                            <div className="mt-1 space-y-1">
-                              {runtimeDiagnostics.nextActions.slice(0, 4).map((item) => (
+                            <div className="text-[11px] font-semibold uppercase tracking-normal text-sky-100/60">下一步 · {runtimeDiagnostics.nextActions.length}</div>
+                            <div className="mt-1 max-h-40 space-y-1 overflow-auto pr-1">
+                              {runtimeDiagnostics.nextActions.map((item) => (
                                 <div key={item} className="text-xs leading-relaxed text-sky-50/74">{item}</div>
                               ))}
                             </div>
