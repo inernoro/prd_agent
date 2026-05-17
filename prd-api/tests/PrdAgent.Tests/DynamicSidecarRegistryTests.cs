@@ -543,6 +543,62 @@ public class DynamicSidecarRegistryTests
     }
 
     [Fact]
+    public async Task Router_Diagnostics_ShouldPromoteReadyzHealthyInstanceIntoHealthRegistry()
+    {
+        var options = new ClaudeSidecarOptions { Enabled = true };
+        var registry = new FakeDynamicRegistry(new[]
+        {
+            new DynamicSidecarInstance
+            {
+                Name = "manual-official-sdk",
+                BaseUrl = "http://127.0.0.1:7400",
+                Token = "sidecar-token",
+                Source = "static",
+            },
+        });
+        var state = new InstanceStateRegistry();
+        var router = new ClaudeSidecarRouter(
+            new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                {
+                  "ready": true,
+                  "anthropicKey": false,
+                  "providerKeyRequiredForReady": false,
+                  "sidecarToken": true,
+                  "agentAdapter": "claude-agent-sdk",
+                  "adapterDiagnostics": {
+                    "adapter": "claude-agent-sdk",
+                    "ready": true,
+                    "loopOwner": "claude-agent-sdk",
+                    "sdkLoopEnabled": true,
+                    "mapRole": "control-plane",
+                    "cdsRole": "sandbox-runtime",
+                    "missing": []
+                  }
+                }
+                """)
+            }),
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            state,
+            registry,
+            new ConfigurationBuilder().Build(),
+            new HttpContextAccessor(),
+            NullLogger<ClaudeSidecarRouter>.Instance);
+
+        var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
+
+        Assert.True(diagnostics.IsConfigured);
+        Assert.Equal(1, diagnostics.InstanceCount);
+        Assert.Equal(1, diagnostics.HealthyCount);
+        Assert.True(state.IsHealthy("manual-official-sdk"));
+        Assert.True(diagnostics.Instances[0].HealthRegistryHealthy);
+        Assert.True(diagnostics.Instances[0].Ready);
+        Assert.Equal("claude-agent-sdk", diagnostics.Instances[0].LoopOwner);
+        Assert.Empty(diagnostics.Blockers ?? Array.Empty<string>());
+    }
+
+    [Fact]
     public async Task Router_UsesPublicCallbackBaseUrl_ForPairedCdsInstance()
     {
         var options = new ClaudeSidecarOptions

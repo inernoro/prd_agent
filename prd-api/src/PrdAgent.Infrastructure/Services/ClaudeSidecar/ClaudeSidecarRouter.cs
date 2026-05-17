@@ -210,13 +210,23 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
                 var body = await SafeReadString(resp, ct, maxLength: 8_000);
                 var parsed = ParseReadyz(body);
+                var readyzHealthy = resp.IsSuccessStatusCode && parsed.Ready == true;
+                if (readyzHealthy)
+                {
+                    _state.RecordSuccess(instance.Name);
+                }
+                else
+                {
+                    _state.RecordFailure(instance.Name, unhealthyThreshold: 1);
+                }
+
                 results.Add(new SidecarInstanceDiagnostics(
                     instance.Name,
                     instance.BaseUrl,
                     instance.Source,
                     instance.Tags,
                     !string.IsNullOrWhiteSpace(token),
-                    _state.IsHealthy(instance.Name),
+                    readyzHealthy,
                     (int)resp.StatusCode,
                     parsed.Ready,
                     parsed.AnthropicKey,
@@ -238,6 +248,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
+                _state.RecordFailure(instance.Name, unhealthyThreshold: 1);
                 results.Add(new SidecarInstanceDiagnostics(
                     instance.Name,
                     instance.BaseUrl,

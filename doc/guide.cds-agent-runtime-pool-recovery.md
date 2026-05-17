@@ -162,6 +162,8 @@ bash scripts/smoke-cds-agent-runtime-status.sh
 这个脚本不会发起模型 run；它只验证认证、`runtime-status`、实例发现、`healthyCount`
 和 `loopOwner=claude-agent-sdk`。如果这里失败，不要继续跑 S1/S2/S3，先修 sidecar
 discovery、`/readyz` 或 MAP 静态旁路配置。
+`runtime-status` 会主动探测 `/readyz` 并把结果写回 MAP sidecar health registry，因此
+刚启动或刚修复的 sidecar 不需要等待后台健康检查周期结束即可进入 smoke 判定。
 
 验证入口仍然是：
 
