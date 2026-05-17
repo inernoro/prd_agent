@@ -200,12 +200,11 @@ public class HostedSiteService : IHostedSiteService
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
 
-        // 清理旧 COS 文件
-        foreach (var f in site.Files)
-        {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
-        }
+        // P1 + URL 稳定 + 无孤儿：先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用），
+        // 校验通过前绝不写任何 COS 对象。校验失败直接抛错——旧 siteId 前缀文件零改动、
+        // DB 未动、也没有任何 staging 残留，原页面与既有 web-hosting/sites/{siteId}/... URL
+        // 继续可用。校验通过后才写入「稳定的 siteId 前缀」（覆盖同名、URL 不变）。
+        var oldFiles = site.Files ?? new List<HostedSiteFile>();
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
         List<HostedSiteFile> siteFiles;
@@ -214,6 +213,10 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
+            var validationError = ValidateZip(fileBytes);
+            if (validationError != null)
+                throw new InvalidOperationException(validationError);
+            // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
             var result = await ExtractAndUploadZip(siteId, fileBytes);
             if (result.Error != null)
                 throw new InvalidOperationException(result.Error);
@@ -238,6 +241,7 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("仅支持 .html/.htm/.zip 文件");
         }
 
+        // siteId 前缀保持不变 → SiteUrl 稳定，既有书签 / 公开主页 / 知识库引用不会 404
         var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile));
 
         // wrappedAssetType 必须显式覆盖（包括清空）：
@@ -256,6 +260,16 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+
+        // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
+        // 原地覆盖，不能删——否则会删掉刚写入的文件。
+        var newKeys = siteFiles.Select(f => f.CosKey).ToHashSet();
+        foreach (var f in oldFiles)
+        {
+            if (newKeys.Contains(f.CosKey)) continue;
+            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
+        }
 
         return (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
     }
@@ -448,7 +462,8 @@ public class HostedSiteService : IHostedSiteService
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,
         string? password, int expiresInDays,
-        CancellationToken ct)
+        CancellationToken ct = default,
+        string purpose = "share")
     {
         var allIds = shareType == "collection" ? (siteIds ?? new()) : new List<string>();
         if (shareType != "collection")
@@ -466,7 +481,54 @@ public class HostedSiteService : IHostedSiteService
         if (ownedCount != allIds.Count)
             throw new UnauthorizedAccessException("包含非自己的站点");
 
-        // 自动生成分享标题
+        // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
+        // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；
+        // 复用时把有效期刷新为本次所选窗口，保证返回链接的寿命恰好等于用户本次所选
+        // （既不会因旧链接即将过期而"开盖即废"，也不会超出所选窗口而绕过有效期管控）。
+        // Purpose 隔离：visit（站点访问便捷链）与 share（用户分享）是两个独立池，
+        // 复用判定按 Purpose 严格分流——访问流程绝不会匹配/篡改用户主动创建的限期分享。
+        // 旧记录无 Purpose 字段（Mongo 中缺字段），按 share 对待：Ne("visit") 能命中缺字段文档。
+        var effShareType = shareType ?? "single";
+        var effPurpose = string.IsNullOrWhiteSpace(purpose) ? "share" : purpose;
+        var wantAccess = string.IsNullOrWhiteSpace(password) ? "public" : "password";
+        var wantPassword = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
+        var nowUtc = DateTime.UtcNow;
+        var newExpiresAt = expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
+
+        var fb = Builders<WebPageShareLink>.Filter;
+        var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
+            & fb.Eq(x => x.IsRevoked, false)
+            & fb.Eq(x => x.AccessLevel, wantAccess)
+            // 已过期的链接不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
+            // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
+            & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc))
+            & (effShareType == "collection"
+                ? fb.Eq(x => x.ShareType, "collection")
+                : fb.Eq(x => x.ShareType, effShareType) & fb.Eq(x => x.SiteId, siteId))
+            & (effPurpose == "visit"
+                ? fb.Eq(x => x.Purpose, "visit")
+                : fb.Ne(x => x.Purpose, "visit"));
+
+        var reuseCandidates = await _db.WebPageShareLinks.Find(reuseFilter)
+            .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+        WebPageShareLink? reusable;
+        if (effShareType == "collection")
+        {
+            var want = allIds.OrderBy(s => s).ToList();
+            reusable = reuseCandidates.FirstOrDefault(s =>
+            {
+                var have = (s.SiteIds ?? new List<string>()).OrderBy(v => v).ToList();
+                return have.Count == want.Count && have.SequenceEqual(want);
+            });
+        }
+        else
+        {
+            reusable = reuseCandidates.FirstOrDefault();
+        }
+
+        // 标题/描述在复用与新建两条路径上必须一致，且复用时也要刷新——
+        // 否则站点改名或调用方传了新 title/description 后，ViewShareAsync 仍渲染旧值。
         var shareTitle = title?.Trim();
         if (string.IsNullOrWhiteSpace(shareTitle))
         {
@@ -477,36 +539,82 @@ public class HostedSiteService : IHostedSiteService
                 ? $"{displayName} 分享给你的 {allIds.Count} 个站点合集"
                 : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
         }
+        var effDescription = description?.Trim();
+
+        if (reusable is { } reuse)
+        {
+            // 复用时把有效期 + 密码 + 标题/描述刷新为本次请求/最新值（单链接模型下
+            // "改密码=轮换"）：否则用户重设新密码却被静默丢弃、旧密码仍可用——既是展示
+            // 错误也是安全隐患；标题/描述不刷新则站点改名后展示陈旧元数据。
+            var ups = new List<UpdateDefinition<WebPageShareLink>>();
+            if (reuse.ExpiresAt != newExpiresAt)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
+                reuse.ExpiresAt = newExpiresAt;
+            }
+            if (wantAccess == "password" && reuse.Password != wantPassword)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Password, wantPassword));
+                reuse.Password = wantPassword;
+            }
+            if (reuse.Title != shareTitle)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Title, shareTitle));
+                reuse.Title = shareTitle;
+            }
+            if (reuse.Description != effDescription)
+            {
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Description, effDescription));
+                reuse.Description = effDescription;
+            }
+            if (ups.Count > 0)
+            {
+                await _db.WebPageShareLinks.UpdateOneAsync(
+                    x => x.Id == reuse.Id,
+                    Builders<WebPageShareLink>.Update.Combine(ups),
+                    cancellationToken: ct);
+            }
+            _logger.LogInformation("用户 {UserId} 复用站点分享 {ShareId}, type={Type}",
+                userId, reuse.Id, reuse.ShareType);
+            return reuse;
+        }
 
         var share = new WebPageShareLink
         {
             SiteId = shareType != "collection" ? siteId : null,
             SiteIds = allIds,
             ShareType = shareType ?? "single",
+            Purpose = effPurpose,
             Title = shareTitle,
-            Description = description?.Trim(),
-            AccessLevel = string.IsNullOrWhiteSpace(password) ? "public" : "password",
-            Password = password?.Trim(),
-            ExpiresAt = expiresInDays > 0 ? DateTime.UtcNow.AddDays(expiresInDays) : null,
+            Description = effDescription,
+            AccessLevel = wantAccess,
+            Password = wantPassword,
+            ExpiresAt = newExpiresAt,
             CreatedBy = userId,
             CreatedByName = displayName,
         };
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
 
-        // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
-        try
+        // visit 便捷链只通过不可猜测的 /s/wp/{token} 暴露，绝不分配数字短链 /s/{seq}：
+        // /api/short-links/{seq} 匿名且可枚举，若给 visit 链分配 seq，攻击者枚举数字即可
+        // 访问到从未被主动分享的私有站点。仅 share 用户主动分享才分配数字短链。
+        if (effPurpose != "visit")
         {
-            var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
-            await _db.WebPageShareLinks.UpdateOneAsync(
-                x => x.Id == share.Id,
-                Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
-                cancellationToken: ct);
-            share.ShortSeq = seq;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
+            // 分配统一短链 Seq（/s/{seq}）；失败不影响主流程（用户仍可用 /s/wp/{token}）
+            try
+            {
+                var seq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.WebPage, share.Token, ct);
+                await _db.WebPageShareLinks.UpdateOneAsync(
+                    x => x.Id == share.Id,
+                    Builders<WebPageShareLink>.Update.Set(x => x.ShortSeq, seq),
+                    cancellationToken: ct);
+                share.ShortSeq = seq;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "为分享 {ShareId} 分配短链失败，将仅提供旧链接", share.Id);
+            }
         }
 
         _logger.LogInformation("用户 {UserId} 创建站点分享 {ShareId}, type={Type}, shortSeq={Seq}",
@@ -517,7 +625,10 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)
     {
-        return await _db.WebPageShareLinks.Find(x => x.CreatedBy == userId && !x.IsRevoked)
+        // 排除 visit 便捷链（自动创建，非用户主动分享，不应污染分享管理列表）；
+        // Ne("visit") 能命中无 Purpose 字段的旧记录，旧分享照常列出。
+        return await _db.WebPageShareLinks
+            .Find(x => x.CreatedBy == userId && !x.IsRevoked && x.Purpose != "visit")
             .SortByDescending(x => x.CreatedAt)
             .Limit(100)
             .ToListAsync(ct);
@@ -809,51 +920,87 @@ public class HostedSiteService : IHostedSiteService
     // 内部工具方法
     // ─────────────────────────────────────────────
 
-    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
+    private sealed class ZipPlan
     {
-        var files = new List<HostedSiteFile>();
+        public string? Error;
+        public List<(ZipArchiveEntry Entry, string RelativePath, string Mime)> Items = new();
+    }
+
+    /// <summary>
+    /// ZIP 过滤/计数/限额逻辑的唯一来源（路径穿越、__MACOSX、黑名单后缀、文件数、
+    /// 解压总大小、空文件处理、≥1 有效文件）。ValidateZip 与 ExtractAndUploadZip 都走它，
+    /// 结构上保证「校验通过」⇔「上传阶段产出 ≥1 文件且不超限」，杜绝两份逻辑各自漂移。
+    /// 返回的 Entry 仅在传入 archive 的生命周期内有效。
+    /// </summary>
+    private ZipPlan PlanZipEntries(ZipArchive archive)
+    {
+        var plan = new ZipPlan();
+
+        if (archive.Entries.Count > MaxFileCount)
+        {
+            plan.Error = $"ZIP 包含的文件数超过限制 ({MaxFileCount})";
+            return plan;
+        }
+
+        var rootPrefix = DetectRootPrefix(archive);
         long totalSize = 0;
 
+        foreach (var entry in archive.Entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name)) continue;
+
+            var relativePath = entry.FullName;
+            if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
+                relativePath = relativePath[rootPrefix.Length..];
+
+            if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
+                continue;
+            if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
+                continue;
+
+            var fileExt = Path.GetExtension(entry.Name);
+            if (BlockedExtensions.Contains(fileExt))
+                continue;
+
+            totalSize += entry.Length;
+            if (totalSize > MaxExtractedSize)
+            {
+                plan.Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)";
+                return plan;
+            }
+
+            if (entry.Length == 0) continue;
+
+            plan.Items.Add((entry, relativePath, GetMimeType(fileExt)));
+        }
+
+        if (plan.Items.Count == 0)
+            plan.Error = "ZIP 中没有有效文件";
+
+        return plan;
+    }
+
+    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
+    {
         try
         {
             using var zipStream = new MemoryStream(zipBytes);
             using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
 
-            if (archive.Entries.Count > MaxFileCount)
-                return new ZipExtractResult { Error = $"ZIP 包含的文件数超过限制 ({MaxFileCount})" };
+            var plan = PlanZipEntries(archive);
+            if (plan.Error != null)
+                return new ZipExtractResult { Error = plan.Error };
 
-            var rootPrefix = DetectRootPrefix(archive);
+            var files = new List<HostedSiteFile>();
+            long totalSize = 0;
 
-            foreach (var entry in archive.Entries)
+            foreach (var (entry, relativePath, mimeType) in plan.Items)
             {
-                if (string.IsNullOrEmpty(entry.Name)) continue;
-
-                var relativePath = entry.FullName;
-                if (!string.IsNullOrEmpty(rootPrefix) && relativePath.StartsWith(rootPrefix))
-                    relativePath = relativePath[rootPrefix.Length..];
-
-                if (relativePath.Contains("..") || Path.IsPathRooted(relativePath))
-                    continue;
-                if (relativePath.StartsWith('.') || relativePath.Contains("/__MACOSX/") || relativePath.StartsWith("__MACOSX/"))
-                    continue;
-
-                var fileExt = Path.GetExtension(entry.Name);
-                if (BlockedExtensions.Contains(fileExt))
-                    continue;
-
-                totalSize += entry.Length;
-                if (totalSize > MaxExtractedSize)
-                    return new ZipExtractResult { Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)" };
-
-                if (entry.Length == 0)
-                    continue;
-
                 using var entryStream = entry.Open();
                 using var entryMs = new MemoryStream();
                 await entryStream.CopyToAsync(entryMs);
                 var entryBytes = entryMs.ToArray();
 
-                var mimeType = GetMimeType(fileExt);
                 if (mimeType == "text/html")
                     entryBytes = RewriteAbsolutePathsInHtml(entryBytes, relativePath);
 
@@ -868,22 +1015,38 @@ public class HostedSiteService : IHostedSiteService
                     Size = entryBytes.Length,
                     MimeType = mimeType,
                 });
+                totalSize += entryBytes.Length;
             }
+
+            var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
+                ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
+                ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
+                ?? files[0].Path;
+
+            return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
         }
         catch (InvalidDataException)
         {
             return new ZipExtractResult { Error = "无效的 ZIP 文件" };
         }
+    }
 
-        if (files.Count == 0)
-            return new ZipExtractResult { Error = "ZIP 中没有有效文件" };
-
-        var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
-            ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
-            ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
-            ?? files[0].Path;
-
-        return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
+    /// <summary>
+    /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
+    /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
+    /// </summary>
+    private string? ValidateZip(byte[] zipBytes)
+    {
+        try
+        {
+            using var zipStream = new MemoryStream(zipBytes);
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+            return PlanZipEntries(archive).Error;
+        }
+        catch (InvalidDataException)
+        {
+            return "无效的 ZIP 文件";
+        }
     }
 
     private static string? DetectRootPrefix(ZipArchive archive)
