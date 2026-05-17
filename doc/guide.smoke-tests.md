@@ -26,6 +26,7 @@ CDS 灰度环境部署完成并不等于业务可用：镜像能起来，但 Con
 | `scripts/smoke-cds-agent-profile-preflight.sh` | CDS Agent profile preflight：验证不兼容默认 profile 会在 `SendMessage` 前被 `runtime_profile_incompatible` 拦截，且不会写入消息或入队 |
 | `scripts/smoke-cds-agent-official-sdk-run.sh` | CDS Agent official SDK S1 run：默认只做 readiness；显式允许 provider 调用后才创建临时只读审查会话并等待 assistant 响应 |
 | `scripts/smoke-cds-agent-official-sdk-controls.sh` | CDS Agent official SDK S2/S3 controls：默认只做 readiness；显式允许 provider 调用后才验证 MAP 审批和 Stop |
+| `scripts/doctor-cds-agent-runtime.sh` | CDS Agent runtime doctor：汇总 runtime-status、默认 profile 兼容性、官方模板、adapter 矩阵，并给出下一步最小验收命令 |
 | `scripts/smoke-all.sh` | 串行执行所有冒烟，汇总 pass/fail/skip |
 
 ---
@@ -87,6 +88,9 @@ bash scripts/smoke-prd-agent.sh
 bash scripts/smoke-cds-agent-runtime-status.sh
 bash scripts/smoke-cds-agent-profile-templates.sh
 bash scripts/smoke-cds-agent-profile-preflight.sh
+
+# 不确定卡在哪里时，先跑 doctor。它不会触发 provider 调用。
+bash scripts/doctor-cds-agent-runtime.sh
 
 # 配好真实 Claude/Anthropic profile 后，先只做 readiness
 bash scripts/smoke-cds-agent-official-sdk-run.sh
@@ -161,6 +165,18 @@ readiness；设置 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 后会触发一次危
 拒绝审批并确认 `tool_result.source=map-tool-approval`；随后创建长任务会话并调用
 `stop`，确认 MAP 接受停止请求。该脚本会触发 provider 调用和临时会话，只应在
 真实 Claude/Anthropic profile 已配置后运行。
+
+`doctor-cds-agent-runtime.sh` 是排障入口，不替代 smoke gate。它会读取
+`runtime-status`、默认 runtime profile、后端官方模板和 adapter 兼容矩阵，然后按
+当前状态输出下一步命令：
+- runtime pool 未就绪时，优先修 CDS discovery / static sidecar / `/readyz`
+- 默认 profile 不兼容或缺 key 时，提示用 Anthropic official template 创建默认 profile
+- 默认 profile 已兼容时，提示先跑 readiness，再显式设置
+  `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 跑 S1/S2/S3 真调用
+
+这条脚本的定位是"把问题定位到下一条命令"，所以它默认不失败于
+`instanceCount=0` 这类业务配置缺口；真正的验收仍看 runtime/profile/S1/controls
+smoke gate 是否通过。
 
 ---
 
