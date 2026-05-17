@@ -362,7 +362,10 @@ V1 视觉 smoke 可以使用真实 JWT、登录用户名/密码，或 `AI_ACCESS
 `X-AI-Access-Key` / `X-AI-Impersonate`，并移除 dummy Bearer token；截图和 text dump
 不会包含真实 `AI_ACCESS_KEY`。V1 断言会检查 `/cds-agent` 页面包含
 `Runtime 调试`、`当前执行结论`、`商业级 READINESS LEDGER` 和
-`下一周期最小闭环`。
+`下一周期最小闭环`。新增 adapter contract 可观察性后，V1 还会检查
+`ADAPTER 兼容性`、`默认路由`、`缺失 adapter contract` 和 `候选 adapter 边界`，
+确保用户能在页面上直接看到为什么 OpenAI Agents SDK、Google ADK 或 Codex-like
+候选还不能默认路由到代码审查。
 
 要真正关闭 R1 并进入 provider smoke，必须显式提供 Anthropic/Claude-compatible key：
 
