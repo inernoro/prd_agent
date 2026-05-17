@@ -294,7 +294,12 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`Readiness overall` 和 pending
 gates 为准。
 
-`cycle-summary.json` 会写出 `status` 和 `nextCommand`。常见状态含义：
+`cycle-summary.json` 会写出 `status`、`nextCommand` 和 `timing`。`timing.steps`
+记录每个阶段的耗时，`timing.slowest` 给出最慢 3 个阶段；终端汇总也会打印
+`Total measured step time` 和 `Slowest steps`，用于判断时间花在本地检查、远程
+deploy 后的 readiness、视觉截图，还是 provider 调用。
+
+常见状态含义：
 
 | status | 含义 |
 | --- | --- |

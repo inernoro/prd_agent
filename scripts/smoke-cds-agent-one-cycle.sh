@@ -32,22 +32,46 @@ SMOKE_CDS_AGENT_CYCLE_SUMMARY="${SMOKE_CDS_AGENT_CYCLE_SUMMARY:-$SMOKE_CDS_AGENT
 passed_arr=()
 failed_arr=()
 skipped_arr=()
+timing_keys=()
+timing_names=()
+timing_statuses=()
+timing_seconds=()
+
+record_timing() {
+  local key="$1"
+  local name="$2"
+  local status="$3"
+  local seconds="$4"
+  timing_keys+=("$key")
+  timing_names+=("$name")
+  timing_statuses+=("$status")
+  timing_seconds+=("$seconds")
+}
 
 run_step() {
   local key="$1"
   local name="$2"
   local script="$3"
   local log="$SMOKE_CDS_AGENT_CYCLE_DIR/${key}.log"
+  local start_ts end_ts duration
 
   printf '\n>>> %s\n' "$name"
+  start_ts=$(date +%s)
   if bash "$script" >"$log" 2>&1; then
+    end_ts=$(date +%s)
+    duration=$((end_ts - start_ts))
     passed_arr+=("$name")
+    record_timing "$key" "$name" "passed" "$duration"
+    printf 'Step duration: %ss\n' "$duration"
     tail -n 8 "$log"
     return 0
   fi
 
+  end_ts=$(date +%s)
+  duration=$((end_ts - start_ts))
   failed_arr+=("$name")
-  printf 'Step failed. Log: %s\n' "$log" >&2
+  record_timing "$key" "$name" "failed" "$duration"
+  printf 'Step failed after %ss. Log: %s\n' "$duration" "$log" >&2
   tail -n 40 "$log" >&2
   return 1
 }
@@ -58,6 +82,7 @@ skip_step() {
   printf '\n>>> %s\n' "$name"
   printf 'Skipped: %s\n' "$reason"
   skipped_arr+=("$name")
+  record_timing "skipped-${#skipped_arr[@]}" "$name" "skipped" "0"
 }
 
 finish_cycle() {
@@ -74,7 +99,7 @@ finish_cycle() {
   local next_command=""
   local pending_has_r1=false
   local pending_has_provider=false
-  local passed_json skipped_json failed_json
+  local passed_json skipped_json failed_json timing_json slowest_json total_seconds
 
   if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
     readiness_overall=$(jq -r '.overall // "unknown"' "$SMOKE_CDS_AGENT_READINESS_REPORT")
@@ -155,6 +180,24 @@ finish_cycle() {
     failed_json=$(printf '%s\n' "${failed_arr[@]}" | jq -R . | jq -s .)
   fi
 
+  timing_json='[]'
+  slowest_json='[]'
+  total_seconds=0
+  if (( ${#timing_keys[@]} > 0 )); then
+    timing_json=$(
+      for i in "${!timing_keys[@]}"; do
+        jq -n \
+          --arg key "${timing_keys[$i]}" \
+          --arg name "${timing_names[$i]}" \
+          --arg status "${timing_statuses[$i]}" \
+          --argjson durationSeconds "${timing_seconds[$i]}" \
+          '{key:$key,name:$name,status:$status,durationSeconds:$durationSeconds}'
+      done | jq -s .
+    )
+    slowest_json=$(jq -c 'sort_by(.durationSeconds) | reverse | .[:3]' <<< "$timing_json")
+    total_seconds=$(jq -r '[.[].durationSeconds] | add // 0' <<< "$timing_json")
+  fi
+
   jq -n \
     --arg cycleId "$CYCLE_ID" \
     --arg cycleStatus "$cycle_status" \
@@ -176,6 +219,9 @@ finish_cycle() {
     --argjson passed "$passed_json" \
     --argjson skipped "$skipped_json" \
     --argjson failed "$failed_json" \
+    --argjson timings "$timing_json" \
+    --argjson slowest "$slowest_json" \
+    --argjson totalSeconds "$total_seconds" \
     --argjson exitCode "$exit_code" \
     '{
       cycleId: $cycleId,
@@ -210,6 +256,11 @@ finish_cycle() {
         passed: $passed,
         skipped: $skipped,
         failed: $failed
+      },
+      timing: {
+        totalSeconds: $totalSeconds,
+        steps: $timings,
+        slowest: $slowest
       }
     }' > "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
 
@@ -224,6 +275,11 @@ finish_cycle() {
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Controls status: %s\n' "$controls_status"
   printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
+  printf 'Total measured step time: %ss\n' "$total_seconds"
+  if (( ${#timing_keys[@]} > 0 )); then
+    printf 'Slowest steps:\n'
+    jq -r '.[] | "  - " + .name + " · " + (.durationSeconds|tostring) + "s · " + .status' <<< "$slowest_json"
+  fi
   printf 'Passed: %s\n' "${#passed_arr[@]}"
   if (( ${#passed_arr[@]} > 0 )); then
     for name in "${passed_arr[@]}"; do printf '  - %s\n' "$name"; done
