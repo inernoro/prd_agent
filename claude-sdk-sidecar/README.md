@@ -6,11 +6,12 @@ Python 进程，把 Agent runtime 包装成统一的 HTTP + SSE 协议，供 prd
 当前有两条 runtime 路径：
 
 - `legacy-sidecar`：兼容路径，使用官方 `anthropic` Python SDK + 本仓库自研
-  `agent_loop.py`。
+  `agent_loop.py`；只能通过显式配置作为 fallback 使用。
 - `claude-agent-sdk`：官方 Claude Agent SDK adapter spike，使用
-  `claude-agent-sdk` 的 Claude Code tools / agent loop / context management。该路径可通过
-  请求字段 `runtimeAdapter=claude-agent-sdk` 或环境变量
-  `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 启用。
+  `claude-agent-sdk` 的 Claude Code tools / agent loop / context management。该路径是
+  sidecar、MAP 和 CDS Agent 代码审查的默认路径；请求字段
+  `runtimeAdapter=claude-agent-sdk` 或环境变量 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`
+  只用于显式声明和诊断。
   当前 adapter 使用 `ClaudeSDKClient`，sidecar `/v1/agent/cancel/{runId}` 会触发
   `client.interrupt()`。
   默认只开放 `Read,Grep,Glob` 只读内置工具，避免 Claude Code 内置
@@ -23,7 +24,9 @@ MAP/prd-api 侧也可以设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent
 由 `ClaudeSidecarRouter` 把选择项透传给 sidecar。MAP 未设置时默认请求
 `claude-agent-sdk`；如果需要回退自研 loop，可显式设置
 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar`。sidecar 独立运行且请求未传
-`runtimeAdapter` 时，仍由 `SIDECAR_AGENT_ADAPTER` 决定，未设置则保留 legacy fallback。
+`runtimeAdapter` 时，仍由 `SIDECAR_AGENT_ADAPTER` 决定；未设置则默认
+`claude-agent-sdk`。只有显式设置 `SIDECAR_AGENT_ADAPTER=legacy-sidecar` 才会走自研
+loop fallback。
 
 ## 协议
 

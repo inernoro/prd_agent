@@ -62,20 +62,29 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(diagnostics["builtinWriteToolsEnabled"], True)
         self.assertEqual(diagnostics["builtinWriteTools"], ["Bash", "Write"])
 
-    def test_readyz_defaults_to_runtime_profile_or_env_provider_key(self) -> None:
+    def test_readyz_defaults_to_official_adapter_and_runtime_profile_or_env_provider_key(self) -> None:
         previous_token = sidecar_main.SIDECAR_TOKEN
+        previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
         sidecar_main.SIDECAR_TOKEN = "test-token"
+        sidecar_main.DEFAULT_AGENT_ADAPTER = "claude-agent-sdk"
         try:
             with patch.dict(os.environ, {
-                "SIDECAR_AGENT_ADAPTER": "legacy-sidecar",
-            }, clear=True):
+                "SIDECAR_AGENT_ADAPTER": "claude-agent-sdk",
+            }, clear=True), \
+                    patch("importlib.util.find_spec", return_value=object()), \
+                    patch("importlib.metadata.version", return_value="0.2.82"), \
+                    patch("shutil.which", return_value=None):
                 response = self._run_readyz()
         finally:
             sidecar_main.SIDECAR_TOKEN = previous_token
+            sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
 
         payload = json.loads(response.body)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["ready"], True)
+        self.assertEqual(payload["agentAdapter"], "claude-agent-sdk")
+        self.assertEqual(payload["adapterDiagnostics"]["loopOwner"], "claude-agent-sdk")
+        self.assertEqual(payload["adapterDiagnostics"]["sdkLoopEnabled"], True)
         self.assertEqual(payload["anthropicKey"], False)
         self.assertEqual(payload["providerKeyMode"], "runtime-profile-or-env")
         self.assertEqual(payload["providerKeyRequiredForReady"], False)

@@ -46,7 +46,7 @@ app = FastAPI(title="Claude Agent SDK Sidecar", version="0.1.0")
 
 SIDECAR_TOKEN = os.environ.get("SIDECAR_TOKEN", "").strip()
 SIDECAR_VERSION = os.environ.get("SIDECAR_VERSION", "0.1.0")
-DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "legacy-sidecar").strip()
+DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sdk").strip()
 
 _active_runs: dict[str, asyncio.Event] = {}
 

@@ -157,7 +157,7 @@
 - P1.4 已有第一步：session 写入 `CurrentRuntimeRunId`，Stop 时会通过 adapter 调 sidecar `/v1/agent/cancel/{runId}` 做 best-effort 取消。
 - P1.6 已接入第一版页面调试面板：`/cds-agent` 展示 runtime adapter、run id、runtime instance、事件 source、cancel 状态；事件标题也显示 adapter/source；无 active session 时也显示空态原因。
 - P1.6 已补 sidecar pool 诊断入口：sidecar `/readyz` 返回当前 adapter、官方 SDK 包、外部 CLI 路径观测、workspace、allowed tools、permission mode、写工具 opt-in 和 approval bridge；MAP `GET /api/infra-agent-sessions/runtime-status` 透出 pool 诊断，页面 runtime 调试面板显示 healthy/instance 数。
-- P1.2 已有第一版官方 Claude Agent SDK adapter spike：sidecar 支持 `runtimeAdapter=claude-agent-sdk` / `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`，MAP 默认按请求透传 `claude-agent-sdk`，仅在显式设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 时回退自研 loop；sidecar standalone 未传 `runtimeAdapter` 时仍保留 legacy fallback。
+- P1.2 已有第一版官方 Claude Agent SDK adapter spike：sidecar 支持 `runtimeAdapter=claude-agent-sdk` / `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`，MAP 默认按请求透传 `claude-agent-sdk`，仅在显式设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar` 或 `SIDECAR_AGENT_ADAPTER=legacy-sidecar` 时回退自研 loop；sidecar standalone 未传 `runtimeAdapter` 时也默认走官方 `claude-agent-sdk`。
 - P1.3 已补 `runtime_init` 事件映射，官方 adapter 初始化信息会进入 MAP 事件流，供调试面板和审计使用。
 - P1.4 官方路径已有第一步取消语义：adapter 使用 `ClaudeSDKClient`，sidecar cancel event 会调用官方 `client.interrupt()`；下一步还要用真实 SDK 包、provider key 和 workspace 证明远程 run 能被停止。
 - P1.5 已有第二步事件游标：后端 `ListEventsAsync(afterSeq, limit)` 和 `/stream?afterSeq=&limit=` 已存在，`/stream` 已改为长连接 SSE + keepalive；`/cds-agent` 页面改为 SSE 优先续读、JSON 分页兜底，并按 `seq` 去重合并事件；Toolbox `cds-agent` 回放改为游标批量读取，避免固定 500 条覆盖长任务审计。
