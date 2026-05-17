@@ -384,7 +384,7 @@ async function main() {
       '商业级',
       'READINESS LEDGER',
       '下一周期最小闭环',
-      'Adapter 兼容性',
+      'ADAPTER 兼容性',
       '默认路由',
       '缺失 adapter contract',
       '候选 adapter 边界'
@@ -450,7 +450,7 @@ async function waitForWorkbench(send) {
       && text.includes('当前执行结论')
       && text.includes('READINESS LEDGER')
       && text.includes('下一周期最小闭环')
-      && text.includes('Adapter 兼容性')
+      && text.includes('ADAPTER 兼容性')
       && text.includes('默认路由')
       && text.includes('缺失 adapter contract')
       && text.includes('候选 adapter 边界')) return;
