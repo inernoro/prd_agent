@@ -69,6 +69,11 @@ bash scripts/preflight-cds-agent-cds-self-update.sh
 - 可选的 R0 alias stability probe 日志。
 - 需要用户明确批准后才能执行的推荐命令。
 
+默认 `SMOKE_CDS_AGENT_REQUIRE_TARGET_MATCH=1`。如果 CDS self branches 看到的目标 commit
+落后于本地 HEAD，preflight 会把 `recommendationStatus` 标为
+`blocked_target_commit_mismatch`，并且不会输出 self update 命令。只有目标 commit 与本地
+HEAD 匹配时，才进入“等待用户批准”的状态。
+
 发布后立刻验证：
 
 ```bash

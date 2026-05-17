@@ -14,6 +14,7 @@
 #   SMOKE_CDS_BRANCH_ID                 default: prd-agent-codex-cds-agent-workbench-ui
 #   SMOKE_CDS_AGENT_PREFLIGHT_REPORT    optional JSON report path
 #   SMOKE_CDS_AGENT_RUN_ALIAS_PROBE     default: 1
+#   SMOKE_CDS_AGENT_REQUIRE_TARGET_MATCH default: 1
 # ============================================
 
 set -euo pipefail
@@ -23,6 +24,7 @@ CDS_SELF_UPDATE_BRANCH="${CDS_SELF_UPDATE_BRANCH:-codex/cds-agent-workbench-ui}"
 SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
 SMOKE_CDS_AGENT_PREFLIGHT_REPORT="${SMOKE_CDS_AGENT_PREFLIGHT_REPORT:-}"
 SMOKE_CDS_AGENT_RUN_ALIAS_PROBE="${SMOKE_CDS_AGENT_RUN_ALIAS_PROBE:-1}"
+SMOKE_CDS_AGENT_REQUIRE_TARGET_MATCH="${SMOKE_CDS_AGENT_REQUIRE_TARGET_MATCH:-1}"
 
 if [[ -z "${CDS_HOST:-}" ]]; then
   printf 'CDS_HOST is required\n' >&2
@@ -109,10 +111,19 @@ else
 fi
 
 recommended_command="CDS_HOST=${CDS_HOST} python3 .claude/skills/cds/cli/cdscli.py self update --branch ${CDS_SELF_UPDATE_BRANCH}"
+recommendation_status="ready_for_human_approval"
+recommendation_message="If the human approves the shared control-plane update, run:"
+if [[ "$SMOKE_CDS_AGENT_REQUIRE_TARGET_MATCH" == "1" && "$target_matches_local" != "true" ]]; then
+  recommendation_status="blocked_target_commit_mismatch"
+  recommendation_message="Target branch commit does not match local HEAD. Wait for CDS self branches to refresh or verify the target branch before approval."
+  recommended_command=""
+fi
 printf '\n>>> [5/5] Recommendation\n'
 printf 'This preflight is read-only. It does not approve or run CDS self update.\n'
-printf 'If the human approves the shared control-plane update, run:\n'
-printf '  %s\n' "$recommended_command"
+printf '%s\n' "$recommendation_message"
+if [[ -n "$recommended_command" ]]; then
+  printf '  %s\n' "$recommended_command"
+fi
 
 if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
   mkdir -p "$(dirname "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT")"
@@ -130,6 +141,8 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
     --arg previewCommit "$preview_commit" \
     --arg aliasProbeStatus "$alias_probe_status" \
     --arg aliasProbeLog "$alias_probe_log" \
+    --arg recommendationStatus "$recommendation_status" \
+    --arg recommendationMessage "$recommendation_message" \
     --arg recommendedCommand "$recommended_command" \
     --argjson targetCdsTouched "$target_cds_touched" \
     --argjson targetMatchesLocalHead "$target_matches_local" \
@@ -162,6 +175,8 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
       },
       localCleanupPresent: $localCleanupPresent,
       nextActionRequiresHumanApproval: true,
+      recommendationStatus: $recommendationStatus,
+      recommendationMessage: $recommendationMessage,
       recommendedCommand: $recommendedCommand
     }' > "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT"
   printf 'Preflight report: %s\n' "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT"
