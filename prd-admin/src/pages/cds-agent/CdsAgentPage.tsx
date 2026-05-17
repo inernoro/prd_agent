@@ -313,6 +313,9 @@ function readRequestedSessionId(): string {
 }
 
 function parseJsonString(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
   if (typeof value !== 'string') return null;
   try {
     const parsed = JSON.parse(value) as unknown;
