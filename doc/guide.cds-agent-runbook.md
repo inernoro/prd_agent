@@ -118,7 +118,7 @@ phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-g
 SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 bash scripts/smoke-cds-agent-commercial-readiness.sh
 ```
 
-截至 2026-05-18，远程 preview 的最新 one-cycle 证据是 `/tmp/cds-agent-cycle-20260518042347`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`V1=pass`、`N6=pass`、`R1/S1/S2/S3=pending`，总耗时 82s，最慢步骤是 V1 视觉 28s、N6 非代码兼容 16s、doctor 10s。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
+截至 2026-05-18，远程 preview 的最新 one-cycle 证据是 `/tmp/cds-agent-cycle-20260518-running`：`status=blocked_r1`、`commercialComplete=false`、`R0=pass`、`A0=pass`、`V1=pass`、`N6=pass`、`R1/S1/S2/S3=pending`，总耗时 86s，最慢步骤是 V1 视觉 30s、N6 非代码兼容 17s、doctor 11s。当前默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，有 key 但不兼容 `claude-agent-sdk`；下一条有效命令是：
 
 ```bash
 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \
