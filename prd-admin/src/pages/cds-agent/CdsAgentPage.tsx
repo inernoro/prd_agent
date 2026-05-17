@@ -1240,6 +1240,22 @@ export default function CdsAgentPage() {
         : 'profile-blocked';
     const nextCyclePlan = runtimeStatus?.nextCyclePlan ?? null;
     const debugCommands = runtimeStatus?.debugCommands ?? [];
+    const firstBlockedCycleItem = nextCyclePlan?.items.find((item) => item.status !== 'pass') ?? null;
+    const primaryDebugCommand = debugCommands.find((item) => item.status === 'blocked')
+      ?? debugCommands.find((item) => item.status !== 'pass')
+      ?? debugCommands[0]
+      ?? null;
+    const commercialBlockingGate = commercialPending[0] ?? null;
+    const commercialBlockingCode = commercialBlockingGate?.code
+      ?? firstBlockedCycleItem?.code
+      ?? primaryDebugCommand?.blockedBy
+      ?? primaryDebugCommand?.code
+      ?? '';
+    const commercialNextAction = commercialBlockingGate?.detail
+      || firstBlockedCycleItem?.nextActions?.[0]
+      || primaryDebugCommand?.purpose
+      || (commercialState === 'commercial-ready' ? '商业级门禁已通过。' : '等待 runtime-status 返回下一步建议。');
+    const commercialNextCommand = primaryDebugCommand?.command ?? '';
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1318,6 +1334,9 @@ export default function CdsAgentPage() {
       commercialTotal,
       commercialPending,
       commercialState,
+      commercialBlockingCode,
+      commercialNextAction,
+      commercialNextCommand,
       nextCyclePlan,
       debugCommands,
       readinessGates,
@@ -1480,6 +1499,9 @@ export default function CdsAgentPage() {
       source: runtimeDiagnostics.source,
       cancelState: runtimeDiagnostics.cancelState,
       commercialState: runtimeDiagnostics.commercialState,
+      commercialBlockingCode: runtimeDiagnostics.commercialBlockingCode,
+      commercialNextAction: runtimeDiagnostics.commercialNextAction,
+      commercialNextCommand: runtimeDiagnostics.commercialNextCommand,
       commercialPassed: runtimeDiagnostics.commercialPassed,
       commercialTotal: runtimeDiagnostics.commercialTotal,
       commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
@@ -3539,6 +3561,54 @@ export default function CdsAgentPage() {
                           <div className="mt-1 break-all text-xs leading-relaxed text-white/72">{value}</div>
                         </div>
                       ))}
+                    </div>
+                    <div
+                      className="mt-3 rounded-md px-3 py-3"
+                      style={{
+                        background: runtimeDiagnostics.commercialState === 'commercial-ready'
+                          ? 'rgba(20,83,45,0.22)'
+                          : 'rgba(113,63,18,0.2)',
+                        border: runtimeDiagnostics.commercialState === 'commercial-ready'
+                          ? '1px solid rgba(34,197,94,0.24)'
+                          : '1px solid rgba(245,158,11,0.22)',
+                      }}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/48">
+                            <ListChecks size={13} />
+                            当前执行结论
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-white/82">
+                            {runtimeDiagnostics.commercialState === 'commercial-ready'
+                              ? '商业级门禁已通过'
+                              : `${runtimeDiagnostics.commercialBlockingCode || 'Gate'} 阻塞`}
+                          </div>
+                          <div className="mt-1 max-w-4xl text-xs leading-relaxed text-white/58">
+                            {runtimeDiagnostics.commercialNextAction}
+                          </div>
+                        </div>
+                        <div className="grid min-w-[220px] gap-1 text-right text-xs text-white/58">
+                          <div>{runtimeDiagnostics.commercialPassed}/{runtimeDiagnostics.commercialTotal} gates passed</div>
+                          <div>{runtimeDiagnostics.commercialPending.length} pending gates</div>
+                          <div>{runtimeDiagnostics.commercialState}</div>
+                        </div>
+                      </div>
+                      {runtimeDiagnostics.commercialNextCommand && (
+                        <div className="mt-3 flex items-start gap-2">
+                          <code className="min-w-0 flex-1 break-all rounded px-2 py-1.5 text-[11px] leading-relaxed text-amber-50/78" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                            {runtimeDiagnostics.commercialNextCommand}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => void copyText('当前下一步命令', runtimeDiagnostics.commercialNextCommand)}
+                            className="shrink-0 rounded p-1.5 text-white/46 hover:text-white/86"
+                            aria-label="复制当前下一步命令"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
