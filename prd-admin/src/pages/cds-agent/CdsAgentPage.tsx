@@ -14,6 +14,7 @@ import {
   createInfraAgentRuntimeProfile,
   createInfraAgentRuntimeProfileFromTemplate,
   createInfraAgentSession,
+  deleteInfraAgentRuntimeProfile,
   getInfraAgentLogs,
   getInfraAgentRuntimeStatus,
   importDefaultInfraAgentRuntimeProfile,
@@ -2250,24 +2251,80 @@ export default function CdsAgentPage() {
       return;
     }
     setBusy(true);
-    const template = matchingRuntimeProfileTemplate();
-    const res = template
-      ? await createInfraAgentRuntimeProfileFromTemplate(template.id, {
-          name: profileDraft.name,
+    let candidateId = '';
+    let promoted = false;
+    try {
+      const template = matchingRuntimeProfileTemplate();
+      const shouldPromoteAfterTest = profileDraft.isDefault;
+      const createInput = { ...profileDraft, isDefault: shouldPromoteAfterTest ? false : profileDraft.isDefault };
+      const res = template
+        ? await createInfraAgentRuntimeProfileFromTemplate(template.id, {
+            name: profileDraft.name,
+            apiKey: profileDraft.apiKey,
+            isDefault: createInput.isDefault,
+          })
+        : await createInfraAgentRuntimeProfile(createInput);
+      if (!res.success || !res.data?.item) {
+        toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+        return;
+      }
+
+      let savedProfile = res.data.item;
+      candidateId = savedProfile.id;
+      if (shouldPromoteAfterTest) {
+        const testRes = await testInfraAgentRuntimeProfile(savedProfile.id);
+        if (!testRes.success || !testRes.data?.result) {
+          toast.error('默认配置测试失败', testRes.error?.message ?? '已取消设为默认，并清理候选配置');
+          return;
+        }
+        const testResult = testRes.data.result;
+        const testMessage = `${testResult.success ? '可用' : '失败'} · ${testResult.protocol} · HTTP ${testResult.httpStatus ?? 'n/a'} · ${testResult.elapsedMs}ms · ${testResult.message}`;
+        setProfileTest(testMessage);
+        if (!testResult.success) {
+          toast.error('默认配置测试失败', `${testResult.message}；已清理候选配置`);
+          return;
+        }
+
+        const promoteRes = await updateInfraAgentRuntimeProfile(savedProfile.id, {
+          name: savedProfile.name,
+          runtime: savedProfile.runtime,
+          protocol: savedProfile.protocol,
+          baseUrl: savedProfile.baseUrl,
+          model: savedProfile.model,
           apiKey: profileDraft.apiKey,
-          isDefault: profileDraft.isDefault,
-        })
-      : await createInfraAgentRuntimeProfile(profileDraft);
-    setBusy(false);
-    if (!res.success || !res.data?.item) {
-      toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
-      return;
+          resourceCpuCores: savedProfile.resourceCpuCores,
+          resourceMemoryMb: savedProfile.resourceMemoryMb,
+          timeoutSeconds: savedProfile.timeoutSeconds,
+          networkPolicy: savedProfile.networkPolicy,
+          autoCleanupMinutes: savedProfile.autoCleanupMinutes,
+          isDefault: true,
+        });
+        if (!promoteRes.success || !promoteRes.data?.item) {
+          toast.error('设为默认失败', promoteRes.error?.message ?? '候选配置已通过测试，但默认提升失败');
+          return;
+        }
+        savedProfile = promoteRes.data.item;
+        promoted = true;
+      }
+
+      setProfiles((prev) => [savedProfile, ...prev.filter((item) => item.id !== savedProfile.id)]);
+      setDraft((prev) => ({ ...prev, runtimeProfileId: savedProfile.id }));
+      setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
+      if (!shouldPromoteAfterTest) setProfileTest('');
+      toast.success(
+        '模型配置已保存',
+        shouldPromoteAfterTest
+          ? '已通过模型测试并设为默认配置'
+          : (template ? '已按后端官方模板创建，可以立即点击测试模型' : '可以立即点击测试模型'),
+      );
+    } catch (err) {
+      toast.error('保存模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 API key');
+    } finally {
+      if (candidateId && profileDraft.isDefault && !promoted) {
+        await deleteInfraAgentRuntimeProfile(candidateId).catch(() => undefined);
+      }
+      setBusy(false);
     }
-    setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
-    setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
-    setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
-    setProfileTest('');
-    toast.success('模型配置已保存', template ? '已按后端官方模板创建，可以立即点击测试模型' : '可以立即点击测试模型');
   }
 
   async function updateProfile() {

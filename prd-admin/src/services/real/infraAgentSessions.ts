@@ -343,6 +343,10 @@ interface RuntimeProfileTestResp {
   result: InfraAgentRuntimeProfileTestResult;
 }
 
+interface DeleteRuntimeProfileResp {
+  deleted: boolean;
+}
+
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
   return await apiRequest<ListResp>(`${api.infraAgentSessions.list()}?limit=${limit}`, { method: 'GET' });
 }
@@ -633,6 +637,12 @@ export async function updateInfraAgentRuntimeProfile(id: string, input: {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.byId(encodeURIComponent(id)), {
     method: 'PUT',
     body: input,
+  });
+}
+
+export async function deleteInfraAgentRuntimeProfile(id: string): Promise<ApiResponse<DeleteRuntimeProfileResp>> {
+  return await apiRequest<DeleteRuntimeProfileResp>(api.infraAgentRuntimeProfiles.byId(encodeURIComponent(id)), {
+    method: 'DELETE',
   });
 }
 
