@@ -89,13 +89,14 @@
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 `blocked_r1`，不要继续 self update 或 redeploy；这表示 MAP/CDS/sidecar pool 已经到位，下一步是修 runtime profile。
+不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、A0 官方 SDK 边界、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 `blocked_r1`，不要继续 self update 或 redeploy；这表示 MAP/CDS/sidecar pool 已经到位，下一步是修 runtime profile。
 
 注意凭据边界：`AI_ACCESS_KEY` 是 MAP/CDS API 的 `X-AI-Access-Key` 鉴权，不是 Anthropic provider key。真实 provider key 只应通过 runtime profile、页面 R1 修复入口，或 smoke 里的 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 提供。
 
 | 门禁 | 证明什么 | 命令或入口 |
 | --- | --- | --- |
 | R0 | MAP/CDS/sidecar pool 可路由官方 SDK | `bash scripts/doctor-cds-agent-runtime.sh` |
+| A0 | 默认路径仍是官方 SDK adapter，legacy loop 只显式 fallback | `bash scripts/smoke-cds-agent-official-sdk-boundary.sh` |
 | R1 | 默认 profile 兼容官方 SDK 且有 key | `/cds-agent` Runtime 调试面板或 readiness audit |
 | T1 | 官方模板和兼容矩阵由后端提供 | `bash scripts/smoke-cds-agent-profile-templates.sh` |
 | S1 | 官方 SDK 能真实只读审查仓库 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh` |

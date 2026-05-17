@@ -36,6 +36,7 @@ export SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS="${SMOKE_CDS_AGENT_DOCTOR_RETRY_SECO
 export SMOKE_CDS_AGENT_R1_REPORT="${SMOKE_CDS_AGENT_R1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/r1-report.json}"
 export SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/s1-report.json}"
 export SMOKE_CDS_AGENT_CONTROLS_REPORT="${SMOKE_CDS_AGENT_CONTROLS_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/controls-report.json}"
+export SMOKE_CDS_AGENT_BOUNDARY_REPORT="${SMOKE_CDS_AGENT_BOUNDARY_REPORT:-$SMOKE_CDS_AGENT_CYCLE_DIR/official-sdk-boundary-report.json}"
 SMOKE_CDS_AGENT_CYCLE_SUMMARY="${SMOKE_CDS_AGENT_CYCLE_SUMMARY:-$SMOKE_CDS_AGENT_CYCLE_DIR/cycle-summary.json}"
 
 passed_arr=()
@@ -103,6 +104,7 @@ finish_cycle() {
   local r1_status="missing"
   local s1_status="missing"
   local controls_status="missing"
+  local boundary_status="missing"
   local doctor_diagnosis="missing"
   local doctor_next="missing"
   local doctor_alias_status="unknown"
@@ -148,6 +150,9 @@ finish_cycle() {
 
   if [[ -f "$SMOKE_CDS_AGENT_CONTROLS_REPORT" ]]; then
     controls_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_CONTROLS_REPORT")
+  fi
+  if [[ -f "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" ]]; then
+    boundary_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_BOUNDARY_REPORT")
   fi
 
   if [[ "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-}" == "1" ]]; then
@@ -314,6 +319,8 @@ finish_cycle() {
     --arg s1Report "$SMOKE_CDS_AGENT_S1_REPORT" \
     --arg controlsStatus "$controls_status" \
     --arg controlsReport "$SMOKE_CDS_AGENT_CONTROLS_REPORT" \
+    --arg boundaryStatus "$boundary_status" \
+    --arg boundaryReport "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
     --arg gateR0 "$gate_r0_status" \
     --arg gateR1 "$gate_r1_status" \
@@ -403,6 +410,10 @@ finish_cycle() {
         status: $controlsStatus,
         report: $controlsReport
       },
+      officialSdkBoundary: {
+        status: $boundaryStatus,
+        report: $boundaryReport
+      },
       visual: {
         screenshot: $screenshot
       },
@@ -460,6 +471,7 @@ finish_cycle() {
   printf 'R1 status: %s\n' "$r1_status"
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Controls status: %s\n' "$controls_status"
+  printf 'Official SDK boundary status: %s\n' "$boundary_status"
   printf 'Commercial gates: R0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
     "$gate_r0_status" "$gate_r1_status" "$gate_s1_status" "$gate_s2s3_status" "$gate_v1_status" "$gate_n6_status"
   if [[ "$commercial_complete" != "true" ]]; then
@@ -532,6 +544,7 @@ else
   skip_step "R0 sidecar alias stability from API container" "set CDS_HOST to exec inside the remote CDS API container"
 fi
 run_step "t1-templates" "T1 official templates and adapter matrix" "$SCRIPT_DIR/smoke-cds-agent-profile-templates.sh" || finish_cycle 1
+run_step "a0-official-sdk-boundary" "A0 official SDK adapter boundary" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || finish_cycle 1
 run_step "r1-repair" "R1 profile repair dry-run or test-before-promote" "$SCRIPT_DIR/smoke-cds-agent-r1-profile-repair.sh" || finish_cycle 1
 run_step "readiness" "Commercial readiness ledger" "$SCRIPT_DIR/smoke-cds-agent-commercial-readiness.sh" || finish_cycle 1
 

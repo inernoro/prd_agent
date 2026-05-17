@@ -167,6 +167,12 @@ public class InfraAgentSessionsController : ControllerBase
                 "只读检查 runtime pool、默认 profile、官方模板和下一步建议。",
                 "ready"),
             new SidecarDebugCommand(
+                "official-sdk-boundary",
+                "官方 SDK 边界",
+                "bash scripts/smoke-cds-agent-official-sdk-boundary.sh",
+                "本地检查默认路径仍由 claude-agent-sdk 接管 turn loop，legacy loop 只作为显式 fallback。",
+                "ready"),
+            new SidecarDebugCommand(
                 "r1-dry-run",
                 "R1 修复预检",
                 "bash scripts/smoke-cds-agent-r1-profile-repair.sh",

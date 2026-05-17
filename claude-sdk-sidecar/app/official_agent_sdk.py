@@ -1,8 +1,9 @@
 """
-Optional Claude Agent SDK adapter.
+Official Claude Agent SDK adapter.
 
-This module is intentionally isolated from ``agent_loop.py``. The legacy loop remains
-the default fallback while MAP/CDS migrates toward the official SDK boundary.
+This module is intentionally isolated from ``agent_loop.py``. The legacy loop is
+kept only for explicit fallback while MAP/CDS keeps the default path on the
+official SDK boundary.
 """
 import logging
 import os

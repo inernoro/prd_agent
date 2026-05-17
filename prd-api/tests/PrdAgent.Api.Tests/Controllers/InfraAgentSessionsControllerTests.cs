@@ -385,6 +385,7 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N2").BlockedBy.ShouldBe("R1");
             nextCyclePlan.StopConditions.ShouldContain(x => x.Contains("N1-N5", StringComparison.Ordinal));
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Single(x => x.Code == "official-sdk-boundary").Command.ShouldBe("bash scripts/smoke-cds-agent-official-sdk-boundary.sh");
             debugCommands.Single(x => x.Code == "r1-apply").BlockedBy.ShouldBe("Anthropic API key");
             debugCommands.Single(x => x.Code == "provider-cycle").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "provider-cycle").BlockedBy.ShouldBe("R1");
@@ -487,6 +488,7 @@ public class InfraAgentSessionsControllerTests
                 .ShouldContain("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
             debugCommands.Select(x => x.Code).ShouldContain("doctor");
+            debugCommands.Select(x => x.Code).ShouldContain("official-sdk-boundary");
             debugCommands.Single(x => x.Code == "non-code-compat").Command.ShouldBe("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
             var executionPanel = diagnostics.ExecutionPanel.ShouldNotBeNull();
             executionPanel.Status.ShouldBe("profile-blocked");
