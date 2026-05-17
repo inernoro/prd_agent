@@ -63,6 +63,18 @@ public class InfraAgentRuntimeProfilesControllerTests
         var codex = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.CodexPlanned);
         codex.Status.ShouldBe("planned-not-routable");
         codex.NextActions.ShouldContain(x => x.Contains("不要把用户代码审查任务默认路由到 codex runtime", StringComparison.OrdinalIgnoreCase));
+
+        var openAiAgents = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.OpenAiAgentsSdkPlanned);
+        openAiAgents.Status.ShouldBe("planned-not-routable");
+        openAiAgents.MapRole.ShouldBe("control-plane-only");
+        openAiAgents.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("不能自动等价于代码审查 agent runtime", StringComparison.OrdinalIgnoreCase));
+        openAiAgents.NextActions.ShouldContain(x => x.Contains("S1/S2/S3", StringComparison.OrdinalIgnoreCase));
+
+        var googleAdk = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.GoogleAdkPlanned);
+        googleAdk.Status.ShouldBe("planned-not-routable");
+        googleAdk.LoopOwner.ShouldBe("google-adk");
+        googleAdk.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("不能直接复用 Claude Agent SDK", StringComparison.OrdinalIgnoreCase));
+        googleAdk.NextActions.ShouldContain(x => x.Contains("不要把代码审查任务默认路由到 google-adk", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

@@ -174,6 +174,8 @@ public static class InfraAgentRuntimeAdapterCompatibility
 {
     public const string SidecarLegacyLoop = "legacy-sidecar";
     public const string CodexPlanned = "codex";
+    public const string OpenAiAgentsSdkPlanned = "openai-agents-sdk";
+    public const string GoogleAdkPlanned = "google-adk";
 
     public static IReadOnlyList<InfraAgentRuntimeAdapterCompatibilityView> All { get; } =
     [
@@ -233,6 +235,50 @@ public static class InfraAgentRuntimeAdapterCompatibility
             ],
             [
                 "在官方 adapter、工具审批、取消和事件映射完成前，不要把用户代码审查任务默认路由到 codex runtime。"
+            ]),
+        new(
+            OpenAiAgentsSdkPlanned,
+            "OpenAI Agents SDK adapter candidate",
+            "planned-not-routable",
+            "openai-agents-sdk",
+            "control-plane-only",
+            "workspace-runtime-host",
+            [InfraAgentRuntimeProtocols.OpenAiCompatible],
+            ["built-in tracing", "tool calls", "handoffs", "guardrails"],
+            [],
+            [
+                "当前 CDS Agent 尚未实现 OpenAI Agents SDK 的 workspace、审批、取消和事件 adapter。",
+                "OpenAI-compatible profile 只能说明模型协议可用，不能自动等价于代码审查 agent runtime。"
+            ],
+            [
+                "OpenAI Agents SDK 可提供 tracing、tool call、handoff 和 guardrail 等官方能力。",
+                "接入时 MAP/CDS 仍只做控制面，不复制新的自研 agent loop。"
+            ],
+            [
+                "先定义 OpenAI Agents SDK run/event/tool approval/cancel 到 MAP/CDS 的 adapter contract。",
+                "通过 S1/S2/S3 同口径 smoke 后，才允许作为代码审查任务 runtime。"
+            ]),
+        new(
+            GoogleAdkPlanned,
+            "Google ADK adapter candidate",
+            "planned-not-routable",
+            "google-adk",
+            "control-plane-only",
+            "workspace-runtime-host",
+            [],
+            ["agent framework", "tool ecosystem", "deployment/runtime integrations"],
+            [],
+            [
+                "当前 CDS Agent 尚未实现 Google ADK 的 session、artifact、tool approval、cancel 和 event adapter。",
+                "ADK 可做智能体框架候选，但不能直接复用 Claude Agent SDK 的 provider profile。"
+            ],
+            [
+                "Google ADK 可作为 agent framework 和工具生态候选。",
+                "接入时需要先把 ADK session/artifact 语义收敛到 MAP/CDS run bundle。"
+            ],
+            [
+                "先设计 ADK artifact/session/tool approval 到 MAP/CDS 的兼容层。",
+                "在真实 provider smoke 和页面诊断都通过前，不要把代码审查任务默认路由到 google-adk。"
             ])
     ];
 }

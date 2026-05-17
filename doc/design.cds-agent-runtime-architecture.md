@@ -95,6 +95,19 @@ flowchart LR
 
 迁移方向：保留 MAP/CDS 控制面，把自研 agent loop 缩成官方 Claude Code SDK / Claude Agent SDK adapter。这样能减少 agent-loop 和上游事件适配维护量，但不能减少权限、审计、产物、workspace 和运行时池代码。
 
+### 4.2 其他官方 Agent SDK 兼容边界
+
+其他官方智能体框架可以借鉴，但不能因为“有工具调用”或“支持 tracing”就直接路由代码审查任务。MAP/CDS 的准入条件不是模型 API 协议，而是能否把 run、事件、工具审批、取消、workspace、artifact 和诊断稳定映射回控制面。
+
+| 候选 adapter | 当前状态 | 能复用的官方能力 | CDS 仍必须补齐的薄 adapter |
+|---|---|---|---|
+| `claude-agent-sdk` | `default-supported` | Claude Code/Agent SDK turn loop、上下文、工具执行、interrupt | profile 兼容性、MAP approval、SSE/event 归一化、run bundle |
+| `openai-agents-sdk` | `planned-not-routable` | Agents SDK 的 tool calls、handoffs、guardrails、tracing | workspace runtime、MAP approval bridge、cancel、事件/trace 到 run bundle 的映射 |
+| `google-adk` | `planned-not-routable` | ADK 的 agent framework、工具生态和部署/runtime 集成 | session/artifact/tool approval/cancel 到 MAP/CDS 的兼容层 |
+| `legacy-sidecar` | `explicit-fallback` | 无官方 loop 复用；只是迁移期保底 | 不扩展新能力，只用于排障或显式 fallback |
+
+因此，当前产品口径必须保持：只有 `claude-agent-sdk` 是代码审查默认路径；OpenAI Agents SDK、Google ADK、Codex-like runtime 都只能先进入 adapter compatibility matrix，待 S1/S2/S3 同口径 smoke 和页面诊断通过后再允许路由。
+
 ---
 
 ## 5. 刚修的 bug
