@@ -162,7 +162,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_WORKBENCH_URL` | _(空)_ | readiness audit 专用；指定需要检查 HTTP 200 的 `/cds-agent` 页面 URL |
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
 | `SMOKE_CDS_AGENT_DOCTOR_REPORT` | _(空)_ | doctor / one-cycle 专用；指定 JSON 诊断包输出路径，包含 diagnosis、nextRecommended、aliasCheck、默认 profile 和 adapter compatibility |
-| `SMOKE_CDS_AGENT_BOUNDARY_REPORT` | _(空)_ | official SDK boundary / one-cycle 专用；指定本地 adapter 边界 JSON 报告输出路径，包含默认 adapter、legacy fallback 和 adapter 行数证据 |
+| `SMOKE_CDS_AGENT_BOUNDARY_REPORT` | _(空)_ | official SDK boundary / one-cycle 专用；指定本地 adapter 边界 JSON 报告输出路径，包含默认 adapter、legacy fallback、adapter/support/total 行数预算和 helper loop-regression 扫描证据 |
 | `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
 | `SMOKE_CDS_AGENT_ACCESS_TOKEN` | _(空)_ | workbench visual 专用；已有 JWT 时可替代用户名密码 |
 | `SMOKE_CDS_AGENT_SCREENSHOT` | `/tmp/cds-agent-workbench-visual.png` | workbench visual 专用；截图输出路径 |
@@ -340,7 +340,7 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 | Gate | 通过含义 |
 | --- | --- |
 | R0 | runtime-status 和 sidecar alias 都证明 `loopOwner=claude-agent-sdk` |
-| A0 | 本地代码边界证明默认路径使用官方 Claude Agent SDK adapter，legacy loop 仅显式 fallback，且官方 adapter 仍在薄接入层预算内 |
+| A0 | 本地代码边界证明默认路径使用官方 Claude Agent SDK adapter，legacy loop 仅显式 fallback，且 adapter/support/total bridge 都在预算内 |
 | R1 | 默认 runtime profile 已是 Anthropic/Claude-compatible 且有 key |
 | S1 | 已显式允许 provider 调用，并完成真实只读 repo run |
 | S2S3 | 已完成真实 MAP approval 和 Stop/cancel 控制验证 |

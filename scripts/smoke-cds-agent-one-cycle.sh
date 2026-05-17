@@ -117,6 +117,7 @@ finish_cycle() {
   local s1_status="missing"
   local controls_status="missing"
   local boundary_status="missing"
+  local boundary_metrics_json="null"
   local doctor_diagnosis="missing"
   local doctor_next="missing"
   local doctor_alias_status="unknown"
@@ -167,6 +168,7 @@ finish_cycle() {
   fi
   if [[ -f "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" ]]; then
     boundary_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_BOUNDARY_REPORT")
+    boundary_metrics_json=$(jq -c '.officialLoopOwnerEvidence // null' "$SMOKE_CDS_AGENT_BOUNDARY_REPORT")
   fi
 
   if [[ "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-}" == "1" ]]; then
@@ -366,6 +368,7 @@ finish_cycle() {
     --arg controlsReport "$SMOKE_CDS_AGENT_CONTROLS_REPORT" \
     --arg boundaryStatus "$boundary_status" \
     --arg boundaryReport "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" \
+    --argjson boundaryMetrics "$boundary_metrics_json" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
     --arg gateR0 "$gate_r0_status" \
     --arg gateA0 "$gate_a0_status" \
@@ -463,7 +466,8 @@ finish_cycle() {
       },
       officialSdkBoundary: {
         status: $boundaryStatus,
-        report: $boundaryReport
+        report: $boundaryReport,
+        metrics: $boundaryMetrics
       },
       visual: {
         screenshot: $screenshot
@@ -491,6 +495,7 @@ finish_cycle() {
         },
         totalSeconds: $totalSeconds,
         slowest: $slowest,
+        officialSdkBoundary: $boundaryMetrics,
         gatesNotPass: $gatesNotPass
       },
       backendExecutionPanel: $readinessExecutionPanel,
@@ -525,6 +530,9 @@ finish_cycle() {
   printf 'S1 status: %s\n' "$s1_status"
   printf 'Controls status: %s\n' "$controls_status"
   printf 'Official SDK boundary status: %s\n' "$boundary_status"
+  if [[ "$boundary_metrics_json" != "null" ]]; then
+    jq -r '"Official SDK bridge budget: adapter=" + (.officialAdapterLines|tostring) + "/" + (.officialAdapterMaxLines|tostring) + " support=" + (.bridgeSupportLines|tostring) + "/" + (.bridgeSupportMaxLines|tostring) + " total=" + (.bridgeTotalLines|tostring) + "/" + (.bridgeTotalMaxLines|tostring)' <<< "$boundary_metrics_json"
+  fi
   printf 'Commercial gates: R0=%s A0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
     "$gate_r0_status" "$gate_a0_status" "$gate_r1_status" "$gate_s1_status" "$gate_s2s3_status" "$gate_v1_status" "$gate_n6_status"
   if [[ "$commercial_complete" != "true" ]]; then
