@@ -18,6 +18,12 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=smoke-lib.sh
+source "$SCRIPT_DIR/smoke-lib.sh"
+smoke_require_tools
+smoke_infer_preview_host
+export SMOKE_TEST_HOST="$SMOKE_HOST"
+
 CYCLE_ID="$(date +%Y%m%d%H%M%S)"
 SMOKE_CDS_AGENT_CYCLE_DIR="${SMOKE_CDS_AGENT_CYCLE_DIR:-/tmp/cds-agent-cycle-$CYCLE_ID}"
 
@@ -261,7 +267,7 @@ finish_cycle() {
     --arg cycleStatus "$cycle_status" \
     --arg nextCommand "$next_command" \
     --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
-    --arg host "${SMOKE_TEST_HOST:-http://localhost:5000}" \
+    --arg host "$SMOKE_TEST_HOST" \
     --arg readinessOverall "$readiness_overall" \
     --arg readinessReport "$SMOKE_CDS_AGENT_READINESS_REPORT" \
     --arg doctorDiagnosis "$doctor_diagnosis" \
@@ -427,7 +433,7 @@ printf '##########################################\n'
 printf '# CDS Agent one-cycle commercial smoke\n'
 printf '##########################################\n'
 printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
-printf 'Host: %s\n' "${SMOKE_TEST_HOST:-http://localhost:5000}"
+printf 'Host: %s\n' "$SMOKE_TEST_HOST"
 printf 'Provider calls: %s\n' "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-0}"
 printf 'R1 repair apply: %s\n' "$([[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]] && printf yes || printf no)"
 

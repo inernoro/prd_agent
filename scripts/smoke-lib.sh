@@ -48,11 +48,37 @@ SMOKE_USER="${SMOKE_USER:-admin}"
 SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-20}"
 SMOKE_VERBOSE="${SMOKE_VERBOSE:-}"
 
+smoke_infer_preview_host() {
+  if [[ -n "${SMOKE_TEST_HOST:-}" || -z "${CDS_HOST:-}" ]]; then
+    return 0
+  fi
+  if [[ ! -f ".claude/skills/cds/cli/cdscli.py" ]]; then
+    return 0
+  fi
+
+  local branch_id="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
+  local host_no_scheme preview_domain status_json preview_slug
+  host_no_scheme="${CDS_HOST#http://}"
+  host_no_scheme="${host_no_scheme#https://}"
+  host_no_scheme="${host_no_scheme%%/*}"
+  preview_domain="${SMOKE_CDS_PREVIEW_DOMAIN:-${host_no_scheme#cds.}}"
+  if [[ -z "$preview_domain" || "$preview_domain" == "$host_no_scheme" ]]; then
+    return 0
+  fi
+
+  status_json=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch status "$branch_id" 2>/dev/null || true)
+  preview_slug=$(printf '%s' "$status_json" | jq -r '.data.previewSlug // empty' 2>/dev/null || true)
+  if [[ -n "$preview_slug" ]]; then
+    SMOKE_HOST="https://${preview_slug}.${preview_domain}"
+  fi
+}
+
 # smoke_init runs auth+tool checks and prints a banner. Pass the human
 # name of the Agent being smoked so logs say "冒烟测试: PRD Agent".
 smoke_init() {
   local agent_name="${1:-Smoke}"
   smoke_require_tools
+  smoke_infer_preview_host
   if [[ -z "${AI_ACCESS_KEY:-}" ]]; then
     printf '[smoke-lib] 必须设置环境变量 AI_ACCESS_KEY (prd-api X-AI-Access-Key header)\n' >&2
     exit 2
