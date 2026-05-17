@@ -801,6 +801,30 @@ export default function CdsAgentPage() {
     const workspaceErrorState = workspaceErrorCode
       ? `${workspaceErrorCode}${workspaceErrorActions[0] ? ` · ${workspaceErrorActions[0]}` : ''}`
       : '无 workspace 错误';
+    const latestProviderKeyErrorPayload = payloads.find((payload) => (
+      readString(payload, 'errorCode') === 'provider_key_missing'
+      || readString(payload, 'error_code') === 'provider_key_missing'
+      || readString(payload, 'code') === 'provider_key_missing'
+      || readString(parseJsonString(payload.content), 'errorCode') === 'provider_key_missing'
+      || readString(parseJsonString(payload.content), 'error_code') === 'provider_key_missing'
+    ));
+    const latestProviderKeyErrorContent = latestProviderKeyErrorPayload ? parseJsonString(latestProviderKeyErrorPayload.content) : null;
+    const providerKeyErrorCode = latestProviderKeyErrorPayload
+      ? readString(latestProviderKeyErrorPayload, 'errorCode')
+        || readString(latestProviderKeyErrorPayload, 'error_code')
+        || readString(latestProviderKeyErrorPayload, 'code')
+        || readString(latestProviderKeyErrorContent, 'errorCode')
+        || readString(latestProviderKeyErrorContent, 'error_code')
+      : '';
+    const providerKeyErrorActions = latestProviderKeyErrorPayload
+      ? [
+          ...readStringArray(latestProviderKeyErrorPayload, 'nextActions'),
+          ...readStringArray(latestProviderKeyErrorContent, 'nextActions'),
+        ]
+      : [];
+    const providerKeyErrorState = providerKeyErrorCode
+      ? `${providerKeyErrorCode}${providerKeyErrorActions[0] ? ` · ${providerKeyErrorActions[0]}` : ''}`
+      : '无 provider key 错误';
     const approvalRequests = events
       .map((event) => ({ event, payload: parsePayload(event) }))
       .filter(({ event, payload }) => event.type === 'tool_call' && readString(payload, 'approvalId'));
@@ -949,11 +973,13 @@ export default function CdsAgentPage() {
       },
       {
         label: '模型凭据',
-        value: profileReady ? '可按请求下发' : '未就绪',
-        detail: profileReady
+        value: providerKeyErrorCode ? '执行时缺失' : profileReady ? '可按请求下发' : '未就绪',
+        detail: providerKeyErrorCode
+          ? (providerKeyErrorActions[0] || '本次 run 没有拿到 env、runtime profile 或 request override provider key。')
+          : profileReady
           ? 'Runtime profile 已具备 baseUrl、model 和可用 API key。'
           : profileBlockReason(selectedProfile),
-        state: profileReady ? 'pass' : selectedProfile ? 'warn' : 'pending',
+        state: providerKeyErrorCode ? 'warn' : profileReady ? 'pass' : selectedProfile ? 'warn' : 'pending',
       },
       {
         label: '审批桥',
@@ -1015,6 +1041,7 @@ export default function CdsAgentPage() {
         ['Ready', readyState],
         ['HTTP', httpState],
         ['Provider key', providerKeyState],
+        ['Provider key error', providerKeyErrorState],
         ['Sidecar token', sidecarTokenState],
         ['Discovery refresh', runtimeDiscoveryRefreshed === null ? '未请求' : runtimeDiscoveryRefreshed ? `已触发 · ${formatTime(runtimeStatusLoadedAt)}` : `未触发 · ${formatTime(runtimeStatusLoadedAt)}`],
         ['Discovery metrics', discoveryMetricSummary],
@@ -1043,6 +1070,19 @@ export default function CdsAgentPage() {
         privateRepositoryAuthConfigured: latestWorkspaceErrorPayload
           ? readBoolean(latestWorkspaceErrorPayload, 'privateRepositoryAuthConfigured') ?? readBoolean(latestWorkspaceErrorContent, 'privateRepositoryAuthConfigured')
           : null,
+      } : null,
+      providerKeyError: providerKeyErrorCode ? {
+        code: providerKeyErrorCode,
+        nextActions: providerKeyErrorActions,
+        upstreamSource: latestProviderKeyErrorPayload
+          ? readString(latestProviderKeyErrorPayload, 'upstreamSource') || readString(latestProviderKeyErrorContent, 'upstreamSource')
+          : '',
+        baseUrlConfigured: latestProviderKeyErrorPayload
+          ? readBoolean(latestProviderKeyErrorPayload, 'baseUrlConfigured') ?? readBoolean(latestProviderKeyErrorContent, 'baseUrlConfigured')
+          : null,
+        providerKeyMode: latestProviderKeyErrorPayload
+          ? readString(latestProviderKeyErrorPayload, 'providerKeyMode') || readString(latestProviderKeyErrorContent, 'providerKeyMode')
+          : '',
       } : null,
     };
   }, [activeProfile, activeSession, activeSessionProfile, eventStreamHealthy, events, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
@@ -1127,6 +1167,7 @@ export default function CdsAgentPage() {
       approvalEvidence: runtimeDiagnostics.approvalEvidence,
       cancelEvidence: runtimeDiagnostics.cancelEvidence,
       workspaceError: runtimeDiagnostics.workspaceError,
+      providerKeyError: runtimeDiagnostics.providerKeyError,
     },
   }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt, sidecarInstanceSummaries]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
