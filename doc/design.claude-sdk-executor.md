@@ -204,7 +204,7 @@ sidecar 在未配置 `callbackBaseUrl + token` 时返回 stub 文本，方便本
   "Enabled": false,
   "Sidecars": [],
   "RoutingStrategy": "tag-weighted",
-  "HealthCheck": { "Path": "/healthz", "IntervalSeconds": 10, ... },
+  "HealthCheck": { "Path": "/readyz", "IntervalSeconds": 10, ... },
   "Timeouts": { "ConnectMs": 3000, "RequestSeconds": 600, "IdleStreamSeconds": 60 },
   "CallbackBaseUrl": "http://api:8080",
   "DefaultModel": "claude-opus-4-5",

@@ -60,6 +60,14 @@ public class DynamicSidecarRegistryTests
     }
 
     [Fact]
+    public void HealthCheckConfig_ShouldDefaultToReadinessProbe()
+    {
+        var options = new ClaudeSidecarOptions();
+
+        Assert.Equal("/readyz", options.HealthCheck.Path);
+    }
+
+    [Fact]
     public async Task RefreshAsync_DiscoversPairedCdsInstances()
     {
         var options = new ClaudeSidecarOptions

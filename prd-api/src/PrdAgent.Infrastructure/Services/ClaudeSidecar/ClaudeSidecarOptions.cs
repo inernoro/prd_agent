@@ -137,7 +137,11 @@ public sealed class SidecarInstanceConfig
 
 public sealed class HealthCheckConfig
 {
-    public string Path { get; set; } = "/healthz";
+    /// <summary>
+    /// MAP runtime routing uses readiness, not only process liveness, so the default probe is /readyz.
+    /// Container orchestrators can still use sidecar /healthz for low-level liveness.
+    /// </summary>
+    public string Path { get; set; } = "/readyz";
     public int IntervalSeconds { get; set; } = 10;
     public int UnhealthyThreshold { get; set; } = 3;
     public int TimeoutSeconds { get; set; } = 3;
