@@ -138,6 +138,17 @@ MAP 导入 sidecar runtime error 时，会把 `recoveryKind`、`retryable` 和 `
 `claude_agent_sdk_not_available`、明确的 workspace 配置错误）不会再显示为可直接重试；
 先按 `nextActions` 修配置，再启动新的 run。
 
+在接 MAP 前，可以先用 sidecar 自带 smoke 验证 official adapter 的本地最小诊断链路：
+
+```bash
+bash claude-sdk-sidecar/smoke.sh
+```
+
+无 `ANTHROPIC_API_KEY` 时，预期不是静默跳过，而是看到
+`provider_key_missing` SSE error；这证明官方 SDK adapter、loop ownership 和 provider
+key 前置诊断已经接上。设置 `ANTHROPIC_API_KEY` 后重跑，才代表真实 Anthropic
+端到端调用通过。
+
 验证入口仍然是：
 
 ```text

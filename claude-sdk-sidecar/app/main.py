@@ -17,16 +17,24 @@ import json
 import logging
 import os
 import shutil
+import warnings
 from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic.warnings import UnsupportedFieldAttributeWarning
 
 from .agent_loop import run_agent
 from .official_agent_sdk import run_official_agent, workspace_diagnostics
 from .schemas import SidecarEvent, SidecarRunRequest
 
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"The 'alias' attribute with value .* has no effect",
+    category=UnsupportedFieldAttributeWarning,
+)
 
 logging.basicConfig(
     level=os.environ.get("SIDECAR_LOG_LEVEL", "INFO"),

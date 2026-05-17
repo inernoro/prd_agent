@@ -120,6 +120,7 @@
 - P1.6 页面已消费后端 runtime error 归因：`/cds-agent` Runtime 调试面板新增 `错误归因` gate 和 `Runtime error` 行，复制诊断包保留最新 runtime error 的 `code/message/recoveryKind/retryable/nextActions/source/runtimeAdapter/runtimeInstance`，避免后端结构化错误仍停留在原始事件 JSON。
 - P1.6 事件 schema 已校准 runtime error 契约：`/api/infra-agent-sessions/event-schema` 的 `error` 类型显式声明 `retryable/recoveryKind/nextActions/source/runtimeAdapter/runtimeInstance/content`，页面、Toolbox 和工作流可以把这些字段当作稳定诊断字段，而不是临时 payload。
 - P1.6 非页面入口也已消费 runtime error 归因：Toolbox `cds-agent` 和工作流 Capsule 渲染事件时会把 error payload 摘成 `code/recoveryKind/retryable/adapter/instance/source/message/下一步`，不再把恢复建议埋在原始 JSON 里。
+- P1.2/P1.6 本地 official adapter smoke 已补 provider key 前置诊断：`claude-sdk-sidecar/smoke.sh` 默认启动 `claude-agent-sdk` adapter，校验 `readyz` 的 `sdkInstalled/loopOwner`，无 `ANTHROPIC_API_KEY` 时发起一次 run 并要求 SSE 中出现 `provider_key_missing`，有 key 时再跑真实 Anthropic 流式调用。这样最小调试入口不再把“没 key”当作跳过，而是验证 MAP/UI 依赖的结构化错误链路。
 - P1.6 官方 SDK 结果观测性已有第一步：`ResultMessage` 的安全元信息（如 `subtype/session_id/model/stop_reason/total_cost_usd/duration_ms/num_turns`）会进入 sidecar `usage/done.content.sdkResult`，MAP 运行日志会保留该 `content`，方便真实 run 接通后定位 SDK session、失败 subtype、成本和耗时；不采集 prompt/result 正文或密钥。
 - P1.6 远程诊断新增实际阻塞定位：`runtime-status` 的 pool diagnostics 会透出 CDS discovery 为 0 的原因；后台 discovery 会把不可解密的历史 infra connection 标记为 revoked，遇到 CDS 返回 `invalid_long_token` 时也会触发探活并收敛为 revoked，避免旧授权每 10 秒重复污染 runtime pool 诊断。
 - P1.6 诊断已从“字符串解释”升级为“可操作恢复路径”：`runtime-status` 现在返回 `blockers` 和 `nextActions`，页面 Runtime 调试区直接显示阻塞项与下一步，避免用户只看到 `instanceCount=0` 或 `/readyz 503` 却不知道该更新 CDS 控制面、重新授权，还是修 sidecar 的 `ANTHROPIC_API_KEY` / `claude-agent-sdk` / workspace。
@@ -161,6 +162,7 @@
 - `python3 -m py_compile claude-sdk-sidecar/app/main.py claude-sdk-sidecar/app/agent_loop.py claude-sdk-sidecar/app/official_agent_sdk.py claude-sdk-sidecar/app/schemas.py` 通过。本轮增量也重跑了 `python3 -m py_compile claude-sdk-sidecar/app/official_agent_sdk.py claude-sdk-sidecar/app/main.py claude-sdk-sidecar/app/schemas.py`。
 - `python3 -m unittest discover -s claude-sdk-sidecar/tests` 通过；该测试使用 fake `claude_agent_sdk`，只验证 adapter 事件映射和 cancel/interrupt 结构，不代表真实 Claude 端到端调用通过。
 - `python3 -m unittest discover -s claude-sdk-sidecar/tests` 最新通过 23 个测试；覆盖私有 GitHub token 不进入 clone URL/runtime event/diagnostic，只通过 Git 临时 config env 用于 clone/fetch。
+- `bash claude-sdk-sidecar/smoke.sh` 已升级为 official SDK adapter smoke：默认校验 `claude-agent-sdk` 包、`loopOwner=claude-agent-sdk`、无 token 401、无 provider key 时的 `provider_key_missing` SSE error；设置 `ANTHROPIC_API_KEY` 后才继续真实 Anthropic run。
 - `claude-sdk-sidecar/tests/test_sidecar_readiness.py` 覆盖 `/readyz` 背后的 adapter diagnostics：legacy 默认 ready、official 缺 SDK 包时报告 missing、外部 `claude` PATH 命令缺失不阻塞、写工具 opt-in 时报告 `builtinWriteToolsEnabled`。
 - `PYTHONPATH=/tmp/codex-sidecar-req-check-2:claude-sdk-sidecar python3 ...` 真实 SDK shape check 通过，`runtime_init` 显示 `approvalBridge=sdk-can-use-tool`、默认 tools 为 `Read/Grep/Glob`、`permissionMode=default`。
 - 临时安装真实 `claude-agent-sdk` 到 `/tmp/codex-claude-agent-sdk` 后，API 形状验证通过：`ClaudeSDKClient`、`ClaudeAgentOptions`、`tool()`、`create_sdk_mcp_server()` 可导入且签名匹配当前 adapter 用法。

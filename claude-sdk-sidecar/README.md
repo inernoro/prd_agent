@@ -170,6 +170,18 @@ python3 -m unittest discover -s claude-sdk-sidecar/tests
 
 这个测试使用 fake `claude_agent_sdk`，只验证 adapter 事件映射和取消路径。
 
+官方 SDK adapter 本地 smoke：
+
+```bash
+bash claude-sdk-sidecar/smoke.sh
+```
+
+`smoke.sh` 默认以 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 启动 sidecar。缺少
+`uvicorn` 或 `claude_agent_sdk` 时会按 `requirements.txt` 安装依赖；无
+`ANTHROPIC_API_KEY` 时不会直接跳过，而是发起一次 official adapter run 并期望看到
+`provider_key_missing` 结构化错误，证明错误发生在 SDK client 创建前且能被 MAP/UI
+稳定消费。有 `ANTHROPIC_API_KEY` 时，会继续跑真实 Anthropic 流式调用。
+
 依赖说明：官方 `claude-agent-sdk` 当前依赖链要求较新的 `pydantic`，并会通过
 `mcp` 间接引入 SSE 相关包。`requirements.txt` 已固定 `pydantic`、`starlette`
 和 `sse-starlette`，避免和 `fastapi==0.115.0` 解出不兼容组合。
