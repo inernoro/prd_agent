@@ -7,7 +7,8 @@
 # before calling S1/S2/S3 provider smokes:
 #   R0: MAP/CDS runtime pool can route to claude-agent-sdk.
 #   R1: default runtime profile is compatible and has an API key.
-#   T1: official profile template and adapter compatibility APIs are present.
+#   T1: official profile template and adapter compatibility APIs are present,
+#       and other official SDK candidates are not silently routable.
 #   V1: optional workbench page is reachable.
 #
 # Set SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL=1 to fail when R1 is not ready.
@@ -31,6 +32,7 @@ require_commercial_failed=""
 gate_r0_status="unknown"
 gate_r1_status="unknown"
 gate_t1_status="unknown"
+gate_candidate_status="unknown"
 gate_provider_status="unknown"
 gate_v1_status="unknown"
 page_code="not_checked"
@@ -67,6 +69,7 @@ write_report() {
     --arg gateR0 "$gate_r0_status" \
     --arg gateR1 "$gate_r1_status" \
     --arg gateT1 "$gate_t1_status" \
+    --arg gateCandidates "$gate_candidate_status" \
     --arg gateProvider "$gate_provider_status" \
     --arg gateV1 "$gate_v1_status" \
     --argjson instanceCount "${instance_count:-0}" \
@@ -103,6 +106,7 @@ write_report() {
         R0: $gateR0,
         R1: $gateR1,
         T1: $gateT1,
+        candidates: $gateCandidates,
         S1S2S3: $gateProvider,
         V1: $gateV1
       },
@@ -172,8 +176,22 @@ official_adapter=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.
 smoke_assert_nonempty "$official_adapter" "claude-agent-sdk compatibility"
 smoke_assert_eq "$(printf '%s' "$official_adapter" | jq -r '.loopOwner')" "claude-agent-sdk" "official.loopOwner"
 smoke_assert_eq "$(printf '%s' "$official_adapter" | jq -r '.mapRole')" "control-plane-only" "official.mapRole"
+codex_adapter=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "codex")')
+smoke_assert_nonempty "$codex_adapter" "codex compatibility"
+smoke_assert_eq "$(printf '%s' "$codex_adapter" | jq -r '.status')" "planned-not-routable" "codex.status"
+openai_agents_adapter=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "openai-agents-sdk")')
+smoke_assert_nonempty "$openai_agents_adapter" "openai-agents-sdk compatibility"
+smoke_assert_eq "$(printf '%s' "$openai_agents_adapter" | jq -r '.status')" "planned-not-routable" "openai-agents-sdk.status"
+openai_agents_next=$(printf '%s' "$openai_agents_adapter" | jq -r '.nextActions[]?')
+smoke_assert_contains "$openai_agents_next" "S1/S2/S3" "openai-agents-sdk.nextActions"
+google_adk_adapter=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "google-adk")')
+smoke_assert_nonempty "$google_adk_adapter" "google-adk compatibility"
+smoke_assert_eq "$(printf '%s' "$google_adk_adapter" | jq -r '.status')" "planned-not-routable" "google-adk.status"
+google_adk_next=$(printf '%s' "$google_adk_adapter" | jq -r '.nextActions[]?')
+smoke_assert_contains "$google_adk_next" "不要把代码审查任务默认路由到 google-adk" "google-adk.nextActions"
 gate_t1_status="pass"
-smoke_ok "T1 ready: template and compatibility matrix are backend-owned"
+gate_candidate_status="pass"
+smoke_ok "T1 ready: template and compatibility matrix are backend-owned; other SDK candidates are planned-not-routable"
 
 smoke_step "S1/S2/S3 provider-run gate status"
 if [[ "$profile_compatible" == "true" && "$profile_has_key" == "true" ]]; then

@@ -67,7 +67,7 @@ compat_resp=$(smoke_get /api/infra-agent-runtime-profiles/adapter-compatibility)
 smoke_assert_eq "$(printf '%s' "$compat_resp" | jq -r '.success')" "true" "success"
 smoke_ok "adapter compatibility API 可访问"
 
-smoke_step "确认官方 SDK 与 Codex-like 边界"
+smoke_step "确认官方 SDK 与其他候选 adapter 边界"
 official=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "claude-agent-sdk")')
 smoke_assert_nonempty "$official" "claude-agent-sdk compatibility"
 smoke_assert_eq "$(printf '%s' "$official" | jq -r '.loopOwner')" "claude-agent-sdk" "official.loopOwner"
@@ -77,6 +77,18 @@ smoke_assert_eq "$incompatible_count" "1" "official.deepseekIncompatiblePattern"
 codex=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "codex")')
 smoke_assert_nonempty "$codex" "codex compatibility"
 smoke_assert_eq "$(printf '%s' "$codex" | jq -r '.status')" "planned-not-routable" "codex.status"
-smoke_ok "official SDK default-supported; codex planned-not-routable"
+openai_agents=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "openai-agents-sdk")')
+smoke_assert_nonempty "$openai_agents" "openai-agents-sdk compatibility"
+smoke_assert_eq "$(printf '%s' "$openai_agents" | jq -r '.status')" "planned-not-routable" "openai-agents-sdk.status"
+smoke_assert_eq "$(printf '%s' "$openai_agents" | jq -r '.mapRole')" "control-plane-only" "openai-agents-sdk.mapRole"
+openai_actions=$(printf '%s' "$openai_agents" | jq -r '.nextActions[]?')
+smoke_assert_contains "$openai_actions" "S1/S2/S3" "openai-agents-sdk.nextActions"
+google_adk=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "google-adk")')
+smoke_assert_nonempty "$google_adk" "google-adk compatibility"
+smoke_assert_eq "$(printf '%s' "$google_adk" | jq -r '.status')" "planned-not-routable" "google-adk.status"
+smoke_assert_eq "$(printf '%s' "$google_adk" | jq -r '.loopOwner')" "google-adk" "google-adk.loopOwner"
+google_actions=$(printf '%s' "$google_adk" | jq -r '.nextActions[]?')
+smoke_assert_contains "$google_actions" "不要把代码审查任务默认路由到 google-adk" "google-adk.nextActions"
+smoke_ok "official SDK default-supported; codex/openai-agents-sdk/google-adk planned-not-routable"
 
 smoke_done
