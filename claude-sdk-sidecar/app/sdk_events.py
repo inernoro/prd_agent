@@ -52,6 +52,9 @@ def handle_sdk_message(message: Any, result_message_type: type, state: SdkEventA
 
 
 def block_type(block: Any) -> str:
+    if isinstance(block, dict):
+        value = block.get("type")
+        return value.lower() if isinstance(value, str) else "dict"
     value = getattr(block, "type", None)
     if isinstance(value, str):
         return value

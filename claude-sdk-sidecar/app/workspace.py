@@ -18,13 +18,15 @@ def parse_github_repository(value: str | None) -> tuple[str, str] | None:
     raw = (value or "").strip()
     if not raw:
         return None
-    if _REPO_SLUG_RE.match(raw):
+    match = _GITHUB_URL_RE.match(raw)
+    if match:
+        slug = match.group(1)
+        if slug.endswith(".git"):
+            slug = slug[:-4]
+    elif _REPO_SLUG_RE.match(raw):
         slug = raw
     else:
-        match = _GITHUB_URL_RE.match(raw)
-        if not match:
-            raise ValueError("gitRepository must be owner/repo or https://github.com/owner/repo")
-        slug = match.group(1)
+        raise ValueError("gitRepository must be owner/repo or https://github.com/owner/repo")
     return slug, f"https://github.com/{slug}.git"
 
 
