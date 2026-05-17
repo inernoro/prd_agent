@@ -55,7 +55,7 @@ if [[ "$(printf '%s' "$self_branches_resp" | jq -r '.ok')" != "true" ]]; then
 fi
 current_branch=$(printf '%s' "$self_branches_resp" | jq -r '.data.current // "unknown"')
 current_commit=$(printf '%s' "$self_branches_resp" | jq -r '.data.commitHash // "unknown"')
-target_branch_json=$(printf '%s' "$self_branches_resp" | jq -c --arg branch "$CDS_SELF_UPDATE_BRANCH" '.data.branchDetails[]? | select(.name == $branch)' | head -n 1)
+target_branch_json=$(printf '%s' "$self_branches_resp" | jq -c --arg branch "$CDS_SELF_UPDATE_BRANCH" 'first(.data.branchDetails[]? | select(.name == $branch)) // empty')
 if [[ -z "$target_branch_json" ]]; then
   printf 'target branch not found in CDS self branches: %s\n' "$CDS_SELF_UPDATE_BRANCH" >&2
   exit 1
