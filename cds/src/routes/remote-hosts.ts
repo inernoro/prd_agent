@@ -453,10 +453,24 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const latest = deps.stateService.getLatestDeploymentsByProject(projectId);
 
     const instances: Array<Record<string, unknown>> = [];
+    const discovery = {
+      projectKind: project.kind || 'unknown',
+      deploymentCount: latest.length,
+      runningDeploymentCount: 0,
+      disabledHostDeploymentCount: 0,
+      branchCount: 0,
+      runningBranchCount: 0,
+      runningBranchServiceCount: 0,
+      previewRootConfigured: false,
+    };
     for (const dep of latest) {
       if (dep.status !== 'running') continue;
+      discovery.runningDeploymentCount += 1;
       const host = service.getRaw(dep.hostId);
-      if (!host || !host.isEnabled) continue;
+      if (!host || !host.isEnabled) {
+        discovery.disabledHostDeploymentCount += 1;
+        continue;
+      }
       instances.push({
         deploymentId: dep.id,
         host: host.host,
@@ -473,10 +487,15 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
       const projectSlug = project.slug || project.id;
       const previewRoot = resolvePreviewRootDomain();
-      for (const branch of deps.stateService.getBranchesForProject(projectId)) {
+      discovery.previewRootConfigured = Boolean(previewRoot);
+      const branches = deps.stateService.getBranchesForProject(projectId);
+      discovery.branchCount = branches.length;
+      for (const branch of branches) {
         if (branch.status !== 'running') continue;
+        discovery.runningBranchCount += 1;
         for (const serviceState of Object.values(branch.services || {})) {
           if (serviceState.status !== 'running') continue;
+          discovery.runningBranchServiceCount += 1;
           const profile = deps.stateService.getBuildProfile(serviceState.profileId);
           const previewSlug = computePreviewSlug(branch.branch, projectSlug);
           const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
@@ -496,7 +515,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       }
     }
 
-    res.json({ projectId, instances });
+    res.json({ projectId, instances, discovery });
   });
 
   router.post('/projects/:id/agent-sessions', async (req, res) => {

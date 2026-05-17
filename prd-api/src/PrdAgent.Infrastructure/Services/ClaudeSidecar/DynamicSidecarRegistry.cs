@@ -273,7 +273,10 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             if (result.Envelope.Instances.Count == 0)
             {
                 emptyEndpoints += 1;
-                emptyEndpointDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} empty_instances");
+                var discoverySummary = result.Envelope.Discovery == null
+                    ? string.Empty
+                    : " " + result.Envelope.Discovery.ToSummary();
+                emptyEndpointDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} empty_instances{discoverySummary}");
                 continue;
             }
             endpointsWithInstances += 1;
@@ -482,6 +485,35 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
     {
         public string? ProjectId { get; set; }
         public List<InstanceDto>? Instances { get; set; }
+        public ProjectInstancesDiscoveryDto? Discovery { get; set; }
+    }
+
+    private sealed class ProjectInstancesDiscoveryDto
+    {
+        public string? ProjectKind { get; set; }
+        public int? DeploymentCount { get; set; }
+        public int? RunningDeploymentCount { get; set; }
+        public int? DisabledHostDeploymentCount { get; set; }
+        public int? BranchCount { get; set; }
+        public int? RunningBranchCount { get; set; }
+        public int? RunningBranchServiceCount { get; set; }
+        public bool? PreviewRootConfigured { get; set; }
+
+        public string ToSummary()
+        {
+            var parts = new List<string>
+            {
+                $"projectKind={ProjectKind ?? "unknown"}",
+                $"deployments={DeploymentCount ?? 0}",
+                $"runningDeployments={RunningDeploymentCount ?? 0}",
+                $"disabledHostDeployments={DisabledHostDeploymentCount ?? 0}",
+                $"branches={BranchCount ?? 0}",
+                $"runningBranches={RunningBranchCount ?? 0}",
+                $"runningBranchServices={RunningBranchServiceCount ?? 0}",
+                $"previewRootConfigured={PreviewRootConfigured == true}",
+            };
+            return "discovery(" + string.Join(" ", parts) + ")";
+        }
     }
 
     private sealed record ProjectInstancesResult(

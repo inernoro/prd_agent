@@ -138,6 +138,15 @@ describe('Remote hosts project instances route', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.projectId).toBe(projectId);
+    expect(res.body.discovery).toMatchObject({
+      projectKind: 'shared-service',
+      deploymentCount: 0,
+      runningDeploymentCount: 0,
+      branchCount: 1,
+      runningBranchCount: 1,
+      runningBranchServiceCount: 1,
+      previewRootConfigured: true,
+    });
     expect(res.body.instances).toHaveLength(1);
     expect(res.body.instances[0]).toMatchObject({
       deploymentId: 'branch:shared-main:api-prd-agent',

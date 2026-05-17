@@ -185,7 +185,20 @@ public class DynamicSidecarRegistryTests
         var httpFactory = new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent("""
-            {"projectId":"shared-sidecar-pool","instances":[]}
+            {
+              "projectId":"shared-sidecar-pool",
+              "instances":[],
+              "discovery": {
+                "projectKind": "shared-service",
+                "deploymentCount": 0,
+                "runningDeploymentCount": 0,
+                "disabledHostDeploymentCount": 0,
+                "branchCount": 1,
+                "runningBranchCount": 1,
+                "runningBranchServiceCount": 0,
+                "previewRootConfigured": true
+              }
+            }
             """),
         });
 
@@ -201,6 +214,8 @@ public class DynamicSidecarRegistryTests
         var error = registry.LastRefreshError ?? string.Empty;
         Assert.Contains("emptyEndpoints=1", error);
         Assert.Contains("paired-empty-endpoints conn-emp shared-sidecar-pool empty_instances", error);
+        Assert.Contains("discovery(projectKind=shared-service", error);
+        Assert.Contains("runningBranchServices=0", error);
     }
 
     [Fact]
