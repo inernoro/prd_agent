@@ -92,6 +92,117 @@ public class DynamicSidecarRegistryTests
     }
 
     [Fact]
+    public async Task RefreshAsync_RecordsPairedEndpointFailureDetails()
+    {
+        var options = new ClaudeSidecarOptions
+        {
+            Enabled = false,
+            CdsDiscovery = new CdsDiscoveryConfig
+            {
+                Enabled = false,
+                EnablePairedInfraConnections = true,
+                SharedSidecarToken = "shared-sidecar-token",
+            },
+        };
+        var infra = new FakeInfraConnectionService(
+            new InfraConnectionPublicView(
+                Id: "conn-failure-1",
+                Partner: "cds",
+                PartnerName: "CDS",
+                PartnerId: "cds-1",
+                PartnerBaseUrl: "https://cds.example.test",
+                ProjectId: "proj-1",
+                InstanceDiscoveryUrl: "/api/projects/proj-1/instances",
+                Scopes: new[] { "instance:read" },
+                Status: "active",
+                CreatedAt: DateTime.UtcNow,
+                UpdatedAt: DateTime.UtcNow,
+                LastProbedAt: null,
+                LastProbeOk: null,
+                LastProbeError: null,
+                LongTokenExpiresAt: DateTime.UtcNow.AddYears(1)),
+            "cds-long-token");
+        var services = new ServiceCollection()
+            .AddSingleton<IInfraConnectionService>(infra)
+            .BuildServiceProvider();
+        var httpFactory = new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("""
+            {"error":{"code":"project_mismatch","message":"connection token cannot access this project"}}
+            """),
+        });
+
+        var registry = new DynamicSidecarRegistry(
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            httpFactory,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<DynamicSidecarRegistry>.Instance);
+
+        await registry.RefreshAsync(CancellationToken.None);
+
+        Assert.Empty(registry.GetCurrent());
+        var error = registry.LastRefreshError ?? string.Empty;
+        Assert.Contains("endpointFailures=1", error);
+        Assert.Contains("paired-endpoint-failures conn-fai proj-1 HTTP 403", error);
+        Assert.Contains("project_mismatch", error);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_RecordsPairedEmptyEndpointDetails()
+    {
+        var options = new ClaudeSidecarOptions
+        {
+            Enabled = false,
+            CdsDiscovery = new CdsDiscoveryConfig
+            {
+                Enabled = false,
+                EnablePairedInfraConnections = true,
+                SharedSidecarToken = "shared-sidecar-token",
+            },
+        };
+        var infra = new FakeInfraConnectionService(
+            new InfraConnectionPublicView(
+                Id: "conn-empty-1",
+                Partner: "cds",
+                PartnerName: "CDS",
+                PartnerId: "cds-1",
+                PartnerBaseUrl: "https://cds.example.test",
+                ProjectId: "shared-sidecar-pool",
+                InstanceDiscoveryUrl: "/api/projects/shared-sidecar-pool/instances",
+                Scopes: new[] { "instance:read" },
+                Status: "active",
+                CreatedAt: DateTime.UtcNow,
+                UpdatedAt: DateTime.UtcNow,
+                LastProbedAt: null,
+                LastProbeOk: null,
+                LastProbeError: null,
+                LongTokenExpiresAt: DateTime.UtcNow.AddYears(1)),
+            "cds-long-token");
+        var services = new ServiceCollection()
+            .AddSingleton<IInfraConnectionService>(infra)
+            .BuildServiceProvider();
+        var httpFactory = new FakeHttpClientFactory(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("""
+            {"projectId":"shared-sidecar-pool","instances":[]}
+            """),
+        });
+
+        var registry = new DynamicSidecarRegistry(
+            new StaticOptionsMonitor<ClaudeSidecarOptions>(options),
+            httpFactory,
+            services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<DynamicSidecarRegistry>.Instance);
+
+        await registry.RefreshAsync(CancellationToken.None);
+
+        Assert.Empty(registry.GetCurrent());
+        var error = registry.LastRefreshError ?? string.Empty;
+        Assert.Contains("emptyEndpoints=1", error);
+        Assert.Contains("paired-empty-endpoints conn-emp shared-sidecar-pool empty_instances", error);
+    }
+
+    [Fact]
     public void Router_IsConfigured_WhenOnlyPairedCdsInstanceExistsAndLocalExecutorDisabled()
     {
         var options = new ClaudeSidecarOptions { Enabled = false };

@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -234,6 +235,8 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var emptyEndpoints = 0;
         var endpointFailures = 0;
         var encryptedTokenFailures = 0;
+        var endpointFailureDetails = new List<string>();
+        var emptyEndpointDetails = new List<string>();
         foreach (var conn in activeCds)
         {
             var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: true);
@@ -249,25 +252,24 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", longToken);
 
             var url = JoinUrl(conn.PartnerBaseUrl, conn.InstanceDiscoveryUrl);
-            ProjectInstancesEnvelope? envelope;
-            try
-            {
-                envelope = await http.GetFromJsonAsync<ProjectInstancesEnvelope>(url, ct);
-            }
-            catch (Exception ex)
+            var (envelope, error) = await FetchProjectInstancesAsync(http, url, ct);
+            if (error != null)
             {
                 endpointFailures += 1;
-                _logger.LogDebug(ex, "[CdsDiscovery] paired instance discovery failed connection={Id}", conn.Id);
+                endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} {error}");
+                _logger.LogDebug("[CdsDiscovery] paired instance discovery failed connection={Id}: {Error}", conn.Id, error);
                 continue;
             }
             if (envelope?.Instances == null)
             {
                 endpointFailures += 1;
+                endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} response_missing_instances");
                 continue;
             }
             if (envelope.Instances.Count == 0)
             {
                 emptyEndpoints += 1;
+                emptyEndpointDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} empty_instances");
                 continue;
             }
             endpointsWithInstances += 1;
@@ -302,9 +304,62 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         {
             notes.Add(
                 $"paired-connections total={connections.Count} activeCds={activeCds.Count} usable={usableConnections} tokenFailures={encryptedTokenFailures} endpointFailures={endpointFailures} emptyEndpoints={emptyEndpoints} endpointsWithInstances={endpointsWithInstances}");
+            if (endpointFailureDetails.Count > 0)
+            {
+                notes.Add("paired-endpoint-failures " + string.Join(" | ", endpointFailureDetails.Take(5)));
+            }
+            if (emptyEndpointDetails.Count > 0)
+            {
+                notes.Add("paired-empty-endpoints " + string.Join(" | ", emptyEndpointDetails.Take(5)));
+            }
         }
 
         return discovered;
+    }
+
+    private static async Task<(ProjectInstancesEnvelope? Envelope, string? Error)> FetchProjectInstancesAsync(
+        HttpClient http,
+        string url,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var response = await http.GetAsync(url, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return (null, $"HTTP {(int)response.StatusCode} {TruncateOneLine(body, 180)}".Trim());
+            }
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return (null, "empty_body");
+            }
+
+            var envelope = JsonSerializer.Deserialize<ProjectInstancesEnvelope>(
+                body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return (envelope, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, $"{ex.GetType().Name}: {TruncateOneLine(ex.Message, 180)}");
+        }
+    }
+
+    private static string ShortId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "unknown";
+        return value.Length <= 8 ? value : value[..8];
+    }
+
+    private static string TruncateOneLine(string? value, int max)
+    {
+        var normalized = (value ?? string.Empty)
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+        if (normalized.Length <= max) return normalized;
+        return normalized[..max] + "...";
     }
 
     private static DynamicSidecarInstance ToDynamicInstance(
