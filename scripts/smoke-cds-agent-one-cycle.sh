@@ -120,6 +120,8 @@ finish_cycle() {
   local commercial_complete=false
   local blocking_reason=""
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
+  local passed_count skipped_count failed_count
+  local doctor_log="$SMOKE_CDS_AGENT_CYCLE_DIR/doctor.log"
 
   if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
     readiness_overall=$(jq -r '.overall // "unknown"' "$SMOKE_CDS_AGENT_READINESS_REPORT")
@@ -203,6 +205,10 @@ finish_cycle() {
   if (( exit_code != 0 || ${#failed_arr[@]} > 0 )); then
     cycle_status="failed"
     blocking_reason="At least one script step failed; inspect failed step logs."
+    if [[ -f "$doctor_log" ]] && grep -Eq 'preview-not-ready|CDS preview is not ready|status=starting' "$doctor_log"; then
+      cycle_status="preview_not_ready"
+      blocking_reason="CDS preview is still starting; retry one-cycle after the preview reports ready."
+    fi
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" && "$controls_status" == "pass" ]]; then
     cycle_status="provider_smokes_passed"
   elif [[ "$provider_calls_enabled" == "true" ]]; then
@@ -236,6 +242,9 @@ finish_cycle() {
       failed)
         next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
         ;;
+      preview_not_ready)
+        next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-one-cycle.sh"
+        ;;
       blocked_r1)
         next_command="SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
@@ -262,6 +271,9 @@ finish_cycle() {
   if (( ${#failed_arr[@]} > 0 )); then
     failed_json=$(printf '%s\n' "${failed_arr[@]}" | jq -R . | jq -s .)
   fi
+  passed_count=${#passed_arr[@]}
+  skipped_count=${#skipped_arr[@]}
+  failed_count=${#failed_arr[@]}
 
   timing_json='[]'
   slowest_json='[]'
@@ -314,11 +326,46 @@ finish_cycle() {
     --argjson passed "$passed_json" \
     --argjson skipped "$skipped_json" \
     --argjson failed "$failed_json" \
+    --argjson passedCount "$passed_count" \
+    --argjson skippedCount "$skipped_count" \
+    --argjson failedCount "$failed_count" \
     --argjson timings "$timing_json" \
     --argjson slowest "$slowest_json" \
     --argjson totalSeconds "$total_seconds" \
     --argjson exitCode "$exit_code" \
-    '{
+    '
+    {
+      R0: {
+        status: $gateR0,
+        evidence: "runtime-status and sidecar alias prove claude-agent-sdk loop ownership"
+      },
+      R1: {
+        status: $gateR1,
+        evidence: "default runtime profile is Anthropic/Claude-compatible and keyed"
+      },
+      S1: {
+        status: $gateS1,
+        evidence: "provider-backed read-only official SDK repo run"
+      },
+      S2S3: {
+        status: $gateS2S3,
+        evidence: "provider-backed MAP approval and SDK stop/cancel controls"
+      },
+      V1: {
+        status: $gateV1,
+        evidence: "authenticated workbench screenshot with real runtime state"
+      },
+      N6: {
+        status: $gateN6,
+        evidence: "non-code Toolbox agents remain independent from CDS sidecar runtime pool"
+      }
+    } as $gates |
+    ($gates | to_entries | map(select(.value.status != "pass") | {
+      gate: .key,
+      status: .value.status,
+      evidence: .value.evidence
+    })) as $gatesNotPass |
+    {
       cycleId: $cycleId,
       status: $cycleStatus,
       commercialComplete: $commercialComplete,
@@ -355,31 +402,29 @@ finish_cycle() {
       visual: {
         screenshot: $screenshot
       },
-      commercialGates: {
-        R0: {
-          status: $gateR0,
-          evidence: "runtime-status and sidecar alias prove claude-agent-sdk loop ownership"
+      commercialGates: $gates,
+      commercialGatesNotPass: $gatesNotPass,
+      executionPanel: {
+        status: $cycleStatus,
+        commercialComplete: $commercialComplete,
+        blockingReason: $blockingReason,
+        nextCommand: $nextCommand,
+        currentBlockingGate: (($gatesNotPass | map(select(.status == "pending")) | .[0].gate) // ($gatesNotPass[0].gate // "")),
+        stepCounts: {
+          passed: $passedCount,
+          skipped: $skippedCount,
+          failed: $failedCount
         },
-        R1: {
-          status: $gateR1,
-          evidence: "default runtime profile is Anthropic/Claude-compatible and keyed"
+        gateCounts: {
+          pass: ($gates | to_entries | map(select(.value.status == "pass")) | length),
+          pending: ($gates | to_entries | map(select(.value.status == "pending")) | length),
+          skipped: ($gates | to_entries | map(select(.value.status == "skipped")) | length),
+          failed: ($gates | to_entries | map(select(.value.status == "failed")) | length),
+          unknown: ($gates | to_entries | map(select(.value.status == "unknown")) | length)
         },
-        S1: {
-          status: $gateS1,
-          evidence: "provider-backed read-only official SDK repo run"
-        },
-        S2S3: {
-          status: $gateS2S3,
-          evidence: "provider-backed MAP approval and SDK stop/cancel controls"
-        },
-        V1: {
-          status: $gateV1,
-          evidence: "authenticated workbench screenshot with real runtime state"
-        },
-        N6: {
-          status: $gateN6,
-          evidence: "non-code Toolbox agents remain independent from CDS sidecar runtime pool"
-        }
+        totalSeconds: $totalSeconds,
+        slowest: $slowest,
+        gatesNotPass: $gatesNotPass
       },
       steps: {
         passed: $passed,

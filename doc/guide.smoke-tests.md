@@ -342,7 +342,13 @@ deploy 后的 readiness、视觉截图，还是 provider 调用。
 | `blocked_provider_smokes` | R1 已不再是主阻塞，但 S1/S2/S3 还没有真实 provider 证据 |
 | `provider_smokes_incomplete` | 已打开 provider 调用，但 S1/S2/S3 没有全部通过 |
 | `provider_smokes_passed` | R1 和 S1/S2/S3 都有通过证据，可进入更高层业务验收 |
+| `preview_not_ready` | 远程 CDS preview 仍在 `starting`，等待 ready 后重跑 one-cycle，不需要先改代码或 self update |
 | `failed` | 某个脚本步骤失败，先看 `cycle-summary.json` 和对应 step log |
+
+面向执行面板或 CI 时，优先读 `cycle-summary.json.executionPanel`。它已经聚合了
+`status`、`commercialComplete`、`blockingReason`、`currentBlockingGate`、
+步骤计数、gate 计数、最慢步骤和未通过 gate 列表；不需要再从终端日志里解析
+`Passed`、`Pending gates` 或 `Slowest steps`。
 
 没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 仍只做 readiness 或跳过真调用；
 没有 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 时，R1 repair 只做 dry-run，不会创建默认 profile，
