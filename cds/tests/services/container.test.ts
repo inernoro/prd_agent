@@ -131,6 +131,45 @@ describe('ContainerService', () => {
       expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
     });
 
+    it('should remove unlabeled stale same branch/profile network endpoints', async () => {
+      mock.addResponsePattern(/docker network inspect --format=.*cds-network/, () => ({
+        stdout: JSON.stringify({
+          stale: {
+            Name: 'cds-feature-a-api-stale',
+            Aliases: ['api', 'cds-feature-a-api-stale'],
+          },
+          otherBranch: {
+            Name: 'cds-feature-b-api-stale',
+            Aliases: ['api', 'cds-feature-b-api-stale'],
+          },
+          current: {
+            Name: 'cds-feature-a-api',
+            Aliases: ['api', 'cds-feature-a-api'],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
+      expect(rmCommands.some(c => c.includes("'cds-feature-a-api-stale'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'cds-feature-b-api-stale'"))).toBe(false);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'cds-feature-a-api-stale'"));
+      const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
+      expect(staleRmIndex).toBeGreaterThanOrEqual(0);
+      expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
+    });
+
     it('should run a single docker command (no 3-step)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

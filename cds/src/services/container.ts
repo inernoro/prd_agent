@@ -397,38 +397,81 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
   ): Promise<void> {
     if (aliases.length === 0) return;
+    const removed = new Set<string>();
+    const removeStale = async (name: string, staleAliases: string[], source: string): Promise<void> => {
+      if (name === service.containerName || removed.has(name)) return;
+      onOutput?.(`── 清理同 branch/profile 的旧 alias endpoint(${source}): ${name} (${staleAliases.join(', ')}) ──\n`);
+      const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(name)}`);
+      if (rm.exitCode !== 0) {
+        await this.shell.exec(
+          `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(name)}`,
+        );
+      }
+      removed.add(name);
+    };
+
     const list = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format "{{.Names}}"`,
     );
-    if (list.exitCode !== 0 || !list.stdout.trim()) return;
-
     const aliasSet = new Set(aliases);
-    const format = [
-      '{{index .Config.Labels "cds.branch.id"}}',
-      '{{index .Config.Labels "cds.profile.id"}}',
-      `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
-    ].join('|');
 
-    for (const name of list.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
-      if (name === service.containerName) continue;
-      const inspect = await this.shell.exec(
-        `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(name)}`,
-      );
-      if (inspect.exitCode !== 0) continue;
-      const [branchId = '', profileId = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
-      if (branchId !== entry.id || profileId !== profile.id) continue;
+    if (list.exitCode === 0 && list.stdout.trim()) {
+      const format = [
+        '{{index .Config.Labels "cds.branch.id"}}',
+        '{{index .Config.Labels "cds.profile.id"}}',
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
+      ].join('|');
 
-      let staleAliases: string[] = [];
-      try {
-        const parsed = JSON.parse(aliasesJson);
-        if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
-      } catch {
-        staleAliases = [];
+      for (const name of list.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
+        if (name === service.containerName) continue;
+        const inspect = await this.shell.exec(
+          `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(name)}`,
+        );
+        if (inspect.exitCode !== 0) continue;
+        const [branchId = '', profileId = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
+        if (branchId !== entry.id || profileId !== profile.id) continue;
+
+        let staleAliases: string[] = [];
+        try {
+          const parsed = JSON.parse(aliasesJson);
+          if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
+        } catch {
+          staleAliases = [];
+        }
+        if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+        await removeStale(name, staleAliases, 'labels');
       }
+    }
+
+    // Older CDS-created containers may not have cds.* labels. Docker DNS is
+    // driven by network endpoints, so inspect the project network as a second
+    // line of defense and remove only names that still match this branch/profile.
+    const networkInspect = await this.shell.exec(
+      `docker network inspect --format='{{json .Containers}}' ${this.shellQuote(network)}`,
+    );
+    if (networkInspect.exitCode !== 0 || !networkInspect.stdout.trim()) return;
+
+    let containers: Record<string, { Name?: string; Aliases?: unknown }> = {};
+    try {
+      const parsed = JSON.parse(networkInspect.stdout.trim());
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        containers = parsed as Record<string, { Name?: string; Aliases?: unknown }>;
+      }
+    } catch {
+      return;
+    }
+
+    for (const endpoint of Object.values(containers)) {
+      const name = typeof endpoint.Name === 'string' ? endpoint.Name : '';
+      if (!name || name === service.containerName || removed.has(name)) continue;
+      if (!name.includes(entry.id) || !name.includes(profile.id)) continue;
+      const staleAliases = Array.isArray(endpoint.Aliases)
+        ? endpoint.Aliases.filter((item): item is string => typeof item === 'string')
+        : [];
       if (!staleAliases.some((item) => aliasSet.has(item))) continue;
 
-      onOutput?.(`── 清理同 branch/profile 的旧 alias endpoint: ${name} (${staleAliases.join(', ')}) ──\n`);
-      await this.shell.exec(`docker rm -f ${this.shellQuote(name)}`);
+      await removeStale(name, staleAliases, 'network');
     }
   }
 
