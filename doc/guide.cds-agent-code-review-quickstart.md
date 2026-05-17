@@ -35,6 +35,34 @@
 5. 修改任务：只允许改一个小文件，要求运行最小测试。
 6. PR 任务：确认 GitHub 权限后再让它创建分支和 PR。
 
+## 最小可用闭环
+
+面向日常使用时，先把"能打开页面"和"能真实审查代码"分开判断：
+
+| 阶段 | 目的 | 入口 | 必须看到的证据 |
+| --- | --- | --- | --- |
+| R0 控制面 | 验证 MAP/CDS/sidecar pool 已连通 | `bash scripts/doctor-cds-agent-runtime.sh` | `instanceCount > 0`、`healthyCount > 0`、`loopOwner=claude-agent-sdk` |
+| R1 profile | 验证默认模型能走官方 SDK | Runtime 调试面板或 `runtime-status` | `compatibleWithDesiredRuntimeAdapter=true`，且 profile 有 API key |
+| S1 只读审查 | 证明官方 SDK 真能读仓库并输出结论 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh` | assistant 消息、repo/ref/workspace 证据、无文件变更 |
+| S2 审批 | 证明危险动作回到 MAP 人审 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh` | `tool_call.status=waiting`、拒绝后有 `tool_result.source=map-tool-approval` |
+| S3 停止 | 证明 Stop 不是只改数据库状态 | 同 S2 controls 脚本 | Stop 请求后 session 进入 stopped/stopping，并有 cancel/interrupt 事件 |
+| V1 视觉 | 证明页面显示真实运行态 | 打开 `/cds-agent?sessionId=...` 并截图 | 页面显示真实 sessionId、traceId、adapter、loop owner、workspace、last event/error |
+
+没有 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 时，S1/S2/S3 脚本只是 readiness gate 或跳过真调用；它们通过只能证明控制面没有明显配置错误，不能证明"上手就能审查代码"。
+
+## 给自己或其他仓库做审查
+
+一次正常审查建议按这个流程走：
+
+| 步骤 | 操作 | 成功判断 |
+| --- | --- | --- |
+| 1. 选择目标 | 当前仓库留空 workspace，其他仓库填写 `gitRepository` 和 `gitRef` | Runtime init 回报 repo/ref/commit 或明确 workspace source |
+| 2. 选择 profile | 使用 Anthropic 官方模板创建默认 runtime profile | Runtime 调试不再显示 `runtime_profile_incompatible` |
+| 3. 先只读 | Prompt 明确"不要修改、不要开 PR" | 只出现 read/search 类工具或纯文本输出 |
+| 4. 看证据 | 检查文件路径、风险说明、事件流、usage、workspace | 结论能追溯到具体 repo/ref 和文件 |
+| 5. 再放开动作 | 需要命令/编辑/PR 时打开对应工具和审批 | 每个危险动作都有 MAP approval 记录 |
+| 6. 导出复盘 | 失败或重要结果导出诊断包 | 包含 session、trace、events、logs、adapter/profile，不含 API key |
+
 ## 审查当前仓库
 
 在本仓库或已准备好的 CDS workspace 中，prompt 可以这样写：
@@ -89,6 +117,21 @@
 模型配置里的 “Anthropic 官方模板” 来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/templates`，不是页面硬编码。它会预填 Anthropic Messages 协议、官方 baseUrl、Claude Sonnet 模型和资源默认值；用户仍需手动填入自己的 API key 并保存为 runtime profile。保存时如果草稿仍匹配模板，页面会调用 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/profiles`，后端按模板创建 profile，缺 API key 会直接返回 `api_key_required`。
 
 Adapter 兼容性来自 MAP 后端 `GET /api/infra-agent-runtime-profiles/adapter-compatibility`。当前代码审查默认只把 `claude-agent-sdk` 当作可路由官方 SDK 路径；`legacy-sidecar` 是显式 fallback；`codex` 仍是 planned-not-routable，不代表页面选择 `runtime=codex` 后就已经接入官方 Codex 能力。
+
+## 其他智能体兼容性口径
+
+CDS Agent 迁移官方 SDK 时，不能把非代码智能体也绑到 sidecar runtime pool：
+
+| 智能体 | 是否应依赖 Claude Agent SDK sidecar | 当前要求 |
+| --- | --- | --- |
+| CDS Agent | 是 | 代码仓库任务默认走 `claude-agent-sdk`，MAP/CDS 只保留控制面 |
+| workflow/capsule `claude-sdk` | 是 | 继续兼容历史 runtime 名，但共享 runtime adapter 和事件 cursor |
+| PRD Agent | 否 | 继续走文本/结构化输出链路，不能因为 sidecar pool 不健康而失败 |
+| Defect Agent | 否 | 继续走 JSON/schema 业务链路，后续可接 guardrail/trace，不接代码工具 loop |
+| Literary Agent | 否 | 保持文本生成链路，不引入代码 workspace 和审批依赖 |
+| Visual Agent | 否 | 保持媒体管线、资产持久化和超时策略，不接代码 sidecar |
+
+当前用 `CdsAgentRuntimeCompatibilityTests` 锁这个边界：只有 `CdsAgentAdapter` 可以依赖 `IInfraAgentRuntimeAdapter`、`IClaudeSidecarRouter` 或 `InfraAgentRuntimes`。新增其他智能体能力时，如果需要官方 SDK，也应先说明它是"代码执行型"还是"非代码编排型"，再决定用 Claude Agent SDK、OpenAI Agents SDK、普通 gateway 或媒体管线。
 
 ## 失败先看哪里
 

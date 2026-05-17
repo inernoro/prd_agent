@@ -66,6 +66,21 @@
 | S5 toolbox | AI 百宝箱 preferredAgents=`["cds-agent"]` | Toolbox event 中出现 CDS session/run artifact |
 | S6 compatibility | PRD/defect/literary/visual 各跑一个最小动作 | 无 runtime adapter 改动引起的回归 |
 
+## 4.1 下一周期最小开发/调试计划
+
+当前控制面、sidecar transport、官方 SDK loop ownership、profile 模板和不兼容 preflight 都已有 gate。下一周期不再扩大页面功能，先完成真实 provider run 的最小闭环：
+
+| 顺序 | 工作 | 交付物 | 验收证据 |
+| --- | --- | --- | --- |
+| N1 | 配置真实 Claude/Anthropic runtime profile | 通过后端模板创建默认 profile，密钥只存 MAP profile | `runtime-status.defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter=true` |
+| N2 | S1 只读远程审查 | 官方 SDK 在 CDS preview 中读取目标 repo/ref 并返回审查结论 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 scripts/smoke-cds-agent-official-sdk-run.sh` 通过 |
+| N3 | S2 MAP 审批 | 危险工具请求进入 MAP approval，拒绝后回写 SDK tool result | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 scripts/smoke-cds-agent-official-sdk-controls.sh` 的 S2 通过 |
+| N4 | S3 Stop | 长任务 Stop 调到底层 SDK interrupt/cancel | controls 脚本 S3 通过，事件含 stop/cancel 证据 |
+| N5 | V1 视觉证据 | `/cds-agent` 展示真实 run 的 session/trace/adapter/workspace/event/error | 远程截图，不接受空态或 mock |
+| N6 | 非代码兼容回归 | PRD/defect/literary/visual 不被 sidecar pool/profile gate 阻断 | `CdsAgentRuntimeCompatibilityTests` + 最小业务 smoke |
+
+如果 N1 没完成，S1/S2/S3 脚本只能作为 readiness 或 preflight 证据，不能算真实代码审查验收。
+
 ## 5. 商业级可用性门槛
 
 | 维度 | 本周期最低门槛 | 最终门槛 |
