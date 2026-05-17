@@ -520,13 +520,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
       <DashCard>
         <SectionTitle>综合排行榜</SectionTitle>
         <div className="overflow-x-auto">
-          <table className="w-full text-[12px]" style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed' }}>
-            <colgroup>
-              <col style={{ width: 40 }} />
-              <col style={{ width: 184 }} />
-              <col style={{ width: 88 }} />
-              {allDims.map(d => <col key={d.key} style={{ width: 112 }} />)}
-            </colgroup>
+          <table className="w-full text-[12px]" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${D.border}` }}>
                 <th className="text-left py-2.5 pr-2 font-medium w-8" style={{ color: D.text3, verticalAlign: 'middle' }}>#</th>
@@ -544,7 +538,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                     <th
                       key={dim.key}
                       className="text-center py-2.5 px-2 font-medium cursor-pointer select-none whitespace-nowrap"
-                      style={{ color: sortKey === dim.key ? D.primary : D.text3, verticalAlign: 'middle' }}
+                      style={{ color: sortKey === dim.key ? D.primary : D.text3, verticalAlign: 'middle', width: 96, minWidth: 96 }}
                       onClick={() => toggleSort(dim.key)}
                     >
                       <span className="inline-flex items-center justify-center gap-1 w-full">
@@ -622,7 +616,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                       );
 
                       return (
-                        <td key={dim.key} className="py-2.5 px-2" style={{ verticalAlign: 'middle', borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
+                        <td key={dim.key} className="py-2.5 px-2" style={{ verticalAlign: 'middle', width: 96, minWidth: 96, borderRadius: isTop3 && isLastCol ? '0 8px 8px 0' : undefined }}>
                           <div className="flex flex-col items-center gap-0.5" style={{ minWidth: 40 }}>
                             {sub && raw > 0 ? (
                               <Tooltip content={`提交 ${sub.created} 个 · 解决 ${sub.resolved} 个`} side="top">
