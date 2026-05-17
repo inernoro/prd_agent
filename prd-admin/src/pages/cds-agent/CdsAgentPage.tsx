@@ -719,6 +719,47 @@ export default function CdsAgentPage() {
       nextActions,
     };
   }, [activeSession, events, runtimeStatus]);
+  const runtimeDiagnosticBundle = useMemo(() => ({
+    generatedAt: new Date().toISOString(),
+    session: activeSession ? {
+      id: activeSession.id,
+      traceId: activeSession.traceId,
+      status: activeSession.status,
+      runtime: activeSession.runtime,
+      runtimeAdapter: activeSession.runtimeAdapter,
+      currentRuntimeRunId: activeSession.currentRuntimeRunId,
+      runtimeProfileId: activeSession.runtimeProfileId,
+    } : null,
+    connection: activeConnection ? {
+      id: activeConnection.id,
+      partner: activeConnection.partner,
+      partnerName: activeConnection.partnerName,
+      status: activeConnection.status,
+      lastProbeOk: activeConnection.lastProbeOk,
+      longTokenExpiresAt: activeConnection.longTokenExpiresAt,
+    } : null,
+    runtimeProfile: activeSessionProfile ? {
+      id: activeSessionProfile.id,
+      name: activeSessionProfile.name,
+      runtime: activeSessionProfile.runtime,
+      model: activeSessionProfile.model,
+      protocol: activeSessionProfile.protocol,
+      hasApiKey: activeSessionProfile.hasApiKey,
+      baseUrlConfigured: Boolean(activeSessionProfile.baseUrl),
+    } : null,
+    runtimeStatus,
+    summary: {
+      adapter: runtimeDiagnostics.adapter,
+      adapterMode: runtimeDiagnostics.adapterMode,
+      runId: runtimeDiagnostics.runId,
+      instance: runtimeDiagnostics.instance,
+      source: runtimeDiagnostics.source,
+      cancelState: runtimeDiagnostics.cancelState,
+      rows: runtimeDiagnostics.rows,
+      blockers: runtimeDiagnostics.blockers,
+      nextActions: runtimeDiagnostics.nextActions,
+    },
+  }), [activeConnection, activeSession, activeSessionProfile, runtimeDiagnostics, runtimeStatus]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
   const prArtifact = artifacts.find((item) => /github\.com\/.+\/pull\/\d+/.test(item.body)) ?? null;
@@ -2349,16 +2390,26 @@ export default function CdsAgentPage() {
                             : '选择或创建会话后，这里会显示真实 adapter、run id、实例和取消能力。'}
                         </div>
                       </div>
-                      <span
-                        className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-medium"
-                        style={{
-                          background: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)',
-                          border: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? '1px solid rgba(34,197,94,0.26)' : '1px solid rgba(245,158,11,0.26)',
-                          color: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? 'rgba(134,239,172,0.92)' : 'rgba(253,230,138,0.92)',
-                        }}
-                      >
-                        {runtimeDiagnostics.adapterMode}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void copyText('Runtime 诊断包', JSON.stringify(runtimeDiagnosticBundle, null, 2))}
+                          className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-white/58 hover:text-white/86"
+                          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        >
+                          <Copy size={12} /> 复制诊断包
+                        </button>
+                        <span
+                          className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-medium"
+                          style={{
+                            background: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.12)',
+                            border: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? '1px solid rgba(34,197,94,0.26)' : '1px solid rgba(245,158,11,0.26)',
+                            color: runtimeDiagnostics.adapterMode === 'Official SDK adapter' ? 'rgba(134,239,172,0.92)' : 'rgba(253,230,138,0.92)',
+                          }}
+                        >
+                          {runtimeDiagnostics.adapterMode}
+                        </span>
+                      </div>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                       {runtimeDiagnostics.rows.map(([label, value]) => (
