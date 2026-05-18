@@ -6,7 +6,8 @@ Python 进程，把 Agent runtime 包装成统一的 HTTP + SSE 协议，供 prd
 当前有两条 runtime 路径：
 
 - `legacy-sidecar`：兼容路径，使用官方 `anthropic` Python SDK + 本仓库自研
-  `agent_loop.py`；只能通过显式配置作为 fallback 使用。
+  `agent_loop.py`；只能通过显式配置作为 fallback 使用。默认官方路径不会在 sidecar
+  启动时加载该 legacy loop，只有显式选择 `legacy-sidecar` 时才懒加载。
 - `claude-agent-sdk`：官方 Claude Agent SDK adapter spike，使用
   `claude-agent-sdk` 的 Claude Code tools / agent loop / context management。该路径是
   sidecar、MAP 和 CDS Agent 代码审查的默认路径；请求字段
@@ -154,6 +155,8 @@ curl http://127.0.0.1:7400/readyz
 如果显式回退 `legacy-sidecar`，SSE 第一条事件也会是 `runtime_init`，其中
 `content.loopOwner=sidecar-legacy-loop`、`content.sdkLoopEnabled=false`、
 `content.fallback=explicit`，确保 MAP 事件流、诊断包和 UI 都能审计这次运行没有走官方 SDK。
+默认 `claude-agent-sdk` 路径的诊断字段 `legacyLoopImport=lazy-explicit-fallback`
+表示自研 loop 没有进入默认运行路径，只作为显式 fallback 保留。
 `readyz.blockers` / `readyz.nextActions` 会直接给出缺失项和修复动作；
 默认 `SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env` 时，不会因为 sidecar env 缺少
 `ANTHROPIC_API_KEY` 判定不可用，provider key 可由 MAP runtime profile 或请求覆盖下发。

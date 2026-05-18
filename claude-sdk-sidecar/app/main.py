@@ -11,6 +11,7 @@ Sidecar HTTP 入口。
 """
 import asyncio
 import hmac
+import importlib
 import importlib.metadata
 import importlib.util
 import json
@@ -25,7 +26,6 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic.warnings import UnsupportedFieldAttributeWarning
 
-from .agent_loop import run_agent
 from .official_agent_sdk import run_official_agent, workspace_diagnostics
 from .schemas import SidecarEvent, SidecarRunRequest
 
@@ -51,6 +51,11 @@ OFFICIAL_AGENT_ADAPTER_ALIASES = {"official", "official-claude", "claude-agent-s
 LEGACY_AGENT_ADAPTER_ALIASES = {"legacy", "legacy-sidecar"}
 
 _active_runs: dict[str, asyncio.Event] = {}
+
+
+def _legacy_agent_stream(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
+    module = importlib.import_module(".agent_loop", package=__package__)
+    return module.run_agent(req)
 
 
 def _check_token(authorization: str | None) -> None:
@@ -175,6 +180,7 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
             "reason": "legacy-sidecar uses the anthropic Python SDK path",
             "loopOwner": "sidecar-legacy-loop",
             "sdkLoopEnabled": False,
+            "legacyLoopImport": "lazy-explicit-fallback",
             "mapRole": "control-plane",
             "cdsRole": "sandbox-runtime",
         }
@@ -236,6 +242,7 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
         "workspacePreparation": workspace_diagnostics(),
         "loopOwner": "claude-agent-sdk",
         "sdkLoopEnabled": True,
+        "legacyLoopImport": "lazy-explicit-fallback",
         "mapRole": "control-plane",
         "cdsRole": "sandbox-runtime",
     }
@@ -308,7 +315,7 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
                 )))
                 return
             official_adapter = selected_adapter == "claude-agent-sdk"
-            stream = run_official_agent(req, cancel_event=cancel_event) if official_adapter else run_agent(req)
+            stream = run_official_agent(req, cancel_event=cancel_event) if official_adapter else _legacy_agent_stream(req)
             if not official_adapter:
                 await queue.put(_format_sse(_legacy_runtime_init_event(req)))
             async for ev in stream:

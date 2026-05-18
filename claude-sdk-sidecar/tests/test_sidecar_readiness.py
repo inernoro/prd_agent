@@ -9,7 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.main as sidecar_main  # noqa: E402
-from app.main import _adapter_diagnostics, _adapter_for, _legacy_runtime_init_event, readyz  # noqa: E402
+from app.main import _adapter_diagnostics, _adapter_for, _legacy_agent_stream, _legacy_runtime_init_event, readyz  # noqa: E402
 from app.schemas import SidecarRunRequest  # noqa: E402
 
 
@@ -21,6 +21,7 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(diagnostics["ready"], True)
         self.assertEqual(diagnostics["loopOwner"], "sidecar-legacy-loop")
         self.assertEqual(diagnostics["sdkLoopEnabled"], False)
+        self.assertEqual(diagnostics["legacyLoopImport"], "lazy-explicit-fallback")
 
     def test_default_adapter_is_official_and_legacy_requires_explicit_request(self) -> None:
         previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
@@ -91,8 +92,21 @@ class SidecarReadinessTests(unittest.TestCase):
         self.assertEqual(diagnostics["approvalBridge"], "sdk-can-use-tool")
         self.assertEqual(diagnostics["loopOwner"], "claude-agent-sdk")
         self.assertEqual(diagnostics["sdkLoopEnabled"], True)
+        self.assertEqual(diagnostics["legacyLoopImport"], "lazy-explicit-fallback")
         self.assertEqual(diagnostics["mapRole"], "control-plane")
         self.assertEqual(diagnostics["cdsRole"], "sandbox-runtime")
+
+    def test_legacy_loop_is_lazy_loaded_only_for_explicit_fallback(self) -> None:
+        class FakeModule:
+            @staticmethod
+            async def run_agent(req: SidecarRunRequest):
+                yield {"runId": req.run_id}
+
+        with patch("importlib.import_module", return_value=FakeModule) as import_module:
+            stream = _legacy_agent_stream(SidecarRunRequest(runId="legacy-lazy"))
+
+        import_module.assert_called_once_with(".agent_loop", package="app")
+        self.assertEqual(stream.__aiter__(), stream)
 
     def test_official_adapter_is_ready_with_bundled_cli_when_sdk_exists(self) -> None:
         with patch("importlib.util.find_spec", return_value=object()), \

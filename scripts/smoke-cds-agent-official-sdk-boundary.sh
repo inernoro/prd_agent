@@ -141,6 +141,14 @@ require_contains "$MAIN_FILE" 'LEGACY_AGENT_ADAPTER_ALIASES = {"legacy", "legacy
   "legacy fallback must require an explicit legacy adapter alias"
 require_contains "$MAIN_FILE" 'return "legacy-sidecar"' \
   "legacy fallback route should stay explicit"
+require_contains "$MAIN_FILE" 'def _legacy_agent_stream' \
+  "legacy fallback must be isolated behind a dedicated lazy stream helper"
+require_contains "$MAIN_FILE" 'importlib.import_module(".agent_loop"' \
+  "legacy fallback must lazy-load the self-managed loop only when explicitly selected"
+require_contains "$MAIN_FILE" '"legacyLoopImport": "lazy-explicit-fallback"' \
+  "adapter diagnostics must expose that the self-managed loop is lazy explicit fallback"
+require_not_contains "$MAIN_FILE" 'from .agent_loop import' \
+  "sidecar main must not import the self-managed loop on the default official path"
 require_contains "$MAIN_FILE" 'unsupported_runtime_adapter' \
   "unknown runtimeAdapter values must not silently fall back to legacy loop"
 require_contains "$OFFICIAL_FILE" 'from claude_agent_sdk import' \
@@ -226,6 +234,7 @@ if [[ -n "$REPORT" ]]; then
       status: $status,
       defaultAdapter: "claude-agent-sdk",
       legacyFallback: "explicit-only",
+      legacyLoopImport: "lazy-explicit-fallback",
       officialLoopOwnerEvidence: {
         mainFile: $mainFile,
         officialFile: $officialFile,
