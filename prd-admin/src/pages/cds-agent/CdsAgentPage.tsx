@@ -43,7 +43,7 @@ import {
   type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
 } from '@/services/real/infraAgentSessions';
-import { resolveProviderEvidenceState } from './cdsAgentReadiness';
+import { resolveExecutionRunway, resolveProviderEvidenceState } from './cdsAgentReadiness';
 
 const EVENT_PAGE_LIMIT = 500;
 const EVENT_MAX_BATCHES_PER_REFRESH = 20;
@@ -1304,6 +1304,12 @@ export default function CdsAgentPage() {
           : '不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile。');
     const executionNextCommand = backendExecutionPanel?.nextCommand || commercialNextCommand;
     const executionGateCounts = backendExecutionPanel?.gateCounts ?? null;
+    const executionRunway = resolveExecutionRunway({
+      commercialComplete: backendExecutionPanel?.commercialComplete ?? executionCommercialState === 'commercial-ready',
+      blockingCode: executionBlockingCode,
+      deploymentAdvice: executionDeploymentAdvice,
+      nextCommand: executionNextCommand,
+    });
     const readinessGates: RuntimeReadinessGate[] = [
       {
         label: '官方 loop 边界',
@@ -1386,6 +1392,7 @@ export default function CdsAgentPage() {
       commercialNextAction: executionNextAction,
       commercialDeploymentAdvice: executionDeploymentAdvice,
       commercialNextCommand: executionNextCommand,
+      executionRunway,
       executionGateCounts,
       nextCyclePlan,
       debugCommands,
@@ -1554,6 +1561,7 @@ export default function CdsAgentPage() {
       commercialBlockingCode: runtimeDiagnostics.commercialBlockingCode,
       commercialNextAction: runtimeDiagnostics.commercialNextAction,
       commercialNextCommand: runtimeDiagnostics.commercialNextCommand,
+      executionRunway: runtimeDiagnostics.executionRunway,
       commercialPassed: runtimeDiagnostics.commercialPassed,
       commercialTotal: runtimeDiagnostics.commercialTotal,
       commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
@@ -3798,6 +3806,49 @@ export default function CdsAgentPage() {
                             </div>
                           )}
                         </div>
+                      </div>
+                      <div className="mt-3 grid gap-2 md:grid-cols-3">
+                        {[
+                          {
+                            label: '部署判定',
+                            value: runtimeDiagnostics.executionRunway.deployLabel,
+                            detail: runtimeDiagnostics.executionRunway.deployDecision === 'skip-deploy'
+                              ? '当前阻塞不靠 build/deploy 解决。'
+                              : runtimeDiagnostics.executionRunway.deployDecision === 'deploy-only-on-change'
+                                ? '避免无代码变更时重复构建。'
+                                : '先跑窄口径诊断命令。',
+                          },
+                          {
+                            label: '命令性质',
+                            value: runtimeDiagnostics.executionRunway.commandLabel,
+                            detail: runtimeDiagnostics.executionRunway.commandKind === 'profile-dry-run'
+                              ? '只读预检，不写默认 profile。'
+                              : runtimeDiagnostics.executionRunway.commandKind === 'profile-repair'
+                                ? '先测候选 profile，通过后再提升默认。'
+                                : runtimeDiagnostics.executionRunway.commandKind === 'provider-cycle'
+                                  ? '完整闭环，受 provider opt-in 保护。'
+                                  : runtimeDiagnostics.executionRunway.commandKind === 'doctor'
+                                    ? '只读检查 runtime pool 和 profile。'
+                                    : '用于收敛当前门禁证据。',
+                          },
+                          {
+                            label: 'Provider 调用',
+                            value: runtimeDiagnostics.executionRunway.providerCallLabel,
+                            detail: runtimeDiagnostics.executionRunway.providerCallRisk === 'requires-explicit-opt-in'
+                              ? '命令里必须显式设置 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1。'
+                              : '适合先在本地/远程快速确认方向。',
+                          },
+                        ].map((item) => (
+                          <div
+                            key={item.label}
+                            className="min-h-[74px] rounded-md px-3 py-2"
+                            style={{ background: 'rgba(15,23,42,0.48)', border: '1px solid rgba(148,163,184,0.14)' }}
+                          >
+                            <div className="text-[11px] font-semibold text-white/40">{item.label}</div>
+                            <div className="mt-1 text-xs font-semibold text-white/78">{item.value}</div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/46">{item.detail}</div>
+                          </div>
+                        ))}
                       </div>
                       {runtimeDiagnostics.commercialNextCommand && (
                         <div className="mt-3 flex items-start gap-2">
