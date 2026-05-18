@@ -11,6 +11,14 @@ REFRESH_OUTPUT="${CDS_AGENT_R0_STATUS_REFRESH:-/tmp/cds-agent-r0-status-refresh-
 PROGRESS_OUTPUT="${CDS_AGENT_R0_PROGRESS_OUTPUT:-/tmp/cds-agent-current-progress-current.md}"
 STATUS_DOC="$ROOT_DIR/doc/status.cds-agent-current-progress.md"
 
+# When this check runs inside audit-cds-agent-goal.sh, CDS_AGENT_GOAL_AUDIT_REPORT
+# points to the report that is still being generated. The progress board needs a
+# completed goal-audit input, so fall back to its default source instead of
+# treating the in-progress report path as authoritative.
+if [[ -n "${CDS_AGENT_GOAL_AUDIT_REPORT:-}" && ! -f "$CDS_AGENT_GOAL_AUDIT_REPORT" ]]; then
+  unset CDS_AGENT_GOAL_AUDIT_REPORT
+fi
+
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1

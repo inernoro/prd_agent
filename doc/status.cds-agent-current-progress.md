@@ -221,7 +221,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | N6 current smoke summary | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 非代码 Toolbox agents 独立于 CDS sidecar pool；候选官方 SDK 仍 planned-not-routable | 27/27 pass, 3s |
 | R0 local apply readiness | `/tmp/cds-agent-r0-apply-readiness-current.json` | 本机尚不能进入 R0 apply/deploy；缺 remote host SSH 参数和 `CDS_AGENT_SIDECAR_IMAGE`；同时展示 registry manifest 与 remote pull 是否匹配当前 image | <1s |
 | R0 operator handoff bundle | `/tmp/cds-agent-r0-operator-handoff-current.md` | 聚合进度、readiness、缺失输入、ETA、安全命令；未发现 secret 泄露 | <2s |
-| goal audit with readiness | `/tmp/cds-agent-goal-audit-current-with-readiness.json` | `N6=pass`、otherAgentCompatibility proved，并纳入 R0 apply readiness；仍 `not_complete` | 15s |
+| goal audit with readiness | `/tmp/cds-agent-goal-audit-current-with-readiness.json` | 7 个本地 guardrail 纳入 A0/D0/D1/N6/P0/evidence；`D1 progress consistency=pass`、`N6=pass`、R0 apply readiness 已纳入；仍 `not_complete` | 10-15s |
 | lifecycle overview | `scripts/print-cds-agent-lifecycle-overview.sh` | 按完整目标输出生命周期、已完成、阻塞、剩余距离和关键路径；V1 标为 partial | <1s |
 | sidecar image readiness | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | 明确 CDS remote deployer 只 `docker pull`，不是远程构建；`CDS_AGENT_SIDECAR_IMAGE` 仍缺 | <1s |
 | sidecar image preflight | `/tmp/cds-agent-sidecar-image-preflight-current.json` | 本地 build context 通过；image 仍为 `missing_image`，远程 pullability 未证明 | <1s |
@@ -260,7 +260,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | N6 current smoke | 3s 沙箱外；沙箱内 VSTest socket 权限失败 | N6 smoke 现在写 summary，进度面板优先读取最新 N6 结果，避免把 infra 权限误判成兼容失败 |
 | R0 local apply readiness | <1s | 先本地判定 env/summary/image/registry manifest/remote pull 是否足够 apply，避免到远程写入阶段才失败 |
 | R0 operator handoff bundle | <2s | 一个文件交接当前状态、缺失输入和安全执行命令，减少翻文档和聊天解释 |
-| goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | audit 读取 N6 summary 和 R0 readiness，不再把 VSTest 权限问题当作兼容性失败 |
+| goal audit with readiness | 10-15s；N6 沙箱步骤可能因 VSTest socket 权限失败，但 canonical summary 校准为 pass | audit 读取 N6 summary、R0 readiness 和 D1 progress consistency，不再把 VSTest 权限问题当作兼容性失败 |
 | lifecycle overview | <1s | 直接回答“整个生命周期到哪一步、离目标多远”，避免只看局部脚本输出 |
 | sidecar image readiness | <1s | 本地 Dockerfile 只能给候选 build/push 命令；远程部署前必须提供可拉取镜像 tag |
 | sidecar image preflight | <1s | 本地先拦截 Dockerfile/context/image 引用问题，避免 R0.3 到远程 `docker pull` 阶段才失败 |
