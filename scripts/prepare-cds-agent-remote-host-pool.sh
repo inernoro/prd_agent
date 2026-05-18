@@ -91,6 +91,49 @@ write_report() {
       enabledHostCount: ([ $existingHosts.hosts[]? | select(.isEnabled != false) ] | length),
       existingHosts: $existingHosts.hosts,
       missingConfig: $missingConfig,
+      recoveryManifest: {
+        safety: "remote_host_create_then_shared_runtime_deploy",
+        phases: [
+          {
+            code: "remote_host_create",
+            method: "POST",
+            endpoint: ($cdsHost + "/api/cds-system/remote-hosts"),
+            applyFlag: "CDS_AGENT_REMOTE_HOST_APPLY=1",
+            requiredEnv: [
+              "CDS_HOST",
+              "AI_ACCESS_KEY or CDS_PROJECT_KEY",
+              "CDS_REMOTE_HOST_NAME",
+              "CDS_REMOTE_HOST_HOST",
+              "CDS_REMOTE_HOST_SSH_USER",
+              "CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE"
+            ],
+            missingEnv: [
+              $missingConfig[]
+              | select(. != "CDS_AGENT_SIDECAR_IMAGE")
+            ]
+          },
+          {
+            code: "shared_runtime_deploy",
+            method: "POST",
+            endpoint: ($cdsHost + "/api/cds-system/remote-hosts/<hostId>/deploy-sidecar"),
+            applyFlag: "CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1",
+            requiredEnv: [
+              "CDS_AGENT_SIDECAR_IMAGE",
+              "CDS_AGENT_SIDECAR_PORT optional, default 7400",
+              "CDS_AGENT_SIDECAR_RELEASE_TAG optional"
+            ],
+            missingEnv: (
+              if $deploySidecar == "1" and ([$missingConfig[] | select(. == "CDS_AGENT_SIDECAR_IMAGE")] | length) > 0
+              then ["CDS_AGENT_SIDECAR_IMAGE"]
+              elif $deploySidecar != "1"
+              then ["CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1", "CDS_AGENT_SIDECAR_IMAGE"]
+              else []
+              end
+            )
+          }
+        ],
+        expectedPostCheck: "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh"
+      },
       createdHost: $createdHost,
       deploy: $deploy
     }' > "$REPORT"
