@@ -970,6 +970,41 @@ public class UsersController : ControllerBase
         await _db.Users.UpdateOneAsync(u => u.UserId == uid, Builders<User>.Update.Set(u => u.DisplayName, name), cancellationToken: ct);
         _logger.LogInformation("User {UserId} displayName updated by admin", uid);
 
+        // 周报系统快照字段 fan-out：周报系统在多张表存了 UserName 快照，改名时需同步刷新，
+        // 否则会出现「右侧列表已更新、左侧周导航仍旧名」的不一致（左侧读 ReportTeamMember.UserName，
+        // 该字段仅在加入团队时快照，永不刷新）。详见 .claude/rules/data-audit.md
+        var teamMemberSync = _db.ReportTeamMembers.UpdateManyAsync(
+            m => m.UserId == uid,
+            Builders<ReportTeamMember>.Update.Set(m => m.UserName, name), cancellationToken: ct);
+        var weeklyReportSync = _db.WeeklyReports.UpdateManyAsync(
+            r => r.UserId == uid,
+            Builders<WeeklyReport>.Update.Set(r => r.UserName, name), cancellationToken: ct);
+        var teamLeaderSync = _db.ReportTeams.UpdateManyAsync(
+            t => t.LeaderUserId == uid,
+            Builders<ReportTeam>.Update.Set(t => t.LeaderName, name), cancellationToken: ct);
+        var dailyLogSync = _db.ReportDailyLogs.UpdateManyAsync(
+            d => d.UserId == uid,
+            Builders<ReportDailyLog>.Update.Set(d => d.UserName, name), cancellationToken: ct);
+        var likeSync = _db.ReportLikes.UpdateManyAsync(
+            l => l.UserId == uid,
+            Builders<ReportLike>.Update.Set(l => l.UserName, name), cancellationToken: ct);
+        var viewEventSync = _db.ReportViewEvents.UpdateManyAsync(
+            v => v.UserId == uid,
+            Builders<ReportViewEvent>.Update.Set(v => v.UserName, name), cancellationToken: ct);
+        var commentSync = _db.ReportComments.UpdateManyAsync(
+            c => c.AuthorUserId == uid,
+            Builders<ReportComment>.Update.Set(c => c.AuthorDisplayName, name), cancellationToken: ct);
+
+        var syncResults = await Task.WhenAll(
+            teamMemberSync, weeklyReportSync, teamLeaderSync,
+            dailyLogSync, likeSync, viewEventSync, commentSync);
+        _logger.LogInformation(
+            "User {UserId} displayName fan-out: members={Members} reports={Reports} teamLeader={Leader} dailyLogs={DailyLogs} likes={Likes} views={Views} comments={Comments}",
+            uid,
+            syncResults[0].ModifiedCount, syncResults[1].ModifiedCount, syncResults[2].ModifiedCount,
+            syncResults[3].ModifiedCount, syncResults[4].ModifiedCount, syncResults[5].ModifiedCount,
+            syncResults[6].ModifiedCount);
+
         return Ok(ApiResponse<UserDisplayNameUpdateResponse>.Ok(new UserDisplayNameUpdateResponse
         {
             UserId = uid,
