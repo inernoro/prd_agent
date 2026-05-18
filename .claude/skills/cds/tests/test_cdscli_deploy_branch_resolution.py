@@ -123,16 +123,23 @@ def test_deploy_uses_resolved_cds_branch_id_for_pull_deploy_and_status(monkeypat
             return {"ok": True}
         raise AssertionError(f"unexpected _call: {method} {path}")
 
-    def fake_request(method, path, body=None, timeout=15, extra_headers=None):
-        calls.append(("_request", method, path, timeout))
+    def fake_request_stream_safe(method, path, body=None, timeout=15, extra_headers=None):
+        calls.append(("_request_stream_safe", method, path, timeout))
         assert method == "POST"
         assert path == "/api/branches/prd-agent-codex-cds-agent-workbench-ui/deploy"
-        return 202, {"accepted": True}, {}
+        return {
+            "triggered": True,
+            "status": 202,
+            "body": {"accepted": True},
+            "partial": False,
+            "error": None,
+            "errorType": None,
+        }
 
     monkeypatch.setattr(subprocess, "check_output", fake_check_output)
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(cdscli, "_call", fake_call)
-    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli, "_request_stream_safe", fake_request_stream_safe)
     monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
 
     code, out = call_main(["deploy", "--no-smoke", "--timeout", "1"])
@@ -143,5 +150,50 @@ def test_deploy_uses_resolved_cds_branch_id_for_pull_deploy_and_status(monkeypat
     assert payload["data"]["branchId"] == "prd-agent-codex-cds-agent-workbench-ui"
     assert ("subprocess.run", ("git", "push", "-u", "origin", "codex/cds-agent-workbench-ui")) in calls
     assert ("_call", "POST", "/api/branches/prd-agent-codex-cds-agent-workbench-ui/pull", 60, False) in calls
-    assert ("_request", "POST", "/api/branches/prd-agent-codex-cds-agent-workbench-ui/deploy", 5) in calls
+    assert ("_request_stream_safe", "POST", "/api/branches/prd-agent-codex-cds-agent-workbench-ui/deploy", 5) in calls
 
+
+def test_deploy_polls_status_after_unconfirmed_trigger_timeout(monkeypatch):
+    calls: list[tuple] = []
+
+    monkeypatch.setattr(subprocess, "check_output", lambda args, text=False: "codex/cds-agent-workbench-ui\n")
+    monkeypatch.setattr(subprocess, "run", lambda args, capture_output=False, text=False: subprocess.CompletedProcess(args, 0, "", ""))
+
+    def fake_call(method, path, body=None, timeout=15, quiet=False):
+        calls.append(("_call", method, path, timeout, quiet))
+        if method == "GET" and path == "/api/branches":
+            return {
+                "branches": [
+                    {
+                        "id": "prd-agent-codex-cds-agent-workbench-ui",
+                        "projectId": "prd-agent",
+                        "branch": "codex/cds-agent-workbench-ui",
+                        "status": "running",
+                    }
+                ]
+            }
+        if method == "POST" and path == "/api/branches/prd-agent-codex-cds-agent-workbench-ui/pull":
+            return {"ok": True}
+        raise AssertionError(f"unexpected _call: {method} {path}")
+
+    def fake_request_stream_safe(method, path, body=None, timeout=15, extra_headers=None):
+        calls.append(("_request_stream_safe", method, path, timeout))
+        return {
+            "triggered": False,
+            "status": None,
+            "body": None,
+            "partial": False,
+            "error": "timeout_5s",
+            "errorType": "TimeoutError",
+        }
+
+    monkeypatch.setattr(cdscli, "_call", fake_call)
+    monkeypatch.setattr(cdscli, "_request_stream_safe", fake_request_stream_safe)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
+
+    code, out = call_main(["deploy", "--no-smoke", "--timeout", "1"])
+
+    assert code == 0, out
+    payload = parse_json(out)
+    assert payload["data"]["branchId"] == "prd-agent-codex-cds-agent-workbench-ui"
+    assert ("_request_stream_safe", "POST", "/api/branches/prd-agent-codex-cds-agent-workbench-ui/deploy", 5) in calls

@@ -5391,9 +5391,27 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     print(f"[2/4] CDS pull branch={branch_id} (git={branch})", file=sys.stderr)
     _call("POST", f"/api/branches/{urllib.parse.quote(branch_id)}/pull", timeout=60)
 
-    # 4. Deploy (reuse cmd_branch_deploy logic)
+    # 4. Deploy (use the same trigger-safe behavior as `branch deploy`)
     print(f"[3/4] CDS deploy (timeout={args.timeout}s)", file=sys.stderr)
-    _request("POST", f"/api/branches/{urllib.parse.quote(branch_id)}/deploy", timeout=5)
+    trigger = _request_stream_safe("POST", f"/api/branches/{urllib.parse.quote(branch_id)}/deploy", timeout=5)
+    trigger_status = trigger.get("status")
+    trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
+    if trigger_http_error or (not trigger["triggered"] and not str(trigger.get("error") or "").startswith("timeout_")):
+        die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
+            code=2 if trigger_status and trigger_status < 500 else 3,
+            extra={
+                "data": {
+                    "stage": "deploy_trigger_failed",
+                    "branchId": branch_id,
+                    "triggerStatus": trigger_status,
+                    "triggerBody": trigger.get("body"),
+                    "triggerError": trigger.get("error"),
+                    "errorType": trigger.get("errorType"),
+                    "partial": trigger.get("partial", False),
+                },
+            })
+    if not trigger["triggered"]:
+        print(f"[3/4] CDS deploy trigger not confirmed ({trigger.get('error')}); polling branch status", file=sys.stderr)
     time.sleep(3)
     deadline = time.time() + args.timeout
     final_status = None
