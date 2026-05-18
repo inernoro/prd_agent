@@ -114,6 +114,18 @@ async def run_official_agent(
         {name for name in builtin_allowed if name.lower() in {"bash", "edit", "write"}}
     )
     permission_mode = os.environ.get("CLAUDE_AGENT_SDK_PERMISSION_MODE", "default")
+    bare_mode = os.environ.get("CLAUDE_AGENT_SDK_BARE", "1").lower() not in {"0", "false", "no"}
+    setting_sources = [] if bare_mode else _csv_env("CLAUDE_AGENT_SDK_SETTING_SOURCES", "project")
+    extra_args = {"bare": None} if bare_mode else {}
+    readonly_system_prompt = (
+        "Runtime tool contract: use only the tools explicitly exposed by CDS. "
+        f"Available built-in tools: {', '.join(builtin_allowed) if builtin_allowed else 'none'}. "
+        "Never call Bash, Edit, or Write unless they are explicitly listed as available tools. "
+        "For git metadata in read-only reviews, read .git/HEAD, .git/refs, or .git/logs files instead of shell commands."
+    )
+    appended_system_prompt = "\n\n".join(
+        part for part in [readonly_system_prompt, req.system_prompt or ""] if part
+    )
     request_cwd = (req.workspace_root or "").strip() or None
     env_cwd = os.environ.get("AGENT_WORKSPACE_ROOT", "").strip() or None
     git_workspace_metadata: dict[str, Any] | None = None
@@ -170,13 +182,13 @@ async def run_official_agent(
     env = upstream.to_sdk_env(req.timeout_seconds)
 
     options = ClaudeAgentOptions(
-        tools={"type": "preset", "preset": "claude_code"},
+        tools=builtin_allowed,
         allowed_tools=[*builtin_allowed, *sdk_tooling.map_tool_names],
         disallowed_tools=builtin_disallowed,
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
-            "append": req.system_prompt or "",
+            "append": appended_system_prompt,
         },
         mcp_servers=sdk_tooling.mcp_servers,
         strict_mcp_config=bool(sdk_tooling.mcp_servers),
@@ -186,7 +198,8 @@ async def run_official_agent(
         cwd=cwd,
         env=env,
         can_use_tool=sdk_tooling.can_use_tool,
-        setting_sources=["project"],
+        setting_sources=setting_sources,
+        extra_args=extra_args,
     )
 
     yield SidecarEvent(
@@ -199,6 +212,8 @@ async def run_official_agent(
             "allowedTools": [*builtin_allowed, *sdk_tooling.map_tool_names],
             "disallowedTools": builtin_disallowed,
             "permissionMode": permission_mode,
+            "bareMode": bare_mode,
+            "settingSources": setting_sources,
             "cwd": cwd,
             "workspaceSource": workspace_source,
             "gitRepository": req.git_repository,
