@@ -47,6 +47,8 @@ app = FastAPI(title="Claude Agent SDK Sidecar", version="0.1.0")
 SIDECAR_TOKEN = os.environ.get("SIDECAR_TOKEN", "").strip()
 SIDECAR_VERSION = os.environ.get("SIDECAR_VERSION", "0.1.0")
 DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sdk").strip()
+OFFICIAL_AGENT_ADAPTER_ALIASES = {"official", "official-claude", "claude-agent-sdk", "agent-sdk"}
+LEGACY_AGENT_ADAPTER_ALIASES = {"legacy", "legacy-sidecar"}
 
 _active_runs: dict[str, asyncio.Event] = {}
 
@@ -77,10 +79,12 @@ async def readyz() -> JSONResponse:
     provider_key_mode = os.environ.get("SIDECAR_PROVIDER_KEY_MODE", "runtime-profile-or-env").strip().lower()
     provider_key_required = provider_key_mode in ("env", "environment", "env-required")
     ready = has_token and (has_key or not provider_key_required)
-    adapter = DEFAULT_AGENT_ADAPTER or "legacy-sidecar"
+    adapter = DEFAULT_AGENT_ADAPTER or "claude-agent-sdk"
     diagnostics = _adapter_diagnostics(adapter)
-    if adapter.strip().lower() in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
+    if adapter.strip().lower() in OFFICIAL_AGENT_ADAPTER_ALIASES:
         ready = ready and bool(diagnostics.get("ready"))
+    else:
+        ready = ready and bool(diagnostics.get("ready", True))
     blockers = _readyz_blockers(
         has_key=has_key,
         has_token=has_token,
@@ -155,18 +159,32 @@ def _readyz_next_actions(
             actions.append("install the official SDK: pip install claude-agent-sdk")
         if "workspace_root" in missing:
             actions.append("set AGENT_WORKSPACE_ROOT to an existing readable workspace")
+        if "unsupported_runtime_adapter" in missing:
+            actions.append("set runtimeAdapter=claude-agent-sdk, or explicitly set runtimeAdapter=legacy-sidecar only for legacy fallback")
 
     return list(dict.fromkeys(actions))
 
 
 def _adapter_diagnostics(adapter: str) -> dict[str, object]:
-    normalized = (adapter or "legacy-sidecar").strip().lower()
-    if normalized not in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
+    requested = (adapter or "claude-agent-sdk").strip()
+    normalized = requested.lower()
+    if normalized in LEGACY_AGENT_ADAPTER_ALIASES:
         return {
             "adapter": "legacy-sidecar",
             "ready": True,
             "reason": "legacy-sidecar uses the anthropic Python SDK path",
             "loopOwner": "sidecar-legacy-loop",
+            "sdkLoopEnabled": False,
+            "mapRole": "control-plane",
+            "cdsRole": "sandbox-runtime",
+        }
+    if normalized not in OFFICIAL_AGENT_ADAPTER_ALIASES:
+        return {
+            "adapter": requested,
+            "ready": False,
+            "missing": ["unsupported_runtime_adapter"],
+            "reason": "unsupported runtimeAdapter; legacy fallback requires an explicit legacy-sidecar adapter value",
+            "loopOwner": "unsupported",
             "sdkLoopEnabled": False,
             "mapRole": "control-plane",
             "cdsRole": "sandbox-runtime",
@@ -224,10 +242,13 @@ def _adapter_diagnostics(adapter: str) -> dict[str, object]:
 
 
 def _adapter_for(req: SidecarRunRequest) -> str:
-    value = (req.runtime_adapter or DEFAULT_AGENT_ADAPTER or "legacy-sidecar").strip().lower()
-    if value in ("official", "official-claude", "claude-agent-sdk", "agent-sdk"):
+    requested = req.runtime_adapter or DEFAULT_AGENT_ADAPTER or "claude-agent-sdk"
+    value = requested.strip().lower()
+    if value in OFFICIAL_AGENT_ADAPTER_ALIASES:
         return "claude-agent-sdk"
-    return "legacy-sidecar"
+    if value in LEGACY_AGENT_ADAPTER_ALIASES:
+        return "legacy-sidecar"
+    raise ValueError(f"unsupported runtimeAdapter: {requested}")
 
 
 def _format_sse(event: SidecarEvent) -> bytes:
@@ -268,7 +289,25 @@ async def _run_stream(req: SidecarRunRequest, request: Request) -> AsyncIterator
 
     async def producer() -> None:
         try:
-            official_adapter = _adapter_for(req) == "claude-agent-sdk"
+            try:
+                selected_adapter = _adapter_for(req)
+            except ValueError as ex:
+                await queue.put(_format_sse(SidecarEvent(
+                    type="error",
+                    error_code="unsupported_runtime_adapter",
+                    message=str(ex),
+                    content={
+                        "runtimeAdapter": req.runtime_adapter,
+                        "defaultAdapter": DEFAULT_AGENT_ADAPTER,
+                        "allowedRuntimeAdapters": sorted(OFFICIAL_AGENT_ADAPTER_ALIASES | LEGACY_AGENT_ADAPTER_ALIASES),
+                        "nextActions": [
+                            "Use runtimeAdapter=claude-agent-sdk for the default official SDK path.",
+                            "Use runtimeAdapter=legacy-sidecar only for explicit legacy fallback."
+                        ],
+                    },
+                )))
+                return
+            official_adapter = selected_adapter == "claude-agent-sdk"
             stream = run_official_agent(req, cancel_event=cancel_event) if official_adapter else run_agent(req)
             if not official_adapter:
                 await queue.put(_format_sse(_legacy_runtime_init_event(req)))

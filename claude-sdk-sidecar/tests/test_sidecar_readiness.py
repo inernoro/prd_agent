@@ -34,6 +34,32 @@ class SidecarReadinessTests(unittest.TestCase):
         finally:
             sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
 
+    def test_unknown_adapter_does_not_fall_back_to_legacy(self) -> None:
+        previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
+        try:
+            sidecar_main.DEFAULT_AGENT_ADAPTER = "claude-agent-sdk"
+            with self.assertRaisesRegex(ValueError, "unsupported runtimeAdapter: codex"):
+                _adapter_for(SidecarRunRequest(runId="codex-run", runtimeAdapter="codex"))
+        finally:
+            sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
+
+    def test_empty_default_adapter_still_uses_official_sdk(self) -> None:
+        previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
+        try:
+            sidecar_main.DEFAULT_AGENT_ADAPTER = ""
+            self.assertEqual(_adapter_for(SidecarRunRequest(runId="empty-default-run")), "claude-agent-sdk")
+        finally:
+            sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
+
+    def test_unknown_adapter_diagnostics_are_not_legacy_ready(self) -> None:
+        diagnostics = _adapter_diagnostics("codex")
+
+        self.assertEqual(diagnostics["adapter"], "codex")
+        self.assertEqual(diagnostics["ready"], False)
+        self.assertEqual(diagnostics["missing"], ["unsupported_runtime_adapter"])
+        self.assertEqual(diagnostics["loopOwner"], "unsupported")
+        self.assertEqual(diagnostics["sdkLoopEnabled"], False)
+
     def test_legacy_runtime_init_makes_fallback_auditable(self) -> None:
         event = _legacy_runtime_init_event(SidecarRunRequest(
             runId="legacy-run",
@@ -171,6 +197,31 @@ class SidecarReadinessTests(unittest.TestCase):
             "provider key may be supplied by MAP runtime profile or per-request override",
             payload["nextActions"],
         )
+
+    def test_readyz_rejects_unsupported_adapter_instead_of_legacy_fallback(self) -> None:
+        previous_token = sidecar_main.SIDECAR_TOKEN
+        previous_adapter = sidecar_main.DEFAULT_AGENT_ADAPTER
+        sidecar_main.SIDECAR_TOKEN = "test-token"
+        sidecar_main.DEFAULT_AGENT_ADAPTER = "codex"
+        try:
+            with patch.dict(os.environ, {
+                "SIDECAR_AGENT_ADAPTER": "codex",
+            }, clear=True):
+                response = self._run_readyz()
+        finally:
+            sidecar_main.SIDECAR_TOKEN = previous_token
+            sidecar_main.DEFAULT_AGENT_ADAPTER = previous_adapter
+
+        payload = json.loads(response.body)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(payload["ready"], False)
+        self.assertEqual(payload["agentAdapter"], "codex")
+        self.assertIn("missing unsupported_runtime_adapter", payload["blockers"])
+        self.assertIn(
+            "set runtimeAdapter=claude-agent-sdk, or explicitly set runtimeAdapter=legacy-sidecar only for legacy fallback",
+            payload["nextActions"],
+        )
+        self.assertEqual(payload["adapterDiagnostics"]["loopOwner"], "unsupported")
 
     @staticmethod
     def _run_readyz():

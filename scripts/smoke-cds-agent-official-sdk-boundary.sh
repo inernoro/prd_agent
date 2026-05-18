@@ -84,8 +84,12 @@ routing_test_status="pass"
 
 require_contains "$MAIN_FILE" 'DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sdk").strip()' \
   "sidecar default adapter must remain claude-agent-sdk"
+require_contains "$MAIN_FILE" 'LEGACY_AGENT_ADAPTER_ALIASES = {"legacy", "legacy-sidecar"}' \
+  "legacy fallback must require an explicit legacy adapter alias"
 require_contains "$MAIN_FILE" 'return "legacy-sidecar"' \
   "legacy fallback route should stay explicit"
+require_contains "$MAIN_FILE" 'unsupported_runtime_adapter' \
+  "unknown runtimeAdapter values must not silently fall back to legacy loop"
 require_contains "$OFFICIAL_FILE" 'from claude_agent_sdk import' \
   "official adapter must import claude_agent_sdk"
 require_contains "$OFFICIAL_FILE" 'ClaudeSDKClient' \
