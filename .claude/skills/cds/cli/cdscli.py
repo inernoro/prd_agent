@@ -651,6 +651,73 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
         })
 
 
+def _fallback_branch_id(branch: str) -> str:
+    return branch.lower().replace("/", "-")
+
+
+def _resolve_deploy_branch_id(branch: str) -> str:
+    """Resolve a local git branch name to the CDS branch id.
+
+    CDS branch ids may include the project id prefix (for example
+    prd-agent-codex-cds-agent-workbench-ui), so deploy must not rely on a
+    slash-to-dash guess from the git branch name.
+    """
+    guessed = _fallback_branch_id(branch)
+    body = _call("GET", "/api/branches", timeout=30)
+    branches = body.get("branches", []) if isinstance(body, dict) else []
+
+    for candidate in branches:
+        if isinstance(candidate, dict) and candidate.get("id") == guessed:
+            return guessed
+
+    matches = [
+        b for b in branches
+        if isinstance(b, dict)
+        and b.get("branch") == branch
+        and b.get("id")
+    ]
+    project_id = os.environ.get("CDS_PROJECT_ID", "").strip()
+    if project_id:
+        project_matches = [
+            b for b in matches
+            if b.get("projectId") == project_id or b.get("project") == project_id
+        ]
+        if len(project_matches) == 1:
+            return str(project_matches[0]["id"])
+
+    if len(matches) == 1:
+        return str(matches[0]["id"])
+
+    if len(matches) > 1:
+        die(
+            f"CDS 分支名不唯一: {branch}，请设置 CDS_PROJECT_ID 后重试",
+            code=2,
+            extra={
+                "data": {
+                    "branch": branch,
+                    "guessedBranchId": guessed,
+                    "matches": [
+                        {
+                            "id": b.get("id"),
+                            "projectId": b.get("projectId") or b.get("project"),
+                        }
+                        for b in matches
+                    ],
+                }
+            })
+
+    die(
+        f"CDS 分支不存在: git branch={branch} guessedBranchId={guessed}",
+        code=2,
+        extra={
+            "data": {
+                "branch": branch,
+                "guessedBranchId": guessed,
+                "nextCommand": f"cdscli branch create --project <projectId> --branch {branch}",
+            }
+        })
+
+
 def _check_blocking_pending_import(branch_id: str) -> dict[str, Any] | None:
     """查 branch → project，看 project 有没有 pending 待批准 import。
 
@@ -5311,7 +5378,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         die("git 仓库未检出", code=1)
     if branch in ("main", "master"):
         die(f"禁止在 {branch} 上部署", code=1)
-    branch_id = branch.lower().replace("/", "-")
+    branch_id = _resolve_deploy_branch_id(branch)
 
     # 2. git push
     print(f"[1/4] git push origin {branch}", file=sys.stderr)
@@ -5321,7 +5388,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         die(f"git push 失败: {rv.stderr[:200]}", code=1)
 
     # 3. CDS pull
-    print(f"[2/4] CDS pull branch={branch_id}", file=sys.stderr)
+    print(f"[2/4] CDS pull branch={branch_id} (git={branch})", file=sys.stderr)
     _call("POST", f"/api/branches/{urllib.parse.quote(branch_id)}/pull", timeout=60)
 
     # 4. Deploy (reuse cmd_branch_deploy logic)
