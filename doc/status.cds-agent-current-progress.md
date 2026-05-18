@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 18:50 Asia/Shanghai
+> **更新时间**：2026-05-18 18:55 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -21,6 +21,7 @@
 
 ```bash
 scripts/print-cds-agent-current-progress.sh
+scripts/print-cds-agent-lifecycle-overview.sh
 ```
 
 该命令只读，不部署、不写远程、不输出 secret；它会直接展示当前 gate、任务看板、blocker、下一步和预计耗时。
@@ -120,6 +121,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | R0 local apply readiness | `/tmp/cds-agent-r0-apply-readiness-current.json` | 本机尚不能进入 R0 apply/deploy；缺 remote host SSH 参数和 `CDS_AGENT_SIDECAR_IMAGE` | <1s |
 | R0 operator handoff bundle | `/tmp/cds-agent-r0-operator-handoff-current.md` | 聚合进度、readiness、缺失输入、ETA、安全命令；未发现 secret 泄露 | <2s |
 | goal audit with readiness | `/tmp/cds-agent-goal-audit-current-with-readiness.json` | `N6=pass`、otherAgentCompatibility proved，并纳入 R0 apply readiness；仍 `not_complete` | 15s |
+| lifecycle overview | `scripts/print-cds-agent-lifecycle-overview.sh` | 按完整目标输出生命周期、已完成、阻塞、剩余距离和关键路径；V1 标为 partial | <1s |
 
 ## 7. 时间和问题账本
 
@@ -145,6 +147,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | R0 local apply readiness | <1s | 先本地判定 env/summary 是否足够 apply，避免到远程写入阶段才失败 |
 | R0 operator handoff bundle | <2s | 一个文件交接当前状态、缺失输入和安全执行命令，减少翻文档和聊天解释 |
 | goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | audit 读取 N6 summary 和 R0 readiness，不再把 VSTest 权限问题当作兼容性失败 |
+| lifecycle overview | <1s | 直接回答“整个生命周期到哪一步、离目标多远”，避免只看局部脚本输出 |
 
 ## 8. 不要做的事
 
@@ -160,6 +163,12 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 
 ```bash
 scripts/print-cds-agent-current-progress.sh
+```
+
+查看完整生命周期：
+
+```bash
+scripts/print-cds-agent-lifecycle-overview.sh
 ```
 
 本地检查 R0 apply/deploy 是否具备输入：

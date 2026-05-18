@@ -356,6 +356,26 @@
 
 优化：以后目标审计的“当前进度”会和本地进度面板一致，减少 N6 误报和重复解释。
 
+### 22. 用户需要生命周期级视图，而不是只看局部进度
+
+问题：已有 progress board、operator handoff 和 goal audit，但它们分别回答“当前命令”“R0 怎么交接”“目标审计结果”。用户问“整个生命周期开发到什么程度、离目标多远”时，仍需要人工把这些输出拼起来。
+
+处理：
+
+- 新增 `scripts/print-cds-agent-lifecycle-overview.sh`。
+- 输出完整生命周期：A0 边界、N6 兼容、R0 runtime pool、R1 profile、S1、S2/S3、V1、商业收口。
+- 明确当前不是完成态：`goalStatus=not_complete`、`currentBlockingGate=R0`。
+- V1 历史页面证据不再显示为完全 done，而是 `partial`，要求 R0/R1/S1-S3 后重截 live runtime 页面。
+
+证据：
+
+- 生命周期视图当前显示：A0 done、N6 done、R0 blocked、R1 blocked、S1 blocked、S2/S3 blocked、V1 partial、Commercial closure blocked。
+- Missing R0 inputs 与 readiness 一致：remote host SSH 参数和 `CDS_AGENT_SIDECAR_IMAGE`。
+
+耗时：<1s。
+
+优化：以后回答全局进度先跑生命周期视图，再决定是否需要展开 audit 或 handoff。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -370,6 +390,7 @@
 | R0 local apply readiness | <1s | 完全可本地化 | 先确认 env 和 dry-run summary 是否足够 apply/deploy，再决定是否触发远程写动作 |
 | R0 operator handoff bundle | <2s | 完全可本地化 | 单文件交接状态、缺失输入、ETA、安全命令和禁止事项 |
 | goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | 部分可本地化 | audit 消费 N6 summary 和 R0 readiness，当前唯一失败收敛到 R0 runtime pool 未恢复 |
+| lifecycle overview | <1s | 完全可本地化 | 固定回答完整生命周期进度、剩余距离和关键路径 |
 
 ## 当前下一步
 
