@@ -611,10 +611,25 @@ describe('Remote hosts project instances route', () => {
       'POST',
       `/api/projects/${projectId}/agent-sessions`,
       longToken,
-      { runtime: 'claude-sdk', model: 'claude-sonnet-4-20250514' },
+      {
+        runtime: 'claude-sdk',
+        model: 'deepseek/deepseek-v4-pro',
+        modelBaseUrl: 'https://openrouter.ai/api',
+        modelProtocol: 'anthropic',
+        modelApiKey: 'provider-secret',
+        runtimeProfileId: 'map-runtime-profile-id',
+      },
     );
 
     expect(created.status).toBe(201);
+    expect(created.body.item).toMatchObject({
+      model: 'deepseek/deepseek-v4-pro',
+      modelBaseUrl: 'https://openrouter.ai/api',
+      modelProtocol: 'anthropic',
+      hasModelApiKey: true,
+      runtimeProfileId: 'map-runtime-profile-id',
+    });
+    expect(JSON.stringify(created.body.item)).not.toContain('provider-secret');
     const sessionId = created.body.item.id;
 
     const sent = await request(
@@ -661,10 +676,25 @@ describe('Remote hosts project instances route', () => {
       'POST',
       `/api/projects/${projectId}/agent-sessions`,
       longToken,
-      { runtime: 'claude-sdk', model: 'claude-sonnet-4-20250514' },
+      {
+        runtime: 'claude-sdk',
+        model: 'deepseek/deepseek-v4-pro',
+        modelBaseUrl: 'https://openrouter.ai/api',
+        modelProtocol: 'anthropic',
+        modelApiKey: 'provider-secret',
+        runtimeProfileId: 'map-runtime-profile-id',
+      },
     );
 
     expect(created.status).toBe(201);
+    expect(created.body.item).toMatchObject({
+      model: 'deepseek/deepseek-v4-pro',
+      modelBaseUrl: 'https://openrouter.ai/api',
+      modelProtocol: 'anthropic',
+      hasModelApiKey: true,
+      runtimeProfileId: 'map-runtime-profile-id',
+    });
+    expect(JSON.stringify(created.body.item)).not.toContain('provider-secret');
     const sessionId = created.body.item.id;
 
     const sent = await request(
@@ -693,9 +723,13 @@ describe('Remote hosts project instances route', () => {
     expect(runtime.requests[0].authorization).toBe('Bearer dev-skip');
     expect(runtime.requests[0].body).toMatchObject({
       runtimeAdapter: 'claude-agent-sdk',
-      model: 'claude-sonnet-4-20250514',
+      model: 'deepseek/deepseek-v4-pro',
       mapSessionId: sessionId,
+      baseUrl: 'https://openrouter.ai/api',
+      apiKey: 'provider-secret',
+      protocol: 'anthropic',
     });
+    expect(runtime.requests[0].body).not.toHaveProperty('profile');
 
     const stream = await request(
       server,
@@ -719,5 +753,100 @@ describe('Remote hosts project instances route', () => {
     expect(logs.body.logs).toContain('owner=cds-managed-runtime');
     expect(logs.body.logs).toContain('loopOwner=claude-agent-sdk');
     expect(logs.body.logs).not.toContain('MAP sidecar bridge');
+  });
+
+  it('prefers the explicit CDS-managed runtime branch over stale main sidecars', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const runtime = await startMockOfficialSdkRuntime();
+
+    const profile: BuildProfile = {
+      id: 'claude-agent-sdk-runtime',
+      projectId,
+      name: 'Claude Agent SDK Runtime',
+      dockerImage: 'python:3.12-slim',
+      workDir: 'claude-sdk-sidecar',
+      command: 'uvicorn app.main:app --host 0.0.0.0 --port 7400',
+      containerPort: 7400,
+      env: {
+        SIDECAR_AGENT_ADAPTER: 'claude-agent-sdk',
+        SIDECAR_TOKEN: 'managed-token',
+      },
+    };
+    stateService.addBuildProfile(profile);
+    stateService.addBranch({
+      id: 'shared-runtime-main',
+      projectId,
+      branch: 'main',
+      worktreePath: path.join(tmpDir, 'shared-runtime-main'),
+      status: 'running',
+      services: {
+        'claude-agent-sdk-runtime': {
+          profileId: 'claude-agent-sdk-runtime',
+          containerName: 'old-main-sidecar',
+          hostPort: 9,
+          status: 'running',
+        },
+      },
+      createdAt: new Date().toISOString(),
+      lastAccessedAt: new Date().toISOString(),
+      githubCommitSha: 'oldmain',
+    });
+    stateService.addBranch({
+      id: 'shared-runtime-managed',
+      projectId,
+      branch: 'cds-managed-runtime',
+      worktreePath: path.join(tmpDir, 'shared-runtime-managed'),
+      status: 'running',
+      services: {
+        'claude-agent-sdk-runtime': {
+          profileId: 'claude-agent-sdk-runtime',
+          containerName: 'cds-claude-agent-sdk-runtime',
+          hostPort: runtime.port,
+          status: 'running',
+        },
+      },
+      createdAt: new Date().toISOString(),
+      lastAccessedAt: new Date().toISOString(),
+      githubCommitSha: 'managed',
+    });
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      {
+        runtime: 'claude-sdk',
+        model: 'deepseek/deepseek-v4-pro',
+        modelBaseUrl: 'https://openrouter.ai/api',
+        modelApiKey: 'provider-secret',
+        runtimeProfileId: 'map-runtime-profile-id',
+      },
+    );
+    expect(created.status).toBe(201);
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${created.body.item.id}/messages`,
+      longToken,
+      { content: 'route through managed runtime' },
+    );
+
+    expect(sent.status).toBe(202);
+    expect(sent.body.accepted).toBe(true);
+    expect(sent.body.transport).toMatchObject({
+      branch: 'cds-managed-runtime',
+      containerName: 'cds-claude-agent-sdk-runtime',
+      hostPort: runtime.port,
+      profileId: 'claude-agent-sdk-runtime',
+    });
+    expect(runtime.requests).toHaveLength(1);
+    expect(runtime.requests[0].body).toMatchObject({
+      baseUrl: 'https://openrouter.ai/api',
+      apiKey: 'provider-secret',
+    });
+    expect(runtime.requests[0].body).not.toHaveProperty('profile');
   });
 });

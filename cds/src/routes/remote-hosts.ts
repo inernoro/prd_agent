@@ -639,7 +639,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const now = new Date().toISOString();
     const runtime = normalizeRuntime(req.body?.runtime);
     const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
-    const hasModelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0;
+    const modelProtocol = typeof req.body?.modelProtocol === 'string' ? req.body.modelProtocol : null;
+    const modelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0
+      ? req.body.modelApiKey
+      : null;
+    const hasModelApiKey = Boolean(modelApiKey);
     const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
     const workerId = runtime === 'fake'
@@ -656,6 +660,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       runtime,
       model: typeof req.body?.model === 'string' ? req.body.model : null,
       modelBaseUrl,
+      modelProtocol,
+      modelApiKey,
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       resourcePolicy,
@@ -675,6 +681,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       runtime,
       model: session.model,
       modelBaseUrl,
+      modelProtocol,
       runtimeProfileId: session.runtimeProfileId,
       modelCredential: hasModelApiKey ? 'configured' : 'missing',
       resourcePolicy,
@@ -1464,6 +1471,8 @@ interface CdsAgentSession {
   runtime: string;
   model: string | null;
   modelBaseUrl: string | null;
+  modelProtocol: string | null;
+  modelApiKey: string | null;
   hasModelApiKey: boolean;
   runtimeProfileId: string | null;
   resourcePolicy: CdsAgentResourcePolicy;
@@ -1554,6 +1563,7 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     runtime: session.runtime,
     model: session.model,
     modelBaseUrl: session.modelBaseUrl,
+    modelProtocol: session.modelProtocol,
     hasModelApiKey: session.hasModelApiKey,
     runtimeProfileId: session.runtimeProfileId,
     resourcePolicy: session.resourcePolicy,
@@ -1575,6 +1585,7 @@ function resolveCdsManagedRuntimeTransport(
 ): CdsManagedRuntimeTransport | null {
   if (project.kind !== 'shared-service') return null;
   const branches = stateService.getBranchesForProject(project.id);
+  const candidates: CdsManagedRuntimeTransport[] = [];
   for (const branch of branches) {
     if (branch.status !== 'running') continue;
     for (const serviceState of Object.values(branch.services || {})) {
@@ -1584,7 +1595,7 @@ function resolveCdsManagedRuntimeTransport(
       const baseUrl = resolveCdsManagedRuntimeBaseUrl(project, branch, serviceState);
       if (!baseUrl) continue;
       const token = normalizeOptionalString(profile?.env?.SIDECAR_TOKEN);
-      return {
+      candidates.push({
         source: 'cds-branch-service',
         runtimeOwnedBy: 'cds-managed-runtime',
         baseUrl,
@@ -1600,10 +1611,20 @@ function resolveCdsManagedRuntimeTransport(
         hostPort: serviceState.hostPort,
         runtimeAdapter: 'claude-agent-sdk',
         loopOwner: 'claude-agent-sdk',
-      };
+      });
     }
   }
-  return null;
+  candidates.sort((a, b) => scoreCdsManagedRuntimeTransport(b) - scoreCdsManagedRuntimeTransport(a));
+  return candidates[0] || null;
+}
+
+function scoreCdsManagedRuntimeTransport(transport: CdsManagedRuntimeTransport): number {
+  let score = 0;
+  if (transport.profileId === CDS_MANAGED_RUNTIME_PROFILE_ID) score += 100;
+  if (transport.branch === CDS_MANAGED_RUNTIME_BRANCH_NAME) score += 50;
+  if (transport.containerName === CDS_MANAGED_RUNTIME_CONTAINER_NAME) score += 20;
+  if (transport.authToken) score += 1;
+  return score;
 }
 
 function isOfficialSdkRuntimeService(
@@ -1680,7 +1701,8 @@ async function runCdsManagedOfficialSdkTransport(
     maxTurns: 10,
     timeoutSeconds: session.resourcePolicy.timeoutSeconds,
     baseUrl: session.modelBaseUrl || undefined,
-    profile: session.runtimeProfileId || undefined,
+    apiKey: session.modelApiKey || undefined,
+    protocol: session.modelProtocol || undefined,
     systemPrompt: [
       'You are running as a CDS-managed Claude SDK runtime.',
       'MAP is only the control-plane client; CDS owns runtime/container/sandbox execution.',
