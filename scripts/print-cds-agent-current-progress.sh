@@ -71,6 +71,7 @@ image_next_action="unknown"
 image_build_context="unknown"
 image_local_build="not checked"
 image_publish="not checked"
+image_publish_candidate="ghcr.io/inernoro/prd-agent/claude-sidecar:$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
 remote_pull="not checked"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
@@ -85,6 +86,8 @@ if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
 fi
 if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.status // "unknown"')
+  image_publish_candidate=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.candidateTargetImage // empty')
+  [[ -n "$image_publish_candidate" ]] || image_publish_candidate="ghcr.io/inernoro/prd-agent/claude-sidecar:$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
 fi
 if [[ -f "$REMOTE_PULL_REPORT" ]]; then
   remote_pull=$(jq_read "$REMOTE_PULL_REPORT" '.status // "unknown"')
@@ -117,23 +120,13 @@ scripts/smoke-cds-agent-sidecar-image-build.sh
 EOF
 )
 elif [[ "$image_publish" != "push_ready" && "$image_publish" != "push_pass" ]]; then
-  exact_next_step=$(cat <<'EOF'
-Choose a registry-qualified image tag and run publish dry-run. This does not push unless `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` is set.
-
-```bash
-CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> scripts/publish-cds-agent-sidecar-image.sh
-```
-EOF
-)
+  exact_next_step=$(printf '%s\n\n```bash\n%s\n```' \
+    'Choose a registry-qualified image tag and run publish dry-run. This does not push unless `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` is set.' \
+    "CDS_AGENT_SIDECAR_IMAGE=$image_publish_candidate scripts/publish-cds-agent-sidecar-image.sh")
 elif [[ "$image_publish" == "push_ready" ]]; then
-  exact_next_step=$(cat <<'EOF'
-Push the sidecar image only after choosing the approved registry tag. This is an explicit write action.
-
-```bash
-CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh
-```
-EOF
-)
+  exact_next_step=$(printf '%s\n\n```bash\n%s\n```' \
+    'Push the sidecar image only after choosing the approved registry tag. This is an explicit write action.' \
+    "CDS_AGENT_SIDECAR_IMAGE=$image_publish_candidate CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh")
 elif [[ "$remote_pull" != "dry_run_ready" && "$remote_pull" != "pull_pass" ]]; then
   exact_next_step=$(cat <<'EOF'
 Validate remote host pull prerequisites. This does not SSH unless `CDS_AGENT_REMOTE_PULL_VERIFY=1` is set.

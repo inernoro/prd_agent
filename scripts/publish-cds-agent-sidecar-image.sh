@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
 BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 LOG="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_LOG:-/tmp/cds-agent-sidecar-image-publish-current.log}"
@@ -37,12 +40,45 @@ looks_registry_qualified() {
   [[ "$value" == */* && ( "$first" == *.* || "$first" == *:* || "$first" == "localhost" ) ]]
 }
 
+derive_candidate_target_image() {
+  if [[ -n "${CDS_AGENT_SIDECAR_IMAGE_REPOSITORY:-}" ]]; then
+    printf '%s:%s' "${CDS_AGENT_SIDECAR_IMAGE_REPOSITORY%:}" "$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
+    return 0
+  fi
+
+  local remote owner repo sha
+  remote="$(git -C "$ROOT_DIR" remote get-url origin 2>/dev/null || printf '')"
+  sha="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
+  case "$remote" in
+    https://github.com/*/*.git|https://github.com/*/*)
+      owner="${remote#https://github.com/}"
+      owner="${owner%%/*}"
+      repo="${remote#https://github.com/$owner/}"
+      repo="${repo%.git}"
+      ;;
+    git@github.com:*/*.git|git@github.com:*/*)
+      owner="${remote#git@github.com:}"
+      owner="${owner%%/*}"
+      repo="${remote#git@github.com:$owner/}"
+      repo="${repo%.git}"
+      ;;
+    *)
+      owner="inernoro"
+      repo="prd_agent"
+      ;;
+  esac
+  owner="$(printf '%s' "$owner" | tr '[:upper:]_' '[:lower:]-')"
+  repo="$(printf '%s' "$repo" | tr '[:upper:]_' '[:lower:]-')"
+  printf 'ghcr.io/%s/%s/claude-sidecar:%s' "$owner" "$repo" "$sha"
+}
+
 if [[ -z "$SOURCE_IMAGE" && -f "$BUILD_REPORT" ]]; then
   SOURCE_IMAGE="$(jq -r '.image // empty' "$BUILD_REPORT")"
 fi
 if [[ -z "$SOURCE_IMAGE" ]]; then
   SOURCE_IMAGE="${CDS_AGENT_SIDECAR_CANDIDATE_IMAGE:-prd-agent/claude-sidecar:latest}"
 fi
+CANDIDATE_TARGET_IMAGE="$(derive_candidate_target_image)"
 
 write_report() {
   local status="$1"
@@ -66,10 +102,13 @@ write_report() {
     --arg detail "$detail" \
     --arg sourceImage "$SOURCE_IMAGE" \
     --arg targetImage "$TARGET_IMAGE" \
+    --arg candidateTargetImage "$CANDIDATE_TARGET_IMAGE" \
     --arg log "$LOG" \
     --arg tagCommand "docker tag $SOURCE_IMAGE $TARGET_IMAGE" \
     --arg pushCommand "docker push $TARGET_IMAGE" \
     --arg pullCommand "docker pull $TARGET_IMAGE" \
+    --arg candidateDryRunCommand "CDS_AGENT_SIDECAR_IMAGE=$CANDIDATE_TARGET_IMAGE scripts/publish-cds-agent-sidecar-image.sh" \
+    --arg candidatePushCommand "CDS_AGENT_SIDECAR_IMAGE=$CANDIDATE_TARGET_IMAGE CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh" \
     --argjson dockerAvailable "$docker_available" \
     --argjson sourceImageExists "$source_exists" \
     --argjson tagAttempted "$tag_attempted" \
@@ -87,6 +126,7 @@ write_report() {
       detail: $detail,
       sourceImage: $sourceImage,
       targetImage: (if $targetImage == "" then null else $targetImage end),
+      candidateTargetImage: $candidateTargetImage,
       dockerAvailable: $dockerAvailable,
       sourceImageExists: $sourceImageExists,
       tagAttempted: $tagAttempted,
@@ -100,7 +140,9 @@ write_report() {
       commands: {
         tag: $tagCommand,
         push: $pushCommand,
-        pullVerify: $pullCommand
+        pullVerify: $pullCommand,
+        candidateDryRun: $candidateDryRunCommand,
+        candidatePush: $candidatePushCommand
       }
     }' > "$tmp_report"
   mv "$tmp_report" "$REPORT"

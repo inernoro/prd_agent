@@ -53,9 +53,11 @@ if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
 fi
 image_publish="not checked"
 image_publish_target="missing"
+image_publish_candidate="missing"
 if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
   image_publish_target=$(jq -r '.targetImage // "missing"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
+  image_publish_candidate=$(jq -r '.candidateTargetImage // "missing"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
 fi
 remote_pull="not checked"
 if [[ -f "$REMOTE_PULL_REPORT" ]]; then
@@ -92,6 +94,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- imageLocalBuild: `%s`\n' "$image_local_build"
   printf -- '- imagePublish: `%s`\n' "$image_publish"
   printf -- '- imagePublishTarget: `%s`\n' "$image_publish_target"
+  printf -- '- imagePublishCandidate: `%s`\n' "$image_publish_candidate"
   printf -- '- remotePull: `%s`\n' "$remote_pull"
   printf -- '- imagePreflightReport: `%s`\n' "$image_preflight_report"
   printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
@@ -115,6 +118,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf 'Local sidecar build context preflight is `%s`; this only proves the repository can describe a candidate image, not that the remote host can pull it.\n\n' "$image_build_context_status"
   printf 'Local docker build smoke is `%s`; build smoke never pushes or deploys.\n\n' "$image_local_build"
   printf 'Registry publish status is `%s`; publish requires `CDS_AGENT_SIDECAR_IMAGE_PUSH=1`.\n\n' "$image_publish"
+  printf 'Candidate registry tag is `%s`.\n\n' "$image_publish_candidate"
   printf 'Remote host docker pull status is `%s`; pull verification requires `CDS_AGENT_REMOTE_PULL_VERIFY=1` and SSH credentials.\n\n' "$remote_pull"
   if [[ -n "$image_build_command" ]]; then
     printf 'Candidate local build command:\n\n'
