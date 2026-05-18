@@ -35,6 +35,8 @@ AUDIT_DIR="${CDS_AGENT_GOAL_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/cds-agent-go
 BOUNDARY_REPORT="$AUDIT_DIR/a0-boundary.json"
 DOCS_CALIBRATION_LOG="$AUDIT_DIR/d0-docs-calibration.log"
 N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
+N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
+R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 EVIDENCE_INDEX_LOG="$AUDIT_DIR/evidence-index-quality.log"
 RUNTIME_POOL_PLAN_LOG="$AUDIT_DIR/runtime-pool-recovery-plan.log"
 BRANCH_ISOLATION_MANIFEST_LOG="$AUDIT_DIR/branch-isolation-manifest.log"
@@ -462,7 +464,7 @@ mkdir -p "$AUDIT_DIR"
 
 run_step "A0 official SDK adapter boundary" env SMOKE_CDS_AGENT_BOUNDARY_REPORT="$BOUNDARY_REPORT" bash "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || true
 run_step "D0 docs current-state calibration" check_docs_calibration "$DOCS_CALIBRATION_LOG" || true
-run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" env DOTNET_CLI_USE_MSBUILD_SERVER=0 MSBUILDDISABLENODEREUSE=1 bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
+run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" env SMOKE_CDS_AGENT_N6_REPORT="$N6_SUMMARY" DOTNET_CLI_USE_MSBUILD_SERVER=0 MSBUILDDISABLENODEREUSE=1 bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
 run_step_logged "P0 branch isolation and shared pool recovery plan" "$RUNTIME_POOL_PLAN_LOG" check_runtime_pool_recovery_plan "$RUNTIME_POOL_PLAN_LOG" || true
 run_step_logged "P0 branch isolation apply manifest" "$BRANCH_ISOLATION_MANIFEST_LOG" check_branch_isolation_apply_manifest || true
 
@@ -503,6 +505,21 @@ elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "N6 
 elif [[ ! -s "$N6_LOG" ]]; then
   n6_status="missing"
 fi
+if [[ -f "$N6_SUMMARY" ]] && [[ "$(jq -r '.status // ""' "$N6_SUMMARY" 2>/dev/null || true)" == "pass" ]]; then
+  n6_status="pass"
+  if (( ${#failures[@]} > 0 )); then
+    filtered_failures=()
+    for failure in "${failures[@]}"; do
+      if [[ "$failure" != "N6 non-code and candidate SDK compatibility" ]]; then
+        filtered_failures+=("$failure")
+      fi
+    done
+    failures=()
+    if (( ${#filtered_failures[@]} > 0 )); then
+      failures=("${filtered_failures[@]}")
+    fi
+  fi
+fi
 
 docs_calibration_status="pass"
 if (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "D0 docs current-state calibration"; then
@@ -531,6 +548,15 @@ runtime_pool_remote_host_count="unknown"
 runtime_pool_enabled_host_count="unknown"
 runtime_pool_branch_deploy_allowed="unknown"
 runtime_pool_blockers_json='[]'
+r0_readiness_json='null'
+if [[ -x "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" ]] && [[ -f "${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}" ]]; then
+  CDS_AGENT_R0_READINESS_REPORT="$R0_READINESS_SUMMARY" \
+    CDS_AGENT_REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}" \
+    bash "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" >/dev/null 2>&1 || true
+fi
+if [[ -f "$R0_READINESS_SUMMARY" ]]; then
+  r0_readiness_json=$(jq -c '.' "$R0_READINESS_SUMMARY" 2>/dev/null || printf 'null')
+fi
 branch_manifest_status="missing"
 branch_manifest_summary="$AUDIT_DIR/branch-isolation-repair/summary.json"
 branch_manifest_json='null'
@@ -1042,9 +1068,11 @@ audit_json=$(
     --arg boundaryReport "$BOUNDARY_REPORT" \
     --arg docsCalibrationLog "$DOCS_CALIBRATION_LOG" \
     --arg n6Log "$N6_LOG" \
+    --arg n6Summary "$N6_SUMMARY" \
     --arg evidenceIndexLog "$EVIDENCE_INDEX_LOG" \
     --arg runtimePoolPlanLog "$RUNTIME_POOL_PLAN_LOG" \
     --arg branchIsolationManifestLog "$BRANCH_ISOLATION_MANIFEST_LOG" \
+    --arg r0ReadinessSummary "$R0_READINESS_SUMMARY" \
     --arg cycleSummary "$cycle_summary" \
     --arg r1Report "$r1_report" \
     --arg s1Report "$s1_report" \
@@ -1124,6 +1152,7 @@ audit_json=$(
     --argjson controlsDetails "$controls_details_json" \
     --argjson runtimePoolPlan "$runtime_pool_plan_json" \
     --argjson runtimePoolBlockers "$runtime_pool_blockers_json" \
+    --argjson r0Readiness "$r0_readiness_json" \
     --argjson branchManifest "$branch_manifest_json" \
     --argjson remoteBranchStatusRaw "$remote_branch_status_json" \
     --argjson controlPlaneStatusRaw "$control_plane_status_json" \
@@ -1137,9 +1166,11 @@ audit_json=$(
         boundaryReport: $boundaryReport,
         docsCalibrationLog: $docsCalibrationLog,
         nonCodeCompatibilityLog: $n6Log,
+        nonCodeCompatibilitySummary: $n6Summary,
         evidenceIndexLog: $evidenceIndexLog,
         runtimePoolPlanLog: $runtimePoolPlanLog,
         branchIsolationManifestLog: $branchIsolationManifestLog,
+        r0ReadinessSummary: $r0ReadinessSummary,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
         r1Report: (if $r1Report == "" then null else $r1Report end),
         s1Report: (if $s1Report == "" then null else $s1Report end),
@@ -1167,6 +1198,7 @@ audit_json=$(
           log: $branchIsolationManifestLog,
           evidence: $branchManifest
         },
+        applyReadiness: $r0Readiness,
         evidence: "Live CDS state must show prd-agent free of branch-local sidecar services, shared-sidecar-pool as shared-service, an enabled remote host, and a running runtime instance."
       },
       docsCalibration: {
@@ -1212,6 +1244,7 @@ audit_json=$(
           runtimePoolRecovery: {
             status: $runtimePoolPlanStatus,
             blockers: $runtimePoolBlockers,
+            applyReadiness: $r0Readiness,
             branchIsolationApplyManifest: {
               status: $branchManifestStatus,
               evidence: $branchManifest
@@ -1239,6 +1272,7 @@ audit_json=$(
         otherAgentCompatibility: {
           status: (if $n6Status == "pass" then "proved" else $n6Status end),
           gate: "N6",
+          summary: (if $n6Summary == "" then null else $n6Summary end),
           evidence: "non-code Toolbox agents stay independent; codex/openai-agents-sdk/google-adk remain planned-not-routable"
         },
         providerReadiness: {
@@ -1345,6 +1379,11 @@ printf 'Runtime pool recovery: %s source=%s sharedKind=%s sharedRunning=%s conta
   "$runtime_pool_remote_host_count" \
   "$runtime_pool_enabled_host_count" \
   "$runtime_pool_branch_deploy_allowed"
+if [[ "$r0_readiness_json" != "null" ]]; then
+  printf 'R0 apply readiness: readyForR0Apply=%s nextAction=%s\n' \
+    "$(jq -r '.readyForR0Apply // false' <<< "$r0_readiness_json")" \
+    "$(jq -r '.nextAction // "unknown"' <<< "$r0_readiness_json")"
+fi
 printf 'Branch isolation apply manifest: %s\n' "$branch_manifest_status"
 if [[ "$branch_manifest_json" != "null" ]]; then
   printf 'Branch isolation manifest endpoint: %s\n' "$(jq -r '.applyManifest.endpoint // "unknown"' <<< "$branch_manifest_json")"

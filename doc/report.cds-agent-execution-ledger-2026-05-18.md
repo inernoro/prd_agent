@@ -334,6 +334,28 @@
 
 优化：拿到参数后先看一个 handoff 文件即可执行 R0.2/R0.3/R0V，减少人工拼命令和重复部署。
 
+### 21. goal audit 必须消费最新 N6 summary 和 R0 readiness
+
+问题：`audit-cds-agent-goal.sh` 会在沙箱内运行 N6。即使已有 `/tmp/cds-agent-n6-non-code-compatibility-current.json` 的当前通过证据，沙箱内 VSTest socket/timeout 仍可能把 N6 写成 `infra_failed`，从而污染当前进度判断。同时 R0 apply readiness 只在进度脚本里可见，goal audit JSON 里缺少同一份证据。
+
+处理：
+
+- goal audit 运行 N6 时传入 `SMOKE_CDS_AGENT_N6_REPORT`。
+- 如果 N6 summary 为 `pass`，audit 将 `N6=pass`，并移除本轮沙箱 N6 失败标签。
+- audit 会调用纯本地 `preflight-cds-agent-r0-apply-readiness.sh`，并把 `runtimePoolRecovery.applyReadiness` 写入报告。
+- `requirements.otherAgentCompatibility.summary` 指向 N6 summary。
+
+证据：
+
+- `/tmp/cds-agent-goal-audit-current-with-readiness.json`：`gates.N6=pass`。
+- `requirements.otherAgentCompatibility.status=proved`。
+- `runtimePoolRecovery.applyReadiness.readyForR0Apply=false`。
+- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `P0 branch isolation/shared pool is not recovered`。
+
+耗时：短超时审计 15s；N6 沙箱步骤被超时停止，但 summary 将当前 N6 证据校准为 pass。
+
+优化：以后目标审计的“当前进度”会和本地进度面板一致，减少 N6 误报和重复解释。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -347,6 +369,7 @@
 | N6 current smoke | 3s 沙箱外；沙箱内会因 VSTest socket 权限失败 | 可本地化但需要 dotnet/VSTest 权限 | smoke 写 summary 后，进度面板直接读最新 N6 证据 |
 | R0 local apply readiness | <1s | 完全可本地化 | 先确认 env 和 dry-run summary 是否足够 apply/deploy，再决定是否触发远程写动作 |
 | R0 operator handoff bundle | <2s | 完全可本地化 | 单文件交接状态、缺失输入、ETA、安全命令和禁止事项 |
+| goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | 部分可本地化 | audit 消费 N6 summary 和 R0 readiness，当前唯一失败收敛到 R0 runtime pool 未恢复 |
 
 ## 当前下一步
 
