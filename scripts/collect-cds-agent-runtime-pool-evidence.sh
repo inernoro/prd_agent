@@ -84,6 +84,21 @@ shared_pool_log="$OUT_DIR/shared-service-pool-audit.log"
 goal_audit_log="$OUT_DIR/goal-audit.log"
 goal_audit_report="$OUT_DIR/goal-audit.json"
 
+# The caller may pin OUT_DIR to a stable location such as
+# /tmp/cds-agent-runtime-pool-evidence-current. Remove prior generated
+# artifacts up front so a failed fresh probe cannot silently reuse stale JSON.
+rm -f \
+  "$plan_log" \
+  "$repair_dry_run_log" \
+  "$repair_dry_run_report" \
+  "$remote_host_prepare_log" \
+  "$remote_host_prepare_report" \
+  "$shared_pool_log" \
+  "$goal_audit_log" \
+  "$goal_audit_report" \
+  "$OUT_DIR/summary.json" \
+  "$OUT_DIR/evidence-index.md"
+
 if [[ -n "${CDS_HOST:-}" ]]; then
   run_capture "runtime pool recovery plan" "$plan_log" \
     bash "$ROOT_DIR/scripts/plan-cds-agent-runtime-pool-recovery.sh"
@@ -107,23 +122,40 @@ if [[ "$RUN_GOAL_AUDIT" == "1" ]]; then
         bash "$ROOT_DIR/scripts/audit-cds-agent-goal.sh"
 fi
 
-plan_json='null'
-if [[ -s "$plan_log" ]]; then
-  plan_json=$(sed -n '/^{/,$p' "$plan_log" | jq -c . 2>/dev/null || printf 'null')
-fi
+json_file_or_null() {
+  local file="$1"
+  local parsed
+  if [[ -s "$file" ]]; then
+    parsed=$(jq -c . "$file" 2>/dev/null || true)
+    if [[ -n "$parsed" ]]; then
+      printf '%s' "$parsed"
+    else
+      printf 'null'
+    fi
+  else
+    printf 'null'
+  fi
+}
 
-goal_json='null'
-if [[ -s "$goal_audit_report" ]]; then
-  goal_json=$(jq -c . "$goal_audit_report" 2>/dev/null || printf 'null')
-fi
-repair_json='null'
-if [[ -s "$repair_dry_run_report" ]]; then
-  repair_json=$(jq -c . "$repair_dry_run_report" 2>/dev/null || printf 'null')
-fi
-remote_host_prepare_json='null'
-if [[ -s "$remote_host_prepare_report" ]]; then
-  remote_host_prepare_json=$(jq -c . "$remote_host_prepare_report" 2>/dev/null || printf 'null')
-fi
+json_from_log_or_null() {
+  local file="$1"
+  local parsed
+  if [[ -s "$file" ]]; then
+    parsed=$(sed -n '/^{/,$p' "$file" | jq -c . 2>/dev/null || true)
+    if [[ -n "$parsed" ]]; then
+      printf '%s' "$parsed"
+    else
+      printf 'null'
+    fi
+  else
+    printf 'null'
+  fi
+}
+
+plan_json=$(json_from_log_or_null "$plan_log")
+goal_json=$(json_file_or_null "$goal_audit_report")
+repair_json=$(json_file_or_null "$repair_dry_run_report")
+remote_host_prepare_json=$(json_file_or_null "$remote_host_prepare_report")
 
 summary="$OUT_DIR/summary.json"
 jq -n \
@@ -156,25 +188,45 @@ jq -n \
     runtimePoolBlockers: (
       $goal.runtimePoolRecovery.blockers //
       [
-        (if ($plan.contaminatedBranchCount // 0) > 0 then {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + (($plan.contaminatedBranchCount // 0)|tostring))} else empty end),
-        (if ((($plan.enabledRemoteHostCount // "unknown") | tostring | test("^[0-9]+$")) and (($plan.enabledRemoteHostCount | tonumber) <= 0)) then {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"} else empty end),
-        (if ($plan.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end)
+        (if ($repair == null and $plan == null) then
+          {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:"unproved:evidence-unavailable"}
+        elif (($repair.contaminatedBranchCount // $plan.contaminatedBranchCount // 0) > 0) then
+          {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + (($repair.contaminatedBranchCount // $plan.contaminatedBranchCount // 0)|tostring))}
+        else empty end),
+        (if ($remoteHostPrepare == null and $plan == null) then
+          {requirement:"REMOTE_HOST_AVAILABLE", status:"unproved:evidence-unavailable"}
+        elif ((($remoteHostPrepare.enabledHostCount // $plan.enabledRemoteHostCount // "unknown") | tostring | test("^[0-9]+$")) and (($remoteHostPrepare.enabledHostCount // $plan.enabledRemoteHostCount | tonumber) <= 0)) then
+          {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"}
+        else empty end),
+        (if ($plan == null) then
+          {requirement:"SHARED_POOL_RUNNING", status:"unproved:evidence-unavailable"}
+        elif (($plan.sharedRunning // 0) <= 0) then
+          {requirement:"SHARED_POOL_RUNNING", status:"missing"}
+        else empty end)
       ]
     )
   }
   | .missingOrUnproved = ($goal.missingOrUnproved // .runtimePoolBlockers)
   | .branchIsolation = (
       {
-        contaminatedBranchCount: (.branchIsolationRepairDryRun.contaminatedBranchCount // .plan.contaminatedBranchCount // 0),
+        evidenceCaptured: (.branchIsolationRepairDryRun != null or .plan != null),
+        contaminatedBranchCount: (.branchIsolationRepairDryRun.contaminatedBranchCount // .plan.contaminatedBranchCount // null),
         candidateProfileIds: (.branchIsolationRepairDryRun.candidateProfileIds // .plan.contaminatedProfileIds // []),
         confirmProfileId: (.branchIsolationRepairDryRun.confirmProfileId // null),
         repairStatus: (.branchIsolationRepairDryRun.status // "unknown")
       }
-      | .clean = ((.contaminatedBranchCount // 0) == 0)
-      | .verdict = (if .clean then "dry-run-clean" else "dry-run-contaminated" end)
+      | .clean = (.evidenceCaptured and ((.contaminatedBranchCount // -1) == 0))
+      | .verdict = (
+          if (.evidenceCaptured | not) then "evidence-unavailable"
+          elif .clean then "dry-run-clean"
+          else "dry-run-contaminated"
+          end
+        )
       | .readyForRemoteHostStep = .clean
       | .nextAction = (
-          if .clean then
+          if (.evidenceCaptured | not) then
+            "runtime pool evidence was unavailable; rerun with network/auth available before any apply or deploy"
+          elif .clean then
             "branch isolation already clean; continue with remote host and shared runtime pool recovery"
           else
             "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate"
@@ -184,14 +236,16 @@ jq -n \
   | .remoteHost = (
       {
         prepareStatus: (.remoteHostPoolPreparation.status // "unknown"),
-        existingHostCount: (.remoteHostPoolPreparation.existingHostCount // .plan.remoteHostCount // 0),
-        enabledHostCount: (.remoteHostPoolPreparation.enabledHostCount // .plan.enabledRemoteHostCount // 0),
+        evidenceCaptured: (.remoteHostPoolPreparation != null or .plan != null),
+        existingHostCount: (.remoteHostPoolPreparation.existingHostCount // .plan.remoteHostCount // null),
+        enabledHostCount: (.remoteHostPoolPreparation.enabledHostCount // .plan.enabledRemoteHostCount // null),
         missingConfig: (.remoteHostPoolPreparation.missingConfig // []),
-        sharedRunning: (.plan.sharedRunning // 0),
+        sharedRunning: (.plan.sharedRunning // null),
         branchIsolationClean: .branchIsolation.clean
       }
       | .verdict = (
           if (.branchIsolationClean | not) then "blocked-branch-isolation"
+          elif (.evidenceCaptured | not) then "evidence-unavailable"
           elif ((.prepareStatus // "") == "missing_config") then "dry-run-missing-config"
           elif (((.enabledHostCount | tostring | tonumber?) // 0) > 0) then "dry-run-host-already-available"
           elif ((.prepareStatus // "") == "dry_run_ready") then "dry-run-ready"
@@ -203,6 +257,8 @@ jq -n \
       | .nextAction = (
           if .verdict == "blocked-branch-isolation" then
             "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
+          elif .verdict == "evidence-unavailable" then
+            "remote host evidence was unavailable; rerun with network/auth available before shared runtime deploy"
           elif .verdict == "dry-run-missing-config" then
             "provide missing remote host variables, then rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh"
           elif .verdict == "dry-run-ready" then

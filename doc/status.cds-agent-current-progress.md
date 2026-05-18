@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 16:15 Asia/Shanghai
+> 更新时间：2026-05-18 16:27 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -23,9 +23,9 @@
 | 步骤 | 状态 | 耗时 |
 | --- | --- | --- |
 | runtime pool recovery plan | pass | 4s |
-| branch isolation repair dry-run | pass | 3s |
+| branch isolation repair dry-run | pass | 2s |
 | remote host pool preparation | pass | 1s |
-| shared-service pool audit | blocked | 4s |
+| shared-service pool audit | blocked | 5s |
 
 ## 为什么不是部署问题
 
