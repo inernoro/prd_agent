@@ -17,6 +17,8 @@
 # Optional:
 #   CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json
 #   CDS_AGENT_GOAL_CYCLE_SUMMARY=/tmp/cds-agent-cycle-.../cycle-summary.json
+#   CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS=90
+#   CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS=15
 # ============================================
 
 set -euo pipefail
@@ -37,6 +39,7 @@ timing_indices=()
 TIMING_STEP_TOTAL=2
 TIMING_STEP_CURRENT=0
 AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
+AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
 
 run_step() {
   local label="$1"
@@ -70,10 +73,11 @@ run_step_logged() {
   local label="$1"
   local log="$2"
   shift 2
-  local started ended duration pid rc last_heartbeat elapsed
+  local started ended duration pid rc last_heartbeat elapsed timed_out
   TIMING_STEP_CURRENT=$((TIMING_STEP_CURRENT + 1))
   started=$(date +%s)
   last_heartbeat="$started"
+  timed_out=false
   printf '>>> [%s/%s] %s\n' "$TIMING_STEP_CURRENT" "$TIMING_STEP_TOTAL" "$label"
   printf '    log: %s\n' "$log"
   "$@" >"$log" 2>&1 &
@@ -81,6 +85,19 @@ run_step_logged() {
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
     elapsed=$(( $(date +%s) - started ))
+    if (( AUDIT_STEP_TIMEOUT_SECONDS > 0 && elapsed >= AUDIT_STEP_TIMEOUT_SECONDS )); then
+      timed_out=true
+      {
+        printf '\nCDS_AGENT_GOAL_AUDIT_TIMEOUT: %s exceeded %ss\n' "$label" "$AUDIT_STEP_TIMEOUT_SECONDS"
+        printf 'The audit step was stopped to keep goal verification bounded and observable.\n'
+      } >>"$log"
+      pkill -TERM -P "$pid" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      pkill -KILL -P "$pid" 2>/dev/null || true
+      kill -KILL "$pid" 2>/dev/null || true
+      break
+    fi
     if kill -0 "$pid" 2>/dev/null && (( $(date +%s) - last_heartbeat >= AUDIT_HEARTBEAT_SECONDS )); then
       last_heartbeat=$(date +%s)
       printf '    still running · elapsed=%ss · log=%s\n' "$elapsed" "$log"
@@ -91,6 +108,9 @@ run_step_logged() {
   wait "$pid"
   rc=$?
   set -e
+  if [[ "$timed_out" == "true" ]]; then
+    rc=124
+  fi
   ended=$(date +%s)
   duration=$((ended - started))
   if (( rc == 0 )); then
@@ -166,7 +186,7 @@ if [[ -f "$BOUNDARY_REPORT" ]]; then
 fi
 
 n6_status="pass"
-if [[ -s "$N6_LOG" ]] && grep -Eq 'MSB1025|System\.Net\.Sockets\.SocketException|Permission denied|NamedPipeServerStream' "$N6_LOG"; then
+if [[ -s "$N6_LOG" ]] && grep -Eq 'CDS_AGENT_GOAL_AUDIT_TIMEOUT|MSB1025|System\.Net\.Sockets\.SocketException|Permission denied|NamedPipeServerStream' "$N6_LOG"; then
   n6_status="infra_failed"
 elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "N6 non-code and candidate SDK compatibility"; then
   n6_status="failed"
@@ -224,6 +244,8 @@ if [[ "$boundary_status" == "pass" ]]; then
 fi
 if [[ "$n6_status" == "pass" ]]; then
   gate_n6="pass"
+elif [[ "$n6_status" != "missing" ]]; then
+  gate_n6="$n6_status"
 fi
 if [[ -n "$r1_report" && -f "$r1_report" ]]; then
   r1_status=$(jq -r '.status // "unknown"' "$r1_report")
@@ -264,7 +286,7 @@ if [[ "$boundary_status" != "pass" ]]; then
 fi
 if [[ "$n6_status" != "pass" ]]; then
   if [[ "$n6_status" == "infra_failed" ]]; then
-    failures+=("N6 guardrail infra failed; rerun outside sandbox or with dotnet permissions")
+    failures+=("N6 guardrail infra failed or timed out; rerun outside sandbox or with dotnet permissions")
   else
     failures+=("N6 compatibility did not pass")
   fi
