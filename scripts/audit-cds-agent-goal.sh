@@ -34,6 +34,7 @@ BOUNDARY_REPORT="$AUDIT_DIR/a0-boundary.json"
 DOCS_CALIBRATION_LOG="$AUDIT_DIR/d0-docs-calibration.log"
 N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
 EVIDENCE_INDEX_LOG="$AUDIT_DIR/evidence-index-quality.log"
+RUNTIME_POOL_PLAN_LOG="$AUDIT_DIR/runtime-pool-recovery-plan.log"
 cycle_summary="${CDS_AGENT_GOAL_CYCLE_SUMMARY:-}"
 current_git_branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf '')"
 current_git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf '')"
@@ -46,7 +47,7 @@ timing_seconds=()
 timing_indices=()
 CYCLE_GIT_DIFF_PATHS=()
 CYCLE_GIT_RUNTIME_DIFF_PATHS=()
-TIMING_STEP_TOTAL=4
+TIMING_STEP_TOTAL=5
 TIMING_STEP_CURRENT=0
 AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
 AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
@@ -343,6 +344,19 @@ check_docs_calibration() {
   return 0
 }
 
+check_runtime_pool_recovery_plan() {
+  local log="$1"
+  : > "$log"
+  if [[ -z "${CDS_HOST:-}" ]]; then
+    {
+      printf 'SKIPPED: CDS_HOST is not set; live runtime pool / branch isolation state was not observed.\n'
+      printf 'Set CDS_HOST=https://cds.miduo.org to include live control-plane isolation in the goal audit.\n'
+    } >> "$log"
+    return 0
+  fi
+  bash "$SCRIPT_DIR/plan-cds-agent-runtime-pool-recovery.sh" >"$log" 2>&1
+}
+
 read_remote_branch_status() {
   if [[ -z "${CDS_HOST:-}" ]]; then
     return 1
@@ -369,6 +383,7 @@ mkdir -p "$AUDIT_DIR"
 run_step "A0 official SDK adapter boundary" env SMOKE_CDS_AGENT_BOUNDARY_REPORT="$BOUNDARY_REPORT" bash "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || true
 run_step "D0 docs current-state calibration" check_docs_calibration "$DOCS_CALIBRATION_LOG" || true
 run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
+run_step_logged "P0 branch isolation and shared pool recovery plan" "$RUNTIME_POOL_PLAN_LOG" check_runtime_pool_recovery_plan "$RUNTIME_POOL_PLAN_LOG" || true
 
 if [[ -z "$cycle_summary" ]]; then
   cycle_summary=$(find_latest_cycle_summary)
@@ -422,6 +437,45 @@ elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "Evi
   evidence_index_status="failed"
 elif [[ ! -s "$EVIDENCE_INDEX_LOG" ]]; then
   evidence_index_status="missing"
+fi
+
+runtime_pool_plan_status="missing"
+runtime_pool_plan_json='null'
+runtime_pool_shared_kind="unknown"
+runtime_pool_shared_running=0
+runtime_pool_contaminated_count=0
+runtime_pool_remote_host_count="unknown"
+runtime_pool_enabled_host_count="unknown"
+runtime_pool_branch_deploy_allowed="unknown"
+runtime_pool_blockers_json='[]'
+if [[ -s "$RUNTIME_POOL_PLAN_LOG" ]]; then
+  if grep -q '^SKIPPED: CDS_HOST is not set' "$RUNTIME_POOL_PLAN_LOG"; then
+    runtime_pool_plan_status="not_observed"
+  else
+    runtime_pool_plan_json=$(sed -n '/^{/,$p' "$RUNTIME_POOL_PLAN_LOG" | jq -c . 2>/dev/null || printf 'null')
+    if [[ "$runtime_pool_plan_json" == "null" ]]; then
+      runtime_pool_plan_status="unparseable"
+    else
+      runtime_pool_shared_kind=$(jq -r '.sharedKind // "unknown"' <<< "$runtime_pool_plan_json")
+      runtime_pool_shared_running=$(jq -r '.sharedRunning // 0' <<< "$runtime_pool_plan_json")
+      runtime_pool_contaminated_count=$(jq -r '.contaminatedBranchCount // 0' <<< "$runtime_pool_plan_json")
+      runtime_pool_remote_host_count=$(jq -r '.remoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
+      runtime_pool_enabled_host_count=$(jq -r '.enabledRemoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
+      runtime_pool_branch_deploy_allowed=$(jq -r 'if has("branchDeploySharedPoolAllowed") then (.branchDeploySharedPoolAllowed | tostring) else "unknown" end' <<< "$runtime_pool_plan_json")
+      runtime_pool_plan_status="pass"
+      runtime_pool_blockers_json=$(
+        jq -c '
+          [
+            (if .sharedKind != "shared-service" then {requirement:"SHARED_POOL_KIND", status:.sharedKind} else empty end),
+            (if (.contaminatedBranchCount // 0) > 0 then {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + ((.contaminatedBranchCount // 0)|tostring))} else empty end),
+            (if ((.enabledRemoteHostCount | tostring | test("^[0-9]+$")) and ((.enabledRemoteHostCount | tonumber) <= 0)) then {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"} else empty end),
+            (if (.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end),
+            (if ((has("branchDeploySharedPoolAllowed") | not) or .branchDeploySharedPoolAllowed != false) then {requirement:"SHARED_POOL_BRANCH_DEPLOY_FORBIDDEN", status:"not-enforced"} else empty end)
+          ]
+        ' <<< "$runtime_pool_plan_json"
+      )
+    fi
+  fi
 fi
 
 cycle_status="missing"
@@ -678,6 +732,11 @@ fi
 if [[ "$evidence_index_status" != "pass" ]]; then
   failures+=("Evidence index quality did not pass")
 fi
+if [[ "$runtime_pool_plan_status" != "pass" ]]; then
+  failures+=("P0 branch isolation/shared pool plan was not observed")
+elif [[ "$(jq -r 'length' <<< "$runtime_pool_blockers_json")" != "0" ]]; then
+  failures+=("P0 branch isolation/shared pool is not recovered")
+fi
 if [[ "$cycle_freshness_status" == "stale" ]]; then
   failures+=("one-cycle summary is stale; rerun scripts/smoke-cds-agent-one-cycle.sh for current remote/provider evidence")
 fi
@@ -695,7 +754,9 @@ if [[ "$(json_bool "$commercial_complete")" == "true" \
   && "$gate_r1" == "pass" \
   && "$gate_s1" == "pass" \
   && "$gate_s2s3" == "pass" \
-  && "$gate_v1" == "pass" ]]; then
+  && "$gate_v1" == "pass" \
+  && "$runtime_pool_plan_status" == "pass" \
+  && "$(jq -r 'length' <<< "$runtime_pool_blockers_json")" == "0" ]]; then
   goal_status="complete"
 fi
 
@@ -709,9 +770,11 @@ missing_json=$(
     --arg gateV1 "$gate_v1" \
     --arg gateN6 "$gate_n6" \
     --arg evidenceIndexStatus "$evidence_index_status" \
+    --arg runtimePoolPlanStatus "$runtime_pool_plan_status" \
     --arg docsCalibrationStatus "$docs_calibration_status" \
     --arg cycleFreshness "$cycle_freshness_status" \
     --arg cycleGitStatus "$cycle_git_status" \
+    --argjson runtimePoolBlockers "$runtime_pool_blockers_json" \
     '{
       gates: {
         R0: $gateR0,
@@ -724,6 +787,8 @@ missing_json=$(
       },
       docsCalibrationStatus: $docsCalibrationStatus,
       evidenceIndexStatus: $evidenceIndexStatus,
+      runtimePoolPlanStatus: $runtimePoolPlanStatus,
+      runtimePoolBlockers: $runtimePoolBlockers,
       cycleFreshness: $cycleFreshness,
       cycleGitStatus: $cycleGitStatus
     } as $root
@@ -734,6 +799,8 @@ missing_json=$(
     + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
     + (if $root.docsCalibrationStatus != "pass" then [{requirement:"D0_DOCS_CALIBRATION", status:$root.docsCalibrationStatus}] else [] end)
     + (if $root.evidenceIndexStatus != "pass" then [{requirement:"EVIDENCE_INDEX", status:$root.evidenceIndexStatus}] else [] end)
+    + (if $root.runtimePoolPlanStatus != "pass" then [{requirement:"P0_RUNTIME_POOL_PLAN", status:$root.runtimePoolPlanStatus}] else [] end)
+    + $root.runtimePoolBlockers
     + (if ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch") then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
 failures_json='[]'
@@ -767,6 +834,7 @@ audit_json=$(
     --arg docsCalibrationLog "$DOCS_CALIBRATION_LOG" \
     --arg n6Log "$N6_LOG" \
     --arg evidenceIndexLog "$EVIDENCE_INDEX_LOG" \
+    --arg runtimePoolPlanLog "$RUNTIME_POOL_PLAN_LOG" \
     --arg cycleSummary "$cycle_summary" \
     --arg r1Report "$r1_report" \
     --arg s1Report "$s1_report" \
@@ -788,6 +856,7 @@ audit_json=$(
     --arg docsCalibrationStatus "$docs_calibration_status" \
     --arg n6Status "$n6_status" \
     --arg evidenceIndexStatus "$evidence_index_status" \
+    --arg runtimePoolPlanStatus "$runtime_pool_plan_status" \
     --arg r1Status "$r1_status" \
     --arg s1Status "$s1_status" \
     --arg controlsStatus "$controls_status" \
@@ -839,6 +908,8 @@ audit_json=$(
     --argjson r1Details "$r1_details_json" \
     --argjson s1Details "$s1_details_json" \
     --argjson controlsDetails "$controls_details_json" \
+    --argjson runtimePoolPlan "$runtime_pool_plan_json" \
+    --argjson runtimePoolBlockers "$runtime_pool_blockers_json" \
     --argjson remoteBranchStatusRaw "$remote_branch_status_json" \
     --argjson controlPlaneStatusRaw "$control_plane_status_json" \
     --argjson missing "$missing_json" \
@@ -852,6 +923,7 @@ audit_json=$(
         docsCalibrationLog: $docsCalibrationLog,
         nonCodeCompatibilityLog: $n6Log,
         evidenceIndexLog: $evidenceIndexLog,
+        runtimePoolPlanLog: $runtimePoolPlanLog,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
         r1Report: (if $r1Report == "" then null else $r1Report end),
         s1Report: (if $s1Report == "" then null else $s1Report end),
@@ -865,6 +937,13 @@ audit_json=$(
       evidenceIndexQuality: {
         status: $evidenceIndexStatus,
         log: $evidenceIndexLog
+      },
+      runtimePoolRecovery: {
+        status: $runtimePoolPlanStatus,
+        log: $runtimePoolPlanLog,
+        plan: $runtimePoolPlan,
+        blockers: $runtimePoolBlockers,
+        evidence: "Live CDS state must show prd-agent free of branch-local sidecar services, shared-sidecar-pool as shared-service, an enabled remote host, and a running runtime instance."
       },
       docsCalibration: {
         status: $docsCalibrationStatus,
@@ -902,10 +981,15 @@ audit_json=$(
       },
       requirements: {
         mapCdsControlPlane: {
-          status: (if $gateR0 == "pass" then "proved" else "needs-remote-evidence" end),
+          status: (if $gateR0 == "pass" and ($runtimePoolBlockers | length) == 0 then "proved" else "needs-remote-evidence" end),
           gate: "R0",
           controlPlaneRelation: $controlPlaneRelation,
           remoteRuntimeRelation: $remoteRuntimeRelation,
+          runtimePoolRecovery: {
+            status: $runtimePoolPlanStatus,
+            blockers: $runtimePoolBlockers,
+            branchDeploySharedPoolAllowed: ($runtimePoolPlan.branchDeploySharedPoolAllowed // null)
+          },
           note: "Control-plane self-update and preview runtime deploy are separate evidence paths."
         },
         officialSdkAdapterBoundary: {
@@ -1024,6 +1108,18 @@ printf 'A0 boundary: %s adapter=%s/%s support=%s/%s total=%s/%s legacy=%s\n' \
 printf 'D0 docs calibration: %s\n' "$docs_calibration_status"
 printf 'N6 compatibility: %s\n' "$n6_status"
 printf 'Evidence index quality: %s\n' "$evidence_index_status"
+printf 'Runtime pool recovery: %s sharedKind=%s sharedRunning=%s contaminatedBranches=%s remoteHosts=%s enabledHosts=%s branchDeployAllowed=%s\n' \
+  "$runtime_pool_plan_status" \
+  "$runtime_pool_shared_kind" \
+  "$runtime_pool_shared_running" \
+  "$runtime_pool_contaminated_count" \
+  "$runtime_pool_remote_host_count" \
+  "$runtime_pool_enabled_host_count" \
+  "$runtime_pool_branch_deploy_allowed"
+if [[ "$runtime_pool_blockers_json" != "[]" ]]; then
+  printf 'Runtime pool blockers:\n'
+  jq -r '.[] | "  - " + .requirement + " · " + .status' <<< "$runtime_pool_blockers_json"
+fi
 printf 'Cycle status: %s\n' "$cycle_status"
 printf 'Cycle freshness: %s age=%ss max=%ss git=%s@%s current=%s@%s match=%s\n' \
   "$cycle_freshness_status" "$cycle_age_seconds" "$CYCLE_MAX_AGE_SECONDS" \
