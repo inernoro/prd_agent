@@ -293,6 +293,24 @@ export interface InfraAgentRuntimeDiagnostics {
     deploymentAdvice?: string | null;
     nextCommand: string;
     gateCounts: Record<string, number>;
+    stepIndex?: number | null;
+    stepTotal?: number | null;
+    passedSteps?: number | null;
+    pendingSteps?: number | null;
+    currentStep?: {
+      order: number;
+      code: string;
+      title: string;
+      status: string;
+      blockedBy?: string | null;
+    } | null;
+    timeline?: Array<{
+      order: number;
+      code: string;
+      title: string;
+      status: string;
+      blockedBy?: string | null;
+    }> | null;
   } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;

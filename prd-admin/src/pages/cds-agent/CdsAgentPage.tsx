@@ -1307,6 +1307,24 @@ export default function CdsAgentPage() {
           : '不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile。');
     const executionNextCommand = backendExecutionPanel?.nextCommand || commercialNextCommand;
     const executionGateCounts = backendExecutionPanel?.gateCounts ?? null;
+    const executionTimeline = backendExecutionPanel?.timeline ?? nextCyclePlan?.items.map((item) => ({
+      order: item.order,
+      code: item.code,
+      title: item.title,
+      status: item.status,
+      blockedBy: item.blockedBy,
+    })) ?? [];
+    const executionCurrentStep = backendExecutionPanel?.currentStep
+      ?? executionTimeline.find((item) => item.status !== 'pass')
+      ?? null;
+    const executionStepTotal = backendExecutionPanel?.stepTotal ?? executionTimeline.length;
+    const executionStepIndex = backendExecutionPanel?.stepIndex
+      ?? executionCurrentStep?.order
+      ?? executionStepTotal;
+    const executionPassedSteps = backendExecutionPanel?.passedSteps
+      ?? executionTimeline.filter((item) => item.status === 'pass').length;
+    const executionPendingSteps = backendExecutionPanel?.pendingSteps
+      ?? Math.max(0, executionStepTotal - executionPassedSteps);
     const executionRunway = resolveExecutionRunway({
       commercialComplete: backendExecutionPanel?.commercialComplete ?? executionCommercialState === 'commercial-ready',
       blockingCode: executionBlockingCode,
@@ -1398,6 +1416,12 @@ export default function CdsAgentPage() {
       commercialNextCommand: executionNextCommand,
       executionRunway,
       executionGateCounts,
+      executionStepIndex,
+      executionStepTotal,
+      executionPassedSteps,
+      executionPendingSteps,
+      executionCurrentStep,
+      executionTimeline,
       nextCyclePlan,
       debugCommands,
       readinessGates,
@@ -1569,6 +1593,12 @@ export default function CdsAgentPage() {
       commercialNextAction: runtimeDiagnostics.commercialNextAction,
       commercialNextCommand: runtimeDiagnostics.commercialNextCommand,
       executionRunway: runtimeDiagnostics.executionRunway,
+      executionStepIndex: runtimeDiagnostics.executionStepIndex,
+      executionStepTotal: runtimeDiagnostics.executionStepTotal,
+      executionPassedSteps: runtimeDiagnostics.executionPassedSteps,
+      executionPendingSteps: runtimeDiagnostics.executionPendingSteps,
+      executionCurrentStep: runtimeDiagnostics.executionCurrentStep,
+      executionTimeline: runtimeDiagnostics.executionTimeline,
       commercialPassed: runtimeDiagnostics.commercialPassed,
       commercialTotal: runtimeDiagnostics.commercialTotal,
       commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
@@ -1773,6 +1803,19 @@ export default function CdsAgentPage() {
             </div>
           </div>
           <div className="flex min-w-[190px] flex-col items-stretch gap-2">
+            {runtimeDiagnostics.executionStepTotal > 0 && (
+              <div className="rounded-md px-2 py-1.5 text-right" style={{ background: 'rgba(15,23,42,0.5)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                <div className="text-[11px] font-semibold text-white/42">执行进度</div>
+                <div className="mt-0.5 text-xs font-semibold text-white/78">
+                  {runtimeDiagnostics.executionPassedSteps}/{runtimeDiagnostics.executionStepTotal} 已完成 · 当前 {runtimeDiagnostics.executionStepIndex}/{runtimeDiagnostics.executionStepTotal}
+                </div>
+                {runtimeDiagnostics.executionCurrentStep && (
+                  <div className="mt-0.5 truncate text-[11px] text-white/50">
+                    {runtimeDiagnostics.executionCurrentStep.code} · {runtimeDiagnostics.executionCurrentStep.title}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex flex-wrap justify-end gap-1">
               {runtimeDiagnostics.executionGateCounts
                 ? (['pass', 'pending', 'failed', 'unknown'] as const).map((key) => {
@@ -3782,6 +3825,11 @@ export default function CdsAgentPage() {
                           <div>{runtimeDiagnostics.commercialPassed}/{runtimeDiagnostics.commercialTotal} gates passed</div>
                           <div>{runtimeDiagnostics.commercialPending.length} pending gates</div>
                           <div>{runtimeDiagnostics.commercialState}</div>
+                          {runtimeDiagnostics.executionStepTotal > 0 && (
+                            <div>
+                              cycle {runtimeDiagnostics.executionPassedSteps}/{runtimeDiagnostics.executionStepTotal} · 当前 {runtimeDiagnostics.executionStepIndex}/{runtimeDiagnostics.executionStepTotal}
+                            </div>
+                          )}
                           {runtimeDiagnostics.executionGateCounts && (
                             <div className="mt-2 flex max-w-[260px] flex-wrap justify-end gap-1 justify-self-end">
                               {(['pass', 'pending', 'failed', 'unknown'] as const).map((key) => {

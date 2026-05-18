@@ -115,6 +115,22 @@ public class InfraAgentSessionsController : ControllerBase
         var gateCounts = readiness.Gates
             .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
+        var timeline = nextCyclePlan.Items
+            .OrderBy(x => x.Order)
+            .Select(x => new SidecarExecutionPanelStep(
+                x.Order,
+                x.Code,
+                x.Title,
+                x.Status,
+                x.BlockedBy))
+            .ToArray();
+        var currentStep = timeline.FirstOrDefault(x =>
+            !string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
+        var stepTotal = timeline.Length;
+        var stepIndex = currentStep?.Order ?? stepTotal;
+        var passedSteps = timeline.Count(x =>
+            string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
+        var pendingSteps = Math.Max(0, stepTotal - passedSteps);
 
         return new SidecarExecutionPanel(
             readiness.Overall,
@@ -125,7 +141,13 @@ public class InfraAgentSessionsController : ControllerBase
                 ?? "商业级门禁已通过。",
             deploymentAdvice,
             command?.Command ?? string.Empty,
-            gateCounts);
+            gateCounts,
+            stepIndex,
+            stepTotal,
+            passedSteps,
+            pendingSteps,
+            currentStep,
+            timeline);
     }
 
     private static string BuildDeploymentAdvice(

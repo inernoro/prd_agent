@@ -256,7 +256,21 @@ public sealed record SidecarExecutionPanel(
     string BlockingReason,
     string DeploymentAdvice,
     string NextCommand,
-    IReadOnlyDictionary<string, int> GateCounts
+    IReadOnlyDictionary<string, int> GateCounts,
+    int StepIndex,
+    int StepTotal,
+    int PassedSteps,
+    int PendingSteps,
+    SidecarExecutionPanelStep? CurrentStep,
+    IReadOnlyList<SidecarExecutionPanelStep> Timeline
+);
+
+public sealed record SidecarExecutionPanelStep(
+    int Order,
+    string Code,
+    string Title,
+    string Status,
+    string? BlockedBy = null
 );
 
 public sealed record SidecarWorkspacePreparationDiagnostics(

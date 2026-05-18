@@ -403,6 +403,12 @@ public class InfraAgentSessionsControllerTests
             executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/doctor-cds-agent-runtime.sh");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
+            executionPanel.StepIndex.ShouldBe(1);
+            executionPanel.StepTotal.ShouldBe(6);
+            executionPanel.PassedSteps.ShouldBe(0);
+            executionPanel.PendingSteps.ShouldBe(6);
+            executionPanel.CurrentStep.ShouldNotBeNull().Code.ShouldBe("N1");
+            executionPanel.Timeline.Count.ShouldBe(6);
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         }
@@ -512,6 +518,12 @@ public class InfraAgentSessionsControllerTests
             executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-r1-profile-repair.sh");
             executionPanel.GateCounts["pass"].ShouldBe(3);
             executionPanel.GateCounts["pending"].ShouldBe(4);
+            executionPanel.StepIndex.ShouldBe(1);
+            executionPanel.StepTotal.ShouldBe(6);
+            executionPanel.PassedSteps.ShouldBe(0);
+            executionPanel.PendingSteps.ShouldBe(6);
+            executionPanel.CurrentStep.ShouldNotBeNull().Code.ShouldBe("N1");
+            executionPanel.Timeline.Select(x => x.Code).ShouldContain("N6");
         }
         finally
         {

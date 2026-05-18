@@ -213,6 +213,9 @@ smoke_assert_contains "$n6_evidence" "最小业务路径" "nextCyclePlan.N6.evid
 smoke_assert_contains "$n6_evidence" "planned-not-routable" "nextCyclePlan.N6.evidence"
 smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
 smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.commercialComplete')" "false" "executionPanel.commercialComplete"
+smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.stepTotal')" "6" "executionPanel.stepTotal"
+smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.currentStep.code // ""')" "N1" "executionPanel.currentStep.code"
+smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '[.timeline[]? | select(.code == "N6")] | length')" "1" "executionPanel.timeline.N6"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
 profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
