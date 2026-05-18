@@ -82,7 +82,7 @@ RemoteHost.deploy-sidecar
 | R0.2.3 | 将 official SDK runtime 作为 CDS-managed profile/container/transport | done_minimal | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | runtime 不进入 `prd-agent` appServices；message 能投递到 CDS-managed official SDK runtime，并写回 `runtime_init/text_delta/done` |
 | R0.2.4 | MAP adapter 改为 CDS session transport 并补 managed-runtime smoke | done | `CdsAgentAdapter` / `InfraAgentSessionService` / scripts / tests | MAP Toolbox adapter 不注入 direct runtime adapter；session message 先走 CDS；direct runtime queue 只在显式 fallback env 下启用 |
 | R0V | managed-runtime post-check/live evidence | done_blocked | scripts / live evidence | 远程证据证明 branch isolation clean，但 CDS-managed runtime capacity 缺失；不要求 SSH/image/env 作为产品主路径 |
-| R0.5 | CDS-managed runtime capacity 收口 | 30-60 分钟 | runtime-status / audit / scripts / CDS capacity contract | 顶层 blocker 表达为 `CDS_MANAGED_RUNTIME_CAPACITY`；remote host/env/image 只作为 operator fallback |
+| R0.5 | CDS-managed runtime capacity 收口 | guarded | runtime-status / audit / scripts / CDS capacity contract | 顶层 blocker 已表达为 `CDS_MANAGED_RUNTIME_CAPACITY`；remote host/env/image 只作为 operator fallback；下一步是真实 capacity contract/实现 |
 | R0.2.6 | 页面数据源和视觉测试 | 30-45 分钟 | runtime-status / `/cds-agent` | 页面展示 R0 facts、ETA、debug fallback，截图通过 |
 
 第一开发周期已完成：
@@ -120,7 +120,8 @@ enabled remote host = 0
 
 ```text
 R0.5 CDS-managed runtime capacity 收口
-预计 30-60 分钟形成最小实现计划和 guard；R0V 远程只读证据已证明当前 capacity 缺失
+guard 已完成；下一步实现真实 CDS runtime/container/sandbox capacity contract
+证据：scripts/smoke-cds-agent-managed-runtime-capacity.sh
 ```
 
 ## 5. Smoke 设计

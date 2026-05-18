@@ -220,12 +220,28 @@ public class InfraAgentSessionsController : ControllerBase
                 5,
                 "R0.4",
                 "MAP session transport smoke",
-                r0Done ? "done" : r0Active ? "next" : "waiting",
-                r0Done ? "MAP session transport evidence is healthy." : "Prove MAP uses CDS session/discovery/cancel/log APIs and does not direct-connect runtime.",
-                r0Done ? "done" : "45-70 min",
-                "scripts/check-cds-agent-progress-consistency.sh"),
+                "done",
+                "MAP uses CDS session/discovery/cancel/log APIs; direct runtime queue is explicit fallback only.",
+                "done",
+                "scripts/smoke-cds-agent-map-session-transport.sh"),
             new SidecarExecutionTask(
                 6,
+                "R0V",
+                "Managed runtime live evidence",
+                r0Done ? "done" : r0Active ? "done_blocked" : "waiting",
+                r0Done ? "Live runtime capacity is available." : "Live evidence is complete; current blocker is CDS-managed runtime capacity, not SSH/env/image input.",
+                r0Done ? "done" : "done",
+                "scripts/collect-cds-agent-runtime-pool-evidence.sh"),
+            new SidecarExecutionTask(
+                7,
+                "R0.5",
+                "CDS-managed runtime capacity",
+                r0Done ? "done" : r0Active ? "active" : "waiting",
+                r0Done ? "CDS-managed runtime capacity is available." : "Define and verify CDS-managed runtime capacity fact source/contract; keep remote host/env/image as operator fallback only.",
+                r0Done ? "done" : "30-60 min for bounded plan/guard",
+                "scripts/smoke-cds-agent-managed-runtime-capacity.sh"),
+            new SidecarExecutionTask(
+                8,
                 "R1",
                 "Default Claude/Anthropic profile",
                 r1Done ? "done" : r1Active ? "active" : r0Done ? "next" : "blocked",
@@ -233,7 +249,7 @@ public class InfraAgentSessionsController : ControllerBase
                 r1Done ? "done" : "5-15 min",
                 "scripts/smoke-cds-agent-r1-profile-repair.sh"),
             new SidecarExecutionTask(
-                7,
+                9,
                 "S1-S3",
                 "Provider read/approval/stop cycle",
                 providerDone ? "done" : providerActive ? "active" : r0Done && r1Done ? "next" : "blocked",
@@ -241,7 +257,7 @@ public class InfraAgentSessionsController : ControllerBase
                 providerDone ? "done" : "10-25 min",
                 "scripts/smoke-cds-agent-official-sdk-run.sh + scripts/smoke-cds-agent-official-sdk-controls.sh"),
             new SidecarExecutionTask(
-                8,
+                10,
                 "V1",
                 "Real runtime visual verification",
                 providerDone ? "next" : "blocked",
@@ -255,7 +271,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "R0.4 MAP session transport smoke 45-70 min; R0V 15-30 sec.";
+            return "R0.5 CDS-managed runtime capacity 30-60 min for bounded plan/guard; do not ask for SSH/env/image as product inputs.";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -280,7 +296,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "Do not spend time on normal preview redeploys or asking for SSH/image/env; the long path is correcting the CDS-managed runtime fact source, then one targeted smoke.";
+            return "Do not spend time on normal preview redeploys or asking for SSH/image/env; the long path is defining CDS-managed runtime capacity, then one targeted smoke.";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -328,8 +344,8 @@ public class InfraAgentSessionsController : ControllerBase
             BuildRunbookStep(
                 4,
                 "R0-shared-runtime-pool",
-                "设计 CDS-managed official SDK runtime fact source",
-                "managed-runtime-fact-source",
+                "收口 CDS-managed official SDK runtime capacity",
+                "managed-runtime-capacity",
                 r0Active ? "next" : "pass",
                 r0Active ? "branch isolation clean" : null,
                 debugCommands),
@@ -490,6 +506,7 @@ public class InfraAgentSessionsController : ControllerBase
             "runtime-pool-evidence" => "read-only; no delete, deploy, restart, or provider call",
             "branch-isolation-dry-run" => "read-only dry-run; no remote deletion",
             "branch-isolation-apply-confirmed" => "destructive remote state change; deletes the confirmed BuildProfile and requires post-check",
+            "managed-runtime-capacity" => "read-only capacity/fact-source check; no SSH, image push, deploy, restart, or provider call",
             "managed-runtime-fact-source" => "read-only design/fact-source check; no SSH, image push, deploy, restart, or provider call",
             "remote-host-prepare" => "operator/debug fallback only; dry-run by default; not the product path",
             "doctor" => "read-only local/remote diagnostics",
@@ -514,7 +531,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "不要靠普通 preview redeploy 解决 R0，也不要向用户索要 SSH/image/env；先把 R0 fact source 改回 CDS-managed runtime/project/profile/container/session。";
+            return "不要靠普通 preview redeploy 解决 R0，也不要向用户索要 SSH/image/env；当前产品 blocker 是 CDS_MANAGED_RUNTIME_CAPACITY。";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase)
@@ -552,7 +569,8 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return debugCommands.FirstOrDefault(x => x.Code == "managed-runtime-fact-source")
+            return debugCommands.FirstOrDefault(x => x.Code == "managed-runtime-capacity")
+                ?? debugCommands.FirstOrDefault(x => x.Code == "managed-runtime-fact-source")
                 ?? debugCommands.FirstOrDefault(x => x.Code == "runtime-pool-evidence")
                 ?? debugCommands.FirstOrDefault(x => x.Code == "doctor");
         }
@@ -594,10 +612,17 @@ public class InfraAgentSessionsController : ControllerBase
         return new[]
         {
             new SidecarDebugCommand(
+                "managed-runtime-capacity",
+                "R0.5 CDS-managed runtime capacity",
+                "sed -n '70,130p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/smoke-cds-agent-managed-runtime-capacity.sh",
+                "只读确认顶层 blocker 是 CDS_MANAGED_RUNTIME_CAPACITY；REMOTE_HOST_AVAILABLE/SHARED_POOL_RUNNING 只能出现在 legacy fallback evidence。",
+                r0Status,
+                r0Ready ? null : "R0"),
+            new SidecarDebugCommand(
                 "managed-runtime-fact-source",
                 "R0 MAP/session transport smoke",
-                "sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh",
-                "只读确认 R0.2/R0.3 已完成，下一步聚焦 MAP_TO_CDS_ONLY、CDS_MANAGED_RUNTIME_TRANSPORT、OFFICIAL_SDK_LOOP_OWNER；SSH/image/env 仅为 operator fallback。",
+                "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh",
+                "只读确认 R0.2/R0.3/R0.4/R0V 已完成或阻塞到 capacity；SSH/image/env 仅为 operator fallback。",
                 r0Status,
                 r0Ready ? null : "R0"),
             new SidecarDebugCommand(
@@ -939,6 +964,7 @@ public class InfraAgentSessionsController : ControllerBase
         var metrics = diagnostics.DiscoveryMetrics;
         var parts = new List<string>
         {
+            "CDS_MANAGED_RUNTIME_CAPACITY=missing",
             $"instanceCount={diagnostics.InstanceCount}",
             $"healthyCount={diagnostics.HealthyCount}",
             $"officialInstances={officialInstances}"
@@ -955,7 +981,7 @@ public class InfraAgentSessionsController : ControllerBase
         {
             parts.Add($"emptyEndpoints={emptyEndpoints}");
         }
-        parts.Add("next=CDS-managed runtime fact source before any deploy");
+        parts.Add("next=R0.5 CDS-managed runtime capacity before any deploy or fallback handoff");
         return string.Join(" ", parts);
     }
 
@@ -963,8 +989,9 @@ public class InfraAgentSessionsController : ControllerBase
     {
         var actions = new List<string>
         {
-            "先查看 doc/design.cds-agent-managed-runtime-fact-source.md，把 R0 fact source 收回到 CDS-managed runtime/project/profile/container/session。",
-            "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，先得到 branch-local sidecar、shared pool running 和 legacy fallback 的同一份证据。",
+            "先查看 doc/design.cds-agent-managed-runtime-fact-source.md，把 R0 fact source 收口为 CDS_MANAGED_RUNTIME_CAPACITY。",
+            "运行 bash scripts/smoke-cds-agent-managed-runtime-capacity.sh，确认 runtime-status/progress/audit 顶层不把 remote host/env/image 当产品 gate。",
+            "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，得到 branch-local sidecar、shared pool running 和 legacy fallback 的同一份证据。",
             "如果 evidence 显示 branch-local sidecar contamination，先用 scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh dry-run 确认候选 BuildProfile，再按审批执行清理。",
             "执行 branch isolation apply 时必须设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent，避免误删其它 BuildProfile。",
             "如果 evidence 显示 remote host missing，只把它归入 operator/debug fallback；不要把 SSH/image/env 暴露成普通用户产品下一步。",

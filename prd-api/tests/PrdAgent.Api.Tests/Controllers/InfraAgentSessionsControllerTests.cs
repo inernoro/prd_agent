@@ -390,6 +390,8 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N2").BlockedBy.ShouldBe("R1");
             nextCyclePlan.StopConditions.ShouldContain(x => x.Contains("N1-N5", StringComparison.Ordinal));
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Single(x => x.Code == "managed-runtime-capacity").Status.ShouldBe("blocked");
+            debugCommands.Single(x => x.Code == "managed-runtime-capacity").Command.ShouldContain("smoke-cds-agent-managed-runtime-capacity.sh");
             debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Command.ShouldContain("doc/design.cds-agent-managed-runtime-fact-source.md");
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Status.ShouldBe("blocked");
@@ -408,10 +410,12 @@ public class InfraAgentSessionsControllerTests
             executionPanel.Status.ShouldBe("runtime-pool-blocked");
             executionPanel.CommercialComplete.ShouldBeFalse();
             executionPanel.CurrentBlockingGate.ShouldBe("R0");
+            executionPanel.BlockingReason.ShouldContain("CDS_MANAGED_RUNTIME_CAPACITY=missing");
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
-            executionPanel.DeploymentAdvice.ShouldContain("R0 fact source");
+            executionPanel.DeploymentAdvice.ShouldContain("CDS_MANAGED_RUNTIME_CAPACITY");
             executionPanel.NextCommand.ShouldContain("doc/design.cds-agent-managed-runtime-fact-source.md");
-            executionPanel.NextCommandCode.ShouldBe("managed-runtime-fact-source");
+            executionPanel.NextCommand.ShouldContain("smoke-cds-agent-managed-runtime-capacity.sh");
+            executionPanel.NextCommandCode.ShouldBe("managed-runtime-capacity");
             executionPanel.NextCommandSafety.ShouldContain("read-only");
             executionPanel.Runbook.Select(x => x.Code).ShouldBe(new[]
             {
@@ -429,7 +433,7 @@ public class InfraAgentSessionsControllerTests
             applyRunbook.ApplyManifest.Endpoint.ShouldBe("https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
             applyRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "unique_candidate_profile").Passed.ShouldBeFalse();
             applyRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-branch-isolation.sh");
-            var managedRuntimeRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "managed-runtime-fact-source");
+            var managedRuntimeRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "managed-runtime-capacity");
             managedRuntimeRunbook.ApplyManifest.ShouldBeNull();
             managedRuntimeRunbook.Safety.ShouldContain("no SSH");
             executionPanel.Runbook.Single(x => x.Code == "R0-branch-clean-apply").BlockedBy.ShouldBe("explicit profile deletion approval");
@@ -441,12 +445,15 @@ public class InfraAgentSessionsControllerTests
             executionPanel.PendingSteps.ShouldBe(6);
             executionPanel.CurrentStep.ShouldNotBeNull().Code.ShouldBe("N1");
             executionPanel.Timeline.Count.ShouldBe(6);
-            executionPanel.TaskBoard.Count.ShouldBe(8);
+            executionPanel.TaskBoard.Count.ShouldBe(10);
             executionPanel.TaskBoard.Single(x => x.Code == "A0").Status.ShouldBe("done");
             executionPanel.TaskBoard.Single(x => x.Code == "R0.2").Status.ShouldBe("done");
             executionPanel.TaskBoard.Single(x => x.Code == "R0.3").Status.ShouldBe("done_minimal");
-            executionPanel.TaskBoard.Single(x => x.Code == "R0.4").NextAction.ShouldContain("MAP uses CDS session");
-            executionPanel.NextStepEta.ShouldContain("R0.4");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.4").Status.ShouldBe("done");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0V").Status.ShouldBe("done_blocked");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.5").Status.ShouldBe("active");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.5").NextAction.ShouldContain("CDS-managed runtime capacity");
+            executionPanel.NextStepEta.ShouldContain("R0.5");
             executionPanel.TimeSinkAdvice.ShouldContain("SSH/image/env");
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
@@ -612,7 +619,7 @@ public class InfraAgentSessionsControllerTests
         debugCommands.Single(x => x.Code == "r1-apply").Command
             .ShouldStartWith("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=");
         diagnostics.ExecutionPanel.ShouldNotBeNull().NextCommand
-            .ShouldBe("sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh");
+            .ShouldBe("sed -n '70,130p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/smoke-cds-agent-managed-runtime-capacity.sh");
     }
 
     private static InfraAgentSessionsController BuildController(

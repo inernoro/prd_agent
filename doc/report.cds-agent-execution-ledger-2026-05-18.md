@@ -796,6 +796,25 @@
 
 优化：后续所有进度展示先说 `CDS_MANAGED_RUNTIME_CAPACITY`，再把 `REMOTE_HOST_AVAILABLE` / `SHARED_POOL_RUNNING` 放进 legacy fallback evidence，避免再次绕回 external host/env-driven recovery。
 
+### 43. runtime-status 页面事实源也必须进入 R0.5，而不是停在 R0.4/R0V
+
+问题：脚本和文档已经进入 R0.5，但后端 `/api/infra-agent-sessions/runtime-status` 的 execution panel 仍把 R0 下一步估算成 R0.4/R0V。页面会消费这个后端事实源，因此只改文档会继续让用户看不懂进度。
+
+处理：
+
+- `InfraAgentSessionsController` 的 R0 blocking message 加入 `CDS_MANAGED_RUNTIME_CAPACITY=missing`。
+- execution task board 增加 `R0V done_blocked` 和 `R0.5 CDS-managed runtime capacity active`。
+- R0 next command 改为 `scripts/smoke-cds-agent-managed-runtime-capacity.sh`。
+- 新增 `scripts/smoke-cds-agent-managed-runtime-capacity.sh`，同时检查 progress、goal audit、runtime-status controller 源码和 fallback wrapper。
+- `InfraAgentSessionsControllerTests` 更新为检查 R0.5、capacity smoke 和 task board 新状态。
+
+证据：
+
+- `scripts/smoke-cds-agent-managed-runtime-capacity.sh`：pass。
+- `dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore`：覆盖 runtime-status execution panel 的 R0.5 状态。
+
+耗时：实现和测试约 20 分钟；主要耗时在把页面事实源、脚本事实源、文档事实源对齐，避免再发生“文档说 R0V、页面说 R0.4”的偏差。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
