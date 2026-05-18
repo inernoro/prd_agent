@@ -302,6 +302,19 @@ export interface InfraAgentRuntimeDiagnostics {
       safety: string;
       status: string;
       blockedBy?: string | null;
+      applyManifest?: {
+        safety: string;
+        method: string;
+        endpoint: string;
+        requiredEnv?: string[] | null;
+        preconditions?: Array<{
+          code: string;
+          expected?: string | null;
+          actual?: string | null;
+          passed: boolean;
+        }> | null;
+        expectedPostCheck?: string | null;
+      } | null;
     }> | null;
     gateCounts: Record<string, number>;
     stepIndex?: number | null;

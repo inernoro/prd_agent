@@ -236,7 +236,48 @@ public class InfraAgentSessionsController : ControllerBase
             commandCode,
             BuildCommandSafety(commandCode),
             status,
-            blockedBy ?? command?.BlockedBy);
+            blockedBy ?? command?.BlockedBy,
+            BuildCommandApplyManifest(commandCode));
+    }
+
+    private static SidecarCommandApplyManifest? BuildCommandApplyManifest(string? commandCode)
+    {
+        if (!string.Equals(commandCode, "branch-isolation-apply-confirmed", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        const string candidateProfileId = "claude-agent-sdk-runtime-v2-prd-agent";
+        return new SidecarCommandApplyManifest(
+            "destructive_remote_delete_build_profile",
+            "DELETE",
+            $"{DefaultRemoteSmokeHost}/api/build-profiles/{candidateProfileId}",
+            new[]
+            {
+                "CDS_HOST",
+                "AI_ACCESS_KEY or CDS_PROJECT_KEY",
+                "SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1",
+                "SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=<unique candidateProfileIds[0]>"
+            },
+            new[]
+            {
+                new SidecarCommandApplyPrecondition(
+                    "unique_candidate_profile",
+                    "1",
+                    null,
+                    false),
+                new SidecarCommandApplyPrecondition(
+                    "confirmation_matches_candidate",
+                    candidateProfileId,
+                    null,
+                    false),
+                new SidecarCommandApplyPrecondition(
+                    "apply_flag_enabled",
+                    "1",
+                    "0",
+                    false)
+            },
+            "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh");
     }
 
     private static string BuildCommandSafety(string? commandCode)

@@ -1,41 +1,42 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 17:12 Asia/Shanghai
+> 更新时间：2026-05-18 17:24 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
-> 状态：R0 runtime pool blocked，目标未完成。
+> 状态：branch-local sidecar 污染已清理；R0 runtime pool 仍 blocked，目标未完成。
 
 ## 当前结论
 
-现在不要做普通 preview redeploy。远程 R0 runtime pool 的结构性阻塞仍存在：
+现在不要做普通 preview redeploy。远程 `prd-agent` branch-local sidecar 污染已清理，R0 runtime pool 的剩余结构性阻塞是 remote host 与 shared runtime pool：
 
-- `BRANCH_LOCAL_SIDECAR_CLEAN = contaminated:4`
+- `BRANCH_LOCAL_SIDECAR_CLEAN = clean`
 - `REMOTE_HOST_AVAILABLE = missing`
 - `SHARED_POOL_RUNNING = missing`
 
 最新只读证据目录：
 
-- `/tmp/cds-agent-runtime-pool-evidence-manifest-current`
-- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-manifest-current/summary.json`
-- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-manifest-current/evidence-index.md`
+- `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean`
+- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean/summary.json`
+- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean/evidence-index.md`
 
-本次证据采集总耗时 `14s`：
+本次证据采集总耗时 `11s`：
 
 | 步骤 | 状态 | 耗时 |
 | --- | --- | --- |
-| runtime pool recovery plan | pass | 5s |
+| runtime pool recovery plan | pass | 4s |
 | branch isolation repair dry-run | pass | 2s |
-| remote host pool preparation | pass | 2s |
-| shared-service pool audit | blocked | 5s |
+| remote host pool preparation | pass | 1s |
+| shared-service pool audit | blocked | 4s |
 
 ## 为什么不是部署问题
 
 当前阻塞不在 `prd-api` 或 `prd-admin` 普通应用代码是否能构建，而在 CDS 远程控制面 state：
 
-- `prd-agent` 业务项目仍有 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留。
+- `prd-agent` 业务项目的 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留已清理，远程 branch list 污染数为 `0`。
+- `prd-agent` 当前 appServices 只剩 `api-prd-agent` 与 `admin-prd-agent`，`runningServiceCount=2`。
 - `shared-sidecar-pool-mp4anabh` 是 `shared-service`，但没有 running service。
 - CDS 系统 remote host 列表为空，没有可承载 official SDK runtime 的主机。
 
-普通 preview redeploy 不能创建 shared runtime pool，也不能清理历史 branch-local sidecar residual。继续 redeploy 反而可能让用户以为构建能解决 R0。
+普通 preview redeploy 不能创建 shared runtime pool，也不能登记 remote host。继续 redeploy 反而可能让用户以为构建能解决 R0。
 
 ## 已完成
 
@@ -51,6 +52,7 @@
 - `scripts/smoke-cds-agent-sidecar-alias-stability.sh` 与 `scripts/doctor-cds-agent-runtime.sh` 已默认阻止探测 branch-local `claude-agent-sdk-runtime*` alias；只有显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` 才能用于历史污染诊断。
 - branch-local sidecar 清理 dry-run 现在会输出 `applyManifest`，明确标记 `destructive_remote_delete_build_profile`、DELETE endpoint、必需环境变量、唯一候选和确认变量等前置条件。
 - 目标审计已新增 `P0 branch isolation apply manifest` gate；有 `CDS_HOST` 时会只读生成清理 dry-run manifest 并运行 `smoke-cds-agent-branch-isolation-manifest.sh` 验证 fail-closed。
+- 2026-05-18 17:22 经用户精确批准，已执行远程 branch-local sidecar 清理；复查显示 `beforeContaminatedBranchCount=4`、`afterContaminatedBranchCount=0`，`prd-agent` appServices 已不再包含 `claude-agent-sdk-runtime-v2-prd-agent`。
 
 ## 最新远程页面验证
 
@@ -81,58 +83,47 @@
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR=/tmp/cds-agent-runtime-pool-evidence-manifest-current CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh`：通过，总证据 `branchIsolation.applyManifest` 已包含同一 DELETE manifest
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-with-manifest.json bash scripts/audit-cds-agent-goal.sh`：按预期返回 `goalStatus=not_complete`；新增 manifest gate 通过，整体耗时 `39s`
 
-## 最新 Branch Isolation Dry Run
+## 最新 Branch Isolation Apply
 
-2026-05-18 17:05 Asia/Shanghai：
+2026-05-18 17:22 Asia/Shanghai：
 
-- 目录：`/tmp/cds-agent-branch-isolation-repair-manifest-current`
-- 报告：`/tmp/cds-agent-branch-isolation-repair-manifest-current/summary.json`
-- verdict：`dry-run-contaminated`
+- 目录：`/tmp/cds-agent-branch-isolation-repair-apply-current`
+- 报告：`/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json`
+- verdict：`applied-clean`
 - beforeContaminatedBranchCount：`4`
-- candidateProfileIds：`claude-agent-sdk-runtime-v2-prd-agent`
-- safety：`destructive_remote_delete_build_profile`
-- endpoint：`https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent`
-- 前置条件：`unique_candidate_profile=true`，`confirmation_matches_candidate=false`，`apply_flag_enabled=false`
-- 说明：这是只读 dry-run，没有执行 DELETE。
+- afterContaminatedBranchCount：`0`
+- readyForRemoteHostStep：`true`
+- nextAction：`branch isolation clean; register an enabled remote host and deploy the shared official SDK runtime sidecar`
+- post-check：`SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh` 已通过
+- 直接复查：`/tmp/cds-agent-branch-list-after-delete.json` 中 runtime sidecar service 污染列表为 `[]`
+- 项目复查：`/tmp/cds-agent-project-list-after-delete.json` 中 `prd-agent.appServices` 只剩 `api-prd-agent` 与 `admin-prd-agent`
 
 ## 最新目标审计
 
-2026-05-18 17:12 Asia/Shanghai：
+2026-05-18 17:24 Asia/Shanghai：
 
-- 报告：`/tmp/cds-agent-goal-audit-with-manifest.json`
-- 结果：`goalStatus=not_complete`
-- 远程 runtime：当前 preview runtime commit 已匹配 `51dbec7e`
-- 部署建议：`Remote runtime commit matches current HEAD; do not redeploy unless provider/profile or visual evidence requires it.`
-- CDS control plane：`control_plane_behind_non_cds_drift`，当前差异不要求 self update
-- Branch isolation apply manifest：`pass`
-- Manifest endpoint：`https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent`
+- 当前没有重跑完整 goal audit；最新运行的是 runtime pool evidence。
+- 结果：目标仍未完成。
 - 当前阻塞门：`R0`
-- 阻塞原因：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4, REMOTE_HOST_AVAILABLE=missing, SHARED_POOL_RUNNING=missing`
-- 最耗时步骤：N6 非代码兼容 `16s`，branch isolation apply manifest `15s`，runtime pool recovery plan `6s`
+- 阻塞原因：`REMOTE_HOST_AVAILABLE=missing, SHARED_POOL_RUNNING=missing`
+- 已解除阻塞：`BRANCH_LOCAL_SIDECAR_CLEAN=clean`
 
 ## 下一步
 
 必须按这个顺序处理：
 
-1. 清理 `prd-agent` 的 branch-local sidecar BuildProfile/service residual。
-   - dry-run 证据已确认候选 profile：`claude-agent-sdk-runtime-v2-prd-agent`
-   - verdict：`dry-run-contaminated`
-   - readyForRemoteHostStep：`false`
-   - nextAction：review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate
-   - apply 确认变量：`SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent`
-   - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。
-2. 登记至少一个 enabled CDS remote host。
-   - verdict：`blocked-branch-isolation`
+1. 登记至少一个 enabled CDS remote host。
+   - verdict：`dry-run-missing-config`
    - readyForSharedRuntimeDeploy：`false`
-   - nextAction：clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet
+   - nextAction：provide missing remote host variables, then rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh
    - 当前缺失：`CDS_REMOTE_HOST_NAME`
    - 当前缺失：`CDS_REMOTE_HOST_HOST`
    - 当前缺失：`CDS_REMOTE_HOST_SSH_USER`
    - 当前缺失：`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`
-3. 部署 shared official SDK runtime sidecar。
+2. 部署 shared official SDK runtime sidecar。
    - 需要 sidecar image，例如通过 `CDS_AGENT_SIDECAR_IMAGE` 提供。
-4. 重跑 shared-service pool audit。
-5. R0 通过后，再进入 R1 Anthropic/Claude-compatible profile 和 S1/S2/S3 provider smokes。
+3. 重跑 shared-service pool audit。
+4. R0 通过后，再进入 R1 Anthropic/Claude-compatible profile 和 S1/S2/S3 provider smokes。
 
 ## 当前有效命令
 

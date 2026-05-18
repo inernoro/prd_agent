@@ -283,7 +283,24 @@ public sealed record SidecarExecutionRunbookStep(
     string CommandCode,
     string Safety,
     string Status,
-    string? BlockedBy = null
+    string? BlockedBy = null,
+    SidecarCommandApplyManifest? ApplyManifest = null
+);
+
+public sealed record SidecarCommandApplyManifest(
+    string Safety,
+    string Method,
+    string Endpoint,
+    IReadOnlyList<string> RequiredEnv,
+    IReadOnlyList<SidecarCommandApplyPrecondition> Preconditions,
+    string ExpectedPostCheck
+);
+
+public sealed record SidecarCommandApplyPrecondition(
+    string Code,
+    string? Expected,
+    string? Actual,
+    bool Passed
 );
 
 public sealed record SidecarWorkspacePreparationDiagnostics(

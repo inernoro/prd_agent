@@ -1,132 +1,170 @@
 # CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
 
 > 日期：2026-05-18
+> 最新复核：2026-05-18 17:24 Asia/Shanghai，远程清理后复查
 > 范围：`prd-agent` 业务项目、`shared-sidecar-pool-mp4anabh` 共享运行池、MAP runtime discovery
-> 结论：这是结构性隔离失败，不是单次页面显示错误。
+> 结论：结构性隔离失败，不是页面误报，也不是 Claude Agent SDK 官方包本身的问题。
 
 ## 结论
 
-Claude Agent SDK runtime 之所以再次出现在 `main` 和多个业务分支里，是因为历史部署把 `claude-agent-sdk-runtime-v2-prd-agent` 当成了 `prd-agent` 业务项目的 branch-local service。MAP 需要的是系统级 shared-service runtime pool，但远程 CDS state 里同时存在两件相互冲突的事实：
+`claude-agent-sdk-runtime-v2-prd-agent` 又出现在 `main`/业务分支视图里，是因为历史部署曾把 Claude Agent SDK runtime 当成 `prd-agent` 业务项目的普通 branch service。CDS 的业务分支模型会把项目 BuildProfile 跟随每个 branch preview 展示、部署、探活和计入 appServices；因此一旦 runtime sidecar 进入 `prd-agent` BuildProfile，它就天然会“侵入” MAP 主系统。
 
-- `prd-agent` 仍残留 branch-local `claude-agent-sdk-runtime-v2-prd-agent` service。
-- `shared-sidecar-pool-mp4anabh` 是 `kind=shared-service`，但没有 running branch/service，也没有可用 remote host。
+当前代码侧已经补了多道禁止新增污染的 guard；2026-05-18 17:22 经用户精确批准后，远程 `prd-agent` 存量 branch-local sidecar residual 已清理。正确的 `shared-service` runtime pool 仍没有 running 实例。也就是说：
 
-因此 MAP 在控制面上没有稳定的官方 SDK runtime pool 可发现，只能持续看到业务分支上的 sidecar 残留。这就是“侵犯主系统 MAP”的实际来源。
+- 错误结构已经从当前业务分支清理：`prd-agent` branch services 中不再包含 `claude-agent-sdk-runtime-v2-prd-agent`。
+- 正确结构还没恢复：`shared-sidecar-pool-mp4anabh` 是 `kind=shared-service`，但没有 running service，也没有 remote host 承载 runtime。
 
-## 当前证据
+所以这次不是“又有人把代码写回去了”，而是此前代码防线、远程存量清理、共享运行池恢复没有形成闭环。现在 branch-local 污染已解除，闭环还差 remote host 与 shared runtime pool。
 
-只读远程审计显示，以下 `prd-agent` 分支仍存在 branch-local sidecar contamination：
+## 最新现场证据
 
-- `prd-agent-codex-cds-agent-workbench-ui`
-- `prd-agent-claude-redesign-ui-layout-awndl`
-- `prd-agent-claude-fix-gallery-stats-csu9h`
-- `prd-agent-cursor-marking-line-agent-e307`
+清理前只读查询命令：
 
-共享池状态：
-
-- `shared-sidecar-pool-mp4anabh.kind = shared-service`
-- `branchCount = 0`
-- `runningBranchCount = 0`
-- `runningServiceCount = 0`
-- `runningInfraServiceCount = 0`
-- `/api/cds-system/remote-hosts` 返回 `hosts=[]`
-
-最新证据目录示例：
-
-- `/tmp/cds-agent-runtime-pool-evidence-current`
-
-其中 `summary.json` 明确显示：
-
-- `BRANCH_LOCAL_SIDECAR_CLEAN = contaminated:4`
-- `REMOTE_HOST_AVAILABLE = missing`
-- `SHARED_POOL_RUNNING = missing`
-- `remoteHostPoolPreparation.status = missing_config`
-
-## 为什么前面修复后还会复发
-
-前面的修复主要解决了代码路径，但没有把远程存量 state 清掉，也没有把 shared-service runtime pool 真正恢复起来。
-
-已经修掉的代码面包括：
-
-- 本地 compose 不再声明 branch-local agent runtime sidecar。
-- MAP API env 不再指向 branch-local `CLAUDE_SIDECAR_BASE_URL`。
-- CDS compose parser 会跳过 agent runtime sidecar import，避免再次把 sidecar 写进业务项目服务。
-- CDS compose parser 已覆盖历史 `claude-sidecar` 命名，避免旧 runtime sidecar 名称绕过 `claude-agent-sdk-runtime` 规则后进入 BuildProfile。
-- CDS StateService 已增加中心写入护栏：非 `shared-service` 项目的 BuildProfile 只要匹配 Claude Agent SDK runtime sidecar 特征，就拒绝落库。
-- runtime-status、goal audit、shared-service pool smoke 已能暴露当前 blocker。
-
-仍未完成的远程状态面包括：
-
-- `prd-agent` 远程 BuildProfile/service residual 仍保存了历史 branch-local sidecar。
-- shared-service pool 没有 remote host，因此没有地方部署官方 SDK runtime。
-- 没有 running shared sidecar instance，MAP discovery 仍然找不到系统级 runtime。
-
-所以复发不是因为某个页面又写错了，而是“代码防线”和“远程控制面状态”之间没有闭环：代码已经开始禁止新增污染，但旧污染仍在；共享池设计已经存在，但运行承载层为空。
-
-## 哪个结构出问题
-
-出问题的是 runtime ownership 边界。
-
-正确结构：
-
-```text
-MAP / prd-agent
-  只负责控制面：session、profile、审批、事件、日志、取消、workspace 上下文
-
-shared-sidecar-pool
-  负责系统级 official SDK runtime instance
-
-Claude Agent SDK
-  负责真正 agent loop、tool loop、模型交互
+```bash
+CDS_HOST=https://cds.miduo.org \
+  python3 .claude/skills/cds/cli/cdscli.py branch list --project prd-agent
 ```
 
-错误结构：
+2026-05-18 17:19 结果显示，仍有 4 个 `prd-agent` 分支包含 branch-local sidecar service：
+
+| 分支 ID | Git 分支 | 状态 | 污染服务 |
+| --- | --- | --- | --- |
+| `prd-agent-codex-cds-agent-workbench-ui` | `codex/cds-agent-workbench-ui` | `running` | `claude-agent-sdk-runtime-v2-prd-agent` |
+| `prd-agent-claude-redesign-ui-layout-awndl` | `claude/redesign-ui-layout-awNDL` | `idle` | `claude-agent-sdk-runtime-v2-prd-agent` |
+| `prd-agent-claude-fix-gallery-stats-csu9h` | `claude/fix-gallery-stats-csu9H` | `idle` | `claude-agent-sdk-runtime-v2-prd-agent` |
+| `prd-agent-cursor-marking-line-agent-e307` | `cursor/marking-line-agent-e307` | `idle` | `claude-agent-sdk-runtime-v2-prd-agent` |
+
+清理前项目列表只读查询同时显示：
+
+| Project | kind | running services | 说明 |
+| --- | --- | --- | --- |
+| `prd-agent` | `git` | `api-prd-agent`、`admin-prd-agent`、`claude-agent-sdk-runtime-v2-prd-agent` | 错误：runtime 被算作业务项目 app service |
+| `shared-sidecar-pool-mp4anabh` | `shared-service` | 无 | 正确承载层存在，但没有 running runtime |
+
+清理执行与复查证据：
+
+- `/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json`
+- `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean/summary.json`
+- `/tmp/cds-agent-branch-list-after-delete.json`
+- `/tmp/cds-agent-project-list-after-delete.json`
+
+其中关键结论为：
+
+- `BRANCH_LOCAL_SIDECAR_CLEAN = clean`
+- `REMOTE_HOST_AVAILABLE = missing`
+- `SHARED_POOL_RUNNING = missing`
+- `beforeContaminatedBranchCount = 4`
+- `afterContaminatedBranchCount = 0`
+- `prd-agent.appServices = api-prd-agent, admin-prd-agent`
+- `shared-sidecar-pool-mp4anabh` 仍无 running runtime
+
+## 为什么屡次复发
+
+### 1. 资源所有权边界曾经放错
+
+正确边界应该是：
+
+```text
+prd-agent / MAP
+  api、admin、session、profile、审批、事件、日志、取消、workspace 上下文
+
+shared-sidecar-pool
+  系统级 official SDK runtime instance
+
+Claude Agent SDK
+  官方 agent loop、tool loop、模型交互
+```
+
+错误边界是：
 
 ```text
 prd-agent branch service
-  同时跑业务 api/admin
-  又挂 claude-agent-sdk-runtime-v2-prd-agent
+  api/admin
+  claude-agent-sdk-runtime-v2-prd-agent
 ```
 
-一旦 sidecar 被建成业务项目的 branch service，它就会跟随 `main`、feature branch、preview deploy 一起复制、显示、失败和重启。它自然会污染 MAP 主系统，因为 CDS 认为它是业务项目的一部分，而不是共享基础设施。
+这个错误边界一旦进入 CDS state，runtime 就会和业务分支共生命周期：一起部署、一起展示、一起探活、一起失败。
 
-## 为什么屡被侵犯
+### 2. 之前的修复偏向“让 R0 能跑”，没有先把负向约束做硬
 
-根因有四个：
+为了让 MAP 能发现 Claude SDK runtime，历史上走过 branch-local fallback：让 `api` 通过 `CLAUDE_SIDECAR_BASE_URL` 指向分支内 sidecar。这个局部方案可以短期让 R0 发现 runtime，但代价是把 runtime 重新纳入业务项目服务列表。
 
-1. **资源模型混淆**：shared-service runtime 和普通 branch preview service 使用了相近的 deploy/profile/display 通路，历史上允许 sidecar 进入 `prd-agent` BuildProfile。
-2. **缺少负向门禁**：过去只验证“runtime 能不能跑”，没有把“不允许 branch-local sidecar 出现在业务项目”做成发布阻断。
-3. **远程状态不可见**：页面能显示端口和服务，但没有把 `branch-local contamination`、`remote host missing`、`shared pool not running` 合并成一个执行面板。
-4. **恢复顺序错误风险**：如果先反复 redeploy preview，而不是先清理业务项目 residual、再恢复 shared pool，就会继续把注意力花在短周期构建上，污染本身不会消失。
+现在已经修正为：R0 找不到 shared-service runtime pool 时应该明确 pending，并输出恢复步骤；不能再把 sidecar 塞回 `prd-agent` 分支服务。
 
-## 当前阻断点
+### 3. 代码防线和远程状态没有同步闭环
 
-下一步不能靠继续部署 `prd-agent` preview 解决。正确顺序是：
+已经补上的代码防线包括：
 
-1. 清理 `prd-agent` 业务项目里历史残留的 `claude-agent-sdk-runtime-v2-prd-agent` BuildProfile/service。
-2. 登记至少一个 enabled remote host。
-3. 在 remote host 上部署 official SDK runtime sidecar，恢复 `shared-sidecar-pool-mp4anabh` 的 running instance。
-4. 重新跑 MAP runtime-status、R0/S1/S2/S3 和 one-cycle。
+- `cds-compose.yml` 当前不再声明 branch-local `claude-agent-sdk-runtime*` service。
+- `api.environment` 当前不再配置 branch-local `CLAUDE_SIDECAR_BASE_URL` 或 `CLAUDE_SIDECAR_TOKEN`。
+- `scripts/smoke-cds-agent-branch-isolation.sh` 能检查本地 compose 和可选远程 branch contamination。
+- `scripts/repair-cds-agent-branch-isolation.sh` 能 dry-run 并输出清理 manifest。
+- CDS `StateService` 对非 `shared-service` 项目的 runtime-looking BuildProfile 做中心写入护栏。
+- MAP runtime-status execution panel 已能显示 R0 blocker 和清理 runbook。
 
-## 新增防复发验证
+但这些只能防止新增污染，不能自动删除已经保存在远程 CDS state 里的 BuildProfile、branch.services 和容器记录。该远程存量清理已在 2026-05-18 17:22 通过 evidence wrapper 执行，复查为 clean。
 
-2026-05-18 15:44 本地补充验证：
+### 4. 正确的 shared-service pool 还没接管
 
-- `bash scripts/smoke-cds-agent-branch-isolation.sh`：通过，确认 `cds-compose.yml` 不再声明 branch-local sidecar，也没有 API 直连 sidecar alias/token。
-- `bash scripts/smoke-cds-agent-shared-service-pool.sh`：通过，确认本地 shared-service pool guard 和报告入口有效。
-- `npm --prefix cds test -- tests/services/compose-parser.test.ts`：`36 passed`，覆盖 `claude-agent-sdk-runtime-v2` 与历史 `claude-sidecar` 均不会导入为 branch BuildProfile。
-- `npm --prefix cds test -- tests/services/state.test.ts`：`39 passed`，覆盖非 `shared-service` 项目拒绝 runtime sidecar BuildProfile、更新绕行被拒绝、`shared-service` 项目仍允许 runtime-looking profile。
-- `npm --prefix cds run build`：通过，确认中心护栏类型检查通过。
-- `CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`：只读 dry-run 通过，`verdict=dry-run-contaminated`、`beforeContaminatedBranchCount=4`、候选 profile 为 `claude-agent-sdk-runtime-v2-prd-agent`，证据目录 `/tmp/cds-agent-branch-isolation-repair-current`。
-- `CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh`：只读 dry-run 通过，`verdict=blocked-branch-isolation`、`beforeEnabledRemoteHostCount=0`、`beforeSharedRunning=0`，证据目录 `/tmp/cds-agent-remote-host-pool-current`。
+`shared-sidecar-pool-mp4anabh` 已经是 `kind=shared-service`，这说明结构方向是对的；但它现在没有 remote host、没有 running runtime instance。只清理污染而不恢复 shared pool，MAP 仍然没有可用 official SDK runtime。
 
-当前 sandbox 下不把路由大套件作为最小验证：`tests/routes/cross-project-isolation.test.ts` 因 `listen EPERM: operation not permitted 127.0.0.1` 失败，耗时约 `191s`；`tests/routes/branches.test.ts` 同类端口监听长跑已中止。后续如需跑这些套件，应在允许本地监听的环境执行。
+## 哪个结构出了问题
 
-禁止路径：
+核心问题是 CDS 里有两套概念共用了相近路径：
 
-- 不要把 `claude-agent-sdk-runtime` 写回 `prd-agent` compose services。
-- 不要让 MAP 默认指向 branch-local `CLAUDE_SIDECAR_BASE_URL`。
-- 不要用普通 `branch deploy` 把 `shared-sidecar-pool-mp4anabh` 当作业务 preview 恢复。
+| 层 | 错误状态 | 正确状态 |
+| --- | --- | --- |
+| Compose / BuildProfile | runtime sidecar 被当成 `prd-agent` app profile | `prd-agent` 只保留 `api/admin` |
+| Branch lifecycle | 每个业务分支继承 runtime service | runtime 不跟随业务分支复制 |
+| Runtime discovery | MAP 可能看到 branch-local sidecar | MAP 只发现 shared-service 或显式外部 runtime |
+| UI / 可观察性 | sidecar 和业务服务一起显示、一起报错 | runtime pool 独立显示健康度、host、adapter、profile |
+| 验收 | 只看“能不能跑” | 同时验证“业务分支不含 runtime sidecar” |
+
+所以问题结构不是 Claude SDK，也不是某一个 UI 卡片，而是 runtime ownership 没有被强制成系统级共享池。
+
+## 为什么用户看到的是“侵犯 MAP”
+
+因为清理前 `prd-agent` 项目列表仍把 `claude-agent-sdk-runtime-v2-prd-agent` 计为 `appServices`，和 `api-prd-agent`、`admin-prd-agent` 并列。截图中红框显示的正是这个 branch service，而不是独立的 shared-service runtime pool。
+
+这会带来实际影响：
+
+- `main` 或业务分支会被无关 runtime 探活失败拖红。
+- 每个分支多一个 Python runtime 服务，增加端口、内存、构建、探活失败面。
+- 用户无法判断失败来自 MAP 业务服务还是代码审查 runtime。
+- 普通 preview redeploy 不能解决根因，反而容易制造“又部署了一次但还是污染”的错觉。
+
+## 当前不能做什么
+
+- 不能继续通过普通 `prd-agent` preview redeploy 解决 R0。
+- 不能把 `claude-agent-sdk-runtime*` 写回 `cds-compose.yml services`。
+- 不能让 MAP 默认指向 branch-local `CLAUDE_SIDECAR_BASE_URL`。
+- 不能把历史 alias smoke 的稳定结果当作 shared-service runtime pool 已恢复。
+
+## 必须按这个顺序闭环
+
+1. 已完成：清理 `prd-agent` 业务项目里的 `claude-agent-sdk-runtime-v2-prd-agent` BuildProfile/service residual。
+2. 已完成：清理后立即跑远程 branch isolation post-check，确认污染数变成 0。
+3. 待完成：登记至少一个 enabled CDS remote host。
+4. 待完成：在 remote host 上部署 official SDK runtime sidecar，让 `shared-sidecar-pool-mp4anabh` 出现 running instance。
+5. 待完成：重跑 runtime-status、R0/S1/S2/S3 和 one-cycle。
+
+已执行的清理命令：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent \
+CDS_AGENT_BRANCH_ISOLATION_REPAIR_DIR=/tmp/cds-agent-branch-isolation-repair-apply-current \
+  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
+```
+
+清理后复查：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
+  bash scripts/smoke-cds-agent-branch-isolation.sh
+```
 
 ## 已沉淀的检查入口
 
@@ -151,11 +189,12 @@ CDS_HOST=https://cds.miduo.org \
   bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
 ```
 
-remote host 准备 dry-run：
+shared-service pool 审计：
 
 ```bash
 CDS_HOST=https://cds.miduo.org \
-  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
+SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
+  bash scripts/smoke-cds-agent-shared-service-pool.sh
 ```
 
-执行清理或创建 remote host 都是写远程状态的动作，必须带 evidence wrapper，并在完成后立即跑 post-check。没有 post-check 的“修复”不能算完成。
+没有 post-check 的清理不能算完成；没有 running shared-service runtime instance 的 R0 也不能算恢复。

@@ -420,7 +420,13 @@ public class InfraAgentSessionsControllerTests
                 "R1-profile",
                 "S1-S3-provider-cycle"
             });
-            executionPanel.Runbook.Single(x => x.CommandCode == "branch-isolation-apply-confirmed").Safety.ShouldContain("destructive");
+            var applyRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "branch-isolation-apply-confirmed");
+            applyRunbook.Safety.ShouldContain("destructive");
+            applyRunbook.ApplyManifest.ShouldNotBeNull().Safety.ShouldBe("destructive_remote_delete_build_profile");
+            applyRunbook.ApplyManifest.Method.ShouldBe("DELETE");
+            applyRunbook.ApplyManifest.Endpoint.ShouldBe("https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
+            applyRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "unique_candidate_profile").Passed.ShouldBeFalse();
+            applyRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-branch-isolation.sh");
             executionPanel.Runbook.Single(x => x.Code == "R0-branch-clean-apply").BlockedBy.ShouldBe("explicit profile deletion approval");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);

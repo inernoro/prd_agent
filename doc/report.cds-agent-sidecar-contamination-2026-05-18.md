@@ -2,7 +2,7 @@
 
 > 日期：2026-05-18  
 > 结论级别：结构性问题，不是单次部署失误  
-> 当前状态：仓库侧已移除 branch-local sidecar 并加防复发 guard；2026-05-18 最新只读复核确认远程 CDS state 仍有 7 个 `prd-agent` branch 保留 `claude-agent-sdk-runtime-v2-prd-agent`，需要单独清理旧 BuildProfile/branch services
+> 当前状态：仓库侧已移除 branch-local sidecar 并加防复发 guard；2026-05-18 17:22 已执行远程清理，复查确认 `prd-agent` branch-local sidecar 污染数为 0；剩余阻塞是 remote host 与 shared-service runtime pool 未恢复
 
 ## 一句话结论
 
@@ -48,9 +48,17 @@ SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
 
 - 本地 `cds-compose.yml` 已通过：未声明 branch-local sidecar service。
 - 本地 `api.environment` 已通过：未配置 `CLAUDE_SIDECAR_BASE_URL=http://claude-agent-sdk-runtime...` 或 `CLAUDE_SIDECAR_TOKEN=dev-skip`。
-- 远程 CDS state 未通过：`prd-agent-main`、`prd-agent-codex-cds-agent-workbench-ui`、`prd-agent-claude-redesign-ui-layout-awndl`、`prd-agent-claude-fix-gallery-stats-csu9h`、`prd-agent-claude-great-keller-htqwh`、`prd-agent-cursor-marking-line-agent-e307`、`prd-agent-claude-sync-sidebar-user-names-fslel` 仍包含 `claude-agent-sdk-runtime-v2-prd-agent`。
+- 远程 CDS state 未通过：`prd-agent-codex-cds-agent-workbench-ui`、`prd-agent-claude-redesign-ui-layout-awndl`、`prd-agent-claude-fix-gallery-stats-csu9h`、`prd-agent-cursor-marking-line-agent-e307` 仍包含 `claude-agent-sdk-runtime-v2-prd-agent`。
 
 因此截图中的红框不是本地 compose 再次回退，而是远程 CDS state 中的历史 BuildProfile/branch service 残留仍在被页面展示和部署流程消费。
+
+2026-05-18 17:22 后续状态：
+
+- 已执行远程清理 evidence wrapper：`/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json`
+- `beforeContaminatedBranchCount=4`
+- `afterContaminatedBranchCount=0`
+- 直接复查 `prd-agent.appServices` 只剩 `api-prd-agent` 与 `admin-prd-agent`
+- 当前剩余 R0 blockers：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`
 
 ## 代码证据
 

@@ -4003,6 +4003,28 @@ export default function CdsAgentPage() {
                                   )}
                                 </div>
                                 <div className="mt-2 line-clamp-3 text-xs leading-relaxed text-white/46">{item.safety}</div>
+                                {item.applyManifest && (
+                                  <div className="mt-2 space-y-1 rounded px-2 py-1.5 text-[11px] leading-relaxed text-white/46" style={{ background: 'rgba(2,6,23,0.32)', border: '1px solid rgba(245,158,11,0.14)' }}>
+                                    <div className="font-semibold text-amber-50/72">
+                                      {item.applyManifest.method} · {item.applyManifest.safety}
+                                    </div>
+                                    <div className="truncate text-white/42">{item.applyManifest.endpoint}</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {(item.applyManifest.preconditions ?? []).map((condition) => (
+                                        <span
+                                          key={condition.code}
+                                          className="rounded px-1.5 py-0.5 font-semibold"
+                                          style={{
+                                            background: condition.passed ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)',
+                                            color: condition.passed ? 'rgba(134,239,172,0.85)' : 'rgba(253,230,138,0.85)',
+                                          }}
+                                        >
+                                          {condition.code}:{condition.passed ? 'pass' : 'wait'}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
