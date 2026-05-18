@@ -10,6 +10,7 @@ HANDOFF_SUMMARY="${CDS_AGENT_REMOTE_HOST_HANDOFF_SUMMARY:-$REMOTE_HOST_SUMMARY}"
 N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
 R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
+SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -68,6 +69,7 @@ image_readiness="unknown"
 image_next_action="unknown"
 image_build_context="unknown"
 image_local_build="not checked"
+image_publish="not checked"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
   r0_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.nextAction // "unknown"')
@@ -78,6 +80,9 @@ if [[ -f "$R0_READINESS_SUMMARY" ]]; then
 fi
 if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
   image_local_build=$(jq_read "$SIDECAR_IMAGE_BUILD_REPORT" '.status // "unknown"')
+fi
+if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
+  image_publish=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.status // "unknown"')
 fi
 
 if [[ -z "$missing_config" ]]; then
@@ -109,6 +114,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Sidecar image readiness: $image_readiness; $image_next_action
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
+- Sidecar registry publish: $image_publish
 
 ## Task Board
 
@@ -130,6 +136,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - imageReadiness: $image_readiness
 - imageBuildContext: $image_build_context
 - imageLocalBuild: $image_local_build
+- imagePublish: $image_publish
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
 
@@ -159,4 +166,5 @@ Then fill only placeholders locally. Do not paste private key contents into chat
 - N6 summary: $N6_SUMMARY
 - R0 readiness summary: $R0_READINESS_SUMMARY
 - sidecar image build summary: $SIDECAR_IMAGE_BUILD_REPORT
+- sidecar image publish summary: $SIDECAR_IMAGE_PUBLISH_REPORT
 EOF

@@ -9,6 +9,7 @@ SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-curren
 READINESS_REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 OUTPUT="${CDS_AGENT_R0_OPERATOR_HANDOFF:-/tmp/cds-agent-r0-operator-handoff-current.md}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
+SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -49,6 +50,12 @@ image_local_build="not checked"
 if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
   image_local_build=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_BUILD_REPORT")
 fi
+image_publish="not checked"
+image_publish_target="missing"
+if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
+  image_publish=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
+  image_publish_target=$(jq -r '.targetImage // "missing"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 {
@@ -78,6 +85,8 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- imageReadiness: `%s`\n' "$image_status"
   printf -- '- imageBuildContext: `%s`\n' "$image_build_context_status"
   printf -- '- imageLocalBuild: `%s`\n' "$image_local_build"
+  printf -- '- imagePublish: `%s`\n' "$image_publish"
+  printf -- '- imagePublishTarget: `%s`\n' "$image_publish_target"
   printf -- '- imagePreflightReport: `%s`\n' "$image_preflight_report"
   printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
 
@@ -99,6 +108,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf 'CDS remote deployer uses `docker pull`; it does not build from this repository on the remote host.\n\n'
   printf 'Local sidecar build context preflight is `%s`; this only proves the repository can describe a candidate image, not that the remote host can pull it.\n\n' "$image_build_context_status"
   printf 'Local docker build smoke is `%s`; build smoke never pushes or deploys.\n\n' "$image_local_build"
+  printf 'Registry publish status is `%s`; publish requires `CDS_AGENT_SIDECAR_IMAGE_PUSH=1`.\n\n' "$image_publish"
   if [[ -n "$image_build_command" ]]; then
     printf 'Candidate local build command:\n\n'
     printf '```bash\n%s\n```\n\n' "$image_build_command"
@@ -117,6 +127,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 ```bash
 scripts/preflight-cds-agent-r0-apply-readiness.sh
 scripts/smoke-cds-agent-sidecar-image-build.sh
+scripts/publish-cds-agent-sidecar-image.sh
 scripts/print-cds-agent-current-progress.sh
 ```
 EOF

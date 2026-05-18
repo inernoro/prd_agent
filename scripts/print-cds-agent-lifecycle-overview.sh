@@ -13,6 +13,7 @@ READINESS="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-c
 OUTPUT="${CDS_AGENT_LIFECYCLE_OVERVIEW:-}"
 REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
+SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -47,6 +48,7 @@ image_readiness="unknown"
 image_next_action="unknown"
 image_build_context="unknown"
 image_local_build="not checked"
+image_publish="not checked"
 if [[ -f "$READINESS" ]]; then
   ready_for_r0=$(jq -r '.readyForR0Apply // false' "$READINESS")
   missing_config=$(jq -r '(.missingConfig // []) | join(", ")' "$READINESS")
@@ -62,6 +64,9 @@ else
 fi
 if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
   image_local_build=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_BUILD_REPORT")
+fi
+if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
+  image_publish=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
 fi
 [[ -n "$missing_config" ]] || missing_config="none"
 
@@ -118,6 +123,7 @@ $deployment_advice
 - Sidecar image readiness: $image_readiness; $image_next_action
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
+- Sidecar registry publish: $image_publish
 
 ## Critical Path
 
@@ -142,6 +148,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-current-with-readiness.jso
 - goal audit: $AUDIT
 - R0 readiness: $READINESS
 - sidecar image build smoke: $SIDECAR_IMAGE_BUILD_REPORT
+- sidecar image publish: $SIDECAR_IMAGE_PUBLISH_REPORT
 - R0 handoff: /tmp/cds-agent-r0-operator-handoff-current.md
 - N6 summary: /tmp/cds-agent-n6-non-code-compatibility-current.json
 EOF

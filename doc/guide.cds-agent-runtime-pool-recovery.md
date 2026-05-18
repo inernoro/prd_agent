@@ -93,6 +93,15 @@ scripts/smoke-cds-agent-sidecar-image-build.sh
 
 它会写 `/tmp/cds-agent-sidecar-image-build-current.json`。只有 `status=build_pass` 才说明本机 Docker 已经能构建候选 image；这仍不等同于 remote host 能 `docker pull`。
 
+registry 发布默认只做 dry-run，不 push、不 deploy：
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
+  scripts/publish-cds-agent-sidecar-image.sh
+```
+
+只有显式设置 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` 才会执行 `docker tag` 和 `docker push`。push 后仍需从目标 remote host 验证 `docker pull`。
+
 如果 CDS 已有 enabled remote host，脚本会优先复用 `CDS_REMOTE_HOST_ID` 指定的 host；未指定时复用第一个 enabled host。此时不会再要求 `CDS_REMOTE_HOST_NAME/HOST/SSH_USER/KEY`，只在部署 shared runtime sidecar 时要求 `CDS_AGENT_SIDECAR_IMAGE`。`prepare` 报告会写出：
 
 - `targetHostId`: 本次将复用或创建的 remote host id。
