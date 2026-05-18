@@ -160,7 +160,8 @@ jq -n \
     beforeSharedRunning: ($pre.plan.sharedRunning // null),
     afterSharedRunning: ($post.plan.sharedRunning // null)
   }
-  | .branchIsolationClean = (([.pre.runtimePoolBlockers[]? | select(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")] | length) == 0)
+  | .preEvidenceAvailable = ((.pre.branchIsolation.evidenceCaptured // false) == true)
+  | .branchIsolationClean = (.preEvidenceAvailable and (([.pre.runtimePoolBlockers[]? | select(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")] | length) == 0))
   | .remoteHostConfigReady = ((.prepare.status // "") == "dry_run_ready" or (.prepare.status // "") == "applied")
   | .remoteHostAvailable = (
       if .apply then
@@ -177,7 +178,8 @@ jq -n \
       end
     )
   | .verdict = (
-      if (.branchIsolationClean | not) then "blocked-branch-isolation"
+      if (.preEvidenceAvailable | not) then "evidence-unavailable"
+      elif (.branchIsolationClean | not) then "blocked-branch-isolation"
       elif ((.prepare.status // "") == "missing_config") then "dry-run-missing-config"
       elif (.apply | not) and .remoteHostConfigReady then "dry-run-ready"
       elif (.apply | not) and .remoteHostAvailable and (.deploySidecar | not) then "dry-run-host-already-available"
@@ -191,7 +193,9 @@ jq -n \
   | .readyForSharedRuntimeDeploy = (.verdict == "dry-run-host-already-available" or .verdict == "applied-host-ready")
   | .readyForProviderSmokes = (.verdict == "applied-running")
   | .nextAction = (
-      if .verdict == "blocked-branch-isolation" then
+      if .verdict == "evidence-unavailable" then
+        "runtime pool evidence was unavailable; fix network/auth and rerun this wrapper before any apply or deploy"
+      elif .verdict == "blocked-branch-isolation" then
         "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
       elif .verdict == "dry-run-missing-config" then
         "provide missing remote host variables, then rerun this wrapper"

@@ -106,13 +106,17 @@ remote host wrapper 也会写 `summary.json`，关键判定字段：
 
 2026-05-18 最新 remote host dry-run 证据：
 
-- evidence dir: `/tmp/cds-agent-runtime-pool-evidence-current-clean`
+- evidence dir: `/tmp/cds-agent-remote-host-pool-current-readonly-live`
 - verdict: `dry-run-missing-config`
 - beforeEnabledRemoteHostCount: `0`
 - beforeSharedRunning: `0`
 - readyForSharedRuntimeDeploy: `false`
 - readyForProviderSmokes: `false`
+- prepare.targetHostId: `null`
+- prepare.willCreateHost: `true`
 - missingConfig: `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`
+
+如果只读 dry-run 因本地 DNS、网络或鉴权失败拿不到 pre evidence，wrapper 的 `verdict` 必须是 `evidence-unavailable`，不能误报为 `blocked-branch-isolation`。这种情况只代表证据不可用，下一步是修网络/鉴权并重跑只读证据，不允许继续 apply。
 
 真正执行 branch-local sidecar 清理时，使用带前后证据的 wrapper。默认仍是 dry-run：
 

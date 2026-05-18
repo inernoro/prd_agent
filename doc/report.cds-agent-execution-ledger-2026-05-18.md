@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 18:00 Asia/Shanghai：
+截至 2026-05-18 18:08 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -35,6 +35,7 @@
 | 17:56 | 无 live 时只显示 R0 unknown 仍不够好，因为已有 `/tmp` R0 evidence 可用 | 让 goal audit 支持 `CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY`，直接消费 `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `runtimePoolRecovery.source=summary`，当前 blocker 精确为 remote host/shared runtime |
 | 18:00 | goal audit 已识别 R0 blocker，但 `executionPanel.status` 仍继承旧 one-cycle 的 `blocked_r1`，`nextCyclePlan` 仍指向 profile closure | R0 blocker 存在时覆盖 `cycle_status=blocked_r0`，并生成 `r0-runtime-pool-recovery` 计划 | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `status=blocked_r0`，plan items=`R0.2/R0.3/R0V` |
 | 18:06 | remote host prepare 总是要求创建 host 参数，即使 CDS 已有 enabled host；这会阻塞“复用已有 host 部署 shared runtime”的路径 | 支持 `CDS_REMOTE_HOST_ID` 或第一个 enabled host 作为 target；已有 host 时不再要求 SSH 创建参数 | `/tmp/cds-agent-remote-host-existing-report.json`、`/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | <1s fixture | 复用 host 路径 `missingConfig=[]`；部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` |
+| 18:08 | 沙箱内只读 live dry-run DNS 失败时，wrapper 把 `evidence-unavailable` 误判成 `blocked-branch-isolation` | 沙箱外重跑只读 dry-run确认真实远程状态；同时修 wrapper verdict 优先区分证据不可用 | `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json`、`/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | 18s live；<1s fixture | 远程真实缺 enabled host；网络/鉴权失败现在输出 `evidence-unavailable` |
 
 ## 本轮暴露的问题
 
@@ -166,6 +167,22 @@
 - `/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json`：existing enabled host + deploy dry-run，只缺 `CDS_AGENT_SIDECAR_IMAGE`。
 
 优化：真实执行前先用 prepare report 看 `targetHostId/willCreateHost/missingConfig`，避免把创建 host 和部署 sidecar 混成一个大黑盒。
+
+### 12. evidence unavailable 不能误报成 branch contamination
+
+问题：沙箱内 DNS 解析 `cds.miduo.org` 失败时，pre evidence 标记 `branchIsolation.evidenceCaptured=false`，但 remote host wrapper 仅通过 `branchIsolationClean=false` 推导 verdict，最终误报 `blocked-branch-isolation`。
+
+处理：`run-cds-agent-remote-host-pool-with-evidence.sh` 增加 `preEvidenceAvailable`，先判断证据是否可用。证据不可用时输出：
+
+- `verdict=evidence-unavailable`
+- `nextAction=fix network/auth and rerun`
+
+证据：
+
+- 沙箱外 live dry-run `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json`：`dry-run-missing-config`，远程 `enabledHostCount=0`、`sharedRunning=0`。
+- 沙箱内 DNS 失败 fixture `/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json`：`verdict=evidence-unavailable`。
+
+优化：以后只有看到真实 `BRANCH_LOCAL_SIDECAR_CLEAN` blocker 时才写 branch contamination；证据不可用单独处理，避免误导执行顺序。
 
 ## 最耗时项
 

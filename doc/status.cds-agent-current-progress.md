@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 18:00 Asia/Shanghai
+> **更新时间**：2026-05-18 18:08 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -101,6 +101,8 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | N6 no-build test | terminal output | 27/27 pass outside sandbox socket restriction | 64ms |
 | remote host prepare fixture | `/tmp/cds-agent-remote-host-existing-report.json` | existing enabled host 可复用，`missingConfig=[]` | <1s |
 | remote host deploy fixture | `/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | existing host 部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` | <1s |
+| remote host live dry-run | `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json` | 远程 `enabledHostCount=0`、`sharedRunning=0`、缺 host SSH 参数 | 18s |
+| unavailable verdict fixture | `/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | DNS/auth 证据不可用时输出 `evidence-unavailable`，不再误报 branch contamination | <1s |
 
 ## 7. 时间和问题账本
 
@@ -117,6 +119,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | runtime pool evidence | 11-14s | 保留为 R0 权威远程证据，不用 one-cycle 替代 |
 | goal audit summary | 11s | 日常看板读最近 R0 summary；只有刷新远程事实时才开 live |
 | remote host prepare fixture | <1s | 本地模拟 API 响应，先验证参数判定，避免真实远程反复试 |
+| remote host live dry-run | 18s | 只读远程证据；只有真实执行前或状态刷新时运行 |
 
 ## 8. 不要做的事
 
@@ -159,6 +162,23 @@ Next cycle plan: r0-runtime-pool-recovery state=runtime-pool-blocked items=R0.2,
 CDS_HOST=https://cds.miduo.org \
 CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-manifest-current \
   bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
+```
+
+当前 live dry-run 证明远程没有 enabled remote host，因此恢复 R0 的最小写入输入是：
+
+```text
+CDS_REMOTE_HOST_NAME
+CDS_REMOTE_HOST_HOST
+CDS_REMOTE_HOST_SSH_USER
+CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE
+CDS_AGENT_REMOTE_HOST_APPLY=1
+```
+
+创建 host 后再部署 shared runtime，需要：
+
+```text
+CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1
+CDS_AGENT_SIDECAR_IMAGE
 ```
 
 发布验证：
