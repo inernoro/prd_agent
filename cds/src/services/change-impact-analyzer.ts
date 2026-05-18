@@ -77,7 +77,7 @@ const IRRELEVANT_PATTERNS: RegExp[] = [
   /(?:^|\/)e2e\//,
   /^cds\/tests\//,
   /^prd-admin\/src\/.+\/__tests__\//,
-  /^scripts\/(?:smoke-|audit-|doctor-|preflight-|verify-)/,
+  /^scripts\/(?:smoke-|audit-|doctor-|preflight-|verify-|index-)/,
   /(?:^|\/)LICENSE$/i,
   /(?:^|\/)\.gitignore$/,
   /(?:^|\/)\.editorconfig$/,

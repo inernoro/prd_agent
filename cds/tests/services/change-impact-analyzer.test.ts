@@ -61,13 +61,14 @@ describe('analyzeChangeImpact', () => {
       'scripts/doctor-cds-agent-runtime.sh',
       'scripts/preflight-cds-agent-cds-self-update.sh',
       'scripts/verify-cds-agent-r0-after-self-update.sh',
+      'scripts/index-cds-agent-cycle-evidence.sh',
       'cds/tests/services/github-webhook-dispatcher.test.ts',
       'prd-admin/src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts',
       'e2e/specs/cds-branch-runtime-visual.spec.ts',
     ]);
     expect(r.needsRestart).toBe(false);
     expect(r.hotReloadablePaths).toHaveLength(0);
-    expect(r.irrelevantPaths).toHaveLength(13);
+    expect(r.irrelevantPaths).toHaveLength(14);
   });
 
   it('未知普通脚本仍保守判定为重启', () => {
