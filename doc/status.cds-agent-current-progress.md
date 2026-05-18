@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 15:25 Asia/Shanghai
+> 更新时间：2026-05-18 15:41 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -48,7 +48,20 @@
 - runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。
 - 目标审计已校准为 R0 runtime pool blocker 优先于 R1 profile；当 P0 未恢复时，`currentBlockingGate=R0`。
 - 最新目标审计仍是 `goalStatus=not_complete`，`A0/D0/N6/pass`，但 `R0=pending`，并明确 `P0 branch isolation/shared pool is not recovered`。
+- 一周期摘要在 R0 runtime pool 未恢复前显示为 `blocked-by-runtime-pool`；旧 commit/runtime drift 不再抢占当前阻塞原因。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
+
+最新目标审计耗时 `22s`，最耗时步骤：
+
+| 步骤 | 状态 | 耗时 |
+| --- | --- | --- |
+| N6 non-code and candidate SDK compatibility | pass | 15s |
+| P0 branch isolation and shared pool recovery plan | pass | 5s |
+| Evidence index quality | pass | 1s |
+
+当前 guardrail failure 只剩：
+
+- `P0 branch isolation/shared pool is not recovered`
 
 ## 下一步
 

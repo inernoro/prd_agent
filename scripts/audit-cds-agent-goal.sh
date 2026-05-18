@@ -718,7 +718,8 @@ if [[ -n "$controls_report" && -f "$controls_report" ]]; then
   }' "$controls_report")
 fi
 
-if [[ "$(jq -r 'length' <<< "$runtime_pool_blockers_json")" != "0" ]]; then
+runtime_pool_blocker_count="$(jq -r 'length' <<< "$runtime_pool_blockers_json")"
+if [[ "$runtime_pool_blocker_count" != "0" ]]; then
   gate_r0="pending"
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery is still blocked: $(jq -r 'map(.requirement + "=" + .status) | join(", ")' <<< "$runtime_pool_blockers_json")."
@@ -744,13 +745,13 @@ if [[ "$evidence_index_status" != "pass" ]]; then
 fi
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   failures+=("P0 branch isolation/shared pool plan was not observed")
-elif [[ "$(jq -r 'length' <<< "$runtime_pool_blockers_json")" != "0" ]]; then
+elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   failures+=("P0 branch isolation/shared pool is not recovered")
 fi
-if [[ "$cycle_freshness_status" == "stale" ]]; then
+if [[ "$runtime_pool_blocker_count" == "0" && "$cycle_freshness_status" == "stale" ]]; then
   failures+=("one-cycle summary is stale; rerun scripts/smoke-cds-agent-one-cycle.sh for current remote/provider evidence")
 fi
-if [[ "$cycle_git_status" == "runtime_mismatch" || "$cycle_git_status" == "mismatch" ]]; then
+if [[ "$runtime_pool_blocker_count" == "0" && ( "$cycle_git_status" == "runtime_mismatch" || "$cycle_git_status" == "mismatch" ) ]]; then
   failures+=("one-cycle summary git commit does not match current HEAD; rerun scripts/smoke-cds-agent-one-cycle.sh for this commit")
 fi
 
@@ -766,7 +767,7 @@ if [[ "$(json_bool "$commercial_complete")" == "true" \
   && "$gate_s2s3" == "pass" \
   && "$gate_v1" == "pass" \
   && "$runtime_pool_plan_status" == "pass" \
-  && "$(jq -r 'length' <<< "$runtime_pool_blockers_json")" == "0" ]]; then
+  && "$runtime_pool_blocker_count" == "0" ]]; then
   goal_status="complete"
 fi
 
@@ -806,12 +807,12 @@ missing_json=$(
       requirement: .key,
       status: .value
     }))
-    + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
+    + (if (($root.runtimePoolBlockers | length) == 0 and $root.cycleFreshness == "stale") then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
     + (if $root.docsCalibrationStatus != "pass" then [{requirement:"D0_DOCS_CALIBRATION", status:$root.docsCalibrationStatus}] else [] end)
     + (if $root.evidenceIndexStatus != "pass" then [{requirement:"EVIDENCE_INDEX", status:$root.evidenceIndexStatus}] else [] end)
     + (if $root.runtimePoolPlanStatus != "pass" then [{requirement:"P0_RUNTIME_POOL_PLAN", status:$root.runtimePoolPlanStatus}] else [] end)
     + $root.runtimePoolBlockers
-    + (if ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch") then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
+    + (if (($root.runtimePoolBlockers | length) == 0 and ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch")) then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
 failures_json='[]'
 if (( ${#failures[@]} > 0 )); then
@@ -1043,9 +1044,9 @@ audit_json=$(
         visualAndUsabilityEvidence: {
           status: (if $gateV1 == "pass" then "proved" else $gateV1 end),
           gate: "V1"
-        },
+      },
       oneCycleObservability: {
-          status: (if $cycleStatus == "missing" then "missing-cycle-summary" elif $cycleFreshnessStatus == "stale" then "stale-cycle-summary" else "available" end),
+          status: (if ($runtimePoolBlockers | length) > 0 then "blocked-by-runtime-pool" elif $cycleStatus == "missing" then "missing-cycle-summary" elif $cycleFreshnessStatus == "stale" then "stale-cycle-summary" else "available" end),
           evidenceIndexStatus: $evidenceIndexStatus,
           cycleStatus: $cycleStatus,
           freshness: {
