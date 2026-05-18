@@ -77,6 +77,7 @@ write_report() {
     --argjson existingHosts "$hosts_json" \
     --argjson targetHost "$target_host_json" \
     --argjson missingConfig "$missing_config_json" \
+    --argjson invalidConfig "$invalid_config_json" \
     --argjson createdHost "$created_host_json" \
     --argjson deploy "$deploy_json" \
     '{
@@ -95,6 +96,8 @@ write_report() {
       targetHostId: ($targetHost.id // null),
       willCreateHost: (($targetHost.id // "") == ""),
       missingConfig: $missingConfig,
+      invalidConfig: $invalidConfig,
+      preflightReady: (($missingConfig | length) == 0 and ($invalidConfig | length) == 0),
       recoveryManifest: {
         safety: "remote_host_create_then_shared_runtime_deploy",
         phases: [
@@ -176,6 +179,7 @@ if [[ -n "$target_host_id" ]]; then
 fi
 
 missing=()
+invalid=()
 if [[ -z "$target_host_id" ]]; then
   [[ -n "${CDS_REMOTE_HOST_NAME:-}" ]] || missing+=("CDS_REMOTE_HOST_NAME")
   [[ -n "${CDS_REMOTE_HOST_HOST:-}" ]] || missing+=("CDS_REMOTE_HOST_HOST")
@@ -183,20 +187,55 @@ if [[ -z "$target_host_id" ]]; then
   if [[ -z "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY:-}" && -z "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE:-}" ]]; then
     missing+=("CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE")
   fi
+  if [[ -n "${CDS_REMOTE_HOST_HOST:-}" && "$CDS_REMOTE_HOST_HOST" == *"://"* ]]; then
+    invalid+=("CDS_REMOTE_HOST_HOST must be hostname/IP, not URL")
+  fi
+  if [[ -n "${CDS_REMOTE_HOST_SSH_PORT:-}" && ! "$CDS_REMOTE_HOST_SSH_PORT" =~ ^[0-9]+$ ]]; then
+    invalid+=("CDS_REMOTE_HOST_SSH_PORT must be numeric")
+  fi
+  if [[ -n "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE:-}" ]]; then
+    if [[ ! -f "$CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE" ]]; then
+      invalid+=("CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE does not exist")
+    elif ! grep -q -- 'BEGIN .*PRIVATE KEY' "$CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE"; then
+      invalid+=("CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE does not look like a private key")
+    fi
+  elif [[ -n "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY:-}" && "$CDS_REMOTE_HOST_SSH_PRIVATE_KEY" != *"BEGIN "*PRIVATE\ KEY* ]]; then
+    invalid+=("CDS_REMOTE_HOST_SSH_PRIVATE_KEY does not look like a private key")
+  fi
 fi
 if [[ "$DEPLOY_SIDECAR" == "1" && -z "${CDS_AGENT_SIDECAR_IMAGE:-}" ]]; then
   missing+=("CDS_AGENT_SIDECAR_IMAGE")
+fi
+if [[ -n "${CDS_AGENT_SIDECAR_IMAGE:-}" && "$CDS_AGENT_SIDECAR_IMAGE" =~ [[:space:]] ]]; then
+  invalid+=("CDS_AGENT_SIDECAR_IMAGE must not contain whitespace")
 fi
 if (( ${#missing[@]} > 0 )); then
   missing_config_json=$(printf '%s\n' "${missing[@]}" | jq -R 'select(length > 0)' | jq -s .)
 else
   missing_config_json='[]'
 fi
+if (( ${#invalid[@]} > 0 )); then
+  invalid_config_json=$(printf '%s\n' "${invalid[@]}" | jq -R 'select(length > 0)' | jq -s .)
+else
+  invalid_config_json='[]'
+fi
 
-if (( ${#missing[@]} > 0 )); then
+if (( ${#missing[@]} > 0 || ${#invalid[@]} > 0 )); then
+  if (( ${#invalid[@]} > 0 )); then
+    printf '\n无效配置:\n'
+    printf '%s\n' "${invalid[@]}" | sed 's/^/  - /'
+  fi
   printf '\n缺失配置:\n'
-  printf '%s\n' "${missing[@]}" | sed 's/^/  - /'
-  write_report "missing_config" "缺少创建 remote host 或部署 sidecar 所需配置" "null" "null"
+  if (( ${#missing[@]} > 0 )); then
+    printf '%s\n' "${missing[@]}" | sed 's/^/  - /'
+  else
+    printf '  - none\n'
+  fi
+  if (( ${#invalid[@]} > 0 )); then
+    write_report "invalid_config" "创建 remote host 或部署 sidecar 的配置格式不合法" "null" "null"
+  else
+    write_report "missing_config" "缺少创建 remote host 或部署 sidecar 所需配置" "null" "null"
+  fi
   exit 0
 fi
 

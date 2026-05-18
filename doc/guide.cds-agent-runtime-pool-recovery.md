@@ -82,6 +82,8 @@ CDS_HOST=https://cds.miduo.org \
 - `targetHostId`: 本次将复用或创建的 remote host id。
 - `willCreateHost`: `false` 表示复用已有 host，`true` 表示仍需创建。
 - `missingConfig`: 只列当前路径真正缺失的参数。
+- `invalidConfig`: 只列已经提供但格式不合格的参数，例如 host 写成 URL、SSH port 非数字、private key 内容不像私钥、sidecar image 含空白字符。
+- `preflightReady`: `missingConfig=[]` 且 `invalidConfig=[]` 时为 `true`。
 
 复用已有 host 并部署 shared runtime 的最小命令形态：
 
@@ -101,6 +103,7 @@ remote host wrapper 也会写 `summary.json`，关键判定字段：
 - `readyForProviderSmokes`: shared runtime 已 running，可以继续 MAP R0/S1/S2/S3 与 one-cycle。
 - `nextAction`: 下一步执行建议。
 - `prepare.targetHostId` / `prepare.willCreateHost`: 区分复用已有 host 还是创建新 host。
+- `prepare.preflightReady` / `prepare.invalidConfig`: 区分“还缺输入”和“输入格式不合格”。
 
 如果 pre evidence 仍包含 `BRANCH_LOCAL_SIDECAR_CLEAN` blocker，apply 模式会被挡住，不会继续创建 remote host 或部署 sidecar。执行 apply 后如果没有 enabled remote host，或 deploy sidecar 后 shared runtime 仍未 running，wrapper 会非零退出。
 
@@ -117,6 +120,8 @@ remote host wrapper 也会写 `summary.json`，关键判定字段：
 - missingConfig: `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`
 
 如果只读 dry-run 因本地 DNS、网络或鉴权失败拿不到 pre evidence，wrapper 的 `verdict` 必须是 `evidence-unavailable`，不能误报为 `blocked-branch-isolation`。这种情况只代表证据不可用，下一步是修网络/鉴权并重跑只读证据，不允许继续 apply。
+
+如果参数格式错误，prepare 报告会输出 `status=invalid_config`，wrapper 顶层 verdict 会输出 `dry-run-invalid-config`。这种情况同样不允许 apply；先修正变量再重跑 dry-run。
 
 真正执行 branch-local sidecar 清理时，使用带前后证据的 wrapper。默认仍是 dry-run：
 

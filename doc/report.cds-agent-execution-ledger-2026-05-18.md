@@ -36,6 +36,7 @@
 | 18:00 | goal audit 已识别 R0 blocker，但 `executionPanel.status` 仍继承旧 one-cycle 的 `blocked_r1`，`nextCyclePlan` 仍指向 profile closure | R0 blocker 存在时覆盖 `cycle_status=blocked_r0`，并生成 `r0-runtime-pool-recovery` 计划 | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `status=blocked_r0`，plan items=`R0.2/R0.3/R0V` |
 | 18:06 | remote host prepare 总是要求创建 host 参数，即使 CDS 已有 enabled host；这会阻塞“复用已有 host 部署 shared runtime”的路径 | 支持 `CDS_REMOTE_HOST_ID` 或第一个 enabled host 作为 target；已有 host 时不再要求 SSH 创建参数 | `/tmp/cds-agent-remote-host-existing-report.json`、`/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | <1s fixture | 复用 host 路径 `missingConfig=[]`；部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` |
 | 18:08 | 沙箱内只读 live dry-run DNS 失败时，wrapper 把 `evidence-unavailable` 误判成 `blocked-branch-isolation` | 沙箱外重跑只读 dry-run确认真实远程状态；同时修 wrapper verdict 优先区分证据不可用 | `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json`、`/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | 18s live；<1s fixture | 远程真实缺 enabled host；网络/鉴权失败现在输出 `evidence-unavailable` |
+| 18:10 | apply 前仍可能到远程才发现 SSH host、port、key、image 参数格式不合法 | prepare dry-run 增加 `invalidConfig/preflightReady`，并让 wrapper 顶层支持 `dry-run-invalid-config` | `/tmp/cds-agent-remote-host-invalid-report.json` | <1s fixture | host URL、非数字 SSH port、非私钥内容会在本地 dry-run 阶段拦截 |
 
 ## 本轮暴露的问题
 
@@ -183,6 +184,20 @@
 - 沙箱内 DNS 失败 fixture `/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json`：`verdict=evidence-unavailable`。
 
 优化：以后只有看到真实 `BRANCH_LOCAL_SIDECAR_CLEAN` blocker 时才写 branch contamination；证据不可用单独处理，避免误导执行顺序。
+
+### 13. remote host apply 前要先拦截格式错误
+
+问题：即使变量都填了，也可能因为 `CDS_REMOTE_HOST_HOST` 写成 URL、`CDS_REMOTE_HOST_SSH_PORT` 非数字、private key 内容不像私钥、或 `CDS_AGENT_SIDECAR_IMAGE` 带空白字符，直到远程 POST 时才失败。
+
+处理：`prepare-cds-agent-remote-host-pool.sh` 增加本地格式 preflight：
+
+- `invalidConfig`: 已提供但格式不合格的变量。
+- `preflightReady`: `missingConfig=[]` 且 `invalidConfig=[]`。
+- wrapper verdict 新增 `dry-run-invalid-config`。
+
+证据：`/tmp/cds-agent-remote-host-invalid-report.json` 显示 `status=invalid_config`、`preflightReady=false`，并列出 host URL、SSH port、private key 三类错误。
+
+优化：执行写入前先看 `preflightReady=true`，否则不进入 apply。
 
 ## 最耗时项
 

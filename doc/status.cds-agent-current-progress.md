@@ -103,6 +103,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote host deploy fixture | `/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | existing host 部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` | <1s |
 | remote host live dry-run | `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json` | 远程 `enabledHostCount=0`、`sharedRunning=0`、缺 host SSH 参数 | 18s |
 | unavailable verdict fixture | `/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | DNS/auth 证据不可用时输出 `evidence-unavailable`，不再误报 branch contamination | <1s |
+| remote host invalid fixture | `/tmp/cds-agent-remote-host-invalid-report.json` | host URL、SSH port、private key 格式错误会进入 `invalid_config` | <1s |
 
 ## 7. 时间和问题账本
 
@@ -120,6 +121,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | goal audit summary | 11s | 日常看板读最近 R0 summary；只有刷新远程事实时才开 live |
 | remote host prepare fixture | <1s | 本地模拟 API 响应，先验证参数判定，避免真实远程反复试 |
 | remote host live dry-run | 18s | 只读远程证据；只有真实执行前或状态刷新时运行 |
+| remote host invalid fixture | <1s | 本地校验参数格式，减少 apply 阶段才失败 |
 
 ## 8. 不要做的事
 

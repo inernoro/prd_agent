@@ -180,6 +180,7 @@ jq -n \
   | .verdict = (
       if (.preEvidenceAvailable | not) then "evidence-unavailable"
       elif (.branchIsolationClean | not) then "blocked-branch-isolation"
+      elif ((.prepare.status // "") == "invalid_config") then "dry-run-invalid-config"
       elif ((.prepare.status // "") == "missing_config") then "dry-run-missing-config"
       elif (.apply | not) and .remoteHostConfigReady then "dry-run-ready"
       elif (.apply | not) and .remoteHostAvailable and (.deploySidecar | not) then "dry-run-host-already-available"
@@ -197,6 +198,8 @@ jq -n \
         "runtime pool evidence was unavailable; fix network/auth and rerun this wrapper before any apply or deploy"
       elif .verdict == "blocked-branch-isolation" then
         "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
+      elif .verdict == "dry-run-invalid-config" then
+        "fix invalid remote host or sidecar variables, then rerun this wrapper"
       elif .verdict == "dry-run-missing-config" then
         "provide missing remote host variables, then rerun this wrapper"
       elif .verdict == "dry-run-ready" then
