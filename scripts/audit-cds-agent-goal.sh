@@ -31,6 +31,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPORT="${CDS_AGENT_GOAL_AUDIT_REPORT:-}"
 AUDIT_DIR="${CDS_AGENT_GOAL_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/cds-agent-goal-audit.XXXXXX")}"
 BOUNDARY_REPORT="$AUDIT_DIR/a0-boundary.json"
+DOCS_CALIBRATION_LOG="$AUDIT_DIR/d0-docs-calibration.log"
 N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
 EVIDENCE_INDEX_LOG="$AUDIT_DIR/evidence-index-quality.log"
 cycle_summary="${CDS_AGENT_GOAL_CYCLE_SUMMARY:-}"
@@ -45,7 +46,7 @@ timing_seconds=()
 timing_indices=()
 CYCLE_GIT_DIFF_PATHS=()
 CYCLE_GIT_RUNTIME_DIFF_PATHS=()
-TIMING_STEP_TOTAL=3
+TIMING_STEP_TOTAL=4
 TIMING_STEP_CURRENT=0
 AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
 AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
@@ -246,6 +247,75 @@ json_bool() {
   fi
 }
 
+check_docs_calibration() {
+  local log="$1"
+  local failed=false
+  local quickstart="$ROOT_DIR/doc/guide.cds-agent-code-review-quickstart.md"
+  local next_testing="$ROOT_DIR/doc/guide.cds-agent-next-agent-testing.md"
+  local migration_plan="$ROOT_DIR/doc/plan.cds-agent-official-sdk-migration.md"
+  local report="$ROOT_DIR/doc/report.cds-agent-workbench-2026-05-15.md"
+  : > "$log"
+
+  require_doc_text() {
+    local file="$1"
+    local text="$2"
+    local label="$3"
+    if grep -Fq "$text" "$file"; then
+      printf 'PASS required: %s\n' "$label" >> "$log"
+    else
+      printf 'FAIL required: %s\n  file=%s\n  text=%s\n' "$label" "${file#$ROOT_DIR/}" "$text" >> "$log"
+      failed=true
+    fi
+  }
+
+  forbid_doc_regex() {
+    local file="$1"
+    local regex="$2"
+    local label="$3"
+    if grep -Eq "$regex" "$file"; then
+      printf 'FAIL forbidden: %s\n  file=%s\n  regex=%s\n' "$label" "${file#$ROOT_DIR/}" "$regex" >> "$log"
+      grep -En "$regex" "$file" >> "$log" || true
+      failed=true
+    else
+      printf 'PASS forbidden: %s\n' "$label" >> "$log"
+    fi
+  }
+
+  for file in "$quickstart" "$next_testing" "$migration_plan" "$report"; do
+    if [[ ! -f "$file" ]]; then
+      printf 'FAIL missing doc: %s\n' "${file#$ROOT_DIR/}" >> "$log"
+      failed=true
+    fi
+  done
+
+  require_doc_text "$quickstart" '当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`' \
+    "quickstart states current gate ledger"
+  require_doc_text "$quickstart" '`claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层' \
+    "quickstart separates official SDK from local adapter"
+  require_doc_text "$next_testing" '旧 A10 复盘里的 legacy sidecar 证据不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
+    "next testing rejects old A10 as SDK completion proof"
+  require_doc_text "$migration_plan" '不要再把历史' \
+    "migration plan flags historical diagnostics"
+  require_doc_text "$migration_plan" '`OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`' \
+    "migration plan names current R1 blocker"
+  require_doc_text "$report" '旧 A10 证明“工作台 MVP 能远程干活”，但不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
+    "A10 report separates MVP from current SDK gates"
+
+  forbid_doc_regex "$next_testing" '当前 `claude-sdk` 是历史 runtime 名，实际是官方 `anthropic` Python SDK \+ 自研 sidecar loop' \
+    "next testing old legacy-loop current-state wording"
+  forbid_doc_regex "$next_testing" '当前远程 preview 的真实阻塞.*(sidecar pool discovery|discovery 为 0)' \
+    "next testing old discovery blocker wording"
+  forbid_doc_regex "$migration_plan" '当前 `claude-sdk` runtime 是官方 `anthropic` Python SDK \+ 自研 sidecar loop' \
+    "migration plan old current-state wording"
+  forbid_doc_regex "$report" '它不是完整官方 Claude Code SDK / Claude Agent SDK 接入' \
+    "A10 report old absolute SDK-not-integrated wording"
+
+  if [[ "$failed" == "true" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 read_remote_branch_status() {
   if [[ -z "${CDS_HOST:-}" ]]; then
     return 1
@@ -270,6 +340,7 @@ cd "$ROOT_DIR"
 mkdir -p "$AUDIT_DIR"
 
 run_step "A0 official SDK adapter boundary" env SMOKE_CDS_AGENT_BOUNDARY_REPORT="$BOUNDARY_REPORT" bash "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || true
+run_step "D0 docs current-state calibration" check_docs_calibration "$DOCS_CALIBRATION_LOG" || true
 run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
 
 if [[ -z "$cycle_summary" ]]; then
@@ -308,6 +379,13 @@ elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "N6 
   n6_status="failed"
 elif [[ ! -s "$N6_LOG" ]]; then
   n6_status="missing"
+fi
+
+docs_calibration_status="pass"
+if (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "D0 docs current-state calibration"; then
+  docs_calibration_status="failed"
+elif [[ ! -s "$DOCS_CALIBRATION_LOG" ]]; then
+  docs_calibration_status="missing"
 fi
 
 evidence_index_status="pass"
@@ -554,6 +632,9 @@ if [[ "$n6_status" != "pass" ]]; then
     failures+=("N6 compatibility did not pass")
   fi
 fi
+if [[ "$docs_calibration_status" != "pass" ]]; then
+  failures+=("D0 docs current-state calibration did not pass")
+fi
 if [[ "$evidence_index_status" != "pass" ]]; then
   failures+=("Evidence index quality did not pass")
 fi
@@ -588,6 +669,7 @@ missing_json=$(
     --arg gateV1 "$gate_v1" \
     --arg gateN6 "$gate_n6" \
     --arg evidenceIndexStatus "$evidence_index_status" \
+    --arg docsCalibrationStatus "$docs_calibration_status" \
     --arg cycleFreshness "$cycle_freshness_status" \
     --arg cycleGitStatus "$cycle_git_status" \
     '{
@@ -600,6 +682,7 @@ missing_json=$(
         V1: $gateV1,
         N6: $gateN6
       },
+      docsCalibrationStatus: $docsCalibrationStatus,
       evidenceIndexStatus: $evidenceIndexStatus,
       cycleFreshness: $cycleFreshness,
       cycleGitStatus: $cycleGitStatus
@@ -609,6 +692,7 @@ missing_json=$(
       status: .value
     }))
     + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
+    + (if $root.docsCalibrationStatus != "pass" then [{requirement:"D0_DOCS_CALIBRATION", status:$root.docsCalibrationStatus}] else [] end)
     + (if $root.evidenceIndexStatus != "pass" then [{requirement:"EVIDENCE_INDEX", status:$root.evidenceIndexStatus}] else [] end)
     + (if ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch") then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
@@ -640,6 +724,7 @@ audit_json=$(
     --arg goalStatus "$goal_status" \
     --arg auditDir "$AUDIT_DIR" \
     --arg boundaryReport "$BOUNDARY_REPORT" \
+    --arg docsCalibrationLog "$DOCS_CALIBRATION_LOG" \
     --arg n6Log "$N6_LOG" \
     --arg evidenceIndexLog "$EVIDENCE_INDEX_LOG" \
     --arg cycleSummary "$cycle_summary" \
@@ -660,6 +745,7 @@ audit_json=$(
     --arg deploymentAdvice "$deployment_advice" \
     --arg nextCommand "$next_command" \
     --arg boundaryStatus "$boundary_status" \
+    --arg docsCalibrationStatus "$docs_calibration_status" \
     --arg n6Status "$n6_status" \
     --arg evidenceIndexStatus "$evidence_index_status" \
     --arg r1Status "$r1_status" \
@@ -723,6 +809,7 @@ audit_json=$(
       auditDir: $auditDir,
       artifacts: {
         boundaryReport: $boundaryReport,
+        docsCalibrationLog: $docsCalibrationLog,
         nonCodeCompatibilityLog: $n6Log,
         evidenceIndexLog: $evidenceIndexLog,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
@@ -738,6 +825,11 @@ audit_json=$(
       evidenceIndexQuality: {
         status: $evidenceIndexStatus,
         log: $evidenceIndexLog
+      },
+      docsCalibration: {
+        status: $docsCalibrationStatus,
+        log: $docsCalibrationLog,
+        evidence: "Critical docs must state the current official claude-agent-sdk path, R1 profile blocker, and that old A10/legacy sidecar evidence does not close S1/S2/S3."
       },
       remoteCdsBranch: {
         observed: ($remoteBranchObserved == "true"),
@@ -786,6 +878,11 @@ audit_json=$(
           bridgeTotalLines: $bridgeTotalLines,
           bridgeTotalMaxLines: $bridgeTotalMax,
           legacyLoopLines: $legacyLines
+        },
+        documentationCalibration: {
+          status: (if $docsCalibrationStatus == "pass" then "proved" else $docsCalibrationStatus end),
+          gate: "D0",
+          evidence: "quickstart, next-agent testing guide, migration plan, and A10 report are calibrated to the current R1 blocker and official SDK adapter boundary"
         },
         otherAgentCompatibility: {
           status: (if $n6Status == "pass" then "proved" else $n6Status end),
@@ -884,6 +981,7 @@ printf 'Goal status: %s\n' "$goal_status"
 printf 'Commercial complete: %s\n' "$commercial_complete"
 printf 'A0 boundary: %s adapter=%s/%s support=%s/%s total=%s/%s legacy=%s\n' \
   "$boundary_status" "$adapter_lines" "$adapter_max" "$support_lines" "$support_max" "$bridge_total_lines" "$bridge_total_max" "$legacy_lines"
+printf 'D0 docs calibration: %s\n' "$docs_calibration_status"
 printf 'N6 compatibility: %s\n' "$n6_status"
 printf 'Evidence index quality: %s\n' "$evidence_index_status"
 printf 'Cycle status: %s\n' "$cycle_status"
