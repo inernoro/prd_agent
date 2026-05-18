@@ -607,6 +607,8 @@ finish_cycle() {
     --argjson boundaryMetrics "$boundary_metrics_json" \
     --argjson remoteBranchStatusRaw "$remote_branch_status_json" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
+    --arg textDump "${SMOKE_CDS_AGENT_TEXT_DUMP:-}" \
+    --arg visualCoverage "${SMOKE_CDS_AGENT_VISUAL_COVERAGE:-}" \
     --arg gateR0 "$gate_r0_status" \
     --arg gateA0 "$gate_a0_status" \
     --arg gateR1 "$gate_r1_status" \
@@ -758,7 +760,9 @@ finish_cycle() {
         metrics: $boundaryMetrics
       },
       visual: {
-        screenshot: $screenshot
+        screenshot: $screenshot,
+        textDump: (if $textDump == "" then null else $textDump end),
+        coverage: (if $visualCoverage == "" then null else $visualCoverage end)
       },
       commercialGates: $gates,
       commercialGatesNotPass: $gatesNotPass,
@@ -930,6 +934,8 @@ if [[ -n "${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}" \
   || ( -n "${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}" && -n "${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}" ) \
   || -n "${AI_ACCESS_KEY:-}" ]]; then
   export SMOKE_CDS_AGENT_SCREENSHOT="${SMOKE_CDS_AGENT_SCREENSHOT:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.png}"
+  export SMOKE_CDS_AGENT_TEXT_DUMP="${SMOKE_CDS_AGENT_TEXT_DUMP:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.txt}"
+  export SMOKE_CDS_AGENT_VISUAL_COVERAGE="${SMOKE_CDS_AGENT_VISUAL_COVERAGE:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.coverage.json}"
   run_step "v1-visual" "V1 authenticated workbench visual" "$SCRIPT_DIR/smoke-cds-agent-workbench-visual.sh" "visual" || finish_cycle 1
 else
   skip_step "V1 authenticated workbench visual" "set SMOKE_CDS_AGENT_ACCESS_TOKEN, login username/password, or AI_ACCESS_KEY" "visual"

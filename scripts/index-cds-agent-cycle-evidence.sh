@@ -58,6 +58,11 @@ if [[ -n "$r1_report" && -f "$r1_report" ]]; then
     providerKeyReceived: (.evidence.providerKeyReceived // false)
   }' "$r1_report")
 fi
+visual_coverage="$(jq -r '.visual.coverage // ""' "$summary")"
+visual_coverage_json='null'
+if [[ -n "$visual_coverage" && -f "$visual_coverage" ]]; then
+  visual_coverage_json=$(jq -c '.' "$visual_coverage")
+fi
 
 jq -n \
   --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -75,6 +80,7 @@ jq -n \
   --arg visualLog "$cycle_dir/v1-visual.log" \
   --arg n6Log "$cycle_dir/n6-non-code-boundary.log" \
   --argjson r1Details "$r1_details_json" \
+  --argjson visualCoverage "$visual_coverage_json" \
   --argjson s "$(jq '.' "$summary")" \
   '{
     schemaVersion: "cds-agent-cycle-evidence-index/v1",
@@ -137,8 +143,11 @@ jq -n \
       s1: ($s.s1.report // null),
       controls: ($s.controls.report // null),
       officialSdkBoundary: ($s.officialSdkBoundary.report // null),
-      screenshot: ($s.visual.screenshot // null)
+      screenshot: ($s.visual.screenshot // null),
+      visualTextDump: ($s.visual.textDump // null),
+      visualCoverage: ($s.visual.coverage // null)
     },
+    visualCoverage: ($visualCoverage // null),
     logs: {
       doctor: $doctorLog,
       r0Runtime: $r0RuntimeLog,
@@ -188,6 +197,12 @@ jq -r \
   (if (.failure.advice // "") != "" then "- Failure advice: " + (.failure.advice // "") + "\n" else "" end) +
   "- Deploy/build advice: " + (.deploymentAdvice // "") + "\n" +
   "- Next command: `" + (.nextCommand // "") + "`\n\n" +
+  (if (.visualCoverage.assertionsPassed // false) then
+    "## Visual Coverage\n\n" +
+    "- Assertions passed: `" + ((.visualCoverage.assertionsPassed // false)|tostring) + "`\n" +
+    "- Required text count: `" + (((.visualCoverage.required // []) | length)|tostring) + "`\n" +
+    "- Execution runway assertions: `" + (((.visualCoverage.required // []) | map(select(. == "部署判定" or . == "命令性质" or . == "Provider 调用" or . == "不需要重新部署" or . == "R1 dry-run" or . == "不会触发真实 provider 调用")) | join(" / ")) // "") + "`\n\n"
+  else "" end) +
   "## Gates\n\n" +
   (["R0","A0","R1","S1","S2S3","V1","N6"] | map(gate_line(.)) | join("\n")) + "\n\n" +
   "## R1 Repair Path\n\n" +
@@ -208,6 +223,8 @@ jq -r \
   ((.timing.slowest // []) | map("- [" + (.phase // "") + "] " + (.name // "") + " — " + ((.durationSeconds // 0)|tostring) + "s — " + (.status // "")) | join("\n")) + "\n\n" +
   "## Key Artifacts\n\n" +
   "- Workbench screenshot: `" + (.reports.screenshot // "") + "`\n" +
+  "- Workbench text dump: `" + (.reports.visualTextDump // "") + "`\n" +
+  "- Workbench visual coverage: `" + (.reports.visualCoverage // "") + "`\n" +
   "- R1 report: `" + (.reports.r1 // "") + "`\n" +
   "- S1 report: `" + (.reports.s1 // "") + "`\n" +
   "- Controls report: `" + (.reports.controls // "") + "`\n" +

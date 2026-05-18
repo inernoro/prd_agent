@@ -99,6 +99,12 @@ case "$runtime_relation" in
 esac
 
 assert_nonempty "$(jq -r '.providerPrerequisites.status // ""' "$json_index")" "providerPrerequisites.status"
+assert_eq "$(jq -r '.visualCoverage.assertionsPassed // false' "$json_index")" "true" "visualCoverage.assertionsPassed"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "部署判定" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "命令性质" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Provider 调用" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "R1 dry-run" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "不会触发真实 provider 调用" "visualCoverage.required"
 provider_calls_requested=$(jq -r 'if (.providerPrerequisites | has("providerCallsRequested")) then (.providerPrerequisites.providerCallsRequested | tostring) else "" end' "$json_index")
 r1_repair_key_provided=$(jq -r 'if (.providerPrerequisites | has("r1RepairKeyProvided")) then (.providerPrerequisites.r1RepairKeyProvided | tostring) else "" end' "$json_index")
 can_collect_provider_smokes=$(jq -r 'if (.providerPrerequisites | has("canCollectProviderSmokes")) then (.providerPrerequisites.canCollectProviderSmokes | tostring) else "" end' "$json_index")
@@ -143,6 +149,8 @@ fi
 md_text=$(cat "$md_index")
 assert_contains "$md_text" "Remote CDS branch" "evidence-index.md"
 assert_contains "$md_text" "Provider prerequisites" "evidence-index.md"
+assert_contains "$md_text" "Visual Coverage" "evidence-index.md"
+assert_contains "$md_text" "Execution runway assertions" "evidence-index.md"
 assert_contains "$md_text" "R1 Repair Path" "evidence-index.md"
 assert_contains "$md_text" "Missing-key guard: \`api_key_required\`" "evidence-index.md"
 assert_contains "$md_text" "Test-before-promote" "evidence-index.md"

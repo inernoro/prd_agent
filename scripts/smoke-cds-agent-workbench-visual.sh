@@ -18,6 +18,7 @@
 #   SMOKE_CDS_AGENT_WORKBENCH_URL=https://.../cds-agent
 #   SMOKE_CDS_AGENT_SCREENSHOT=/tmp/cds-agent-workbench-visual.png
 #   SMOKE_CDS_AGENT_TEXT_DUMP=/tmp/cds-agent-workbench-visual.txt
+#   SMOKE_CDS_AGENT_VISUAL_COVERAGE=/tmp/cds-agent-workbench-visual.coverage.json
 #   CHROME_BIN=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 # ============================================
 
@@ -32,6 +33,7 @@ SMOKE_CDS_AGENT_WORKBENCH_URL_INPUT="${SMOKE_CDS_AGENT_WORKBENCH_URL:-}"
 SMOKE_CDS_AGENT_WORKBENCH_URL="${SMOKE_CDS_AGENT_WORKBENCH_URL_INPUT:-${SMOKE_HOST%/}/cds-agent}"
 SMOKE_CDS_AGENT_SCREENSHOT="${SMOKE_CDS_AGENT_SCREENSHOT:-/tmp/cds-agent-workbench-visual.png}"
 SMOKE_CDS_AGENT_TEXT_DUMP="${SMOKE_CDS_AGENT_TEXT_DUMP:-/tmp/cds-agent-workbench-visual.txt}"
+SMOKE_CDS_AGENT_VISUAL_COVERAGE="${SMOKE_CDS_AGENT_VISUAL_COVERAGE:-/tmp/cds-agent-workbench-visual.coverage.json}"
 SMOKE_CDS_AGENT_ACCESS_TOKEN="${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}"
 SMOKE_CDS_AGENT_LOGIN_USERNAME="${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}"
 SMOKE_CDS_AGENT_LOGIN_PASSWORD="${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}"
@@ -131,6 +133,7 @@ const aiImpersonate = process.env.SMOKE_USER || 'admin';
 const authMode = process.env.SMOKE_CDS_AGENT_AUTH_MODE || 'jwt';
 const screenshot = process.env.SMOKE_CDS_AGENT_SCREENSHOT;
 const textDump = process.env.SMOKE_CDS_AGENT_TEXT_DUMP;
+const visualCoverage = process.env.SMOKE_CDS_AGENT_VISUAL_COVERAGE;
 const userDataDir = process.env.SMOKE_CDS_AGENT_CHROME_PROFILE;
 const port = Number(process.env.SMOKE_CDS_AGENT_CDP_PORT || '9223');
 const origin = new URL(url).origin;
@@ -440,6 +443,19 @@ async function main() {
       '候选 adapter 边界'
     ];
     const missing = required.filter((item) => !text.includes(item));
+    if (textDump) {
+      fs.writeFileSync(textDump, text);
+    }
+    if (visualCoverage) {
+      fs.writeFileSync(visualCoverage, JSON.stringify({
+        schemaVersion: 'cds-agent-workbench-visual-coverage/v1',
+        checkedAt: new Date().toISOString(),
+        url,
+        required,
+        missing,
+        assertionsPassed: missing.length === 0
+      }, null, 2));
+    }
     if (missing.length) {
       throw new Error(`Workbench missing expected text: ${missing.join(', ')}`);
     }
@@ -500,6 +516,12 @@ async function waitForWorkbench(send, cdp) {
       && text.includes('商业级')
       && text.includes('当前执行结论')
       && text.includes('重新部署')
+      && text.includes('部署判定')
+      && text.includes('命令性质')
+      && text.includes('Provider 调用')
+      && text.includes('不需要重新部署')
+      && text.includes('R1 dry-run')
+      && text.includes('不会触发真实 provider 调用')
       && text.includes('READINESS LEDGER')
       && text.includes('下一周期最小闭环')
       && text.includes('official-sdk-provider-closure')
@@ -536,6 +558,7 @@ CHROME_BIN_RESOLVED="$chrome_path" \
 SMOKE_CDS_AGENT_WORKBENCH_URL="$SMOKE_CDS_AGENT_WORKBENCH_URL" \
 SMOKE_CDS_AGENT_SCREENSHOT="$SMOKE_CDS_AGENT_SCREENSHOT" \
 SMOKE_CDS_AGENT_TEXT_DUMP="$SMOKE_CDS_AGENT_TEXT_DUMP" \
+SMOKE_CDS_AGENT_VISUAL_COVERAGE="$SMOKE_CDS_AGENT_VISUAL_COVERAGE" \
 SMOKE_CDS_AGENT_ACCESS_TOKEN="$SMOKE_CDS_AGENT_ACCESS_TOKEN" \
 SMOKE_CDS_AGENT_AUTH_USER_JSON="$auth_user_json" \
 SMOKE_CDS_AGENT_AUTH_MODE="$SMOKE_CDS_AGENT_AUTH_MODE" \
@@ -551,6 +574,8 @@ if [[ ! -s "$SMOKE_CDS_AGENT_SCREENSHOT" ]]; then
   smoke_fail "截图未生成: $SMOKE_CDS_AGENT_SCREENSHOT"
 fi
 printf 'Screenshot: %s\n' "$SMOKE_CDS_AGENT_SCREENSHOT"
+printf 'Text dump: %s\n' "$SMOKE_CDS_AGENT_TEXT_DUMP"
+printf 'Visual coverage: %s\n' "$SMOKE_CDS_AGENT_VISUAL_COVERAGE"
 smoke_ok "截图已保存"
 
 smoke_step "完成 V1 视觉验收"
