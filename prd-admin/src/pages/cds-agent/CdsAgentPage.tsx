@@ -705,7 +705,13 @@ export default function CdsAgentPage() {
       || profileCompatibilityBlockReason(activeSessionProfile, desiredRuntimeAdapterForProfile)
     : '';
   const activeRuntimePoolBlockReason = runtimePoolBlockReason(runtimeStatus);
-  const canUpdateActiveProfile = Boolean(activeProfile && profileDraft.apiKey.trim());
+  const canReuseActiveProfileSecret = Boolean(activeProfile?.hasApiKey && !profileDraft.apiKey.trim());
+  const canUpdateActiveProfile = Boolean(
+    activeProfile
+    && profileDraft.baseUrl.trim()
+    && profileDraft.model.trim()
+    && (profileDraft.apiKey.trim() || activeProfile.hasApiKey),
+  );
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason && !activeRuntimePoolBlockReason);
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason && !activeRuntimePoolBlockReason);
   const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
@@ -2500,14 +2506,15 @@ export default function CdsAgentPage() {
   }
 
   function validateProfileDraftBeforeSave(action: 'save' | 'update') {
-    if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
+    const canRetainExistingSecret = action === 'update' && Boolean(activeProfile?.hasApiKey) && !profileDraft.apiKey.trim();
+    if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || (!profileDraft.apiKey.trim() && !canRetainExistingSecret)) {
       return action === 'update'
-        ? '更新当前配置需要重新输入 baseUrl、model 和 provider secret'
+        ? '更新当前配置需要 baseUrl、model；provider secret 可留空以复用已加密保存的值'
         : 'baseUrl、model 和 provider secret 都必填';
     }
 
     const template = matchingRuntimeProfileTemplate();
-    if (template?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && !profileDraft.apiKey.trim().startsWith('sk-ant-')) {
+    if (template?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && !canRetainExistingSecret && !profileDraft.apiKey.trim().startsWith('sk-ant-')) {
       return 'Anthropic 官方模板只接受 sk-ant- 开头的 provider secret；cc-switch/DeepSeek 自定义 key 请使用自定义 profile，不要套用原生 Anthropic 官方模板。';
     }
 
@@ -2633,8 +2640,9 @@ export default function CdsAgentPage() {
     setBusy(true);
     let candidateId = '';
     let promoted = false;
+    const retainsExistingSecret = activeProfile.hasApiKey && !profileDraft.apiKey.trim();
     try {
-      if (profileDraft.isDefault) {
+      if (profileDraft.isDefault && !retainsExistingSecret) {
         const template = matchingRuntimeProfileTemplate();
         if (template) {
           const promotionRes = await createDefaultInfraAgentRuntimeProfileFromTemplateAfterTest(template.id, {
@@ -2719,7 +2727,12 @@ export default function CdsAgentPage() {
       setDraft((prev) => ({ ...prev, runtimeProfileId: res.data.item.id }));
       setProfileDraft((prev) => ({ ...prev, apiKey: '' }));
       setProfileTest('');
-      toast.success('模型配置已更新', '这是一条系统级长期配置，后续会话会继续复用');
+      toast.success(
+        '模型配置已更新',
+        retainsExistingSecret
+          ? '已复用当前加密 provider secret；请点击测试模型确认上游可用'
+          : '这是一条系统级长期配置，后续会话会继续复用',
+      );
     } catch (err) {
       toast.error('更新模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 provider secret');
     } finally {
@@ -3533,6 +3546,11 @@ export default function CdsAgentPage() {
                     placeholder={profileDraft.protocol === 'anthropic' && profileDraft.baseUrl.includes('api.anthropic.com') ? 'Anthropic provider secret: sk-ant-...' : 'provider secret'}
                     type="password"
                   />
+                  {canReuseActiveProfileSecret && (
+                    <div className="text-xs leading-relaxed text-emerald-200/65">
+                      留空会复用当前配置已加密保存的 provider secret；适合把 OpenRouter/DeepSeek profile 纠偏为 Claude Code provider-switch 形态。
+                    </div>
+                  )}
                   {matchingRuntimeProfileTemplate()?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && (
                     <div className="text-xs leading-relaxed text-white/42">
                       这是原生 Anthropic 官方模板，只接受 `sk-ant-` provider secret。cc-switch/DeepSeek 自定义 key 可以用 `claude-sdk + anthropic protocol + 兼容 baseUrl`，不要套用此模板。
@@ -3621,7 +3639,7 @@ export default function CdsAgentPage() {
                     {busy ? <MapSpinner size={13} /> : <RefreshCw size={13} />} 更新当前配置
                   </button>
                   <div className="text-xs leading-relaxed text-white/42">
-                    更新会覆盖当前选中的系统级配置。provider secret 只保存加密值，不会回显；重新保存后长期复用。
+                    更新会覆盖当前选中的系统级配置。provider secret 只保存加密值，不会回显；留空更新会保留当前密文，重新输入则替换。
                   </div>
                 </div>
               </details>

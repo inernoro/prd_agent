@@ -44,6 +44,8 @@
 - 已推进：CDS-managed official SDK runtime transport 已有最小闭环；CDS 可从 shared-service branch service 发现 `claude-agent-sdk` runtime，并投递 `/v1/agent/run` 后写回 `runtime_init/text_delta/done`。
 - 已完成：R0.7 CDS-managed runtime live evidence。真实 CDS shared-service runtime 已有 running official SDK runtime。
 - 已修正：one-cycle/R0/readiness 事实源不再把 `ANTHROPIC_API_KEY` 缺失误判为 R0 runtime capacity failure；该状态归入 R1。
+- 已修正：R1 不再要求用户重新提供 provider secret；profile 更新留空 `apiKey` 时复用 CDS 已加密保存的 secret，前端更新按钮也允许这种纠偏路径。
+- 已确认：DeepSeek 官方 Anthropic-compatible base URL 是 `https://api.deepseek.com/anthropic`；当前远端默认 profile 仍是 raw OpenRouter Chat Completions endpoint，因此不能直接作为 Claude Code SDK 上游。
 - 当前未解决：R1 Anthropic/Claude-compatible provider profile 和 S1/S2/S3 provider one-cycle 仍未完成；当前目标保持 `not_complete`。
 
 ## 执行时间线

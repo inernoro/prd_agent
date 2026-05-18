@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-19 00:33 Asia/Shanghai
+> **更新时间**：2026-05-19 01:20 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R1 Claude Code provider-switch profile 纠偏。
 > **总状态**：目标未完成；R0/A0/N6/V1 dry-run 已通过，当前阻塞不是缺 Anthropic 原生认证，而是默认 OpenRouter/DeepSeek profile 需要按 Claude Code/cc-switch 方式登记为 Anthropic-compatible upstream。
@@ -9,15 +9,15 @@
 
 | 项 | 当前结论 |
 | --- | --- |
-| 总进度 | 约 70%；控制面/R0/视觉 dry-run 已打通，真实 provider cycle 未闭合 |
+| 总进度 | 约 72%；控制面/R0/视觉 dry-run 已打通，R1 provider-switch metadata/secret 复用修复已本地通过，待远端自更新和 provider 测试 |
 | 当前 gate | `R1` |
-| 当前 blocker | 默认 runtime profile 是 OpenRouter DeepSeek V4 Pro，但当前被记录为 raw `openai-compatible`；Claude Code 云端路径需要 `claude-sdk` runtime + `anthropic` protocol + cc-switch/DeepSeek Anthropic-compatible baseUrl |
-| 需要用户协助 | 暂不需要提供新 key。已有 DeepSeek/OpenRouter key 可以作为 provider secret；需要系统把它按 Claude Code provider-switch profile 保存，而不是要求 Anthropic 原生 `sk-ant` |
+| 当前 blocker | 远端默认 runtime profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / https://openrouter.ai/api/v1`；Claude Code 云端路径需要 `claude-sdk` runtime + `anthropic` protocol + DeepSeek/cc-switch Anthropic-compatible baseUrl |
+| 需要用户协助 | 当前没有必须由你提供的输入。已修复“更新 profile 必须重新输入 secret”的错误约束；下一步由 CDS 复用已加密 provider secret 进行 R1 纠偏测试 |
 | 不需要用户协助 | 不需要补 `CDS_REMOTE_HOST_*`、SSH 私钥、sidecar image 作为产品主路径 |
-| 本轮下一步 | 修正 runtime/profile 文案和校验：Claude SDK 路径允许 cc-switch/DeepSeek provider-switch，只在原生 `api.anthropic.com` 才要求 `sk-ant` |
-| 预计结束 | 本轮纠偏 35-55 分钟；之后用 DeepSeek/cc-switch profile 跑 provider-enabled one-cycle |
-| 是否该 redeploy preview | 否。当前 blocker 是 adapter/profile 事实源，不是普通页面/API bundle |
-| 当前权威证据 | `/tmp/cds-agent-cycle-20260519003122/cycle-summary.json`、`/tmp/cds-agent-goal-audit-current.json` |
+| 本轮下一步 | 提交并 CDS self-update；远端把默认 profile retarget 到 Anthropic-compatible endpoint 后运行 profile test、S1/S2/S3 provider smokes 和视觉复核 |
+| 预计结束 | 若现有 secret 对 DeepSeek Anthropic endpoint 或 cc-switch 可用，约 45-75 分钟闭合 R1/S1/S2/S3/V1；若 secret 只对 OpenRouter raw Chat Completions 可用，则真实阻塞会变成“需要一个可用的 Anthropic-compatible gateway/secret pair” |
+| 是否该 redeploy preview | 是。此次包含后端 profile update 行为和页面更新按钮逻辑，必须通过 CDS self-update 发布 |
+| 当前权威证据 | `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-commercial-readiness.sh`：R0/A0/V1 pass，R1 pending；本地相关测试 50/50、前端 tsc、sidecar 32/32 pass |
 
 下一条命令不代表必须使用 Anthropic 原生认证。`SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 这个历史变量名只适合原生 Claude smoke；DeepSeek/cc-switch 路径应使用 CDS-managed runtime profile/request override 下发 provider secret 和 baseUrl，不应把 key 明文写进聊天：
 

@@ -83,8 +83,9 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
                 "API key 不能为空");
         }
+        var resolvedApiKey = apiKey ?? string.Empty;
         var protocol = NormalizeProtocol(request.Protocol);
-        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, apiKey);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolvedApiKey);
 
         var now = DateTime.UtcNow;
         var item = new InfraAgentRuntimeProfile
@@ -94,7 +95,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             Protocol = protocol,
             BaseUrl = baseUrl,
             Model = model,
-            ApiKeyEncrypted = _protector.Protect(apiKey),
+            ApiKeyEncrypted = _protector.Protect(resolvedApiKey),
             ResourceCpuCores = NormalizeCpuCores(request.ResourceCpuCores),
             ResourceMemoryMb = NormalizeMemoryMb(request.ResourceMemoryMb),
             TimeoutSeconds = NormalizeTimeoutSeconds(request.TimeoutSeconds),
@@ -236,21 +237,40 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 InfraAgentRuntimeProfileErrorCodes.ModelRequired,
                 "模型名称不能为空");
         }
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var retainsExistingApiKey = string.IsNullOrWhiteSpace(apiKey);
+        if (retainsExistingApiKey)
         {
-            throw new InfraAgentRuntimeProfileException(
-                InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
-                "更新配置时必须重新输入 API key");
+            if (string.IsNullOrWhiteSpace(item.ApiKeyEncrypted))
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
+                    "当前配置没有可复用的 provider secret，请输入后再保存");
+            }
+            try
+            {
+                apiKey = _protector.Unprotect(item.ApiKeyEncrypted);
+            }
+            catch (CryptographicException)
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable,
+                    $"模型配置「{item.Name}」的 provider secret 无法解密，请重新输入后再保存。",
+                    StatusCodes.Status409Conflict);
+            }
         }
+        var resolvedApiKey = apiKey ?? string.Empty;
         var protocol = NormalizeProtocol(request.Protocol);
-        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, apiKey);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolvedApiKey);
 
         item.Name = name;
         item.Runtime = NormalizeRuntime(request.Runtime);
         item.Protocol = protocol;
         item.BaseUrl = baseUrl;
         item.Model = model;
-        item.ApiKeyEncrypted = _protector.Protect(apiKey);
+        if (!retainsExistingApiKey)
+        {
+            item.ApiKeyEncrypted = _protector.Protect(resolvedApiKey);
+        }
         item.ResourceCpuCores = NormalizeCpuCores(request.ResourceCpuCores);
         item.ResourceMemoryMb = NormalizeMemoryMb(request.ResourceMemoryMb);
         item.TimeoutSeconds = NormalizeTimeoutSeconds(request.TimeoutSeconds);
