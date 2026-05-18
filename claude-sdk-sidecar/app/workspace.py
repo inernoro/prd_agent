@@ -80,6 +80,9 @@ def workspace_error_diagnostics(ex: Exception, req: SidecarRunRequest) -> dict[s
     elif "not a git repository" in lower:
         code = "workspace_target_conflict"
         actions = ["remove or change the existing workspace directory before retrying"]
+    elif "no such file or directory" in lower:
+        code = "git_not_installed"
+        actions = ["install git in the CDS-managed runtime image/profile before running repository inspections"]
 
     return {
         "workspaceErrorCode": code,

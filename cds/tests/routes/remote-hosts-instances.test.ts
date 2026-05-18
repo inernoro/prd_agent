@@ -461,6 +461,8 @@ describe('Remote hosts project instances route', () => {
           expect(branch.worktreePath).toBe(path.dirname(process.cwd()));
           expect(profile.id).toBe('claude-agent-sdk-runtime');
           expect(profile.dockerImage).toBe('python:3.12-slim');
+          expect(profile.command).toContain('apt-get install');
+          expect(profile.command).toContain('git');
           expect(profile.command).toContain('pip install');
           expect(profile.env?.SIDECAR_AGENT_ADAPTER).toBe('claude-agent-sdk');
           expect(profile.env?.SIDECAR_PROVIDER_KEY_MODE).toBe('runtime-profile-or-env');

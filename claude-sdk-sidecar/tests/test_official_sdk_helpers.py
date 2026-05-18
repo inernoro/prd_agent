@@ -11,7 +11,7 @@ from app.schemas import SidecarRunRequest, SidecarToolDef  # noqa: E402
 from app.sdk_events import SdkEventAccumulator, handle_sdk_message, safe_result_metadata, usage_value  # noqa: E402
 from app.sdk_tooling import build_sdk_tooling  # noqa: E402
 from app.upstream import UpstreamResolution, provider_key_missing_event, resolve_upstream  # noqa: E402
-from app.workspace import git_auth_env, normalize_git_ref, parse_github_repository, workspace_slug  # noqa: E402
+from app.workspace import git_auth_env, normalize_git_ref, parse_github_repository, workspace_error_diagnostics, workspace_slug  # noqa: E402
 
 
 class FakeUsage:
@@ -306,6 +306,14 @@ class WorkspaceHelperTests(unittest.TestCase):
         self.assertEqual(env["GIT_CONFIG_COUNT"], "3")
         self.assertEqual(env["GIT_CONFIG_KEY_2"], "http.https://github.com/.extraheader")
         self.assertEqual(env["GIT_CONFIG_VALUE_2"], "AUTHORIZATION: bearer ghp-secret")
+
+    def test_missing_git_binary_has_actionable_workspace_error(self) -> None:
+        req = SidecarRunRequest(runId="workspace", gitRepository="inernoro/prd_agent", gitRef="main")
+
+        diagnostics = workspace_error_diagnostics(FileNotFoundError(2, "No such file or directory"), req)
+
+        self.assertEqual(diagnostics["workspaceErrorCode"], "git_not_installed")
+        self.assertIn("install git", diagnostics["nextActions"][0])
 
 
 if __name__ == "__main__":
