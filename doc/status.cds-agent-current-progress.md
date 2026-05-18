@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 20:32 Asia/Shanghai
+> **更新时间**：2026-05-18 20:41 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -92,7 +92,7 @@ CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file>
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
 | `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行；也可直接提供其他可 pull registry image |
-| `SIDECAR_LOCAL_REGISTRY_TAG` | pass | 候选 tag `ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84` 已本地创建；`pushAttempted=false` |
+| `SIDECAR_LOCAL_REGISTRY_TAG` | pass | 历史候选 tag 已本地创建；当前 HEAD 候选以 `scripts/refresh-cds-agent-r0-status.sh` 输出的 `candidateSidecarImage` 为准；`pushAttempted=false` |
 | `SIDECAR_MANUAL_CI_PUBLISH` | optional | `.github/workflows/cds-sidecar-image.yml` 是 GHCR 候选路径；如果已有可 pull image 可跳过 |
 | `SIDECAR_REGISTRY_MANIFEST` | not checked | 发布完成后先用只读 registry manifest 检查确认 image tag 可见，再 SSH 到 remote host |
 | `REMOTE_HOST_PULL` | blocked | 默认报告 `missing_config`；需要 remote host SSH 参数和 registry image，显式 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` |
@@ -144,7 +144,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | sidecar build context | `pass` | `/tmp/cds-agent-sidecar-image-preflight-current.json` |
 | sidecar local docker build | `build_pass` | `/tmp/cds-agent-sidecar-image-build-current.json` |
 | sidecar registry publish | `push_ready` | `/tmp/cds-agent-sidecar-image-publish-current.json` |
-| sidecar local registry tag | `tagPassed=true`、`pushAttempted=false` | `/tmp/cds-agent-sidecar-image-publish-current.json` |
+| sidecar local registry tag | `tagPassed=true`、`pushAttempted=false` | 历史本地 tag 通过；当前 HEAD 候选以 refresh 输出的 `candidateSidecarImage` 为准 |
 | sidecar registry manifest | `not checked` | `/tmp/cds-agent-sidecar-registry-image-current.json` |
 | remote host docker pull | `missing_config` | `/tmp/cds-agent-remote-sidecar-pull-current.json` |
 
@@ -408,7 +408,7 @@ workflowFileVisible=true
 workflowRun=none
 ```
 
-这表示 `.github/workflows/cds-sidecar-image.yml` 已存在于 `codex/cds-agent-workbench-ui` 分支，但 GitHub Actions workflow API 不能 dispatch/list 它。下一步要么把 workflow 暴露到 GitHub Actions 可索引分支后再发布，要么走 handoff 中的本机 GHCR push 替代路径；后者是外部 registry 写入，必须显式批准。
+这表示 `.github/workflows/cds-sidecar-image.yml` 已存在于 `codex/cds-agent-workbench-ui` 分支，但 GitHub Actions workflow API 不能 dispatch/list 它。它只是 GHCR 候选路径的问题，不是 R0 架构前提。当前最小下一步仍是提供任意目标 remote host 可 `docker pull` 的 `CDS_AGENT_SIDECAR_IMAGE`，以及 remote host 参数；如果选择 GHCR，再处理 workflow 索引或显式批准 registry push。
 
 生成安全 handoff 命令：
 

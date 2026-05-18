@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:32 Asia/Shanghai：
+截至 2026-05-18 20:41 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -22,7 +22,7 @@
 - 已解决：registry candidate tag 可由 git remote/commit 自动推导；进度面板下一步不再要求手填占位符。
 - 已解决：候选 GHCR tag 已在本地 Docker 中创建；仍未 push。
 - 已解决：GHCR 发布增加手动 GitHub Actions 入口，不再只能由本机 Codex push。
-- 已解决：GHCR 手动发布入口有只读 handoff，进度面板默认指向 handoff 而不是本机 push；handoff 使用当前 commit tag，避免旧本地候选 tag 混淆。
+- 已解决：GHCR 手动发布入口有只读 handoff；当明确选择 GHCR 候选路径时可用 handoff，默认 R0 下一步仍是补齐 pullable image 与 remote host 参数。
 - 已解决：sidecar image 发布后到 remote host SSH pull 前增加只读 registry manifest 验证门，减少远程排障面。
 - 已解决：R0 readiness 与 operator handoff 已消费 registry manifest / remote pull 报告，能显示它们是否匹配当前 `CDS_AGENT_SIDECAR_IMAGE`。
 - 已解决：R0 operator handoff 优先显示当前 HEAD 对应 GHCR image，旧 publish report candidate 不再覆盖当前发布目标。
@@ -31,6 +31,8 @@
 - 已确认：workflow 文件已存在于 `codex/cds-agent-workbench-ui`，但 GitHub Actions workflow API 仍不可 dispatch/list，状态为 `workflow_file_on_branch_not_indexed`。
 - 已校准：GHCR 降级为候选路径；R0 主输入是任意 remote host 可 `docker pull` 的 `CDS_AGENT_SIDECAR_IMAGE`。
 - 已校准：`doc/status.cds-agent-current-progress.md` 第一屏现在直接回答预计结束时间、总步骤、当前位置、需要用户协助项和关键文档。
+- 已校准：进度面板 `Exact Next Step` 在缺 remote host 和 image 时不再默认指向 GHCR publish handoff，而是先要求补齐 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数。
+- 已校准：R0 status refresh 的 `Next Command` 与进度面板同口径，不再把 GHCR publish 伪装成唯一下一步。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -76,6 +78,8 @@
 | 20:18 | 手动发布 workflow 是否存在/是否运行只能靠打开 GitHub 页面；`gh api` 当前返回 404 时没有结构化沉淀 | 新增 `scripts/check-cds-agent-sidecar-workflow.sh`，并由 refresh 脚本默认 dry-run 调用 | `/tmp/cds-agent-sidecar-workflow-current.json` | <1s dry-run；显式检查约 1s | workflow 404/API 失败会进入报告，不再散落在终端 |
 | 20:22 | workflow runs API 返回 404，但无法区分文件未推送还是 Actions 未索引 | workflow 检查脚本追加 contents API fallback | `/tmp/cds-agent-sidecar-workflow-current.json` | 约 1s | `workflowFileVisible=true`、`workflowStatus=workflow_file_on_branch_not_indexed` |
 | 20:32 | 用户指出 GHCR 意义不清且项目级进度不清楚 | GHCR 从主路径降级为候选；进度文档第一屏增加 8 步、ETA、当前位置、需要用户协助项 | `doc/status.cds-agent-current-progress.md`、publish handoff | 本地编辑 | R0 主输入回到 `CDS_AGENT_SIDECAR_IMAGE=<任意可 pull image>` |
+| 20:38 | 进度面板虽然文案承认 GHCR 只是候选，但 `Exact Next Step` 仍把 publish handoff 放在缺 remote host/image 之前 | 调整 `scripts/print-cds-agent-current-progress.sh` 的下一步选择顺序：缺 R0 外部输入时先要求补 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数 | `/tmp/cds-agent-current-progress-current.md` | <1s | 面板下一步不再误导到 GHCR |
+| 20:39 | R0 status refresh 底部 `Next Command` 仍固定指向 publish handoff，和进度面板冲突 | 调整 `scripts/refresh-cds-agent-r0-status.sh`：`userActionRequired=true` 时直接输出缺失输入刷新命令 | `/tmp/cds-agent-r0-status-refresh-current.md` | <1s | refresh 报告与 progress board 同口径 |
 
 ## 本轮暴露的问题
 
@@ -581,12 +585,12 @@
 
 - 新增 `scripts/print-cds-agent-sidecar-publish-handoff.sh`。
 - 输出 GitHub Actions URL、当前 commit image tag、workflow image、local push image 和 CLI 等价命令。
-- `scripts/print-cds-agent-current-progress.sh` 在 `push_ready` 时默认提示运行 handoff，不再默认提示本机 push。
+- `scripts/print-cds-agent-current-progress.sh` 当时在 `push_ready` 时默认提示运行 handoff，不再默认提示本机 push；后续 20:38 已再次校准为缺 R0 外部输入时优先提示补齐 image/remote host。
 
 证据：
 
 - `/tmp/cds-agent-sidecar-publish-handoff-current.md` 已生成。
-- 当前进度面板的 `Exact Next Step` 指向 `scripts/print-cds-agent-sidecar-publish-handoff.sh`。
+- 当时进度面板的 `Exact Next Step` 指向 `scripts/print-cds-agent-sidecar-publish-handoff.sh`；当前已改为先提供 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数。
 
 优化：外部发布入口现在从“命令散落在聊天里”收敛成一个只读 handoff 文件。
 
