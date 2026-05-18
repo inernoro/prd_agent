@@ -178,6 +178,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const pendingByParentRef = useRef<Map<string, EmergenceNodeType[]>>(new Map());
   // 每个父节点的逐个渐显定时器
   const revealTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // SSE 已结束但缓冲节点尚未逐个渐显完毕的父节点：此期间该父仍视为"流式中"，
+  // 阻止对同父的重复探索 / 涌现 / 整理交错，避免乱序落位
+  const revealingRef = useRef<Set<string>>(new Set());
   // 刚到达节点的入场动画标记
   const arrivedIdsRef = useRef<Set<string>>(new Set());
   // 灵感对话框
@@ -224,7 +227,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     const has = (id: string) => byId.has(id);
     const positions = positionsRef.current;
     const arrivedIds = arrivedIdsRef.current;
-    const activeSet = new Set(activeExploresRef.current.keys());
+    // 探索进行中 + 缓冲渐显中 的父节点都保持"探索态"脉冲，直到子节点全部出完
+    const activeSet = new Set([...activeExploresRef.current.keys(), ...revealingRef.current]);
 
     const flowNodes: Node<EmergenceNodeData>[] = all.map(n => {
       // 后端持久化坐标优先；否则用位置权威；都没有则锚点下方兜底（不污染权威）
@@ -410,6 +414,42 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     slotsRef.current.delete(parentId);
     liveTextRef.current.delete(parentId);
     pendingByParentRef.current.delete(parentId);
+    revealingRef.current.delete(parentId);
+    bumpExplore(); // 解锁后刷新 stop 按钮 / 探索态 / 整理·涌现可用性
+  }, [bumpExplore]);
+
+  // 中止/出错兜底：把已到达（后端已持久化）但尚未渐显的缓冲节点一次性落位，
+  // 而不是丢弃——否则这些节点要等整树重载才出现（Bugbot medium）
+  const flushPending = useCallback((parentId: string) => {
+    const buf = pendingByParentRef.current.get(parentId);
+    if (!buf || buf.length === 0) { pendingByParentRef.current.delete(parentId); return; }
+    const existing = new Set(backendNodesRef.current.map(n => n.id));
+    const positions = positionsRef.current;
+    const slot = slotsRef.current.get(parentId);
+    let baseX: number, y: number, startFilled: number;
+    if (slot) {
+      baseX = slot.baseX; y = slot.y; startFilled = slot.filled;
+    } else {
+      const has = (id: string) => backendNodesRef.current.some(n => n.id === id);
+      const anchorId = buf[0] ? anchorParentId(buf[0], has) : null;
+      const ap = (anchorId ? positions.get(anchorId) : undefined)
+        ?? positions.get(parentId) ?? { x: 0, y: 0 };
+      baseX = ap.x - ((Math.max(buf.length, 1) - 1) / 2) * LEAF_WIDTH;
+      y = ap.y + DEPTH_STEP;
+      startFilled = 0;
+    }
+    const added: EmergenceNodeType[] = [];
+    for (const node of buf) {
+      if (existing.has(node.id)) continue;
+      positions.set(node.id, { x: baseX + (startFilled + added.length) * LEAF_WIDTH, y });
+      added.push(node);
+    }
+    if (added.length > 0) {
+      backendNodesRef.current = [...backendNodesRef.current, ...added];
+      if (slot) slot.filled = startFilled + added.length;
+      setNodeCount(c => c + added.length);
+    }
+    pendingByParentRef.current.delete(parentId);
   }, []);
 
   // 逐个渐显：从缓冲弹一个 → 落到预留 band → 1s 后再下一个
@@ -445,10 +485,13 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     if (!slot) return;
     slot.generating = false;            // 临时面板立即消失
     liveTextRef.current.delete(parentId);
+    // 渐显未完成前父节点保持锁定（阻止同父重复探索 / 涌现 / 整理交错）
+    revealingRef.current.add(parentId);
+    bumpExplore();
     buildFlow();
     const t = setTimeout(() => revealNext(parentId), REVEAL_DELAY_MS);
     revealTimersRef.current.set(parentId, t);
-  }, [buildFlow, revealNext]);
+  }, [buildFlow, revealNext, bumpExplore]);
 
   // ── 涌现 SSE ──
   const {
@@ -479,7 +522,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       },
       onError: (msg) => {
         const pid = emergeAnchorRef.current;
-        if (pid) { cleanupParent(pid); buildFlow(); }
+        // 已到达的持久化节点先落位再收尾，避免丢节点（Bugbot medium）
+        if (pid) { flushPending(pid); cleanupParent(pid); buildFlow(); }
         toast.error('涌现失败', msg);
       },
     });
@@ -517,6 +561,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const fireExplore = useCallback(async (nodeId: string, userPrompt?: string) => {
     if (isEmerging) return;
     if (activeExploresRef.current.has(nodeId)) return;
+    if (revealingRef.current.has(nodeId)) return; // 该父渐显未完成，禁止重复探索导致交错
 
     const controller = new AbortController();
     const state: ActiveExplore = {
@@ -586,19 +631,23 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     abortEmerge();
     for (const t of revealTimersRef.current.values()) clearTimeout(t);
     revealTimersRef.current.clear();
+    // 丢弃前先把已到达的持久化节点落位（Bugbot medium）：停止 ≠ 删除已生成的节点
+    for (const key of [...pendingByParentRef.current.keys()]) flushPending(key);
     pendingByParentRef.current.clear();
+    revealingRef.current.clear();
     slotsRef.current.clear();
     liveTextRef.current.clear();
     emergeAnchorRef.current = null;
     bumpExplore();
     buildFlow();
-  }, [abortEmerge, bumpExplore, buildFlow]);
+  }, [abortEmerge, bumpExplore, buildFlow, flushPending]);
 
   const handleExplore = useCallback((nodeId: string) => { fireExplore(nodeId); }, [fireExplore]);
 
   const handleInspire = useCallback((nodeId: string) => {
     if (isEmerging) return;
     if (activeExploresRef.current.has(nodeId)) return;
+    if (revealingRef.current.has(nodeId)) return;
     setInspireTargetId(nodeId);
   }, [isEmerging]);
 
@@ -625,7 +674,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   useEffect(() => { handleStatusChangeRef.current = handleStatusChange; }, [handleStatusChange]);
 
   const handleEmerge = useCallback((fantasy: boolean) => {
-    if (activeExploresRef.current.size > 0 || isEmerging) return;
+    if (activeExploresRef.current.size > 0 || isEmerging || revealingRef.current.size > 0) return;
     setEmergeThinking('');
     const anchorId = backendNodesRef.current[0]?.id ?? null;
     emergeAnchorRef.current = anchorId;
@@ -640,12 +689,14 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
   // 手动整理：唯一会移动既有节点的入口，平滑滑行
   const handleTidy = useCallback(() => {
+    // 流式 / 渐显进行中禁止整理：整理会全量重排，与渐显落位冲突
+    if (activeExploresRef.current.size > 0 || isEmerging || revealingRef.current.size > 0) return;
     positionsRef.current = computeFullLayout(backendNodesRef.current);
     setTidying(true);
     buildFlow();
     setTimeout(() => reactFlow.fitView({ padding: 0.25, duration: 500 }), 30);
     setTimeout(() => setTidying(false), 700);
-  }, [buildFlow, reactFlow]);
+  }, [buildFlow, reactFlow, isEmerging]);
 
   // 拖动后把位置写回权威，避免下次 buildFlow 弹回
   const handleNodeDragStop = useCallback((_e: unknown, node: Node) => {
@@ -678,7 +729,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   void exploreTick; // 订阅 tick，stop 按钮 / 探索态随之刷新
   const exploreCount = activeExploresRef.current.size;
   const isExploring = exploreCount > 0;
-  const isStreaming = isExploring || isEmerging;
+  // 渐显未完成也算"流式中"：停止按钮保持、涌现/整理保持禁用，直到子节点全部出完
+  const isStreaming = isExploring || isEmerging || revealingRef.current.size > 0;
 
   const guideContent: Record<string, { title: string; desc: string; icon: typeof Zap }> = {
     seed: { title: '点击种子节点的「探索」按钮', desc: 'AI 会基于种子内容，在系统内寻找可实现的子功能', icon: MousePointerClick },
