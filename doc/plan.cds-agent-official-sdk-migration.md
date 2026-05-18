@@ -150,10 +150,17 @@
 
 ## 8. 当前状态
 
-截至 2026-05-17：
+本节是迁移时间线，包含若干 2026-05-17 的历史诊断。当前 2026-05-18 的权威结论是：
+R0 runtime pool、A0 official SDK adapter boundary、V1 authenticated visual、N6 非代码兼容均已有通过证据；
+R1/S1/S2/S3 仍未完成，真实 blocker 是默认 runtime profile 仍为
+`OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，不能作为
+`claude-agent-sdk` 的默认 Anthropic/Claude-compatible profile。不要再把历史
+`instanceCount=0` / `empty_instances` 记录当作当前主阻塞。
 
-- UI 工作台已完成第一轮视觉升级，但它不是 runtime 完成的证明。
-- 当前 `claude-sdk` runtime 是官方 `anthropic` Python SDK + 自研 sidecar loop，不是完整官方 Claude Agent SDK adapter。
+截至 2026-05-18：
+
+- UI 工作台已完成第一轮视觉升级，但它不是 runtime 完成的证明；当前 V1 只证明页面可观察性口径存在，不能替代 provider run。
+- 默认代码审查路径已从历史 `claude-sdk`/legacy sidecar loop 校准为官方 `claude-agent-sdk` adapter；legacy loop 只允许显式 fallback。
 - P1.1 已开始落代码：新增 `IInfraAgentRuntimeAdapter`，把现有 sidecar 包成 `SidecarRuntimeAdapter`，`InfraAgentSessionService` 改为通过 runtime adapter 消费事件。
 - P1.4 已有第一步：session 写入 `CurrentRuntimeRunId`，Stop 时会通过 adapter 调 sidecar `/v1/agent/cancel/{runId}` 做 best-effort 取消。
 - P1.6 已接入第一版页面调试面板：`/cds-agent` 展示 runtime adapter、run id、runtime instance、事件 source、cancel 状态；事件标题也显示 adapter/source；无 active session 时也显示空态原因。
