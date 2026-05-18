@@ -2417,9 +2417,26 @@ export default function CdsAgentPage() {
     )) ?? null;
   }
 
-  async function saveProfile() {
+  function validateProfileDraftBeforeSave(action: 'save' | 'update') {
     if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
-      toast.warning('模型配置不完整', 'baseUrl、model 和 API key 都必填');
+      return action === 'update'
+        ? '更新当前配置需要重新输入 baseUrl、model 和 API key'
+        : 'baseUrl、model 和 API key 都必填';
+    }
+
+    const template = matchingRuntimeProfileTemplate();
+    if (template?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && !profileDraft.apiKey.trim().startsWith('sk-ant-')) {
+      return 'Anthropic 官方模板只接受 sk-ant- 开头的 API key；不要填写 OpenRouter、OpenAI-compatible key、MAP/CDS 管理 key 或普通密码。';
+    }
+
+    return '';
+  }
+
+  async function saveProfile() {
+    const profileDraftError = validateProfileDraftBeforeSave('save');
+    if (profileDraftError) {
+      setProfileTest(profileDraftError);
+      toast.warning(profileDraftError.includes('sk-ant-') ? 'API key 不匹配' : '模型配置不完整', profileDraftError);
       return;
     }
     setBusy(true);
@@ -2525,8 +2542,10 @@ export default function CdsAgentPage() {
       toast.warning('没有可更新的模型配置');
       return;
     }
-    if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
-      toast.warning('模型配置不完整', '更新当前配置需要重新输入 baseUrl、model 和 API key');
+    const profileDraftError = validateProfileDraftBeforeSave('update');
+    if (profileDraftError) {
+      setProfileTest(profileDraftError);
+      toast.warning(profileDraftError.includes('sk-ant-') ? 'API key 不匹配' : '模型配置不完整', profileDraftError);
       return;
     }
     setBusy(true);
@@ -3428,9 +3447,14 @@ export default function CdsAgentPage() {
                     onChange={(e) => setProfileDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
                     className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
-                    placeholder="API key"
+                    placeholder={profileDraft.protocol === 'anthropic' ? 'Anthropic API key: sk-ant-...' : 'API key'}
                     type="password"
                   />
+                  {matchingRuntimeProfileTemplate()?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && (
+                    <div className="text-xs leading-relaxed text-white/42">
+                      官方 claude-agent-sdk 运行时只接受 Anthropic 官方 `sk-ant-` key；OpenRouter、OpenAI-compatible key、MAP/CDS 管理 key 和普通密码不会通过 R1。
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       value={profileDraft.resourceCpuCores}
