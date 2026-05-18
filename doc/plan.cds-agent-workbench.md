@@ -1,6 +1,6 @@
 # CDS Agent 工作台完全可用路线 · 计划
 
-> **版本**：v2.2 | **日期**：2026-05-17 | **状态**：MVP 已跑通，官方 SDK adapter 迁移和商业级门禁已重新标注
+> **版本**：v2.3 | **日期**：2026-05-18 | **状态**：MVP 已跑通，官方 SDK adapter 迁移和商业级门禁已重新标注；执行进度以 `executionPanel` 为事实源
 
 ## 1. 目标
 
@@ -89,6 +89,15 @@
 ## 3.2 下一周期最小开发计划
 
 下一周期只关闭“上手就能真实审查代码”的硬门禁，不扩展新功能。
+
+进度展示必须以 `/api/infra-agent-sessions/runtime-status` 返回的 `diagnostics.executionPanel` 为事实源，而不是聊天记录或人工记忆。页面顶部 `当前执行面板` 必须展示：
+
+- `stepIndex/stepTotal`：当前执行到第几项。
+- `passedSteps/pendingSteps`：已完成和未完成数量。
+- `currentStep`：当前应该处理的 N1-N6 项。
+- `timeline`：本周期完整任务列表。
+- `deploymentAdvice`：是否需要部署；`blocked_r1`、默认 profile 不兼容、provider smoke 未开启时不得建议重复部署。
+- `nextCommand`：当前最窄下一条命令。
 
 | 顺序 | 任务 | 完成证据 |
 | --- | --- | --- |
