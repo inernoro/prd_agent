@@ -114,6 +114,13 @@ fi
 if [[ "$status" == "blocked_r1" ]]; then
   assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.suggestedCommand"
 fi
+if [[ "$(jq -r '.nextCyclePlan | type' "$json_index")" == "object" ]]; then
+  assert_eq "$(jq -r '.nextCyclePlan.cycle // ""' "$json_index")" "official-sdk-provider-closure" "nextCyclePlan.cycle"
+  assert_nonempty "$(jq -r '.nextCyclePlan.state // ""' "$json_index")" "nextCyclePlan.state"
+  assert_eq "$(jq -r '[.nextCyclePlan.items[]? | select(.code == "N1")] | length' "$json_index")" "1" "nextCyclePlan.N1"
+  assert_eq "$(jq -r '[.nextCyclePlan.items[]? | select(.code == "N6")] | length' "$json_index")" "1" "nextCyclePlan.N6"
+  assert_contains "$(jq -r '.nextCyclePlan.stopConditions[]?' "$json_index")" "N1-N5" "nextCyclePlan.stopConditions"
+fi
 
 md_text=$(cat "$md_index")
 assert_contains "$md_text" "Remote CDS branch" "evidence-index.md"
@@ -123,6 +130,9 @@ assert_contains "$md_text" "Missing-key guard: \`api_key_required\`" "evidence-i
 assert_contains "$md_text" "Test-before-promote" "evidence-index.md"
 if [[ "$(jq -r '.r1Repair.suggestedRepairCommand // ""' "$json_index")" != "" ]]; then
   assert_contains "$md_text" "Repair-only command" "evidence-index.md"
+fi
+if [[ "$(jq -r '.nextCyclePlan | type' "$json_index")" == "object" ]]; then
+  assert_contains "$md_text" "Next Cycle Plan" "evidence-index.md"
 fi
 assert_contains "$md_text" "do not self update" "evidence-index.md"
 

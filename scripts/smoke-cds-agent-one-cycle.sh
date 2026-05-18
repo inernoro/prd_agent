@@ -195,6 +195,7 @@ finish_cycle() {
   local readiness_pending_json="[]"
   local readiness_pending_count=0
   local readiness_execution_panel="null"
+  local readiness_next_cycle_plan="null"
   local r1_status="missing"
   local s1_status="missing"
   local controls_status="missing"
@@ -249,6 +250,7 @@ finish_cycle() {
     readiness_pending_json=$(jq -c '.pending // []' "$SMOKE_CDS_AGENT_READINESS_REPORT")
     readiness_pending_count=$(jq -r '.pending // [] | length' "$SMOKE_CDS_AGENT_READINESS_REPORT")
     readiness_execution_panel=$(jq -c '.executionPanel // null' "$SMOKE_CDS_AGENT_READINESS_REPORT")
+    readiness_next_cycle_plan=$(jq -c '.nextCyclePlan // null' "$SMOKE_CDS_AGENT_READINESS_REPORT")
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_DOCTOR_REPORT" ]]; then
@@ -617,6 +619,7 @@ finish_cycle() {
     --argjson commercialComplete "$commercial_complete" \
     --argjson readinessPending "$readiness_pending_json" \
     --argjson readinessExecutionPanel "$readiness_execution_panel" \
+    --argjson readinessNextCyclePlan "$readiness_next_cycle_plan" \
     --argjson passed "$passed_json" \
     --argjson skipped "$skipped_json" \
     --argjson failed "$failed_json" \
@@ -785,6 +788,7 @@ finish_cycle() {
         gatesNotPass: $gatesNotPass
       },
       backendExecutionPanel: $readinessExecutionPanel,
+      nextCyclePlan: $readinessNextCyclePlan,
       steps: {
         passed: $passed,
         skipped: $skipped,

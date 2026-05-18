@@ -41,6 +41,7 @@ gate_provider_status="unknown"
 gate_v1_status="unknown"
 page_code="not_checked"
 execution_panel="null"
+next_cycle_plan="null"
 profile_reason_code=""
 profile_reason=""
 commercial_reason_code=""
@@ -90,6 +91,7 @@ write_report() {
     --argjson profileHasKey "${profile_has_key:-false}" \
     --argjson profileCompatible "${profile_compatible:-false}" \
     --argjson executionPanel "${execution_panel:-null}" \
+    --argjson nextCyclePlan "${next_cycle_plan:-null}" \
     --argjson pending "$pending_json" \
     --argjson elapsedSeconds "$elapsed" \
     '{
@@ -130,6 +132,7 @@ write_report() {
         V1: $gateV1
       },
       executionPanel: $executionPanel,
+      nextCyclePlan: $nextCyclePlan,
       pending: $pending
     }' > "$SMOKE_CDS_AGENT_READINESS_REPORT"
   printf 'Readiness report: %s\n' "$SMOKE_CDS_AGENT_READINESS_REPORT"

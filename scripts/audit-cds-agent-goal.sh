@@ -342,6 +342,7 @@ cycle_git_commit_short=""
 cycle_git_status="missing"
 cycle_git_diff_json='[]'
 cycle_git_runtime_diff_json='[]'
+next_cycle_plan_json='null'
 r1_report=""
 r1_status="missing"
 r1_details_json='null'
@@ -397,6 +398,7 @@ if [[ -f "$cycle_summary" ]]; then
   gate_n6=$(jq -r '.commercialGates.N6.status // "'"$n6_status"'"' "$cycle_summary")
   cycle_total_seconds=$(jq -r '.timing.totalSeconds // 0' "$cycle_summary")
   cycle_slowest=$(jq -c '.timing.slowest // []' "$cycle_summary")
+  next_cycle_plan_json=$(jq -c '.nextCyclePlan // null' "$cycle_summary")
   cycle_git_branch=$(jq -r '.git.branch // ""' "$cycle_summary")
   cycle_git_commit=$(jq -r '.git.commit // ""' "$cycle_summary")
   cycle_git_commit_short=$(jq -r '.git.commitShort // ""' "$cycle_summary")
@@ -704,6 +706,7 @@ audit_json=$(
     --argjson cycleGitDiffPaths "$cycle_git_diff_json" \
     --argjson cycleGitRuntimeDiffPaths "$cycle_git_runtime_diff_json" \
     --argjson cycleSlowest "$cycle_slowest" \
+    --argjson nextCyclePlan "$next_cycle_plan_json" \
     --argjson localTiming "$timing_json" \
     --argjson localSlowest "$timing_slowest_json" \
     --argjson localTotalSeconds "$timing_total_seconds" \
@@ -843,6 +846,7 @@ audit_json=$(
         V1: $gateV1,
         N6: $gateN6
       },
+      nextCyclePlan: $nextCyclePlan,
       missingOrUnproved: $missing,
       executionPanel: {
         status: $cycleStatus,
@@ -951,6 +955,12 @@ if [[ "$s1_details_json" != "null" || "$controls_details_json" != "null" ]]; the
 fi
 printf 'Deploy/build advice: %s\n' "$deployment_advice"
 printf 'Next command: %s\n' "$next_command"
+if [[ "$next_cycle_plan_json" != "null" ]]; then
+  printf 'Next cycle plan: %s state=%s items=%s\n' \
+    "$(jq -r '.cycle // "unknown"' <<< "$next_cycle_plan_json")" \
+    "$(jq -r '.state // "unknown"' <<< "$next_cycle_plan_json")" \
+    "$(jq -r '[.items[]?.code] | join(",")' <<< "$next_cycle_plan_json")"
+fi
 printf 'Gates: R0=%s A0=%s R1=%s S1=%s S2/S3=%s V1=%s N6=%s\n' \
   "$gate_r0" "$gate_a0" "$gate_r1" "$gate_s1" "$gate_s2s3" "$gate_v1" "$gate_n6"
 printf 'Local guardrail time: %ss\n' "$timing_total_seconds"

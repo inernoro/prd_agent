@@ -122,6 +122,7 @@ jq -n \
       suggestedCommand: ($s.r1.details.suggestedCommand // $s.r1.suggestedCommand // $s.nextCommand // "")
     },
     executionPanel: ($s.executionPanel // null),
+    nextCyclePlan: ($s.nextCyclePlan // null),
     gates: ($s.commercialGates // {}),
     gatesNotPass: ($s.commercialGatesNotPass // []),
     timing: {
@@ -197,6 +198,12 @@ jq -r \
   "- Test-before-promote: backend creates a candidate Anthropic profile, tests upstream, then promotes only on success.\n" +
   (if (.r1Repair.suggestedRepairCommand // "") != "" then "- Repair-only command: `" + (.r1Repair.suggestedRepairCommand // "") + "`\n" else "" end) +
   "- Rerun command: `" + (.r1Repair.suggestedCommand // .nextCommand // "") + "`\n\n" +
+  (if (.nextCyclePlan // null) != null then
+    "## Next Cycle Plan\n\n" +
+    "- Cycle: `" + (.nextCyclePlan.cycle // "unknown") + "`\n" +
+    "- State: `" + (.nextCyclePlan.state // "unknown") + "`\n" +
+    ((.nextCyclePlan.items // []) | map("- `" + (.code // "") + "` " + (.status // "") + (if (.blockedBy // "") != "" then " blockedBy=`" + .blockedBy + "`" else "" end) + " — " + (.evidence // .title // "")) | join("\n")) + "\n\n"
+  else "" end) +
   "## Slowest Steps\n\n" +
   ((.timing.slowest // []) | map("- [" + (.phase // "") + "] " + (.name // "") + " — " + ((.durationSeconds // 0)|tostring) + "s — " + (.status // "")) | join("\n")) + "\n\n" +
   "## Key Artifacts\n\n" +
