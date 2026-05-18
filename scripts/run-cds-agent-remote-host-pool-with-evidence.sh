@@ -26,6 +26,7 @@ step_names=""
 step_statuses=""
 step_seconds=""
 step_logs=""
+step_exit_codes=""
 
 append_json_string() {
   local current="$1"
@@ -70,6 +71,7 @@ run_capture() {
   step_statuses=$(append_json_string "$step_statuses" "$status")
   step_seconds=$(append_json_number "$step_seconds" "$duration")
   step_logs=$(append_json_string "$step_logs" "$log")
+  step_exit_codes=$(append_json_number "$step_exit_codes" "$rc")
   return 0
 }
 
@@ -91,11 +93,22 @@ run_capture "pre runtime pool evidence" "$OUT_DIR/pre-evidence.log" \
       CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \
       bash "$ROOT_DIR/scripts/collect-cds-agent-runtime-pool-evidence.sh"
 
-run_capture "remote host pool preparation" "$prepare_log" \
-  env CDS_AGENT_REMOTE_HOST_POOL_REPORT="$prepare_report" \
-      bash "$ROOT_DIR/scripts/prepare-cds-agent-remote-host-pool.sh"
+pre_branch_contaminated=0
+if [[ -s "$pre_dir/summary.json" ]]; then
+  pre_branch_contaminated=$(
+    jq -r '[.runtimePoolBlockers[]? | select(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")] | length' "$pre_dir/summary.json" 2>/dev/null || printf '0'
+  )
+fi
 
-if [[ "$APPLY" == "1" ]]; then
+if [[ "$APPLY" == "1" && "$pre_branch_contaminated" != "0" ]]; then
+  printf 'blocked remote host pool preparation: branch isolation is still contaminated; clean branch-local sidecar residuals first\n'
+else
+  run_capture "remote host pool preparation" "$prepare_log" \
+    env CDS_AGENT_REMOTE_HOST_POOL_REPORT="$prepare_report" \
+        bash "$ROOT_DIR/scripts/prepare-cds-agent-remote-host-pool.sh"
+fi
+
+if [[ "$APPLY" == "1" && "$pre_branch_contaminated" == "0" ]]; then
   run_capture "post runtime pool evidence" "$OUT_DIR/post-evidence.log" \
     env CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR="$post_dir" \
         CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \
@@ -122,6 +135,7 @@ jq -n \
   --argjson statuses "[$step_statuses]" \
   --argjson seconds "[$step_seconds]" \
   --argjson logs "[$step_logs]" \
+  --argjson exitCodes "[$step_exit_codes]" \
   --argjson prepare "$prepare_json" \
   --argjson pre "$pre_summary" \
   --argjson post "$post_summary" \
@@ -134,6 +148,7 @@ jq -n \
       name: $names[.],
       status: $statuses[.],
       durationSeconds: $seconds[.],
+      exitCode: $exitCodes[.],
       log: $logs[.]
     }],
     totalSeconds: ($seconds | add // 0),
@@ -144,7 +159,54 @@ jq -n \
     afterEnabledRemoteHostCount: ($post.plan.enabledRemoteHostCount // $post.remoteHostPoolPreparation.enabledHostCount // null),
     beforeSharedRunning: ($pre.plan.sharedRunning // null),
     afterSharedRunning: ($post.plan.sharedRunning // null)
-  }' > "$summary"
+  }
+  | .branchIsolationClean = (([.pre.runtimePoolBlockers[]? | select(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")] | length) == 0)
+  | .remoteHostConfigReady = ((.prepare.status // "") == "dry_run_ready" or (.prepare.status // "") == "applied")
+  | .remoteHostAvailable = (
+      if .apply then
+        ((.afterEnabledRemoteHostCount // .prepare.enabledHostCount // 0) | tonumber) > 0
+      else
+        ((.beforeEnabledRemoteHostCount // .prepare.enabledHostCount // 0) | tonumber) > 0
+      end
+    )
+  | .sharedRuntimeRunning = (
+      if .apply then
+        ((.afterSharedRunning // 0) | tonumber) > 0
+      else
+        ((.beforeSharedRunning // 0) | tonumber) > 0
+      end
+    )
+  | .verdict = (
+      if (.branchIsolationClean | not) then "blocked-branch-isolation"
+      elif ((.prepare.status // "") == "missing_config") then "dry-run-missing-config"
+      elif (.apply | not) and .remoteHostConfigReady then "dry-run-ready"
+      elif (.apply | not) and .remoteHostAvailable and (.deploySidecar | not) then "dry-run-host-already-available"
+      elif .apply and .deploySidecar and .sharedRuntimeRunning then "applied-running"
+      elif .apply and .deploySidecar then "applied-not-running"
+      elif .apply and .remoteHostAvailable then "applied-host-ready"
+      elif .apply then "applied-host-missing"
+      else "dry-run-blocked"
+      end
+    )
+  | .readyForSharedRuntimeDeploy = (.verdict == "dry-run-host-already-available" or .verdict == "applied-host-ready")
+  | .readyForProviderSmokes = (.verdict == "applied-running")
+  | .nextAction = (
+      if .verdict == "blocked-branch-isolation" then
+        "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
+      elif .verdict == "dry-run-missing-config" then
+        "provide missing remote host variables, then rerun this wrapper"
+      elif .verdict == "dry-run-ready" then
+        "configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 after branch isolation is clean"
+      elif .verdict == "dry-run-host-already-available" then
+        "enabled remote host exists; deploy shared official SDK runtime sidecar"
+      elif .verdict == "applied-host-ready" then
+        "remote host is ready; rerun with CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1 and CDS_AGENT_SIDECAR_IMAGE"
+      elif .verdict == "applied-running" then
+        "shared runtime is running; continue with MAP R0/S1/S2/S3 and one-cycle smokes"
+      else
+        "inspect post evidence and shared-service pool audit before continuing"
+      end
+    )' > "$summary"
 
 index="$OUT_DIR/evidence-index.md"
 {
@@ -157,9 +219,13 @@ index="$OUT_DIR/evidence-index.md"
   printf '%s\n' "- afterEnabledRemoteHostCount: \`$(jq -r '.afterEnabledRemoteHostCount // "not-run"' "$summary")\`"
   printf '%s\n' "- beforeSharedRunning: \`$(jq -r '.beforeSharedRunning // "unknown"' "$summary")\`"
   printf '%s\n' "- afterSharedRunning: \`$(jq -r '.afterSharedRunning // "not-run"' "$summary")\`"
+  printf '%s\n' "- verdict: \`$(jq -r '.verdict' "$summary")\`"
+  printf '%s\n' "- readyForSharedRuntimeDeploy: \`$(jq -r '.readyForSharedRuntimeDeploy' "$summary")\`"
+  printf '%s\n' "- readyForProviderSmokes: \`$(jq -r '.readyForProviderSmokes' "$summary")\`"
+  printf '%s\n' "- nextAction: $(jq -r '.nextAction' "$summary")"
   printf '%s\n\n' "- summary: \`$summary\`"
   printf '## Steps\n\n'
-  jq -r '.steps[] | "- `" + .status + "` " + .name + " · " + (.durationSeconds|tostring) + "s · `" + .log + "`"' "$summary"
+  jq -r '.steps[] | "- `" + .status + "` " + .name + " · rc=" + (.exitCode|tostring) + " · " + (.durationSeconds|tostring) + "s · `" + .log + "`"' "$summary"
   printf '\n## Remote Host Preparation\n\n'
   jq -r '"- status: `" + (.prepare.status // "unknown") + "`",
     "- existingHostCount: `" + ((.prepare.existingHostCount // 0)|tostring) + "`",
@@ -170,4 +236,17 @@ index="$OUT_DIR/evidence-index.md"
 printf '\nEvidence dir: %s\n' "$OUT_DIR"
 printf 'Summary:      %s\n' "$summary"
 printf 'Index:        %s\n' "$index"
-jq '{apply,deploySidecar,totalSeconds,beforeEnabledRemoteHostCount,afterEnabledRemoteHostCount,beforeSharedRunning,afterSharedRunning,prepare:{status:.prepare.status,existingHostCount:.prepare.existingHostCount,enabledHostCount:.prepare.enabledHostCount,missingConfig:.prepare.missingConfig}}' "$summary"
+jq '{apply,deploySidecar,totalSeconds,verdict,readyForSharedRuntimeDeploy,readyForProviderSmokes,nextAction,beforeEnabledRemoteHostCount,afterEnabledRemoteHostCount,beforeSharedRunning,afterSharedRunning,prepare:{status:.prepare.status,existingHostCount:.prepare.existingHostCount,enabledHostCount:.prepare.enabledHostCount,missingConfig:.prepare.missingConfig}}' "$summary"
+
+if [[ "$APPLY" == "1" && "$(jq -r '.branchIsolationClean' "$summary")" != "true" ]]; then
+  printf '❌ remote host apply blocked: branch isolation is still contaminated; see %s\n' "$index" >&2
+  exit 1
+fi
+if [[ "$APPLY" == "1" && "$(jq -r '.remoteHostAvailable' "$summary")" != "true" ]]; then
+  printf '❌ remote host apply did not produce an enabled remote host; see %s\n' "$index" >&2
+  exit 1
+fi
+if [[ "$APPLY" == "1" && "$DEPLOY_SIDECAR" == "1" && "$(jq -r '.sharedRuntimeRunning' "$summary")" != "true" ]]; then
+  printf '❌ shared runtime deploy did not produce a running pool; see %s\n' "$index" >&2
+  exit 1
+fi

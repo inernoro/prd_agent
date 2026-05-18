@@ -77,6 +77,24 @@ CDS_HOST=https://cds.miduo.org \
 
 如果需要创建 remote host，必须显式设置 `CDS_AGENT_REMOTE_HOST_APPLY=1`，并提供 `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE` 或 `CDS_REMOTE_HOST_SSH_PRIVATE_KEY`。触发 sidecar 部署还要额外设置 `CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1` 和 `CDS_AGENT_SIDECAR_IMAGE`。
 
+remote host wrapper 也会写 `summary.json`，关键判定字段：
+
+- `verdict`: `blocked-branch-isolation`、`dry-run-missing-config`、`dry-run-ready`、`dry-run-host-already-available`、`applied-host-ready`、`applied-running` 等。
+- `readyForSharedRuntimeDeploy`: 已具备部署 shared official SDK runtime sidecar 的前置条件。
+- `readyForProviderSmokes`: shared runtime 已 running，可以继续 MAP R0/S1/S2/S3 与 one-cycle。
+- `nextAction`: 下一步执行建议。
+
+如果 pre evidence 仍包含 `BRANCH_LOCAL_SIDECAR_CLEAN` blocker，apply 模式会被挡住，不会继续创建 remote host 或部署 sidecar。执行 apply 后如果没有 enabled remote host，或 deploy sidecar 后 shared runtime 仍未 running，wrapper 会非零退出。
+
+2026-05-18 最新 remote host dry-run 证据：
+
+- evidence dir: `/tmp/cds-agent-remote-host-pool-current`
+- verdict: `blocked-branch-isolation`
+- beforeEnabledRemoteHostCount: `0`
+- beforeSharedRunning: `0`
+- readyForSharedRuntimeDeploy: `false`
+- readyForProviderSmokes: `false`
+
 真正执行 branch-local sidecar 清理时，使用带前后证据的 wrapper。默认仍是 dry-run：
 
 ```bash

@@ -121,6 +121,7 @@ prd-agent branch service
 - `npm --prefix cds test -- tests/services/state.test.ts`：`39 passed`，覆盖非 `shared-service` 项目拒绝 runtime sidecar BuildProfile、更新绕行被拒绝、`shared-service` 项目仍允许 runtime-looking profile。
 - `npm --prefix cds run build`：通过，确认中心护栏类型检查通过。
 - `CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`：只读 dry-run 通过，`verdict=dry-run-contaminated`、`beforeContaminatedBranchCount=7`、候选 profile 为 `claude-agent-sdk-runtime-v2-prd-agent`，证据目录 `/tmp/cds-agent-branch-isolation-repair-current`。
+- `CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh`：只读 dry-run 通过，`verdict=blocked-branch-isolation`、`beforeEnabledRemoteHostCount=0`、`beforeSharedRunning=0`，证据目录 `/tmp/cds-agent-remote-host-pool-current`。
 
 当前 sandbox 下不把路由大套件作为最小验证：`tests/routes/cross-project-isolation.test.ts` 因 `listen EPERM: operation not permitted 127.0.0.1` 失败，耗时约 `191s`；`tests/routes/branches.test.ts` 同类端口监听长跑已中止。后续如需跑这些套件，应在允许本地监听的环境执行。
 
