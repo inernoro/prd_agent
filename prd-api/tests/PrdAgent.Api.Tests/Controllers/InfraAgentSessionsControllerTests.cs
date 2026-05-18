@@ -483,7 +483,12 @@ public class InfraAgentSessionsControllerTests
             readiness.Gates.Single(x => x.Code == "R0").Status.ShouldBe("pass");
             readiness.Gates.Single(x => x.Code == "A0").Status.ShouldBe("pass");
             readiness.Gates.Single(x => x.Code == "T1").Status.ShouldBe("pass");
-            readiness.Gates.Single(x => x.Code == "R1").Status.ShouldBe("pending");
+            var r1Gate = readiness.Gates.Single(x => x.Code == "R1");
+            r1Gate.Status.ShouldBe("pending");
+            r1Gate.ReasonCode.ShouldBe("openai-compatible-non-claude-model");
+            readiness.Gates.Single(x => x.Code == "S1").ReasonCode.ShouldBe("openai-compatible-non-claude-model");
+            readiness.Gates.Single(x => x.Code == "S2").ReasonCode.ShouldBe("openai-compatible-non-claude-model");
+            readiness.Gates.Single(x => x.Code == "S3").ReasonCode.ShouldBe("openai-compatible-non-claude-model");
             readiness.Pending.ShouldContain(x => x.StartsWith("R1:", StringComparison.Ordinal));
             var repairPlan = diagnostics.RuntimeProfileRepairPlan.ShouldNotBeNull();
             repairPlan.State.ShouldBe("blocked");

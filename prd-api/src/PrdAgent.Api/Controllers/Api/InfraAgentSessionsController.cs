@@ -63,23 +63,23 @@ public class InfraAgentSessionsController : ControllerBase
         }
 
         var desiredRuntimeAdapter = InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter();
-        var profileDiagnostics = _runtimeProfiles == null
+        var profile = _runtimeProfiles == null
             ? null
             : await ResolveDefaultRuntimeProfileDiagnosticsAsync(desiredRuntimeAdapter, ct);
         var baseDiagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
         var commercialReadiness = BuildCommercialReadiness(
             baseDiagnostics,
             desiredRuntimeAdapter,
-            profileDiagnostics);
-        var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profileDiagnostics);
-        var nextCyclePlan = BuildNextCyclePlan(profileDiagnostics, runtimeProfileRepairPlan);
-        var debugCommands = BuildDebugCommands(profileDiagnostics);
+            profile);
+        var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profile);
+        var nextCyclePlan = BuildNextCyclePlan(profile, runtimeProfileRepairPlan);
+        var debugCommands = BuildDebugCommands(profile);
         var executionPanel = BuildExecutionPanel(commercialReadiness, nextCyclePlan, debugCommands);
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
             RuntimeTransport = _runtimeAdapter?.AdapterKind,
-            DefaultRuntimeProfile = profileDiagnostics,
+            DefaultRuntimeProfile = profile,
             CommercialReadiness = commercialReadiness,
             RuntimeProfileRepairPlan = runtimeProfileRepairPlan,
             NextCyclePlan = nextCyclePlan,
@@ -87,7 +87,7 @@ public class InfraAgentSessionsController : ControllerBase
             ExecutionPanel = executionPanel,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
-                profileDiagnostics)
+                profile)
         };
         return Ok(ApiResponse<object>.Ok(new { diagnostics, discoveryRefreshed = refreshDiscovery && _sidecarRegistry != null }));
     }
@@ -405,10 +405,24 @@ public class InfraAgentSessionsController : ControllerBase
             && InfraAgentRuntimeAdapterCompatibility.All.Any(x =>
                 string.Equals(x.Id, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(x.Status, "default-supported", StringComparison.OrdinalIgnoreCase));
+        var profileBlockReasonCode = r1Ready
+            ? null
+            : profile?.CompatibilityReasonCode
+                ?? (profile == null
+                    ? "runtime-profile-missing"
+                    : !profile.HasApiKey
+                        ? "runtime-profile-api-key-missing"
+                        : "runtime-profile-incompatible");
+        var profileBlockReason = profile?.CompatibilityReason
+            ?? profile?.Warning
+            ?? "create a default Anthropic/Claude-compatible runtime profile with API key";
+        var profileBlockNextActions = profile?.CompatibilityNextActions is { Count: > 0 } actions
+            ? actions
+            : new[] { "使用 Anthropic 官方模板创建默认 profile，并填入 API key" };
         var providerStatus = r1Ready ? "unblocked" : "pending";
         var providerMessage = r1Ready
             ? "默认 profile 已兼容并带 key；可以显式开启 provider smoke 验证真实 run。"
-            : "等待 R1 通过后再运行真实 provider smoke。";
+            : $"等待 R1 通过后再运行真实 provider smoke：{profileBlockReason}";
 
         var gates = new List<SidecarCommercialReadinessGate>
         {
@@ -434,8 +448,9 @@ public class InfraAgentSessionsController : ControllerBase
                 r1Ready ? "pass" : "pending",
                 r1Ready
                     ? "default profile can be used by claude-agent-sdk"
-                    : "create a default Anthropic/Claude-compatible runtime profile with API key",
-                r1Ready ? Array.Empty<string>() : new[] { "使用 Anthropic 官方模板创建默认 profile，并填入 API key" }),
+                    : profileBlockReason,
+                r1Ready ? Array.Empty<string>() : profileBlockNextActions,
+                profileBlockReasonCode),
             new(
                 "T1",
                 "Official template and adapter compatibility APIs",
@@ -445,11 +460,14 @@ public class InfraAgentSessionsController : ControllerBase
                     : "backend template or adapter compatibility matrix is missing official SDK support",
                 t1Ready ? Array.Empty<string>() : new[] { "检查 runtime profile templates 与 adapter compatibility API" }),
             new("S1", "Read-only provider run", providerStatus, providerMessage,
-                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-run.sh" } : Array.Empty<string>()),
+                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-run.sh" } : profileBlockNextActions,
+                profileBlockReasonCode),
             new("S2", "MAP tool approval provider run", providerStatus, providerMessage,
-                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh" } : Array.Empty<string>()),
+                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh" } : profileBlockNextActions,
+                profileBlockReasonCode),
             new("S3", "Stop / interrupt provider run", providerStatus, providerMessage,
-                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh" } : Array.Empty<string>())
+                r1Ready ? new[] { "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh" } : profileBlockNextActions,
+                profileBlockReasonCode)
         };
         var passed = gates.Count(x => string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
         var pending = gates

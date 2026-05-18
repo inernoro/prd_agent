@@ -206,7 +206,8 @@ public sealed record SidecarCommercialReadinessGate(
     string Label,
     string Status,
     string Message,
-    IReadOnlyList<string>? NextActions = null
+    IReadOnlyList<string>? NextActions = null,
+    string? ReasonCode = null
 );
 
 public sealed record SidecarRuntimeProfileRepairPlan(

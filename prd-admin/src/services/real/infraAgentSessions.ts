@@ -233,6 +233,7 @@ export interface InfraAgentRuntimeDiagnostics {
       status: string;
       message: string;
       nextActions?: string[] | null;
+      reasonCode?: string | null;
     }>;
     pending: string[];
   } | null;

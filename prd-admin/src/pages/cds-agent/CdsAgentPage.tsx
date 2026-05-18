@@ -394,6 +394,7 @@ type RuntimeReadinessGate = {
   value: string;
   detail: string;
   state: 'pass' | 'warn' | 'pending';
+  reasonCode?: string | null;
 };
 
 type CommercialReadinessGate = RuntimeReadinessGate & {
@@ -1154,6 +1155,7 @@ export default function CdsAgentPage() {
     };
     const backendGateValue = (code: string, fallback: string): string => backendCommercialGates.get(code)?.status || fallback;
     const backendGateDetail = (code: string, fallback: string): string => backendCommercialGates.get(code)?.message || fallback;
+    const backendGateReasonCode = (code: string): string | null => backendCommercialGates.get(code)?.reasonCode || null;
     const providerEvidenceState = resolveProviderEvidenceState({
       defaultProfileReady,
       officialLoopReady,
@@ -1177,6 +1179,7 @@ export default function CdsAgentPage() {
           ? 'runtime pool 可用，但还需要证明 loopOwner=claude-agent-sdk 且 SDK loop enabled。'
           : blockers[0] || registryIssue || '需要先恢复 CDS sidecar runtime pool.'),
         state: backendGateState('R0', runtimePoolReady && officialLoopReady ? 'pass' : runtimeStatus ? 'warn' : 'pending'),
+        reasonCode: backendGateReasonCode('R0'),
       },
       {
         code: 'A0',
@@ -1186,6 +1189,7 @@ export default function CdsAgentPage() {
           ? '默认 adapter contract 指向 claude-agent-sdk，MAP/CDS 只保留控制面，legacy loop 只能显式 fallback。'
           : '需要后端 adapter compatibility 证明 claude-agent-sdk 可默认路由且没有缺失 contract。'),
         state: backendGateState('A0', activeAdapterCompatibility?.routableByDefault ? 'pass' : 'pending'),
+        reasonCode: backendGateReasonCode('A0'),
       },
       {
         code: 'R1',
@@ -1197,6 +1201,7 @@ export default function CdsAgentPage() {
           ? profileCompatibilityWarning || `${defaultRuntimeProfile.name} 仍不是 Anthropic/Claude-compatible 默认 profile，真实 S1/S2/S3 会被阻断。`
           : '需要用 Anthropic 官方模板创建默认 runtime profile，并填入 API key.'),
         state: backendGateState('R1', defaultProfileReady ? 'pass' : defaultRuntimeProfile ? 'warn' : 'pending'),
+        reasonCode: backendGateReasonCode('R1') || profileCompatibilityReasonCode || null,
       },
       {
         code: 'T1',
@@ -1206,6 +1211,7 @@ export default function CdsAgentPage() {
           ? 'Anthropic 官方模板和 adapter compatibility 均由后端返回，不是页面硬编码。'
           : '需要后端返回 Anthropic 官方模板和 claude-agent-sdk 兼容矩阵.'),
         state: backendGateState('T1', templateReady ? 'pass' : 'pending'),
+        reasonCode: backendGateReasonCode('T1'),
       },
       {
         code: 'S1',
@@ -1219,6 +1225,7 @@ export default function CdsAgentPage() {
           ? '配置已解锁；还需运行 S1 smoke，证明官方 SDK 能真实审查仓库。'
           : providerEvidenceState.blockedDetail),
         state: s1EvidenceReady ? 'pass' : backendGateState('S1', defaultProfileReady ? 'warn' : 'pending'),
+        reasonCode: backendGateReasonCode('S1') || (!defaultProfileReady ? profileCompatibilityReasonCode || null : null),
       },
       {
         code: 'S2',
@@ -1232,6 +1239,7 @@ export default function CdsAgentPage() {
           ? '还需运行 S2 controls，证明危险工具会回到 MAP 审批。'
           : providerEvidenceState.blockedDetail),
         state: s2EvidenceReady ? 'pass' : backendGateState('S2', defaultProfileReady ? 'warn' : 'pending'),
+        reasonCode: backendGateReasonCode('S2') || (!defaultProfileReady ? profileCompatibilityReasonCode || null : null),
       },
       {
         code: 'S3',
@@ -1245,6 +1253,7 @@ export default function CdsAgentPage() {
           ? '还需运行 S3 controls，证明 Stop 能触达底层 SDK run。'
           : providerEvidenceState.blockedDetail),
         state: s3EvidenceReady ? 'pass' : backendGateState('S3', defaultProfileReady ? 'warn' : 'pending'),
+        reasonCode: backendGateReasonCode('S3') || (!defaultProfileReady ? profileCompatibilityReasonCode || null : null),
       },
       {
         code: 'V1',
@@ -1254,6 +1263,7 @@ export default function CdsAgentPage() {
           ? '当前页面已显示 runtime-status、adapter、profile、事件和诊断包字段。'
           : '需要打开 /cds-agent 并看到真实 runtime-status 结果。',
         state: v1EvidenceReady ? 'pass' : 'pending',
+        reasonCode: backendGateReasonCode('V1'),
       },
     ];
     const commercialPassed = commercialReadinessGates.filter((gate) => gate.state === 'pass').length;
@@ -3841,6 +3851,11 @@ export default function CdsAgentPage() {
                                 </span>
                               </div>
                               <div className="mt-2 break-words text-xs font-medium text-white/82">{gate.value}</div>
+                              {gate.reasonCode && (
+                                <div className="mt-1 inline-flex max-w-full rounded px-1.5 py-0.5 text-[11px] font-semibold text-amber-50/82" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.18)' }}>
+                                  <span className="truncate">{gate.reasonCode}</span>
+                                </div>
+                              )}
                               <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-white/46">{gate.detail}</div>
                             </div>
                           );
@@ -3852,7 +3867,7 @@ export default function CdsAgentPage() {
                           <div className="mt-1 grid gap-1 md:grid-cols-2">
                             {runtimeDiagnostics.commercialPending.map((gate) => (
                               <div key={gate.code} className="text-xs leading-relaxed text-amber-50/76">
-                                {gate.code} · {gate.detail}
+                                {gate.code} · {gate.reasonCode ? `${gate.reasonCode} · ` : ''}{gate.detail}
                               </div>
                             ))}
                           </div>
