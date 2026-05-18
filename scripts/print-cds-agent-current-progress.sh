@@ -129,6 +129,20 @@ scripts/smoke-cds-agent-sidecar-image-build.sh
 ```
 EOF
 )
+elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Provide the two R0 external inputs first. The sidecar image can come from any registry the target remote host can `docker pull`; GHCR is only an optional candidate path.
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<pullable-registry-image>
+CDS_REMOTE_HOST_NAME=<name>
+CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol>
+CDS_REMOTE_HOST_SSH_USER=<ssh-user>
+CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file>
+scripts/refresh-cds-agent-r0-status.sh
+```
+EOF
+)
 elif [[ "$image_publish" != "push_ready" && "$image_publish" != "push_pass" ]]; then
   exact_next_step=$(printf '%s\n\n```bash\n%s\n```' \
     'Choose a registry-qualified image tag and run publish dry-run. This does not push unless `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` is set.' \
