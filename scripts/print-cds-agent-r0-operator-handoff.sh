@@ -10,6 +10,7 @@ READINESS_REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readi
 OUTPUT="${CDS_AGENT_R0_OPERATOR_HANDOFF:-/tmp/cds-agent-r0-operator-handoff-current.md}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
+REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -56,6 +57,10 @@ if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
   image_publish_target=$(jq -r '.targetImage // "missing"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
 fi
+remote_pull="not checked"
+if [[ -f "$REMOTE_PULL_REPORT" ]]; then
+  remote_pull=$(jq -r '.status // "unknown"' "$REMOTE_PULL_REPORT")
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 {
@@ -87,6 +92,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- imageLocalBuild: `%s`\n' "$image_local_build"
   printf -- '- imagePublish: `%s`\n' "$image_publish"
   printf -- '- imagePublishTarget: `%s`\n' "$image_publish_target"
+  printf -- '- remotePull: `%s`\n' "$remote_pull"
   printf -- '- imagePreflightReport: `%s`\n' "$image_preflight_report"
   printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
 
@@ -109,6 +115,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf 'Local sidecar build context preflight is `%s`; this only proves the repository can describe a candidate image, not that the remote host can pull it.\n\n' "$image_build_context_status"
   printf 'Local docker build smoke is `%s`; build smoke never pushes or deploys.\n\n' "$image_local_build"
   printf 'Registry publish status is `%s`; publish requires `CDS_AGENT_SIDECAR_IMAGE_PUSH=1`.\n\n' "$image_publish"
+  printf 'Remote host docker pull status is `%s`; pull verification requires `CDS_AGENT_REMOTE_PULL_VERIFY=1` and SSH credentials.\n\n' "$remote_pull"
   if [[ -n "$image_build_command" ]]; then
     printf 'Candidate local build command:\n\n'
     printf '```bash\n%s\n```\n\n' "$image_build_command"
@@ -128,6 +135,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 scripts/preflight-cds-agent-r0-apply-readiness.sh
 scripts/smoke-cds-agent-sidecar-image-build.sh
 scripts/publish-cds-agent-sidecar-image.sh
+scripts/verify-cds-agent-remote-sidecar-pull.sh
 scripts/print-cds-agent-current-progress.sh
 ```
 EOF

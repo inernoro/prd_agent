@@ -102,6 +102,17 @@ CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
 
 只有显式设置 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` 才会执行 `docker tag` 和 `docker push`。push 后仍需从目标 remote host 验证 `docker pull`。
 
+目标 host pull 验证默认也只做 dry-run。只有显式设置 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才会 SSH 到目标 host 执行 `docker pull`，不会创建 CDS host，也不会运行 sidecar：
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
+CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol> \
+CDS_REMOTE_HOST_SSH_USER=<ssh-user> \
+CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file> \
+CDS_AGENT_REMOTE_PULL_VERIFY=1 \
+  scripts/verify-cds-agent-remote-sidecar-pull.sh
+```
+
 如果 CDS 已有 enabled remote host，脚本会优先复用 `CDS_REMOTE_HOST_ID` 指定的 host；未指定时复用第一个 enabled host。此时不会再要求 `CDS_REMOTE_HOST_NAME/HOST/SSH_USER/KEY`，只在部署 shared runtime sidecar 时要求 `CDS_AGENT_SIDECAR_IMAGE`。`prepare` 报告会写出：
 
 - `targetHostId`: 本次将复用或创建的 remote host id。

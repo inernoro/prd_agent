@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:30 Asia/Shanghai：
+截至 2026-05-18 19:36 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -17,6 +17,7 @@
 - 已解决：sidecar image 本地构建上下文已纳入预检，不再靠人工猜 Dockerfile 是否可用。
 - 已解决：sidecar image build smoke 已通过，本地候选镜像可构建；Docker daemon/Colima 问题已从 R0 远程问题中剥离。
 - 已解决：sidecar image registry 发布阶段已纳入 dry-run/显式 push 门禁。
+- 已解决：remote host `docker pull` 已纳入独立 dry-run/显式 SSH 验证门禁。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -48,6 +49,7 @@
 | 19:15 | Colima 显示 running，但 Docker CLI 无法连接 daemon；本地 image 构建证据缺失 | 新增 `scripts/smoke-cds-agent-sidecar-image-build.sh`，将 Docker/build 结果写入 JSON，并接入 progress/lifecycle/handoff | `/tmp/cds-agent-sidecar-image-build-current.json` | <1s 当前失败 | 当前 `status=docker_unavailable`；不会误触发 push/deploy |
 | 19:26 | Colima LaunchAgent 与 Lima VM 状态不一致，`colima status` 误报 running，实际 Lima instance broken | 卸载 stale LaunchAgent，`LIMA_HOME=/Users/inernoro/.colima/_lima limactl stop -f colima` 清理 broken pid/socket，再 `colima start`；拉取 `python:3.12-slim` 后复跑 build smoke | `/tmp/cds-agent-sidecar-image-build-current.json` | 约 2m，build 约 65s | `status=build_pass`；本地候选镜像 `prd-agent/claude-sidecar:latest` 可构建 |
 | 19:30 | 本地 build pass 后仍缺 registry tag/push/pullability 证据 | 新增 `scripts/publish-cds-agent-sidecar-image.sh`，默认 dry-run；只有 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` 才 push | `/tmp/cds-agent-sidecar-image-publish-current.json`、`/tmp/cds-agent-sidecar-image-publish-dryrun-ghcr.json` | <1s dry-run | 当前默认 `missing_target_image`；示例 ghcr tag dry-run 为 `push_ready`，未 push |
+| 19:36 | 即使 image 已 push，也还需要证明目标 remote host 能 `docker pull` | 新增 `scripts/verify-cds-agent-remote-sidecar-pull.sh`，默认 dry-run；只有 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` | `/tmp/cds-agent-remote-sidecar-pull-current.json`、`/tmp/cds-agent-remote-pull-dryrun-ready.json` | <1s dry-run | 当前默认 `missing_config`；示例参数 dry-run 为 `dry_run_ready`，未 SSH、未 deploy |
 
 ## 本轮暴露的问题
 
@@ -461,6 +463,25 @@
 
 优化：R0.3 现在被拆成 build context -> local build -> registry publish -> remote host pull/run。每一步都有独立证据，不再把失败都堆到远程部署阶段。
 
+### 27. Remote host pull 必须先于 deploy-sidecar 单独验证
+
+问题：就算 registry push 成功，目标 remote host 仍可能因为网络、鉴权、Docker daemon、registry 权限或架构问题无法 `docker pull`。如果直接调用 CDS deploy-sidecar，失败会混在 remote deployment 里，难以区分是 pull 问题还是 run/healthcheck 问题。
+
+处理：
+
+- 新增 `scripts/verify-cds-agent-remote-sidecar-pull.sh`。
+- 默认只校验 `CDS_AGENT_SIDECAR_IMAGE`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、SSH key 和 port，不 SSH。
+- 只有 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 时才通过 SSH 执行 `docker pull <image>`。
+- 脚本报告 `pullAttempted`、`pullPassed`、`deployAttempted=false`，保证它不会创建 CDS host 或运行 sidecar。
+- progress board、lifecycle overview、operator handoff 显示 `Remote host docker pull`。
+
+证据：
+
+- 默认报告 `/tmp/cds-agent-remote-sidecar-pull-current.json` 当前 `status=missing_config`。
+- 示例报告 `/tmp/cds-agent-remote-pull-dryrun-ready.json` 当前 `status=dry_run_ready`、`pullAttempted=false`。
+
+优化：R0.3 现在继续拆分为 remote pull 和 sidecar run/healthcheck。下一次远程失败可以定位到 pull、run、healthcheck 或 CDS state post-check，而不是笼统“部署失败”。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -480,6 +501,7 @@
 | sidecar image preflight | <1s | 完全可本地化 | 先证明 build context，后续只追 registry image 和 remote host pull 权限 |
 | sidecar image build smoke | 约 65s 当前通过 | 完全可本地化 | Docker daemon、base image pull、Python dependency install 都在本地 build gate 暴露，不进入远程 deploy |
 | sidecar image publish dry-run | <1s | 完全可本地化 | registry target/tag/push 显式化；默认不 push、不 deploy |
+| remote sidecar pull dry-run | <1s | 部分本地化 | 先校验 SSH/image 输入；显式开启后才访问目标 host 执行 docker pull |
 
 ## 当前下一步
 

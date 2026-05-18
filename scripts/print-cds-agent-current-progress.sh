@@ -11,6 +11,7 @@ N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-cur
 R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
+REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -70,6 +71,7 @@ image_next_action="unknown"
 image_build_context="unknown"
 image_local_build="not checked"
 image_publish="not checked"
+remote_pull="not checked"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
   r0_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.nextAction // "unknown"')
@@ -83,6 +85,9 @@ if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
 fi
 if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.status // "unknown"')
+fi
+if [[ -f "$REMOTE_PULL_REPORT" ]]; then
+  remote_pull=$(jq_read "$REMOTE_PULL_REPORT" '.status // "unknown"')
 fi
 
 if [[ -z "$missing_config" ]]; then
@@ -115,6 +120,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
 - Sidecar registry publish: $image_publish
+- Remote host docker pull: $remote_pull
 
 ## Task Board
 
@@ -137,6 +143,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - imageBuildContext: $image_build_context
 - imageLocalBuild: $image_local_build
 - imagePublish: $image_publish
+- remotePull: $remote_pull
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
 
@@ -167,4 +174,5 @@ Then fill only placeholders locally. Do not paste private key contents into chat
 - R0 readiness summary: $R0_READINESS_SUMMARY
 - sidecar image build summary: $SIDECAR_IMAGE_BUILD_REPORT
 - sidecar image publish summary: $SIDECAR_IMAGE_PUBLISH_REPORT
+- remote sidecar pull summary: $REMOTE_PULL_REPORT
 EOF
