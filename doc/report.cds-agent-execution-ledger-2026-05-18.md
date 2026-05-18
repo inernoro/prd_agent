@@ -314,6 +314,26 @@
 
 优化：R0.2/R0.3 真正执行前先跑该门禁，只有 ready 后才进入远程 apply/deploy，避免反复远程构建/部署/写入。
 
+### 20. R0 需要一个单文件操作员交接包
+
+问题：R0 的事实分散在 progress board、readiness JSON、remote host handoff 和状态文档中。即使信息齐全，实际执行人仍需要在多个文件里切换，容易漏掉 warning、缺失输入或“不要重复 preview redeploy”的约束。
+
+处理：
+
+- 新增 `scripts/print-cds-agent-r0-operator-handoff.sh`。
+- 它先刷新本地 R0 readiness，再把当前决策、缺失输入、ETA、不要做的事、安全 apply/deploy/post-check 命令聚合为 `/tmp/cds-agent-r0-operator-handoff-current.md`。
+- 交接包只使用占位符和 env 名称，不输出 private key、AI access key 或 provider key。
+
+证据：
+
+- `/tmp/cds-agent-r0-operator-handoff-current.md`：`status=blocked_before_apply`、`readyForR0Apply=false`、缺 remote host SSH 参数和 `CDS_AGENT_SIDECAR_IMAGE`。
+- 安全扫描：未发现 `BEGIN .*PRIVATE KEY`、当前访问 key、`sk-` 或 key=value secret 形态。
+- `git diff --check`：pass。
+
+耗时：生成 <2s；安全扫描 <1s。
+
+优化：拿到参数后先看一个 handoff 文件即可执行 R0.2/R0.3/R0V，减少人工拼命令和重复部署。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -326,6 +346,7 @@
 | runtime-status task board | 后端测试 15s，前端 tsc 20s | 可本地化 | 页面事实源输出 taskBoard/nextStepEta/timeSinkAdvice，减少聊天解释和重复部署 |
 | N6 current smoke | 3s 沙箱外；沙箱内会因 VSTest socket 权限失败 | 可本地化但需要 dotnet/VSTest 权限 | smoke 写 summary 后，进度面板直接读最新 N6 证据 |
 | R0 local apply readiness | <1s | 完全可本地化 | 先确认 env 和 dry-run summary 是否足够 apply/deploy，再决定是否触发远程写动作 |
+| R0 operator handoff bundle | <2s | 完全可本地化 | 单文件交接状态、缺失输入、ETA、安全命令和禁止事项 |
 
 ## 当前下一步
 
