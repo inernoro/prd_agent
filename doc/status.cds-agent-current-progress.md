@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 16:54 Asia/Shanghai
+> 更新时间：2026-05-18 17:01 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -14,9 +14,9 @@
 
 最新只读证据目录：
 
-- `/tmp/cds-agent-runtime-pool-evidence-current`
-- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-current/summary.json`
-- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-current/evidence-index.md`
+- `/tmp/cds-agent-runtime-pool-evidence-20260518165720`
+- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518165720/summary.json`
+- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518165720/evidence-index.md`
 
 本次证据采集总耗时 `12s`：
 
@@ -73,6 +73,20 @@
 - `git diff --check`：通过
 - `dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj --no-restore --filter FullyQualifiedName~DynamicSidecarRegistryTests`：通过，18/18
 - `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-sidecar-alias-stability.sh`：按预期拒绝默认 branch-local alias probe，除非显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1`
+- `CDS_HOST=https://cds.miduo.org CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-current-after-doc-fix.json bash scripts/audit-cds-agent-goal.sh`：按预期返回 `goalStatus=not_complete`，本地 guardrail 耗时 `11s`，阻塞为 R0 runtime pool 未恢复
+
+## 最新目标审计
+
+2026-05-18 17:02 Asia/Shanghai：
+
+- 报告：`/tmp/cds-agent-goal-audit-current-after-doc-fix.json`
+- 结果：`goalStatus=not_complete`
+- 远程 runtime：当前 preview runtime commit 已匹配 `f2dc32be`
+- 部署建议：`Remote runtime commit matches current HEAD; do not redeploy unless provider/profile or visual evidence requires it.`
+- CDS control plane：`control_plane_behind_non_cds_drift`，当前差异不要求 self update
+- 当前阻塞门：`R0`
+- 阻塞原因：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4, REMOTE_HOST_AVAILABLE=missing, SHARED_POOL_RUNNING=missing`
+- 最耗时步骤：runtime pool recovery plan `6s`，N6 非代码兼容 `3s`
 
 ## 下一步
 

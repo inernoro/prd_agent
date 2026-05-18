@@ -254,7 +254,7 @@ CDS Agent 迁移官方 SDK 时，不能把非代码智能体也绑到 sidecar ru
 
 ## 当前未完成的商业级验收
 
-截至 2026-05-18，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、sidecar alias 稳定性 smoke、profile preflight gate、doctor JSON 报告、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。远程 preview 已能证明 `desiredRuntimeAdapter=claude-agent-sdk`、`runtimeTransport=sidecar-runtime-adapter`、`loopOwner=claude-agent-sdk`、`aliasCheck.status=stable`。
+截至 2026-05-18，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、profile preflight gate、doctor JSON 报告、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。当前远程权威证据不是 `aliasCheck.status=stable`，而是 R0 blocked：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`。历史 branch-local alias 稳定性证据只能用于污染诊断，不能证明 shared-service runtime pool 已恢复。
 
 但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
 

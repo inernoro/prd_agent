@@ -249,9 +249,9 @@ public interface IAgentRuntimeAdapter
 
 2026-05-18 运行时证据和执行面板校准：
 
-- preview sidecar 已迁到唯一 scoped alias `claude-agent-sdk-runtime-v2-prd-agent`，doctor 和 alias smoke 都从 API 容器内部验证该 alias 只解析到一个 ready official SDK sidecar。
+- 历史 preview sidecar alias `claude-agent-sdk-runtime-v2-prd-agent` 已被确认是 branch-local contamination 的候选 profile；doctor 和 alias smoke 默认不再探测该 alias，只有显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` 时才用于污染诊断。
 - `scripts/doctor-cds-agent-runtime.sh` 可输出 JSON 诊断包，字段包含 `diagnosis`、`nextRecommended`、`runtime`、`aliasCheck`、默认 profile、官方模板和 adapter compatibility。它是排障入口，不替代 S1/S2/S3 provider smoke。
 - `scripts/smoke-cds-agent-one-cycle.sh` 会把 doctor 作为第一步，并把 doctor 结论、下一步建议、逐步耗时和最慢步骤写入 `cycle-summary.json`。这用于回答“时间花在哪里”和“下一步到底是什么”。
 - `scripts/smoke-cds-agent-official-sdk-boundary.sh` 作为本地 A0 边界 smoke 加入 one-cycle，后端 `runtime-status.diagnostics.commercialReadiness` 也暴露 `A0` gate：它不访问 CDS、不消耗 provider token，只断言默认 sidecar adapter 是 `claude-agent-sdk`，官方 adapter 使用 `ClaudeSDKClient` / `ClaudeAgentOptions` / SDK MCP / `can_use_tool`，并禁止在 official adapter 内重新引入 raw Anthropic/OpenAI chat loop。该报告用于持续证明自研 agent loop 被压缩为显式 fallback，而不是在官方路径里重写一遍。
 - `runtime-status.diagnostics.executionPanel` 是页面执行判定的事实源，前端只做展示和二次归类：`部署判定` 判断是否应避免 redeploy，`命令性质` 区分 doctor、R1 dry-run、R1 test-before-promote 和 provider one-cycle，`Provider 调用` 明确只有带 `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1` 的命令才会做真实 provider smoke。这样页面不会把 R1 profile 问题误导成 build/deploy 问题。
-- 当前远程诊断已经证明 MAP/CDS 控制面、sidecar transport 和 `loopOwner=claude-agent-sdk` 的最小运行前置条件；仍未证明商业级完成，因为默认 profile 是 OpenRouter DeepSeek V4 Pro，不兼容官方 Claude Agent SDK。R1 通过前，不允许把 S1/S2/S3 readiness 当作真实代码审查验收。
+- 当前远程诊断证明 A0 官方 SDK adapter 边界仍成立，但 R0 shared-service runtime pool 未恢复：业务项目仍有 branch-local sidecar residual，remote host 缺失，shared pool 没有 running official SDK runtime。R0 通过前，不允许把历史 preview alias 绕行或 R1 readiness 当作真实代码审查验收。

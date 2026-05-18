@@ -337,6 +337,16 @@ check_docs_calibration() {
     "next testing stale R0-pass R1-only wording"
   forbid_doc_regex "$migration_plan" '当前 `claude-sdk` runtime 是官方 `anthropic` Python SDK \+ 自研 sidecar loop' \
     "migration plan old current-state wording"
+  forbid_doc_regex "$migration_plan" 'R0 runtime pool、A0 official SDK adapter boundary、V1 authenticated visual、N6 非代码兼容均已有通过证据' \
+    "migration plan stale R0-pass current-state wording"
+  forbid_doc_regex "$migration_plan" '验证显示.*aliasCheck\.status=stable' \
+    "migration plan stale branch-local alias stable evidence"
+  forbid_doc_regex "$quickstart" '远程 preview 已能证明.*aliasCheck\.status=stable' \
+    "quickstart stale branch-local alias stable evidence"
+  forbid_doc_regex "$ROOT_DIR/doc/design.cds-agent-official-sdk-adapter.md" '当前远程诊断已经证明 MAP/CDS 控制面、sidecar transport 和 `loopOwner=claude-agent-sdk` 的最小运行前置条件' \
+    "design stale remote R0 proof wording"
+  forbid_doc_regex "$ROOT_DIR/doc/design.cds-agent-official-sdk-adapter.md" 'preview sidecar 已迁到唯一 scoped alias `claude-agent-sdk-runtime-v2-prd-agent`' \
+    "design stale branch-local alias success wording"
   forbid_doc_regex "$report" '它不是完整官方 Claude Code SDK / Claude Agent SDK 接入' \
     "A10 report old absolute SDK-not-integrated wording"
 
