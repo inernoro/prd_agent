@@ -15,12 +15,21 @@ interface SchedulerConfig {
 }
 
 interface SchedulerSnapshot {
-  enabled: boolean;
-  config: SchedulerConfig;
-  hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
-  cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
-  capacityUsage: { current: number; max: number };
+  enabled?: boolean;
+  // scheduler 未挂载时后端可能返回 config: null —— 全部按可选处理（Codex P2）。
+  config?: SchedulerConfig | null;
+  hot?: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
+  cold?: Array<{ slug: string; lastAccessedAt: string | undefined }>;
+  capacityUsage?: { current: number; max: number };
 }
+
+const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
+  enabled: false,
+  maxHotBranches: 3,
+  idleTTLSeconds: 900,
+  tickIntervalSeconds: 60,
+  pinnedBranches: [],
+};
 
 const inputClass =
   'min-h-11 w-32 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring';
@@ -37,10 +46,11 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
     const ctrl = new AbortController();
     apiRequest<SchedulerSnapshot>('/api/scheduler/state', { signal: ctrl.signal })
       .then((data) => {
+        const cfg = data.config ?? DEFAULT_SCHEDULER_CONFIG;
         setState({ status: 'ok', data });
-        setEnabled(data.enabled);
-        setIdleMinutes(String(Math.round((data.config.idleTTLSeconds || 900) / 60)));
-        setMaxHot(String(data.config.maxHotBranches ?? 3));
+        setEnabled(data.enabled ?? cfg.enabled);
+        setIdleMinutes(String(Math.round((cfg.idleTTLSeconds || 900) / 60)));
+        setMaxHot(String(cfg.maxHotBranches ?? 3));
       })
       .catch((err: unknown) => {
         if ((err as DOMException)?.name === 'AbortError') return;
@@ -53,6 +63,10 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
   if (state.status === 'error') return <ErrorBlock message={state.message} />;
 
   const snap = state.data;
+  const cfg = snap.config ?? DEFAULT_SCHEDULER_CONFIG;
+  const hotList = snap.hot ?? [];
+  const coldList = snap.cold ?? [];
+  const capMax = snap.capacityUsage?.max ?? cfg.maxHotBranches;
 
   async function save(): Promise<void> {
     const minutes = Number(idleMinutes);
@@ -92,9 +106,9 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
               <Flame className="h-4 w-4 text-amber-500" />
               当前热分支
             </div>
-            <div className="mt-2 text-2xl font-semibold">{snap.hot.length}</div>
+            <div className="mt-2 text-2xl font-semibold">{hotList.length}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              上限 {snap.capacityUsage.max === 0 ? '不限' : snap.capacityUsage.max}
+              上限 {capMax === 0 ? '不限' : capMax}
             </div>
           </div>
           <div className="rounded-md border border-border bg-card px-4 py-4">
@@ -102,7 +116,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
               <Snowflake className="h-4 w-4 text-sky-500" />
               当前冷分支
             </div>
-            <div className="mt-2 text-2xl font-semibold">{snap.cold.length}</div>
+            <div className="mt-2 text-2xl font-semibold">{coldList.length}</div>
             <div className="mt-1 text-xs text-muted-foreground">已被停止 / 降温的分支</div>
           </div>
         </div>
@@ -132,7 +146,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           />
           <div className="mt-1.5 text-xs text-muted-foreground">
             分支无预览域名访问超过此时长即被停止。范围 1–1440 分钟。当前生效值{' '}
-            <CodePill>{Math.round((snap.config.idleTTLSeconds || 900) / 60)} 分钟</CodePill>
+            <CodePill>{Math.round((cfg.idleTTLSeconds || 900) / 60)} 分钟</CodePill>
           </div>
         </Field>
 
@@ -147,14 +161,14 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           />
           <div className="mt-1.5 text-xs text-muted-foreground">
             同时保持运行的分支上限，超出按 LRU 驱逐最久未访问的非固定分支。0 = 不限。当前生效值{' '}
-            <CodePill>{snap.config.maxHotBranches === 0 ? '不限' : snap.config.maxHotBranches}</CodePill>
+            <CodePill>{cfg.maxHotBranches === 0 ? '不限' : cfg.maxHotBranches}</CodePill>
           </div>
         </Field>
 
-        {snap.config.pinnedBranches.length > 0 ? (
+        {cfg.pinnedBranches.length > 0 ? (
           <Field label="固定分支（永不冷却）">
             <div className="flex flex-wrap gap-2">
-              {snap.config.pinnedBranches.map((slug) => (
+              {cfg.pinnedBranches.map((slug) => (
                 <CodePill key={slug}>{slug}</CodePill>
               ))}
             </div>
