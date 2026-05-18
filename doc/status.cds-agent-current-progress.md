@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 19:08 Asia/Shanghai
+> **更新时间**：2026-05-18 19:15 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -18,6 +18,7 @@
 | `SHARED_POOL_RUNNING` | blocked | `shared-sidecar-pool-mp4anabh` 没有 running runtime |
 | `SIDECAR_IMAGE_PULLABLE` | blocked | CDS deployer 是 `docker pull` 模式；本仓库有 Dockerfile，但不能证明远程 host 可拉取 |
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
+| `SIDECAR_LOCAL_BUILD` | blocked | Colima 标记 running，但 Docker CLI 当前无法连接 daemon，build smoke 输出 `docker_unavailable` |
 
 固定查看入口：
 
@@ -54,6 +55,7 @@ scripts/print-cds-agent-lifecycle-overview.sh
 | should redeploy preview? | no | blocker 不在 preview app build |
 | sidecar image readiness | `missing` | `CDS_AGENT_SIDECAR_IMAGE` 必须是目标 remote host 可 `docker pull` 的镜像 |
 | sidecar build context | `pass` | `/tmp/cds-agent-sidecar-image-preflight-current.json` |
+| sidecar local docker build | `docker_unavailable` | `/tmp/cds-agent-sidecar-image-build-current.json` |
 
 ## 4. 下一步最小计划
 
@@ -128,6 +130,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | lifecycle overview | `scripts/print-cds-agent-lifecycle-overview.sh` | 按完整目标输出生命周期、已完成、阻塞、剩余距离和关键路径；V1 标为 partial | <1s |
 | sidecar image readiness | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | 明确 CDS remote deployer 只 `docker pull`，不是远程构建；`CDS_AGENT_SIDECAR_IMAGE` 仍缺 | <1s |
 | sidecar image preflight | `/tmp/cds-agent-sidecar-image-preflight-current.json` | 本地 build context 通过；image 仍为 `missing_image`，远程 pullability 未证明 | <1s |
+| sidecar image build smoke | `/tmp/cds-agent-sidecar-image-build-current.json` | Docker daemon 当前不可达；未 push、未 deploy | <1s |
 
 ## 7. 时间和问题账本
 
@@ -156,6 +159,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | lifecycle overview | <1s | 直接回答“整个生命周期到哪一步、离目标多远”，避免只看局部脚本输出 |
 | sidecar image readiness | <1s | 本地 Dockerfile 只能给候选 build/push 命令；远程部署前必须提供可拉取镜像 tag |
 | sidecar image preflight | <1s | 本地先拦截 Dockerfile/context/image 引用问题，避免 R0.3 到远程 `docker pull` 阶段才失败 |
+| sidecar image build smoke | <1s 当前失败 | 把 Docker daemon 不可达写成机器可读证据，不再把它混进 R0 远程 deploy 失败 |
 
 ## 8. 不要做的事
 
@@ -189,6 +193,12 @@ scripts/preflight-cds-agent-r0-apply-readiness.sh
 
 ```bash
 scripts/preflight-cds-agent-sidecar-image.sh
+```
+
+本地尝试构建 sidecar image，不 push、不 deploy：
+
+```bash
+scripts/smoke-cds-agent-sidecar-image-build.sh
 ```
 
 生成 R0 操作员交接包：

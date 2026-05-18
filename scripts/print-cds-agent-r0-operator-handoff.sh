@@ -8,6 +8,7 @@ set -euo pipefail
 SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 READINESS_REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 OUTPUT="${CDS_AGENT_R0_OPERATOR_HANDOFF:-/tmp/cds-agent-r0-operator-handoff-current.md}"
+SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -44,6 +45,10 @@ image_build_context_status=$(jq -r '.imageReadiness.buildContextStatus // "unkno
 image_preflight_report=$(jq -r '.imageReadiness.preflightReport // "unknown"' "$READINESS_REPORT")
 image_build_command=$(jq -r '.imageReadiness.candidateBuildCommand // ""' "$READINESS_REPORT")
 image_push_command=$(jq -r '.imageReadiness.candidatePushCommand // ""' "$READINESS_REPORT")
+image_local_build="not checked"
+if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
+  image_local_build=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_BUILD_REPORT")
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 {
@@ -72,6 +77,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- warnings: `%s`\n\n' "${warnings:-none}"
   printf -- '- imageReadiness: `%s`\n' "$image_status"
   printf -- '- imageBuildContext: `%s`\n' "$image_build_context_status"
+  printf -- '- imageLocalBuild: `%s`\n' "$image_local_build"
   printf -- '- imagePreflightReport: `%s`\n' "$image_preflight_report"
   printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
 
@@ -92,6 +98,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf '## Sidecar Image\n\n'
   printf 'CDS remote deployer uses `docker pull`; it does not build from this repository on the remote host.\n\n'
   printf 'Local sidecar build context preflight is `%s`; this only proves the repository can describe a candidate image, not that the remote host can pull it.\n\n' "$image_build_context_status"
+  printf 'Local docker build smoke is `%s`; build smoke never pushes or deploys.\n\n' "$image_local_build"
   if [[ -n "$image_build_command" ]]; then
     printf 'Candidate local build command:\n\n'
     printf '```bash\n%s\n```\n\n' "$image_build_command"
@@ -109,6 +116,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   cat <<'EOF'
 ```bash
 scripts/preflight-cds-agent-r0-apply-readiness.sh
+scripts/smoke-cds-agent-sidecar-image-build.sh
 scripts/print-cds-agent-current-progress.sh
 ```
 EOF

@@ -8,13 +8,14 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:08 Asia/Shanghai：
+截至 2026-05-18 19:15 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
 - 已解决：发布验证能证明远程 bundle 支持 `applyManifest/preconditions` 渲染。
 - 已解决：生命周期视图能直接回答“目标到哪一步、离完成多远、下一步 ETA”。
 - 已解决：sidecar image 本地构建上下文已纳入预检，不再靠人工猜 Dockerfile 是否可用。
+- 已解决：sidecar image build smoke 已纳入门禁，Docker daemon 不可用会形成机器可读证据。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -43,6 +44,7 @@
 | 18:20 | 参数给齐后仍需要从长文档拼 apply/deploy/post-check 命令，容易泄露私钥或漏 flag | 新增安全 handoff 脚本，从 summary 生成占位符命令；支持 wrapper summary 和 prepare report | `/tmp/cds-agent-remote-host-handoff.md`、`/tmp/cds-agent-remote-host-existing-handoff.md`、`/tmp/cds-agent-remote-host-invalid-handoff.md` | <1s | 输出不含私钥；existing host 路径使用 `CDS_REMOTE_HOST_ID`；invalid 路径只列错误 |
 | 19:00 | `CDS_AGENT_SIDECAR_IMAGE` 容易被误解为“仓库有 Dockerfile 就能部署”，但 CDS remote deployer 实际只 `docker pull` | R0 readiness、lifecycle overview、operator handoff 增加 image readiness；明确候选 build/push 命令不等于远程可拉取 | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md`、`scripts/print-cds-agent-lifecycle-overview.sh` | <1s | R0 阻塞被拆成 remote host SSH 参数 + pullable sidecar image，不再混成一个黑盒 |
 | 19:08 | 只知道“缺 image”还不够，下一次远程部署前还需要知道本地 sidecar build context 是否健康 | 新增 `scripts/preflight-cds-agent-sidecar-image.sh`，并接入 R0 readiness、progress board、lifecycle、handoff | `/tmp/cds-agent-sidecar-image-preflight-current.json`、`/tmp/cds-agent-r0-apply-readiness-current.json` | <1s | `buildContext=pass`、`image=missing`；远程写动作前少一个不确定项 |
+| 19:15 | Colima 显示 running，但 Docker CLI 无法连接 daemon；本地 image 构建证据缺失 | 新增 `scripts/smoke-cds-agent-sidecar-image-build.sh`，将 Docker/build 结果写入 JSON，并接入 progress/lifecycle/handoff | `/tmp/cds-agent-sidecar-image-build-current.json` | <1s 当前失败 | 当前 `status=docker_unavailable`；不会误触发 push/deploy |
 
 ## 本轮暴露的问题
 
@@ -416,6 +418,24 @@
 
 优化：后续 R0.3 的失败面被拆成三类：本地 context、registry image、remote host docker pull。当前只剩 registry image 和 remote host。
 
+### 25. 本地 Docker 构建也必须成为门禁，而不是临时终端错误
+
+问题：`colima status` 显示 running，但 `docker version` 和 `docker ps` 无法连接 `/Users/inernoro/.colima/default/docker.sock`。如果没有独立 build smoke，这类环境问题会在人工构建镜像时才暴露，并再次被误解成 CDS R0 远程 deploy 问题。
+
+处理：
+
+- 新增 `scripts/smoke-cds-agent-sidecar-image-build.sh`。
+- 脚本先跑 image preflight，再尝试 `docker build -t <image> -f <Dockerfile> <context>`。
+- 结果写入 `/tmp/cds-agent-sidecar-image-build-current.json`，状态包括 `docker_unavailable`、`build_failed`、`build_pass`。
+- 脚本明确 `pushAttempted=false`、`deployAttempted=false`。
+- progress board、lifecycle overview、operator handoff 显示 local docker build 状态。
+
+证据：
+
+- 当前 `/tmp/cds-agent-sidecar-image-build-current.json` 为 `status=docker_unavailable`。
+
+优化：R0.3 前置证据现在分层为：build context pass、local docker build、registry push/pull、remote deploy。下一步不再把 Docker daemon 问题与 CDS remote host 问题混在一起。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -433,6 +453,7 @@
 | lifecycle overview | <1s | 完全可本地化 | 固定回答完整生命周期进度、剩余距离和关键路径 |
 | sidecar image readiness | <1s | 完全可本地化 | 把本地 Dockerfile、候选 build/push 命令、远程 pull-only 要求分开，避免远程 deploy 才失败 |
 | sidecar image preflight | <1s | 完全可本地化 | 先证明 build context，后续只追 registry image 和 remote host pull 权限 |
+| sidecar image build smoke | <1s 当前失败 | 完全可本地化 | Docker daemon 不可达时直接停在本地 build gate，不进入远程 deploy |
 
 ## 当前下一步
 

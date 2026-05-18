@@ -9,6 +9,7 @@ REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host
 HANDOFF_SUMMARY="${CDS_AGENT_REMOTE_HOST_HANDOFF_SUMMARY:-$REMOTE_HOST_SUMMARY}"
 N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
 R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
+SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -66,6 +67,7 @@ r0_readiness_line="not checked"
 image_readiness="unknown"
 image_next_action="unknown"
 image_build_context="unknown"
+image_local_build="not checked"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
   r0_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.nextAction // "unknown"')
@@ -73,6 +75,9 @@ if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   image_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.nextAction // "unknown"')
   image_build_context=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.buildContextStatus // "unknown"')
   r0_readiness_line="readyForR0Apply=$r0_ready; nextAction=$r0_next_action"
+fi
+if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
+  image_local_build=$(jq_read "$SIDECAR_IMAGE_BUILD_REPORT" '.status // "unknown"')
 fi
 
 if [[ -z "$missing_config" ]]; then
@@ -103,6 +108,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - R0 local apply readiness: $r0_readiness_line
 - Sidecar image readiness: $image_readiness; $image_next_action
 - Sidecar build context: $image_build_context
+- Sidecar local docker build: $image_local_build
 
 ## Task Board
 
@@ -123,6 +129,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - invalidConfig: $invalid_config
 - imageReadiness: $image_readiness
 - imageBuildContext: $image_build_context
+- imageLocalBuild: $image_local_build
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
 
@@ -151,4 +158,5 @@ Then fill only placeholders locally. Do not paste private key contents into chat
 - handoff summary: $HANDOFF_SUMMARY
 - N6 summary: $N6_SUMMARY
 - R0 readiness summary: $R0_READINESS_SUMMARY
+- sidecar image build summary: $SIDECAR_IMAGE_BUILD_REPORT
 EOF
