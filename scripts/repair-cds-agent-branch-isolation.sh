@@ -5,6 +5,7 @@
 # 真正执行需要显式设置:
 #   CDS_HOST=https://cds.miduo.org \
 #   SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+#   SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent \
 #     bash scripts/repair-cds-agent-branch-isolation.sh
 #
 # 执行动作:
@@ -20,6 +21,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CDS_PROJECT_ID="${SMOKE_CDS_PROJECT_ID:-prd-agent}"
 APPLY="${SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY:-0}"
+CONFIRM_PROFILE_ID="${SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID:-}"
 REPORT="${SMOKE_CDS_AGENT_BRANCH_ISOLATION_REPAIR_REPORT:-}"
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STARTED_EPOCH="$(date +%s)"
@@ -46,6 +48,7 @@ write_report() {
     --arg cdsHost "$cds_base" \
     --arg projectId "$CDS_PROJECT_ID" \
     --arg apply "$APPLY" \
+    --arg confirmProfileId "$CONFIRM_PROFILE_ID" \
     --arg status "$status" \
     --arg message "$message" \
     --argjson contaminated "$contaminated" \
@@ -58,6 +61,7 @@ write_report() {
       cdsHost: $cdsHost,
       projectId: $projectId,
       apply: ($apply == "1"),
+      confirmProfileId: (if $confirmProfileId == "" then null else $confirmProfileId end),
       status: $status,
       message: $message,
       contaminatedBranchCount: ($contaminated | length),
@@ -125,6 +129,20 @@ if [[ "$APPLY" != "1" ]]; then
   printf '\nDRY-RUN: 未执行删除。设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 后再运行。\n'
   write_report "dry_run" "未执行删除；设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 后再运行" "[]"
   exit 0
+fi
+
+profile_count=$(printf '%s\n' "$profile_ids" | sed '/^$/d' | wc -l | tr -d ' ')
+if [[ "$profile_count" != "1" ]]; then
+  write_report "confirm_failed" "候选 BuildProfile 数量不是 1，拒绝执行删除；请先人工复核候选列表" "[]"
+  fail "候选 BuildProfile 数量不是 1，拒绝执行删除；当前数量=$profile_count"
+fi
+if [[ -z "$CONFIRM_PROFILE_ID" ]]; then
+  write_report "confirm_failed" "缺少 SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID，拒绝执行删除" "[]"
+  fail "缺少 SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID；必须精确等于候选 BuildProfile id"
+fi
+if [[ "$CONFIRM_PROFILE_ID" != "$profile_ids" ]]; then
+  write_report "confirm_failed" "确认的 BuildProfile id 与候选不匹配，拒绝执行删除" "[]"
+  fail "确认的 BuildProfile id 与候选不匹配: confirm=$CONFIRM_PROFILE_ID candidate=$profile_ids"
 fi
 
 printf '\n>>> 执行删除\n'

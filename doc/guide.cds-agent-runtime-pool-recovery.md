@@ -107,10 +107,11 @@ CDS_HOST=https://cds.miduo.org \
 ```bash
 CDS_HOST=https://cds.miduo.org \
 SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent \
   bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
 ```
 
-wrapper 会写 `/tmp/cds-agent-branch-isolation-repair-*`，包含 pre evidence、repair report、post branch isolation smoke 和 post evidence。若 post check 仍失败，`summary.json` 会保留删除结果与复查失败状态，便于继续定位。
+wrapper 会写 `/tmp/cds-agent-branch-isolation-repair-*`，包含 pre evidence、repair report、post branch isolation smoke 和 post evidence。apply 模式必须提供 `SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID`，且它必须精确等于唯一候选 BuildProfile；候选为空、候选不唯一或确认值不匹配都会拒绝执行 DELETE。若 post check 仍失败，`summary.json` 会保留删除结果与复查失败状态，便于继续定位。
 
 `summary.json` 的关键判定字段：
 

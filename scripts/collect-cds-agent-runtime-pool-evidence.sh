@@ -167,6 +167,7 @@ jq -n \
       {
         contaminatedBranchCount: (.branchIsolationRepairDryRun.contaminatedBranchCount // .plan.contaminatedBranchCount // 0),
         candidateProfileIds: (.branchIsolationRepairDryRun.candidateProfileIds // .plan.contaminatedProfileIds // []),
+        confirmProfileId: (.branchIsolationRepairDryRun.confirmProfileId // null),
         repairStatus: (.branchIsolationRepairDryRun.status // "unknown")
       }
       | .clean = ((.contaminatedBranchCount // 0) == 0)
@@ -176,7 +177,7 @@ jq -n \
           if .clean then
             "branch isolation already clean; continue with remote host and shared runtime pool recovery"
           else
-            "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1"
+            "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate"
           end
         )
     )
@@ -238,7 +239,8 @@ index="$OUT_DIR/evidence-index.md"
       "- nextAction: " + (.branchIsolation.nextAction // ""),
       "- status: `" + (.branchIsolationRepairDryRun.status // "unknown") + "`",
       "- contaminatedBranchCount: `" + ((.branchIsolation.contaminatedBranchCount // 0)|tostring) + "`",
-      "- candidateProfileIds: `" + ((.branchIsolation.candidateProfileIds // []) | join(",")) + "`"' "$summary"
+      "- candidateProfileIds: `" + ((.branchIsolation.candidateProfileIds // []) | join(",")) + "`",
+      "- confirmProfileId: `" + (.branchIsolation.confirmProfileId // "not-set") + "`"' "$summary"
   fi
   printf '\n## Remote Host Pool Preparation\n\n'
   if [[ "$(jq -r '.remoteHostPoolPreparation == null' "$summary")" == "true" ]]; then
@@ -311,6 +313,7 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf '   - verdict：`%s`\n' "$(jq -r '.branchIsolation.verdict // "unknown"' "$summary")"
     printf '   - readyForRemoteHostStep：`%s`\n' "$(jq -r '.branchIsolation.readyForRemoteHostStep // false' "$summary")"
     printf '   - nextAction：%s\n' "$(jq -r '.branchIsolation.nextAction // ""' "$summary")"
+    printf '   - apply 确认变量：`SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=%s`\n' "$(jq -r '(.branchIsolation.candidateProfileIds // []) | if length == 1 then .[0] else "REVIEW_CANDIDATES" end' "$summary")"
     printf '   - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。\n'
     printf '2. 登记至少一个 enabled CDS remote host。\n'
     printf '   - verdict：`%s`\n' "$(jq -r '.remoteHost.verdict // "unknown"' "$summary")"
@@ -332,6 +335,13 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf 'branch 清理 dry-run：\n\n'
     printf '```bash\n'
     printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf '  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh\n'
+    printf '```\n\n'
+    printf 'branch 清理 apply 必须精确确认候选 profile：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf 'SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \\\n'
+    printf 'SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=%s \\\n' "$(jq -r '(.branchIsolation.candidateProfileIds // []) | if length == 1 then .[0] else "REVIEW_CANDIDATES" end' "$summary")"
     printf '  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh\n'
     printf '```\n\n'
     printf 'remote host 准备 dry-run：\n\n'

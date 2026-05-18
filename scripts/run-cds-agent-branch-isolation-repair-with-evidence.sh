@@ -26,6 +26,7 @@ step_statuses=""
 step_seconds=""
 step_logs=""
 step_exit_codes=""
+last_run_rc=0
 
 append_json_string() {
   local current="$1"
@@ -66,6 +67,7 @@ run_capture() {
     status="blocked"
   fi
   printf '%s %s (%ss) log=%s\n' "$status" "$name" "$duration" "$log"
+  last_run_rc="$rc"
   step_names=$(append_json_string "$step_names" "$name")
   step_statuses=$(append_json_string "$step_statuses" "$status")
   step_seconds=$(append_json_number "$step_seconds" "$duration")
@@ -95,8 +97,9 @@ run_capture "branch isolation repair" "$repair_log" \
   env SMOKE_CDS_AGENT_BRANCH_ISOLATION_REPAIR_REPORT="$repair_report" \
       SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY="$APPLY" \
       bash "$ROOT_DIR/scripts/repair-cds-agent-branch-isolation.sh"
+repair_rc="$last_run_rc"
 
-if [[ "$APPLY" == "1" ]]; then
+if [[ "$APPLY" == "1" && "$repair_rc" == "0" ]]; then
   run_capture "post branch isolation smoke" "$post_branch_smoke_log" \
     env SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
         bash "$ROOT_DIR/scripts/smoke-cds-agent-branch-isolation.sh"
@@ -152,7 +155,8 @@ jq -n \
       end
     )
   | .verdict = (
-      if .apply and .branchIsolationClean then "applied-clean"
+      if ((.repair.status // "") == "confirm_failed") then "apply-confirm-failed"
+      elif .apply and .branchIsolationClean then "applied-clean"
       elif .apply then "applied-not-clean"
       elif .branchIsolationClean then "dry-run-clean"
       else "dry-run-contaminated"
@@ -160,7 +164,9 @@ jq -n \
     )
   | .readyForRemoteHostStep = (.verdict == "applied-clean" or .verdict == "dry-run-clean")
   | .nextAction = (
-      if .verdict == "applied-clean" then
+      if .verdict == "apply-confirm-failed" then
+        "apply was blocked before DELETE because confirmation did not match the unique candidate BuildProfile"
+      elif .verdict == "applied-clean" then
         "branch isolation clean; register an enabled remote host and deploy the shared official SDK runtime sidecar"
       elif .verdict == "dry-run-clean" then
         "branch isolation already clean; continue with remote host and shared runtime pool recovery"
@@ -196,6 +202,10 @@ printf 'Summary:      %s\n' "$summary"
 printf 'Index:        %s\n' "$index"
 jq '{apply,totalSeconds,verdict,readyForRemoteHostStep,nextAction,beforeContaminatedBranchCount,afterContaminatedBranchCount,repair:{status:.repair.status,candidateProfileIds:.repair.candidateProfileIds,deletedProfileIds:.repair.deletedProfileIds}}' "$summary"
 
+if [[ "$APPLY" == "1" && "$(jq -r '.verdict' "$summary")" == "apply-confirm-failed" ]]; then
+  printf '❌ branch isolation repair apply was blocked before DELETE by profile confirmation guard; see %s\n' "$index" >&2
+  exit 1
+fi
 if [[ "$APPLY" == "1" && "$(jq -r '.branchIsolationClean' "$summary")" != "true" ]]; then
   printf '❌ branch isolation repair apply did not produce a clean post-check; see %s\n' "$index" >&2
   exit 1

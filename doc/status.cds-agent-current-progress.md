@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 16:04 Asia/Shanghai
+> 更新时间：2026-05-18 16:15 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -18,14 +18,14 @@
 - `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-current/summary.json`
 - `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-current/evidence-index.md`
 
-本次证据采集总耗时 `15s`：
+本次证据采集总耗时 `12s`：
 
 | 步骤 | 状态 | 耗时 |
 | --- | --- | --- |
 | runtime pool recovery plan | pass | 4s |
-| branch isolation repair dry-run | pass | 2s |
+| branch isolation repair dry-run | pass | 3s |
 | remote host pool preparation | pass | 1s |
-| shared-service pool audit | blocked | 8s |
+| shared-service pool audit | blocked | 4s |
 
 ## 为什么不是部署问题
 
@@ -55,7 +55,8 @@
    - dry-run 证据已确认候选 profile：`claude-agent-sdk-runtime-v2-prd-agent`
    - verdict：`dry-run-contaminated`
    - readyForRemoteHostStep：`false`
-   - nextAction：review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1
+   - nextAction：review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate
+   - apply 确认变量：`SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent`
    - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。
 2. 登记至少一个 enabled CDS remote host。
    - verdict：`blocked-branch-isolation`
@@ -85,6 +86,15 @@ branch 清理 dry-run：
 
 ```bash
 CDS_HOST=https://cds.miduo.org \
+  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
+```
+
+branch 清理 apply 必须精确确认候选 profile：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent \
   bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
 ```
 
