@@ -774,7 +774,7 @@ export function BranchDetailDrawer({
     if (!open || !branchId) return;
     failureAutoSwitchedRef.current = false;
     setActiveTab('deployments');
-    setLogsMode('build');
+    setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
     // 2026-05-14 Codex review P2：切到另一分支时必须清空内联容器日志的
@@ -793,6 +793,9 @@ export function BranchDetailDrawer({
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
     setTriggerLogsState({ status: 'idle' });
+    // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
+    // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
+    setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};

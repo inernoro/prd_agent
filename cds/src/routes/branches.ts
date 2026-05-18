@@ -4313,7 +4313,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
     const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
-    const all = stateService.getActivityLogs(entry.projectId, { limit: 200, sinceIso });
+    // 先按 branchId 过滤再截断，否则繁忙项目里其它分支的事件会把本分支
+    // 的历史挤出 200 条上限，导致"谁停的/为什么"时间线对高频项目恰好失效
+    // （Codex review P1）。getActivityLogs 不传 limit 返回项目全部（最新在前）。
+    const all = stateService.getActivityLogs(entry.projectId, { sinceIso });
     const logs = all.filter((e) => e.branchId === id).slice(0, limit);
     res.json({ branchId: id, logs, total: logs.length });
   });
