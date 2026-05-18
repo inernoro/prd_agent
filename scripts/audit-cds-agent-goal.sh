@@ -161,7 +161,7 @@ is_non_runtime_cycle_drift_path() {
     *.md|*.MD|*.txt|*.TXT) return 0 ;;
     CHANGELOG*|changelogs/*|doc/*|.claude/*|.github/*|e2e/*) return 0 ;;
     cds/tests/*|prd-admin/src/*/__tests__/*) return 0 ;;
-    scripts/smoke-*|scripts/audit-*|scripts/doctor-*|scripts/preflight-*|scripts/verify-*) return 0 ;;
+    scripts/smoke-*|scripts/audit-*|scripts/doctor-*|scripts/preflight-*|scripts/verify-*|scripts/index-*) return 0 ;;
     LICENSE|license|.gitignore|.editorconfig) return 0 ;;
   esac
   return 1
