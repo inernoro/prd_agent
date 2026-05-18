@@ -219,6 +219,9 @@ export interface InfraAgentRuntimeDiagnostics {
     isDefault: boolean;
     compatibleWithDesiredRuntimeAdapter: boolean;
     warning?: string | null;
+    compatibilityReasonCode?: string | null;
+    compatibilityReason?: string | null;
+    compatibilityNextActions?: string[] | null;
   } | null;
   commercialReadiness?: {
     overall: string;
@@ -246,6 +249,9 @@ export interface InfraAgentRuntimeDiagnostics {
       isDefault: boolean;
       compatibleWithDesiredRuntimeAdapter: boolean;
       warning?: string | null;
+      compatibilityReasonCode?: string | null;
+      compatibilityReason?: string | null;
+      compatibilityNextActions?: string[] | null;
     } | null;
     targetTemplateId: string;
     targetProtocol: string;

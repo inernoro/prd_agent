@@ -2132,10 +2132,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return;
         }
 
-        if (InfraAgentRuntimeProfileCompatibility.IsCompatibleWithDesiredRuntimeAdapter(
-                desiredRuntimeAdapter,
-                profile.Protocol,
-                profile.Model))
+        var compatibility = InfraAgentRuntimeProfileCompatibility.AnalyzeForDesiredRuntimeAdapter(
+            desiredRuntimeAdapter,
+            profile.Protocol,
+            profile.Model);
+        if (compatibility.Compatible)
         {
             return;
         }

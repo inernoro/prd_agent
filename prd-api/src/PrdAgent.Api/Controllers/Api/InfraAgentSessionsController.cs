@@ -472,13 +472,13 @@ public class InfraAgentSessionsController : ControllerBase
         var selected = profiles.FirstOrDefault(x => x.IsDefault) ?? profiles.FirstOrDefault();
         if (selected == null) return null;
 
-        var compatible = InfraAgentRuntimeProfileCompatibility.IsCompatibleWithDesiredRuntimeAdapter(
+        var compatibility = InfraAgentRuntimeProfileCompatibility.AnalyzeForDesiredRuntimeAdapter(
             desiredRuntimeAdapter,
             selected.Protocol,
             selected.Model);
-        var warning = compatible
+        var warning = compatibility.Compatible
             ? null
-            : "claude-agent-sdk 通常需要 Claude/Anthropic 兼容模型；当前默认模型可能只适合普通 OpenAI-compatible gateway";
+            : compatibility.Reason;
         return new SidecarRuntimeProfileDiagnostics(
             selected.Id,
             selected.Name,
@@ -487,8 +487,11 @@ public class InfraAgentSessionsController : ControllerBase
             selected.Model,
             selected.HasApiKey,
             selected.IsDefault,
-            compatible,
-            warning);
+            compatibility.Compatible,
+            warning,
+            compatibility.ReasonCode,
+            compatibility.Reason,
+            compatibility.NextActions);
     }
 
     private static IReadOnlyList<string>? MergeNextActions(
@@ -501,6 +504,7 @@ public class InfraAgentSessionsController : ControllerBase
         }
 
         var result = new List<string>(current ?? Array.Empty<string>());
+        result.AddRange(profile.CompatibilityNextActions ?? Array.Empty<string>());
         result.Add("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         return result.Distinct().ToArray();
     }

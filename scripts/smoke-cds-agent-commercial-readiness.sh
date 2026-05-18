@@ -196,10 +196,17 @@ profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown
 profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
 profile_has_key=$(printf '%s' "$default_profile" | jq -r '.hasApiKey // false')
 profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end')
-printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s\n' \
-  "$profile_name" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible"
+profile_reason_code=$(printf '%s' "$default_profile" | jq -r '.compatibilityReasonCode // ""')
+profile_reason=$(printf '%s' "$default_profile" | jq -r '.compatibilityReason // ""')
+printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s reason=%s\n' \
+  "$profile_name" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible" "${profile_reason_code:-none}"
 if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   gate_r1_status="pending"
+  if [[ "$profile_compatible" != "true" ]]; then
+    smoke_assert_nonempty "$profile_reason_code" "defaultProfile.compatibilityReasonCode"
+    smoke_assert_nonempty "$profile_reason" "defaultProfile.compatibilityReason"
+    smoke_assert_contains "$profile_reason" "claude-agent-sdk" "defaultProfile.compatibilityReason"
+  fi
   smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.state')" "blocked" "runtimeProfileRepairPlan.state"
   smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.state')" "profile-blocked" "nextCyclePlan.state"
   smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.items[]? | select(.code == "N2") | .blockedBy')" "R1" "nextCyclePlan.N2.blockedBy"

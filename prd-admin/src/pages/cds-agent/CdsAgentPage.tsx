@@ -728,6 +728,9 @@ export default function CdsAgentPage() {
           hasApiKey: defaultRuntimeProfileDiagnostics.hasApiKey,
           compatibleWithDesiredRuntimeAdapter: defaultRuntimeProfileDiagnostics.compatibleWithDesiredRuntimeAdapter,
           warning: defaultRuntimeProfileDiagnostics.warning ?? null,
+          compatibilityReasonCode: defaultRuntimeProfileDiagnostics.compatibilityReasonCode ?? null,
+          compatibilityReason: defaultRuntimeProfileDiagnostics.compatibilityReason ?? null,
+          compatibilityNextActions: defaultRuntimeProfileDiagnostics.compatibilityNextActions ?? null,
         }
       : null),
     targetTemplate: backendR1RepairPlan
@@ -893,7 +896,8 @@ export default function CdsAgentPage() {
     const blockers = runtimeStatus?.blockers?.filter(Boolean) ?? [];
     const nextActions = runtimeStatus?.nextActions?.filter(Boolean) ?? [];
     const defaultRuntimeProfile = runtimeStatus?.defaultRuntimeProfile ?? null;
-    const profileCompatibilityWarning = defaultRuntimeProfile?.warning || '';
+    const profileCompatibilityReasonCode = defaultRuntimeProfile?.compatibilityReasonCode || '';
+    const profileCompatibilityWarning = defaultRuntimeProfile?.compatibilityReason || defaultRuntimeProfile?.warning || '';
     const profileCompatibilityState = defaultRuntimeProfile
       ? `${defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter ? '兼容' : '需调整'} · ${defaultRuntimeProfile.name} / ${defaultRuntimeProfile.model}`
       : '未上报';
@@ -1403,6 +1407,7 @@ export default function CdsAgentPage() {
         ['Ready', readyState],
         ['HTTP', httpState],
         ['Default profile', profileCompatibilityState],
+        ['Profile reason', profileCompatibilityReasonCode || '无结构化原因'],
         ['Execution panel', backendExecutionPanel ? `${backendExecutionPanel.status} · ${backendExecutionPanel.currentBlockingGate || 'clear'}` : 'page-derived'],
         ['Profile warning', profileCompatibilityWarning || '无兼容性提示'],
         ['Provider key', providerKeyState],

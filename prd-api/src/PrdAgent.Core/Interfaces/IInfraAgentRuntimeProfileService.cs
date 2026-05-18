@@ -134,6 +134,13 @@ public record InfraAgentRuntimeProfileTestResult(
     long ElapsedMs
 );
 
+public record InfraAgentRuntimeProfileCompatibilityDecision(
+    bool Compatible,
+    string ReasonCode,
+    string Reason,
+    IReadOnlyList<string> NextActions
+);
+
 public static class InfraAgentRuntimeProfileCompatibility
 {
     public static bool IsCompatibleWithDesiredRuntimeAdapter(
@@ -141,16 +148,54 @@ public static class InfraAgentRuntimeProfileCompatibility
         string? protocol,
         string? model)
     {
+        return AnalyzeForDesiredRuntimeAdapter(desiredRuntimeAdapter, protocol, model).Compatible;
+    }
+
+    public static InfraAgentRuntimeProfileCompatibilityDecision AnalyzeForDesiredRuntimeAdapter(
+        string? desiredRuntimeAdapter,
+        string? protocol,
+        string? model)
+    {
         if (!string.Equals(desiredRuntimeAdapter, "claude-agent-sdk", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            return new InfraAgentRuntimeProfileCompatibilityDecision(
+                true,
+                "adapter-not-claude-agent-sdk",
+                "当前目标 adapter 不是 claude-agent-sdk；不套用 Claude/Anthropic profile gate。",
+                Array.Empty<string>());
         }
 
         var normalizedProtocol = protocol ?? string.Empty;
         var normalizedModel = model ?? string.Empty;
-        return normalizedProtocol.Equals("anthropic", StringComparison.OrdinalIgnoreCase)
-            || normalizedModel.Contains("claude", StringComparison.OrdinalIgnoreCase)
-            || normalizedModel.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase);
+        if (normalizedProtocol.Equals("anthropic", StringComparison.OrdinalIgnoreCase))
+        {
+            return new InfraAgentRuntimeProfileCompatibilityDecision(
+                true,
+                "anthropic-protocol",
+                "profile protocol=anthropic，可作为 claude-agent-sdk provider profile。",
+                Array.Empty<string>());
+        }
+
+        if (normalizedModel.Contains("claude", StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase))
+        {
+            return new InfraAgentRuntimeProfileCompatibilityDecision(
+                true,
+                "claude-model-hint",
+                "profile model 指向 Claude/Anthropic 模型，可进入 provider smoke 验证。",
+                Array.Empty<string>());
+        }
+
+        return new InfraAgentRuntimeProfileCompatibilityDecision(
+            false,
+            "openai-compatible-non-claude-model",
+            "claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。",
+            new[]
+            {
+                "使用 Anthropic 官方模板创建默认 runtime profile，并填入有效 API key。",
+                "如果必须使用普通 OpenAI-compatible 模型，不要把代码审查任务路由到 claude-agent-sdk。",
+                "补齐其他官方 SDK adapter contract 和 S1/S2/S3 smokes 后，再允许对应 runtime 路由。"
+            });
     }
 
     public static string BuildIncompatibleMessage(string profileName, string model) =>

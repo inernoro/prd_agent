@@ -370,6 +370,10 @@ public class InfraAgentSessionsControllerTests
             var defaultProfile = diagnostics.DefaultRuntimeProfile.ShouldNotBeNull();
             defaultProfile.CompatibleWithDesiredRuntimeAdapter.ShouldBeFalse();
             defaultProfile.Warning.ShouldNotBeNull().ShouldContain("Claude/Anthropic");
+            defaultProfile.CompatibilityReasonCode.ShouldBe("openai-compatible-non-claude-model");
+            defaultProfile.CompatibilityReason.ShouldNotBeNull().ShouldContain("OpenAI-compatible");
+            defaultProfile.CompatibilityNextActions.ShouldNotBeNull()
+                .ShouldContain(x => x.Contains("不要把代码审查任务路由到 claude-agent-sdk", StringComparison.Ordinal));
             var repairPlan = diagnostics.RuntimeProfileRepairPlan.ShouldNotBeNull();
             repairPlan.Gate.ShouldBe("R1");
             repairPlan.State.ShouldBe("blocked");

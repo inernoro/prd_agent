@@ -198,9 +198,14 @@ else
   profile_model=$(printf '%s' "$default_profile" | jq -r '.model // "unknown"')
   profile_has_key=$(printf '%s' "$default_profile" | jq -r '.hasApiKey // false')
   profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end')
+  profile_reason_code=$(printf '%s' "$default_profile" | jq -r '.compatibilityReasonCode // ""')
+  profile_reason=$(printf '%s' "$default_profile" | jq -r '.compatibilityReason // ""')
   profile_warning=$(printf '%s' "$default_profile" | jq -r '.warning // ""')
   printf 'Default profile: name=%s runtime=%s protocol=%s model=%s hasApiKey=%s compatibleWithDesiredRuntimeAdapter=%s\n' \
     "$profile_name" "$profile_runtime" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible"
+  if [[ -n "$profile_reason_code" ]]; then
+    printf 'Profile compatibility reason: code=%s message=%s\n' "$profile_reason_code" "$profile_reason"
+  fi
   if [[ -n "$profile_warning" ]]; then
     printf 'Profile warning: %s\n' "$profile_warning"
   elif [[ "$desired_adapter" == "claude-agent-sdk" && "$profile_model" != *claude* && "$profile_model" != anthropic/* ]]; then

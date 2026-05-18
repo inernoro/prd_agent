@@ -187,7 +187,10 @@ public sealed record SidecarRuntimeProfileDiagnostics(
     bool HasApiKey,
     bool IsDefault,
     bool CompatibleWithDesiredRuntimeAdapter,
-    string? Warning = null
+    string? Warning = null,
+    string? CompatibilityReasonCode = null,
+    string? CompatibilityReason = null,
+    IReadOnlyList<string>? CompatibilityNextActions = null
 );
 
 public sealed record SidecarCommercialReadinessDiagnostics(
