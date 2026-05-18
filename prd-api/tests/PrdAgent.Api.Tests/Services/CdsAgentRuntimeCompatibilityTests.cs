@@ -31,7 +31,7 @@ public class CdsAgentRuntimeCompatibilityTests
     }
 
     [Fact]
-    public void CdsAgentAdapter_ShouldBeTheOnlyToolboxAdapterThatDependsOnInfraRuntime()
+    public void ToolboxAdapters_ShouldNotDependOnInfraRuntimeAdapter()
     {
         var adapterSources = ReadToolboxAdapterSources()
             .Where(x => x.Source.Contains("IInfraAgentRuntimeAdapter", StringComparison.Ordinal))
@@ -39,7 +39,7 @@ public class CdsAgentRuntimeCompatibilityTests
             .OrderBy(x => x, StringComparer.Ordinal)
             .ToArray();
 
-        adapterSources.ShouldBe(new[] { "CdsAgentAdapter.cs" });
+        adapterSources.ShouldBeEmpty();
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class CdsAgentRuntimeCompatibilityTests
     }
 
     [Fact]
-    public void CdsAgentAdapter_ShouldOwnTheOnlyRuntimeAdapterConstructorDependency()
+    public void ToolboxAdapters_ShouldNotOwnRuntimeAdapterConstructorDependency()
     {
         var owners = ToolboxAdapterTypes()
             .Where(type => ConstructorParameterTypes(type).Contains(typeof(IInfraAgentRuntimeAdapter)))
@@ -65,7 +65,7 @@ public class CdsAgentRuntimeCompatibilityTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
 
-        owners.ShouldBe(new[] { nameof(CdsAgentAdapter) });
+        owners.ShouldBeEmpty();
     }
 
     [Fact]

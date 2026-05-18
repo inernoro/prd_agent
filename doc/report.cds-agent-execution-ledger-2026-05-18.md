@@ -202,10 +202,10 @@
 
 - `executionPanel.status=blocked_r0`
 - `currentBlockingGate=R0`
-- `nextCyclePlan.cycle=r0-map-session-transport-smoke`
-- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport done_minimal、`R0.4` MAP session transport smoke、`R0V` evidence refresh。
+- `nextCyclePlan.cycle=r0-managed-runtime-postcheck`
+- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport done_minimal、`R0.4` MAP session transport smoke done、`R0V` managed-runtime post-check。
 
-证据：`scripts/audit-cds-agent-goal.sh` 当前输出 `Next cycle plan: r0-map-session-transport-smoke state=map-session-transport-blocked items=D1,R0.3,R0.4,R0V`。
+证据：`scripts/audit-cds-agent-goal.sh` 当前输出 `Next cycle plan: r0-managed-runtime-postcheck state=managed-runtime-postcheck-blocked items=D1,R0.3,R0.4,R0V`。
 
 优化：旧 one-cycle 只作为历史 provider/profile 证据，不再决定当前执行面板的顶层状态。
 
@@ -406,7 +406,7 @@
 - `/tmp/cds-agent-goal-audit-current-with-readiness.json`：`gates.N6=pass`。
 - `requirements.otherAgentCompatibility.status=proved`。
 - `runtimePoolRecovery.applyReadiness.readyForR0Apply=false`。
-- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `R0 MAP session transport smoke is not complete; legacy fallback pool evidence remains missing`。
+- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `R0V managed-runtime post-check is not complete; legacy fallback pool evidence remains missing`。
 
 耗时：短超时审计 15s；N6 沙箱步骤被超时停止，但 summary 将当前 N6 证据校准为 pass。
 
@@ -742,16 +742,38 @@
 处理：
 
 - `doc/status.cds-agent-current-progress.md` 第一节改为“项目级答案”。
-- 明确从输入齐全开始预计 1-2 小时完成真实一轮验收。
-- 明确总共 8 步，当前在第 3 步 R0。
-- 明确最小协助输入：`CDS_AGENT_SIDECAR_IMAGE` + remote host SSH 信息。
-- 明确只需看两个文档：当前进度面板和执行账本。
+- 明确当前有限周期是 R0V managed-runtime post-check/live evidence，本地预计 15-30 秒，live evidence 取决于 CDS 当前状态。
+- 明确总共 8 步，当前在第 4 步 R0。
+- 明确当前不需要把 `CDS_AGENT_SIDECAR_IMAGE` + remote host SSH 信息当成产品主路径输入；它们只保留为 operator/debug fallback。
+- 明确优先看三个文档：当前进度面板、managed-runtime fact-source 设计、执行账本。
 
 证据：
 
 - `doc/status.cds-agent-current-progress.md` 的 `## 1. 项目级答案`。
 
 优化：后续同步进度时先更新项目级答案，再补技术细节。
+
+### 41. R0.2.4 完成后，MAP 默认执行面仍需要从 direct runtime queue 收回
+
+问题：CDS `/agent-sessions` 已经能通过 CDS-managed branch service transport 调 official SDK sidecar，但 MAP 侧 `CdsAgentAdapter` 仍注入 `IInfraAgentRuntimeAdapter` 做预检，`InfraAgentSessionService.SendMessageAsync` 仍默认排 `_runtimeJobs.EnqueueAsync`。这会让 MAP 重新拥有执行队列，结构上继续接近“MAP 直连 runtime”，和“MAP 只连接 CDS、CDS 管 runtime/container/sandbox”的目标不一致。
+
+处理：
+
+- `CdsAgentAdapter` 移除 `IInfraAgentRuntimeAdapter` 构造依赖和 runtime pool 预检，只负责创建 CDS session、启动 session、发送 CDS session message。
+- `InfraAgentSessionService.SendMessageAsync` 先调用 CDS `/agent-sessions/{id}/messages`，导入 CDS stream events，再更新本地 session 状态。
+- MAP direct runtime queue 改为显式 fallback：只有 `INFRA_AGENT_ENABLE_MAP_DIRECT_RUNTIME_FALLBACK=1|true|yes` 时才 enqueue；默认记录 `cds-session-transport` 事件。
+- `RunRuntimeJobAsync` 默认早退，写入 `MAP direct runtime job skipped; CDS session transport owns execution`，避免后台 worker 继续偷跑。
+- 新增 `scripts/smoke-cds-agent-map-session-transport.sh`，静态锁定 Toolbox adapter 不注入 direct runtime adapter、session message 先走 CDS、fallback env 必须显式存在。
+
+证据：
+
+- `scripts/smoke-cds-agent-map-session-transport.sh`：pass。
+- `dotnet test prd-api/tests/PrdAgent.Api.Tests --filter "CdsAgentRuntimeCompatibilityTests|CdsAgentAdapterTests|InfraAgentSessionsControllerTests" --no-restore`：32/32 pass。
+- `CdsAgentRuntimeCompatibilityTests` 现在要求所有 Toolbox adapters 都不能依赖 `IInfraAgentRuntimeAdapter`。
+
+耗时：本地实现和单元验证约 35-45 分钟；文档和审计口径同步约 10 分钟。
+
+优化：后续默认调试入口应先看 `cds-session-transport` 事件和 CDS session logs。只有 operator 明确打开 fallback env 时，才允许 MAP direct runtime job 参与排障，且不能作为产品验收路径。
 
 ## 最耗时项
 

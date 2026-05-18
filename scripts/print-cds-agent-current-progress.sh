@@ -131,11 +131,12 @@ EOF
 )
 elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
   exact_next_step=$(cat <<'EOF'
-Continue R0.2.4 MAP adapter session transport and managed-runtime smoke work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
+Continue R0V managed-runtime post-check work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
-sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md
-dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore
+sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md
+scripts/smoke-cds-agent-map-session-transport.sh
+scripts/smoke-cds-agent-shared-service-pool.sh
 scripts/check-cds-agent-progress-consistency.sh
 ```
 EOF
@@ -236,8 +237,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.2 CDS-managed runtime fact source | done | Session ownership guard is in place; non-fake messages no longer delegate to MAP sidecar bridge | done |
 | R0.2F Operator fallback host path | fallback | Keep SSH/env/image only as CDS operator fallback | later |
 | R0.3 CDS-managed official SDK runtime | done_minimal | CDS agent sessions can dispatch to CDS-managed branch-service official SDK transport | done |
-| R0.4 MAP session transport smoke | in_progress | Prove MAP uses CDS session/discovery/cancel/log APIs and no direct runtime instance | 45-70 min |
-| R0V Post-check | waiting | Run managed-runtime fact-source smoke after MAP transport evidence exists | 15-30 sec |
+| R0.4 MAP session transport smoke | done | MAP uses CDS session/discovery/cancel/log APIs; direct runtime queue is explicit fallback only | done |
+| R0V Post-check | in_progress | Run managed-runtime post-check/live evidence before R1/S1 provider cycle | 15-30 sec local; live evidence depends on CDS state |
 | R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |

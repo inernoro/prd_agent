@@ -28,20 +28,17 @@ public class CdsAgentAdapter : IAgentAdapter
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
-    private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
     private readonly ILogger<CdsAgentAdapter> _logger;
 
     public CdsAgentAdapter(
         MongoDbContext db,
         IInfraAgentSessionService sessions,
         IInfraAgentRuntimeProfileService runtimeProfiles,
-        IInfraAgentRuntimeAdapter? runtimeAdapter,
         ILogger<CdsAgentAdapter> logger)
     {
         _db = db;
         _sessions = sessions;
         _runtimeProfiles = runtimeProfiles;
-        _runtimeAdapter = runtimeAdapter;
         _logger = logger;
     }
 
@@ -120,13 +117,6 @@ public class CdsAgentAdapter : IAgentAdapter
         if (runtimeProfile == null)
         {
             yield return AgentStreamChunk.Error("没有系统级模型配置，请先配置 baseUrl、model 和 API key");
-            yield break;
-        }
-
-        var runtimeUnavailable = BuildRuntimeUnavailableMessage(runtimeProfile.Runtime, _runtimeAdapter);
-        if (!string.IsNullOrWhiteSpace(runtimeUnavailable))
-        {
-            yield return AgentStreamChunk.Error($"CDS Agent runtime pool 不可用，已阻止 Toolbox 委托：{runtimeUnavailable}");
             yield break;
         }
 
@@ -403,27 +393,6 @@ public class CdsAgentAdapter : IAgentAdapter
         string Model,
         bool IsDefault,
         DateTime UpdatedAt);
-
-    internal static string? BuildRuntimeUnavailableMessage(string? runtime, IInfraAgentRuntimeAdapter? runtimeAdapter)
-    {
-        if (!RequiresManagedRuntime(runtime)) return null;
-        if (runtimeAdapter?.IsConfigured == true) return null;
-
-        if (runtimeAdapter == null)
-        {
-            return "runtime adapter 未注册";
-        }
-
-        var parts = new List<string>
-        {
-            $"adapter={runtimeAdapter.AdapterKind}",
-            $"instances={runtimeAdapter.InstanceCount}",
-            $"healthy={runtimeAdapter.HealthyCount}"
-        };
-        parts.AddRange(runtimeAdapter.Blockers.Take(3).Select(x => $"blocker={x}"));
-        parts.AddRange(runtimeAdapter.NextActions.Take(2).Select(x => $"next={x}"));
-        return string.Join("; ", parts);
-    }
 
     internal static bool RequiresManagedRuntime(string? runtime)
     {

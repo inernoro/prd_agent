@@ -120,7 +120,7 @@ fi
 
 display_next_action="$next_action"
 if [[ "$user_action_required" == "true" ]]; then
-  display_next_action="continue R0.2.4 MAP adapter session transport and managed-runtime smoke before any fallback env handoff"
+  display_next_action="continue R0V managed-runtime post-check before any fallback env handoff"
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
@@ -161,10 +161,11 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Next Command\n\n'
   if [[ "$user_action_required" == "true" ]]; then
-    printf 'Continue R0.2.4 MAP adapter session transport and managed-runtime smoke work. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
+    printf 'Continue R0V managed-runtime post-check work. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
-    printf "sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md\n"
-    printf 'dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore\n'
+    printf "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md\n"
+    printf 'scripts/smoke-cds-agent-map-session-transport.sh\n'
+    printf 'scripts/smoke-cds-agent-shared-service-pool.sh\n'
     printf 'scripts/check-cds-agent-progress-consistency.sh\n'
     printf '```\n'
   else

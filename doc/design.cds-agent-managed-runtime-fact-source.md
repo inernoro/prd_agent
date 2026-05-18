@@ -80,8 +80,8 @@ RemoteHost.deploy-sidecar
 | R0.2.1 | 定义 CDS-managed runtime status DTO | 20-30 分钟 | CDS route / MAP diagnostics contract | runtime-status 能展示新 gate，不出现 env handoff |
 | R0.2.2 | 改造 CDS `/agent-sessions` 非 fake 路径 | done | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时返回 CDS-owned unavailable/error |
 | R0.2.3 | 将 official SDK runtime 作为 CDS-managed profile/container/transport | done_minimal | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | runtime 不进入 `prd-agent` appServices；message 能投递到 CDS-managed official SDK runtime，并写回 `runtime_init/text_delta/done` |
-| R0.2.4 | MAP adapter 改为 CDS session transport 并补 managed-runtime smoke | 45-70 分钟 | `IInfraAgentRuntimeAdapter` 实现 / discovery registry / scripts | MAP 不直连 runtime instance；smoke 证明 `MAP_TO_CDS_ONLY`、`OFFICIAL_SDK_LOOP_OWNER` |
-| R0.2.5 | R0 smoke 重写 | 30-45 分钟 | scripts / tests | 检查新 fact source，不要求 SSH/image/env |
+| R0.2.4 | MAP adapter 改为 CDS session transport 并补 managed-runtime smoke | done | `CdsAgentAdapter` / `InfraAgentSessionService` / scripts / tests | MAP Toolbox adapter 不注入 direct runtime adapter；session message 先走 CDS；direct runtime queue 只在显式 fallback env 下启用 |
+| R0V | managed-runtime post-check/live evidence | 15-30 秒本地；live evidence 取决于 CDS state | scripts / live evidence | 检查新 fact source，不要求 SSH/image/env 作为产品主路径 |
 | R0.2.6 | 页面数据源和视觉测试 | 30-45 分钟 | runtime-status / `/cds-agent` | 页面展示 R0 facts、ETA、debug fallback，截图通过 |
 
 第一开发周期已完成：
@@ -98,11 +98,18 @@ R0.2.3 CDS-managed official SDK runtime transport
 证据：CDS route test 通过，message 经 CDS-managed branch service transport 投递到 official SDK sidecar 协议
 ```
 
-下一开发周期建议只做：
+第三开发周期已完成：
 
 ```text
 R0.2.4 MAP adapter session transport + managed-runtime smoke
-预计 45-70 分钟
+证据：MAP Toolbox adapter 不再注入 IInfraAgentRuntimeAdapter；InfraAgentSessionService 默认经 CDS session message transport；direct runtime queue 只在 INFRA_AGENT_ENABLE_MAP_DIRECT_RUNTIME_FALLBACK 下启用
+```
+
+下一开发周期建议只做：
+
+```text
+R0V managed-runtime post-check/live evidence
+预计本地 15-30 秒；live evidence 取决于 CDS 当前状态
 ```
 
 ## 5. Smoke 设计

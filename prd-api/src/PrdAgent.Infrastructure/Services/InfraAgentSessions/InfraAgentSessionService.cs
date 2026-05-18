@@ -159,7 +159,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var timeoutSeconds = runtimeProfile?.TimeoutSeconds ?? session.TimeoutSeconds;
             var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
             var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
-            EnsureRuntimeAdapterReady(runtime);
             EnsureRuntimeProfileCompatibleWithAdapter(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
@@ -274,7 +273,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 StatusCodes.Status409Conflict);
         }
 
-        EnsureRuntimeAdapterReady(session.Runtime);
         var messageRuntimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
         EnsureRuntimeProfileCompatibleWithAdapter(
             session.Runtime,
@@ -307,15 +305,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/messages",
             new { content = request.Content.Trim() },
             ct);
-        response.EnsureSuccessStatusCode();
+        var cdsItem = await ReadCdsItemAsync(response, ct);
+        var cdsStatus = MapCdsStatus(GetString(cdsItem, "status"));
         await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == id && x.UserId == userId,
-            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, InfraAgentSessionStatuses.Running),
+            Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, cdsStatus),
             cancellationToken: ct);
-        session.Status = InfraAgentSessionStatuses.Running;
+        session.Status = cdsStatus;
         await AppendRawEventAsync(
             session.Id,
             await NextEventSeqAsync(session.Id, ct),
@@ -323,16 +322,23 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             JsonSerializer.Serialize(new
             {
                 level = "info",
-                source = "runtime-dispatcher",
-                message = "runtime job queued",
-                queuedAt = DateTime.UtcNow
+                source = "cds-session-transport",
+                message = "message dispatched through CDS session transport; MAP direct runtime queue skipped",
+                mapRole = "control-plane-client",
+                cdsRole = "runtime-container-sandbox-manager",
+                fallbackScope = "operator-debug-only",
+                directRuntimeFallbackEnabled = IsMapDirectRuntimeFallbackEnabled(),
+                dispatchedAt = DateTime.UtcNow
             }),
             ct);
-        await _runtimeJobs.EnqueueAsync(new InfraAgentRuntimeJob(
-            userId,
-            id,
-            request.Content.Trim(),
-            DateTime.UtcNow), ct);
+        if (IsMapDirectRuntimeFallbackEnabled())
+        {
+            await _runtimeJobs.EnqueueAsync(new InfraAgentRuntimeJob(
+                userId,
+                id,
+                request.Content.Trim(),
+                DateTime.UtcNow), ct);
+        }
         return ToView(session);
     }
 
@@ -340,6 +346,25 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return;
+
+        if (!IsMapDirectRuntimeFallbackEnabled())
+        {
+            await AppendRawEventAsync(
+                session.Id,
+                await NextEventSeqAsync(session.Id, ct),
+                InfraAgentEventTypes.Log,
+                JsonSerializer.Serialize(new
+                {
+                    level = "info",
+                    source = "runtime-dispatcher",
+                    message = "MAP direct runtime job skipped; CDS session transport owns execution",
+                    mapRole = "control-plane-client",
+                    cdsRole = "runtime-container-sandbox-manager",
+                    fallbackScope = "operator-debug-only"
+                }),
+                ct);
+            return;
+        }
 
         bool runtimeOk;
         try
@@ -1679,6 +1704,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             InfraAgentSessionErrorCodes.RuntimeUnavailable,
             BuildRuntimeUnavailableMessage(),
             StatusCodes.Status503ServiceUnavailable);
+    }
+
+    private static bool IsMapDirectRuntimeFallbackEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable("INFRA_AGENT_ENABLE_MAP_DIRECT_RUNTIME_FALLBACK");
+        return string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private string BuildRuntimeUnavailableMessage()
