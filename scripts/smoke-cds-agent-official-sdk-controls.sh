@@ -96,7 +96,20 @@ profile_runtime=$(printf '%s' "$default_profile" | jq -r '.runtime // "claude-sd
 profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end')
 smoke_assert_nonempty "$profile_id" "defaultProfile.id"
 printf 'Default profile: %s / %s compatible=%s\n' "$profile_name" "$profile_model" "$profile_compatible"
-profile_evidence=$(printf '%s' "$default_profile" | jq -c '{defaultProfile:{id:(.id // ""),name:(.name // ""),model:(.model // ""),runtime:(.runtime // "claude-sdk"),protocol:(.protocol // ""),hasApiKey:(.hasApiKey // false),compatibleWithDesiredRuntimeAdapter:(if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end)}}')
+profile_evidence=$(printf '%s' "$default_profile" | jq -c '{
+  defaultProfile: {
+    id: (.id // ""),
+    name: (.name // ""),
+    model: (.model // ""),
+    runtime: (.runtime // "claude-sdk"),
+    protocol: (.protocol // ""),
+    hasApiKey: (.hasApiKey // false),
+    compatibleWithDesiredRuntimeAdapter: (if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end),
+    compatibilityReasonCode: (.compatibilityReasonCode // ""),
+    compatibilityReason: (.compatibilityReason // .warning // ""),
+    compatibilityNextActions: (.compatibilityNextActions // [])
+  }
+}')
 if [[ "$profile_compatible" != "true" ]]; then
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMPATIBLE" ]]; then
     write_controls_report "failed_incompatible_profile" "$profile_evidence"

@@ -154,6 +154,8 @@ finish_cycle() {
   local doctor_next="missing"
   local doctor_alias_status="unknown"
   local r1_details_json="null"
+  local s1_details_json="null"
+  local controls_details_json="null"
   local provider_calls_enabled=false
   local r1_repair_apply=false
   local cycle_status="pending"
@@ -176,6 +178,7 @@ finish_cycle() {
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
   local passed_count skipped_count failed_count
   local doctor_log="$SMOKE_CDS_AGENT_CYCLE_DIR/doctor.log"
+  local sidecar_alias_log="$SMOKE_CDS_AGENT_CYCLE_DIR/r0-sidecar-alias.log"
 
   if [[ -f "$SMOKE_CDS_AGENT_READINESS_REPORT" ]]; then
     readiness_overall=$(jq -r '.overall // "unknown"' "$SMOKE_CDS_AGENT_READINESS_REPORT")
@@ -205,10 +208,21 @@ finish_cycle() {
 
   if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
     s1_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_S1_REPORT")
+    s1_details_json=$(jq -c '{
+      status: (.status // "unknown"),
+      sessionId: (.sessionId // ""),
+      traceId: (.traceId // ""),
+      defaultProfile: (.evidence.defaultProfile // null)
+    }' "$SMOKE_CDS_AGENT_S1_REPORT")
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_CONTROLS_REPORT" ]]; then
     controls_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_CONTROLS_REPORT")
+    controls_details_json=$(jq -c '{
+      status: (.status // "unknown"),
+      target: (.target // null),
+      defaultProfile: (.evidence.defaultProfile // null)
+    }' "$SMOKE_CDS_AGENT_CONTROLS_REPORT")
   fi
   if [[ -f "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" ]]; then
     boundary_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_BOUNDARY_REPORT")
@@ -297,6 +311,11 @@ finish_cycle() {
       failure_kind="auth_failed"
       blocking_reason="The smoke target rejected the request; check AI_ACCESS_KEY or the authenticated preview session."
       failure_advice="Do not redeploy for auth failures. Fix credentials and rerun the same smoke."
+    elif [[ -f "$sidecar_alias_log" ]] && grep -Fq 'No such container:' "$sidecar_alias_log"; then
+      failure_kind="remote_branch_idle_or_container_missing"
+      blocking_reason="CDS branch exec could not find the remote API container; the preview branch is likely idle/stopped or CDS container state is stale."
+      failure_advice="Do not change application code for this state. Check CDS branch status first; if services are stopped, wake or redeploy the existing preview before rerunning only the alias smoke."
+      narrow_rerun_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-sidecar-alias-stability.sh"
     fi
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" && "$controls_status" == "pass" ]]; then
     cycle_status="provider_smokes_passed"
@@ -454,8 +473,10 @@ finish_cycle() {
     --argjson r1Details "$r1_details_json" \
     --arg s1Status "$s1_status" \
     --arg s1Report "$SMOKE_CDS_AGENT_S1_REPORT" \
+    --argjson s1Details "$s1_details_json" \
     --arg controlsStatus "$controls_status" \
     --arg controlsReport "$SMOKE_CDS_AGENT_CONTROLS_REPORT" \
+    --argjson controlsDetails "$controls_details_json" \
     --arg boundaryStatus "$boundary_status" \
     --arg boundaryReport "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" \
     --argjson boundaryMetrics "$boundary_metrics_json" \
@@ -574,11 +595,13 @@ finish_cycle() {
       },
       s1: {
         status: $s1Status,
-        report: $s1Report
+        report: $s1Report,
+        details: $s1Details
       },
       controls: {
         status: $controlsStatus,
-        report: $controlsReport
+        report: $controlsReport,
+        details: $controlsDetails
       },
       officialSdkBoundary: {
         status: $boundaryStatus,
