@@ -38,6 +38,7 @@
 | 18:08 | 沙箱内只读 live dry-run DNS 失败时，wrapper 把 `evidence-unavailable` 误判成 `blocked-branch-isolation` | 沙箱外重跑只读 dry-run确认真实远程状态；同时修 wrapper verdict 优先区分证据不可用 | `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json`、`/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | 18s live；<1s fixture | 远程真实缺 enabled host；网络/鉴权失败现在输出 `evidence-unavailable` |
 | 18:10 | apply 前仍可能到远程才发现 SSH host、port、key、image 参数格式不合法 | prepare dry-run 增加 `invalidConfig/preflightReady`，并让 wrapper 顶层支持 `dry-run-invalid-config` | `/tmp/cds-agent-remote-host-invalid-report.json` | <1s fixture | host URL、非数字 SSH port、非私钥内容会在本地 dry-run 阶段拦截 |
 | 18:18 | 脚本已有 `preflightReady/invalidConfig`，但页面 execution panel 仍只展示老的 required env 和 preconditions | 后端 `ApplyManifest` 增加 `localPreflightCommand/reportFields/optionalEnv`，前端展示 preflight 命令和报告字段 | `InfraAgentSessionsControllerTests`、`pnpm --prefix prd-admin tsc` | dotnet 有效测试约 8s；tsc 通过 | 页面能指向 `prepare.preflightReady/invalidConfig`，不再只让人猜环境变量 |
+| 18:20 | 参数给齐后仍需要从长文档拼 apply/deploy/post-check 命令，容易泄露私钥或漏 flag | 新增安全 handoff 脚本，从 summary 生成占位符命令；支持 wrapper summary 和 prepare report | `/tmp/cds-agent-remote-host-handoff.md`、`/tmp/cds-agent-remote-host-existing-handoff.md`、`/tmp/cds-agent-remote-host-invalid-handoff.md` | <1s | 输出不含私钥；existing host 路径使用 `CDS_REMOTE_HOST_ID`；invalid 路径只列错误 |
 
 ## 本轮暴露的问题
 
@@ -214,6 +215,24 @@
 证据：`InfraAgentSessionsControllerTests` 18/18 通过；`pnpm --prefix prd-admin tsc` 通过。
 
 优化：页面下一步应该围绕 preflight report 判断，而不是只读静态 env 列表。
+
+### 15. apply handoff 不能靠人工拼命令
+
+问题：即使 dry-run summary 已经明确，人工从文档里拼 create host、deploy sidecar、post-check 三段命令仍容易漏 flag；更严重的是可能把 private key 内容复制到聊天或日志里。
+
+处理：新增 `scripts/print-cds-agent-remote-host-handoff.sh`。输入 wrapper summary 或 prepare report，输出安全 handoff：
+
+- 新建 host 路径输出占位符 `<private-key-file>`，不输出 key 内容。
+- existing host 路径输出 `CDS_REMOTE_HOST_ID=<id>`。
+- invalid config 路径只输出错误列表，不输出 apply 命令。
+
+证据：
+
+- `/tmp/cds-agent-remote-host-handoff.md`
+- `/tmp/cds-agent-remote-host-existing-handoff.md`
+- `/tmp/cds-agent-remote-host-invalid-handoff.md`
+
+优化：真实写远程前先生成 handoff，再由人类填入私钥文件路径和 sidecar image。
 
 ## 最耗时项
 

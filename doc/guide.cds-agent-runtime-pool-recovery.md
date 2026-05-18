@@ -123,6 +123,15 @@ remote host wrapper 也会写 `summary.json`，关键判定字段：
 
 如果参数格式错误，prepare 报告会输出 `status=invalid_config`，wrapper 顶层 verdict 会输出 `dry-run-invalid-config`。这种情况同样不允许 apply；先修正变量再重跑 dry-run。
 
+拿到 dry-run summary 后，可以生成不含私钥内容的 handoff 命令：
+
+```bash
+scripts/print-cds-agent-remote-host-handoff.sh \
+  /tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json
+```
+
+该脚本只输出占位符或 `CDS_REMOTE_HOST_ID`，不会打印 `CDS_REMOTE_HOST_SSH_PRIVATE_KEY` 的内容。
+
 真正执行 branch-local sidecar 清理时，使用带前后证据的 wrapper。默认仍是 dry-run：
 
 ```bash

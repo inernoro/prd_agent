@@ -105,6 +105,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | unavailable verdict fixture | `/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | DNS/auth 证据不可用时输出 `evidence-unavailable`，不再误报 branch contamination | <1s |
 | remote host invalid fixture | `/tmp/cds-agent-remote-host-invalid-report.json` | host URL、SSH port、private key 格式错误会进入 `invalid_config` | <1s |
 | execution panel preflight manifest | `InfraAgentSessionsControllerTests`、`pnpm --prefix prd-admin tsc` | 页面可显示 local preflight 命令和 `preflightReady/invalidConfig` 报告字段 | 18/18 + tsc |
+| remote host handoff | `/tmp/cds-agent-remote-host-handoff.md` | 从 dry-run summary 生成不含私钥的 apply/deploy/post-check 命令 | <1s |
 
 ## 7. 时间和问题账本
 
@@ -124,6 +125,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote host live dry-run | 18s | 只读远程证据；只有真实执行前或状态刷新时运行 |
 | remote host invalid fixture | <1s | 本地校验参数格式，减少 apply 阶段才失败 |
 | execution panel manifest tests | 约 8s 有效测试，沙箱内 dotnet 会因 socket 权限失败 | 需要 dotnet 时直接用已批准的沙箱外测试；前端 tsc 本地可跑 |
+| remote host handoff | <1s | 参数给齐后直接按 handoff 执行，不再翻长文档 |
 
 ## 8. 不要做的事
 
@@ -183,6 +185,13 @@ CDS_AGENT_REMOTE_HOST_APPLY=1
 ```text
 CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1
 CDS_AGENT_SIDECAR_IMAGE
+```
+
+生成安全 handoff 命令：
+
+```bash
+scripts/print-cds-agent-remote-host-handoff.sh \
+  /tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json
 ```
 
 发布验证：
