@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 18:55 Asia/Shanghai
+> **更新时间**：2026-05-18 19:00 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -16,6 +16,7 @@
 | `BRANCH_LOCAL_SIDECAR_CLEAN` | pass | 远程 branch services 污染数 `4 -> 0` |
 | `REMOTE_HOST_AVAILABLE` | blocked | `/api/cds-system/remote-hosts` enabled host = `0` |
 | `SHARED_POOL_RUNNING` | blocked | `shared-sidecar-pool-mp4anabh` 没有 running runtime |
+| `SIDECAR_IMAGE_PULLABLE` | blocked | CDS deployer 是 `docker pull` 模式；本仓库有 Dockerfile，但不能证明远程 host 可拉取 |
 
 固定查看入口：
 
@@ -50,6 +51,7 @@ scripts/print-cds-agent-lifecycle-overview.sh
 | remote hosts | `0 enabled` | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` |
 | shared runtime running | `0` | `/tmp/cds-agent-runtime-pool-evidence-current-clean/summary.json` |
 | should redeploy preview? | no | blocker 不在 preview app build |
+| sidecar image readiness | `missing` | `CDS_AGENT_SIDECAR_IMAGE` 必须是目标 remote host 可 `docker pull` 的镜像 |
 
 ## 4. 下一步最小计划
 
@@ -122,6 +124,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | R0 operator handoff bundle | `/tmp/cds-agent-r0-operator-handoff-current.md` | 聚合进度、readiness、缺失输入、ETA、安全命令；未发现 secret 泄露 | <2s |
 | goal audit with readiness | `/tmp/cds-agent-goal-audit-current-with-readiness.json` | `N6=pass`、otherAgentCompatibility proved，并纳入 R0 apply readiness；仍 `not_complete` | 15s |
 | lifecycle overview | `scripts/print-cds-agent-lifecycle-overview.sh` | 按完整目标输出生命周期、已完成、阻塞、剩余距离和关键路径；V1 标为 partial | <1s |
+| sidecar image readiness | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | 明确 CDS remote deployer 只 `docker pull`，不是远程构建；`CDS_AGENT_SIDECAR_IMAGE` 仍缺 | <1s |
 
 ## 7. 时间和问题账本
 
@@ -148,6 +151,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | R0 operator handoff bundle | <2s | 一个文件交接当前状态、缺失输入和安全执行命令，减少翻文档和聊天解释 |
 | goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | audit 读取 N6 summary 和 R0 readiness，不再把 VSTest 权限问题当作兼容性失败 |
 | lifecycle overview | <1s | 直接回答“整个生命周期到哪一步、离目标多远”，避免只看局部脚本输出 |
+| sidecar image readiness | <1s | 本地 Dockerfile 只能给候选 build/push 命令；远程部署前必须提供可拉取镜像 tag |
 
 ## 8. 不要做的事
 
@@ -232,6 +236,8 @@ CDS_AGENT_REMOTE_HOST_APPLY=1
 CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1
 CDS_AGENT_SIDECAR_IMAGE
 ```
+
+注意：`CDS_AGENT_SIDECAR_IMAGE` 不是“仓库里有 Dockerfile 就自动具备”。CDS remote sidecar deployer 当前只执行 `docker pull` 和 `docker run`，所以这里必须是目标 remote host 可以拉取的 registry image，例如先完成本地 build、push，再把可拉取 tag 填入该变量。
 
 生成安全 handoff 命令：
 

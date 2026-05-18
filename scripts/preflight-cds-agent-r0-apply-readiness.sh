@@ -8,6 +8,9 @@ set -euo pipefail
 SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 EXPECTED_CDS_HOST="${CDS_AGENT_EXPECTED_CDS_HOST:-https://cds.miduo.org}"
+SIDECAR_DOCKERFILE="${CDS_AGENT_SIDECAR_DOCKERFILE:-claude-sdk-sidecar/Dockerfile}"
+SIDECAR_BUILD_CONTEXT="${CDS_AGENT_SIDECAR_BUILD_CONTEXT:-claude-sdk-sidecar}"
+SIDECAR_CANDIDATE_IMAGE="${CDS_AGENT_SIDECAR_CANDIDATE_IMAGE:-prd-agent/claude-sidecar:latest}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -75,10 +78,20 @@ elif [[ -n "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY:-}" && "$CDS_REMOTE_HOST_SSH_PRIVA
   invalid=$(append_json_string "$invalid" "CDS_REMOTE_HOST_SSH_PRIVATE_KEY does not look like a private key")
 fi
 
+image_status="missing"
+image_value=""
+image_next_action="publish a pullable sidecar image and set CDS_AGENT_SIDECAR_IMAGE"
 if ! has_env CDS_AGENT_SIDECAR_IMAGE; then
   missing=$(append_json_string "$missing" "CDS_AGENT_SIDECAR_IMAGE")
 elif [[ "$CDS_AGENT_SIDECAR_IMAGE" =~ [[:space:]] ]]; then
+  image_status="invalid"
+  image_value="$CDS_AGENT_SIDECAR_IMAGE"
+  image_next_action="remove whitespace from CDS_AGENT_SIDECAR_IMAGE"
   invalid=$(append_json_string "$invalid" "CDS_AGENT_SIDECAR_IMAGE must not contain whitespace")
+else
+  image_status="provided_unverified"
+  image_value="$CDS_AGENT_SIDECAR_IMAGE"
+  image_next_action="ensure the remote host can docker pull this image"
 fi
 
 missing_count=$(jq 'length' <<< "$missing")
@@ -125,6 +138,12 @@ jq -n \
   --argjson missing "$missing" \
   --argjson invalid "$invalid" \
   --argjson warnings "$warnings" \
+  --arg sidecarDockerfile "$SIDECAR_DOCKERFILE" \
+  --arg sidecarBuildContext "$SIDECAR_BUILD_CONTEXT" \
+  --arg sidecarCandidateImage "$SIDECAR_CANDIDATE_IMAGE" \
+  --arg imageStatus "$image_status" \
+  --arg imageValue "$image_value" \
+  --arg imageNextAction "$image_next_action" \
   '{
     generatedAt: $generatedAt,
     summary: $summary,
@@ -143,6 +162,18 @@ jq -n \
     missingConfig: $missing,
     invalidConfig: $invalid,
     warnings: $warnings,
+    imageReadiness: {
+      status: $imageStatus,
+      value: (if $imageValue == "" then null else $imageValue end),
+      dockerfile: $sidecarDockerfile,
+      buildContext: $sidecarBuildContext,
+      deployerMode: "docker-pull-only",
+      remoteHostRequirement: "image reference must be pullable from the target remote host",
+      candidateImage: $sidecarCandidateImage,
+      candidateBuildCommand: ("docker build -t " + $sidecarCandidateImage + " " + $sidecarBuildContext),
+      candidatePushCommand: ("docker push " + $sidecarCandidateImage),
+      nextAction: $imageNextAction
+    },
     safeHandoffCommand: ("scripts/print-cds-agent-remote-host-handoff.sh " + $summary)
   }' > "$REPORT"
 
@@ -157,5 +188,7 @@ jq -r '
   "- nextAction: `" + .nextAction + "`",
   "- missingConfig: `" + ((.missingConfig // []) | join(", ")) + "`",
   "- invalidConfig: `" + ((.invalidConfig // []) | join(", ")) + "`",
-  "- warnings: `" + ((.warnings // []) | join(", ")) + "`"
+  "- warnings: `" + ((.warnings // []) | join(", ")) + "`",
+  "- imageReadiness: `" + (.imageReadiness.status // "unknown") + "`",
+  "- imageNextAction: `" + (.imageReadiness.nextAction // "unknown") + "`"
 ' "$REPORT"

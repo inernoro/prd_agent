@@ -38,6 +38,10 @@ will_create_host=$(jq -r '.remoteState.willCreateHost // true' "$READINESS_REPOR
 missing=$(jq -r '(.missingConfig // []) | join(", ")' "$READINESS_REPORT")
 invalid=$(jq -r '(.invalidConfig // []) | join(", ")' "$READINESS_REPORT")
 warnings=$(jq -r '(.warnings // []) | join("; ")' "$READINESS_REPORT")
+image_status=$(jq -r '.imageReadiness.status // "unknown"' "$READINESS_REPORT")
+image_next_action=$(jq -r '.imageReadiness.nextAction // "unknown"' "$READINESS_REPORT")
+image_build_command=$(jq -r '.imageReadiness.candidateBuildCommand // ""' "$READINESS_REPORT")
+image_push_command=$(jq -r '.imageReadiness.candidatePushCommand // ""' "$READINESS_REPORT")
 
 mkdir -p "$(dirname "$OUTPUT")"
 {
@@ -64,6 +68,8 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- missingConfig: `%s`\n' "${missing:-none}"
   printf -- '- invalidConfig: `%s`\n' "${invalid:-none}"
   printf -- '- warnings: `%s`\n\n' "${warnings:-none}"
+  printf -- '- imageReadiness: `%s`\n' "$image_status"
+  printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
 
   printf '## Timeline\n\n'
   printf '| Step | Expected Time | Start Condition | Evidence |\n'
@@ -78,6 +84,18 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- Do not run provider one-cycle before `REMOTE_HOST_AVAILABLE` and `SHARED_POOL_RUNNING` pass.\n'
   printf -- '- Do not add `claude-agent-sdk-runtime-v2` back into `prd-agent` branch services.\n'
   printf -- '- Do not paste private key contents into chat or logs; use `CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`.\n\n'
+
+  printf '## Sidecar Image\n\n'
+  printf 'CDS remote deployer uses `docker pull`; it does not build from this repository on the remote host.\n\n'
+  if [[ -n "$image_build_command" ]]; then
+    printf 'Candidate local build command:\n\n'
+    printf '```bash\n%s\n```\n\n' "$image_build_command"
+  fi
+  if [[ -n "$image_push_command" ]]; then
+    printf 'Candidate push command after choosing a pullable registry/tag:\n\n'
+    printf '```bash\n%s\n```\n\n' "$image_push_command"
+  fi
+  printf 'Set `CDS_AGENT_SIDECAR_IMAGE` only to an image reference the target remote host can pull.\n\n'
 
   printf '## Safe Commands\n\n'
   cat "$tmp_handoff"

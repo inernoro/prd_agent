@@ -5,9 +5,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-/tmp/cds-agent-goal-audit-current-with-readiness.json}"
 READINESS="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 OUTPUT="${CDS_AGENT_LIFECYCLE_OVERVIEW:-}"
+REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -16,6 +20,12 @@ fail() {
 
 command -v jq >/dev/null 2>&1 || fail "missing dependency: jq"
 [[ -f "$AUDIT" ]] || fail "goal audit not found: $AUDIT"
+
+if [[ -x "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" && -f "$REMOTE_HOST_SUMMARY" ]]; then
+  CDS_AGENT_R0_READINESS_REPORT="$READINESS" \
+  CDS_AGENT_REMOTE_HOST_SUMMARY="$REMOTE_HOST_SUMMARY" \
+    bash "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" >/dev/null 2>&1 || true
+fi
 
 goal_status=$(jq -r '.goalStatus // "unknown"' "$AUDIT")
 commercial_complete=$(jq -r '.commercialComplete // false' "$AUDIT")
@@ -32,12 +42,18 @@ n6=$(jq -r '.gates.N6 // "unknown"' "$AUDIT")
 
 ready_for_r0="unknown"
 missing_config="unknown"
+image_readiness="unknown"
+image_next_action="unknown"
 if [[ -f "$READINESS" ]]; then
   ready_for_r0=$(jq -r '.readyForR0Apply // false' "$READINESS")
   missing_config=$(jq -r '(.missingConfig // []) | join(", ")' "$READINESS")
+  image_readiness=$(jq -r '.imageReadiness.status // "unknown"' "$READINESS")
+  image_next_action=$(jq -r '.imageReadiness.nextAction // "unknown"' "$READINESS")
 else
   ready_for_r0=$(jq -r '.runtimePoolRecovery.applyReadiness.readyForR0Apply // "unknown"' "$AUDIT")
   missing_config=$(jq -r '(.runtimePoolRecovery.applyReadiness.missingConfig // []) | join(", ")' "$AUDIT")
+  image_readiness=$(jq -r '.runtimePoolRecovery.applyReadiness.imageReadiness.status // "unknown"' "$AUDIT")
+  image_next_action=$(jq -r '.runtimePoolRecovery.applyReadiness.imageReadiness.nextAction // "unknown"' "$AUDIT")
 fi
 [[ -n "$missing_config" ]] || missing_config="none"
 
@@ -55,7 +71,7 @@ render() {
 # CDS Agent Lifecycle Overview
 
 Generated: $(date '+%Y-%m-%d %H:%M:%S %Z')
-Branch: $(git branch --show-current 2>/dev/null || printf unknown)
+Branch: $(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf unknown)
 Goal status: $goal_status
 Commercial complete: $commercial_complete
 Current blocking gate: $blocking_gate
@@ -91,6 +107,7 @@ $deployment_advice
 - Blocking now: R0 remote runtime pool.
 - Not yet started in current valid cycle: R1, S1, S2/S3, final live V1.
 - Missing R0 inputs: $missing_config
+- Sidecar image readiness: $image_readiness; $image_next_action
 
 ## Critical Path
 
