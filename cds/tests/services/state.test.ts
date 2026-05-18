@@ -272,6 +272,55 @@ describe('StateService', () => {
       service.removeBuildProfile('api');
       expect(service.getBuildProfiles()).toHaveLength(0);
     });
+
+    it('rejects Claude Agent SDK runtime sidecars as branch BuildProfiles', () => {
+      expect(() => service.addBuildProfile({
+        id: 'claude-sidecar-prd-agent',
+        projectId: 'default',
+        name: 'Claude Sidecar',
+        dockerImage: 'prdagent/claude-sidecar:dev',
+        workDir: 'claude-sdk-sidecar',
+        command: 'uvicorn app.main:app --host 0.0.0.0 --port 7400',
+        containerPort: 7400,
+      })).toThrow('agent runtime 必须由 CDS shared-service runtime pool 管理');
+    });
+
+    it('rejects updates that would turn a branch BuildProfile into a runtime sidecar', () => {
+      service.addBuildProfile({
+        id: 'api',
+        projectId: 'default',
+        name: 'API',
+        dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+        workDir: 'prd-api',
+        command: 'dotnet run',
+        containerPort: 8080,
+      });
+
+      expect(() => service.updateBuildProfile('api', {
+        env: { SIDECAR_AGENT_ADAPTER: 'claude-agent-sdk' },
+      })).toThrow('agent runtime 必须由 CDS shared-service runtime pool 管理');
+    });
+
+    it('allows runtime-looking profiles only for shared-service projects', () => {
+      service.addProject({
+        id: 'shared-sidecar-pool-test',
+        slug: 'shared-sidecar-pool-test',
+        name: 'Shared Sidecar Pool',
+        kind: 'shared-service',
+      } as any);
+
+      service.addBuildProfile({
+        id: 'claude-sidecar-shared',
+        projectId: 'shared-sidecar-pool-test',
+        name: 'Claude Sidecar Shared',
+        dockerImage: 'prdagent/claude-sidecar:dev',
+        workDir: 'claude-sdk-sidecar',
+        command: 'uvicorn app.main:app --host 0.0.0.0 --port 7400',
+        containerPort: 7400,
+      });
+
+      expect(service.getBuildProfile('claude-sidecar-shared')).toBeDefined();
+    });
   });
 
   describe('logs', () => {

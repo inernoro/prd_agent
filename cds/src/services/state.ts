@@ -39,6 +39,27 @@ function isSystemInfraService(service: Partial<InfraService>): boolean {
   return classifyInfraScope(service) === 'system';
 }
 
+function isAgentRuntimeBuildProfile(profile: Partial<BuildProfile>): boolean {
+  const env = profile.env || {};
+  const text = [
+    profile.id,
+    profile.name,
+    profile.dockerImage,
+    profile.workDir,
+    profile.containerWorkDir,
+    profile.command,
+    ...Object.keys(env),
+    ...Object.values(env),
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (!text.trim()) return false;
+  if (text.includes('claude-agent-sdk-runtime')) return true;
+  if (text.includes('claude-sidecar')) return true;
+  if (text.includes('claude-sdk-sidecar')) return true;
+  if ((env.SIDECAR_AGENT_ADAPTER || '').toLowerCase() === 'claude-agent-sdk') return true;
+  return false;
+}
+
 /**
  * Phase 9 — Bugbot fix(PR #521 第四轮):TODO 占位符检测。
  * 必须与 cdscli `_REQUIRED_VALUE_MARKERS` 保持一致 — 否则 cdscli 把
@@ -844,17 +865,30 @@ export class StateService {
     }
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
     if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+    this.assertBuildProfileRuntimeBoundary(profile);
     this.state.buildProfiles.push(profile);
   }
 
   updateBuildProfile(id: string, updates: Partial<BuildProfile>): void {
     const idx = this.state.buildProfiles.findIndex(p => p.id === id);
     if (idx === -1) throw new Error(`构建配置 "${id}" 不存在`);
+    this.assertBuildProfileRuntimeBoundary({ ...this.state.buildProfiles[idx], ...updates });
     Object.assign(this.state.buildProfiles[idx], updates);
   }
 
   removeBuildProfile(id: string): void {
     this.state.buildProfiles = this.state.buildProfiles.filter(p => p.id !== id);
+  }
+
+  private assertBuildProfileRuntimeBoundary(profile: BuildProfile): void {
+    if (!isAgentRuntimeBuildProfile(profile)) return;
+    const project = this.getProject(profile.projectId);
+    if (project?.kind === 'shared-service') return;
+
+    throw new Error(
+      `构建配置 "${profile.id}" 看起来是 Claude Agent SDK runtime sidecar；` +
+      'agent runtime 必须由 CDS shared-service runtime pool 管理，不能写入业务项目 BuildProfile。',
+    );
   }
 
   // ── Operation logs ──

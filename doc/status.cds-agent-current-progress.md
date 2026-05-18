@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 15:44 Asia/Shanghai
+> 更新时间：2026-05-18 15:52 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -51,6 +51,7 @@
 - 一周期摘要在 R0 runtime pool 未恢复前显示为 `blocked-by-runtime-pool`；旧 commit/runtime drift 不再抢占当前阻塞原因。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
 - compose parser 已补防复发：`claude-sidecar` 旧命名也会被识别为 agent runtime sidecar，不会导入成业务 branch BuildProfile。
+- StateService 已补中心写入护栏：非 `shared-service` 项目的 BuildProfile 如果像 Claude Agent SDK runtime sidecar，会被拒绝；这覆盖手工创建、API 写入、导入和 clone auto-config 的最终落库路径。
 - `smoke-cds-agent-shared-service-pool.sh` 已改为引用当前 runtime pool contamination report，避免本地防复发入口因旧文件名误报。
 
 最新目标审计耗时 `22s`，最耗时步骤：
@@ -72,6 +73,13 @@
 | `bash scripts/smoke-cds-agent-branch-isolation.sh` | pass | <1s |
 | `bash scripts/smoke-cds-agent-shared-service-pool.sh` | pass | <1s |
 | `npm --prefix cds test -- tests/services/compose-parser.test.ts` | 36 passed | 334ms |
+| `npm --prefix cds test -- tests/services/state.test.ts` | 39 passed | 816ms |
+| `npm --prefix cds run build` | pass | ~1s |
+
+路由大套件校验记录：
+
+- `npm --prefix cds test -- tests/routes/cross-project-isolation.test.ts` 在当前 sandbox 下失败，原因是 `listen EPERM: operation not permitted 127.0.0.1`，耗时约 `191s`，不是业务断言失败。
+- `npm --prefix cds test -- tests/routes/branches.test.ts` 同类端口监听长跑，已中止；它不适合作为本轮最小本地验证。
 
 ## 下一步
 
