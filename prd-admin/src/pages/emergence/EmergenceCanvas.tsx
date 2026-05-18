@@ -481,6 +481,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       revealTimersRef.current.set(parentId, t);
     } else {
       cleanupParent(parentId);
+      buildFlow(); // 解锁后立即重建：清掉该父残留的 isExploring 脉冲/锁定态
     }
   }, [markArrived, buildFlow, centerOnNode, cleanupParent]);
 
@@ -515,6 +516,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         },
       },
       onItem: (newNode) => {
+        // abort 后 SSE 可能仍递送已缓冲的 node 事件：无活跃锚点则丢弃，
+        // 否则会被塞进无槽无定时器的 key 而孤立（Codex P1）
+        if (!emergeAnchorRef.current) return;
         enqueueArrival(newNode);
       },
       onDone: (data) => {
@@ -608,6 +612,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
               liveTextRef.current.set(nodeId, state.typing);
               pokeSlotText(nodeId);
             } else if (evt.event === 'node') {
+              // abort 后 SSE 可能仍递送已缓冲的 node 事件：本流已非该父的活跃流
+              // （stopAll 清空 / 已重启新流）则丢弃，避免塞进无槽 key 孤立（Codex P1）
+              if (activeExploresRef.current.get(nodeId) !== state) return;
               enqueueArrival(data as EmergenceNodeType);
             } else if (evt.event === 'done') {
               state.phase = 'done';

@@ -3,3 +3,5 @@
 | fix | prd-admin | 涌现画布：revealNext 与 flushPending 去重逻辑对齐，避免 SSE 重发导致重复节点/nodeCount 多计 |
 | fix | prd-admin | 涌现画布：涌现 onDone/onError 清空 emergeAnchorRef，防止陈旧锚点把后续探索节点误导到无槽 key 而孤立 |
 | fix | prd-admin | 涌现画布：flushPending 同一批内重复 node 事件也去重（dedupe set 随落位增长） |
+| fix | prd-admin | 涌现画布：stopAll 后 SSE 迟到 node 事件丢弃（探索按流身份、涌现按锚点判活），不再孤立已生成节点 |
+| fix | prd-admin | 涌现画布：最后一个缓冲节点渐显完后补 buildFlow，立即清掉父节点残留的 isExploring 脉冲/锁定态 |
