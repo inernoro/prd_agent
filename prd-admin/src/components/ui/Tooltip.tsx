@@ -44,30 +44,33 @@ export function Tooltip({
         <TooltipPrimitive.Trigger asChild>
           {triggerContent}
         </TooltipPrimitive.Trigger>
-        <TooltipPrimitive.Content
-          side={side}
-          align={align}
-          sideOffset={8}
-          alignOffset={-6}
-          className="rounded-[12px] px-3 py-2 text-xs"
-          style={{
-            ...glassTooltip,
-            color: 'rgba(255,255,255,0.95)',
-            maxWidth: 240,
-            userSelect: 'none',
-            zIndex: 9999,
-            animation: 'tooltipFloat 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-            fontWeight: 500,
-            lineHeight: 1.4,
-          }}
-        >
-          {content}
-          <TooltipPrimitive.Arrow
-            width={12}
-            height={6}
-            style={{ fill: 'rgba(20, 20, 24, 0.95)' }}
-          />
-        </TooltipPrimitive.Content>
+        <TooltipPrimitive.Portal>
+          <TooltipPrimitive.Content
+            side={side}
+            align={align}
+            sideOffset={8}
+            alignOffset={-6}
+            collisionPadding={12}
+            className="rounded-[12px] px-3 py-2 text-xs"
+            style={{
+              ...glassTooltip,
+              color: 'rgba(255,255,255,0.95)',
+              maxWidth: 240,
+              userSelect: 'none',
+              zIndex: 9999,
+              animation: 'tooltipFloat 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+              fontWeight: 500,
+              lineHeight: 1.4,
+            }}
+          >
+            {content}
+            <TooltipPrimitive.Arrow
+              width={12}
+              height={6}
+              style={{ fill: 'rgba(20, 20, 24, 0.95)' }}
+            />
+          </TooltipPrimitive.Content>
+        </TooltipPrimitive.Portal>
         <style>{`
           @keyframes tooltipFloat {
             0% { opacity: 0; transform: translateY(4px) scale(0.96); }
