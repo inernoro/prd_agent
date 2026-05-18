@@ -4,6 +4,7 @@
 # 输出一个目录，包含:
 #   - recovery plan
 #   - branch isolation repair dry-run
+#   - remote host pool preparation dry-run
 #   - shared-service pool audit
 #   - optional goal audit
 #   - summary.json / evidence-index.md
@@ -73,6 +74,8 @@ run_capture() {
 plan_log="$OUT_DIR/runtime-pool-recovery-plan.log"
 repair_dry_run_log="$OUT_DIR/branch-isolation-repair-dry-run.log"
 repair_dry_run_report="$OUT_DIR/branch-isolation-repair-dry-run.json"
+remote_host_prepare_log="$OUT_DIR/remote-host-pool-prepare.log"
+remote_host_prepare_report="$OUT_DIR/remote-host-pool-prepare.json"
 shared_pool_log="$OUT_DIR/shared-service-pool-audit.log"
 goal_audit_log="$OUT_DIR/goal-audit.log"
 goal_audit_report="$OUT_DIR/goal-audit.json"
@@ -83,6 +86,9 @@ if [[ -n "${CDS_HOST:-}" ]]; then
   run_capture "branch isolation repair dry-run" "$repair_dry_run_log" \
     env SMOKE_CDS_AGENT_BRANCH_ISOLATION_REPAIR_REPORT="$repair_dry_run_report" \
         bash "$ROOT_DIR/scripts/repair-cds-agent-branch-isolation.sh"
+  run_capture "remote host pool preparation" "$remote_host_prepare_log" \
+    env CDS_AGENT_REMOTE_HOST_POOL_REPORT="$remote_host_prepare_report" \
+        bash "$ROOT_DIR/scripts/prepare-cds-agent-remote-host-pool.sh"
   run_capture "shared-service pool audit" "$shared_pool_log" \
     env SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash "$ROOT_DIR/scripts/smoke-cds-agent-shared-service-pool.sh"
 else
@@ -110,6 +116,10 @@ repair_json='null'
 if [[ -s "$repair_dry_run_report" ]]; then
   repair_json=$(jq -c . "$repair_dry_run_report" 2>/dev/null || printf 'null')
 fi
+remote_host_prepare_json='null'
+if [[ -s "$remote_host_prepare_report" ]]; then
+  remote_host_prepare_json=$(jq -c . "$remote_host_prepare_report" 2>/dev/null || printf 'null')
+fi
 
 summary="$OUT_DIR/summary.json"
 jq -n \
@@ -122,6 +132,7 @@ jq -n \
   --argjson logs "[$step_logs]" \
   --argjson plan "$plan_json" \
   --argjson repair "$repair_json" \
+  --argjson remoteHostPrepare "$remote_host_prepare_json" \
   --argjson goal "$goal_json" \
   '{
     createdAt: $createdAt,
@@ -136,6 +147,7 @@ jq -n \
     totalSeconds: ($seconds | add // 0),
     plan: $plan,
     branchIsolationRepairDryRun: $repair,
+    remoteHostPoolPreparation: $remoteHostPrepare,
     goalStatus: ($goal.goalStatus // null),
     runtimePoolBlockers: (
       $goal.runtimePoolRecovery.blockers //
@@ -169,6 +181,15 @@ index="$OUT_DIR/evidence-index.md"
     jq -r '"- status: `" + (.branchIsolationRepairDryRun.status // "unknown") + "`",
       "- contaminatedBranchCount: `" + ((.branchIsolationRepairDryRun.contaminatedBranchCount // 0)|tostring) + "`",
       "- candidateProfileIds: `" + ((.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",")) + "`"' "$summary"
+  fi
+  printf '\n## Remote Host Pool Preparation\n\n'
+  if [[ "$(jq -r '.remoteHostPoolPreparation == null' "$summary")" == "true" ]]; then
+    printf '%s\n' '- not captured'
+  else
+    jq -r '"- status: `" + (.remoteHostPoolPreparation.status // "unknown") + "`",
+      "- existingHostCount: `" + ((.remoteHostPoolPreparation.existingHostCount // 0)|tostring) + "`",
+      "- enabledHostCount: `" + ((.remoteHostPoolPreparation.enabledHostCount // 0)|tostring) + "`",
+      "- missingConfig: `" + ((.remoteHostPoolPreparation.missingConfig // []) | join(",")) + "`"' "$summary"
   fi
   printf '\n## Missing Or Unproved\n\n'
   if [[ "$(jq -r '.missingOrUnproved | length' "$summary")" == "0" ]]; then

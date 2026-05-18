@@ -59,7 +59,16 @@ CDS_HOST=https://cds.miduo.org \
   bash scripts/collect-cds-agent-runtime-pool-evidence.sh
 ```
 
-它会创建 `/tmp/cds-agent-runtime-pool-evidence-*` 目录，写入 `summary.json` 和 `evidence-index.md`。默认会同时跑 runtime pool plan、branch isolation repair dry-run、shared-service pool audit 和 goal audit；如只想快速采集 runtime pool 证据，设置 `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0`。dry-run 会额外写 `branch-isolation-repair-dry-run.json`，用于确认真正清理前会删除哪个 BuildProfile。
+它会创建 `/tmp/cds-agent-runtime-pool-evidence-*` 目录，写入 `summary.json` 和 `evidence-index.md`。默认会同时跑 runtime pool plan、branch isolation repair dry-run、remote host pool preparation、shared-service pool audit 和 goal audit；如只想快速采集 runtime pool 证据，设置 `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0`。dry-run 会额外写 `branch-isolation-repair-dry-run.json`，用于确认真正清理前会删除哪个 BuildProfile。
+
+remote host 准备脚本默认只检查，不写远程：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+  bash scripts/prepare-cds-agent-remote-host-pool.sh
+```
+
+如果需要创建 remote host，必须显式设置 `CDS_AGENT_REMOTE_HOST_APPLY=1`，并提供 `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE` 或 `CDS_REMOTE_HOST_SSH_PRIVATE_KEY`。触发 sidecar 部署还要额外设置 `CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1` 和 `CDS_AGENT_SIDECAR_IMAGE`。
 
 真正执行 branch-local sidecar 清理时，使用带前后证据的 wrapper。默认仍是 dry-run：
 
