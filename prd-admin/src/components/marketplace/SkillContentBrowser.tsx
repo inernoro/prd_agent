@@ -71,9 +71,12 @@ function pickDefault(paths: string[], preferred: string): string | null {
   if (rootExact) return rootExact;
   const anyExact = paths.find((p) => basename(p).toLowerCase() === lower);
   if (anyExact) return anyExact;
-  const firstMd = paths.find((p) => extOf(p) === '.md' || extOf(p) === '.markdown');
+  // 兜底（无 SKILL.md）按字母序选，与左侧排序后的文件树一致，
+  // 避免"高亮的文件"和"树里第一个文件"对不上（zip 内部顺序不可控）
+  const sorted = [...paths].sort((a, b) => a.localeCompare(b));
+  const firstMd = sorted.find((p) => extOf(p) === '.md' || extOf(p) === '.markdown');
   if (firstMd) return firstMd;
-  return paths[0];
+  return sorted[0];
 }
 
 function FileRow({
@@ -179,6 +182,9 @@ export function SkillContentBrowser({
     if (!obj) return;
     const seq = ++loadSeqRef.current;
     setSelectedPath(path);
+    // 立刻清空旧预览：selectedPath 已同步切到新文件，若保留旧 preview，
+    // syntheticEntry 会用新文件名 + 旧 contentType/blob 渲染出错误内容（闪一下）
+    setPreview(null);
     const name = basename(path);
     const cfg = getFileTypeConfig(name, '');
     try {
