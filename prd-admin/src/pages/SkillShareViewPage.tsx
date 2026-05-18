@@ -20,7 +20,11 @@ export default function SkillShareViewPage() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!token) return;
+    if (!token) {
+      setLoading(false);
+      setError({ code: 'NOT_FOUND', message: '缺少分享标识' });
+      return;
+    }
     setLoading(true);
     setError(null);
     viewSkillShare(token).then((res) => {

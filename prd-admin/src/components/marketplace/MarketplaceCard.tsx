@@ -203,7 +203,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onClick={() => {
-        if (item.type === 'skill') setDetailOpen(true);
+        if (item.type === 'skill' && !detailOpen) setDetailOpen(true);
       }}
       style={{
         backgroundImage: cardGradient,

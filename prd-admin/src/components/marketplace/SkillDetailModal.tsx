@@ -36,7 +36,12 @@ export function SkillDetailModal({
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
+      onClick={(e) => {
+        // createPortal 下 React 合成事件仍沿组件树冒泡回卡片 onClick，
+        // 不 stop 的话点遮罩关闭后会立刻被卡片 onClick 重新打开
+        e.stopPropagation();
+        onClose();
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
