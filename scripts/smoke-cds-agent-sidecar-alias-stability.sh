@@ -90,12 +90,14 @@ host_count=$(printf '%s\n' "$stdout" | awk -v alias="$SMOKE_CDS_AGENT_SIDECAR_AL
 ready_count=$(printf '%s' "$stdout" | grep -o '"ready":true,"anthropicKey"' | wc -l | tr -d ' ')
 adapter_count=$(printf '%s' "$stdout" | grep -o '"agentAdapter":"claude-agent-sdk"' | wc -l | tr -d ' ')
 loop_count=$(printf '%s' "$stdout" | grep -o '"loopOwner":"claude-agent-sdk"' | wc -l | tr -d ' ')
+lazy_legacy_count=$(printf '%s' "$stdout" | grep -o '"legacyLoopImport":"lazy-explicit-fallback"' | wc -l | tr -d ' ')
 smoke_assert_eq "$sample_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "readyz sample count"
 smoke_assert_eq "$host_count" "1" "unique DNS host count"
 smoke_assert_eq "$ready_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "ready=true count"
 smoke_assert_eq "$adapter_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "agentAdapter=claude-agent-sdk count"
 smoke_assert_eq "$loop_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "loopOwner=claude-agent-sdk count"
-smoke_ok "all ${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS} attempts returned ready=true and loopOwner=claude-agent-sdk"
+smoke_assert_eq "$lazy_legacy_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "legacyLoopImport=lazy-explicit-fallback count"
+smoke_ok "all ${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS} attempts returned ready=true, loopOwner=claude-agent-sdk, and legacyLoopImport=lazy-explicit-fallback"
 
 smoke_step "确认未知 runtimeAdapter 不会回退 legacy"
 unsupported_cmd="curl -sS -N --max-time 20 -H 'Authorization: Bearer dev-skip' -H 'Content-Type: application/json' -d '{\"runId\":\"unsupported-adapter-smoke\",\"runtimeAdapter\":\"codex\",\"prompt\":\"should not run\"}' http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/v1/agent/run | head -20"
@@ -132,7 +134,8 @@ jq -n \
     expected: {
       ready: true,
       agentAdapter: "claude-agent-sdk",
-      loopOwner: "claude-agent-sdk"
+      loopOwner: "claude-agent-sdk",
+      legacyLoopImport: "lazy-explicit-fallback"
     },
     unsupportedRuntimeAdapter: {
       adapter: "codex",

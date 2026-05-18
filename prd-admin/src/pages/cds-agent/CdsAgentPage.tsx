@@ -1071,6 +1071,9 @@ export default function CdsAgentPage() {
     const sdkLoopEnabled = readBoolean(latestRuntimeContent, 'sdkLoopEnabled')
       ?? primaryRuntime?.sdkLoopEnabled
       ?? readBoolean(primaryAdapterDiagnostics, 'sdkLoopEnabled');
+    const legacyLoopImport = (latestRuntimeContent ? readString(latestRuntimeContent, 'legacyLoopImport') : '')
+      || primaryRuntime?.legacyLoopImport
+      || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'legacyLoopImport') : '');
     const mapRole = (latestRuntimeContent ? readString(latestRuntimeContent, 'mapRole') : '')
       || primaryRuntime?.mapRole
       || (primaryAdapterDiagnostics ? readString(primaryAdapterDiagnostics, 'mapRole') : '');
@@ -1377,6 +1380,7 @@ export default function CdsAgentPage() {
       adapterMode,
       loopOwner: loopOwner || '未上报',
       sdkLoopEnabled,
+      legacyLoopImport: legacyLoopImport || '未上报',
       mapRole: mapRole || '未上报',
       cdsRole: cdsRole || '未上报',
       runId,
@@ -1405,6 +1409,7 @@ export default function CdsAgentPage() {
         ['Transport', runtimeTransport || '未上报'],
         ['Loop owner', loopOwner || '未上报'],
         ['Expected loop owner', activeAdapterCompatibility?.loopOwner || '未上报'],
+        ['Legacy loop import', legacyLoopImport || '未上报'],
         ['Expected MAP role', activeAdapterCompatibility?.mapRole || '未上报'],
         ['SDK loop', sdkLoopState],
         ['MAP role', mapRole || '未上报'],
@@ -1496,6 +1501,7 @@ export default function CdsAgentPage() {
       sidecarTokenConfigured: item.sidecarTokenConfigured,
       loopOwner: item.loopOwner,
       sdkLoopEnabled: item.sdkLoopEnabled,
+      legacyLoopImport: item.legacyLoopImport,
       mapRole: item.mapRole,
       cdsRole: item.cdsRole,
       claudeCliPath: item.claudeCliPath,
@@ -1551,6 +1557,7 @@ export default function CdsAgentPage() {
       adapterMode: runtimeDiagnostics.adapterMode,
       loopOwner: runtimeDiagnostics.loopOwner,
       sdkLoopEnabled: runtimeDiagnostics.sdkLoopEnabled,
+      legacyLoopImport: runtimeDiagnostics.legacyLoopImport,
       mapRole: runtimeDiagnostics.mapRole,
       cdsRole: runtimeDiagnostics.cdsRole,
       runId: runtimeDiagnostics.runId,
@@ -1602,6 +1609,7 @@ export default function CdsAgentPage() {
         runtimeAdapter: runtimeDiagnostics.adapter,
         loopOwner: runtimeDiagnostics.loopOwner,
         sdkLoopEnabled: runtimeDiagnostics.sdkLoopEnabled,
+        legacyLoopImport: runtimeDiagnostics.legacyLoopImport,
         runtimePool: runtimeStatus ? `${runtimeStatus.healthyCount}/${runtimeStatus.instanceCount}` : null,
         readinessPassed: runtimeDiagnostics.readinessGates.filter((gate) => gate.state === 'pass').length,
         readinessTotal: runtimeDiagnostics.readinessGates.length,

@@ -438,6 +438,8 @@ async function main() {
       'N6',
       '停止条件',
       'ADAPTER 兼容性',
+      'Legacy loop import',
+      'lazy-explicit-fallback',
       '默认路由',
       '缺失 adapter contract',
       '候选 adapter 边界'
@@ -530,6 +532,8 @@ async function waitForWorkbench(send, cdp) {
       && text.includes('N6')
       && text.includes('停止条件')
       && text.includes('ADAPTER 兼容性')
+      && text.includes('Legacy loop import')
+      && text.includes('lazy-explicit-fallback')
       && text.includes('默认路由')
       && text.includes('缺失 adapter contract')
       && text.includes('候选 adapter 边界')) return;

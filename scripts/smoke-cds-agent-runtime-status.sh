@@ -8,6 +8,7 @@
 #   2. 验证 MAP 已发现至少一个 sidecar runtime 实例
 #   3. 验证 healthyCount > 0，且 healthy 语义来自 /readyz
 #   4. 验证期望 adapter 是官方 claude-agent-sdk，并尽量确认实例 loopOwner
+#   5. 验证 legacy loop 仍是 lazy explicit fallback，而不是默认路径依赖
 #
 # 前置:
 #   - prd-api 已配置 AI_ACCESS_KEY smoke 鉴权
@@ -76,9 +77,14 @@ smoke_ok "healthyCount=${healthy_count}"
 smoke_step "确认实例 loopOwner 指向官方 SDK"
 official_instances=$(smoke_get_data "$resp" '[.diagnostics.instances[]? | select((.agentAdapter // "") == "claude-agent-sdk" or (.loopOwner // "") == "claude-agent-sdk")] | length')
 if (( official_instances <= 0 )); then
-  summary=$(smoke_get_data "$resp" '.diagnostics.instances // [] | map({name, source, agentAdapter, loopOwner, sdkLoopEnabled})')
+  summary=$(smoke_get_data "$resp" '.diagnostics.instances // [] | map({name, source, agentAdapter, loopOwner, sdkLoopEnabled, legacyLoopImport})')
   smoke_fail "未发现 claude-agent-sdk 实例；instances=$summary"
 fi
-smoke_ok "officialSdkInstances=$official_instances"
+lazy_legacy_instances=$(smoke_get_data "$resp" '[.diagnostics.instances[]? | select((.agentAdapter // "") == "claude-agent-sdk" or (.loopOwner // "") == "claude-agent-sdk") | select((.legacyLoopImport // "") == "lazy-explicit-fallback")] | length')
+if (( lazy_legacy_instances <= 0 )); then
+  summary=$(smoke_get_data "$resp" '.diagnostics.instances // [] | map({name, source, agentAdapter, loopOwner, sdkLoopEnabled, legacyLoopImport})')
+  smoke_fail "未发现 legacyLoopImport=lazy-explicit-fallback 的官方 SDK 实例；instances=$summary"
+fi
+smoke_ok "officialSdkInstances=$official_instances lazyLegacyFallbackInstances=$lazy_legacy_instances"
 
 smoke_done

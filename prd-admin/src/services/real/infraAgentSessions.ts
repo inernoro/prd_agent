@@ -179,6 +179,7 @@ export interface InfraAgentSidecarInstanceDiagnostics {
   adapterDiagnosticsJson?: string | null;
   loopOwner?: string | null;
   sdkLoopEnabled?: boolean | null;
+  legacyLoopImport?: string | null;
   mapRole?: string | null;
   cdsRole?: string | null;
   claudeCliPath?: string | null;

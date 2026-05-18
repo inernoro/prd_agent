@@ -35,6 +35,7 @@ alias_check_status="skipped"
 alias_unique_hosts=0
 alias_ready_count=0
 alias_loop_count=0
+alias_lazy_legacy_count=0
 alias_warning=""
 diagnosis=""
 next_recommended=""
@@ -150,26 +151,30 @@ else
     host_count=$(printf '%s\n' "$alias_stdout" | awk -v alias="$SMOKE_CDS_AGENT_SIDECAR_ALIAS" '$2 == alias {print $1}' | sort -u | wc -l | tr -d ' ')
     ready_count=$(printf '%s' "$alias_stdout" | grep -o '"ready":true,"anthropicKey"' | wc -l | tr -d ' ')
     loop_count=$(printf '%s' "$alias_stdout" | grep -o '"loopOwner":"claude-agent-sdk"' | wc -l | tr -d ' ')
+    lazy_legacy_count=$(printf '%s' "$alias_stdout" | grep -o '"legacyLoopImport":"lazy-explicit-fallback"' | wc -l | tr -d ' ')
     alias_unique_hosts="$host_count"
     alias_ready_count="$ready_count"
     alias_loop_count="$loop_count"
-    printf 'Alias summary: alias=%s uniqueHosts=%s readySamples=%s/%s officialLoopSamples=%s/%s\n' \
+    alias_lazy_legacy_count="$lazy_legacy_count"
+    printf 'Alias summary: alias=%s uniqueHosts=%s readySamples=%s/%s officialLoopSamples=%s/%s lazyLegacyFallbackSamples=%s/%s\n' \
       "$SMOKE_CDS_AGENT_SIDECAR_ALIAS" \
       "$host_count" \
       "$ready_count" \
       "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" \
       "$loop_count" \
+      "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" \
+      "$lazy_legacy_count" \
       "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS"
     if (( host_count > 1 )); then
       printf 'Alias warning: DNS alias resolves to multiple IPs; stale Docker endpoint may still be attached.\n'
       alias_warning="DNS alias resolves to multiple IPs; stale Docker endpoint may still be attached."
     fi
-    if (( ready_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS || loop_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS )); then
-      printf 'Alias warning: not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk.\n'
+    if (( ready_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS || loop_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS || lazy_legacy_count < SMOKE_CDS_AGENT_ALIAS_ATTEMPTS )); then
+      printf 'Alias warning: not every /readyz sample proved ready=true, loopOwner=claude-agent-sdk, and legacyLoopImport=lazy-explicit-fallback.\n'
       if [[ -n "$alias_warning" ]]; then
-        alias_warning="$alias_warning Not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk."
+        alias_warning="$alias_warning Not every /readyz sample proved ready=true, loopOwner=claude-agent-sdk, and legacyLoopImport=lazy-explicit-fallback."
       else
-        alias_warning="Not every /readyz sample proved ready=true and loopOwner=claude-agent-sdk."
+        alias_warning="Not every /readyz sample proved ready=true, loopOwner=claude-agent-sdk, and legacyLoopImport=lazy-explicit-fallback."
       fi
     elif (( host_count <= 1 )); then
       alias_check_status="stable"
@@ -327,6 +332,7 @@ if [[ -n "$SMOKE_CDS_AGENT_DOCTOR_REPORT" ]]; then
     --argjson aliasUniqueHosts "$alias_unique_hosts" \
     --argjson aliasReadyCount "$alias_ready_count" \
     --argjson aliasLoopCount "$alias_loop_count" \
+    --argjson aliasLazyLegacyCount "$alias_lazy_legacy_count" \
     --argjson runtimeStatus "$(printf '%s' "$resp" | jq -c '.data.diagnostics')" \
     --argjson defaultProfile "$(printf '%s' "${default_profile:-null}" | jq -c '.')" \
     --argjson officialTemplate "$(printf '%s' "${anthropic_template:-null}" | jq -c '.')" \
@@ -350,6 +356,7 @@ if [[ -n "$SMOKE_CDS_AGENT_DOCTOR_REPORT" ]]; then
         uniqueHosts: $aliasUniqueHosts,
         readySamples: $aliasReadyCount,
         officialLoopSamples: $aliasLoopCount,
+        lazyLegacyFallbackSamples: $aliasLazyLegacyCount,
         warning: (if $aliasWarning == "" then null else $aliasWarning end)
       },
       defaultProfile: $defaultProfile,

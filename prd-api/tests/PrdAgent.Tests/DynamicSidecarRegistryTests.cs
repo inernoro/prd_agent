@@ -505,6 +505,7 @@ public class DynamicSidecarRegistryTests
                     "ready": false,
                     "loopOwner": "claude-agent-sdk",
                     "sdkLoopEnabled": true,
+                    "legacyLoopImport": "lazy-explicit-fallback",
                     "mapRole": "control-plane",
                     "cdsRole": "sandbox-runtime",
                     "missing": ["claude_agent_sdk", "workspace_root"],
@@ -541,6 +542,7 @@ public class DynamicSidecarRegistryTests
         Assert.True(diagnostics.Instances[0].SidecarTokenConfigured);
         Assert.Equal("claude-agent-sdk", diagnostics.Instances[0].LoopOwner);
         Assert.True(diagnostics.Instances[0].SdkLoopEnabled);
+        Assert.Equal("lazy-explicit-fallback", diagnostics.Instances[0].LegacyLoopImport);
         Assert.Equal("control-plane", diagnostics.Instances[0].MapRole);
         Assert.Equal("sandbox-runtime", diagnostics.Instances[0].CdsRole);
         Assert.Null(diagnostics.Instances[0].ClaudeCliPath);
@@ -606,6 +608,7 @@ public class DynamicSidecarRegistryTests
                     "ready": true,
                     "loopOwner": "claude-agent-sdk",
                     "sdkLoopEnabled": true,
+                    "legacyLoopImport": "lazy-explicit-fallback",
                     "mapRole": "control-plane",
                     "cdsRole": "sandbox-runtime",
                     "missing": []
@@ -629,6 +632,7 @@ public class DynamicSidecarRegistryTests
         Assert.True(diagnostics.Instances[0].HealthRegistryHealthy);
         Assert.True(diagnostics.Instances[0].Ready);
         Assert.Equal("claude-agent-sdk", diagnostics.Instances[0].LoopOwner);
+        Assert.Equal("lazy-explicit-fallback", diagnostics.Instances[0].LegacyLoopImport);
         Assert.Empty(diagnostics.Blockers ?? Array.Empty<string>());
     }
 

@@ -103,6 +103,8 @@ assert_eq "$(jq -r '.visualCoverage.assertionsPassed // false' "$json_index")" "
 assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "部署判定" "visualCoverage.required"
 assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "命令性质" "visualCoverage.required"
 assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Provider 调用" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Legacy loop import" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "lazy-explicit-fallback" "visualCoverage.required"
 assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "R1 dry-run" "visualCoverage.required"
 assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "不会触发真实 provider 调用" "visualCoverage.required"
 provider_calls_requested=$(jq -r 'if (.providerPrerequisites | has("providerCallsRequested")) then (.providerPrerequisites.providerCallsRequested | tostring) else "" end' "$json_index")

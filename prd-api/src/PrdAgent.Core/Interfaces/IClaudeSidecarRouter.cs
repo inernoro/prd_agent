@@ -309,6 +309,7 @@ public sealed record SidecarInstanceDiagnostics(
     IReadOnlyList<string>? ReadyzNextActions = null,
     string? LoopOwner = null,
     bool? SdkLoopEnabled = null,
+    string? LegacyLoopImport = null,
     string? MapRole = null,
     string? CdsRole = null,
     string? ClaudeCliPath = null,

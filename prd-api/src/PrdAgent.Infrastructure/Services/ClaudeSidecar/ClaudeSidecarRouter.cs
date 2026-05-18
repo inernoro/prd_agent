@@ -239,6 +239,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                     parsed.ReadyzNextActions,
                     parsed.LoopOwner,
                     parsed.SdkLoopEnabled,
+                    parsed.LegacyLoopImport,
                     parsed.MapRole,
                     parsed.CdsRole,
                     parsed.ClaudeCliPath,
@@ -508,10 +509,10 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
     }
 
-    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? MapRole, string? CdsRole, string? ClaudeCliPath, bool? ClaudeCliBundled, SidecarWorkspacePreparationDiagnostics? WorkspacePreparation) ParseReadyz(string body)
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? LegacyLoopImport, string? MapRole, string? CdsRole, string? ClaudeCliPath, bool? ClaudeCliBundled, SidecarWorkspacePreparationDiagnostics? WorkspacePreparation) ParseReadyz(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
-            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
 
         try
         {
@@ -542,6 +543,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 : null;
             string? loopOwner = TryReadString(diagElement, "loopOwner");
             bool? sdkLoopEnabled = TryReadBool(diagElement, "sdkLoopEnabled");
+            string? legacyLoopImport = TryReadString(diagElement, "legacyLoopImport");
             string? mapRole = TryReadString(diagElement, "mapRole");
             string? cdsRole = TryReadString(diagElement, "cdsRole");
             string? claudeCliPath = TryReadString(diagElement, "claudeCliPath");
@@ -549,11 +551,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             var workspacePreparation = TryReadWorkspacePreparation(diagElement);
             var blockers = ReadStringArray(root, "blockers");
             var nextActions = ReadStringArray(root, "nextActions");
-            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, mapRole, cdsRole, claudeCliPath, claudeCliBundled, workspacePreparation);
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, legacyLoopImport, mapRole, cdsRole, claudeCliPath, claudeCliBundled, workspacePreparation);
         }
         catch (JsonException)
         {
-            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         }
     }
 
