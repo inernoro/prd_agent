@@ -28,6 +28,7 @@
 | 17:31 | 远程是否发布了 manifest UI 不清楚 | 运行发布验证脚本 | `/tmp/cds-agent-runbook-published/summary.json` | 首轮约 35s | 发现脚本错误地要求后端常量出现在前端 bundle |
 | 17:35 | 发布验证脚本误报 | 改为验证前端 bundle 的 `applyManifest/preconditions` 渲染能力，后端常量由控制器测试覆盖 | `/tmp/cds-agent-runbook-published/summary.json` | 约 35s | 发布验证通过，命中 `assets/index-D_MWXu97-local.js` |
 | 17:38 | remote host dry-run 只列创建 host 缺参，没有列 deploy sidecar 缺参 | 给 `prepare-cds-agent-remote-host-pool.sh` 增加 `recoveryManifest.phases[]` | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` | 14s | 机器可读列出 `remote_host_create` 和 `shared_runtime_deploy` 两阶段缺参 |
+| 17:43 | 进度面板可读性不足，且远程构建状态需要复核 | 将 status 改成看板式第一屏，并刷新 CDS branch status 与 R0 evidence | `/tmp/cds-branch-status-latest-progress.json`、`/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | 约 13s | 远程拾取 `ffef7117`，服务仍只有 api/admin；R0 仍只缺 remote host/shared runtime |
 
 ## 本轮暴露的问题
 

@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 17:40 Asia/Shanghai
+> **更新时间**：2026-05-18 17:43 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -93,7 +93,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | 证据 | 路径 | 结论 | 耗时 |
 | --- | --- | --- | --- |
 | branch isolation apply | `/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json` | `applied-clean` | 40s |
-| runtime pool evidence | `/tmp/cds-agent-runtime-pool-evidence-current-clean/summary.json` | branch clean，remote host/shared runtime missing | 11s |
+| runtime pool evidence | `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | branch clean，remote host/shared runtime missing | 12s |
 | remote host recovery dry-run | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` | `dry-run-missing-config` | 14s |
 | runbook publish verification | `/tmp/cds-agent-runbook-published/summary.json` | bundle has `applyManifest/preconditions` rendering | ~35s |
 | CDS branch status | `/tmp/cds-branch-status-final.json` | preview running, services only api/admin | ~1s |
