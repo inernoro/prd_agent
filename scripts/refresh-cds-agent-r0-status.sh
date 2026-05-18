@@ -120,7 +120,7 @@ fi
 
 display_next_action="$next_action"
 if [[ "$user_action_required" == "true" ]]; then
-  display_next_action="continue R0 CDS-managed runtime fact-source work before any fallback env handoff"
+  display_next_action="continue R0.2.3 CDS-managed official SDK runtime transport before any fallback env handoff"
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
@@ -161,7 +161,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Next Command\n\n'
   if [[ "$user_action_required" == "true" ]]; then
-    printf 'Continue R0 CDS-managed runtime fact-source work. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
+    printf 'Continue R0.2.3 CDS-managed official SDK runtime transport work. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
     printf "sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md\n"
     printf 'dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore\n'

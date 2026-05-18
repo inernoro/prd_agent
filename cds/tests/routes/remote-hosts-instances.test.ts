@@ -15,9 +15,11 @@ async function request(
   method: string,
   urlPath: string,
   token?: string,
+  body?: unknown,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
+    const payload = body === undefined ? undefined : JSON.stringify(body);
     const req = http.request(
       {
         hostname: '127.0.0.1',
@@ -26,6 +28,7 @@ async function request(
         method,
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
         },
       },
       (res) => {
@@ -41,6 +44,7 @@ async function request(
       },
     );
     req.on('error', reject);
+    if (payload) req.write(payload);
     req.end();
   });
 }
@@ -237,5 +241,53 @@ describe('Remote hosts project instances route', () => {
       previewRootConfigured: false,
     });
     expect(res.body.instances).toHaveLength(0);
+  });
+
+  it('keeps non-fake agent session execution owned by CDS instead of delegating back to MAP', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'claude-sdk', model: 'claude-sonnet-4-20250514' },
+    );
+
+    expect(created.status).toBe(201);
+    const sessionId = created.body.item.id;
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'review this repository' },
+    );
+
+    expect(sent.status).toBe(202);
+    expect(sent.body.accepted).toBe(false);
+    expect(sent.body.runtimeOwnedBy).toBe('cds-managed-runtime');
+    expect(sent.body.item.status).toBe('failed');
+    expect(sent.body.error).toMatchObject({
+      code: 'cds_managed_runtime_unavailable',
+      mapRole: 'control-plane-client',
+      cdsRole: 'runtime-container-sandbox-manager',
+      fallbackScope: 'operator-debug-only',
+      runtime: 'claude-sdk',
+    });
+    expect(sent.body.error.message).not.toContain('MAP sidecar bridge');
+    expect(sent.body.error.nextActions.join('\n')).not.toContain('CDS_REMOTE_HOST');
+
+    const stream = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/logs`,
+      longToken,
+    );
+    expect(stream.status).toBe(200);
+    expect(stream.body.logs).toContain('owner=cds-managed-runtime');
+    expect(stream.body.logs).not.toContain('delegated');
   });
 });

@@ -47,18 +47,19 @@ require_file "$PROGRESS_OUTPUT"
 require_file "$STATUS_DOC"
 
 require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
-require_text "$REFRESH_OUTPUT" 'nextAction: `continue R0 CDS-managed runtime fact-source work before any fallback env handoff`' 'refresh next action'
-require_text "$REFRESH_OUTPUT" 'Continue R0 CDS-managed runtime fact-source work' 'refresh R0 design next command'
+require_text "$REFRESH_OUTPUT" 'nextAction: `continue R0.2.3 CDS-managed official SDK runtime transport before any fallback env handoff`' 'refresh next action'
+require_text "$REFRESH_OUTPUT" 'Continue R0.2.3 CDS-managed official SDK runtime transport work' 'refresh R0 design next command'
 require_text "$REFRESH_OUTPUT" 'operator/debug fallback details, not the product path' 'refresh fallback scope'
 require_text "$REFRESH_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'refresh next command design'
 
 require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r0' 'progress overall status'
 require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R0' 'progress blocking gate'
-require_text "$PROGRESS_OUTPUT" 'Continue R0 CDS-managed runtime fact-source work' 'progress exact next step'
+require_text "$PROGRESS_OUTPUT" 'Continue R0.2.3 CDS-managed official SDK runtime transport work' 'progress exact next step'
 require_text "$PROGRESS_OUTPUT" 'operator/debug fallback details, not the product path' 'progress fallback scope'
 require_text "$PROGRESS_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'progress next command design'
 require_text "$PROGRESS_OUTPUT" '| D1 Runtime architecture correction | done |' 'progress D1 done'
-require_text "$PROGRESS_OUTPUT" '| R0.2 CDS-managed runtime fact source | in_progress |' 'progress R0 in progress'
+require_text "$PROGRESS_OUTPUT" '| R0.2 CDS-managed runtime fact source | done |' 'progress R0.2 done'
+require_text "$PROGRESS_OUTPUT" '| R0.3 CDS-managed official SDK runtime | in_progress |' 'progress R0.3 in progress'
 require_text "$PROGRESS_OUTPUT" '| R0.2F Operator fallback host path | fallback |' 'progress fallback demotion'
 
 require_text "$STATUS_DOC" 'Claude SDK Agent 是 CDS-managed runtime/container/sandbox' 'status doc managed runtime'

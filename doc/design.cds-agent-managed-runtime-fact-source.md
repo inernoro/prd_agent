@@ -28,7 +28,7 @@ MAP -> CDS -> CDS-managed runtime/container/sandbox -> official SDK adapter
 | CDS BuildProfile | `BuildProfile` 已能表达 image、command、env、resource、readiness | 可复用 | 可以承载 `cds-managed-runtime` profile，但不能写回 `prd-agent` 业务项目 |
 | CDS Branch service | `BranchEntry.services` 记录 containerName、hostPort、status | 可复用 | shared-service runtime 可以作为独立项目分支服务被发现 |
 | Instance discovery | `/api/projects/:id/instances` 已支持 shared-service branch services | 可复用 | MAP 仍只连 CDS，通过 project-scoped discovery 找 runtime |
-| Agent session API | `/api/projects/:id/agent-sessions` 已存在 | 需改造 | 非 fake runtime 目前只是记录并返回“delegated to MAP sidecar bridge”，不是 CDS-managed execution |
+| Agent session API | `/api/projects/:id/agent-sessions` 已存在 | 部分可用 | 非 fake runtime 已不再返回“delegated to MAP sidecar bridge”；runtime 缺失时由 CDS 返回 `cds_managed_runtime_unavailable`，下一步接入真实 CDS-managed official SDK runtime transport |
 | MAP runtime adapter | `IInfraAgentRuntimeAdapter` 已是 thin adapter boundary | 可复用 | MAP 只做 routing/SSE/cancel 映射，不 owns agent loop |
 | Sidecar official adapter | `claude-sdk-sidecar` 默认 `claude-agent-sdk`，legacy loop 显式 fallback | 可复用 | official SDK loop 已在 sidecar 内，不应再自造 loop |
 | Remote host deployer | `RemoteHost` + `ServiceDeployment` + deploy-sidecar | fallback | 只能作为 operator/debug 恢复路径，不是用户主路径 |
@@ -57,7 +57,7 @@ MAP_TO_CDS_ONLY
 | `CDS_MANAGED_RUNTIME_PROFILE` | runtime profile 由 CDS 管理，配置 image/command/readiness/resource | CDS build profile 或后续 runtime profile endpoint |
 | `CDS_MANAGED_RUNTIME_CONTAINER` | runtime container 由 CDS container service 启动、停止、探活 | branch service / deployment state |
 | `CDS_MANAGED_RUNTIME_SANDBOX_READY` | workspace、network、resource、permission policy 由 CDS 生成 | runtime session view / readyz diagnostics |
-| `CDS_AGENT_SESSION_EXECUTION_OWNED_BY_CDS` | `/agent-sessions/:id/messages` 在 CDS runtime 内执行或投递到 CDS-managed worker | 事件流出现 `runtimeInit/text/tool/done/error`，不是“delegated to MAP sidecar bridge” |
+| `CDS_AGENT_SESSION_EXECUTION_OWNED_BY_CDS` | `/agent-sessions/:id/messages` 在 CDS runtime 内执行、投递到 CDS-managed worker，或在 runtime 缺失时由 CDS 产生明确 `cds_managed_runtime_unavailable` 错误 | 事件流出现 `runtimeInit/text/tool/done/error` 或 CDS-owned unavailable/error，不能出现“delegated to MAP sidecar bridge” |
 | `OFFICIAL_SDK_LOOP_OWNER` | `loopOwner=claude-agent-sdk` 或其他官方 SDK adapter | `/readyz.adapterDiagnostics.loopOwner` |
 | `MAP_TO_CDS_ONLY` | MAP runtime adapter 只调用 CDS session/discovery/cancel/log API | MAP adapter diagnostics / no direct runtime URL in user path |
 
@@ -78,17 +78,24 @@ RemoteHost.deploy-sidecar
 | # | 任务 | 预计 | 改动范围 | 成功标准 |
 | --- | ---: | --- | --- | --- |
 | R0.2.1 | 定义 CDS-managed runtime status DTO | 20-30 分钟 | CDS route / MAP diagnostics contract | runtime-status 能展示新 gate，不出现 env handoff |
-| R0.2.2 | 改造 CDS `/agent-sessions` 非 fake 路径 | 45-70 分钟 | `cds/src/routes/remote-hosts.ts` 或新 runtime route | message 不再返回“delegated to MAP sidecar bridge” |
-| R0.2.3 | 将 official SDK sidecar 作为 CDS-managed profile/container | 45-90 分钟 | CDS project/profile/container service | runtime 不进入 `prd-agent` appServices |
+| R0.2.2 | 改造 CDS `/agent-sessions` 非 fake 路径 | done | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时返回 CDS-owned unavailable/error |
+| R0.2.3 | 将 official SDK runtime 作为 CDS-managed profile/container/transport | 45-90 分钟 | CDS project/profile/container/session transport | runtime 不进入 `prd-agent` appServices；message 能投递到 CDS-managed official SDK runtime |
 | R0.2.4 | MAP adapter 改为 CDS session transport | 45-70 分钟 | `IInfraAgentRuntimeAdapter` 实现 / discovery registry | MAP 不直连 runtime instance |
 | R0.2.5 | R0 smoke 重写 | 30-45 分钟 | scripts / tests | 检查新 fact source，不要求 SSH/image/env |
 | R0.2.6 | 页面数据源和视觉测试 | 30-45 分钟 | runtime-status / `/cds-agent` | 页面展示 R0 facts、ETA、debug fallback，截图通过 |
 
-第一开发周期建议只做：
+第一开发周期已完成：
 
 ```text
-R0.2.1 + runtime-status execution panel 修正 + smoke guard
-预计 45-70 分钟
+R0.2.1 + runtime-status execution panel 修正 + R0.2.2 session ownership guard
+证据：CDS route test 通过，非 fake runtime 不再委托 MAP sidecar bridge
+```
+
+下一开发周期建议只做：
+
+```text
+R0.2.3 CDS-managed official SDK runtime transport
+预计 45-90 分钟
 ```
 
 ## 5. Smoke 设计

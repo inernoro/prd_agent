@@ -642,14 +642,22 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     });
 
     if (session.runtime !== 'fake') {
+      const unavailable = buildCdsManagedRuntimeUnavailable(session);
+      session.status = 'failed';
+      session.updatedAt = new Date().toISOString();
+      pushCdsAgentEvent(session, 'error', unavailable);
       pushCdsAgentEvent(session, 'log', {
-        level: 'info',
-        message: `${session.runtime} runtime delegated message execution to MAP sidecar bridge`,
+        level: 'warn',
+        message: unavailable.message,
         source: `${session.runtime}-runtime`,
       });
-      session.logs.push(`[${new Date().toISOString()}] message delegated runtime=${session.runtime} chars=${content.length}`);
-      session.updatedAt = new Date().toISOString();
-      res.status(202).json({ item: toCdsAgentSessionView(session), accepted: true });
+      session.logs.push(`[${session.updatedAt}] runtime unavailable runtime=${session.runtime} owner=cds-managed-runtime reason=${unavailable.code}`);
+      res.status(202).json({
+        item: toCdsAgentSessionView(session),
+        accepted: false,
+        runtimeOwnedBy: 'cds-managed-runtime',
+        error: unavailable,
+      });
       return;
     }
 
@@ -911,6 +919,24 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     updatedAt: session.updatedAt,
     stoppedAt: session.stoppedAt ?? null,
     eventCount: session.events.length,
+  };
+}
+
+function buildCdsManagedRuntimeUnavailable(session: CdsAgentSession): Record<string, unknown> {
+  return {
+    code: 'cds_managed_runtime_unavailable',
+    message: `${session.runtime} runtime is owned by CDS, but no CDS-managed runtime/container/sandbox execution path is available yet`,
+    runtime: session.runtime,
+    runtimeProfileId: session.runtimeProfileId,
+    mapRole: 'control-plane-client',
+    cdsRole: 'runtime-container-sandbox-manager',
+    fallbackScope: 'operator-debug-only',
+    retryable: true,
+    nextActions: [
+      'restore or create a CDS-managed runtime project/profile/container',
+      'route /agent-sessions execution to the CDS-managed official SDK runtime',
+      'keep SSH, image, and env handoff as operator/debug fallback only',
+    ],
   };
 }
 

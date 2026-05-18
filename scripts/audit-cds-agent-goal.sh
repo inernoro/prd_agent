@@ -911,19 +911,19 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
-  blocking_reason="Runtime pool recovery is still blocked in old evidence. R0 fact-source design is in progress; the next product step is CDS agent session execution ownership. Remote host/env/image are operator fallback only."
+  blocking_reason="Runtime pool recovery is still blocked in old evidence. R0 fact-source and CDS session ownership guard are in place; the next product step is CDS-managed official SDK runtime transport. Remote host/env/image are operator fallback only."
   if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
     deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals if needed, then correct the runtime recovery model back to CDS-managed runtime before exposing any operator fallback."
   else
-    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is CDS agent session execution ownership, not asking the user for SSH/env/image."
+    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is CDS-managed official SDK runtime transport, not asking the user for SSH/env/image."
   fi
   next_command="sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --argjson blockers "$runtime_pool_blockers_json" \
     --arg command "$next_command" \
     '{
-      cycle: "r0-runtime-pool-recovery",
-      state: "runtime-pool-blocked",
+      cycle: "r0-cds-managed-runtime-transport",
+      state: "runtime-transport-blocked",
       items: [
         {
           order: 1,
@@ -939,14 +939,14 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
         },
         {
           order: 2,
-          code: "R0.2",
-          title: "重定义 CDS-managed runtime 恢复事实源",
-          goal: "让 CDS 的容器/分支/runtime/sandbox 能表达 Claude SDK runtime 恢复状态。",
-          evidence: "doc/design.cds-agent-managed-runtime-fact-source.md 与 runtime-status/taskBoard 不要求普通用户补 SSH/env/image。",
+          code: "R0.3",
+          title: "接入 CDS-managed official SDK runtime transport",
+          goal: "让 CDS 的容器/分支/runtime/sandbox 承载 Claude SDK runtime，并由 /agent-sessions 投递消息。",
+          evidence: "非 fake session ownership guard 已完成；下一步需要 runtime/profile/container/session transport。",
           status: "next",
           blockedBy: null,
           nextActions: [
-            "重新设计 R0 evidence，不以 external agent host 作为产品模型。"
+            "实现 CDS-managed official SDK runtime transport，不以 external agent host 作为产品模型。"
           ]
         },
         {
@@ -956,13 +956,14 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           goal: "用当前 CDS state 更新 goal audit 和进度面板。",
           evidence: "runtimePoolBlockers=[]，R0=pass。",
           status: "waiting",
-          blockedBy: "R0.2",
+          blockedBy: "R0.3",
           nextActions: [$command]
         }
       ],
+      legacyFallbackBlockers: $blockers,
       blockers: $blockers,
       stopConditions: [
-        "R0 CDS-managed runtime fact source 完成前，不运行 provider one-cycle。",
+        "R0 CDS-managed official SDK runtime transport 完成前，不运行 provider one-cycle。",
         "不要把 remote host/env/image 暴露为普通用户主路径。"
       ]
     }')
@@ -990,7 +991,7 @@ fi
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   failures+=("P0 branch isolation/shared pool plan was not observed")
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
-  failures+=("P0 branch isolation/shared pool is not recovered")
+  failures+=("R0 CDS-managed official SDK runtime transport is not complete; legacy fallback pool evidence remains missing")
 fi
 if [[ "$branch_manifest_status" != "pass" && "$branch_manifest_status" != "clean_from_runtime_pool_summary" ]]; then
   failures+=("P0 branch isolation apply manifest did not pass")
@@ -1435,7 +1436,7 @@ if [[ "$branch_manifest_json" != "null" ]]; then
   printf 'Branch isolation manifest safety: %s\n' "$(jq -r '.applyManifest.safety // "unknown"' <<< "$branch_manifest_json")"
 fi
 if [[ "$runtime_pool_blockers_json" != "[]" ]]; then
-  printf 'Runtime pool blockers:\n'
+  printf 'Legacy fallback blockers (not product path):\n'
   jq -r '.[] | "  - " + .requirement + " · " + .status' <<< "$runtime_pool_blockers_json"
 fi
 printf 'Cycle status: %s\n' "$cycle_status"

@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 21:53 Asia/Shanghai：
+截至 2026-05-18 22:08 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -40,7 +40,8 @@
 - 已启动：新增有限纠偏计划 `doc/plan.cds-agent-runtime-correction-limited.md`，本轮只校准文档入口和本地事实源，不实现 runtime。
 - 已设计：新增 R0 fact source 设计 `doc/design.cds-agent-managed-runtime-fact-source.md`，把 R0 blocker 改成 CDS-managed runtime/project/profile/container/session，而不是 remote host/image/env。
 - 已校准：runtime-status execution panel 的 R0.2/R0.3、NextCommand、runbook 和 task board 已指向 CDS-managed runtime fact source；remote host/image 只作为 operator fallback debug。
-- 未解决：CDS `/agent-sessions` 非 fake runtime 执行仍需改造；当前目标保持 `not_complete`。
+- 已修复：CDS `/agent-sessions` 非 fake runtime message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时由 CDS 返回 `cds_managed_runtime_unavailable`，避免再次把执行归属推回 MAP。
+- 未解决：CDS-managed official SDK runtime transport 仍需接入；当前目标保持 `not_complete`。
 
 ## 执行时间线
 
@@ -91,6 +92,7 @@
 | 20:51 | consistency check 单独通过，但接入 goal audit 时继承了“尚未生成”的 `CDS_AGENT_GOAL_AUDIT_REPORT` 导致假失败；同时 N6 沙箱失败会覆盖 canonical summary | consistency check 在 in-progress audit report 不存在时回退默认目标审计输入；goal audit 内 N6 attempt 写入 audit dir，只有 pass 才更新 canonical summary | `/tmp/cds-agent-goal-audit-with-progress-consistency.json`、`/tmp/cds-agent-n6-non-code-compatibility-current.json` | audit 约 10s；沙箱外 N6 约 30s | D1=pass，N6=pass；本地审计唯一失败收敛到 R0 runtime pool 未恢复 |
 | 21:35 | 用户明确指出 remote-host/env 路线偏离原始 CDS 设计，要求新建有限计划并先纠正文档 | 新增 `doc/plan.cds-agent-runtime-correction-limited.md`；主进度文档第一屏改为 CDS-managed runtime 纠偏；progress/refresh 下一步改为纠偏计划 | 本文档、`doc/status.cds-agent-current-progress.md`、progress consistency | 预计 65-90m，本轮先完成入口校准 | remote host/env 被降级为 operator fallback，不再作为产品主路径 |
 | 22:02 | D1 完成后 runtime-status 后端仍把 R0.2/R0.3 写成 remote host carrier / deploy sidecar image | 新增 R0 fact-source 设计文档；修正 runtime-status execution panel、debug command、task board、controller tests | `doc/design.cds-agent-managed-runtime-fact-source.md`、`InfraAgentSessionsControllerTests` | controller tests 18/18，约 11s | 页面数据源主线已改为 CDS-managed runtime fact source；下一步是 CDS `/agent-sessions` execution 改造 |
+| 22:08 | CDS `/agent-sessions` 非 fake message 仍可能把执行描述成 MAP sidecar bridge delegation | 改成 CDS-owned unavailable/error path；补 CDS route test，断言不出现 MAP sidecar bridge，也不要求 SSH/image/env | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | CDS route tests 3/3，约 0.5s | R0.2.2 ownership guard 完成；下一步是 CDS-managed official SDK runtime transport |
 
 ## 本轮暴露的问题
 
@@ -198,10 +200,10 @@
 
 - `executionPanel.status=blocked_r0`
 - `currentBlockingGate=R0`
-- `nextCyclePlan.cycle=r0-runtime-pool-recovery`
-- plan items 为 `R0.2` enabled remote host、`R0.3` shared runtime deploy、`R0V` evidence refresh。
+- `nextCyclePlan.cycle=r0-cds-managed-runtime-transport`
+- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport、`R0V` evidence refresh。
 
-证据：`/tmp/cds-agent-goal-audit-summary-fast.json` 当前输出 `Next cycle plan: r0-runtime-pool-recovery state=runtime-pool-blocked items=R0.2,R0.3,R0V`。
+证据：`scripts/audit-cds-agent-goal.sh` 当前输出 `Next cycle plan: r0-cds-managed-runtime-transport state=runtime-transport-blocked items=D1,R0.3,R0V`。
 
 优化：旧 one-cycle 只作为历史 provider/profile 证据，不再决定当前执行面板的顶层状态。
 
@@ -402,7 +404,7 @@
 - `/tmp/cds-agent-goal-audit-current-with-readiness.json`：`gates.N6=pass`。
 - `requirements.otherAgentCompatibility.status=proved`。
 - `runtimePoolRecovery.applyReadiness.readyForR0Apply=false`。
-- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `P0 branch isolation/shared pool is not recovered`。
+- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `R0 CDS-managed official SDK runtime transport is not complete; legacy fallback pool evidence remains missing`。
 
 耗时：短超时审计 15s；N6 沙箱步骤被超时停止，但 summary 将当前 N6 证据校准为 pass。
 
