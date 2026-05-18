@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 15:52 Asia/Shanghai
+> 更新时间：2026-05-18 15:56 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -18,6 +18,7 @@
 - `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/summary.json`
 - `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/evidence-index.md`
 - remote host wrapper dry-run: `/tmp/cds-agent-remote-host-pool-20260518152907`
+- branch isolation wrapper dry-run: `/tmp/cds-agent-branch-isolation-repair-current`
 - goal audit: `/tmp/cds-agent-goal-audit-current.json`
 
 本次证据采集总耗时 `13s`：
@@ -53,6 +54,7 @@
 - compose parser 已补防复发：`claude-sidecar` 旧命名也会被识别为 agent runtime sidecar，不会导入成业务 branch BuildProfile。
 - StateService 已补中心写入护栏：非 `shared-service` 项目的 BuildProfile 如果像 Claude Agent SDK runtime sidecar，会被拒绝；这覆盖手工创建、API 写入、导入和 clone auto-config 的最终落库路径。
 - `smoke-cds-agent-shared-service-pool.sh` 已改为引用当前 runtime pool contamination report，避免本地防复发入口因旧文件名误报。
+- branch isolation repair wrapper 已增加机器判定：`verdict`、`readyForRemoteHostStep`、`nextAction`；apply 后 post-check 不干净会非零退出，避免误进入 remote host/shared pool 步骤。
 
 最新目标审计耗时 `22s`，最耗时步骤：
 
@@ -75,6 +77,7 @@
 | `npm --prefix cds test -- tests/services/compose-parser.test.ts` | 36 passed | 334ms |
 | `npm --prefix cds test -- tests/services/state.test.ts` | 39 passed | 816ms |
 | `npm --prefix cds run build` | pass | ~1s |
+| `CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh` | `dry-run-contaminated` | 15s |
 
 路由大套件校验记录：
 
@@ -87,6 +90,9 @@
 
 1. 清理 `prd-agent` 的 branch-local sidecar BuildProfile/service residual。
    - dry-run 证据已确认候选 profile：`claude-agent-sdk-runtime-v2-prd-agent`
+   - 最新 wrapper verdict：`dry-run-contaminated`
+   - `readyForRemoteHostStep=false`
+   - nextAction：review candidate profile 后，用 `SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1` 执行同一个 wrapper
    - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。
 2. 登记至少一个 enabled CDS remote host。
    - 当前缺失：`CDS_REMOTE_HOST_NAME`

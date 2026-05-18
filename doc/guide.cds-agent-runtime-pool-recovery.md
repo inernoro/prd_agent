@@ -94,6 +94,23 @@ SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
 
 wrapper 会写 `/tmp/cds-agent-branch-isolation-repair-*`，包含 pre evidence、repair report、post branch isolation smoke 和 post evidence。若 post check 仍失败，`summary.json` 会保留删除结果与复查失败状态，便于继续定位。
 
+`summary.json` 的关键判定字段：
+
+- `verdict`: `dry-run-contaminated`、`dry-run-clean`、`applied-clean` 或 `applied-not-clean`。
+- `readyForRemoteHostStep`: 只有 branch isolation 已干净时才为 `true`。
+- `nextAction`: 下一步执行建议。
+- `beforeContaminatedBranchCount` / `afterContaminatedBranchCount`: 清理前后污染分支数。
+
+执行清理后如果 `afterContaminatedBranchCount != 0`，wrapper 会非零退出。不要在 `verdict=applied-not-clean` 时继续登记 remote host 或部署 shared runtime pool。
+
+2026-05-18 最新 dry-run 证据：
+
+- evidence dir: `/tmp/cds-agent-branch-isolation-repair-current`
+- verdict: `dry-run-contaminated`
+- beforeContaminatedBranchCount: `7`
+- candidateProfileIds: `claude-agent-sdk-runtime-v2-prd-agent`
+- readyForRemoteHostStep: `false`
+
 ## 发布前检查
 
 在考虑更新共享 CDS 控制面前，先在当前分支确认这些本地检查已经通过：

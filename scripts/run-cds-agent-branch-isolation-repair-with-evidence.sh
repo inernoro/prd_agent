@@ -25,6 +25,7 @@ step_names=""
 step_statuses=""
 step_seconds=""
 step_logs=""
+step_exit_codes=""
 
 append_json_string() {
   local current="$1"
@@ -69,6 +70,7 @@ run_capture() {
   step_statuses=$(append_json_string "$step_statuses" "$status")
   step_seconds=$(append_json_number "$step_seconds" "$duration")
   step_logs=$(append_json_string "$step_logs" "$log")
+  step_exit_codes=$(append_json_number "$step_exit_codes" "$rc")
   return 0
 }
 
@@ -120,6 +122,7 @@ jq -n \
   --argjson statuses "[$step_statuses]" \
   --argjson seconds "[$step_seconds]" \
   --argjson logs "[$step_logs]" \
+  --argjson exitCodes "[$step_exit_codes]" \
   --argjson repair "$repair_json" \
   --argjson pre "$pre_summary" \
   --argjson post "$post_summary" \
@@ -131,6 +134,7 @@ jq -n \
       name: $names[.],
       status: $statuses[.],
       durationSeconds: $seconds[.],
+      exitCode: $exitCodes[.],
       log: $logs[.]
     }],
     totalSeconds: ($seconds | add // 0),
@@ -139,7 +143,33 @@ jq -n \
     post: $post,
     beforeContaminatedBranchCount: ($pre.branchIsolationRepairDryRun.contaminatedBranchCount // $pre.plan.contaminatedBranchCount // null),
     afterContaminatedBranchCount: ($post.branchIsolationRepairDryRun.contaminatedBranchCount // $post.plan.contaminatedBranchCount // null)
-  }' > "$summary"
+  }
+  | .branchIsolationClean = (
+      if .apply then
+        ((.afterContaminatedBranchCount // -1) == 0)
+      else
+        ((.beforeContaminatedBranchCount // -1) == 0)
+      end
+    )
+  | .verdict = (
+      if .apply and .branchIsolationClean then "applied-clean"
+      elif .apply then "applied-not-clean"
+      elif .branchIsolationClean then "dry-run-clean"
+      else "dry-run-contaminated"
+      end
+    )
+  | .readyForRemoteHostStep = (.verdict == "applied-clean" or .verdict == "dry-run-clean")
+  | .nextAction = (
+      if .verdict == "applied-clean" then
+        "branch isolation clean; register an enabled remote host and deploy the shared official SDK runtime sidecar"
+      elif .verdict == "dry-run-clean" then
+        "branch isolation already clean; continue with remote host and shared runtime pool recovery"
+      elif .verdict == "dry-run-contaminated" then
+        "review candidateProfileIds, then rerun this wrapper with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1"
+      else
+        "apply ran but branch isolation is still contaminated; inspect post smoke/evidence before any redeploy"
+      end
+    )' > "$summary"
 
 index="$OUT_DIR/evidence-index.md"
 {
@@ -149,9 +179,12 @@ index="$OUT_DIR/evidence-index.md"
   printf '%s\n' "- totalSeconds: \`$(jq -r '.totalSeconds' "$summary")\`"
   printf '%s\n' "- beforeContaminatedBranchCount: \`$(jq -r '.beforeContaminatedBranchCount // "unknown"' "$summary")\`"
   printf '%s\n' "- afterContaminatedBranchCount: \`$(jq -r '.afterContaminatedBranchCount // "not-run"' "$summary")\`"
+  printf '%s\n' "- verdict: \`$(jq -r '.verdict' "$summary")\`"
+  printf '%s\n' "- readyForRemoteHostStep: \`$(jq -r '.readyForRemoteHostStep' "$summary")\`"
+  printf '%s\n' "- nextAction: $(jq -r '.nextAction' "$summary")"
   printf '%s\n\n' "- summary: \`$summary\`"
   printf '## Steps\n\n'
-  jq -r '.steps[] | "- `" + .status + "` " + .name + " · " + (.durationSeconds|tostring) + "s · `" + .log + "`"' "$summary"
+  jq -r '.steps[] | "- `" + .status + "` " + .name + " · rc=" + (.exitCode|tostring) + " · " + (.durationSeconds|tostring) + "s · `" + .log + "`"' "$summary"
   printf '\n## Repair\n\n'
   jq -r '"- status: `" + (.repair.status // "unknown") + "`",
     "- candidateProfileIds: `" + ((.repair.candidateProfileIds // []) | join(",")) + "`",
@@ -161,4 +194,9 @@ index="$OUT_DIR/evidence-index.md"
 printf '\nEvidence dir: %s\n' "$OUT_DIR"
 printf 'Summary:      %s\n' "$summary"
 printf 'Index:        %s\n' "$index"
-jq '{apply,totalSeconds,beforeContaminatedBranchCount,afterContaminatedBranchCount,repair:{status:.repair.status,candidateProfileIds:.repair.candidateProfileIds,deletedProfileIds:.repair.deletedProfileIds}}' "$summary"
+jq '{apply,totalSeconds,verdict,readyForRemoteHostStep,nextAction,beforeContaminatedBranchCount,afterContaminatedBranchCount,repair:{status:.repair.status,candidateProfileIds:.repair.candidateProfileIds,deletedProfileIds:.repair.deletedProfileIds}}' "$summary"
+
+if [[ "$APPLY" == "1" && "$(jq -r '.branchIsolationClean' "$summary")" != "true" ]]; then
+  printf '❌ branch isolation repair apply did not produce a clean post-check; see %s\n' "$index" >&2
+  exit 1
+fi
