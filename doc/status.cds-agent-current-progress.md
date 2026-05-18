@@ -1,22 +1,23 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-19 02:32 Asia/Shanghai
+> **更新时间**：2026-05-19 03:10 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
-> **当前阶段**：provider-backed one-cycle 已通过；正在提交归档和最终风险说明。
-> **总状态**：最小可用闭环已打通。MAP 保持控制面，CDS 管理 Claude SDK runtime/container/sandbox，默认 OpenRouter DeepSeek profile 可通过官方 Claude Agent SDK adapter 执行只读仓库巡检。写文件/执行命令/PR 仍必须显式开启写工具 profile，并走人工审批。
+> **当前阶段**：Phase 0 已完成，正在进入 Phase 1 商业级最小可用：简洁 Agent 面板、可观测性/超时、工作流最小调度、知识库只读接入。
+> **权威入口**：`doc/design.cds-agent-commercial-architecture-and-roadmap.md`
+> **总状态**：最小只读闭环已打通。MAP 保持控制面，CDS 管理 Claude SDK runtime/container/sandbox，默认 OpenRouter DeepSeek profile 可通过官方 Claude Agent SDK adapter 执行只读仓库巡检。下一步不是继续修 runtime 基线，而是把使用入口、工作流和知识库接入打磨到商业可用。
 
 ## 0. 当前执行面板
 
 | 项 | 当前结论 |
 | --- | --- |
-| 总进度 | 约 97%；R0/A0/R1/S1/S2/S3/V1/N6 全部通过，剩余是提交归档与最终风险说明 |
-| 当前 gate | `Archive + final risk note` |
-| 当前 blocker | 无需用户输入的 blocker。剩余风险是默认只读 profile 不提供写/命令/PR 能力；要做改代码/跑测试/提交 PR，需要单独的 writable runtime profile 和审批策略 |
-| 需要用户协助 | 当前不需要。你已经提供的 DeepSeek/OpenRouter provider 条件足够完成只读巡检闭环 |
+| 总进度 | Phase 0 基线 100%；商业级整体按三期推进，当前进入 Phase 1 |
+| 当前 gate | `P1_SIMPLE_AGENT_PANEL + P1_WORKFLOW_MIN_NODE + P1_KB_READONLY` |
+| 当前 blocker | 无需用户输入的 blocker。需要开发的是简洁模式页面、统一超时/可观测字段、`CdsAgentRun` 工作流节点、KnowledgeBase 只读工具 |
+| 需要用户协助 | 当前不需要。只有当知识库权限模型或目标示例空间无法从本地上下文确认时，才需要你指定一个示例知识库 |
 | 不需要用户协助 | 不需要补 `CDS_REMOTE_HOST_*`、SSH 私钥、sidecar image 作为产品主路径 |
-| 本轮下一步 | 提交 smoke/进度面板/文档修正，给出最终使用方式和剩余限制 |
-| 预计结束 | 约 10-15 分钟；不需要再部署 runtime，除非代码再变 |
-| 是否该 redeploy preview | 否。远端 CDS 已在 `e0af6d2e`，runtime branch 也在 `e0af6d2e`；后续文档/脚本 smoke 语义变更不影响 runtime |
+| 本轮下一步 | 按新权威入口进入 Phase 1：先实现简洁 Agent 面板和可观测性/超时，再接最小工作流节点和知识库只读工具 |
+| 预计结束 | Phase 1 预计 5-7 个工作日；第一个可视化页面迭代预计 0.5-1 天内完成本地验收 |
+| 是否该 redeploy preview | 当前不需要。先做本地单测、smoke 和视觉测试；只有关键门通过后再部署 |
 | 当前权威证据 | one-cycle `/tmp/cds-agent-cycle-hardened-current/cycle-summary.json`：`commercialComplete=true`、7/7 gates pass、10 pass / 1 legacy skip / 0 failed、总 161s；S1/S2/S3/V1 单项证据仍保留 |
 
 如需复跑完整周期，使用现有 CDS-managed provider profile，不需要把 key 发到聊天里：
@@ -45,7 +46,7 @@ doc/plan.cds-agent-runtime-correction-limited.md
 doc/design.cds-agent-managed-runtime-fact-source.md
 ```
 
-## 2. 8 步总览
+## 2. Phase 0 基线总览
 
 | 顺序 | 阶段 | 状态 | 剩余时间 |
 | --- | --- | --- | --- |
@@ -56,9 +57,9 @@ doc/design.cds-agent-managed-runtime-fact-source.md
 | 5 | R1 Claude Code provider-switch profile 修正 | done_live | 0 |
 | 6 | S1 provider read-only run | done_live | 0 |
 | 7 | S2/S3 hardened controls、stop/cancel | done_live | 0 |
-| 8 | 最终商业级验收/文档归档 | current | 10-15 分钟 |
+| 8 | V1 live visual acceptance + 文档归档 | done_live | 0 |
 
-V1 页面视觉当前 dry-run pass，但真正商业闭环仍要在 provider-backed cycle 后再截一次 live-runtime 页面。
+Phase 0 的职责是证明“CDS-managed official SDK 只读闭环可跑、可停、默认不暴露危险工具”。它已经完成。Phase 1 的职责不是继续兜 runtime 基线，而是把普通用户入口、工作流调度和知识库只读接入做成可用产品。
 
 ## 3. Gate 状态
 
@@ -86,8 +87,9 @@ ssh root@62.146.168.225
 
 ## 5. 最关键文档
 
-当前先看这三个：
+当前先看这些：
 
+- `doc/design.cds-agent-commercial-architecture-and-roadmap.md`：当前权威入口，定义商业级总目标、能力边界、架构图、一期/二期/三期和验收门。
 - `doc/plan.cds-agent-runtime-correction-limited.md`：D1 有限纠偏计划、任务数、ETA、smoke、视觉测试触发条件。
 - `doc/design.cds-agent-managed-runtime-fact-source.md`：R0 CDS-managed runtime fact source、最小开发计划、smoke 和视觉触发条件。
 - `doc/status.cds-agent-current-progress.md`：当前项目级进度、剩余步骤、当前 blocker、下一步。
@@ -95,9 +97,9 @@ ssh root@62.146.168.225
 
 ## 6. 一句话进度
 
-`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；MAP Toolbox adapter 也已收回到 CDS session transport，默认不再排 MAP direct runtime job。R0.5/R0.6/R0.7 已闭合：CDS `/api/projects/:id/runtime-capacity` 和 `/runtime-capacity/reconcile liveApply` 已能证明 shared-service official SDK runtime running > 0。下一步不能要求普通用户补 SSH/env/image，也不能把 DeepSeek/cc-switch 误推成 Anthropic 原生认证；应先完成 Claude Code provider-switch profile 纠偏。
+`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；MAP Toolbox adapter 也已收回到 CDS session transport，默认不再排 MAP direct runtime job。R0.5/R0.6/R0.7/R1/S1/S2/S3/V1 已闭合。下一步进入 Phase 1：简洁 Agent 面板、统一可观测性/超时、`CdsAgentRun` 工作流节点、KnowledgeBase 只读工具。
 
-当前有效 blocker：
+当前有效 gate 记录：
 
 | Gate | 状态 | 说明 |
 | --- | --- | --- |
@@ -110,8 +112,8 @@ ssh root@62.146.168.225
 | `MAP_TO_CDS_SESSION_TRANSPORT` | pass_smoke | MAP Toolbox adapter 不注入 direct runtime adapter；session message 先走 CDS `/agent-sessions/{id}/messages`，MAP direct runtime queue 只在显式 fallback env 下启用 |
 | `R0V_MANAGED_RUNTIME_POSTCHECK` | done | live evidence 显示 branch isolation clean，CDS-managed runtime capacity available |
 | `CDS_MANAGED_RUNTIME_CAPACITY` | pass_live | `/tmp/cds-agent-runtime-live-apply-current.json` 与 `/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json` 显示 `runningOfficialSdkRuntimeCount=1` |
-| `R1_DRY_RUN_GUARDS` | pass_dry_run_for_native_claude_template | `/tmp/cds-agent-r1-dryrun-current.json` 显示原生 Anthropic 官方模板 guard 通过；还需补 cc-switch/DeepSeek provider-switch profile 证据 |
-| `ONE_CYCLE_FACT_SOURCE` | pass_remote_dry_run | `/tmp/cds-agent-cycle-20260519003122/cycle-summary.json` 显示 `R0=pass A0=pass R1=pending V1=pass N6=pass`，失败数 0 |
+| `R1_PROVIDER_PROFILE` | pass_live | 默认 profile `OpenRouter DeepSeek V4 Pro · Claude Code` 已按 Anthropic-compatible upstream 通过，不需要 Anthropic 原生 secret |
+| `ONE_CYCLE_FACT_SOURCE` | pass_live | `/tmp/cds-agent-cycle-hardened-current/cycle-summary.json` 显示 `commercialComplete=true`、7/7 gates pass、10 pass / 1 legacy skip / 0 failed |
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
 | `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行；也可直接提供其他可 pull registry image |
@@ -129,19 +131,18 @@ scripts/print-cds-agent-lifecycle-overview.sh
 scripts/check-cds-agent-progress-consistency.sh
 ```
 
-这些命令只读，不部署、不写远程、不输出 secret。`refresh-cds-agent-r0-status.sh` 默认只做本地刷新；只有显式设置 `CDS_AGENT_WORKFLOW_CHECK=1` 才查询 GitHub Actions 状态。它会统一刷新 publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle 和 progress board，避免多个 `/tmp` 证据文件停留在不同 commit。
-`check-cds-agent-progress-consistency.sh` 会重新运行 refresh，并断言 refresh 报告、progress board 和本主文档都指向同一个当前 gate 与下一步；R0 通过后应统一指向 R1，而不是回到 remote host/image/env。
+这些命令只读，不部署、不写远程、不输出 secret。它们仍可用于复查 Phase 0 runtime/profile 事实源；Phase 1 需要新增或更新面板、工作流、知识库相关 smoke，避免继续只围绕 R0/R1 打转。
 
 ## 7. 阶段总览
 
-完整生命周期不是“做页面”一个阶段，而是 8 个 gate：
+Phase 0 生命周期不是“做页面”一个阶段，而是 8 个 gate：
 
 ```text
 A0 adapter 边界 -> R0 runtime pool -> R1 Claude Code provider-switch profile -> S1 read-only ->
 S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 ```
 
-当前实际位置：A0、N6、D1、R0 已完成；R1 是唯一当前 blocker。R0 不再表述为“等待用户补 remote host/env/image”，而是已有 live capacity 证据证明 CDS-managed runtime 可用。R1 也不再表述为“必须让用户补 Anthropic key”，而是让 Claude Code runtime 使用 cc-switch/DeepSeek provider-switch profile。
+当前实际位置：A0、N6、D1、R0、R1、S1、S2、S3、V1 均已闭合。新的工作面是 Phase 1 产品化：简洁面板、可观测性/超时、工作流最小调度、知识库只读接入。
 
 | 阶段 | 开发 | 证据 | 状态 | 下一步 |
 | --- | --- | --- | --- | --- |
@@ -149,12 +150,12 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | R0.1 业务分支去污染 | [x] | `/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json` | 已完成 | 防回归 |
 | D1 架构纠偏 | [x] | `doc/plan.cds-agent-runtime-correction-limited.md` | 已完成 | 作为 R0 设计边界 |
 | R0 CDS-managed runtime pool | [x] | `doc/design.cds-agent-managed-runtime-fact-source.md`、runtime-status task board、CDS route test、MAP session transport smoke、R0V/R0.7 live evidence、R0.5 capacity smoke、CDS runtime-capacity/reconcile/liveApply route test | pass_live | 防回归 |
-| R1 Claude Code provider-switch profile | [x] 原生 Claude 模板/预检就绪；cc-switch/DeepSeek 口径纠偏进行中 | runtime-status profile diagnostics + sidecar upstream resolver | current_blocker | `claude-sdk` runtime 允许 Anthropic-compatible DeepSeek/cc-switch upstream；只有原生 Anthropic endpoint 才要求 `sk-ant` |
-| S1/S2/S3 one-cycle | [x] smoke 框架就绪 | one-cycle summary | pending | R0/R1 通过后跑只读、审批、取消 |
-| V1 视觉验证 | [x] 页面支持 | `/tmp/cds-agent-cycle-20260519001522/workbench-visual.png` | pass_dry_run | provider-backed cycle 后再做登录态截图 |
-| N6 非代码智能体兼容 | [x] | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 已完成 | one-cycle 前后复跑 |
+| R1 Claude Code provider-switch profile | [x] | runtime-status profile diagnostics + sidecar upstream resolver | pass_live | 防回归 |
+| S1/S2/S3 one-cycle | [x] | `/tmp/cds-agent-cycle-hardened-current/cycle-summary.json` | pass_live | 防回归 |
+| V1 视觉验证 | [x] | `/tmp/cds-agent-workbench-visual.png` | pass_live | Phase 1 页面改动后重跑视觉测试 |
+| N6 非代码智能体兼容 | [x] | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 已完成 | 新 adapter 接入前复跑 |
 
-## 8. 当前 D1/R0 看板
+## 8. 当前 Phase 0 看板
 
 | 项 | 当前值 | 证据 |
 | --- | --- | --- |
@@ -166,20 +167,21 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | CDS-managed runtime model | `required` | 本轮最终目标 |
 | operator fallback resource | `ssh root@62.146.168.225` | 用户提供，仅作为 fallback 线索 |
 | legacy remote-host/env path | `rejected_as_product_path` | 本轮纠偏声明 |
-| should redeploy preview? | no | 当前 blocker 不在 preview app build |
+| should redeploy preview? | no | 当前是产品页面和接入设计开发，先本地验收再部署 |
 | old sidecar image/registry checks | `operator_fallback_only` | 不再作为产品主下一步 |
 
 ## 9. 下一步最小计划
 
-下一轮只做 R1 Claude Code provider-switch profile 验证，不做普通 preview redeploy，不把 SSH/env/image 重新提升为产品路径，也不把 DeepSeek/cc-switch 错写成 Anthropic 原生认证必需项。
+下一轮进入 Phase 1，不做普通 preview redeploy，不把 SSH/env/image 重新提升为产品路径，也不把 DeepSeek/cc-switch 错写成 Anthropic 原生认证必需项。完整商业级计划见 `doc/design.cds-agent-commercial-architecture-and-roadmap.md`。
 
 | 顺序 | 动作 | 需要输入 | 成功证据 |
 | --- | --- | --- | --- |
-| 1 | 定义 CDS-managed runtime capacity 产品事实源 | 无新增输入 | done：`runtime-status`/progress/audit 顶层显示 `CDS_MANAGED_RUNTIME_CAPACITY` |
-| 2 | 把 remote host wrapper 输出降级为 operator fallback | 无新增输入 | done：evidence `nextAction` 明确“do not ask product users for remote host variables” |
-| 3 | 将 R0.6 reconciler 接到真实 CDS runtime/container/sandbox start/recover | 已完成本地 liveApply 路径，不需要用户补 SSH/env/image | done_minimal：route test 证明 `ContainerService.runService` + readiness 可把 capacity 置为 available |
-| 3.1 | 在真实 CDS shared-service runtime 执行 live evidence | 不需要普通用户补 SSH/env/image | done：shared-service official SDK runtime running > 0，R0 pass |
-| 4 | 进入 R1/S1/S2/S3/V1 | R0 capacity 已通过 | profile、provider smokes、登录态页面截图通过 |
+| 1 | 盘点现有 Agent 页面组件和事件 API | 无新增输入 | 明确可复用组件、缺失字段和改动文件 |
+| 2 | 实现简洁模式信息架构 | 无新增输入 | 首屏只保留目标、任务、运行、停止、状态、结果 |
+| 3 | 统一 timeline、timeout、stop 展示 | 无新增输入 | 页面显示 traceId、状态、耗时、timeoutAt、lastEventSeq |
+| 4 | 本地 smoke + 视觉测试 | 无新增输入 | 截图证明无错位，smoke 证明状态链路可用 |
+| 5 | 设计/实现 `CdsAgentRun` 最小 workflow node | 仅在 workflow API 缺扩展点时需要确认 | Start -> Agent -> Notify 可跑通 |
+| 6 | 接入 KnowledgeBase 只读工具 | 仅在找不到示例知识库时需要你指定 | `kb_list/search/read` 可被 Agent 调用并显示来源 |
 
 ## 10. 已完成清单
 
@@ -221,7 +223,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | N6 current smoke summary | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 非代码 Toolbox agents 独立于 CDS sidecar pool；候选官方 SDK 仍 planned-not-routable | 27/27 pass, 3s |
 | R0 local apply readiness | `/tmp/cds-agent-r0-apply-readiness-current.json` | 本机尚不能进入 R0 apply/deploy；缺 remote host SSH 参数和 `CDS_AGENT_SIDECAR_IMAGE`；同时展示 registry manifest 与 remote pull 是否匹配当前 image | <1s |
 | R0 operator handoff bundle | `/tmp/cds-agent-r0-operator-handoff-current.md` | 聚合进度、readiness、缺失输入、ETA、安全命令；未发现 secret 泄露 | <2s |
-| goal audit with readiness | `/tmp/cds-agent-goal-audit-current-with-readiness.json` | 7 个本地 guardrail 纳入 A0/D0/D1/N6/P0/evidence；`D1 progress consistency=pass`、`N6=pass`、R0 apply readiness 已纳入；仍 `not_complete` | 10-15s |
+| goal audit with readiness | `/tmp/cds-agent-goal-audit-current-with-readiness.json` | 历史 R0 readiness 审计；Phase 0 最终结论以后续 one-cycle hardened summary 为准 | 10-15s |
 | lifecycle overview | `scripts/print-cds-agent-lifecycle-overview.sh` | 按完整目标输出生命周期、已完成、阻塞、剩余距离和关键路径；V1 标为 partial | <1s |
 | sidecar image readiness | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | 明确 CDS remote deployer 只 `docker pull`，不是远程构建；`CDS_AGENT_SIDECAR_IMAGE` 仍缺 | <1s |
 | sidecar image preflight | `/tmp/cds-agent-sidecar-image-preflight-current.json` | 本地 build context 通过；image 仍为 `missing_image`，远程 pullability 未证明 | <1s |
