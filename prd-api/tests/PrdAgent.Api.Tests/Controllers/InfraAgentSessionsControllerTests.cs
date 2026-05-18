@@ -393,6 +393,9 @@ public class InfraAgentSessionsControllerTests
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Command.ShouldContain("collect-cds-agent-runtime-pool-evidence.sh");
             debugCommands.Single(x => x.Code == "branch-isolation-dry-run").BlockedBy.ShouldBe("R0");
+            var branchApply = debugCommands.Single(x => x.Code == "branch-isolation-apply-confirmed");
+            branchApply.BlockedBy.ShouldBe("R0 approval");
+            branchApply.Command.ShouldContain("SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent");
             debugCommands.Single(x => x.Code == "remote-host-prepare").BlockedBy.ShouldBe("R0");
             debugCommands.Single(x => x.Code == "remote-host-prepare").Command.ShouldContain("run-cds-agent-remote-host-pool-with-evidence.sh");
             debugCommands.Single(x => x.Code == "official-sdk-boundary").Command.ShouldBe("bash scripts/smoke-cds-agent-official-sdk-boundary.sh");
@@ -569,6 +572,8 @@ public class InfraAgentSessionsControllerTests
             .ShouldBe("CDS_HOST=https://cds.example.test CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
         debugCommands.Single(x => x.Code == "doctor").Command
             .ShouldBe("CDS_HOST=https://cds.example.test bash scripts/doctor-cds-agent-runtime.sh");
+        debugCommands.Single(x => x.Code == "branch-isolation-apply-confirmed").Command
+            .ShouldContain("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent");
         debugCommands.Single(x => x.Code == "r1-apply").Command
             .ShouldStartWith("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=");
         diagnostics.ExecutionPanel.ShouldNotBeNull().NextCommand
