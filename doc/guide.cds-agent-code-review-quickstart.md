@@ -101,7 +101,9 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518091314` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 106s，最慢的是 V1 authenticated workbench visual 33s、N6 non-code compatibility 17s、R0 sidecar alias stability 13s；V1 和 N6 都按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。对应目标审计报告是 `/tmp/cds-agent-goal-audit-fe51afb-current.json`，`cycle git match=match`，仍明确给出 `Deploy/build advice: Do not redeploy for this state`。
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518122109` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 95s，最慢的是 V1 authenticated workbench visual 30s、N6 non-code compatibility 20s、R0 sidecar alias stability 12s；V1 和 N6 都按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。当前 HEAD `875be1132` 只比该 one-cycle 证据多 smoke 工具链脚本变更，目标审计 `/tmp/cds-agent-goal-audit-toolchain-875be1132.json` 标成 `compatible_non_runtime_drift`，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
+
+A0/N6 的本地工具链已经做了自检：A0 会自动选择能 import `fastapi`、`pydantic`、`starlette` 的 Python，并在报告中记录 `pythonBin`；N6 会自动选择能看到 .NET 8 runtime 的 dotnet，并在终端打印 `dotnet:`。如果登录 shell 里的 `python3` 或 `dotnet` 指向错误版本，先看脚本打印的实际解释器路径，不要把依赖缺失当成 CDS Agent 功能失败。
 
 R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本。脚本和页面都会调用后端 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile`，由后端创建非默认 Anthropic 候选 profile，调用 `/test` 验证上游可用，成功后才提升为默认 profile，并复查 `commercialReadiness.R1=pass`。页面的“保存配置 + 设为默认”和“更新当前配置 + 设为默认”都走同样的 test-before-promote 流程；测试失败时会清理候选 profile，不会覆盖当前默认配置。
 设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。报告里的 `nextCommands` 会拆开三种动作：`dryRun` 只复查保护，`repairOnly` 只执行 R1 test-before-promote，`repairAndProviderCycle` 才会在 R1 后继续收集 S1/S2/S3 provider 证据。
@@ -255,14 +257,17 @@ CDS Agent 迁移官方 SDK 时，不能把非代码智能体也绑到 sidecar ru
 配置真实 profile 后，先跑：
 
 ```bash
-SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \
+SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 \
+  bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
 如果只想拆开看失败点，再分别跑：
 
 ```bash
-SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh
-SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh
+CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh
+CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh
 ```
 
 完成这些后，才可以把“上手即用”从诊断可用推进到商业级可用。
