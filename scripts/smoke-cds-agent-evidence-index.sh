@@ -82,8 +82,21 @@ assert_eq "$remote_observed" "true" "remoteCdsBranch.observed"
 assert_nonempty "$(jq -r '.remoteCdsBranch.branchId // ""' "$json_index")" "remoteCdsBranch.branchId"
 assert_nonempty "$(jq -r '.remoteCdsBranch.githubCommitSha // ""' "$json_index")" "remoteCdsBranch.githubCommitSha"
 assert_nonempty "$(jq -r '.remoteCdsBranch.runtimeCommitSha // ""' "$json_index")" "remoteCdsBranch.runtimeCommitSha"
-assert_nonempty "$(jq -r '.remoteCdsBranch.runtimeRelation // ""' "$json_index")" "remoteCdsBranch.runtimeRelation"
-assert_contains "$(jq -r '.remoteCdsBranch.deployAdvice // ""' "$json_index")" "self update" "remoteCdsBranch.deployAdvice"
+runtime_relation=$(jq -r '.remoteCdsBranch.runtimeRelation // ""' "$json_index")
+deploy_advice=$(jq -r '.remoteCdsBranch.deployAdvice // ""' "$json_index")
+assert_nonempty "$runtime_relation" "remoteCdsBranch.runtimeRelation"
+assert_nonempty "$deploy_advice" "remoteCdsBranch.deployAdvice"
+case "$runtime_relation" in
+  runtime_matches_head)
+    assert_contains "$deploy_advice" "do not redeploy" "remoteCdsBranch.deployAdvice"
+    ;;
+  runtime_behind_non_runtime_drift)
+    assert_contains "$deploy_advice" "do not self update" "remoteCdsBranch.deployAdvice"
+    ;;
+  *)
+    assert_contains "$deploy_advice" "self update" "remoteCdsBranch.deployAdvice"
+    ;;
+esac
 
 assert_nonempty "$(jq -r '.providerPrerequisites.status // ""' "$json_index")" "providerPrerequisites.status"
 provider_calls_requested=$(jq -r 'if (.providerPrerequisites | has("providerCallsRequested")) then (.providerPrerequisites.providerCallsRequested | tostring) else "" end' "$json_index")
@@ -134,7 +147,17 @@ fi
 if [[ "$(jq -r '.nextCyclePlan | type' "$json_index")" == "object" ]]; then
   assert_contains "$md_text" "Next Cycle Plan" "evidence-index.md"
 fi
-assert_contains "$md_text" "do not self update" "evidence-index.md"
+case "$runtime_relation" in
+  runtime_matches_head)
+    assert_contains "$md_text" "do not redeploy" "evidence-index.md"
+    ;;
+  runtime_behind_non_runtime_drift)
+    assert_contains "$md_text" "do not self update" "evidence-index.md"
+    ;;
+  *)
+    assert_contains "$md_text" "self update" "evidence-index.md"
+    ;;
+esac
 
 printf 'CDS Agent evidence index smoke: pass\n'
 printf 'Summary: %s\n' "$summary"
