@@ -423,6 +423,11 @@ async function main() {
       '商业级',
       'READINESS LEDGER',
       '下一周期最小闭环',
+      'official-sdk-provider-closure',
+      'profile-blocked',
+      'N1',
+      'N6',
+      '停止条件',
       'ADAPTER 兼容性',
       '默认路由',
       '缺失 adapter contract',
@@ -491,6 +496,11 @@ async function waitForWorkbench(send, cdp) {
       && text.includes('重新部署')
       && text.includes('READINESS LEDGER')
       && text.includes('下一周期最小闭环')
+      && text.includes('official-sdk-provider-closure')
+      && text.includes('profile-blocked')
+      && text.includes('N1')
+      && text.includes('N6')
+      && text.includes('停止条件')
       && text.includes('ADAPTER 兼容性')
       && text.includes('默认路由')
       && text.includes('缺失 adapter contract')
