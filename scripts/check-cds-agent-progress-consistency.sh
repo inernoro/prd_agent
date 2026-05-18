@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REFRESH_OUTPUT="${CDS_AGENT_R0_STATUS_REFRESH:-/tmp/cds-agent-r0-status-refresh-current.md}"
 PROGRESS_OUTPUT="${CDS_AGENT_R0_PROGRESS_OUTPUT:-/tmp/cds-agent-current-progress-current.md}"
 STATUS_DOC="$ROOT_DIR/doc/status.cds-agent-current-progress.md"
+RUNTIME_CAPACITY_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json}"
 
 # When this check runs inside audit-cds-agent-goal.sh, CDS_AGENT_GOAL_AUDIT_REPORT
 # points to the report that is still being generated. The progress board needs a
@@ -57,28 +58,53 @@ require_file "$REFRESH_OUTPUT"
 require_file "$PROGRESS_OUTPUT"
 require_file "$STATUS_DOC"
 
-require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
-require_text "$REFRESH_OUTPUT" 'nextAction: `continue R0.7 CDS-managed runtime live apply before any fallback env handoff`' 'refresh next action'
-require_text "$REFRESH_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'refresh R0 design next command'
-require_text "$REFRESH_OUTPUT" 'operator/debug fallback details, not the product path' 'refresh fallback scope'
-require_text "$REFRESH_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'refresh next command design'
+runtime_capacity_available=false
+if [[ -f "$RUNTIME_CAPACITY_SUMMARY" ]] && jq -e '
+  ((.remoteHost.runtimeCapacityStatus // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status] | last) // "") == "available")
+  or (((.remoteHost.runtimeCapacityRunning // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount] | last) // 0) | tonumber) > 0)
+' "$RUNTIME_CAPACITY_SUMMARY" >/dev/null 2>&1; then
+  runtime_capacity_available=true
+fi
 
-require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r0' 'progress overall status'
-require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R0' 'progress blocking gate'
-require_text "$PROGRESS_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'progress exact next step'
-require_text "$PROGRESS_OUTPUT" 'operator/debug fallback details, not the product path' 'progress fallback scope'
-require_text "$PROGRESS_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'progress next command design'
-require_text "$PROGRESS_OUTPUT" 'R0 managed runtime capacity: sharedRunning=' 'progress managed runtime capacity'
+require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
+require_text "$REFRESH_OUTPUT" 'runtimeCapacityStatus: `' 'refresh runtime capacity status'
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  require_text "$REFRESH_OUTPUT" 'nextAction: `R0 pass; continue R1 Anthropic/Claude-compatible profile repair and provider smokes`' 'refresh R1 next action'
+  require_text "$REFRESH_OUTPUT" 'R0 is passed by live CDS-managed runtime capacity evidence' 'refresh R0 pass command'
+  require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r1' 'progress overall status'
+  require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R1' 'progress blocking gate'
+  require_text "$PROGRESS_OUTPUT" 'R0 CDS-managed runtime capacity is available' 'progress exact next step'
+else
+  require_text "$REFRESH_OUTPUT" 'nextAction: `continue R0.7 CDS-managed runtime live apply before any fallback env handoff`' 'refresh next action'
+  require_text "$REFRESH_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'refresh R0 design next command'
+  require_text "$REFRESH_OUTPUT" 'operator/debug fallback details, not the product path' 'refresh fallback scope'
+  require_text "$REFRESH_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'refresh next command design'
+  require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r0' 'progress overall status'
+  require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R0' 'progress blocking gate'
+  require_text "$PROGRESS_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'progress exact next step'
+  require_text "$PROGRESS_OUTPUT" 'operator/debug fallback details, not the product path' 'progress fallback scope'
+  require_text "$PROGRESS_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'progress next command design'
+fi
+require_text "$PROGRESS_OUTPUT" 'R0 managed runtime capacity: status=' 'progress managed runtime capacity'
 require_text "$PROGRESS_OUTPUT" 'Operator fallback remote host verdict:' 'progress fallback host label'
 require_absent "$PROGRESS_OUTPUT" 'R0 remote host verdict:' 'progress must not promote remote host as R0 product gate'
 require_text "$PROGRESS_OUTPUT" '| D1 Runtime architecture correction | done |' 'progress D1 done'
 require_text "$PROGRESS_OUTPUT" '| R0.2 CDS-managed runtime fact source | done |' 'progress R0.2 done'
 require_text "$PROGRESS_OUTPUT" '| R0.3 CDS-managed official SDK runtime | done_minimal |' 'progress R0.3 done minimal'
 require_text "$PROGRESS_OUTPUT" '| R0.4 MAP session transport smoke | done |' 'progress R0.4 done'
-require_text "$PROGRESS_OUTPUT" '| R0V Post-check | done_blocked |' 'progress R0V done blocked'
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  require_text "$PROGRESS_OUTPUT" '| R0V Post-check | done |' 'progress R0V done'
+else
+  require_text "$PROGRESS_OUTPUT" '| R0V Post-check | done_blocked |' 'progress R0V done blocked'
+fi
 require_text "$PROGRESS_OUTPUT" '| R0.5 CDS-managed runtime capacity contract | done_minimal |' 'progress R0.5 done minimal'
 require_text "$PROGRESS_OUTPUT" '| R0.6 CDS-managed runtime capacity reconciler | done_minimal |' 'progress R0.6 done minimal'
-require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress R0.7 in progress'
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | done_live |' 'progress R0.7 done live'
+  require_text "$PROGRESS_OUTPUT" '| R1 Profile repair | current_blocker |' 'progress R1 current blocker'
+else
+  require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress R0.7 in progress'
+fi
 require_text "$PROGRESS_OUTPUT" '| R0.2F Operator fallback host path | fallback |' 'progress fallback demotion'
 
 require_text "$STATUS_DOC" 'Claude SDK Agent 是 CDS-managed runtime/container/sandbox' 'status doc managed runtime'

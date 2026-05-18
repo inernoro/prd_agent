@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 22:08 Asia/Shanghai：
+截至 2026-05-18 23:55 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -42,7 +42,8 @@
 - 已校准：runtime-status execution panel 的 R0.2/R0.3、NextCommand、runbook 和 task board 已指向 CDS-managed runtime fact source；remote host/image 只作为 operator fallback debug。
 - 已修复：CDS `/agent-sessions` 非 fake runtime message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时由 CDS 返回 `cds_managed_runtime_unavailable`，避免再次把执行归属推回 MAP。
 - 已推进：CDS-managed official SDK runtime transport 已有最小闭环；CDS 可从 shared-service branch service 发现 `claude-agent-sdk` runtime，并投递 `/v1/agent/run` 后写回 `runtime_init/text_delta/done`。
-- 未解决：MAP adapter session transport + managed-runtime smoke 仍需补齐；当前目标保持 `not_complete`。
+- 已完成：R0.7 CDS-managed runtime live evidence。真实 CDS shared-service runtime 已有 running official SDK runtime。
+- 当前未解决：R1 Anthropic/Claude-compatible provider profile 和 S1/S2/S3 provider one-cycle 仍未完成；当前目标保持 `not_complete`。
 
 ## 执行时间线
 
@@ -95,6 +96,10 @@
 | 22:02 | D1 完成后 runtime-status 后端仍把 R0.2/R0.3 写成 remote host carrier / deploy sidecar image | 新增 R0 fact-source 设计文档；修正 runtime-status execution panel、debug command、task board、controller tests | `doc/design.cds-agent-managed-runtime-fact-source.md`、`InfraAgentSessionsControllerTests` | controller tests 18/18，约 11s | 页面数据源主线已改为 CDS-managed runtime fact source；下一步是 CDS `/agent-sessions` execution 改造 |
 | 22:08 | CDS `/agent-sessions` 非 fake message 仍可能把执行描述成 MAP sidecar bridge delegation | 改成 CDS-owned unavailable/error path；补 CDS route test，断言不出现 MAP sidecar bridge，也不要求 SSH/image/env | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | CDS route tests 3/3，约 0.5s | R0.2.2 ownership guard 完成；下一步是 CDS-managed official SDK runtime transport |
 | 22:28 | CDS `/agent-sessions` 仍只能返回 runtime unavailable，尚未真实投递 official SDK runtime | 增加 CDS-managed branch-service transport：发现 shared-service `claude-agent-sdk` runtime，POST `/v1/agent/run`，解析 SSE 并写回 session events；补 mock official SDK runtime route test | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | CDS route tests 4/4，约 0.9s；CDS build pass | R0.2.3 done_minimal；下一步是 MAP adapter session transport + managed-runtime smoke |
+| 23:05 | 需要把 R0.6 reconciler 接入真实 CDS container service，而不是继续走 remote host/image fallback | 增加 `liveApply=true`，由 CDS `ContainerService.runService` + readiness 创建/恢复官方 SDK runtime；补 route test/build/smoke | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts`、`scripts/smoke-cds-agent-managed-runtime-capacity.sh` | route test <1s；CDS build 约数秒；self-update 约 26s | CDS control plane 更新到 `5b5867e0` |
+| 23:20 | 旧方案仍要求预构建 sidecar image，容易把产品路径拖回 operator env/image | managed runtime BuildProfile 改为 `python:3.12-slim` 从仓库源码安装 requirements 并启动 uvicorn，不再要求用户提供 `CDS_AGENT_SIDECAR_IMAGE` | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | route test <1s；CDS build 通过；self-update 约 29s | CDS control plane 更新到 `89324dcb` |
+| 23:41 | 需要真实证明 R0 不再缺 capacity | 在远程 CDS shared-service project 上 issue/accept pairing token，调用 `/runtime-capacity` 和 `/runtime-capacity/reconcile liveApply`，再读 after evidence | `/tmp/cds-agent-runtime-live-apply-current.json`、`/tmp/cds-agent-runtime-live-apply-current.log` | 7.7s | `status=available`、`runningOfficialSdkRuntimeCount=1`、runtime owner=`cds-managed-runtime`、adapter=`claude-agent-sdk`、port=`10618` |
+| 23:50 | 进度面板仍按旧 R0.7 阻塞口径读 `/tmp` 旧证据 | 让 collect/audit/progress/refresh/check/smoke 消费 runtime capacity summary；R0 available 时自动转到 R1 blocker | `scripts/audit-cds-agent-goal.sh`、`scripts/collect-cds-agent-runtime-pool-evidence.sh`、`scripts/print-cds-agent-current-progress.sh`、`scripts/refresh-cds-agent-r0-status.sh` | 本地脚本修正 | 当前权威状态：R0=pass，currentBlockingGate=R1 |
 
 ## 本轮暴露的问题
 

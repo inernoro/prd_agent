@@ -5,7 +5,11 @@
 set -euo pipefail
 
 GOAL_AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-/tmp/cds-agent-goal-audit-r0-current.json}"
-REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
+DEFAULT_REMOTE_HOST_SUMMARY="/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json"
+if [[ -f "/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json" ]]; then
+  DEFAULT_REMOTE_HOST_SUMMARY="/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json"
+fi
+REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-$DEFAULT_REMOTE_HOST_SUMMARY}"
 HANDOFF_SUMMARY="${CDS_AGENT_REMOTE_HOST_HANDOFF_SUMMARY:-$REMOTE_HOST_SUMMARY}"
 N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
 R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
@@ -67,6 +71,19 @@ target_host_id=$(jq_read "$REMOTE_HOST_SUMMARY" '(if has("prepare") and .prepare
 missing_config=$(jq_read "$REMOTE_HOST_SUMMARY" '((if has("prepare") and .prepare != null then .prepare.missingConfig else [] end) // []) | join(", ")')
 invalid_config=$(jq_read "$REMOTE_HOST_SUMMARY" '((if has("prepare") and .prepare != null then .prepare.invalidConfig else [] end) // []) | join(", ")')
 total_seconds=$(jq_read "$REMOTE_HOST_SUMMARY" '.totalSeconds // "unknown"')
+runtime_capacity_status=$(jq_read "$REMOTE_HOST_SUMMARY" '(.remoteHost.runtimeCapacityStatus // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status] | last) // "unknown")')
+runtime_capacity_running=$(jq_read "$REMOTE_HOST_SUMMARY" '(.remoteHost.runtimeCapacityRunning // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount] | last) // 0)')
+runtime_capacity_available=false
+if [[ "$runtime_capacity_status" == "available" ]] || [[ "$runtime_capacity_running" =~ ^[0-9]+$ && "$runtime_capacity_running" -gt 0 ]]; then
+  runtime_capacity_available=true
+  status="blocked_r1"
+  gate="R1"
+  r0="pass"
+  shared_running="$runtime_capacity_running"
+  ready_deploy=true
+  ready_smoke=true
+  verdict="cds-managed-runtime-capacity-available"
+fi
 r0_readiness_line="not checked"
 image_readiness="unknown"
 image_next_action="unknown"
@@ -85,6 +102,9 @@ if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   image_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.nextAction // "unknown"')
   image_build_context=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.buildContextStatus // "unknown"')
   r0_readiness_line="readyForR0Apply=$r0_ready; nextAction=$r0_next_action"
+fi
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  r0_readiness_line="readyForR0Apply=passed_by_runtime_capacity; nextAction=continue R1 profile repair and provider smokes"
 fi
 if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
   image_local_build=$(jq_read "$SIDECAR_IMAGE_BUILD_REPORT" '.status // "unknown"')
@@ -111,7 +131,16 @@ if [[ -z "$invalid_config" ]]; then
 fi
 
 exact_next_step=""
-if [[ "$image_build_context" != "pass" ]]; then
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  exact_next_step=$(cat <<'EOF'
+R0 CDS-managed runtime capacity is available. Continue R1 profile repair and provider smokes; do not spend time on remote host/image fallback for the product path.
+
+```bash
+CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh
+```
+EOF
+)
+elif [[ "$image_build_context" != "pass" ]]; then
   exact_next_step=$(cat <<'EOF'
 Run the sidecar image context preflight:
 
@@ -212,7 +241,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Overall status: $status
 - Current blocking gate: $gate
 - Gate status: A0=$a0, R0=$r0, V1=$v1, N6=$n6
-- R0 managed runtime capacity: sharedRunning=$shared_running; readyForProviderSmokes=$ready_smoke
+- R0 managed runtime capacity: status=$runtime_capacity_status; sharedRunning=$shared_running; readyForProviderSmokes=$ready_smoke
 - Operator fallback remote host verdict: $verdict
 - Operator fallback remote hosts enabled: $enabled_hosts
 - Operator fallback ready for shared runtime deploy: $ready_deploy
@@ -239,11 +268,11 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.2F Operator fallback host path | fallback | Keep SSH/env/image only as CDS operator fallback | later |
 | R0.3 CDS-managed official SDK runtime | done_minimal | CDS agent sessions can dispatch to CDS-managed branch-service official SDK transport | done |
 | R0.4 MAP session transport smoke | done | MAP uses CDS session/discovery/cancel/log APIs; direct runtime queue is explicit fallback only | done |
-| R0V Post-check | done_blocked | Live evidence complete; shared runtime running=0 and enabled fallback hosts=0 | done |
+| R0V Post-check | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done' || printf 'done_blocked') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'Live evidence complete; CDS-managed runtime capacity is available' || printf 'Live evidence complete; shared runtime running=0 and enabled fallback hosts=0') | done |
 | R0.5 CDS-managed runtime capacity contract | done_minimal | CDS exposes /api/projects/:id/runtime-capacity and separates product runtime from operator fallback | done |
 | R0.6 CDS-managed runtime capacity reconciler | done_minimal | CDS exposes dry-run/apply reconciler and route tests prove product runtime capacity path | done |
-| R0.7 CDS-managed runtime live apply | in_progress | Local liveApply path is wired; run live evidence so sharedRunning becomes >0 | next |
-| R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
+| R0.7 CDS-managed runtime live apply | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done_live' || printf 'in_progress') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'Live evidence shows running official SDK runtime count >0' || printf 'Local liveApply path is wired; run live evidence so sharedRunning becomes >0') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done' || printf 'next') |
+| R1 Profile repair | $([[ "$runtime_capacity_available" == "true" ]] && printf 'current_blocker' || printf 'pending') | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |
 

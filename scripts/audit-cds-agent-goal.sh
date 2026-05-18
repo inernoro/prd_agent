@@ -61,7 +61,11 @@ AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
 CYCLE_MAX_AGE_SECONDS="${CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS:-86400}"
 SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
 GOAL_AUDIT_LIVE="${CDS_AGENT_GOAL_AUDIT_LIVE:-0}"
-RUNTIME_POOL_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-latest/summary.json}"
+DEFAULT_RUNTIME_POOL_SUMMARY="/tmp/cds-agent-runtime-pool-evidence-latest/summary.json"
+if [[ -z "${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-}" && -f "/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json" ]]; then
+  DEFAULT_RUNTIME_POOL_SUMMARY="/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json"
+fi
+RUNTIME_POOL_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-$DEFAULT_RUNTIME_POOL_SUMMARY}"
 
 run_step() {
   local label="$1"
@@ -173,11 +177,12 @@ file_mtime() {
 runtime_pool_summary_to_plan() {
   local summary="$1"
   jq -c '
-    .plan // {
+    {
       sharedPoolId: (.plan.sharedPoolId // "shared-sidecar-pool-mp4anabh"),
       sharedKind: (.plan.sharedKind // "unknown"),
       sharedBranchCount: (.plan.sharedBranchCount // 0),
-      sharedRunning: (.remoteHost.sharedRunning // 0),
+      sharedRunning: ((.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount) // (.remoteHost.runtimeCapacityRunning // .remoteHost.sharedRunning // 0)),
+      runtimeCapacityStatus: ((.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status) // (.remoteHost.runtimeCapacityStatus // null)),
       contaminatedBranchCount: (.branchIsolation.contaminatedBranchCount // 0),
       contaminatedProfileIds: (.branchIsolation.candidateProfileIds // []),
       remoteHostCount: (.remoteHost.existingHostCount // "unknown"),
@@ -192,8 +197,8 @@ runtime_pool_plan_blockers() {
     [
       (if .sharedKind != "shared-service" then {requirement:"SHARED_POOL_KIND", status:.sharedKind} else empty end),
       (if (.contaminatedBranchCount // 0) > 0 then {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + ((.contaminatedBranchCount // 0)|tostring))} else empty end),
-      (if ((.enabledRemoteHostCount | tostring | test("^[0-9]+$")) and ((.enabledRemoteHostCount | tonumber) <= 0)) then {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"} else empty end),
-      (if (.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end),
+      (if (.runtimeCapacityStatus // "") == "available" then empty elif ((.enabledRemoteHostCount | tostring | test("^[0-9]+$")) and ((.enabledRemoteHostCount | tonumber) <= 0)) then {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"} else empty end),
+      (if (.runtimeCapacityStatus // "") == "available" then empty elif (.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end),
       (if ((has("branchDeploySharedPoolAllowed") | not) or .branchDeploySharedPoolAllowed != false) then {requirement:"SHARED_POOL_BRANCH_DEPLOY_FORBIDDEN", status:"not-enforced"} else empty end)
     ]
   '
@@ -639,6 +644,21 @@ if [[ "$runtime_pool_plan_status" != "pass" && -s "$RUNTIME_POOL_SUMMARY" ]]; th
     fi
   fi
 fi
+if [[ -s "$RUNTIME_POOL_SUMMARY" ]] && jq -e '(.runtimeCapacity.ok // false) == true' "$RUNTIME_POOL_SUMMARY" >/dev/null 2>&1; then
+  runtime_pool_plan_json=$(runtime_pool_summary_to_plan "$RUNTIME_POOL_SUMMARY" 2>/dev/null || printf 'null')
+  if [[ "$runtime_pool_plan_json" != "null" ]]; then
+    runtime_pool_shared_kind=$(jq -r '.sharedKind // "unknown"' <<< "$runtime_pool_plan_json")
+    runtime_pool_shared_running=$(jq -r '.sharedRunning // 0' <<< "$runtime_pool_plan_json")
+    runtime_pool_contaminated_count=$(jq -r '.contaminatedBranchCount // 0' <<< "$runtime_pool_plan_json")
+    runtime_pool_remote_host_count=$(jq -r '.remoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
+    runtime_pool_enabled_host_count=$(jq -r '.enabledRemoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
+    runtime_pool_branch_deploy_allowed=$(jq -r 'if has("branchDeploySharedPoolAllowed") then (.branchDeploySharedPoolAllowed | tostring) else "unknown" end' <<< "$runtime_pool_plan_json")
+    runtime_pool_plan_status="pass"
+    runtime_pool_plan_source="summary-capacity"
+    runtime_pool_summary_age_seconds=$(( $(date +%s) - $(file_mtime "$RUNTIME_POOL_SUMMARY") ))
+    runtime_pool_blockers_json=$(runtime_pool_plan_blockers <<< "$runtime_pool_plan_json")
+  fi
+fi
 
 cycle_status="missing"
 commercial_complete=false
@@ -1021,6 +1041,21 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
         "不要把 remote host/env/image 暴露为普通用户主路径。"
       ]
     }')
+else
+  gate_r0="pass"
+  if [[ -z "$current_blocking_gate" || "$current_blocking_gate" == "R0" ]]; then
+    current_blocking_gate="R1"
+  fi
+  if [[ "$cycle_status" == "missing" || "$cycle_status" == "blocked_r0" ]]; then
+    cycle_status="blocked_r1"
+  fi
+  if [[ -z "$blocking_reason" || "$blocking_reason" == No\ one-cycle\ summary* || "$blocking_reason" == R0V\ live\ evidence* ]]; then
+    blocking_reason="R0 CDS-managed runtime capacity is available; next blocker is R1 Anthropic/Claude-compatible profile/provider proof."
+  fi
+  if [[ -z "$next_command" || "$next_command" == CDS_HOST=https://cds.miduo.org\ bash\ scripts/smoke-cds-agent-one-cycle.sh* ]]; then
+    next_command="CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+  fi
+  deployment_advice="Do not run remote-host/image fallback for R0; continue with R1 profile repair/provider smokes on the CDS-managed runtime path."
 fi
 
 if [[ "$boundary_status" != "pass" ]]; then

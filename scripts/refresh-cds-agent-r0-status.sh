@@ -10,6 +10,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT="${CDS_AGENT_R0_STATUS_REFRESH:-/tmp/cds-agent-r0-status-refresh-current.md}"
 PROGRESS_OUTPUT="${CDS_AGENT_R0_PROGRESS_OUTPUT:-/tmp/cds-agent-current-progress-current.md}"
 LIFECYCLE_OUTPUT="${CDS_AGENT_R0_LIFECYCLE_OUTPUT:-/tmp/cds-agent-lifecycle-overview-current.md}"
+RUNTIME_CAPACITY_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json}"
 REMOTE="${CDS_AGENT_GITHUB_REMOTE:-origin}"
 
 fail() {
@@ -86,6 +87,16 @@ user_action_required=false
 user_action_reason="none"
 unblock_option_a="none"
 unblock_option_b="none"
+runtime_capacity_status="unknown"
+runtime_capacity_running=0
+runtime_capacity_available=false
+if [[ -f "$RUNTIME_CAPACITY_SUMMARY" ]]; then
+  runtime_capacity_status="$(jq -r '(.remoteHost.runtimeCapacityStatus // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status] | last) // "unknown")' "$RUNTIME_CAPACITY_SUMMARY")"
+  runtime_capacity_running="$(jq -r '(.remoteHost.runtimeCapacityRunning // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount] | last) // 0)' "$RUNTIME_CAPACITY_SUMMARY")"
+  if [[ "$runtime_capacity_status" == "available" ]] || [[ "$runtime_capacity_running" =~ ^[0-9]+$ && "$runtime_capacity_running" -gt 0 ]]; then
+    runtime_capacity_available=true
+  fi
+fi
 if [[ -f "$readiness" ]]; then
   ready_for_r0="$(jq -r '.readyForR0Apply // false' "$readiness")"
   next_action="$(jq -r '.nextAction // "unknown"' "$readiness")"
@@ -119,7 +130,12 @@ if [[ "$ready_for_r0" != "true" ]]; then
 fi
 
 display_next_action="$next_action"
-if [[ "$user_action_required" == "true" ]]; then
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  display_next_action="R0 pass; continue R1 Anthropic/Claude-compatible profile repair and provider smokes"
+  user_action_required=false
+  user_action_reason="none"
+  ready_for_r0="passed_by_runtime_capacity"
+elif [[ "$user_action_required" == "true" ]]; then
   display_next_action="continue R0.7 CDS-managed runtime live apply before any fallback env handoff"
 fi
 
@@ -134,6 +150,8 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- candidateSidecarImage: `%s`\n' "$candidate_image"
   printf -- '- registryCheckImage: `%s`\n' "$registry_image"
   printf -- '- readyForR0Apply: `%s`\n' "$ready_for_r0"
+  printf -- '- runtimeCapacityStatus: `%s`\n' "$runtime_capacity_status"
+  printf -- '- runtimeCapacityRunning: `%s`\n' "$runtime_capacity_running"
   printf -- '- nextAction: `%s`\n' "$display_next_action"
   printf -- '- missingConfig: `%s`\n' "${missing_config:-none}"
   printf -- '- registryManifestStatus: `%s`\n' "$registry_status"
@@ -157,10 +175,16 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- readiness report: `%s`\n' "$readiness"
   printf -- '- operator handoff: `%s`\n' "$operator_handoff"
   printf -- '- lifecycle overview: `%s`\n' "$LIFECYCLE_OUTPUT"
+  printf -- '- runtime capacity summary: `%s`\n' "$RUNTIME_CAPACITY_SUMMARY"
   printf -- '- progress board: `%s`\n\n' "$PROGRESS_OUTPUT"
 
   printf '## Next Command\n\n'
-  if [[ "$user_action_required" == "true" ]]; then
+  if [[ "$runtime_capacity_available" == "true" ]]; then
+    printf 'R0 is passed by live CDS-managed runtime capacity evidence. Continue R1 profile repair and provider smokes:\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh\n'
+    printf '```\n'
+  elif [[ "$user_action_required" == "true" ]]; then
     printf 'Continue R0.7 CDS-managed runtime live evidence work. R0.7 local liveApply container path is in place; remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
     printf "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md\n"

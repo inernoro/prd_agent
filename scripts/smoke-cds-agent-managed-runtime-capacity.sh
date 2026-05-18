@@ -12,6 +12,7 @@ PROGRESS_OUTPUT="${CDS_AGENT_R0_PROGRESS_OUTPUT:-/tmp/cds-agent-current-progress
 AUDIT_REPORT="${CDS_AGENT_CAPACITY_AUDIT_REPORT:-/tmp/cds-agent-capacity-audit-current.json}"
 AUDIT_LOG="${CDS_AGENT_CAPACITY_AUDIT_LOG:-/tmp/cds-agent-capacity-audit-current.log}"
 RUNTIME_POOL_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-latest/summary.json}"
+CURRENT_CAPACITY_SUMMARY="${CDS_AGENT_RUNTIME_CAPACITY_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json}"
 
 fail() {
   printf 'CDS Agent managed-runtime capacity smoke: FAIL - %s\n' "$*" >&2
@@ -45,12 +46,28 @@ printf 'CDS Agent managed-runtime capacity smoke\n'
 
 cd "$ROOT_DIR"
 
+if [[ -z "${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-}" && -f "$CURRENT_CAPACITY_SUMMARY" ]]; then
+  RUNTIME_POOL_SUMMARY="$CURRENT_CAPACITY_SUMMARY"
+fi
+runtime_capacity_available=false
+if [[ -f "$RUNTIME_POOL_SUMMARY" ]] && jq -e '
+  ((.remoteHost.runtimeCapacityStatus // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status] | last) // "") == "available")
+  or (((.remoteHost.runtimeCapacityRunning // ([.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount] | last) // 0) | tonumber) > 0)
+' "$RUNTIME_POOL_SUMMARY" >/dev/null 2>&1; then
+  runtime_capacity_available=true
+fi
+
 bash scripts/check-cds-agent-progress-consistency.sh >/dev/null
 require_file "$PROGRESS_OUTPUT"
-require_contains "$PROGRESS_OUTPUT" 'R0 managed runtime capacity: sharedRunning=' 'progress exposes managed runtime capacity'
+require_contains "$PROGRESS_OUTPUT" 'R0 managed runtime capacity: status=' 'progress exposes managed runtime capacity'
 require_contains "$PROGRESS_OUTPUT" '| R0.5 CDS-managed runtime capacity contract | done_minimal |' 'progress task board has R0.5 contract'
 require_contains "$PROGRESS_OUTPUT" '| R0.6 CDS-managed runtime capacity reconciler | done_minimal |' 'progress task board has R0.6 reconciler'
-require_contains "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress task board has R0.7 live apply'
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  require_contains "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | done_live |' 'progress task board has R0.7 live evidence'
+  require_contains "$PROGRESS_OUTPUT" '| R1 Profile repair | current_blocker |' 'progress task board moves to R1'
+else
+  require_contains "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress task board has R0.7 live apply'
+fi
 require_contains "$PROGRESS_OUTPUT" 'Operator fallback remote host verdict:' 'progress demotes remote host to fallback'
 require_not_contains "$PROGRESS_OUTPUT" 'R0 remote host verdict:' 'progress does not promote remote host as product gate'
 
@@ -62,13 +79,22 @@ CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY="$RUNTIME_POOL_SUMMARY" \
 audit_rc=$?
 set -e
 
-if [[ "$audit_rc" -eq 0 ]]; then
-  fail "goal audit unexpectedly completed; R0.7 should remain blocked until runtime capacity exists"
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  if [[ "$audit_rc" -eq 0 ]]; then
+    fail "goal audit unexpectedly completed; R1/S1/S2/S3 should still be unproved"
+  fi
+  require_contains "$AUDIT_LOG" 'Runtime pool recovery: pass source=summary-capacity' 'audit accepts capacity summary'
+  require_contains "$AUDIT_LOG" 'Gates: R0=pass' 'audit marks R0 pass'
+  require_contains "$AUDIT_LOG" 'Current blocking gate: R1' 'audit moves blocker to R1'
+  require_not_contains "$AUDIT_LOG" 'CDS-managed runtime live apply has not produced running official SDK runtime' 'audit no longer blocks on live apply'
+else
+  if [[ "$audit_rc" -eq 0 ]]; then
+    fail "goal audit unexpectedly completed; R0.7 should remain blocked until runtime capacity exists"
+  fi
+  require_contains "$AUDIT_LOG" 'CDS-managed runtime live apply has not produced running official SDK runtime' 'audit blocks on live apply'
+  require_contains "$AUDIT_LOG" 'Next cycle plan: r0-cds-managed-runtime-live-apply state=cds-managed-runtime-live-capacity-missing items=D1,R0.3,R0.4,R0V,R0.5,R0.6,R0.7' 'audit next cycle is R0.7 live apply'
+  require_contains "$AUDIT_LOG" 'Legacy fallback blockers (not product path):' 'audit keeps fallback blockers separate'
 fi
-
-require_contains "$AUDIT_LOG" 'CDS-managed runtime live apply has not produced running official SDK runtime' 'audit blocks on live apply'
-require_contains "$AUDIT_LOG" 'Next cycle plan: r0-cds-managed-runtime-live-apply state=cds-managed-runtime-live-capacity-missing items=D1,R0.3,R0.4,R0V,R0.5,R0.6,R0.7' 'audit next cycle is R0.7 live apply'
-require_contains "$AUDIT_LOG" 'Legacy fallback blockers (not product path):' 'audit keeps fallback blockers separate'
 require_not_contains "$AUDIT_LOG" 'R0V managed-runtime post-check is not complete' 'audit no longer blocks on old R0V wording'
 require_not_contains "$AUDIT_LOG" 'r0-managed-runtime-postcheck' 'audit no longer uses old R0V cycle'
 

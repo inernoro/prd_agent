@@ -21,6 +21,7 @@ RUN_GOAL_AUDIT="${CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT:-1}"
 GOAL_AUDIT_TIMEOUT="${CDS_AGENT_RUNTIME_POOL_GOAL_AUDIT_TIMEOUT:-25}"
 UPDATE_STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC:-0}"
 STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_STATUS_DOC:-$ROOT_DIR/doc/status.cds-agent-current-progress.md}"
+RUNTIME_CAPACITY_REPORT="${CDS_AGENT_RUNTIME_CAPACITY_REPORT:-/tmp/cds-agent-runtime-live-apply-current.json}"
 
 mkdir -p "$OUT_DIR"
 
@@ -156,6 +157,7 @@ plan_json=$(json_from_log_or_null "$plan_log")
 goal_json=$(json_file_or_null "$goal_audit_report")
 repair_json=$(json_file_or_null "$repair_dry_run_report")
 remote_host_prepare_json=$(json_file_or_null "$remote_host_prepare_report")
+runtime_capacity_json=$(json_file_or_null "$RUNTIME_CAPACITY_REPORT")
 
 summary="$OUT_DIR/summary.json"
 jq -n \
@@ -169,6 +171,7 @@ jq -n \
   --argjson plan "$plan_json" \
   --argjson repair "$repair_json" \
   --argjson remoteHostPrepare "$remote_host_prepare_json" \
+  --argjson runtimeCapacity "$runtime_capacity_json" \
   --argjson goal "$goal_json" \
   '{
     createdAt: $createdAt,
@@ -182,12 +185,15 @@ jq -n \
     }],
     totalSeconds: ($seconds | add // 0),
     plan: $plan,
+    runtimeCapacity: $runtimeCapacity,
     branchIsolationRepairDryRun: $repair,
     remoteHostPoolPreparation: $remoteHostPrepare,
     goalStatus: ($goal.goalStatus // null),
     runtimePoolBlockers: (
       $goal.runtimePoolRecovery.blockers //
-      [
+      (if ($runtimeCapacity.ok // false) then
+        []
+      else [
         (if ($repair == null and $plan == null) then
           {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:"unproved:evidence-unavailable"}
         elif (($repair.contaminatedBranchCount // $plan.contaminatedBranchCount // 0) > 0) then
@@ -203,7 +209,7 @@ jq -n \
         elif (($plan.sharedRunning // 0) <= 0) then
           {requirement:"SHARED_POOL_RUNNING", status:"missing"}
         else empty end)
-      ]
+      ] end)
     )
   }
   | .missingOrUnproved = ($goal.missingOrUnproved // .runtimePoolBlockers)
@@ -242,24 +248,29 @@ jq -n \
         enabledHostCount: (.remoteHostPoolPreparation.enabledHostCount // .plan.enabledRemoteHostCount // null),
         missingConfig: (.remoteHostPoolPreparation.missingConfig // []),
         sharedRunning: (.plan.sharedRunning // null),
+        runtimeCapacityStatus: (.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status),
+        runtimeCapacityRunning: (.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount),
         branchIsolationClean: .branchIsolation.clean
       }
       | .verdict = (
           if (.branchIsolationClean | not) then "blocked-branch-isolation"
           elif (.evidenceCaptured | not) then "evidence-unavailable"
+          elif ((.runtimeCapacityStatus // "") == "available") then "cds-managed-runtime-capacity-available"
           elif ((.prepareStatus // "") == "missing_config") then "dry-run-missing-config"
           elif (((.enabledHostCount | tostring | tonumber?) // 0) > 0) then "dry-run-host-already-available"
           elif ((.prepareStatus // "") == "dry_run_ready") then "dry-run-ready"
           else "dry-run-blocked"
           end
         )
-      | .readyForSharedRuntimeDeploy = (.verdict == "dry-run-host-already-available")
-      | .readyForProviderSmokes = ((((.sharedRunning // 0) | tostring | tonumber?) // 0) > 0)
+      | .readyForSharedRuntimeDeploy = (.verdict == "dry-run-host-already-available" or .verdict == "cds-managed-runtime-capacity-available")
+      | .readyForProviderSmokes = (((((.runtimeCapacityRunning // .sharedRunning // 0) | tostring | tonumber?) // 0) > 0) or ((.runtimeCapacityStatus // "") == "available"))
       | .nextAction = (
           if .verdict == "blocked-branch-isolation" then
             "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
           elif .verdict == "evidence-unavailable" then
             "remote host evidence was unavailable; rerun with network/auth available before shared runtime deploy"
+          elif .verdict == "cds-managed-runtime-capacity-available" then
+            "CDS-managed runtime capacity is available; continue R1 profile repair and provider smokes without remote host fallback"
           elif .verdict == "dry-run-missing-config" then
             "CDS-managed runtime capacity is absent in live evidence; do not ask product users for remote host variables. Only operator fallback may rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh with explicit remote host variables"
           elif .verdict == "dry-run-ready" then
