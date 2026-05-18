@@ -4,7 +4,7 @@
 > **状态**：active authority  
 > **分支**：`codex/cds-agent-workbench-ui`  
 > **读者**：产品、研发、运维、后续接手的 Agent  
-> **定位**：这是 CDS Agent 当前最重要的权威入口。旧文档继续保留为背景资料和历史记录，但以本文的目标、边界、分期、验收口径为准。
+> **定位**：这是 CDS Agent 当前唯一权威入口。架构、阶段、验收标准、当前进度、视觉测试和冒烟测试对勾都以本文为准。旧文档继续保留为背景资料和历史记录。
 
 ---
 
@@ -363,11 +363,70 @@ flowchart LR
 
 | 文档 | 角色 |
 | --- | --- |
-| 本文 | 当前权威入口，回答目标、架构、阶段、验收 |
-| `doc/status.cds-agent-current-progress.md` | 当前执行面板和最新证据 |
+| 本文 | 唯一权威入口，回答目标、架构、阶段、验收、进度和测试对勾 |
+| `doc/status.cds-agent-current-progress.md` | 兼容旧链接的跳转页，不再维护独立进度 |
 | `doc/plan.cds-agent-workbench.md` | 历史主战场，保留大量上下文 |
 | `doc/design.cds-agent-runtime-architecture.md` | 旧 runtime 架构说明，后续应按本文校准 |
 | `doc/guide.workflow-agent.md` | 通用工作流使用指南，后续补 `CdsAgentRun` 章节 |
 | `doc/design.document-store.md` | 文档空间已实现基础能力 |
 | `doc/design.multi-doc-knowledge.md` | 多文档知识库背景设计 |
 
+---
+
+## 14. 进度与验收 Checklist
+
+这一节是当前唯一进度面板。看法如下：
+
+- `[x]` 表示已经完成并有证据。
+- `[ ]` 表示未完成或尚未验收。
+- 阶段只看目标和验收标准；小节点只放在当前阶段。
+- 视觉测试、冒烟测试、PDF/截图证据统一放在“测试对勾”里。
+
+### 14.1 阶段总览
+
+| 阶段 | 状态 | 阶段目标 | 可验收标准 |
+| --- | --- | --- | --- |
+| [x] Phase 0 基线闭环 | 完成 | 证明 CDS-managed Claude Agent SDK 只读任务能跑、能停、默认安全 | one-cycle pass；S1/S2/S3/V1 pass；危险工具默认不暴露 |
+| [ ] Phase 1 商业级最小可用 | 进行中 | 用户能用简洁面板跑只读代码巡检、知识库只读搜索，并能从工作流调度一次 Agent | 3 步内启动；可观测字段齐全；stop/timeout 可见；`CdsAgentRun` 最小工作流通过；KB search/read 通过 |
+| [ ] Phase 2 可写协作 | 未开始 | Agent 能生成代码/知识库 draft/diff，并通过人工审批 apply | 写操作不直落库；diff 可审查；workflow 可暂停/恢复；artifact bundle 可导出 |
+| [ ] Phase 3 规模化商业能力 | 未开始 | 团队级巡检、知识治理、多运行时和成本治理 | 多 adapter gate；定时巡检；SLA/成本面板；trace bundle 可回放 |
+
+### 14.2 Phase 0 测试对勾
+
+| 对勾 | 类型 | 验收项 | 证据 |
+| --- | --- | --- | --- |
+| [x] | 冒烟 | provider-backed one-cycle 通过 | `/tmp/cds-agent-cycle-hardened-current/cycle-summary.json`：`commercialComplete=true`，7/7 gates pass，10 pass / 1 legacy skip / 0 failed |
+| [x] | 冒烟 | S1 只读仓库巡检通过 | `/tmp/cds-agent-s1-provider-hardened.json`：assistantMessages=1，dangerousApprovals=0，dangerousBuiltinTools=0 |
+| [x] | 冒烟 | S2/S3 危险工具收口和 stop 通过 | `/tmp/cds-agent-controls-hardened.json`：hardened-readonly，dangerousApprovals=0，dangerousBuiltinTools=0，stopStatus=`stopped` |
+| [x] | 视觉 | 远端工作台页面可达并截图验收 | `/tmp/cds-agent-workbench-visual.png`、`/tmp/cds-agent-cycle-hardened-current/workbench-visual.png` |
+| [x] | 报告 | 视觉验收 PDF 已生成 | `doc/report.cds-agent-acceptance-visual-2026-05-19.pdf` |
+| [x] | 单测 | Claude SDK sidecar 测试通过 | `pytest claude-sdk-sidecar/tests`：47/47 pass |
+| [x] | 单测 | CDS runtime/profile 路由测试通过 | `npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts`：8/8 pass |
+| [x] | 单测 | MAP session transport 测试通过 | `dotnet test ... --filter InfraAgentSessionServiceRuntimeAdapterTests --no-restore`：12/12 pass |
+| [x] | 构建 | CDS build 通过 | `npm --prefix cds run build` pass |
+| [x] | 文档 | 架构与进度合并为单一权威入口 | 本文档；`doc/status.cds-agent-current-progress.md` 降级为跳转页 |
+
+### 14.3 Phase 1 当前进度
+
+| 对勾 | 小节点 | 最终目标 | 验收标准 |
+| --- | --- | --- | --- |
+| [ ] | P1-1 简洁模式 Agent 面板 | 首屏只保留目标、任务、运行、停止、状态、结果 | 用户不用理解 runtime/profile 细节也能启动只读巡检 |
+| [ ] | P1-2 可观测 timeline | 一眼看到任务在哪一步、是否卡住、是否超时 | 页面显示 `traceId`、状态、耗时、`timeoutAt`、`lastEventSeq`、产物数量 |
+| [ ] | P1-3 stop/timeout 统一 | 停止和超时不只是 UI 文案，而是 MAP/CDS/SDK/runtime 状态一致 | stop 后不继续后台消耗；timeout 有事件、原因和清理状态 |
+| [ ] | P1-4 `CdsAgentRun` 工作流节点 | 工作流能调度一次最简单的 Agent 任务 | Start -> Agent -> Notify 可跑通；节点能跳回 Agent 面板看结果 |
+| [ ] | P1-5 KnowledgeBase 只读工具 | Agent 能搜索和读取知识库内容 | `kb_list/search/read` 可用；回答里能显示引用来源 |
+| [ ] | P1-6 Phase 1 验收包 | 本地先验收，再决定是否部署 | 冒烟、视觉截图、最小使用指南齐全 |
+
+### 14.4 当前对话完成项
+
+| 对勾 | 事项 | 结果 |
+| --- | --- | --- |
+| [x] | 确认单一权威文档策略 | 本文成为架构、进度、checklist、测试证据唯一入口 |
+| [x] | 阶段按完成打勾 | `14.1 阶段总览` 已用 `[x]` / `[ ]` 表达 |
+| [x] | 小节点放到底部 | `14.3 Phase 1 当前进度` 只列当前阶段小节点 |
+| [x] | 视觉测试和冒烟测试对勾 | `14.2 Phase 0 测试对勾` 已集中列出证据 |
+| [x] | 减少细碎步骤 | 阶段区只写最终目标和验收标准，不展开所有实现步骤 |
+
+### 14.5 下一次开发入口
+
+下一次开始写代码时，从 `P1-1 简洁模式 Agent 面板` 开始。完成任何一个小节点后，必须回到本节把对应 `[ ]` 改成 `[x]`，并补一条证据路径或截图路径。
