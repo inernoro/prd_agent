@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 17:56 Asia/Shanghai
+> **更新时间**：2026-05-18 18:00 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -97,7 +97,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote host recovery dry-run | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` | `dry-run-missing-config` | 14s |
 | runbook publish verification | `/tmp/cds-agent-runbook-published/summary.json` | bundle has `applyManifest/preconditions` rendering | ~35s |
 | CDS branch status | `/tmp/cds-branch-status-final.json` | preview running, services only api/admin | ~1s |
-| goal audit summary fast | `/tmp/cds-agent-goal-audit-summary-fast.json` | `source=summary`，R0=pending: remote host/shared runtime missing | 11s |
+| goal audit summary fast | `/tmp/cds-agent-goal-audit-summary-fast.json` | `status=blocked_r0`，next plan=`R0.2/R0.3/R0V` | 11s |
 | N6 no-build test | terminal output | 27/27 pass outside sandbox socket restriction | 64ms |
 
 ## 7. 时间和问题账本
@@ -113,6 +113,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | branch isolation cleanup wrapper | 40s | 远程写动作保留 wrapper，但完成后直接查 branch/project list，减少反复判断 |
 | runbook publish verification | ~35s | 只在 UI 发布后跑；后端 manifest 内容用 controller tests 覆盖 |
 | runtime pool evidence | 11-14s | 保留为 R0 权威远程证据，不用 one-cycle 替代 |
+| goal audit summary | 11s | 日常看板读最近 R0 summary；只有刷新远程事实时才开 live |
 
 ## 8. 不要做的事
 
@@ -139,6 +140,14 @@ CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY=/tmp/cds-agent-runtime-pool-evidence-latest/
 CDS_AGENT_GOAL_AUDIT_LIVE=0 \
 CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-summary-fast.json \
   bash scripts/audit-cds-agent-goal.sh
+```
+
+该命令当前应输出：
+
+```text
+Cycle status: blocked_r0
+Current blocking gate: R0
+Next cycle plan: r0-runtime-pool-recovery state=runtime-pool-blocked items=R0.2,R0.3,R0V
 ```
 
 只读刷新 remote host recovery manifest：

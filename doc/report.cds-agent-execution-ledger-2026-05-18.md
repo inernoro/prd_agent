@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 17:56 Asia/Shanghai：
+截至 2026-05-18 18:00 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -33,6 +33,7 @@
 | 17:50 | 目标审计在无显式 live 输入时仍被环境变量带去查 `https://miduo.org`，并把旧 one-cycle R1 当当前 blocker | 改为 `CDS_AGENT_GOAL_AUDIT_LIVE=1` 才查远程；未观测 R0 时禁止把旧 R1 当当前结论 | `/tmp/cds-agent-goal-audit-fast.json` | 约 11s 快速审计 | 当前 blocker 回到 `R0 evidence not observed`，不会误导去修 R1 |
 | 17:56 | N6 在目标审计中超时，需区分测试失败还是沙箱问题 | 先在沙箱内复现 `Permission denied`，再用已批准的 `dotnet test` 沙箱外跑 no-build 测试 | dotnet test 输出 | 64ms 测试执行；审计超时 62s | 27/27 pass；目标审计的 N6 是 infra/sandbox failure，不是业务回归 |
 | 17:56 | 无 live 时只显示 R0 unknown 仍不够好，因为已有 `/tmp` R0 evidence 可用 | 让 goal audit 支持 `CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY`，直接消费 `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `runtimePoolRecovery.source=summary`，当前 blocker 精确为 remote host/shared runtime |
+| 18:00 | goal audit 已识别 R0 blocker，但 `executionPanel.status` 仍继承旧 one-cycle 的 `blocked_r1`，`nextCyclePlan` 仍指向 profile closure | R0 blocker 存在时覆盖 `cycle_status=blocked_r0`，并生成 `r0-runtime-pool-recovery` 计划 | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `status=blocked_r0`，plan items=`R0.2/R0.3/R0V` |
 
 ## 本轮暴露的问题
 
@@ -131,6 +132,21 @@
 证据：`/tmp/cds-agent-goal-audit-summary-fast.json` 显示 `runtimePoolRecovery.status=pass`、`source=summary`、`contaminatedBranchCount=0`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`。
 
 优化：以后日常进度面板优先走“本地 guardrail + 最近 R0 summary”，只有要刷新远程事实时才开 `CDS_AGENT_GOAL_AUDIT_LIVE=1`。
+
+### 10. 审计状态和下一步计划不能继承旧 one-cycle
+
+问题：即使 runtime pool blockers 已经来自最新 summary，`executionPanel.status` 仍沿用旧 one-cycle 的 `blocked_r1`，`nextCyclePlan` 仍是 provider/profile closure。这会让页面或人类读者误以为下一步应先修 R1。
+
+处理：当 runtime pool plan 未观测或存在 blockers 时，goal audit 强制输出 R0 状态：
+
+- `executionPanel.status=blocked_r0`
+- `currentBlockingGate=R0`
+- `nextCyclePlan.cycle=r0-runtime-pool-recovery`
+- plan items 为 `R0.2` enabled remote host、`R0.3` shared runtime deploy、`R0V` evidence refresh。
+
+证据：`/tmp/cds-agent-goal-audit-summary-fast.json` 当前输出 `Next cycle plan: r0-runtime-pool-recovery state=runtime-pool-blocked items=R0.2,R0.3,R0V`。
+
+优化：旧 one-cycle 只作为历史 provider/profile 证据，不再决定当前执行面板的顶层状态。
 
 ## 最耗时项
 

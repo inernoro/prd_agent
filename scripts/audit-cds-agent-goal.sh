@@ -829,12 +829,35 @@ fi
 
 runtime_pool_blocker_count="$(jq -r 'length' <<< "$runtime_pool_blockers_json")"
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
+  cycle_status="blocked_r0"
   gate_r0="unknown"
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery was not observed in this audit. Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST=https://cds.miduo.org, or use the latest runtime pool evidence summary, before treating any older one-cycle R1 blocker as current."
   deployment_advice="Do not redeploy for this state. First collect current runtime pool evidence; only then decide whether the next blocker is R0 remote host/shared runtime or R1 provider profile."
   next_command="CDS_AGENT_GOAL_AUDIT_LIVE=1 CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh"
+  next_cycle_plan_json=$(jq -n \
+    --arg command "$next_command" \
+    '{
+      cycle: "r0-runtime-pool-recovery",
+      state: "runtime-pool-evidence-required",
+      items: [
+        {
+          order: 1,
+          code: "R0E",
+          title: "刷新 runtime pool 权威证据",
+          goal: "确认 prd-agent branch-local sidecar 仍干净，并读取 remote host/shared runtime 现状。",
+          evidence: "goal audit 或 runtime pool summary 包含 branchIsolation、remoteHost、runtimePoolBlockers。",
+          status: "next",
+          blockedBy: "R0",
+          nextActions: [$command]
+        }
+      ],
+      stopConditions: [
+        "R0 未有当前证据前，不把旧 one-cycle R1/profile blocker 当作当前执行方向。"
+      ]
+    }')
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
+  cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery is still blocked: $(jq -r 'map(.requirement + "=" + .status) | join(", ")' <<< "$runtime_pool_blockers_json")."
@@ -844,6 +867,54 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
     deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; register an enabled remote host and restore the shared official SDK runtime pool."
   fi
   next_command="CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh"
+  next_cycle_plan_json=$(jq -n \
+    --argjson blockers "$runtime_pool_blockers_json" \
+    --arg command "$next_command" \
+    '{
+      cycle: "r0-runtime-pool-recovery",
+      state: "runtime-pool-blocked",
+      items: [
+        {
+          order: 1,
+          code: "R0.2",
+          title: "登记 enabled remote host",
+          goal: "为 shared official SDK runtime 提供 CDS 系统级承载层。",
+          evidence: "enabledHostCount > 0。",
+          status: (if any($blockers[]; .requirement == "REMOTE_HOST_AVAILABLE") then "blocked" else "done" end),
+          blockedBy: (if any($blockers[]; .requirement == "REMOTE_HOST_AVAILABLE") then "REMOTE_HOST_AVAILABLE" else null end),
+          nextActions: [
+            "提供 CDS_REMOTE_HOST_NAME、CDS_REMOTE_HOST_HOST、CDS_REMOTE_HOST_SSH_USER 和 SSH private key。"
+          ]
+        },
+        {
+          order: 2,
+          code: "R0.3",
+          title: "部署 shared official SDK runtime",
+          goal: "让 shared-sidecar-pool 暴露 running/healthy 的官方 SDK runtime instance。",
+          evidence: "sharedRunning > 0 且 smoke-cds-agent-shared-service-pool.sh 通过。",
+          status: (if any($blockers[]; .requirement == "SHARED_POOL_RUNNING") then "blocked" else "done" end),
+          blockedBy: (if any($blockers[]; .requirement == "SHARED_POOL_RUNNING") then "SHARED_POOL_RUNNING" else null end),
+          nextActions: [
+            "提供 CDS_AGENT_SIDECAR_IMAGE，并设置 CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1。"
+          ]
+        },
+        {
+          order: 3,
+          code: "R0V",
+          title: "复跑 R0 runtime pool evidence",
+          goal: "用当前 CDS state 更新 goal audit 和进度面板。",
+          evidence: "runtimePoolBlockers=[]，R0=pass。",
+          status: "waiting",
+          blockedBy: "R0.2/R0.3",
+          nextActions: [$command]
+        }
+      ],
+      blockers: $blockers,
+      stopConditions: [
+        "R0 runtime pool 未恢复前，不运行 provider one-cycle。",
+        "不要通过普通 preview redeploy 解决 remote host/shared runtime 缺失。"
+      ]
+    }')
 fi
 
 if [[ "$boundary_status" != "pass" ]]; then
