@@ -338,6 +338,117 @@ describe('Remote hosts project instances route', () => {
     });
   });
 
+  it('reconciles CDS-managed official SDK runtime capacity without remote host fallback', async () => {
+    process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const planned = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/runtime-capacity/reconcile`,
+      longToken,
+      { apply: false },
+    );
+
+    expect(planned.status).toBe(200);
+    expect(planned.body).toMatchObject({
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      applied: false,
+      status: 'planned',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPathOnly: true,
+      fallbackScope: 'operator-debug-only',
+    });
+    expect(planned.body.plan.map((step: any) => step.step)).toEqual([
+      'ensure-build-profile',
+      'ensure-branch-service',
+      'verify-product-capacity',
+    ]);
+    expect(JSON.stringify(planned.body)).not.toContain('CDS_REMOTE_HOST');
+
+    const runtime = await startMockOfficialSdkRuntime();
+    const applied = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/runtime-capacity/reconcile`,
+      longToken,
+      { apply: true, hostPort: runtime.port },
+    );
+
+    expect(applied.status).toBe(200);
+    expect(applied.body).toMatchObject({
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      applied: true,
+      status: 'available',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPathOnly: true,
+      fallbackScope: 'operator-debug-only',
+      profileId: 'claude-agent-sdk-runtime',
+      branch: 'cds-managed-runtime',
+      containerName: 'cds-claude-agent-sdk-runtime',
+      capacity: {
+        status: 'available',
+        productPath: {
+          runningOfficialSdkRuntimeCount: 1,
+        },
+        legacyFallback: {
+          enabledRemoteHostCount: 0,
+          runningFallbackInstanceCount: 0,
+          scope: 'operator-debug-only',
+        },
+      },
+    });
+    expect(applied.body.changes).toMatchObject({
+      profile: 'created',
+      branch: 'created',
+      service: 'created',
+    });
+    expect(JSON.stringify(applied.body)).not.toContain('CDS_REMOTE_HOST');
+
+    const available = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
+    expect(available.status).toBe(200);
+    expect(available.body.instances[0]).toMatchObject({
+      branch: 'cds-managed-runtime',
+      capacityRole: 'product-runtime',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      runtimeAdapter: 'claude-agent-sdk',
+      loopOwner: 'claude-agent-sdk',
+      baseUrl: 'https://cds-managed-runtime-shared-sidecar-pool.preview.example.test',
+    });
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'claude-sdk', model: 'claude-sonnet-4-20250514' },
+    );
+    expect(created.status).toBe(201);
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${created.body.item.id}/messages`,
+      longToken,
+      { content: 'verify reconciled runtime' },
+    );
+
+    expect(sent.status).toBe(202);
+    expect(sent.body.accepted).toBe(true);
+    expect(sent.body.transport).toMatchObject({
+      source: 'cds-branch-service',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      profileId: 'claude-agent-sdk-runtime',
+      runtimeAdapter: 'claude-agent-sdk',
+      loopOwner: 'claude-agent-sdk',
+    });
+    expect(sent.body.transport.baseUrl).toBe(`http://127.0.0.1:${runtime.port}`);
+    expect(runtime.requests).toHaveLength(1);
+  });
+
   it('does not expose branch services for regular projects through instance discovery', async () => {
     process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
     await startServer();

@@ -911,19 +911,19 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
-  blocking_reason="R0V live evidence is complete and R0.5 capacity contract is in place, but CDS-managed runtime capacity is still missing: branch isolation is clean, shared runtime running=0, and enabled operator fallback hosts=0. The next product step is R0.6 CDS-managed runtime capacity reconciler, not asking users for SSH/env/image."
+  blocking_reason="R0V live evidence is complete, R0.5 capacity contract is in place, and R0.6 local reconciler/API is in place, but CDS-managed runtime capacity is still missing in live evidence: branch isolation is clean, shared runtime running=0, and enabled operator fallback hosts=0. The next product step is R0.7 CDS-managed runtime live apply, not asking users for SSH/env/image."
   if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
     deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals if needed, then correct the runtime recovery model back to CDS-managed runtime before exposing any operator fallback."
   else
-    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is R0.6 CDS-managed runtime capacity reconciler, not asking the user for SSH/env/image."
+    deployment_advice="Do not redeploy normal previews for this state. Branch-local sidecar cleanup is already clean; the next product step is R0.7 CDS-managed runtime live apply, not asking the user for SSH/env/image."
   fi
-  next_command="sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md && scripts/smoke-cds-agent-map-session-transport.sh && scripts/smoke-cds-agent-shared-service-pool.sh && scripts/check-cds-agent-progress-consistency.sh"
+  next_command="npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts && scripts/smoke-cds-agent-map-session-transport.sh && scripts/smoke-cds-agent-shared-service-pool.sh && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --argjson blockers "$runtime_pool_blockers_json" \
     --arg command "$next_command" \
     '{
-      cycle: "r0-cds-managed-runtime-reconciler",
-      state: "cds-managed-runtime-reconciler-missing",
+      cycle: "r0-cds-managed-runtime-live-apply",
+      state: "cds-managed-runtime-live-capacity-missing",
       items: [
         {
           order: 1,
@@ -989,7 +989,19 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           order: 6,
           code: "R0.6",
           title: "CDS-managed runtime capacity reconciler",
-          goal: "让 CDS 自己创建/启动/恢复 official SDK runtime capacity，而不是要求普通用户提供 SSH/env/image。",
+          goal: "让 CDS 自己创建/修复 official SDK runtime capacity 的 BuildProfile + branch-service 事实，而不是要求普通用户提供 SSH/env/image。",
+          evidence: "CDS /runtime-capacity/reconcile route、dry-run/apply 测试、agent session transport 测试通过。",
+          status: "done_minimal",
+          blockedBy: "CDS_MANAGED_RUNTIME_CAPACITY",
+          nextActions: [
+            "保持 reconciler API；下一步接入真实 CDS container start/live evidence。"
+          ]
+        },
+        {
+          order: 7,
+          code: "R0.7",
+          title: "CDS-managed runtime live apply",
+          goal: "把 R0.6 reconciler 接到实际 CDS container start/recover，使 shared-service official SDK runtime running count > 0。",
           evidence: "CDS-managed official SDK runtime running count > 0；R0=pass。",
           status: "next",
           blockedBy: "CDS_MANAGED_RUNTIME_CAPACITY",
@@ -1033,7 +1045,7 @@ fi
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   failures+=("P0 branch isolation/shared pool plan was not observed")
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
-  failures+=("CDS-managed runtime capacity reconciler has not produced running official SDK runtime")
+  failures+=("CDS-managed runtime live apply has not produced running official SDK runtime")
 fi
 if [[ "$branch_manifest_status" != "pass" && "$branch_manifest_status" != "clean_from_runtime_pool_summary" ]]; then
   failures+=("P0 branch isolation apply manifest did not pass")

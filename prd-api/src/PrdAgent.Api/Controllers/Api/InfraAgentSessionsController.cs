@@ -244,12 +244,20 @@ public class InfraAgentSessionsController : ControllerBase
                 8,
                 "R0.6",
                 "CDS-managed runtime capacity reconciler",
-                r0Done ? "done" : r0Active ? "active" : "waiting",
-                r0Done ? "CDS-managed runtime capacity is available." : "Make CDS create/start/recover official SDK runtime capacity itself.",
-                r0Done ? "done" : "next",
+                r0Done ? "done" : r0Active ? "done_minimal" : "waiting",
+                r0Done ? "CDS-managed runtime capacity is available." : "CDS local reconciler/API contract is in place; next is live container apply evidence.",
+                r0Done ? "done" : "done",
                 "CDS /api/projects/:id/runtime-capacity + reconciler smoke"),
             new SidecarExecutionTask(
                 9,
+                "R0.7",
+                "CDS-managed runtime live apply",
+                r0Done ? "done" : r0Active ? "active" : "waiting",
+                r0Done ? "Live runtime capacity is available." : "Wire reconciler to actual CDS container start/recover so official SDK runtime is running.",
+                r0Done ? "done" : "next",
+                "CDS runtime-capacity/reconcile + live evidence"),
+            new SidecarExecutionTask(
+                10,
                 "R1",
                 "Default Claude/Anthropic profile",
                 r1Done ? "done" : r1Active ? "active" : r0Done ? "next" : "blocked",
@@ -257,7 +265,7 @@ public class InfraAgentSessionsController : ControllerBase
                 r1Done ? "done" : "5-15 min",
                 "scripts/smoke-cds-agent-r1-profile-repair.sh"),
             new SidecarExecutionTask(
-                10,
+                11,
                 "S1-S3",
                 "Provider read/approval/stop cycle",
                 providerDone ? "done" : providerActive ? "active" : r0Done && r1Done ? "next" : "blocked",
@@ -265,7 +273,7 @@ public class InfraAgentSessionsController : ControllerBase
                 providerDone ? "done" : "10-25 min",
                 "scripts/smoke-cds-agent-official-sdk-run.sh + scripts/smoke-cds-agent-official-sdk-controls.sh"),
             new SidecarExecutionTask(
-                11,
+                12,
                 "V1",
                 "Real runtime visual verification",
                 providerDone ? "next" : "blocked",
@@ -279,7 +287,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "R0.6 CDS-managed runtime capacity reconciler; do not ask for SSH/env/image as product inputs.";
+            return "R0.7 CDS-managed runtime live apply; do not ask for SSH/env/image as product inputs.";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -989,7 +997,7 @@ public class InfraAgentSessionsController : ControllerBase
         {
             parts.Add($"emptyEndpoints={emptyEndpoints}");
         }
-        parts.Add("next=R0.6 CDS-managed runtime capacity reconciler before any deploy or fallback handoff");
+        parts.Add("next=R0.7 CDS-managed runtime live apply before any deploy or fallback handoff");
         return string.Join(" ", parts);
     }
 

@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 23:07 Asia/Shanghai
+> **更新时间**：2026-05-18 23:25 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：D1 架构纠偏已完成；R0.2.2/R0.2.3/R0.2.4 已完成最小闭环；R0V live evidence 已完成并确认 CDS-managed runtime capacity 仍缺失
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，当前文档和本地事实源已把 operator/debug 参数降级为 fallback。
@@ -41,7 +41,8 @@ R0.2.4 MAP adapter session transport + managed-runtime smoke：done
 R0V managed-runtime post-check/live evidence：done_blocked，远程证据显示 shared-service pool running=0、enabled remote host=0
 R0.5 CDS-managed runtime capacity smoke：done_guarded
 R0.5 CDS-managed runtime capacity contract/API：done_minimal
-下一步 R0.6 CDS-managed runtime capacity reconciler：让 CDS 自己创建/启动/恢复 official SDK runtime capacity，不把 SSH/env/image 作为普通用户主路径
+R0.6 CDS-managed runtime capacity reconciler：done_minimal，CDS 已有 `/runtime-capacity/reconcile` dry-run/apply API 与 route 测试
+下一步 R0.7 CDS-managed runtime live apply：把 reconciler 接到真实 CDS container start/live evidence，让 shared-service official SDK runtime running > 0
 ```
 
 这不是完成整个商业级工作台的时间，而是把当前路线从 external host/env-driven recovery 纠正回 CDS-managed runtime 架构的有限周期。
@@ -53,7 +54,7 @@ R0.5 CDS-managed runtime capacity contract/API：done_minimal
 | 1 | A0 官方 SDK adapter 边界 | done | 0 |
 | 2 | N6 其他智能体兼容性 | done | 0 |
 | 3 | D1 架构纠偏计划 | done | 0 |
-| 4 | R0 CDS-managed runtime 恢复设计 | in_progress | R0.5 contract/API 已完成；下一步是真实 capacity reconciler |
+| 4 | R0 CDS-managed runtime 恢复设计 | in_progress | R0.6 reconciler/API 已完成最小闭环；下一步是真实 live apply |
 | 5 | R1 Claude/Anthropic profile 修正 | pending | R0 事实源纠偏后 5-15 分钟 |
 | 6 | S1/S2/S3 one-cycle | pending | R0/R1 后 10-25 分钟 |
 | 7 | V1 真实页面视觉/交互验证 | pending | 页面数据源纠偏后 5-10 分钟 |
@@ -103,7 +104,7 @@ ssh root@62.146.168.225
 
 ## 2. 一句话进度
 
-`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；MAP Toolbox adapter 也已收回到 CDS session transport，默认不再排 MAP direct runtime job。R0V 远程只读证据已完成，结论是 CDS-managed runtime capacity 缺失；R0.5 已补 CDS `/api/projects/:id/runtime-capacity` 产品事实源，把 product runtime capacity 和 operator fallback capacity 分开。下一步不能要求普通用户补 SSH/env/image，而是做 R0.6 CDS-managed runtime capacity reconciler。
+`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；MAP Toolbox adapter 也已收回到 CDS session transport，默认不再排 MAP direct runtime job。R0V 远程只读证据已完成，结论是 CDS-managed runtime capacity 缺失；R0.5 已补 CDS `/api/projects/:id/runtime-capacity` 产品事实源，把 product runtime capacity 和 operator fallback capacity 分开；R0.6 已补 `/api/projects/:id/runtime-capacity/reconcile` 最小 reconciler/API 和 route 测试。下一步不能要求普通用户补 SSH/env/image，而是做 R0.7 CDS-managed runtime live apply。
 
 当前有效 blocker：
 
@@ -117,7 +118,7 @@ ssh root@62.146.168.225
 | `CDS_MANAGED_RUNTIME_TRANSPORT` | pass_minimal | CDS `/agent-sessions` 可发现 shared-service branch runtime 并投递 `/v1/agent/run`，事件写回 `runtime_init/text_delta/done` |
 | `MAP_TO_CDS_SESSION_TRANSPORT` | pass_smoke | MAP Toolbox adapter 不注入 direct runtime adapter；session message 先走 CDS `/agent-sessions/{id}/messages`，MAP direct runtime queue 只在显式 fallback env 下启用 |
 | `R0V_MANAGED_RUNTIME_POSTCHECK` | done_blocked | `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` 显示 branch isolation clean，但 shared-service pool 没有 running runtime |
-| `CDS_MANAGED_RUNTIME_CAPACITY` | missing_contract_ready | 当前缺的是运行中的 CDS 产品级 runtime capacity；CDS `/runtime-capacity`、runtime-status/progress/audit/smoke 已锁定这个 blocker，remote host/env/image 只能作为 operator fallback 证据 |
+| `CDS_MANAGED_RUNTIME_CAPACITY` | missing_reconciler_ready | 当前缺的是运行中的 CDS 产品级 runtime capacity；CDS `/runtime-capacity` 与 `/runtime-capacity/reconcile`、runtime-status/progress/audit/smoke 已锁定这个 blocker，remote host/env/image 只能作为 operator fallback 证据 |
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
 | `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行；也可直接提供其他可 pull registry image |
@@ -154,7 +155,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | A0 官方 SDK adapter 边界 | [x] | `smoke-cds-agent-official-sdk-boundary.sh`、helper tests | 已完成 | 保持 legacy loop 只作显式 fallback |
 | R0.1 业务分支去污染 | [x] | `/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json` | 已完成 | 防回归 |
 | D1 架构纠偏 | [x] | `doc/plan.cds-agent-runtime-correction-limited.md` | 已完成 | 作为 R0 设计边界 |
-| R0 CDS-managed runtime pool | [~] | `doc/design.cds-agent-managed-runtime-fact-source.md`、runtime-status task board、CDS route test、MAP session transport smoke、R0V live evidence、R0.5 capacity smoke、CDS runtime-capacity route test | blocked_capacity | 实现 CDS-managed runtime capacity reconciler，不把 env 当产品主路径 |
+| R0 CDS-managed runtime pool | [~] | `doc/design.cds-agent-managed-runtime-fact-source.md`、runtime-status task board、CDS route test、MAP session transport smoke、R0V live evidence、R0.5 capacity smoke、CDS runtime-capacity/reconcile route test | blocked_capacity | 做 R0.7 live apply，让真实 shared-service official SDK runtime running > 0 |
 | R1 Claude/Anthropic profile | [x] 模板/预检就绪 | runtime-status profile diagnostics | pending | R0 通过后配置默认 profile |
 | S1/S2/S3 one-cycle | [x] smoke 框架就绪 | one-cycle summary | pending | R0/R1 通过后跑只读、审批、取消 |
 | V1 视觉验证 | [x] 页面支持 | bundle publish check | partial | R0/R1/S1 后做登录态截图 |
@@ -177,14 +178,14 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 
 ## 5. 下一步最小计划
 
-下一轮只做 R0.6 CDS-managed runtime capacity reconciler，不做普通 preview redeploy，不把 SSH/env/image 重新提升为产品路径。
+下一轮只做 R0.7 CDS-managed runtime live apply，不做普通 preview redeploy，不把 SSH/env/image 重新提升为产品路径。
 
 | 顺序 | 动作 | 需要输入 | 成功证据 |
 | --- | --- | --- | --- |
 | 1 | 定义 CDS-managed runtime capacity 产品事实源 | 无新增输入 | done：`runtime-status`/progress/audit 顶层显示 `CDS_MANAGED_RUNTIME_CAPACITY` |
 | 2 | 把 remote host wrapper 输出降级为 operator fallback | 无新增输入 | done：evidence `nextAction` 明确“do not ask product users for remote host variables” |
-| 3 | 实现真实 CDS runtime/container/sandbox capacity reconciler | 需要代码实现，不需要用户补 SSH/env/image | CDS 能自己创建/启动/恢复 official SDK runtime capacity，R0 pass |
-| 4 | R0.6 后再进入 R1/S1/S2/S3/V1 | R0 capacity 通过 | profile、provider smokes、登录态页面截图通过 |
+| 3 | 将 R0.6 reconciler 接到真实 CDS runtime/container/sandbox start/recover | 需要代码实现，不需要用户补 SSH/env/image | shared-service official SDK runtime running > 0，R0 pass |
+| 4 | R0.7 后再进入 R1/S1/S2/S3/V1 | R0 capacity 通过 | profile、provider smokes、登录态页面截图通过 |
 
 ## 6. 已完成清单
 
@@ -386,7 +387,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-summary-fast.json \
 ```text
 Cycle status: blocked_r0
 Current blocking gate: R0
-Next cycle plan: r0-cds-managed-runtime-reconciler state=cds-managed-runtime-reconciler-missing items=D1,R0.3,R0.4,R0V,R0.5,R0.6
+Next cycle plan: r0-cds-managed-runtime-live-apply state=cds-managed-runtime-live-capacity-missing items=D1,R0.3,R0.4,R0V,R0.5,R0.6,R0.7
 ```
 
 只读刷新 remote host recovery manifest：

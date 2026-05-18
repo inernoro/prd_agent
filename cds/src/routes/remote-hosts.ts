@@ -564,6 +564,56 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.json({ projectId, ...instancesResponse });
   });
 
+  router.post('/projects/:id/runtime-capacity/reconcile', (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+
+    const project = deps.stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+    if (project.kind !== 'shared-service') {
+      res.status(409).json({
+        error: {
+          code: 'runtime_capacity_requires_shared_service_project',
+          message: 'CDS-managed official SDK runtime capacity must be reconciled inside a shared-service project, not an application project.',
+        },
+      });
+      return;
+    }
+
+    const hostPort = parseOptionalHostPort(req.body?.hostPort);
+    if (hostPort === null) {
+      res.status(400).json({
+        error: {
+          code: 'invalid_host_port',
+          message: 'hostPort must be an integer in [1, 65535] when provided',
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = reconcileCdsManagedRuntimeCapacity(deps.stateService, service, project, {
+        apply: req.body?.apply === true,
+        hostPort,
+        now: new Date().toISOString(),
+      });
+      res.json({ projectId: project.id, ...result });
+    } catch (err) {
+      res.status(409).json({
+        error: {
+          code: 'runtime_capacity_reconcile_failed',
+          message: (err as Error).message,
+        },
+      });
+    }
+  });
+
   router.post('/projects/:id/agent-sessions', async (req, res) => {
     const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
@@ -893,6 +943,16 @@ interface ProjectRuntimeInstancesResponse {
   capacity: Record<string, unknown>;
 }
 
+const CDS_MANAGED_RUNTIME_PROFILE_ID = 'claude-agent-sdk-runtime';
+const CDS_MANAGED_RUNTIME_BRANCH_NAME = 'cds-managed-runtime';
+const CDS_MANAGED_RUNTIME_CONTAINER_NAME = 'cds-claude-agent-sdk-runtime';
+
+interface CdsManagedRuntimeReconcileOptions {
+  apply: boolean;
+  hostPort?: number;
+  now: string;
+}
+
 function collectProjectRuntimeInstances(
   stateService: StateService,
   service: RemoteHostService,
@@ -987,6 +1047,177 @@ function collectProjectRuntimeInstances(
     discovery,
     capacity: buildCdsManagedRuntimeCapacity(project, instances, discovery, service.list()),
   };
+}
+
+function reconcileCdsManagedRuntimeCapacity(
+  stateService: StateService,
+  service: RemoteHostService,
+  project: Project,
+  options: CdsManagedRuntimeReconcileOptions,
+): Record<string, unknown> {
+  const before = collectProjectRuntimeInstances(stateService, service, project);
+  const alreadyAvailable = before.capacity.status === 'available';
+  const planned = planCdsManagedRuntimeCapacity(stateService, project, options.hostPort, alreadyAvailable);
+
+  if (!options.apply || alreadyAvailable) {
+    return {
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      applied: false,
+      status: alreadyAvailable ? 'available' : 'planned',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPathOnly: true,
+      fallbackScope: 'operator-debug-only',
+      plan: planned,
+      capacity: before.capacity,
+      nextAction: alreadyAvailable
+        ? 'CDS-managed official SDK runtime capacity already exists; continue with R1/S1/S2/S3.'
+        : 'Apply this CDS-managed runtime reconcile plan; do not ask product users for SSH/env/image.',
+    };
+  }
+
+  const profile = buildCdsManagedRuntimeProfile(project.id);
+  const existingProfile = stateService.getBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID);
+  let profileChange: 'created' | 'updated' | 'unchanged' = 'created';
+  if (existingProfile) {
+    if (existingProfile.projectId !== project.id) {
+      throw new Error(`runtime profile ${CDS_MANAGED_RUNTIME_PROFILE_ID} belongs to project ${existingProfile.projectId}`);
+    }
+    stateService.updateBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID, profile);
+    profileChange = 'updated';
+  } else {
+    stateService.addBuildProfile(profile);
+  }
+
+  const serviceState: ServiceState = {
+    profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
+    containerName: CDS_MANAGED_RUNTIME_CONTAINER_NAME,
+    hostPort: options.hostPort || 0,
+    status: options.hostPort ? 'running' : 'starting',
+  };
+  const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
+  let branchChange: 'created' | 'updated' = 'created';
+  let serviceChange: 'created' | 'updated' = 'created';
+  if (branch) {
+    branch.services = branch.services || {};
+    serviceChange = branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] ? 'updated' : 'created';
+    branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] = serviceState;
+    branch.status = options.hostPort ? 'running' : 'idle';
+    branch.lastAccessedAt = options.now;
+    branch.lastDeployAt = options.now;
+    branchChange = 'updated';
+  } else {
+    stateService.addBranch({
+      id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
+      projectId: project.id,
+      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+      worktreePath: `${process.cwd()}/.cds-managed-runtime/${slugifyRuntimeSegment(project.id)}`,
+      status: options.hostPort ? 'running' : 'idle',
+      services: {
+        [CDS_MANAGED_RUNTIME_PROFILE_ID]: serviceState,
+      },
+      createdAt: options.now,
+      lastAccessedAt: options.now,
+      lastDeployAt: options.now,
+      githubCommitSha: 'cds-managed-runtime',
+    });
+  }
+
+  const after = collectProjectRuntimeInstances(stateService, service, project);
+  return {
+    requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+    applied: true,
+    status: after.capacity.status === 'available' ? 'available' : 'starting',
+    runtimeOwnedBy: 'cds-managed-runtime',
+    loopOwner: 'claude-agent-sdk',
+    productPathOnly: true,
+    fallbackScope: 'operator-debug-only',
+    changes: {
+      profile: profileChange,
+      branch: branchChange,
+      service: serviceChange,
+    },
+    profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
+    branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+    containerName: CDS_MANAGED_RUNTIME_CONTAINER_NAME,
+    capacity: after.capacity,
+    nextAction: after.capacity.status === 'available'
+      ? 'CDS-managed official SDK runtime capacity is available; continue with R1/S1/S2/S3.'
+      : 'CDS accepted the managed runtime profile and branch-service record; continue the CDS container start path without SSH/env/image handoff.',
+  };
+}
+
+function planCdsManagedRuntimeCapacity(
+  stateService: StateService,
+  project: Project,
+  hostPort: number | undefined,
+  alreadyAvailable: boolean,
+): Array<Record<string, unknown>> {
+  if (alreadyAvailable) {
+    return [{ step: 'verify-capacity', state: 'already_available' }];
+  }
+  const profile = stateService.getBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID);
+  const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
+  return [
+    {
+      step: 'ensure-build-profile',
+      profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
+      state: profile ? 'update_existing' : 'create',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+    },
+    {
+      step: 'ensure-branch-service',
+      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+      state: branch ? 'update_existing' : 'create',
+      targetServiceStatus: hostPort ? 'running' : 'starting',
+    },
+    {
+      step: 'verify-product-capacity',
+      expectedRequirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      expectedCapacityRole: 'product-runtime',
+      fallbackScope: 'operator-debug-only',
+    },
+  ];
+}
+
+function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
+  return {
+    id: CDS_MANAGED_RUNTIME_PROFILE_ID,
+    projectId,
+    name: 'Claude Agent SDK Runtime',
+    dockerImage: 'prd-agent/claude-sidecar:latest',
+    workDir: 'claude-sdk-sidecar',
+    containerWorkDir: '/app',
+    command: 'uvicorn app.main:app --host 0.0.0.0 --port 7400',
+    containerPort: 7400,
+    env: {
+      SIDECAR_AGENT_ADAPTER: 'claude-agent-sdk',
+      SIDECAR_RUNTIME_OWNER: 'cds-managed-runtime',
+      SIDECAR_LOOP_OWNER: 'claude-agent-sdk',
+      SIDECAR_TOKEN: 'cds-managed',
+    },
+    readinessProbe: {
+      path: '/readyz',
+      timeoutSeconds: 30,
+      intervalSeconds: 1,
+    },
+  };
+}
+
+function parseOptionalHostPort(value: unknown): number | undefined | null {
+  if (value === undefined || value === null || value === '') return undefined;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return port;
+}
+
+function slugifyRuntimeSegment(value: string): string {
+  return value
+    .replace(/[^a-zA-Z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase() || 'shared-service';
 }
 
 function buildCdsManagedRuntimeCapacity(

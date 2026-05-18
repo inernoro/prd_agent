@@ -166,7 +166,7 @@ if [[ "$invalid_count" -eq 0 ]]; then
   fi
 fi
 
-next_action="continue R0.6 CDS-managed runtime capacity reconciler before any fallback env handoff"
+next_action="continue R0.7 CDS-managed runtime live apply before any fallback env handoff"
 if [[ "$invalid_count" -gt 0 ]]; then
   next_action="fix invalid fallback env before any operator apply"
 elif [[ "$ready_for_r0_apply" == "true" ]]; then

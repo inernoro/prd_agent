@@ -131,10 +131,11 @@ EOF
 )
 elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
   exact_next_step=$(cat <<'EOF'
-Continue R0.6 CDS-managed runtime capacity reconciler work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
+Continue R0.7 CDS-managed runtime live apply work. R0.6 has the local reconciler/API contract; next is wiring it to real CDS container start/live evidence. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
 sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md
+npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts
 scripts/smoke-cds-agent-map-session-transport.sh
 scripts/smoke-cds-agent-shared-service-pool.sh
 scripts/check-cds-agent-progress-consistency.sh
@@ -240,7 +241,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.4 MAP session transport smoke | done | MAP uses CDS session/discovery/cancel/log APIs; direct runtime queue is explicit fallback only | done |
 | R0V Post-check | done_blocked | Live evidence complete; shared runtime running=0 and enabled fallback hosts=0 | done |
 | R0.5 CDS-managed runtime capacity contract | done_minimal | CDS exposes /api/projects/:id/runtime-capacity and separates product runtime from operator fallback | done |
-| R0.6 CDS-managed runtime capacity reconciler | in_progress | Make CDS create/start/recover official SDK runtime capacity itself | next |
+| R0.6 CDS-managed runtime capacity reconciler | done_minimal | CDS exposes dry-run/apply reconciler and route tests prove product runtime capacity path | done |
+| R0.7 CDS-managed runtime live apply | in_progress | Wire reconciler to actual CDS container start/live evidence so sharedRunning becomes >0 | next |
 | R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |

@@ -83,7 +83,8 @@ RemoteHost.deploy-sidecar
 | R0.2.4 | MAP adapter 改为 CDS session transport 并补 managed-runtime smoke | done | `CdsAgentAdapter` / `InfraAgentSessionService` / scripts / tests | MAP Toolbox adapter 不注入 direct runtime adapter；session message 先走 CDS；direct runtime queue 只在显式 fallback env 下启用 |
 | R0V | managed-runtime post-check/live evidence | done_blocked | scripts / live evidence | 远程证据证明 branch isolation clean，但 CDS-managed runtime capacity 缺失；不要求 SSH/image/env 作为产品主路径 |
 | R0.5 | CDS-managed runtime capacity 收口 | done_minimal | runtime-status / audit / scripts / CDS capacity contract | 顶层 blocker 已表达为 `CDS_MANAGED_RUNTIME_CAPACITY`；CDS 暴露 `/api/projects/:id/runtime-capacity`；remote host/env/image 只作为 operator fallback |
-| R0.6 | CDS-managed runtime capacity reconciler | next | CDS runtime/container/sandbox reconciler | CDS 自己创建/启动/恢复 official SDK runtime capacity；R0 变为 pass |
+| R0.6 | CDS-managed runtime capacity reconciler | done_minimal | `POST /api/projects/:id/runtime-capacity/reconcile`、CDS route test | CDS 能 dry-run/apply 创建或修复 official SDK runtime BuildProfile + branch-service capacity fact，不要求 SSH/env/image |
+| R0.7 | CDS-managed runtime live apply | next | CDS runtime/container/sandbox start/recover + live evidence | shared-service official SDK runtime running > 0；R0 变为 pass |
 | R0.2.6 | 页面数据源和视觉测试 | 30-45 分钟 | runtime-status / `/cds-agent` | 页面展示 R0 facts、ETA、debug fallback，截图通过 |
 
 第一开发周期已完成：

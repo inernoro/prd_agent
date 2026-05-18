@@ -202,10 +202,10 @@
 
 - `executionPanel.status=blocked_r0`
 - `currentBlockingGate=R0`
-- `nextCyclePlan.cycle=r0-cds-managed-runtime-reconciler`
-- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport done_minimal、`R0.4` MAP session transport smoke done、`R0V` live evidence done_blocked、`R0.5` capacity contract done_minimal、`R0.6` reconciler next。
+- `nextCyclePlan.cycle=r0-cds-managed-runtime-reconciler`（该条为当时状态；R0.6 完成后已推进到 R0.7）
+- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport done_minimal、`R0.4` MAP session transport smoke done、`R0V` live evidence done_blocked、`R0.5` capacity contract done_minimal、`R0.6` reconciler next（该条为当时状态）。
 
-证据：`scripts/audit-cds-agent-goal.sh` 当前输出 `Next cycle plan: r0-cds-managed-runtime-reconciler state=cds-managed-runtime-reconciler-missing items=D1,R0.3,R0.4,R0V,R0.5,R0.6`。
+证据：当时 `scripts/audit-cds-agent-goal.sh` 输出 `Next cycle plan: r0-cds-managed-runtime-reconciler state=cds-managed-runtime-reconciler-missing items=D1,R0.3,R0.4,R0V,R0.5,R0.6`。当前状态以后文最新章节和 `doc/status.cds-agent-current-progress.md` 为准。
 
 优化：旧 one-cycle 只作为历史 provider/profile 证据，不再决定当前执行面板的顶层状态。
 
@@ -406,7 +406,7 @@
 - `/tmp/cds-agent-goal-audit-current-with-readiness.json`：`gates.N6=pass`。
 - `requirements.otherAgentCompatibility.status=proved`。
 - `runtimePoolRecovery.applyReadiness.readyForR0Apply=false`。
-- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `CDS-managed runtime capacity reconciler has not produced running official SDK runtime`。
+- audit stdout 仍明确 `Goal status: not_complete`，当时失败为 `CDS-managed runtime capacity reconciler has not produced running official SDK runtime`。R0.6 完成后，当前失败已推进为 R0.7 live apply 尚未产生 running official SDK runtime。
 
 耗时：短超时审计 15s；N6 沙箱步骤被超时停止，但 summary 将当前 N6 证据校准为 pass。
 
@@ -785,7 +785,7 @@
 - 运行 `CDS_HOST=https://cds.miduo.org CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-current-readonly-live bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh`。
 - 将 evidence 脚本的 `nextAction` 改为：CDS-managed runtime capacity 缺失；不要要求产品用户提供 remote host variables；remote host 只允许 explicit operator fallback。
 - progress board 顶层从 `R0 remote host verdict` 改成 `R0 managed runtime capacity`，并把 remote host 行标为 `Operator fallback`。
-- goal audit 的下一周期先从 `r0-managed-runtime-postcheck` 改成 capacity gate，随后在 R0.5 contract/API 完成后推进到 `r0-cds-managed-runtime-reconciler`，失败原因改为 `CDS-managed runtime capacity reconciler has not produced running official SDK runtime`。
+- goal audit 的下一周期先从 `r0-managed-runtime-postcheck` 改成 capacity gate，随后在 R0.5 contract/API 完成后推进到 `r0-cds-managed-runtime-reconciler`；R0.6 完成后再推进到 `r0-cds-managed-runtime-live-apply`。
 
 证据：
 
@@ -869,7 +869,7 @@
 
 ## 当前下一步
 
-现在不应该继续普通 preview redeploy。下一步要么提供 remote host 参数，要么继续完善恢复前置检查。
+现在不应该继续普通 preview redeploy，也不应该把 remote host 参数作为普通产品路径。R0.6 已完成最小 reconciler/API，本轮下一步是 R0.7：把 reconciler 接到真实 CDS container start/recover 与 live evidence。
 
 查看当前任务纵览：
 
@@ -877,37 +877,50 @@
 scripts/print-cds-agent-current-progress.sh
 ```
 
-真正恢复 R0 需要：
+R0.7 真正恢复 R0 需要：
 
 ```text
-CDS_REMOTE_HOST_NAME
-CDS_REMOTE_HOST_HOST
-CDS_REMOTE_HOST_SSH_USER
-CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE
-CDS_AGENT_REMOTE_HOST_APPLY=1
-CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1
-CDS_AGENT_SIDECAR_IMAGE
+CDS-managed shared-service official SDK runtime running > 0
+CDS /runtime-capacity status=available
+MAP -> CDS /agent-sessions message path remains the only product path
+remote host / SSH / image / env remain operator/debug fallback evidence only
 ```
-
-`CDS_AGENT_SIDECAR_IMAGE` 必须是 remote host 可 `docker pull` 的镜像引用。本仓库的 `claude-sdk-sidecar/Dockerfile` 只能作为候选镜像构建来源；CDS 不会在 remote deploy 阶段从仓库自动 build。
 
 执行入口：
 
 ```bash
-CDS_HOST=https://cds.miduo.org \
-CDS_AGENT_REMOTE_HOST_APPLY=1 \
-CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1 \
-CDS_AGENT_SIDECAR_IMAGE=<image> \
-  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
+npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts
+scripts/smoke-cds-agent-managed-runtime-capacity.sh
+scripts/check-cds-agent-progress-consistency.sh
 ```
 
 完成后必须通过：
 
 ```bash
-CDS_HOST=https://cds.miduo.org \
-SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
-  bash scripts/smoke-cds-agent-shared-service-pool.sh
+scripts/print-cds-agent-current-progress.sh
+scripts/audit-cds-agent-goal.sh
 ```
+
+## 2026-05-18 23:25 CST - R0.6 reconciler 最小闭环
+
+问题：R0.5 只有 `/runtime-capacity` fact source，面板长期停在 R0.6，用户看不到实际推进。
+
+处理：
+
+- CDS 新增 `POST /api/projects/:id/runtime-capacity/reconcile`。
+- dry-run 返回 `ensure-build-profile`、`ensure-branch-service`、`verify-product-capacity` 三步计划。
+- apply 在 shared-service project 内创建/修复 `claude-agent-sdk-runtime` BuildProfile 与 `cds-managed-runtime` branch service。
+- route 测试证明 apply 后 `/runtime-capacity` 变为 available，并且 `/agent-sessions/{id}/messages` 继续走 CDS branch-service official SDK transport。
+- progress/status/audit 从 R0.6 推进到 R0.7，避免继续显示“一个任务原地没动”。
+
+耗时：约 35 分钟。
+
+验证：
+
+- `npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts`：6/6 pass。
+- `npm --prefix cds run build`：pass。
+
+剩余：R0.7 需要把 reconciler 接到真实 CDS container start/recover 与 live evidence，使 shared-service official SDK runtime running > 0。
 
 ## 承诺的记录方式
 
