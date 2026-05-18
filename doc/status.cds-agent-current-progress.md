@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 15:41 Asia/Shanghai
+> 更新时间：2026-05-18 15:44 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -50,6 +50,8 @@
 - 最新目标审计仍是 `goalStatus=not_complete`，`A0/D0/N6/pass`，但 `R0=pending`，并明确 `P0 branch isolation/shared pool is not recovered`。
 - 一周期摘要在 R0 runtime pool 未恢复前显示为 `blocked-by-runtime-pool`；旧 commit/runtime drift 不再抢占当前阻塞原因。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
+- compose parser 已补防复发：`claude-sidecar` 旧命名也会被识别为 agent runtime sidecar，不会导入成业务 branch BuildProfile。
+- `smoke-cds-agent-shared-service-pool.sh` 已改为引用当前 runtime pool contamination report，避免本地防复发入口因旧文件名误报。
 
 最新目标审计耗时 `22s`，最耗时步骤：
 
@@ -62,6 +64,14 @@
 当前 guardrail failure 只剩：
 
 - `P0 branch isolation/shared pool is not recovered`
+
+本轮新增本地验证：
+
+| 命令 | 结果 | 耗时 |
+| --- | --- | --- |
+| `bash scripts/smoke-cds-agent-branch-isolation.sh` | pass | <1s |
+| `bash scripts/smoke-cds-agent-shared-service-pool.sh` | pass | <1s |
+| `npm --prefix cds test -- tests/services/compose-parser.test.ts` | 36 passed | 334ms |
 
 ## 下一步
 

@@ -891,6 +891,8 @@ function isAgentRuntimeSidecarService(serviceId: string, entry: ComposeServiceEn
   const text = [
     serviceId,
     entry.image,
+    entry.container_name,
+    ...(entry.volumes || []),
     extractCommand(entry.command),
     extractCommand(entry.entrypoint),
     env.SIDECAR_AGENT_ADAPTER,
@@ -899,6 +901,7 @@ function isAgentRuntimeSidecarService(serviceId: string, entry: ComposeServiceEn
 
   if (!text.trim()) return false;
   if (text.includes('claude-agent-sdk-runtime')) return true;
+  if (text.includes('claude-sidecar')) return true;
   if (text.includes('claude-sdk-sidecar')) return true;
   if (text.includes('sidecar_agent_adapter') && text.includes('claude-agent-sdk')) return true;
   if (env.SIDECAR_AGENT_ADAPTER === 'claude-agent-sdk') return true;

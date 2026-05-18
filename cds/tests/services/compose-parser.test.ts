@@ -321,6 +321,30 @@ services:
     expect(cfg!.infraServices.map((service) => service.id)).not.toContain('claude-agent-sdk-runtime-v2');
   });
 
+  it('does not import legacy claude-sidecar runtime services as branch BuildProfiles', () => {
+    const yaml = `
+services:
+  api:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    volumes:
+      - ./prd-api:/repo/prd-api
+    ports:
+      - "5000"
+  claude-sidecar:
+    image: prdagent/claude-sidecar:dev
+    container_name: claude-sidecar-prd-agent
+    volumes:
+      - ./claude-sdk-sidecar:/app
+    ports:
+      - "7400"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 7400
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles.map((profile) => profile.id)).toEqual(['api']);
+    expect(cfg!.infraServices.map((service) => service.id)).not.toContain('claude-sidecar');
+  });
+
   it('still imports ordinary worker services that are not agent runtime sidecars', () => {
     const yaml = `
 services:

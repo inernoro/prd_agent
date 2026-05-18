@@ -55,7 +55,7 @@ bash "$ROOT_DIR/scripts/smoke-cds-agent-branch-isolation.sh"
 printf '\n>>> [2/5] 本地文档与恢复入口存在\n'
 [[ -f "$ROOT_DIR/doc/guide.cds-agent-runtime-pool-recovery.md" ]] \
   || fail_now "缺少 runtime pool recovery runbook"
-[[ -f "$ROOT_DIR/doc/report.cds-agent-sidecar-contamination-2026-05-18.md" ]] \
+[[ -f "$ROOT_DIR/doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md" ]] \
   || fail_now "缺少 sidecar contamination report"
 if ! grep -Eq 'shared-service|shared-sidecar-pool' "$ROOT_DIR/doc/guide.cds-agent-runtime-pool-recovery.md"; then
   fail_now "runtime pool recovery runbook 未描述 shared-service/shared-sidecar-pool"
