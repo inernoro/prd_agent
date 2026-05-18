@@ -18,6 +18,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 smoke_require_tools
@@ -25,6 +26,10 @@ smoke_infer_preview_host
 export SMOKE_TEST_HOST="$SMOKE_HOST"
 
 CYCLE_ID="$(date +%Y%m%d%H%M%S)"
+cycle_created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+git_branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf '')"
+git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf '')"
+git_commit_short="$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || printf '')"
 SMOKE_CDS_AGENT_CYCLE_DIR="${SMOKE_CDS_AGENT_CYCLE_DIR:-/tmp/cds-agent-cycle-$CYCLE_ID}"
 
 mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
@@ -376,6 +381,10 @@ finish_cycle() {
 
   jq -n \
     --arg cycleId "$CYCLE_ID" \
+    --arg createdAt "$cycle_created_at" \
+    --arg gitBranch "$git_branch" \
+    --arg gitCommit "$git_commit" \
+    --arg gitCommitShort "$git_commit_short" \
     --arg cycleStatus "$cycle_status" \
     --arg nextCommand "$next_command" \
     --arg blockingReason "$blocking_reason" \
@@ -458,6 +467,12 @@ finish_cycle() {
     })) as $gatesNotPass |
     {
       cycleId: $cycleId,
+      createdAt: $createdAt,
+      git: {
+        branch: $gitBranch,
+        commit: $gitCommit,
+        commitShort: $gitCommitShort
+      },
       status: $cycleStatus,
       commercialComplete: $commercialComplete,
       blockingReason: $blockingReason,
