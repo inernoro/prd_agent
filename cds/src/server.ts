@@ -464,6 +464,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
+    [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
     [/^POST \/branches\/(.+)\/reset$/, '重置分支状态'],
     [/^GET \/branches\/(.+)\/logs$/, '查看操作日志'],

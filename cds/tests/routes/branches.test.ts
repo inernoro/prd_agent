@@ -1155,4 +1155,48 @@ describe('Branch Routes', () => {
       expect(body.error).toContain('获取分支列表失败');
     });
   });
+
+  // ── 轻量重启 + 分支系统日志（2026-05-18）──
+
+  describe('POST /api/branches/:id/restart', () => {
+    it('404 when branch does not exist', async () => {
+      const res = await request(server, 'POST', '/api/branches/nope/restart');
+      expect(res.status).toBe(404);
+    });
+
+    it('409 when branch has no built containers', async () => {
+      stateService.addBranch({
+        id: 'feat-x', branch: 'feat/x', worktreePath: '/tmp/wt/feat-x',
+        services: {}, status: 'idle', createdAt: '2026-02-12T00:00:00Z',
+        projectId: 'default',
+      });
+      const res = await request(server, 'POST', '/api/branches/feat-x/restart');
+      expect(res.status).toBe(409);
+    });
+
+  });
+
+  describe('GET /api/branches/:id/activity-logs', () => {
+    it('404 for unknown branch', async () => {
+      const res = await request(server, 'GET', '/api/branches/nope/activity-logs');
+      expect(res.status).toBe(404);
+    });
+
+    it('只返回本分支事件且最新在前', async () => {
+      stateService.addBranch({
+        id: 'feat-z', branch: 'feat/z', worktreePath: '/tmp/wt/feat-z',
+        services: {}, status: 'idle', createdAt: '2026-02-12T00:00:00Z', projectId: 'default',
+      });
+      stateService.appendActivityLog('default', { type: 'deploy', branchId: 'feat-z', actor: 'user', at: '2026-05-18T00:00:00.000Z' });
+      stateService.appendActivityLog('default', { type: 'crash', branchId: 'feat-z', actor: 'auto-restart', at: '2026-05-18T01:00:00.000Z' });
+      stateService.appendActivityLog('default', { type: 'stop', branchId: 'other-branch', actor: 'user', at: '2026-05-18T02:00:00.000Z' });
+      stateService.save();
+      const res = await request(server, 'GET', '/api/branches/feat-z/activity-logs');
+      expect(res.status).toBe(200);
+      const body = res.body as { logs: Array<{ type: string; branchId: string }> };
+      expect(body.logs.every((e) => e.branchId === 'feat-z')).toBe(true);
+      expect(body.logs[0].type).toBe('crash'); // 最新在前
+      expect(body.logs.map((e) => e.type)).toEqual(['crash', 'deploy']);
+    });
+  });
 });

@@ -4212,6 +4212,112 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── POST /api/branches/:id/restart — 轻量重启（不重建）──
+  //
+  // 与 /deploy 区分：/deploy 是 git pull + 重新构建镜像 + docker run（有代码
+  // 变更时用）；/restart 只对已构建好的容器做 docker restart（没 bug、只是
+  // 服务被停了，直接拉起来，秒级，不动代码）。复用 containerService
+  // .restartServiceInPlace（docker restart + 存活探测）。
+  router.post('/branches/:id/restart', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const remoteExecutor =
+      entry.executorId && registry
+        ? registry.getAll().find(n => n.id === entry.executorId && n.role !== 'embedded')
+        : null;
+    if (remoteExecutor) {
+      res.status(409).json({ error: '该分支运行在远端执行器，请使用「重新部署」' });
+      return;
+    }
+    const services = Object.values(entry.services);
+    if (services.length === 0) {
+      res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
+      return;
+    }
+    try {
+      entry.status = 'restarting';
+      for (const svc of services) svc.status = 'starting';
+      stateService.save();
+
+      const failed: string[] = [];
+      for (const svc of services) {
+        const ok = await containerService.restartServiceInPlace(svc.containerName);
+        if (ok) {
+          svc.status = 'running';
+        } else {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
+          failed.push(svc.containerName);
+        }
+      }
+
+      if (failed.length === 0) {
+        entry.status = 'running';
+        entry.lastStoppedAt = undefined;
+        entry.lastStopReason = undefined;
+        entry.lastStopSource = undefined;
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'restart',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+          note: '手动重新启动（docker restart，未重建代码）',
+        });
+        stateService.save();
+        res.json({ message: '所有服务已重新启动' });
+      } else {
+        entry.status = 'error';
+        entry.errorMessage = `${failed.length} 个容器重启失败：${failed.join(', ')}`;
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'restart',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+          note: `重新启动部分失败（${failed.join(', ')}），建议「重新部署」`,
+        });
+        stateService.save();
+        res.status(409).json({
+          error: `${failed.length} 个容器重启失败，建议改用「重新部署」`,
+          failed,
+        });
+      }
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── GET /api/branches/:id/activity-logs — 分支维度系统日志（生命周期时间线）──
+  //
+  // 复用 stateService.getActivityLogs（已按最新在前 reverse），按 branchId
+  // 过滤出本分支的 部署 / 停止 / 崩溃 / 重启 / 回收 等事件，供分支详情页
+  // 「系统日志」子页签展示"谁停的 / 何时 / 为什么"。
+  router.get('/branches/:id/activity-logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+    const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const all = stateService.getActivityLogs(entry.projectId, { limit: 200, sinceIso });
+    const logs = all.filter((e) => e.branchId === id).slice(0, limit);
+    res.json({ branchId: id, logs, total: logs.length });
+  });
+
   // ── Set default branch ──
 
   router.post('/branches/:id/set-default', async (req, res) => {

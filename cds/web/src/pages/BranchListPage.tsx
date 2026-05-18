@@ -2397,7 +2397,7 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                 {sortedBranches.map((branch) => (
                   <BranchCard
                     key={branch.id}
@@ -3631,7 +3631,9 @@ function BranchCard({
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
           <GitBranch className="h-4 w-4 shrink-0 text-sky-500" />
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
-          <span className="shrink-0 font-mono text-xs">{branch.commitSha ? branch.commitSha.slice(0, 7) : '未提交'}</span>
+          <span className="shrink-0 whitespace-nowrap text-xs" title={timeBadge.title}>
+            {timeBadge.label} {timeBadge.text}
+          </span>
         </div>
         {/*
           重设计(2026-05-04 用户主诉求):

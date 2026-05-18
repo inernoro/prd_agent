@@ -570,9 +570,10 @@ export interface BranchEntry {
    *   - 'user'      用户在 UI 上点了停止
    *   - 'scheduler' 调度器自动降温/驱逐
    *   - 'executor'  远端执行器
-   *   - 'system'    其他系统侧（垃圾回收等）
+   *   - 'crash'     容器自行退出（崩溃 / OOM / docker kill），由 auto-restart 巡检发现
+   *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -1227,6 +1228,8 @@ export interface ProjectActivityLog {
     | 'deploy-failed'  // 同上但部分 / 全部 service error
     | 'pull'           // POST /branches/:id/pull
     | 'stop'           // POST /branches/:id/stop
+    | 'restart'        // POST /branches/:id/restart（轻量重启，未重建）
+    | 'crash'          // 容器异常退出，auto-restart 巡检发现
     | 'colormark-on'   // 标记调试中
     | 'colormark-off'  // 取消调试中
     | 'ai-occupy'      // AI agent 开始操作

@@ -803,6 +803,16 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
+  try {
+    stateService.appendActivityLog(branch.projectId, {
+      type: 'branch-deleted',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: 'janitor',
+      note: 'Janitor 自动回收：停止容器并移除 worktree（超过保留期 / 磁盘清理）',
+    });
+  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
   for (const svc of Object.values(branch.services)) {
     try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
   }
@@ -981,11 +991,40 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)
 
         const attemptKey = `app:${key}`;
+        const isNewCrash = !restartAttempts.has(attemptKey);
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
+        // 容器自行退出（崩溃 / OOM / docker kill）首次被巡检发现：留痕，
+        // 否则用户只看到分支变灰、"停止次数 0"、零日志（莫名其妙停止）。
+        if (isNewCrash) {
+          const reason = `容器异常退出（docker 显示未运行），auto-restart 介入尝试拉起：${found.containerName}`;
+          branch.lastStoppedAt = new Date().toISOString();
+          branch.lastStopReason = reason;
+          branch.lastStopSource = 'crash';
+          stateService.incrementBranchStat(branch.id, 'stopCount');
+          try {
+            stateService.appendActivityLog(branch.projectId, {
+              type: 'crash',
+              branchId: branch.id,
+              branchName: branch.branch,
+              actor: 'auto-restart',
+              note: reason,
+            });
+          } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+          stateService.save();
+        }
         if (now < att.nextAtMs) continue;
         if (att.count >= MAX_RETRIES) {
           svc.status = 'error';
           svc.errorMessage = `auto-restart 已尝试 ${MAX_RETRIES} 次仍失败,请手动 redeploy 或查看容器日志(${found.containerName})`;
+          try {
+            stateService.appendActivityLog(branch.projectId, {
+              type: 'deploy-failed',
+              branchId: branch.id,
+              branchName: branch.branch,
+              actor: 'auto-restart',
+              note: `auto-restart 重试 ${MAX_RETRIES} 次仍失败，已标记 error，请手动重新部署`,
+            });
+          } catch { /* 辅助 */ }
           stateService.save();
           continue;
         }
@@ -993,6 +1032,16 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (startRes.exitCode === 0) {
           console.log(`[auto-restart] app ${found.containerName} 已重启(attempt ${att.count + 1})`);
           restartAttempts.delete(attemptKey);
+          try {
+            stateService.appendActivityLog(branch.projectId, {
+              type: 'restart',
+              branchId: branch.id,
+              branchName: branch.branch,
+              actor: 'auto-restart',
+              note: `容器异常退出后由 auto-restart 自动拉起成功（第 ${att.count + 1} 次尝试）：${found.containerName}`,
+            });
+          } catch { /* 辅助 */ }
+          stateService.save();
         } else {
           att.count += 1;
           att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
