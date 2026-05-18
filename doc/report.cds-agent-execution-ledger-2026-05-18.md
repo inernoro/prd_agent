@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:00 Asia/Shanghai：
+截至 2026-05-18 20:03 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -23,6 +23,7 @@
 - 已解决：候选 GHCR tag 已在本地 Docker 中创建；仍未 push。
 - 已解决：GHCR 发布增加手动 GitHub Actions 入口，不再只能由本机 Codex push。
 - 已解决：GHCR 手动发布入口有只读 handoff，进度面板默认指向 handoff 而不是本机 push；handoff 使用当前 commit tag，避免旧本地候选 tag 混淆。
+- 已解决：sidecar image 发布后到 remote host SSH pull 前增加只读 registry manifest 验证门，减少远程排障面。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -61,6 +62,7 @@
 | 19:54 | 外部 registry push 被安全策略拦截，仍需要一个可审计的发布路径 | 新增 `.github/workflows/cds-sidecar-image.yml`，仅 `workflow_dispatch` 手动发布 GHCR image | workflow file | local edit | GitHub UI 手动触发后输出 `CDS_AGENT_SIDECAR_IMAGE` 和 digest |
 | 19:58 | workflow 存在但执行入口仍分散，进度面板默认仍容易让人走本机 push | 新增 `scripts/print-cds-agent-sidecar-publish-handoff.sh`，并让进度面板默认指向它 | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | <1s | Handoff 输出 Actions URL、image tag、CLI 等价命令、本机 push 替代命令 |
 | 20:00 | handoff 同时展示 workflow tag 和旧 local candidate，容易让人以为有两个目标 image | local push alternative 改为先按当前 commit tag retag，再 push；旧 candidate 只作为 previousLocalCandidate | handoff script diff | <1s | 发布目标统一到当前 commit tag |
+| 20:03 | image 发布成功与 remote host pull 失败之间缺少中间诊断，容易把 registry 不可见误判成 host/SSH 问题 | 新增 `scripts/verify-cds-agent-sidecar-registry-image.sh`，默认 dry-run，显式开启后只读查询 GHCR manifest | `/tmp/cds-agent-sidecar-registry-image-current.json` | <1s dry-run | 新增 `SIDECAR_REGISTRY_MANIFEST` gate；handoff 输出发布后验证命令 |
 
 ## 本轮暴露的问题
 
@@ -575,6 +577,25 @@
 
 优化：外部发布入口现在从“命令散落在聊天里”收敛成一个只读 handoff 文件。
 
+### 33. registry 可见性应在 remote host SSH 前验证
+
+问题：即使 GitHub Actions 或本机 push 成功，后续 remote host `docker pull` 失败也可能来自三类原因：image tag 不存在、registry 权限不可读、host 本身网络/认证问题。如果直接 SSH 到 host 才发现失败，排障面过大。
+
+处理：
+
+- 新增 `scripts/verify-cds-agent-sidecar-registry-image.sh`。
+- 默认只做参数校验和 dry-run，不访问 registry。
+- 显式 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 时，对 GHCR 走匿名 pull token + manifest HEAD 查询，只读验证 tag/digest 可见。
+- handoff 在 GitHub Actions 发布后直接给出 manifest 验证命令。
+- current progress 和 lifecycle overview 增加 `Sidecar registry manifest` 状态。
+
+证据：
+
+- 脚本写入 `/tmp/cds-agent-sidecar-registry-image-current.json`。
+- `scripts/print-cds-agent-current-progress.sh` 会展示 `Sidecar registry manifest`。
+
+优化：R0.3 前置链路从“publish -> remote SSH pull”拆为“publish -> registry manifest visible -> remote SSH pull”，减少远程环境排障。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -594,6 +615,7 @@
 | sidecar image preflight | <1s | 完全可本地化 | 先证明 build context，后续只追 registry image 和 remote host pull 权限 |
 | sidecar image build smoke | 约 65s 当前通过 | 完全可本地化 | Docker daemon、base image pull、Python dependency install 都在本地 build gate 暴露，不进入远程 deploy |
 | sidecar image publish dry-run | <1s | 完全可本地化 | registry target/tag/push 显式化；默认不 push、不 deploy |
+| sidecar registry manifest verify | <1s dry-run；真实 GHCR 查询通常 1-5s | 部分本地化 | 先确认 image tag 在 registry 可见，再进入 remote host SSH/docker pull |
 | remote sidecar pull dry-run | <1s | 部分本地化 | 先校验 SSH/image 输入；显式开启后才访问目标 host 执行 docker pull |
 | dynamic exact next step | <1s | 完全可本地化 | 按 gate 顺序给下一条命令，减少人工在多个 handoff 之间判断 |
 

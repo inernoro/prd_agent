@@ -104,6 +104,16 @@ CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
 
 也可以在 GitHub Actions 手动触发 `CDS Sidecar Image` workflow 发布 GHCR image。该 workflow 只支持 `workflow_dispatch`，不会随普通 push 自动发布；完成后从 workflow summary 复制 `CDS_AGENT_SIDECAR_IMAGE`。
 
+发布完成后，先做只读 registry manifest 验证，再 SSH 到 remote host 做 `docker pull`：
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
+CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1 \
+  scripts/verify-cds-agent-sidecar-registry-image.sh
+```
+
+这个检查默认 dry-run；只有显式设置 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 才访问 registry。当前脚本支持 GHCR manifest 可见性验证。它不能替代目标 remote host 的 `docker pull`，但可以先排除 image tag 不存在或 registry manifest 不可读的问题。
+
 目标 host pull 验证默认也只做 dry-run。只有显式设置 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才会 SSH 到目标 host 执行 `docker pull`，不会创建 CDS host，也不会运行 sidecar：
 
 ```bash

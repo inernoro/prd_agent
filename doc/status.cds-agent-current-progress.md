@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 20:00 Asia/Shanghai
+> **更新时间**：2026-05-18 20:03 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -22,6 +22,7 @@
 | `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行 |
 | `SIDECAR_LOCAL_REGISTRY_TAG` | pass | 候选 tag `ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84` 已本地创建；`pushAttempted=false` |
 | `SIDECAR_MANUAL_CI_PUBLISH` | ready | `.github/workflows/cds-sidecar-image.yml` 只支持手动 `workflow_dispatch` 发布 GHCR image |
+| `SIDECAR_REGISTRY_MANIFEST` | not checked | 发布完成后先用只读 registry manifest 检查确认 image tag 可见，再 SSH 到 remote host |
 | `REMOTE_HOST_PULL` | blocked | 默认报告 `missing_config`；需要 remote host SSH 参数和 registry image，显式 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` |
 
 固定查看入口：
@@ -71,6 +72,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | sidecar local docker build | `build_pass` | `/tmp/cds-agent-sidecar-image-build-current.json` |
 | sidecar registry publish | `push_ready` | `/tmp/cds-agent-sidecar-image-publish-current.json` |
 | sidecar local registry tag | `tagPassed=true`、`pushAttempted=false` | `/tmp/cds-agent-sidecar-image-publish-current.json` |
+| sidecar registry manifest | `not checked` | `/tmp/cds-agent-sidecar-registry-image-current.json` |
 | remote host docker pull | `missing_config` | `/tmp/cds-agent-remote-sidecar-pull-current.json` |
 
 ## 4. 下一步最小计划
@@ -79,12 +81,13 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 
 | 顺序 | 动作 | 需要输入 | 成功证据 |
 | --- | --- | --- | --- |
-| 1 | 发布 sidecar image | 手动 GitHub Actions dispatch 或显式批准本机 GHCR push | `CDS_AGENT_SIDECAR_IMAGE` 可被远程 host `docker pull` |
-| 2 | 创建/登记 enabled remote host | `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、SSH private key | `enabledHostCount > 0` |
-| 3 | 部署 shared official SDK runtime sidecar | `CDS_AGENT_SIDECAR_IMAGE`，可选 `CDS_AGENT_SIDECAR_PORT=7400` | `sharedRunning > 0` |
-| 4 | 跑 shared-service pool audit | 无新增输入 | `smoke-cds-agent-shared-service-pool.sh` pass |
-| 5 | 刷新 MAP runtime-status | 登录态或 API | `diagnostics.healthyCount > 0`，R0 pass |
-| 6 | 进入 R1/S1/S2/S3 | Anthropic/Claude-compatible profile key | one-cycle 产生真实只读、审批、取消证据 |
+| 1 | 发布 sidecar image | 手动 GitHub Actions dispatch 或显式批准本机 GHCR push | workflow summary 输出 `CDS_AGENT_SIDECAR_IMAGE` |
+| 2 | 只读验证 registry manifest | `CDS_AGENT_SIDECAR_IMAGE` | `/tmp/cds-agent-sidecar-registry-image-current.json` 为 `manifest_visible` |
+| 3 | 创建/登记 enabled remote host | `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、SSH private key | `enabledHostCount > 0` |
+| 4 | 验证 remote host 可 pull image 并部署 shared runtime | `CDS_AGENT_SIDECAR_IMAGE`，可选 `CDS_AGENT_SIDECAR_PORT=7400` | `remote pull=pass`、`sharedRunning > 0` |
+| 5 | 跑 shared-service pool audit | 无新增输入 | `smoke-cds-agent-shared-service-pool.sh` pass |
+| 6 | 刷新 MAP runtime-status | 登录态或 API | `diagnostics.healthyCount > 0`，R0 pass |
+| 7 | 进入 R1/S1/S2/S3 | Anthropic/Claude-compatible profile key | one-cycle 产生真实只读、审批、取消证据 |
 
 执行入口：
 
@@ -154,6 +157,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | local registry tag | `/tmp/cds-agent-sidecar-image-publish-current.json` | 本地 tag 已创建，未 push、未 deploy | <1s |
 | manual CI publish workflow | `.github/workflows/cds-sidecar-image.yml` | 手动触发，默认 tag 为 commit SHA；不会随普通 push 自动发布 | local syntax/read |
 | sidecar publish handoff | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | 输出 GitHub Actions 手动发布 URL、image tag、CLI 等价命令和本机 push 替代路径 | <1s |
+| sidecar registry manifest verify | `/tmp/cds-agent-sidecar-registry-image-current.json` | 默认 dry-run；显式 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 后只读查询 GHCR manifest | <1s dry-run |
 
 ## 7. 时间和问题账本
 
@@ -184,6 +188,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | sidecar image preflight | <1s | 本地先拦截 Dockerfile/context/image 引用问题，避免 R0.3 到远程 `docker pull` 阶段才失败 |
 | sidecar image build smoke | 约 65s 当前通过 | 把 Docker daemon / base image pull / Python dependency install 问题和 R0 远程 deploy 分开 |
 | sidecar image publish dry-run | <1s | 显式拆出 registry tag/push 阶段，避免把本地 build pass 误认为 remote host pullable |
+| sidecar registry manifest verify | <1s dry-run；真实 GHCR 查询通常 1-5s | 在 SSH 到 remote host 前先证明 image tag 在 registry 可见，减少远程排障面 |
 | remote sidecar pull dry-run | <1s | 独立验证目标 host 是否可 pull image；不创建 CDS host、不运行 sidecar |
 | dynamic exact next step | <1s | 不再固定跳到 remote-host handoff；先走当前最靠前的失败 gate |
 
@@ -243,6 +248,14 @@ CDS_AGENT_SIDECAR_IMAGE_PUSH=1 \
 ```
 
 验证目标 remote host 能否 pull image，不创建 CDS host、不运行 sidecar：
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
+CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1 \
+  scripts/verify-cds-agent-sidecar-registry-image.sh
+```
+
+确认 registry manifest 可见后，再验证目标 remote host 能否 pull image：
 
 ```bash
 CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \

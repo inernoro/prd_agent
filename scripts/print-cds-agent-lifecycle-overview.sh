@@ -14,6 +14,7 @@ OUTPUT="${CDS_AGENT_LIFECYCLE_OVERVIEW:-}"
 REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
+SIDECAR_REGISTRY_VERIFY_REPORT="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
 REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
 
 fail() {
@@ -50,6 +51,7 @@ image_next_action="unknown"
 image_build_context="unknown"
 image_local_build="not checked"
 image_publish="not checked"
+image_registry_visible="not checked"
 remote_pull="not checked"
 if [[ -f "$READINESS" ]]; then
   ready_for_r0=$(jq -r '.readyForR0Apply // false' "$READINESS")
@@ -69,6 +71,9 @@ if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
 fi
 if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
+fi
+if [[ -f "$SIDECAR_REGISTRY_VERIFY_REPORT" ]]; then
+  image_registry_visible=$(jq -r '.status // "unknown"' "$SIDECAR_REGISTRY_VERIFY_REPORT")
 fi
 if [[ -f "$REMOTE_PULL_REPORT" ]]; then
   remote_pull=$(jq -r '.status // "unknown"' "$REMOTE_PULL_REPORT")
@@ -129,16 +134,18 @@ $deployment_advice
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
 - Sidecar registry publish: $image_publish
+- Sidecar registry manifest: $image_registry_visible
 - Remote host docker pull: $remote_pull
 
 ## Critical Path
 
-1. R0.2: register/reuse enabled remote host. ETA after inputs: 1-3 min.
-2. R0.3: deploy shared official SDK sidecar image. ETA after image/host: 2-5 min.
-3. R0V: run shared pool post-check. ETA: 15-30 sec.
-4. R1: configure Anthropic/Claude-compatible default profile. ETA: 5-15 min.
-5. S1/S2/S3: run provider read-only, approval, and stop cycle. ETA: 10-25 min.
-6. V1: capture real live-runtime page evidence. ETA: 3-8 min.
+1. R0.0: publish sidecar image and verify registry manifest. ETA after GitHub Actions/manual push: 15-60 sec.
+2. R0.2: register/reuse enabled remote host. ETA after inputs: 1-3 min.
+3. R0.3: verify remote host pull and deploy shared official SDK sidecar image. ETA after image/host: 2-5 min.
+4. R0V: run shared pool post-check. ETA: 15-30 sec.
+5. R1: configure Anthropic/Claude-compatible default profile. ETA: 5-15 min.
+6. S1/S2/S3: run provider read-only, approval, and stop cycle. ETA: 10-25 min.
+7. V1: capture real live-runtime page evidence. ETA: 3-8 min.
 
 ## Fixed Inspection Commands
 
@@ -155,6 +162,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-current-with-readiness.jso
 - R0 readiness: $READINESS
 - sidecar image build smoke: $SIDECAR_IMAGE_BUILD_REPORT
 - sidecar image publish: $SIDECAR_IMAGE_PUBLISH_REPORT
+- sidecar registry manifest: $SIDECAR_REGISTRY_VERIFY_REPORT
 - remote sidecar pull: $REMOTE_PULL_REPORT
 - R0 handoff: /tmp/cds-agent-r0-operator-handoff-current.md
 - N6 summary: /tmp/cds-agent-n6-non-code-compatibility-current.json

@@ -11,6 +11,7 @@ N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-cur
 R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
+SIDECAR_REGISTRY_VERIFY_REPORT="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
 REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
 SIDECAR_PUBLISH_HANDOFF="${CDS_AGENT_SIDECAR_PUBLISH_HANDOFF:-/tmp/cds-agent-sidecar-publish-handoff-current.md}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,6 +76,7 @@ image_publish="not checked"
 image_publish_candidate="ghcr.io/inernoro/prd-agent/claude-sidecar:$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
 image_publish_tag="not checked"
 image_push_attempted="false"
+image_registry_visible="not checked"
 remote_pull="not checked"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
@@ -93,6 +95,9 @@ if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_push_attempted=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.pushAttempted // false')
   image_publish_candidate=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.candidateTargetImage // empty')
   [[ -n "$image_publish_candidate" ]] || image_publish_candidate="ghcr.io/inernoro/prd-agent/claude-sidecar:$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
+fi
+if [[ -f "$SIDECAR_REGISTRY_VERIFY_REPORT" ]]; then
+  image_registry_visible=$(jq_read "$SIDECAR_REGISTRY_VERIFY_REPORT" '.status // "unknown"')
 fi
 if [[ -f "$REMOTE_PULL_REPORT" ]]; then
   remote_pull=$(jq_read "$REMOTE_PULL_REPORT" '.status // "unknown"')
@@ -128,10 +133,19 @@ elif [[ "$image_publish" != "push_ready" && "$image_publish" != "push_pass" ]]; 
   exact_next_step=$(printf '%s\n\n```bash\n%s\n```' \
     'Choose a registry-qualified image tag and run publish dry-run. This does not push unless `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` is set.' \
     "CDS_AGENT_SIDECAR_IMAGE=$image_publish_candidate scripts/publish-cds-agent-sidecar-image.sh")
-elif [[ "$image_publish" == "push_ready" ]]; then
+elif [[ "$image_publish" == "push_ready" && "$image_registry_visible" != "manifest_visible" ]]; then
   exact_next_step=$(printf '%s\n\n```bash\n%s\n```' \
     'Use the manual GitHub Actions publish handoff. This keeps the external registry write auditable and does not push from Codex.' \
     'scripts/print-cds-agent-sidecar-publish-handoff.sh')
+elif [[ "$image_registry_visible" != "manifest_visible" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Verify the sidecar image is visible in the registry before SSHing to a remote host.
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1 scripts/verify-cds-agent-sidecar-registry-image.sh
+```
+EOF
+)
 elif [[ "$remote_pull" != "dry_run_ready" && "$remote_pull" != "pull_pass" ]]; then
   exact_next_step=$(cat <<'EOF'
 Validate remote host pull prerequisites. This does not SSH unless `CDS_AGENT_REMOTE_PULL_VERIFY=1` is set.
@@ -198,6 +212,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Sidecar registry publish: $image_publish
 - Sidecar local registry tag: $image_publish_tag
 - Sidecar push attempted: $image_push_attempted
+- Sidecar registry manifest: $image_registry_visible
 - Remote host docker pull: $remote_pull
 
 ## Task Board
@@ -223,6 +238,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - imagePublish: $image_publish
 - imagePublishTag: $image_publish_tag
 - imagePushAttempted: $image_push_attempted
+- imageRegistryManifest: $image_registry_visible
 - remotePull: $remote_pull
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
@@ -247,6 +263,7 @@ $exact_next_step
 - R0 readiness summary: $R0_READINESS_SUMMARY
 - sidecar image build summary: $SIDECAR_IMAGE_BUILD_REPORT
 - sidecar image publish summary: $SIDECAR_IMAGE_PUBLISH_REPORT
+- sidecar registry manifest summary: $SIDECAR_REGISTRY_VERIFY_REPORT
 - remote sidecar pull summary: $REMOTE_PULL_REPORT
 - sidecar publish handoff: $SIDECAR_PUBLISH_HANDOFF
 EOF

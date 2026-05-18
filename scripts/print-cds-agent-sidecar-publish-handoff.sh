@@ -61,6 +61,10 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf '3. Set `image_tag` to `%s`.\n' "$tag"
   printf '4. Keep `docker_platforms=linux/amd64` unless the remote host needs multi-arch.\n'
   printf '5. After it completes, copy `CDS_AGENT_SIDECAR_IMAGE` from the workflow summary.\n\n'
+  printf '6. Verify the registry manifest before trying remote host SSH pull:\n\n'
+  printf '```bash\n'
+  printf 'CDS_AGENT_SIDECAR_IMAGE=%s CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1 scripts/verify-cds-agent-sidecar-registry-image.sh\n' "$workflow_image"
+  printf '```\n\n'
 
   printf '## CLI Equivalent\n\n'
   printf 'This is also an external write. Run it only from an approved GitHub session.\n\n'
@@ -73,6 +77,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf '```bash\n'
   printf 'CDS_AGENT_SIDECAR_IMAGE=%s CDS_AGENT_SIDECAR_IMAGE_TAG=1 scripts/publish-cds-agent-sidecar-image.sh\n' "$workflow_image"
   printf 'CDS_AGENT_SIDECAR_IMAGE=%s CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh\n' "$workflow_image"
+  printf 'CDS_AGENT_SIDECAR_IMAGE=%s CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1 scripts/verify-cds-agent-sidecar-registry-image.sh\n' "$workflow_image"
   printf '```\n'
 } > "$OUTPUT"
 
