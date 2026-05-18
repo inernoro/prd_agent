@@ -65,11 +65,13 @@ total_seconds=$(jq_read "$REMOTE_HOST_SUMMARY" '.totalSeconds // "unknown"')
 r0_readiness_line="not checked"
 image_readiness="unknown"
 image_next_action="unknown"
+image_build_context="unknown"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
   r0_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.nextAction // "unknown"')
   image_readiness=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.status // "unknown"')
   image_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.nextAction // "unknown"')
+  image_build_context=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.buildContextStatus // "unknown"')
   r0_readiness_line="readyForR0Apply=$r0_ready; nextAction=$r0_next_action"
 fi
 
@@ -100,6 +102,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Evidence refresh cost: ${total_seconds}s
 - R0 local apply readiness: $r0_readiness_line
 - Sidecar image readiness: $image_readiness; $image_next_action
+- Sidecar build context: $image_build_context
 
 ## Task Board
 
@@ -119,6 +122,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - missingConfig: $missing_config
 - invalidConfig: $invalid_config
 - imageReadiness: $image_readiness
+- imageBuildContext: $image_build_context
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
 

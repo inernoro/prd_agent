@@ -44,16 +44,19 @@ ready_for_r0="unknown"
 missing_config="unknown"
 image_readiness="unknown"
 image_next_action="unknown"
+image_build_context="unknown"
 if [[ -f "$READINESS" ]]; then
   ready_for_r0=$(jq -r '.readyForR0Apply // false' "$READINESS")
   missing_config=$(jq -r '(.missingConfig // []) | join(", ")' "$READINESS")
   image_readiness=$(jq -r '.imageReadiness.status // "unknown"' "$READINESS")
   image_next_action=$(jq -r '.imageReadiness.nextAction // "unknown"' "$READINESS")
+  image_build_context=$(jq -r '.imageReadiness.buildContextStatus // "unknown"' "$READINESS")
 else
   ready_for_r0=$(jq -r '.runtimePoolRecovery.applyReadiness.readyForR0Apply // "unknown"' "$AUDIT")
   missing_config=$(jq -r '(.runtimePoolRecovery.applyReadiness.missingConfig // []) | join(", ")' "$AUDIT")
   image_readiness=$(jq -r '.runtimePoolRecovery.applyReadiness.imageReadiness.status // "unknown"' "$AUDIT")
   image_next_action=$(jq -r '.runtimePoolRecovery.applyReadiness.imageReadiness.nextAction // "unknown"' "$AUDIT")
+  image_build_context=$(jq -r '.runtimePoolRecovery.applyReadiness.imageReadiness.buildContextStatus // "unknown"' "$AUDIT")
 fi
 [[ -n "$missing_config" ]] || missing_config="none"
 
@@ -108,6 +111,7 @@ $deployment_advice
 - Not yet started in current valid cycle: R1, S1, S2/S3, final live V1.
 - Missing R0 inputs: $missing_config
 - Sidecar image readiness: $image_readiness; $image_next_action
+- Sidecar build context: $image_build_context
 
 ## Critical Path
 

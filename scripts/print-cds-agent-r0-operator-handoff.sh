@@ -40,6 +40,8 @@ invalid=$(jq -r '(.invalidConfig // []) | join(", ")' "$READINESS_REPORT")
 warnings=$(jq -r '(.warnings // []) | join("; ")' "$READINESS_REPORT")
 image_status=$(jq -r '.imageReadiness.status // "unknown"' "$READINESS_REPORT")
 image_next_action=$(jq -r '.imageReadiness.nextAction // "unknown"' "$READINESS_REPORT")
+image_build_context_status=$(jq -r '.imageReadiness.buildContextStatus // "unknown"' "$READINESS_REPORT")
+image_preflight_report=$(jq -r '.imageReadiness.preflightReport // "unknown"' "$READINESS_REPORT")
 image_build_command=$(jq -r '.imageReadiness.candidateBuildCommand // ""' "$READINESS_REPORT")
 image_push_command=$(jq -r '.imageReadiness.candidatePushCommand // ""' "$READINESS_REPORT")
 
@@ -69,6 +71,8 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- invalidConfig: `%s`\n' "${invalid:-none}"
   printf -- '- warnings: `%s`\n\n' "${warnings:-none}"
   printf -- '- imageReadiness: `%s`\n' "$image_status"
+  printf -- '- imageBuildContext: `%s`\n' "$image_build_context_status"
+  printf -- '- imagePreflightReport: `%s`\n' "$image_preflight_report"
   printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
 
   printf '## Timeline\n\n'
@@ -87,6 +91,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Sidecar Image\n\n'
   printf 'CDS remote deployer uses `docker pull`; it does not build from this repository on the remote host.\n\n'
+  printf 'Local sidecar build context preflight is `%s`; this only proves the repository can describe a candidate image, not that the remote host can pull it.\n\n' "$image_build_context_status"
   if [[ -n "$image_build_command" ]]; then
     printf 'Candidate local build command:\n\n'
     printf '```bash\n%s\n```\n\n' "$image_build_command"

@@ -5,12 +5,15 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 EXPECTED_CDS_HOST="${CDS_AGENT_EXPECTED_CDS_HOST:-https://cds.miduo.org}"
 SIDECAR_DOCKERFILE="${CDS_AGENT_SIDECAR_DOCKERFILE:-claude-sdk-sidecar/Dockerfile}"
 SIDECAR_BUILD_CONTEXT="${CDS_AGENT_SIDECAR_BUILD_CONTEXT:-claude-sdk-sidecar}"
 SIDECAR_CANDIDATE_IMAGE="${CDS_AGENT_SIDECAR_CANDIDATE_IMAGE:-prd-agent/claude-sidecar:latest}"
+SIDECAR_IMAGE_PREFLIGHT_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PREFLIGHT_REPORT:-/tmp/cds-agent-sidecar-image-preflight-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -94,6 +97,29 @@ else
   image_next_action="ensure the remote host can docker pull this image"
 fi
 
+image_preflight='null'
+image_build_context_status="unknown"
+if [[ -x "$SCRIPT_DIR/preflight-cds-agent-sidecar-image.sh" ]]; then
+  CDS_AGENT_SIDECAR_IMAGE_PREFLIGHT_REPORT="$SIDECAR_IMAGE_PREFLIGHT_REPORT" \
+  CDS_AGENT_SIDECAR_DOCKERFILE="$SIDECAR_DOCKERFILE" \
+  CDS_AGENT_SIDECAR_BUILD_CONTEXT="$SIDECAR_BUILD_CONTEXT" \
+  CDS_AGENT_SIDECAR_CANDIDATE_IMAGE="$SIDECAR_CANDIDATE_IMAGE" \
+    bash "$SCRIPT_DIR/preflight-cds-agent-sidecar-image.sh" >/dev/null 2>&1 || true
+fi
+if [[ -f "$SIDECAR_IMAGE_PREFLIGHT_REPORT" ]]; then
+  image_preflight=$(jq -c '.' "$SIDECAR_IMAGE_PREFLIGHT_REPORT")
+  image_status=$(jq -r '.image.status // "unknown"' "$SIDECAR_IMAGE_PREFLIGHT_REPORT")
+  image_value=$(jq -r '.image.value // ""' "$SIDECAR_IMAGE_PREFLIGHT_REPORT")
+  image_next_action=$(jq -r '.image.nextAction // "unknown"' "$SIDECAR_IMAGE_PREFLIGHT_REPORT")
+  image_build_context_status=$(jq -r '.buildContext.status // "unknown"' "$SIDECAR_IMAGE_PREFLIGHT_REPORT")
+  if [[ "$image_build_context_status" == "invalid" ]]; then
+    invalid=$(append_json_string "$invalid" "sidecar build context is invalid")
+  fi
+  if [[ "$image_status" == "invalid" ]]; then
+    invalid=$(append_json_string "$invalid" "CDS_AGENT_SIDECAR_IMAGE is not safe for CDS docker pull/run")
+  fi
+fi
+
 missing_count=$(jq 'length' <<< "$missing")
 invalid_count=$(jq 'length' <<< "$invalid")
 ready_for_host_apply=false
@@ -122,6 +148,8 @@ elif [[ "$ready_for_host_apply" == "true" ]]; then
 fi
 
 mkdir -p "$(dirname "$REPORT")"
+tmp_report="${REPORT}.tmp.$$"
+trap 'rm -f "$tmp_report"' EXIT
 jq -n \
   --arg generatedAt "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
   --arg summary "$SUMMARY" \
@@ -144,6 +172,9 @@ jq -n \
   --arg imageStatus "$image_status" \
   --arg imageValue "$image_value" \
   --arg imageNextAction "$image_next_action" \
+  --arg imagePreflightReport "$SIDECAR_IMAGE_PREFLIGHT_REPORT" \
+  --arg imageBuildContextStatus "$image_build_context_status" \
+  --argjson imagePreflight "$image_preflight" \
   '{
     generatedAt: $generatedAt,
     summary: $summary,
@@ -172,10 +203,14 @@ jq -n \
       candidateImage: $sidecarCandidateImage,
       candidateBuildCommand: ("docker build -t " + $sidecarCandidateImage + " " + $sidecarBuildContext),
       candidatePushCommand: ("docker push " + $sidecarCandidateImage),
-      nextAction: $imageNextAction
+      nextAction: $imageNextAction,
+      preflightReport: $imagePreflightReport,
+      buildContextStatus: $imageBuildContextStatus,
+      preflight: $imagePreflight
     },
     safeHandoffCommand: ("scripts/print-cds-agent-remote-host-handoff.sh " + $summary)
-  }' > "$REPORT"
+  }' > "$tmp_report"
+mv "$tmp_report" "$REPORT"
 
 printf '# CDS Agent R0 Apply Readiness\n\n'
 jq -r '
@@ -190,5 +225,6 @@ jq -r '
   "- invalidConfig: `" + ((.invalidConfig // []) | join(", ")) + "`",
   "- warnings: `" + ((.warnings // []) | join(", ")) + "`",
   "- imageReadiness: `" + (.imageReadiness.status // "unknown") + "`",
+  "- imageBuildContext: `" + (.imageReadiness.buildContextStatus // "unknown") + "`",
   "- imageNextAction: `" + (.imageReadiness.nextAction // "unknown") + "`"
 ' "$REPORT"

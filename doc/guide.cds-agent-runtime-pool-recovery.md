@@ -77,6 +77,14 @@ CDS_HOST=https://cds.miduo.org \
 
 如果需要创建 remote host，必须显式设置 `CDS_AGENT_REMOTE_HOST_APPLY=1`，并提供 `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE` 或 `CDS_REMOTE_HOST_SSH_PRIVATE_KEY`。触发 sidecar 部署还要额外设置 `CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1` 和 `CDS_AGENT_SIDECAR_IMAGE`。
 
+在进入远程 deploy 前，先跑本地 image 预检：
+
+```bash
+scripts/preflight-cds-agent-sidecar-image.sh
+```
+
+该检查只证明 `claude-sdk-sidecar` build context 是否完整，以及 `CDS_AGENT_SIDECAR_IMAGE` 是否符合 CDS docker pull/run 的安全字符集；它不会访问 registry，也不会证明 remote host 一定能 pull。当前 CDS sidecar deployer 是 `docker pull` + `docker run`，不会在 remote host 上从仓库自动 build。
+
 如果 CDS 已有 enabled remote host，脚本会优先复用 `CDS_REMOTE_HOST_ID` 指定的 host；未指定时复用第一个 enabled host。此时不会再要求 `CDS_REMOTE_HOST_NAME/HOST/SSH_USER/KEY`，只在部署 shared runtime sidecar 时要求 `CDS_AGENT_SIDECAR_IMAGE`。`prepare` 报告会写出：
 
 - `targetHostId`: 本次将复用或创建的 remote host id。

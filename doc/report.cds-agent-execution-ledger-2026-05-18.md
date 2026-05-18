@@ -8,12 +8,13 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:00 Asia/Shanghai：
+截至 2026-05-18 19:08 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
 - 已解决：发布验证能证明远程 bundle 支持 `applyManifest/preconditions` 渲染。
 - 已解决：生命周期视图能直接回答“目标到哪一步、离完成多远、下一步 ETA”。
+- 已解决：sidecar image 本地构建上下文已纳入预检，不再靠人工猜 Dockerfile 是否可用。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -41,6 +42,7 @@
 | 18:18 | 脚本已有 `preflightReady/invalidConfig`，但页面 execution panel 仍只展示老的 required env 和 preconditions | 后端 `ApplyManifest` 增加 `localPreflightCommand/reportFields/optionalEnv`，前端展示 preflight 命令和报告字段 | `InfraAgentSessionsControllerTests`、`pnpm --prefix prd-admin tsc` | dotnet 有效测试约 8s；tsc 通过 | 页面能指向 `prepare.preflightReady/invalidConfig`，不再只让人猜环境变量 |
 | 18:20 | 参数给齐后仍需要从长文档拼 apply/deploy/post-check 命令，容易泄露私钥或漏 flag | 新增安全 handoff 脚本，从 summary 生成占位符命令；支持 wrapper summary 和 prepare report | `/tmp/cds-agent-remote-host-handoff.md`、`/tmp/cds-agent-remote-host-existing-handoff.md`、`/tmp/cds-agent-remote-host-invalid-handoff.md` | <1s | 输出不含私钥；existing host 路径使用 `CDS_REMOTE_HOST_ID`；invalid 路径只列错误 |
 | 19:00 | `CDS_AGENT_SIDECAR_IMAGE` 容易被误解为“仓库有 Dockerfile 就能部署”，但 CDS remote deployer 实际只 `docker pull` | R0 readiness、lifecycle overview、operator handoff 增加 image readiness；明确候选 build/push 命令不等于远程可拉取 | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md`、`scripts/print-cds-agent-lifecycle-overview.sh` | <1s | R0 阻塞被拆成 remote host SSH 参数 + pullable sidecar image，不再混成一个黑盒 |
+| 19:08 | 只知道“缺 image”还不够，下一次远程部署前还需要知道本地 sidecar build context 是否健康 | 新增 `scripts/preflight-cds-agent-sidecar-image.sh`，并接入 R0 readiness、progress board、lifecycle、handoff | `/tmp/cds-agent-sidecar-image-preflight-current.json`、`/tmp/cds-agent-r0-apply-readiness-current.json` | <1s | `buildContext=pass`、`image=missing`；远程写动作前少一个不确定项 |
 
 ## 本轮暴露的问题
 
@@ -396,6 +398,24 @@
 
 优化：R0.3 开始前必须先回答“目标 remote host 能否 `docker pull` 该 image”。没有 pullable registry tag 时，只允许 dry-run、handoff 和本地预检，不进入远程 deploy。
 
+### 24. Sidecar image 预检需要拆成本地 build context 与远程 pullability
+
+问题：`CDS_AGENT_SIDECAR_IMAGE` 的远程可拉取性不能在本地证明，但本地仍然可以证明 Dockerfile/context 是否足以生成候选 image。之前这两类问题混在一起，容易导致下一次 R0.3 失败时不知道是 Dockerfile/context 坏了，还是 registry/remote host pull 权限坏了。
+
+处理：
+
+- 新增 `scripts/preflight-cds-agent-sidecar-image.sh`。
+- 本地验证 `claude-sdk-sidecar/Dockerfile`、`requirements.txt`、`app/main.py`、`app/official_agent_sdk.py`、`/healthz`、`/readyz`、`claude-agent-sdk` dependency 和端口/healthcheck。
+- R0 readiness 嵌入 `imageReadiness.preflight`、`buildContextStatus` 和 preflight report 路径。
+- progress board、lifecycle overview、operator handoff 都显示 `Sidecar build context`。
+
+证据：
+
+- `/tmp/cds-agent-sidecar-image-preflight-current.json` 当前 `buildContext.status=pass`、`image.status=missing`。
+- `/tmp/cds-agent-r0-apply-readiness-current.json` 当前 `imageReadiness.buildContextStatus=pass`。
+
+优化：后续 R0.3 的失败面被拆成三类：本地 context、registry image、remote host docker pull。当前只剩 registry image 和 remote host。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -412,6 +432,7 @@
 | goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | 部分可本地化 | audit 消费 N6 summary 和 R0 readiness，当前唯一失败收敛到 R0 runtime pool 未恢复 |
 | lifecycle overview | <1s | 完全可本地化 | 固定回答完整生命周期进度、剩余距离和关键路径 |
 | sidecar image readiness | <1s | 完全可本地化 | 把本地 Dockerfile、候选 build/push 命令、远程 pull-only 要求分开，避免远程 deploy 才失败 |
+| sidecar image preflight | <1s | 完全可本地化 | 先证明 build context，后续只追 registry image 和 remote host pull 权限 |
 
 ## 当前下一步
 
