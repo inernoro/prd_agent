@@ -1336,6 +1336,7 @@ export const forkWatermark: ForkWatermarkContract = withAuth(forkWatermarkReal);
 
 // 海鲜市场「技能」板块（zip 上传）
 import type {
+  CreateMarketplaceSkillShareContract,
   DeleteMarketplaceSkillContract,
   FavoriteMarketplaceSkillContract,
   ForkMarketplaceSkillContract,
@@ -1347,6 +1348,7 @@ import type {
   UploadMarketplaceSkillContract,
 } from '@/services/contracts/marketplaceSkills';
 import {
+  createMarketplaceSkillShareReal,
   deleteMarketplaceSkillReal,
   favoriteMarketplaceSkillReal,
   forkMarketplaceSkillReal,
@@ -1366,6 +1368,9 @@ export const forkMarketplaceSkill: ForkMarketplaceSkillContract = withAuth(forkM
 export const favoriteMarketplaceSkill: FavoriteMarketplaceSkillContract = withAuth(favoriteMarketplaceSkillReal);
 export const unfavoriteMarketplaceSkill: UnfavoriteMarketplaceSkillContract = withAuth(unfavoriteMarketplaceSkillReal);
 export const deleteMarketplaceSkill: DeleteMarketplaceSkillContract = withAuth(deleteMarketplaceSkillReal);
+export const createMarketplaceSkillShare: CreateMarketplaceSkillShareContract = withAuth(createMarketplaceSkillShareReal);
+export { viewSkillShare } from '@/services/real/marketplaceSkills';
+export type { ViewSkillShareData, PublicSharedSkillDto, MarketplaceSkillShareLinkDto } from '@/services/contracts/marketplaceSkills';
 
 // Agent 开放接口 API Key 管理（"接入 AI" Dialog）
 import type {
