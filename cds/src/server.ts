@@ -383,6 +383,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
     'PUT /scheduler/enabled': '启停调度器',
+    'PUT /scheduler/config': '更新调度器配置',
     'GET /strategy': '获取调度策略',
     'PUT /strategy': '更新调度策略',
     'GET /cluster/status': '获取集群状态',

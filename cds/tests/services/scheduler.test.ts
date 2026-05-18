@@ -366,4 +366,66 @@ describe('SchedulerService', () => {
       expect(snap.enabled).toBe(false);
     });
   });
+
+  // ── runtime config setters (UI override of idleTTL / maxHot) ──
+
+  describe('runtime config setters', () => {
+    it('setIdleTTLSeconds mutates config so the next tick uses the new threshold', async () => {
+      // idle TTL starts at 900s (15min). A branch idle for 600s should NOT
+      // cool yet, but after lowering the threshold to 300s it should.
+      stateService.addBranch(makeBranch('feature-a', 'running', { heatState: 'hot' }));
+      scheduler.touch('feature-a');
+      clock.advance(600_000); // 10 min idle
+
+      await scheduler.tick();
+      expect(cooled).toEqual([]); // still under the 15min default
+
+      scheduler.setIdleTTLSeconds(300); // lower to 5 min at runtime
+      await scheduler.tick();
+      expect(cooled).toEqual(['feature-a']); // now over the 5min threshold
+    });
+
+    it('setMaxHotBranches mutates the capacity cap reflected in getSnapshot', () => {
+      scheduler.setMaxHotBranches(7);
+      expect(scheduler.getSnapshot().capacityUsage.max).toBe(7);
+    });
+
+    it('setIdleTTLSeconds / setMaxHotBranches are idempotent no-ops on same value', () => {
+      scheduler.setIdleTTLSeconds(900); // same as default
+      scheduler.setMaxHotBranches(3); // same as default
+      const snap = scheduler.getSnapshot();
+      expect(snap.config.idleTTLSeconds).toBe(900);
+      expect(snap.config.maxHotBranches).toBe(3);
+    });
+  });
+
+  // ── state persistence of the UI overrides ──
+
+  describe('scheduler override persistence (StateService)', () => {
+    it('idleTTL override round-trips and clears with undefined', () => {
+      expect(stateService.getSchedulerIdleTTLOverride()).toBeUndefined();
+      stateService.setSchedulerIdleTTLOverride(1800);
+      expect(stateService.getSchedulerIdleTTLOverride()).toBe(1800);
+      stateService.setSchedulerIdleTTLOverride(undefined);
+      expect(stateService.getSchedulerIdleTTLOverride()).toBeUndefined();
+    });
+
+    it('maxHot override round-trips and clears with undefined', () => {
+      expect(stateService.getSchedulerMaxHotOverride()).toBeUndefined();
+      stateService.setSchedulerMaxHotOverride(0);
+      expect(stateService.getSchedulerMaxHotOverride()).toBe(0);
+      stateService.setSchedulerMaxHotOverride(undefined);
+      expect(stateService.getSchedulerMaxHotOverride()).toBeUndefined();
+    });
+
+    it('overrides survive a save + reload cycle', () => {
+      stateService.setSchedulerIdleTTLOverride(120);
+      stateService.setSchedulerMaxHotOverride(5);
+      stateService.save();
+      const reloaded = new StateService(stateFile);
+      reloaded.load();
+      expect(reloaded.getSchedulerIdleTTLOverride()).toBe(120);
+      expect(reloaded.getSchedulerMaxHotOverride()).toBe(5);
+    });
+  });
 });

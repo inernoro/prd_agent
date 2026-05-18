@@ -482,6 +482,16 @@ const gracefulShutdownController = createGracefulShutdownController();
     config.scheduler.enabled = uiOverride;
     console.log(`  [scheduler] applying UI override: enabled=${uiOverride}`);
   }
+  const idleTTLOverride = stateService.getSchedulerIdleTTLOverride();
+  if (idleTTLOverride !== undefined && config.scheduler) {
+    config.scheduler.idleTTLSeconds = idleTTLOverride;
+    console.log(`  [scheduler] applying UI override: idleTTLSeconds=${idleTTLOverride}`);
+  }
+  const maxHotOverride = stateService.getSchedulerMaxHotOverride();
+  if (maxHotOverride !== undefined && config.scheduler) {
+    config.scheduler.maxHotBranches = maxHotOverride;
+    console.log(`  [scheduler] applying UI override: maxHotBranches=${maxHotOverride}`);
+  }
 }
 const schedulerService = new SchedulerService(
   stateService,

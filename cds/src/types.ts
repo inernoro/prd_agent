@@ -695,6 +695,19 @@ export interface CdsState {
    * `false` = forced off (even if config file has enabled:true).
    */
   schedulerEnabledOverride?: boolean;
+  /**
+   * UI-controlled override for the warm-pool scheduler idle timeout
+   * (`config.scheduler.idleTTLSeconds`, seconds). Same semantics as
+   * `schedulerEnabledOverride`: when defined it supersedes the config-file
+   * value at runtime and is re-applied on boot. `undefined` = no override.
+   */
+  schedulerIdleTTLOverride?: number;
+  /**
+   * UI-controlled override for the warm-pool scheduler hot-pool cap
+   * (`config.scheduler.maxHotBranches`). Same semantics as
+   * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
+   */
+  schedulerMaxHotOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */

@@ -10911,6 +10911,60 @@ cdscli project list --human
     res.json({ enabled, source: 'ui-override' });
   });
 
+  // ── PUT /api/scheduler/config — tune scheduler params from the UI ──
+  //
+  // Body { enabled?, idleTTLSeconds?, maxHotBranches? } — every field is
+  // optional and validated independently. Each provided field persists an
+  // override to state (survives restart) then mutates the running scheduler.
+  // Mirrors the proven /scheduler/enabled pattern; the two routes write the
+  // same state overrides so they stay consistent.
+  router.put('/scheduler/config', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler service not wired in' });
+      return;
+    }
+    const body = (req.body || {}) as {
+      enabled?: unknown;
+      idleTTLSeconds?: unknown;
+      maxHotBranches?: unknown;
+    };
+
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是 boolean' });
+      return;
+    }
+    if (body.idleTTLSeconds !== undefined) {
+      const v = body.idleTTLSeconds;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 60 || v > 86400) {
+        res.status(400).json({ error: 'idleTTLSeconds 必须是 60 到 86400 之间的整数（秒）' });
+        return;
+      }
+    }
+    if (body.maxHotBranches !== undefined) {
+      const v = body.maxHotBranches;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100) {
+        res.status(400).json({ error: 'maxHotBranches 必须是 0 到 100 之间的整数（0=不限）' });
+        return;
+      }
+    }
+
+    if (typeof body.enabled === 'boolean') {
+      stateService.setSchedulerEnabledOverride(body.enabled);
+      schedulerService.setEnabled(body.enabled);
+    }
+    if (typeof body.idleTTLSeconds === 'number') {
+      stateService.setSchedulerIdleTTLOverride(body.idleTTLSeconds);
+      schedulerService.setIdleTTLSeconds(body.idleTTLSeconds);
+    }
+    if (typeof body.maxHotBranches === 'number') {
+      stateService.setSchedulerMaxHotOverride(body.maxHotBranches);
+      schedulerService.setMaxHotBranches(body.maxHotBranches);
+    }
+    stateService.save();
+
+    res.json({ ...schedulerService.getSnapshot(), source: 'ui-override' });
+  });
+
   router.post('/scheduler/pin/:slug', (req, res) => {
     if (!schedulerService) {
       res.status(503).json({ error: 'Scheduler not enabled' });
