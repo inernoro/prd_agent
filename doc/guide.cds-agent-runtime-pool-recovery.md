@@ -43,6 +43,15 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 - CDS 是否至少登记了一个 enabled remote host 作为系统级 sidecar 承载目标。
 - 可选提供 `CDS_SHARED_POOL_LONG_TOKEN` 后，是否能直接访问 `/api/projects/:id/instances`。
 
+如果需要把当前阻塞转换成可执行顺序，跑只读计划脚本：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+  bash scripts/plan-cds-agent-runtime-pool-recovery.sh
+```
+
+它会输出当前污染分支数、shared pool running 状态、remote host 数量和下一步命令。计划脚本还会明确标出禁止路径：不能用 `cdscli branch create/deploy shared-sidecar-pool-mp4anabh main` 恢复 runtime pool，因为 shared-service runtime 不是普通 branch preview。
+
 ## 发布前检查
 
 在考虑更新共享 CDS 控制面前，先在当前分支确认这些本地检查已经通过：

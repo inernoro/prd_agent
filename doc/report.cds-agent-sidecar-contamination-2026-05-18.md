@@ -275,6 +275,15 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 
 该脚本会同时验证 `prd-agent` 不再携带 branch-local sidecar、`shared-sidecar-pool-*` 仍是 `shared-service`、CDS 是否登记了 enabled remote host，以及共享 runtime pool 是否有 running 实例。它不执行删除、重启或部署。
 
+查看当前恢复顺序：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+  bash scripts/plan-cds-agent-runtime-pool-recovery.sh
+```
+
+该计划脚本只读输出污染分支数、shared pool 状态、remote host 数量和下一步动作，并明确禁止通过普通 branch deploy 恢复 shared-service runtime pool。
+
 当前远程只读审计结果仍有 7 个分支受影响，候选删除 BuildProfile 为：
 
 ```text
