@@ -49,7 +49,7 @@
 
 如果第 2 步没通过，先不要发审查 prompt；应该先看页面“当前执行结论”的 `currentBlockingGate`、`blockingReason`、`deploymentAdvice` 和 `nextCommand`，再运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
-当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，目标仍是 `commercialComplete=false`。也就是说，现在第一阻塞不是继续 redeploy preview，也不是先修默认 profile，而是先恢复 R0 runtime pool：清理 `prd-agent` 业务项目里的 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留，登记至少一个 enabled remote host，并让 `shared-sidecar-pool-mp4anabh` 跑出 healthy official SDK instance。证据入口是 `CDS_HOST=https://cds.miduo.org bash scripts/collect-cds-agent-runtime-pool-evidence.sh`，结构性原因见 `doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md`。
+当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，目标仍是 `commercialComplete=false`。也就是说，现在第一阻塞不是继续 redeploy preview，也不是先修默认 profile，而是先恢复 R0 runtime pool：清理 `prd-agent` 业务项目里的 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留，登记至少一个 enabled remote host，并让 `shared-sidecar-pool-mp4anabh` 跑出 healthy official SDK instance。证据入口是 `CDS_HOST=https://cds.miduo.org bash scripts/collect-cds-agent-runtime-pool-evidence.sh`，当前进度见 `doc/status.cds-agent-current-progress.md`，结构性原因见 `doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md`。
 
 R0 恢复后，下一层仍是 R1 provider profile。此前远程默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，并附带 `compatibilityNextActions`。不要把这个 profile 当作“上手就能审查代码”的完成态；R0 恢复后再用页面 R1 修复入口或 `CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板并收集 S1/S2/S3 证据。
 
@@ -111,7 +111,7 @@ CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \
   bash scripts/collect-cds-agent-runtime-pool-evidence.sh
 ```
 
-最新 runtime pool evidence 示例是 `/tmp/cds-agent-runtime-pool-evidence-20260518150655`：总耗时约 13s，清楚显示 7 个 branch-local sidecar 污染、0 个 remote host、shared pool 没有 running instance。这个证据比反复 one-cycle 更适合当前阶段，因为它直接回答“为什么又侵犯 MAP”和“下一步是否需要部署”。
+最新 runtime pool evidence 示例是 `/tmp/cds-agent-runtime-pool-evidence-20260518152052`：总耗时约 14s，清楚显示 7 个 branch-local sidecar 污染、0 个 remote host、shared pool 没有 running instance。这个证据比反复 one-cycle 更适合当前阶段，因为它直接回答“为什么又侵犯 MAP”和“下一步是否需要部署”。
 
 A0/N6 的本地工具链已经做了自检：A0 会自动选择能 import `fastapi`、`pydantic`、`starlette` 的 Python，并在报告中记录 `pythonBin`；N6 会自动选择能看到 .NET 8 runtime 的 dotnet，并在终端打印 `dotnet:`。如果登录 shell 里的 `python3` 或 `dotnet` 指向错误版本，先看脚本打印的实际解释器路径，不要把依赖缺失当成 CDS Agent 功能失败。
 
