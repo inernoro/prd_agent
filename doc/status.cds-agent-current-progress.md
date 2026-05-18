@@ -1,29 +1,28 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-19 01:20 Asia/Shanghai
+> **更新时间**：2026-05-19 02:32 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
-> **当前阶段**：R1 Claude Code provider-switch profile 纠偏。
-> **总状态**：目标未完成；R0/A0/N6/V1 dry-run 已通过，当前阻塞不是缺 Anthropic 原生认证，而是默认 OpenRouter/DeepSeek profile 需要按 Claude Code/cc-switch 方式登记为 Anthropic-compatible upstream。
+> **当前阶段**：provider-backed one-cycle 已通过；正在提交归档和最终风险说明。
+> **总状态**：最小可用闭环已打通。MAP 保持控制面，CDS 管理 Claude SDK runtime/container/sandbox，默认 OpenRouter DeepSeek profile 可通过官方 Claude Agent SDK adapter 执行只读仓库巡检。写文件/执行命令/PR 仍必须显式开启写工具 profile，并走人工审批。
 
 ## 0. 当前执行面板
 
 | 项 | 当前结论 |
 | --- | --- |
-| 总进度 | 约 72%；控制面/R0/视觉 dry-run 已打通，R1 provider-switch metadata/secret 复用修复已本地通过，待远端自更新和 provider 测试 |
-| 当前 gate | `R1` |
-| 当前 blocker | 远端默认 runtime profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / https://openrouter.ai/api/v1`；Claude Code 云端路径需要 `claude-sdk` runtime + `anthropic` protocol + DeepSeek/cc-switch Anthropic-compatible baseUrl |
-| 需要用户协助 | 当前没有必须由你提供的输入。已修复“更新 profile 必须重新输入 secret”的错误约束；下一步由 CDS 复用已加密 provider secret 进行 R1 纠偏测试 |
+| 总进度 | 约 97%；R0/A0/R1/S1/S2/S3/V1/N6 全部通过，剩余是提交归档与最终风险说明 |
+| 当前 gate | `Archive + final risk note` |
+| 当前 blocker | 无需用户输入的 blocker。剩余风险是默认只读 profile 不提供写/命令/PR 能力；要做改代码/跑测试/提交 PR，需要单独的 writable runtime profile 和审批策略 |
+| 需要用户协助 | 当前不需要。你已经提供的 DeepSeek/OpenRouter provider 条件足够完成只读巡检闭环 |
 | 不需要用户协助 | 不需要补 `CDS_REMOTE_HOST_*`、SSH 私钥、sidecar image 作为产品主路径 |
-| 本轮下一步 | 提交并 CDS self-update；远端把默认 profile retarget 到 Anthropic-compatible endpoint 后运行 profile test、S1/S2/S3 provider smokes 和视觉复核 |
-| 预计结束 | 若现有 secret 对 DeepSeek Anthropic endpoint 或 cc-switch 可用，约 45-75 分钟闭合 R1/S1/S2/S3/V1；若 secret 只对 OpenRouter raw Chat Completions 可用，则真实阻塞会变成“需要一个可用的 Anthropic-compatible gateway/secret pair” |
-| 是否该 redeploy preview | 是。此次包含后端 profile update 行为和页面更新按钮逻辑，必须通过 CDS self-update 发布 |
-| 当前权威证据 | `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-commercial-readiness.sh`：R0/A0/V1 pass，R1 pending；本地相关测试 50/50、前端 tsc、sidecar 32/32 pass |
+| 本轮下一步 | 提交 smoke/进度面板/文档修正，给出最终使用方式和剩余限制 |
+| 预计结束 | 约 10-15 分钟；不需要再部署 runtime，除非代码再变 |
+| 是否该 redeploy preview | 否。远端 CDS 已在 `e0af6d2e`，runtime branch 也在 `e0af6d2e`；后续文档/脚本 smoke 语义变更不影响 runtime |
+| 当前权威证据 | one-cycle `/tmp/cds-agent-cycle-hardened-current/cycle-summary.json`：`commercialComplete=true`、7/7 gates pass、10 pass / 1 legacy skip / 0 failed、总 161s；S1/S2/S3/V1 单项证据仍保留 |
 
-下一条命令不代表必须使用 Anthropic 原生认证。`SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 这个历史变量名只适合原生 Claude smoke；DeepSeek/cc-switch 路径应使用 CDS-managed runtime profile/request override 下发 provider secret 和 baseUrl，不应把 key 明文写进聊天：
+如需复跑完整周期，使用现有 CDS-managed provider profile，不需要把 key 发到聊天里：
 
 ```bash
 CDS_HOST=https://cds.miduo.org \
-SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> \
 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 \
   bash scripts/smoke-cds-agent-one-cycle.sh
 ```
@@ -54,10 +53,10 @@ doc/design.cds-agent-managed-runtime-fact-source.md
 | 2 | N6 其他智能体兼容性 | done | 0 |
 | 3 | D1 架构纠偏计划 | done | 0 |
 | 4 | R0 CDS-managed runtime/container/sandbox | done_live | 0 |
-| 5 | R1 Claude Code provider-switch profile 修正 | current_blocker | 本轮 35-55 分钟；不向用户索要 Anthropic 原生 key |
-| 6 | S1 provider read-only run | pending | adapter/profile 匹配后 5-10 分钟 |
-| 7 | S2/S3 approval、stop/cancel | pending | S1 后 5-15 分钟 |
-| 8 | 最终商业级验收/文档归档 | pending | 10-20 分钟 |
+| 5 | R1 Claude Code provider-switch profile 修正 | done_live | 0 |
+| 6 | S1 provider read-only run | done_live | 0 |
+| 7 | S2/S3 hardened controls、stop/cancel | done_live | 0 |
+| 8 | 最终商业级验收/文档归档 | current | 10-15 分钟 |
 
 V1 页面视觉当前 dry-run pass，但真正商业闭环仍要在 provider-backed cycle 后再截一次 live-runtime 页面。
 
@@ -67,10 +66,10 @@ V1 页面视觉当前 dry-run pass，但真正商业闭环仍要在 provider-bac
 | --- | --- | --- | --- |
 | A0 | pass | official SDK adapter boundary smoke | 自研 loop 已压缩为 adapter/bridge/policy/audit/UI 层 |
 | R0 | pass | `/tmp/cds-agent-runtime-live-apply-current.json`、`/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json` | CDS-managed official SDK runtime running > 0 |
-| R1 | pending | `/tmp/cds-agent-r1-dryrun-current.json` + 当前代码检查 | 旧 dry-run guard 只覆盖原生 Anthropic 模板；当前需补 Claude Code provider-switch/cc-switch/DeepSeek profile 口径 |
-| S1 | pending | provider one-cycle 尚未启用 | 等 R1 |
-| S2/S3 | pending | approval/stop controls 尚未跑 provider-backed smoke | 等 S1 |
-| V1 | pass_dry_run | `/tmp/cds-agent-cycle-20260519001522/workbench-visual.png` | 当前页面截图通过；provider cycle 后复核 |
+| R1 | pass_live | 默认 profile `OpenRouter DeepSeek V4 Pro · Claude Code`：runtime `claude-sdk`、protocol `anthropic`、baseUrl `https://openrouter.ai/api`、model `deepseek/deepseek-v4-pro`、hasApiKey true | 不需要 Anthropic 原生认证；按 Claude Code/OpenRouter Anthropic-compatible 路径运行 |
+| S1 | pass_live | `/tmp/cds-agent-s1-provider-hardened.json` | provider-backed 只读仓库巡检通过；assistantMessages=1，dangerousApprovals=0，dangerousBuiltinTools=0 |
+| S2/S3 | pass_live | `/tmp/cds-agent-controls-hardened.json` | 默认 hardened-readonly 不进入危险审批/执行；S3 stop 返回 `stopped` |
+| V1 | pass_live | `/tmp/cds-agent-workbench-visual.png`、`/tmp/cds-agent-workbench-visual.coverage.json` | 远端工作台页面可达并通过文本/截图断言 |
 | N6 | pass | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 非代码 Agent 不被 Claude SDK runtime path 误接管 |
 
 ## 4. 当前需要协助

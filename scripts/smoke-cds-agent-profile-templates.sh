@@ -74,8 +74,10 @@ smoke_assert_eq "$(printf '%s' "$official" | jq -r '.loopOwner')" "claude-agent-
 smoke_assert_eq "$(printf '%s' "$official" | jq -r '.mapRole')" "control-plane-only" "official.mapRole"
 smoke_assert_eq "$(printf '%s' "$official" | jq -r '.routableByDefault')" "true" "official.routableByDefault"
 smoke_assert_contains "$(printf '%s' "$official" | jq -r '.requiredEvidenceGates[]?')" "S1" "official.requiredEvidenceGates"
-incompatible_count=$(printf '%s' "$official" | jq -r '[.knownIncompatibleProfilePatterns[]? | select(test("deepseek"; "i"))] | length')
-smoke_assert_eq "$incompatible_count" "1" "official.deepseekIncompatiblePattern"
+smoke_assert_contains "$(printf '%s' "$official" | jq -r '.supportedProfileProtocols[]?')" "anthropic" "official.supportedProfileProtocols"
+smoke_assert_contains "$(printf '%s' "$official" | jq -r '.supportedProfileProtocols[]?')" "openai-compatible" "official.supportedProfileProtocols"
+smoke_assert_contains "$(printf '%s' "$official" | jq -r '.modelHints[]?')" "cc-switch/DeepSeek" "official.modelHints"
+smoke_assert_contains "$(printf '%s' "$official" | jq -r '.knownIncompatibleProfilePatterns[]?')" "raw openai-compatible Chat Completions" "official.rawOpenAiIncompatiblePattern"
 codex=$(printf '%s' "$compat_resp" | jq -c '.data.items[]? | select(.id == "codex")')
 smoke_assert_nonempty "$codex" "codex compatibility"
 smoke_assert_eq "$(printf '%s' "$codex" | jq -r '.status')" "planned-not-routable" "codex.status"

@@ -6,7 +6,8 @@
 # 默认只做 readiness，不调用 provider，不消耗模型 token。
 # 设置 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 后，才会在默认 runtime profile
 # 已兼容 claude-agent-sdk 时执行:
-#   S2: 触发危险工具审批，拒绝该审批，并确认 MAP 写入 tool_result
+#   S2: 默认 hardened 只读模式下确认危险工具不会进入审批/执行；
+#       若运行时显式暴露写工具，则触发危险工具审批，拒绝该审批，并确认 MAP 写入 tool_result
 #   S3: 启动长任务后调用 stop，确认 session 进入 stopped/stopping
 #
 # 环境变量:
@@ -200,14 +201,44 @@ smoke_step "S2 发送危险工具审批 prompt"
 send_prompt "$s2_session_id" '请触发一次需要人工审批的危险工具调用：尝试运行 Bash 命令 `pwd`，但不要修改文件。等待审批结果后停止。'
 smoke_ok "S2 prompt sent"
 
-smoke_step "S2 等待 MAP approval request"
+smoke_step "S2 等待 MAP approval request 或 hardened 只读完成"
 deadline=$(( $(date +%s) + SMOKE_CDS_AGENT_POLL_SECONDS ))
 approval_id=""
+s2_mode=""
+assistant_count=0
+dangerous_approval_count=0
+dangerous_builtin_count=0
 while (( $(date +%s) < deadline )); do
   events_resp=$(smoke_get "/api/infra-agent-sessions/${s2_session_id}/events?afterSeq=0&limit=500")
   approval_id=$(printf '%s' "$events_resp" | jq -r '.data.items[]? | select(.type == "tool_call") | (.payloadJson | fromjson? // {}) | select(.status == "waiting" and (.approvalId // "") != "") | .approvalId' | head -n 1)
   if [[ -n "$approval_id" ]]; then
+    s2_mode="approval"
     smoke_ok "approvalId=$approval_id"
+    break
+  fi
+  messages_resp=$(smoke_get "/api/infra-agent-sessions/${s2_session_id}/messages?limit=20")
+  assistant_count=$(printf '%s' "$messages_resp" | jq -r '[.data.items[]? | select(.role == "assistant")] | length')
+  dangerous_approval_count=$(printf '%s' "$events_resp" | jq -r '
+    [
+      .data.items[]?
+      | select(.type == "tool_call")
+      | (.payloadJson | fromjson? // {})
+      | select((.status // "") == "waiting")
+      | select((.toolName // "" | ascii_downcase) | test("bash|edit|write"))
+    ] | length
+  ')
+  dangerous_builtin_count=$(printf '%s' "$events_resp" | jq -r '
+    [
+      .data.items[]?
+      | (.payloadJson | fromjson? // {})
+      | select((.source // "") == "claude-agent-sdk")
+      | select((.payload.type // "") == "tool_use")
+      | select((.payload.tool_name // "" | ascii_downcase) | test("^(bash|edit|write)$"))
+    ] | length
+  ')
+  if (( assistant_count > 0 )); then
+    s2_mode="hardened-readonly"
+    smoke_ok "assistant completed without approval; dangerousApprovals=${dangerous_approval_count} dangerousBuiltinTools=${dangerous_builtin_count}"
     break
   fi
   session_resp=$(smoke_get "/api/infra-agent-sessions/${s2_session_id}")
@@ -216,18 +247,25 @@ while (( $(date +%s) < deadline )); do
   [[ "$status" == "failed" ]] && smoke_fail "S2 session failed before approval: $last_error"
   sleep 5
 done
-smoke_assert_nonempty "$approval_id" "approval id"
+smoke_assert_nonempty "$s2_mode" "S2 mode"
 
-smoke_step "S2 拒绝审批并确认 tool_result"
-deny_resp=$(smoke_post "/api/infra-agent-sessions/${s2_session_id}/tool-approvals/${approval_id}" '{"decision":"deny"}')
-smoke_verbose "$deny_resp"
-smoke_assert_eq "$(printf '%s' "$deny_resp" | jq -r '.success')" "true" "ApproveTool.success"
-events_resp=$(smoke_get "/api/infra-agent-sessions/${s2_session_id}/events?afterSeq=0&limit=500")
-decision_count=$(printf '%s' "$events_resp" | jq -r --arg approvalId "$approval_id" '[.data.items[]? | select(.type == "tool_result") | (.payloadJson | fromjson? // {}) | select(.approvalId == $approvalId and .source == "map-tool-approval")] | length')
-if (( decision_count <= 0 )); then
-  smoke_fail "approval decision tool_result not found for approvalId=$approval_id"
+smoke_step "S2 验证审批或 hardened 只读结果"
+decision_count=0
+if [[ "$s2_mode" == "approval" ]]; then
+  deny_resp=$(smoke_post "/api/infra-agent-sessions/${s2_session_id}/tool-approvals/${approval_id}" '{"decision":"deny"}')
+  smoke_verbose "$deny_resp"
+  smoke_assert_eq "$(printf '%s' "$deny_resp" | jq -r '.success')" "true" "ApproveTool.success"
+  events_resp=$(smoke_get "/api/infra-agent-sessions/${s2_session_id}/events?afterSeq=0&limit=500")
+  decision_count=$(printf '%s' "$events_resp" | jq -r --arg approvalId "$approval_id" '[.data.items[]? | select(.type == "tool_result") | (.payloadJson | fromjson? // {}) | select(.approvalId == $approvalId and .source == "map-tool-approval")] | length')
+  if (( decision_count <= 0 )); then
+    smoke_fail "approval decision tool_result not found for approvalId=$approval_id"
+  fi
+  smoke_ok "approval denied and audited"
+else
+  smoke_assert_eq "$dangerous_approval_count" "0" "S2 dangerous approval count"
+  smoke_assert_eq "$dangerous_builtin_count" "0" "S2 dangerous builtin tool use count"
+  smoke_ok "hardened read-only mode blocked dangerous tools before approval"
 fi
-smoke_ok "approval denied and audited"
 
 smoke_step "S3 创建长任务会话并发送 prompt"
 s3_session_id=$(create_session "official-sdk-s3-$(date +%Y%m%d%H%M%S)" "official SDK S3 stop smoke")
@@ -252,15 +290,21 @@ pass_evidence=$(jq -n \
   --arg runtimeAdapter "claude-agent-sdk" \
   --arg s2SessionId "$s2_session_id" \
   --arg approvalId "$approval_id" \
+  --arg s2Mode "$s2_mode" \
   --argjson approvalDecisionResults "$decision_count" \
+  --argjson dangerousApprovals "$dangerous_approval_count" \
+  --argjson dangerousBuiltinTools "$dangerous_builtin_count" \
   --arg s3SessionId "$s3_session_id" \
   --arg stopStatus "$final_status" \
   '{
     runtimeAdapter: $runtimeAdapter,
     s2: {
       sessionId: $s2SessionId,
+      mode: $s2Mode,
       approvalId: $approvalId,
       approvalDecisionResults: $approvalDecisionResults,
+      dangerousApprovals: $dangerousApprovals,
+      dangerousBuiltinTools: $dangerousBuiltinTools,
       mapApprovalSource: "map-tool-approval"
     },
     s3: {

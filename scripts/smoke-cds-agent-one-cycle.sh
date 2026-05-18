@@ -304,7 +304,10 @@ finish_cycle() {
   if [[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
     r1_repair_apply=true
   fi
-  if [[ "$provider_calls_enabled" == "true" && "$r1_repair_apply" == "true" ]]; then
+  if [[ "$provider_calls_enabled" == "true" && ( "$r1_status" == "already_pass" || "$r1_status" == "pass" || "$readiness_overall" == "ready_for_provider_smokes" ) ]]; then
+    provider_prerequisite_status="provider_profile_ready"
+    provider_prerequisite_advice="Provider calls were requested and the default CDS-managed runtime profile is already compatible; no smoke-supplied Anthropic key is required."
+  elif [[ "$provider_calls_enabled" == "true" && "$r1_repair_apply" == "true" ]]; then
     provider_prerequisite_status="provider_and_r1_repair_requested"
     provider_prerequisite_advice="This cycle may close R1 and collect S1/S2/S3 only if the smoke-supplied Anthropic key is saved as a CDS-managed profile/secret after backend test-before-promote."
   elif [[ "$provider_calls_enabled" == "true" ]]; then
@@ -488,6 +491,8 @@ finish_cycle() {
     else
       next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
     fi
+  elif [[ "$commercial_complete" == "true" ]]; then
+    next_command="No deploy needed. Re-run only if code/profile changes: CDS_HOST=${CDS_HOST:-https://cds.miduo.org} SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
   fi
 
   case "$cycle_status" in
@@ -717,7 +722,7 @@ finish_cycle() {
         providerCallsRequested: $providerCallsEnabled,
         r1RepairKeyProvided: $r1RepairApply,
         canAttemptR1Repair: $r1RepairApply,
-        canCollectProviderSmokes: ($providerCallsEnabled and $r1RepairApply)
+        canCollectProviderSmokes: ($providerCallsEnabled and ($gateR1 == "pass"))
       },
       readiness: {
         overall: $readinessOverall,
@@ -902,7 +907,11 @@ finish_cycle() {
   fi
 
   printf '\nNext: %s\n' "$next_command"
-  printf 'The goal is not commercially complete until R1 is pass and S1/S2/S3 provider smokes run with SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1.\n'
+  if [[ "$commercial_complete" == "true" ]]; then
+    printf 'Commercial gate summary: complete for the current hardened read-only CDS Agent path.\n'
+  else
+    printf 'The goal is not commercially complete until R1 is pass and S1/S2/S3 provider smokes run with SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1.\n'
+  fi
   exit "$exit_code"
 }
 

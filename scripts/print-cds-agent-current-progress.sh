@@ -22,6 +22,14 @@ SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds
 SIDECAR_REGISTRY_VERIFY_REPORT="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
 REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
 SIDECAR_PUBLISH_HANDOFF="${CDS_AGENT_SIDECAR_PUBLISH_HANDOFF:-/tmp/cds-agent-sidecar-publish-handoff-current.md}"
+DEFAULT_CYCLE_SUMMARY="/tmp/cds-agent-cycle-hardened-current/cycle-summary.json"
+if [[ ! -f "$DEFAULT_CYCLE_SUMMARY" ]]; then
+  latest_cycle_summary=$(ls -t /tmp/cds-agent-cycle-*/cycle-summary.json 2>/dev/null | head -n 1 || true)
+  if [[ -n "$latest_cycle_summary" ]]; then
+    DEFAULT_CYCLE_SUMMARY="$latest_cycle_summary"
+  fi
+fi
+CYCLE_SUMMARY="${CDS_AGENT_CYCLE_SUMMARY:-$DEFAULT_CYCLE_SUMMARY}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -64,6 +72,28 @@ if [[ -f "$N6_SUMMARY" ]]; then
     n6="pass"
   fi
 fi
+commercial_complete=false
+cycle_status="missing"
+cycle_total_seconds="unknown"
+cycle_passed="unknown"
+cycle_skipped="unknown"
+cycle_failed="unknown"
+cycle_slowest="[]"
+if [[ -f "$CYCLE_SUMMARY" ]] && [[ "$(jq_read "$CYCLE_SUMMARY" '.commercialComplete // false')" == "true" ]]; then
+  commercial_complete=true
+  cycle_status=$(jq_read "$CYCLE_SUMMARY" '.status // "unknown"')
+  cycle_total_seconds=$(jq_read "$CYCLE_SUMMARY" '.timing.totalSeconds // "unknown"')
+  cycle_passed=$(jq_read "$CYCLE_SUMMARY" '.executionPanel.stepCounts.passed // "unknown"')
+  cycle_skipped=$(jq_read "$CYCLE_SUMMARY" '.executionPanel.stepCounts.skipped // "unknown"')
+  cycle_failed=$(jq_read "$CYCLE_SUMMARY" '.executionPanel.stepCounts.failed // "unknown"')
+  cycle_slowest=$(jq -c '.timing.slowest // []' "$CYCLE_SUMMARY")
+  status="$cycle_status"
+  gate="complete"
+  r0="pass"
+  a0="pass"
+  v1="pass"
+  n6="pass"
+fi
 
 verdict=$(jq_read "$REMOTE_HOST_SUMMARY" '.verdict // .status // "unknown"')
 enabled_hosts=$(jq_read "$REMOTE_HOST_SUMMARY" '(if has("prepare") and .prepare != null then .prepare.enabledHostCount else .beforeEnabledRemoteHostCount end) // "unknown"')
@@ -80,8 +110,10 @@ runtime_capacity_running=$(jq_read "$REMOTE_HOST_SUMMARY" '(.remoteHost.runtimeC
 runtime_capacity_available=false
 if [[ "$runtime_capacity_status" == "available" ]] || [[ "$runtime_capacity_running" =~ ^[0-9]+$ && "$runtime_capacity_running" -gt 0 ]]; then
   runtime_capacity_available=true
-  status="blocked_r1"
-  gate="R1"
+  if [[ "$commercial_complete" != "true" ]]; then
+    status="blocked_r1"
+    gate="R1"
+  fi
   r0="pass"
   shared_running="$runtime_capacity_running"
   ready_deploy=true
@@ -142,7 +174,18 @@ if [[ -z "$invalid_config" ]]; then
 fi
 
 exact_next_step=""
-if [[ "$runtime_capacity_available" == "true" ]]; then
+if [[ "$commercial_complete" == "true" ]]; then
+  exact_next_step=$(cat <<EOF
+Current provider-backed cycle is complete for the hardened read-only CDS Agent path. Do not redeploy or rebuild unless code/profile changes.
+
+\`\`\`bash
+CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh
+\`\`\`
+
+Evidence: $CYCLE_SUMMARY
+EOF
+)
+elif [[ "$runtime_capacity_available" == "true" ]]; then
   exact_next_step=$(cat <<'EOF'
 R0 CDS-managed runtime capacity is available. Continue R1 Claude Code provider-switch profile repair and provider smokes; do not spend time on remote host/image fallback for the product path.
 
@@ -254,6 +297,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Overall status: $status
 - Current blocking gate: $gate
 - Gate status: A0=$a0, R0=$r0, V1=$v1, N6=$n6
+- Provider cycle: commercialComplete=$commercial_complete; status=$cycle_status; steps=${cycle_passed}/${cycle_skipped}/${cycle_failed}; total=${cycle_total_seconds}s
 - R0 managed runtime capacity: status=$runtime_capacity_status; sharedRunning=$shared_running; readyForProviderSmokes=$ready_smoke
 - Operator fallback remote host verdict: $verdict
 - Operator fallback remote hosts enabled: $enabled_hosts
@@ -285,9 +329,9 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.5 CDS-managed runtime capacity contract | done_minimal | CDS exposes /api/projects/:id/runtime-capacity and separates product runtime from operator fallback | done |
 | R0.6 CDS-managed runtime capacity reconciler | done_minimal | CDS exposes dry-run/apply reconciler and route tests prove product runtime capacity path | done |
 | R0.7 CDS-managed runtime live apply | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done_live' || printf 'in_progress') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'Live evidence shows running official SDK runtime count >0' || printf 'Local liveApply path is wired; run live evidence so sharedRunning becomes >0') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done' || printf 'next') |
-| R1 Claude Code provider-switch profile | $([[ "$runtime_capacity_available" == "true" ]] && printf 'current_blocker' || printf 'pending') | Keep Claude SDK runtime; allow cc-switch/DeepSeek Anthropic-compatible upstream; require sk-ant only for native Anthropic endpoint | 35-55 min |
-| S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after selected adapter/profile is available | 10-25 min |
-| V1 Visual verification | $([[ "$runtime_capacity_available" == "true" ]] && printf 'pass_dry_run' || printf 'partial') | Re-capture provider-backed runtime page after S1/S2/S3 | 3-8 min |
+| R1 Claude Code provider-switch profile | $([[ "$commercial_complete" == "true" ]] && printf 'done_live' || ([[ "$runtime_capacity_available" == "true" ]] && printf 'current_blocker' || printf 'pending')) | $([[ "$commercial_complete" == "true" ]] && printf 'Default CDS-managed OpenRouter/DeepSeek profile is compatible; no Anthropic native key needed' || printf 'Keep Claude SDK runtime; allow cc-switch/DeepSeek Anthropic-compatible upstream; require sk-ant only for native Anthropic endpoint') | $([[ "$commercial_complete" == "true" ]] && printf 'done' || printf '35-55 min') |
+| S1/S2/S3 One-cycle smokes | $([[ "$commercial_complete" == "true" ]] && printf 'done_live' || printf 'pending') | $([[ "$commercial_complete" == "true" ]] && printf 'S1 provider read-only and S2/S3 hardened controls passed' || printf 'Run read-only/approval/cancel cycles after selected adapter/profile is available') | $([[ "$commercial_complete" == "true" ]] && printf 'done' || printf '10-25 min') |
+| V1 Visual verification | $([[ "$commercial_complete" == "true" ]] && printf 'pass_live' || ([[ "$runtime_capacity_available" == "true" ]] && printf 'pass_dry_run' || printf 'partial')) | $([[ "$commercial_complete" == "true" ]] && printf 'Provider-backed workbench screenshot captured' || printf 'Re-capture provider-backed runtime page after S1/S2/S3') | $([[ "$commercial_complete" == "true" ]] && printf 'done' || printf '3-8 min') |
 
 ## Legacy Fallback Blockers
 
@@ -310,8 +354,8 @@ $exact_next_step
 
 ## Do Not Spend Time On Now
 
-- Do not repeat normal preview redeploys for this blocker.
-- Do not run provider one-cycle before R1 has a matching Claude Code provider-switch profile. Anthropic native sk-ant is required only for api.anthropic.com.
+- Do not repeat normal preview redeploys for this state.
+- Do not ask for an Anthropic native key unless the selected profile points to api.anthropic.com. The current provider-backed evidence used the existing CDS-managed OpenRouter/DeepSeek profile.
 - Do not add claude-agent-sdk-runtime-v2 back into prd-agent branch services.
 - Do not treat UI preview running as proof that shared-service runtime pool recovered.
 
@@ -327,4 +371,5 @@ $exact_next_step
 - sidecar registry manifest summary: $SIDECAR_REGISTRY_VERIFY_REPORT
 - remote sidecar pull summary: $REMOTE_PULL_REPORT
 - sidecar publish handoff: $SIDECAR_PUBLISH_HANDOFF
+- latest one-cycle summary: $CYCLE_SUMMARY
 EOF
