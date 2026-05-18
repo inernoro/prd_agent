@@ -64,6 +64,22 @@ function formatTime(value?: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function formatClockTime(value?: Date | null): string {
+  if (!value) return '未记录';
+  return value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDuration(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remainMinutes = minutes % 60;
+  if (hours <= 0) return `${minutes}m ${seconds}s`;
+  return `${hours}h ${remainMinutes}m`;
+}
+
 function primaryActionLabel(status: string): string {
   if (status === 'failed') return '重试';
   if (status === 'stopped') return '继续';
@@ -1761,7 +1777,7 @@ export default function CdsAgentPage() {
             return (
               <div
                 key={step.label}
-                className="relative min-h-[100px] rounded-lg p-3"
+                className="relative min-h-[100px] min-w-0 overflow-hidden rounded-lg p-3"
                 style={{
                   background: isPass ? 'rgba(34,197,94,0.08)' : isWarn ? 'rgba(245,158,11,0.1)' : 'rgba(15,23,42,0.92)',
                   border: isPass ? '1px solid rgba(34,197,94,0.28)' : isWarn ? '1px solid rgba(245,158,11,0.32)' : '1px solid rgba(148,163,184,0.14)',
@@ -1831,7 +1847,7 @@ export default function CdsAgentPage() {
               </div>
             )}
           </div>
-          <div className="flex min-w-[190px] flex-col items-stretch gap-2">
+          <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:w-auto sm:min-w-[190px]">
             {runtimeDiagnostics.executionStepTotal > 0 && (
               <div className="rounded-md px-2 py-1.5 text-right" style={{ background: 'rgba(15,23,42,0.5)', border: '1px solid rgba(148,163,184,0.14)' }}>
                 <div className="text-[11px] font-semibold text-white/42">执行进度</div>
@@ -2242,6 +2258,82 @@ export default function CdsAgentPage() {
     } catch (err) {
       toast.error('发送失败', err instanceof Error ? err.message : '请稍后重试');
       await refreshDetail(sessionId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runSimpleReadonlyReview() {
+    if (!prompt.trim()) return;
+    if (activeSession?.manualTakeoverEnabled) {
+      await sendPrompt();
+      return;
+    }
+
+    let session = activeSession;
+    if (!session && !activeConnection) {
+      toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
+      return;
+    }
+    if (!session && activeProfileBlockReason) {
+      toast.warning('模型配置不可用', activeProfileBlockReason);
+      return;
+    }
+    if (session && activeSessionProfileBlockReason) {
+      toast.warning('模型配置不可用', activeSessionProfileBlockReason);
+      return;
+    }
+    if (activeRuntimePoolBlockReason) {
+      toast.warning('CDS runtime pool 不可用', activeRuntimePoolBlockReason);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (!session) {
+        const title = prompt.trim().slice(0, 28) || '只读代码巡检';
+        const createRes = await createInfraAgentSession({
+          connectionId: activeConnection!.id,
+          runtime: activeProfile?.runtime ?? 'claude-sdk',
+          model: activeProfile?.model,
+          runtimeProfileId: activeProfile?.id,
+          title,
+          toolPolicy: draft.toolPolicy,
+          gitRepository: draft.gitRepository.trim() || undefined,
+          gitRef: draft.gitRef.trim() || undefined,
+          workspaceRoot: draft.workspaceRoot.trim() || undefined,
+        });
+        if (!createRes.success || !createRes.data?.item) {
+          toast.error('新建会话失败', createRes.error?.message ?? '请检查 CDS 连接和模型配置');
+          return;
+        }
+        session = createRes.data.item;
+        upsertSession(session);
+      }
+
+      if (canStartFromStatus(session.status)) {
+        const startRes = await startInfraAgentSession(session.id);
+        if (!startRes.success || !startRes.data?.item) {
+          toast.error('启动失败', startRes.error?.message ?? '请检查 CDS runtime');
+          await refreshDetail(session.id);
+          return;
+        }
+        session = startRes.data.item;
+        upsertSession(session);
+      }
+
+      const messageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(prompt, contextDraft));
+      if (!messageRes.success || !messageRes.data?.item) {
+        toast.error('发送失败', messageRes.error?.message ?? '请稍后重试');
+        await refreshDetail(session.id);
+        return;
+      }
+      setPrompt('');
+      upsertSession(messageRes.data.item);
+      await refreshDetail(messageRes.data.item.id);
+    } catch (err) {
+      toast.error('启动巡检失败', err instanceof Error ? err.message : '请稍后重试');
+      if (session?.id) await refreshDetail(session.id);
     } finally {
       setBusy(false);
     }
@@ -2867,7 +2959,15 @@ export default function CdsAgentPage() {
       else timelineBlocks.push({ type: 'group', key: item.key, events: [item.ev] });
     }
     const hasTimeline = timelineBlocks.length > 0;
-    const sendDisabled = !activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput);
+    const canRunSimplePrompt = Boolean(
+      prompt.trim()
+      && !busy
+      && (
+        (activeSession && (canSendActiveSession || canStartActiveSession || canRecordManualInput))
+        || (!activeSession && canCreateSession)
+      ),
+    );
+    const sendDisabled = !canRunSimplePrompt;
 
     // 左侧任务分组：运行中 vs 已完成。
     const runningSessions = visibleSessions.filter((s) => s.status === 'running' || s.status === 'creating' || s.status === 'idle');
@@ -2889,8 +2989,38 @@ export default function CdsAgentPage() {
       const base = lastUser ? new Date(lastUser.createdAt).getTime() : nowTick;
       waitedSec = Math.max(0, Math.round((nowTick - base) / 1000));
     }
+    const sessionStartedAt = activeSession?.startedAt ? new Date(activeSession.startedAt) : activeSession?.createdAt ? new Date(activeSession.createdAt) : null;
+    const sessionEndedAt = activeSession?.stoppedAt ? new Date(activeSession.stoppedAt) : null;
+    const elapsedSeconds = sessionStartedAt
+      ? Math.max(0, Math.round(((sessionEndedAt?.getTime() ?? nowTick) - sessionStartedAt.getTime()) / 1000))
+      : 0;
+    const timeoutSeconds = activeSession?.timeoutSeconds ?? activeRuntimeProfile?.timeoutSeconds ?? 900;
+    const timeoutAt = sessionStartedAt ? new Date(sessionStartedAt.getTime() + timeoutSeconds * 1000) : null;
+    const timeoutReached = Boolean(timeoutAt && nowTick >= timeoutAt.getTime() && ['running', 'creating', 'stopping'].includes(activeSession?.status ?? ''));
+    const lastSeq = latestEventSeq(events);
+    const stopState = activeSession?.status === 'stopping'
+      ? '停止中'
+      : activeSession?.status === 'stopped'
+        ? '已停止'
+        : runtimeDiagnostics.cancelEvidence.eventCount > 0
+          ? runtimeDiagnostics.cancelEvidence.latestMessage || '已有取消事件'
+          : '未触发';
+    const timeoutState = timeoutReached
+      ? '已到达 timeout'
+      : timeoutAt
+        ? `${formatDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
+        : `启动后 ${formatDuration(timeoutSeconds)}`;
+    const simpleTelemetry = [
+      { label: '任务状态', value: activeSession ? statusLabel(activeSession.status) : '未创建', detail: activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
+      { label: 'traceId', value: activeSession ? shortId(activeSession.traceId, 14) : '待生成', detail: activeSession?.cdsSessionId ? `CDS ${shortId(activeSession.cdsSessionId, 10)}` : 'MAP/CDS 全链路定位' },
+      { label: '耗时', value: sessionStartedAt ? formatDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `started ${formatClockTime(sessionStartedAt)}` : '启动后开始计时' },
+      { label: 'timeoutAt', value: timeoutAt ? formatClockTime(timeoutAt) : '待计算', detail: timeoutState },
+      { label: 'lastEventSeq', value: String(lastSeq), detail: eventStreamHealthy ? 'SSE live' : events.length > 0 ? '分页回放' : '暂无事件' },
+      { label: 'Stop', value: stopState, detail: runtimeDiagnostics.cancelEvidence.eventCount > 0 ? runtimeDiagnostics.cancelEvidence.latestMessage || runtimeDiagnostics.cancelState : runtimeDiagnostics.cancelState },
+      { label: '产物入口', value: `${artifacts.length}`, detail: artifacts.length > 0 ? '右侧可查看和复制' : '等待 diff / 日志 / 快照' },
+    ];
     return (
-      <div className="h-full min-h-0 flex flex-col px-6 py-5 text-white" style={{ background: '#0F172A' }}>
+      <div className="h-full min-h-0 flex flex-col overflow-y-auto px-4 py-5 text-white sm:px-6" style={{ background: '#0F172A' }}>
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
@@ -2912,6 +3042,63 @@ export default function CdsAgentPage() {
         <div className="mt-4">
           {executionRunway}
         </div>
+
+        <section className="mt-3 rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_160px]">
+            <div className="min-w-0 rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-white/36">1. 目标</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px]">
+                <input
+                  value={draft.gitRepository}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+                  placeholder="仓库 URL，可留空使用默认 workspace"
+                  className="min-h-10 rounded-md px-3 text-sm text-white outline-none placeholder:text-white/30"
+                  style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                />
+                <input
+                  value={draft.gitRef}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
+                  placeholder="main"
+                  className="min-h-10 rounded-md px-3 text-sm text-white outline-none placeholder:text-white/30"
+                  style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+                />
+              </div>
+            </div>
+            <div className="min-w-0 rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-white/36">2. 任务</div>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={2}
+                placeholder="例如：巡检当前仓库，找一个小问题并给出修复计划"
+                className="mt-2 min-h-[56px] w-full resize-none rounded-md px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+                style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+              />
+            </div>
+            <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-white/36">3. 运行</div>
+              <button
+                type="button"
+                onClick={() => void runSimpleReadonlyReview()}
+                disabled={sendDisabled}
+                className="mt-2 inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-md text-sm font-semibold disabled:opacity-45"
+                style={{ background: 'rgba(34,197,94,0.13)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
+              >
+                {busy ? <MapSpinner size={15} /> : <Play size={15} />}
+                运行只读巡检
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-7">
+            {simpleTelemetry.map((item) => (
+              <div key={item.label} className="min-h-[72px] rounded-lg p-2.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div className="text-[11px] text-white/36">{item.label}</div>
+                <div className="mt-1 truncate text-sm font-semibold text-white/78">{item.value}</div>
+                <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-white/42">{item.detail}</div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <div className="mt-3 grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
           <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
@@ -3186,13 +3373,13 @@ export default function CdsAgentPage() {
               />
               <button
                 type="button"
-                onClick={() => void sendPrompt()}
+                onClick={() => void runSimpleReadonlyReview()}
                 disabled={sendDisabled}
                 className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45"
                 style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}
               >
                 {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
-                {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
+                {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
               </button>
             </div>
           </section>
