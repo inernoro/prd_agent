@@ -368,7 +368,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             if (refreshError.Contains("paired-empty-endpoints", StringComparison.OrdinalIgnoreCase)
                 || refreshError.Contains("empty_instances", StringComparison.OrdinalIgnoreCase))
             {
-                actions.Add("当前 CDS 授权可用但实例列表为空：优先更新共享 CDS 控制面的 /api/projects/{id}/instances，使其暴露 running 的 branch-service sidecar 实例");
+                actions.Add("当前 CDS 授权可用但实例列表为空：优先恢复 shared-service runtime pool，并让 /api/projects/{id}/instances 暴露 running 的 shared sidecar 实例");
                 if (!refreshError.Contains("discovery(", StringComparison.OrdinalIgnoreCase))
                 {
                     actions.Add("当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布");
@@ -376,20 +376,20 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 if (HasPositiveDiscoveryMetric(refreshError, "skippedBranchServices")
                     && !HasPositiveDiscoveryMetric(refreshError, "runtimeBranchServices"))
                 {
-                    actions.Add("CDS 发现到 running 分支服务但全部被 runtime 过滤跳过：确认 sidecar runtime profile/service 名称包含 api、sidecar、runtime、worker 或 agent，且不要命名为 admin/web/ui");
+                    actions.Add("CDS 发现到 running shared-service 服务但全部被 runtime 过滤跳过：确认 sidecar runtime profile/service 名称包含 api、sidecar、runtime、worker 或 agent，且不要命名为 admin/web/ui");
                 }
                 else if (!HasPositiveDiscoveryMetric(refreshError, "runningBranchServices"))
                 {
-                    actions.Add("确认 shared sidecar pool 分支服务正在运行；当前 discovery 未看到 running branch service");
+                    actions.Add("确认 shared sidecar pool 服务正在运行；当前 discovery 未看到 running shared-service sidecar");
                 }
                 else
                 {
-                    actions.Add("确认 shared sidecar pool 分支服务正在运行，并且服务标签/来源允许 MAP 作为 cds-sidecar 发现");
+                    actions.Add("确认 shared sidecar pool 服务正在运行，并且服务标签/来源允许 MAP 作为 cds-sidecar 发现");
                 }
             }
             else
             {
-                actions.Add("确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复");
+                actions.Add("确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 shared-service sidecar 实例发现修复");
                 actions.Add("确认 shared sidecar pool 正在运行，并且实例标签/来源允许当前 MAP 发现");
             }
 

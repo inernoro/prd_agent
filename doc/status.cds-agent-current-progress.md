@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 16:41 Asia/Shanghai
+> 更新时间：2026-05-18 16:54 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -47,6 +47,8 @@
 - 总证据 summary 已聚合 branch isolation 与 remote host/shared runtime verdict，避免跨多个 `/tmp` 目录人工判断。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
 - runtime-status 已下发机器可读 `runbook[]`、`nextCommandCode`、`nextCommandSafety`，页面已渲染执行 runbook，标明只读、远程删除、remote host apply/deploy 和 provider opt-in 边界。
+- runtime-status 的下一步建议已校准为 `shared-service runtime pool`，不再把运行时恢复描述成 `branch-service sidecar`。
+- `scripts/smoke-cds-agent-sidecar-alias-stability.sh` 与 `scripts/doctor-cds-agent-runtime.sh` 已默认阻止探测 branch-local `claude-agent-sdk-runtime*` alias；只有显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` 才能用于历史污染诊断。
 
 ## 最新远程页面验证
 
@@ -61,6 +63,16 @@
 - chunk 中已包含执行 runbook 渲染、`branch-isolation-apply-confirmed`、`requires approval`、`provider opt-in` 等发布后代码。
 
 限制：本地 headless 截图被登录页拦截，只能证明远程构建资源已发布，不能替代登录后的像素级视觉截图。
+
+## 最新本地验证
+
+2026-05-18 16:54 Asia/Shanghai：
+
+- `bash -n scripts/doctor-cds-agent-runtime.sh`：通过
+- `bash -n scripts/smoke-cds-agent-sidecar-alias-stability.sh`：通过
+- `git diff --check`：通过
+- `dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj --no-restore --filter FullyQualifiedName~DynamicSidecarRegistryTests`：通过，18/18
+- `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-sidecar-alias-stability.sh`：按预期拒绝默认 branch-local alias probe，除非显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1`
 
 ## 下一步
 

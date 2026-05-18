@@ -369,7 +369,7 @@ public class DynamicSidecarRegistryTests
         Assert.Contains("未发现静态 ClaudeSdkExecutor:Sidecars，也未发现可用的 CDS paired sidecar 实例", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains("paired-connections total=1 activeCds=1 usable=1 endpointsWithInstances=0", diagnostics.Blockers ?? Array.Empty<string>());
         Assert.Contains(
-            "确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 branch-service sidecar 实例发现修复",
+            "确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 shared-service sidecar 实例发现修复",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.Contains(
             "如需绕过共享 CDS discovery，显式配置 ClaudeSdkExecutor:Enabled=true 与 ClaudeSdkExecutor:Sidecars[0].BaseUrl/Token 指向一个健康的 claude-agent-sdk sidecar",
@@ -401,7 +401,7 @@ public class DynamicSidecarRegistryTests
         var diagnostics = await router.GetDiagnosticsAsync(CancellationToken.None);
 
         Assert.Contains(
-            "当前 CDS 授权可用但实例列表为空：优先更新共享 CDS 控制面的 /api/projects/{id}/instances，使其暴露 running 的 branch-service sidecar 实例",
+            "当前 CDS 授权可用但实例列表为空：优先恢复 shared-service runtime pool，并让 /api/projects/{id}/instances 暴露 running 的 shared sidecar 实例",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.Contains(
             "当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布",
@@ -433,10 +433,10 @@ public class DynamicSidecarRegistryTests
             "当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.Contains(
-            "CDS 发现到 running 分支服务但全部被 runtime 过滤跳过：确认 sidecar runtime profile/service 名称包含 api、sidecar、runtime、worker 或 agent，且不要命名为 admin/web/ui",
+            "CDS 发现到 running shared-service 服务但全部被 runtime 过滤跳过：确认 sidecar runtime profile/service 名称包含 api、sidecar、runtime、worker 或 agent，且不要命名为 admin/web/ui",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.DoesNotContain(
-            "确认 shared sidecar pool 分支服务正在运行；当前 discovery 未看到 running branch service",
+            "确认 shared sidecar pool 服务正在运行；当前 discovery 未看到 running shared-service sidecar",
             diagnostics.NextActions ?? Array.Empty<string>());
         Assert.NotNull(diagnostics.DiscoveryMetrics);
         Assert.Equal(12, diagnostics.DiscoveryMetrics!.TotalConnections);

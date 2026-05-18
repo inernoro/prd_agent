@@ -15,6 +15,7 @@
 #   SMOKE_VERBOSE=1  额外输出完整 runtime-status JSON
 #   CDS_HOST         可选；设置后会从远程 API 容器内检查 sidecar DNS alias
 #   SMOKE_CDS_AGENT_DOCTOR_REPORT 可选；写出机器可读 JSON 诊断包
+#   SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1 可选；仅用于历史污染别名诊断
 # ============================================
 
 set -euo pipefail
@@ -28,6 +29,7 @@ SMOKE_CDS_AGENT_API_PROFILE="${SMOKE_CDS_AGENT_API_PROFILE:-api-prd-agent}"
 SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-v2-prd-agent}"
 SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
 SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-3}"
+SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE="${SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE:-0}"
 SMOKE_CDS_AGENT_DOCTOR_RETRIES="${SMOKE_CDS_AGENT_DOCTOR_RETRIES:-5}"
 SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS="${SMOKE_CDS_AGENT_DOCTOR_RETRY_SECONDS:-3}"
 SMOKE_CDS_AGENT_DOCTOR_REPORT="${SMOKE_CDS_AGENT_DOCTOR_REPORT:-}"
@@ -128,6 +130,12 @@ if [[ -z "${CDS_HOST:-}" ]]; then
   printf 'Skipped: set CDS_HOST to exec inside the remote CDS API container\n'
   alias_check_status="skipped"
   alias_warning="set CDS_HOST to exec inside the remote CDS API container"
+elif [[ "$SMOKE_CDS_AGENT_SIDECAR_ALIAS" =~ (^|[-_])claude-agent-sdk-runtime ]] \
+  && [[ "$SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE" != "1" ]]; then
+  printf 'Skipped: refusing branch-local sidecar alias probe for %s\n' "$SMOKE_CDS_AGENT_SIDECAR_ALIAS"
+  printf 'Set SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1 only for legacy contamination diagnosis.\n'
+  alias_check_status="blocked_branch_local_alias"
+  alias_warning="branch-local sidecar alias probe is blocked by default"
 else
   remote_url="http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/readyz"
   remote_cmd="echo hosts; getent hosts ${SMOKE_CDS_AGENT_SIDECAR_ALIAS} || true; "

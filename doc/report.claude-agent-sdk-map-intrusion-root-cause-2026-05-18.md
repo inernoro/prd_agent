@@ -205,6 +205,7 @@ agent runtime 必须由 CDS shared-service runtime pool 管理，不能写入业
 ## 已经做对的事
 
 - 本地 compose guard 已有：`scripts/smoke-cds-agent-branch-isolation.sh`
+- 旧 branch-local alias 探测已默认关闭：`scripts/smoke-cds-agent-sidecar-alias-stability.sh` 和 `scripts/doctor-cds-agent-runtime.sh` 只有显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` 才会访问历史污染别名。
 - 远程污染 dry-run 已有：`scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`
 - 远程 host / shared pool evidence 已有：`scripts/collect-cds-agent-runtime-pool-evidence.sh`
 - 当前进度文档已沉淀：`doc/status.cds-agent-current-progress.md`
