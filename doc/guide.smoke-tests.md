@@ -342,6 +342,9 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 只表示脚本步骤完成；是否商业就绪以 `Cycle status`、`commercialGates`、
 `Readiness overall` 和 pending gates 为准。
 
+one-cycle 还会生成 `evidence-index.json` 和 `evidence-index.md`。这是给人工排障和交付复盘看的
+诊断包入口，聚合 summary、gates、当前阻塞、下一条命令、最慢步骤、截图、R1/S1/S2/S3 报告和关键日志路径。
+
 `cycle-summary.json.commercialGates` 会把验收语义拆开：
 
 | Gate | 通过含义 |

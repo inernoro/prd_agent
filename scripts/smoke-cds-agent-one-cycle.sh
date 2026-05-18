@@ -554,6 +554,10 @@ finish_cycle() {
       }
     }' > "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
 
+  if [[ -x "$SCRIPT_DIR/index-cds-agent-cycle-evidence.sh" || -f "$SCRIPT_DIR/index-cds-agent-cycle-evidence.sh" ]]; then
+    bash "$SCRIPT_DIR/index-cds-agent-cycle-evidence.sh" "$SMOKE_CDS_AGENT_CYCLE_SUMMARY" >/dev/null 2>&1 || true
+  fi
+
   printf '\n##########################################\n'
   printf '# CDS Agent one-cycle summary\n'
   printf '##########################################\n'
@@ -589,6 +593,9 @@ finish_cycle() {
     [[ "$gate_n6_status" != "pass" ]] && printf '  - N6=%s\n' "$gate_n6_status"
   fi
   printf 'Summary report: %s\n' "$SMOKE_CDS_AGENT_CYCLE_SUMMARY"
+  if [[ -f "$SMOKE_CDS_AGENT_CYCLE_DIR/evidence-index.md" ]]; then
+    printf 'Evidence index: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR/evidence-index.md"
+  fi
   printf 'Total measured step time: %ss\n' "$total_seconds"
   if (( ${#timing_keys[@]} > 0 )); then
     printf 'Slowest steps:\n'
