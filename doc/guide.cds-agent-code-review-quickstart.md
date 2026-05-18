@@ -72,7 +72,7 @@ R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDisco
 
 同一个接口还会返回 `diagnostics.debugCommands`，页面的“调试命令”区域直接展示这些后端生成的命令。日常排障优先按该列表执行：先跑 doctor / R1 dry-run；拿到真实 Anthropic/Claude-compatible key 后再跑 R1 test-before-promote；R1 通过后才显式打开 provider 调用跑 one-cycle。
 
-`diagnostics.executionPanel` 是当前执行结论的机器事实源：它给出 `status`、`commercialComplete`、`currentBlockingGate`、`blockingReason`、`nextCommand` 和 gate 计数。页面的“当前执行结论”和 readiness smoke 都应优先消费这个字段；如果 `currentBlockingGate=R0`，下一步应先跑 doctor；如果是 `R1`，再跑 R1 dry-run/test-before-promote，避免跳过真实阻塞。
+`diagnostics.executionPanel` 是当前执行结论的机器事实源：它给出 `status`、`commercialComplete`、`currentBlockingGate`、`blockingReason`、`nextCommand` 和 gate 计数。页面的“当前执行结论”和 readiness smoke 都应优先消费这个字段；如果 `currentBlockingGate=R0`，下一步应先跑 doctor；如果是 `R1`，再跑 R1 dry-run/test-before-promote，避免跳过真实阻塞。页面还会把这个结论折成三格执行判定：`部署判定`、`命令性质`、`Provider 调用`。R1 dry-run 应显示“不需要重新部署 / R1 dry-run / 不会触发真实 provider 调用”；provider one-cycle 才应显示“显式 opt-in 后才调用 provider”。
 
 同一个 execution panel 还会给出 `deploymentAdvice`。它的用途是减少无意义构建/部署：`blocked_r1` 或 `profile-blocked` 不靠 redeploy 解决，应该保存 Anthropic/Claude-compatible profile；S1/S2/S3 pending 不靠 redeploy 解决，应该显式打开 provider smoke；只有代码改动、远程容器网络/鉴权变化、视觉证据或 promotion 需要重新部署。
 
@@ -101,7 +101,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518124425` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 90s，最慢的是 V1 authenticated workbench visual 29s、N6 non-code compatibility 18s、R0 sidecar alias stability 13s；V1 和 N6 都会按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。目标审计 `/tmp/cds-agent-goal-audit-backend-next-command-cec55199.json` 标成 `match`，远程 runtime 已匹配当前 HEAD，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518131650` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 83s，最慢的是 V1 authenticated workbench visual 30s、R0 sidecar alias stability 15s、runtime doctor 10s；V1、R0 alias 和 N6 都会按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。目标审计 `/tmp/cds-agent-goal-audit-4a28fab1-after-cycle.json` 标成 `match`，远程 runtime 已匹配当前 HEAD `4a28fab1`，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
 
 A0/N6 的本地工具链已经做了自检：A0 会自动选择能 import `fastapi`、`pydantic`、`starlette` 的 Python，并在报告中记录 `pythonBin`；N6 会自动选择能看到 .NET 8 runtime 的 dotnet，并在终端打印 `dotnet:`。如果登录 shell 里的 `python3` 或 `dotnet` 指向错误版本，先看脚本打印的实际解释器路径，不要把依赖缺失当成 CDS Agent 功能失败。
 
