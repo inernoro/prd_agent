@@ -224,6 +224,27 @@ public static class InfraAgentRuntimeProfileTemplates
             true,
             [InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk])
     ];
+
+    public static void ValidateApiKeyForTemplate(InfraAgentRuntimeProfileTemplateView template, string? apiKey)
+    {
+        var normalized = apiKey?.Trim();
+        if (string.Equals(template.Id, AnthropicOfficialClaudeSonnet4, StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
+                    "Anthropic 官方模板需要填写 API key。");
+            }
+
+            if (!normalized.StartsWith("sk-ant-", StringComparison.Ordinal))
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ApiKeyFormatInvalid,
+                    "Anthropic 官方模板只接受 sk-ant- 开头的 API key；不要填 OpenRouter、OpenAI-compatible 或 MAP/CDS 管理 key。");
+            }
+        }
+    }
 }
 
 public static class InfraAgentRuntimeAdapterCompatibility
@@ -365,6 +386,7 @@ public static class InfraAgentRuntimeProfileErrorCodes
     public const string BaseUrlInvalid = "base_url_invalid";
     public const string ModelRequired = "model_required";
     public const string ApiKeyRequired = "api_key_required";
+    public const string ApiKeyFormatInvalid = "api_key_format_invalid";
     public const string ApiKeyUnreadable = "api_key_unreadable";
     public const string ProfileNotFound = "profile_not_found";
     public const string ModelNotConfigured = "model_not_configured";

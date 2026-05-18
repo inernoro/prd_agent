@@ -421,6 +421,9 @@ S1/S2/S3 误标成 pending 或 pass。
 没有 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 时，R1 repair 只做 dry-run，不会创建默认 profile，
 但会在 `r1-report.json` 里写出当前默认 profile、后端 R1 修复计划、缺 key 保护结果和
 不含真实密钥的下一条修复命令。
+提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 时，脚本会先做本地 key 形态检查，只接受
+`sk-ant-` 开头的 Anthropic key；OpenRouter/OpenAI-compatible key、MAP/CDS 管理 key
+或普通密码会被拒绝，不会发送到后端 test-before-promote 入口。
 
 V1 视觉 smoke 可以使用真实 JWT、登录用户名/密码，或 `AI_ACCESS_KEY + SMOKE_USER`
 的 smoke-only 浏览器请求头注入。后一种路径只给同源 `/api/` 请求注入

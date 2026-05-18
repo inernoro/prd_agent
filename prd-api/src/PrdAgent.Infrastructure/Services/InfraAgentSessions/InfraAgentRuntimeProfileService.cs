@@ -131,6 +131,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 "运行配置模板不存在",
                 StatusCodes.Status404NotFound);
         }
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForTemplate(template, request.ApiKey);
 
         var upsert = new UpsertInfraAgentRuntimeProfileRequest(
             NormalizeOptional(request.Name) ?? template.Name,

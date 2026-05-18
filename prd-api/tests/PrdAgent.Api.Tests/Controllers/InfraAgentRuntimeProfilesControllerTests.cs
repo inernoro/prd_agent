@@ -92,6 +92,47 @@ public class InfraAgentRuntimeProfilesControllerTests
         googleAdk.NextActions.ShouldContain(x => x.Contains("不要把代码审查任务默认路由到 google-adk", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ValidateApiKeyForTemplate_ShouldRejectMissingAnthropicKey(string? apiKey)
+    {
+        var template = InfraAgentRuntimeProfileTemplates.All.Single(x =>
+            x.Id == InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+
+        var ex = Should.Throw<InfraAgentRuntimeProfileException>(() =>
+            InfraAgentRuntimeProfileTemplates.ValidateApiKeyForTemplate(template, apiKey));
+
+        ex.ErrorCode.ShouldBe(InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired);
+    }
+
+    [Theory]
+    [InlineData("sk-or-v1-test")]
+    [InlineData("sk-proj-test")]
+    [InlineData("inernoro Shenmemima..01")]
+    public void ValidateApiKeyForTemplate_ShouldRejectNonAnthropicKeyShape(string apiKey)
+    {
+        var template = InfraAgentRuntimeProfileTemplates.All.Single(x =>
+            x.Id == InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+
+        var ex = Should.Throw<InfraAgentRuntimeProfileException>(() =>
+            InfraAgentRuntimeProfileTemplates.ValidateApiKeyForTemplate(template, apiKey));
+
+        ex.ErrorCode.ShouldBe(InfraAgentRuntimeProfileErrorCodes.ApiKeyFormatInvalid);
+        ex.Message.ShouldContain("sk-ant-");
+    }
+
+    [Fact]
+    public void ValidateApiKeyForTemplate_ShouldAcceptAnthropicKeyShape()
+    {
+        var template = InfraAgentRuntimeProfileTemplates.All.Single(x =>
+            x.Id == InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
+
+        Should.NotThrow(() =>
+            InfraAgentRuntimeProfileTemplates.ValidateApiKeyForTemplate(template, "sk-ant-test"));
+    }
+
     [Fact]
     public async Task CreateFromTemplate_ShouldUseCurrentUserAndTemplateId()
     {

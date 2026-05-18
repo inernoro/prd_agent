@@ -69,6 +69,48 @@ write_r1_report() {
   printf 'R1 report: %s\n' "$SMOKE_CDS_AGENT_R1_REPORT"
 }
 
+write_invalid_key_report() {
+  [[ -z "$SMOKE_CDS_AGENT_R1_REPORT" ]] && return
+  local evidence_json
+  evidence_json=$(jq -n \
+    --argjson currentR1 "$current_r1" \
+    --argjson defaultProfile "$default_profile" \
+    --argjson repairPlan "$repair_plan" \
+    --argjson template "$template" \
+    '{
+      currentR1: $currentR1,
+      defaultProfile: $defaultProfile,
+      repairPlan: $repairPlan,
+      targetTemplate: {
+        id: ($template.id // ""),
+        name: ($template.name // ""),
+        protocol: ($template.protocol // ""),
+        baseUrl: ($template.baseUrl // ""),
+        model: ($template.model // ""),
+        compatibleRuntimeAdapters: ($template.compatibleRuntimeAdapters // [])
+      },
+      providerKeyReceived: true,
+      providerKeyFormat: {
+        checked: true,
+        accepted: false,
+        requiredPrefix: "sk-ant-",
+        message: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY must be an Anthropic API key beginning with sk-ant-. Do not use OpenRouter/OpenAI-compatible keys or MAP/CDS management credentials."
+      }
+    }')
+  write_r1_report "invalid_anthropic_key_format" "$evidence_json"
+}
+
+assert_anthropic_key_shape() {
+  local key="${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}"
+  if [[ -z "$key" ]]; then
+    return 0
+  fi
+  if [[ "$key" != sk-ant-* ]]; then
+    write_invalid_key_report
+    smoke_fail "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY must start with sk-ant-; refusing to send a non-Anthropic key to the R1 test-before-promote endpoint"
+  fi
+}
+
 cleanup_candidate_profile() {
   if [[ -n "$candidate_profile_id" && -z "$candidate_promoted" ]]; then
     smoke_delete "/api/infra-agent-runtime-profiles/${candidate_profile_id}" >/dev/null 2>&1 || true
@@ -179,6 +221,7 @@ if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
   smoke_done
   exit 0
 fi
+assert_anthropic_key_shape
 
 repair_body=$(mktemp)
 repair_resp_tmp=$(mktemp)
