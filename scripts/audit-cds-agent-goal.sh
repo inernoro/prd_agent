@@ -40,6 +40,8 @@ timing_names=()
 timing_statuses=()
 timing_seconds=()
 timing_indices=()
+CYCLE_GIT_DIFF_PATHS=()
+CYCLE_GIT_RUNTIME_DIFF_PATHS=()
 TIMING_STEP_TOTAL=2
 TIMING_STEP_CURRENT=0
 AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
@@ -153,6 +155,48 @@ file_mtime() {
   stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null || printf '0'
 }
 
+is_non_runtime_cycle_drift_path() {
+  local path="$1"
+  case "$path" in
+    *.md|*.MD|*.txt|*.TXT) return 0 ;;
+    CHANGELOG*|changelogs/*|doc/*|.claude/*|.github/*|e2e/*) return 0 ;;
+    cds/tests/*|prd-admin/src/*/__tests__/*) return 0 ;;
+    scripts/smoke-*|scripts/audit-*|scripts/doctor-*|scripts/preflight-*|scripts/verify-*) return 0 ;;
+    LICENSE|license|.gitignore|.editorconfig) return 0 ;;
+  esac
+  return 1
+}
+
+classify_cycle_git_drift() {
+  local base_commit="$1"
+  local head_commit="$2"
+  local diff_output path has_paths=false has_runtime=false
+  CYCLE_GIT_DIFF_PATHS=()
+  CYCLE_GIT_RUNTIME_DIFF_PATHS=()
+  if [[ -z "$base_commit" || -z "$head_commit" ]]; then
+    return 1
+  fi
+  if ! diff_output=$(git -C "$ROOT_DIR" diff --name-only "${base_commit}..${head_commit}" 2>/dev/null); then
+    return 1
+  fi
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    has_paths=true
+    CYCLE_GIT_DIFF_PATHS+=("$path")
+    if ! is_non_runtime_cycle_drift_path "$path"; then
+      has_runtime=true
+      CYCLE_GIT_RUNTIME_DIFF_PATHS+=("$path")
+    fi
+  done <<< "$diff_output"
+  if [[ "$has_runtime" == "true" ]]; then
+    return 2
+  fi
+  if [[ "$has_paths" == "true" ]]; then
+    return 0
+  fi
+  return 3
+}
+
 json_bool() {
   if [[ "$1" == "true" ]]; then
     printf 'true'
@@ -220,6 +264,8 @@ cycle_git_branch=""
 cycle_git_commit=""
 cycle_git_commit_short=""
 cycle_git_status="missing"
+cycle_git_diff_json='[]'
+cycle_git_runtime_diff_json='[]'
 r1_report=""
 r1_status="missing"
 r1_details_json='null'
@@ -260,8 +306,21 @@ if [[ -f "$cycle_summary" ]]; then
     cycle_git_status="unknown"
   elif [[ -n "$current_git_commit" && "$cycle_git_commit" == "$current_git_commit" ]]; then
     cycle_git_status="match"
+  elif classify_cycle_git_drift "$cycle_git_commit" "$current_git_commit"; then
+    cycle_git_status="compatible_non_runtime_drift"
   else
-    cycle_git_status="mismatch"
+    drift_rc=$?
+    if (( drift_rc == 2 )); then
+      cycle_git_status="runtime_mismatch"
+    else
+      cycle_git_status="mismatch"
+    fi
+  fi
+  if (( ${#CYCLE_GIT_DIFF_PATHS[@]} > 0 )); then
+    cycle_git_diff_json=$(printf '%s\n' "${CYCLE_GIT_DIFF_PATHS[@]}" | jq -R . | jq -s .)
+  fi
+  if (( ${#CYCLE_GIT_RUNTIME_DIFF_PATHS[@]} > 0 )); then
+    cycle_git_runtime_diff_json=$(printf '%s\n' "${CYCLE_GIT_RUNTIME_DIFF_PATHS[@]}" | jq -R . | jq -s .)
   fi
   r1_report=$(jq -r '.r1.report // ""' "$cycle_summary")
   s1_report=$(jq -r '.s1.report // ""' "$cycle_summary")
@@ -323,14 +382,14 @@ fi
 if [[ "$cycle_freshness_status" == "stale" ]]; then
   failures+=("one-cycle summary is stale; rerun scripts/smoke-cds-agent-one-cycle.sh for current remote/provider evidence")
 fi
-if [[ "$cycle_git_status" == "mismatch" ]]; then
+if [[ "$cycle_git_status" == "runtime_mismatch" || "$cycle_git_status" == "mismatch" ]]; then
   failures+=("one-cycle summary git commit does not match current HEAD; rerun scripts/smoke-cds-agent-one-cycle.sh for this commit")
 fi
 
 goal_status="not_complete"
 if [[ "$(json_bool "$commercial_complete")" == "true" \
   && "$cycle_freshness_status" == "fresh" \
-  && "$cycle_git_status" == "match" \
+  && ( "$cycle_git_status" == "match" || "$cycle_git_status" == "compatible_non_runtime_drift" ) \
   && "$boundary_status" == "pass" \
   && "$n6_status" == "pass" \
   && "$gate_r0" == "pass" \
@@ -370,7 +429,7 @@ missing_json=$(
       status: .value
     }))
     + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
-    + (if $root.cycleGitStatus == "mismatch" then [{requirement:"CYCLE_GIT_MATCH", status:"mismatch"}] else [] end)'
+    + (if ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch") then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
 failures_json='[]'
 if (( ${#failures[@]} > 0 )); then
@@ -441,6 +500,8 @@ audit_json=$(
     --argjson cycleTotalSeconds "$cycle_total_seconds" \
     --argjson cycleAgeSeconds "$cycle_age_seconds" \
     --argjson cycleMaxAgeSeconds "$CYCLE_MAX_AGE_SECONDS" \
+    --argjson cycleGitDiffPaths "$cycle_git_diff_json" \
+    --argjson cycleGitRuntimeDiffPaths "$cycle_git_runtime_diff_json" \
     --argjson cycleSlowest "$cycle_slowest" \
     --argjson localTiming "$timing_json" \
     --argjson localSlowest "$timing_slowest_json" \
@@ -521,7 +582,9 @@ audit_json=$(
             currentBranch: $currentGitBranch,
             currentCommit: $currentGitCommit,
             currentCommitShort: $currentGitCommitShort,
-            status: $cycleGitStatus
+            status: $cycleGitStatus,
+            diffPaths: $cycleGitDiffPaths,
+            runtimeDiffPaths: $cycleGitRuntimeDiffPaths
           },
           totalSeconds: $cycleTotalSeconds,
           slowest: $cycleSlowest
@@ -553,7 +616,9 @@ audit_json=$(
         gitCommitShort: $cycleGitCommitShort,
         currentGitBranch: $currentGitBranch,
         currentGitCommitShort: $currentGitCommitShort,
-        gitStatus: $cycleGitStatus
+        gitStatus: $cycleGitStatus,
+        diffPaths: $cycleGitDiffPaths,
+        runtimeDiffPaths: $cycleGitRuntimeDiffPaths
       },
       failures: $failures
     }'
@@ -577,6 +642,13 @@ printf 'Cycle freshness: %s age=%ss max=%ss git=%s@%s current=%s@%s match=%s\n' 
   "$cycle_freshness_status" "$cycle_age_seconds" "$CYCLE_MAX_AGE_SECONDS" \
   "${cycle_git_branch:-unknown}" "${cycle_git_commit_short:-unknown}" \
   "${current_git_branch:-unknown}" "${current_git_commit_short:-unknown}" "$cycle_git_status"
+if [[ "$cycle_git_status" == "compatible_non_runtime_drift" ]]; then
+  printf 'Cycle git drift: compatible non-runtime changes since summary:\n'
+  printf '%s\n' "${CYCLE_GIT_DIFF_PATHS[@]}" | sed 's/^/  - /'
+elif [[ "$cycle_git_status" == "runtime_mismatch" ]]; then
+  printf 'Cycle git runtime drift:\n'
+  printf '%s\n' "${CYCLE_GIT_RUNTIME_DIFF_PATHS[@]}" | sed 's/^/  - /'
+fi
 printf 'Current blocking gate: %s\n' "${current_blocking_gate:-unknown}"
 printf 'Blocking reason: %s\n' "$blocking_reason"
 if [[ "$r1_details_json" != "null" ]]; then

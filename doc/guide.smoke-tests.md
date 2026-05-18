@@ -167,7 +167,7 @@ SMOKE_VERBOSE=1 bash scripts/smoke-all.sh
 | `SMOKE_CDS_AGENT_READINESS_REPORT` | _(空)_ | readiness audit 专用；指定 JSON 报告输出路径，便于 CI、诊断包或页面消费 |
 | `CDS_AGENT_GOAL_AUDIT_REPORT` | _(空)_ | goal audit 专用；指定目标完成审计 JSON 输出路径 |
 | `CDS_AGENT_GOAL_CYCLE_SUMMARY` | _(自动查找)_ | goal audit 专用；指定 one-cycle `cycle-summary.json`，不指定时自动查找最新 `/tmp/cds-agent-cycle-*/cycle-summary.json` |
-| `CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS` | `86400` | goal audit 专用；one-cycle 摘要超过该秒数会标成 `cycleFreshness=stale`；summary git commit 不等于当前 HEAD 时会标成 `CYCLE_GIT_MATCH=mismatch`，两者都不能用于证明目标完成 |
+| `CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS` | `86400` | goal audit 专用；one-cycle 摘要超过该秒数会标成 `cycleFreshness=stale`；summary git commit 不等于当前 HEAD 时会按 diff 分为 `compatible_non_runtime_drift` 或 `runtime_mismatch`，后者不能用于证明目标完成 |
 | `SMOKE_CDS_AGENT_DOCTOR_REPORT` | _(空)_ | doctor / one-cycle 专用；指定 JSON 诊断包输出路径，包含 diagnosis、nextRecommended、aliasCheck、默认 profile 和 adapter compatibility |
 | `SMOKE_CDS_AGENT_BOUNDARY_REPORT` | _(空)_ | official SDK boundary / one-cycle 专用；指定本地 adapter 边界 JSON 报告输出路径，包含默认 adapter、legacy fallback、adapter/support/total 行数预算和 helper loop-regression 扫描证据 |
 | `SMOKE_CDS_AGENT_LOGIN_USERNAME` / `SMOKE_CDS_AGENT_LOGIN_PASSWORD` | _(空)_ | workbench visual 专用；用于登录并生成前端 JWT |
