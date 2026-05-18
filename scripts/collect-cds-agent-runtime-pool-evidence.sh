@@ -272,7 +272,7 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf 'remote host 准备 dry-run：\n\n'
     printf '```bash\n'
     printf 'CDS_HOST=https://cds.miduo.org \\\n'
-    printf '  bash scripts/prepare-cds-agent-remote-host-pool.sh\n'
+    printf '  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh\n'
     printf '```\n\n'
     printf '目标审计：\n\n'
     printf '```bash\n'

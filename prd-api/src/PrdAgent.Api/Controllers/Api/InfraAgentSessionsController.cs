@@ -261,8 +261,8 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "remote-host-prepare",
                 "Remote host 准备预检",
-                remoteSmokePrefix + "bash scripts/prepare-cds-agent-remote-host-pool.sh",
-                "默认只读检查 CDS remote host 是否存在、缺哪些 SSH/image 配置；不会创建主机。",
+                remoteSmokePrefix + "bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
+                "默认 dry-run，生成 pre evidence、remote host prepare report 和 summary；显式 apply/deploy 前先确认缺失配置。",
                 r0Status,
                 r0Ready ? null : "R0"),
             new SidecarDebugCommand(
@@ -602,7 +602,7 @@ public class InfraAgentSessionsController : ControllerBase
         {
             "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，先得到 branch-local sidecar、remote host、shared pool running 的同一份证据。",
             "如果 evidence 显示 branch-local sidecar contamination，先用 scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh dry-run 确认候选 BuildProfile，再按审批执行清理。",
-            "如果 evidence 显示 remote host missing，先用 scripts/prepare-cds-agent-remote-host-pool.sh 检查缺失的 SSH/image 配置；不要通过普通 preview redeploy 解决。",
+            "如果 evidence 显示 remote host missing，先用 scripts/run-cds-agent-remote-host-pool-with-evidence.sh 检查缺失的 SSH/image 配置并保留 pre/post evidence；不要通过普通 preview redeploy 解决。",
             "shared-service runtime pool 恢复 running official SDK instance 后，再重跑 MAP R0/S1/S2/S3/one-cycle。"
         };
         if (diagnostics.NextActions is { Count: > 0 })

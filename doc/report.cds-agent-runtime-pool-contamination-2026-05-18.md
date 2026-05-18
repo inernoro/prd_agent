@@ -142,7 +142,7 @@ remote host 准备 dry-run：
 
 ```bash
 CDS_HOST=https://cds.miduo.org \
-  bash scripts/prepare-cds-agent-remote-host-pool.sh
+  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
 ```
 
 执行清理或创建 remote host 都是写远程状态的动作，必须带 evidence wrapper，并在完成后立即跑 post-check。没有 post-check 的“修复”不能算完成。
