@@ -1314,6 +1314,7 @@ export default function CdsAgentPage() {
       status: item.status,
       blockedBy: item.blockedBy,
     })) ?? [];
+    const executionRunbook = backendExecutionPanel?.runbook ?? [];
     const executionCurrentStep = backendExecutionPanel?.currentStep
       ?? executionTimeline.find((item) => item.status !== 'pass')
       ?? null;
@@ -1422,6 +1423,7 @@ export default function CdsAgentPage() {
       executionPendingSteps,
       executionCurrentStep,
       executionTimeline,
+      executionRunbook,
       nextCyclePlan,
       debugCommands,
       readinessGates,
@@ -1599,6 +1601,7 @@ export default function CdsAgentPage() {
       executionPendingSteps: runtimeDiagnostics.executionPendingSteps,
       executionCurrentStep: runtimeDiagnostics.executionCurrentStep,
       executionTimeline: runtimeDiagnostics.executionTimeline,
+      executionRunbook: runtimeDiagnostics.executionRunbook,
       commercialPassed: runtimeDiagnostics.commercialPassed,
       commercialTotal: runtimeDiagnostics.commercialTotal,
       commercialReadinessGates: runtimeDiagnostics.commercialReadinessGates,
@@ -3924,6 +3927,88 @@ export default function CdsAgentPage() {
                         </div>
                       )}
                     </div>
+                    {runtimeDiagnostics.executionRunbook.length > 0 && (
+                      <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-white/46">
+                              <Route size={13} />
+                              执行 runbook
+                            </div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/48">
+                              后端 runtime-status 生成的机器可读步骤；标明只读、删除、部署和 provider 调用边界。
+                            </div>
+                          </div>
+                          <span className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-semibold text-white/58" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            {runtimeDiagnostics.executionRunbook.filter((item) => item.status === 'pass').length}/{runtimeDiagnostics.executionRunbook.length}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                          {runtimeDiagnostics.executionRunbook.map((item) => {
+                            const isActive = item.status === 'active';
+                            const isBlocked = item.status === 'blocked';
+                            const isPass = item.status === 'pass';
+                            const isDestructive = item.safety.includes('destructive');
+                            const isProvider = item.safety.includes('provider');
+                            const border = isActive
+                              ? '1px solid rgba(56,189,248,0.28)'
+                              : isBlocked || isDestructive
+                                ? '1px solid rgba(245,158,11,0.22)'
+                                : isPass
+                                  ? '1px solid rgba(34,197,94,0.2)'
+                                  : '1px solid rgba(148,163,184,0.14)';
+                            const background = isActive
+                              ? 'rgba(14,165,233,0.1)'
+                              : isBlocked || isDestructive
+                                ? 'rgba(245,158,11,0.08)'
+                                : isPass
+                                  ? 'rgba(34,197,94,0.07)'
+                                  : 'rgba(15,23,42,0.62)';
+                            return (
+                              <div
+                                key={item.code}
+                                className="min-h-[126px] rounded-md px-3 py-2"
+                                style={{ background, border }}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[11px] font-semibold text-white/40">
+                                      {item.order}. {item.code}
+                                    </div>
+                                    <div className="mt-0.5 text-xs font-semibold text-white/76">{item.title}</div>
+                                  </div>
+                                  <span
+                                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                                    style={{
+                                      background: isActive ? 'rgba(56,189,248,0.14)' : isBlocked || isDestructive ? 'rgba(245,158,11,0.14)' : isPass ? 'rgba(34,197,94,0.12)' : 'rgba(148,163,184,0.1)',
+                                      color: isActive ? 'rgba(186,230,253,0.92)' : isBlocked || isDestructive ? 'rgba(253,230,138,0.9)' : isPass ? 'rgba(134,239,172,0.9)' : 'rgba(203,213,225,0.76)',
+                                    }}
+                                  >
+                                    {item.status.toUpperCase()}
+                                  </span>
+                                </div>
+                                {item.blockedBy && (
+                                  <div className="mt-2 inline-flex max-w-full rounded px-1.5 py-0.5 text-[11px] font-semibold text-amber-50/82" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.18)' }}>
+                                    <span className="truncate">blocked by {item.blockedBy}</span>
+                                  </div>
+                                )}
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  <span className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-sky-50/70" style={{ background: 'rgba(56,189,248,0.09)', border: '1px solid rgba(56,189,248,0.16)' }}>
+                                    {item.commandCode}
+                                  </span>
+                                  {(isDestructive || isProvider) && (
+                                    <span className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-amber-50/78" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.18)' }}>
+                                      {isDestructive ? 'requires approval' : 'provider opt-in'}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-2 line-clamp-3 text-xs leading-relaxed text-white/46">{item.safety}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
