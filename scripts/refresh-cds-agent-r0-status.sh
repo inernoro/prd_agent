@@ -131,7 +131,7 @@ fi
 
 display_next_action="$next_action"
 if [[ "$runtime_capacity_available" == "true" ]]; then
-  display_next_action="R0 pass; continue R1 Anthropic/Claude-compatible profile repair and provider smokes"
+  display_next_action="R0 pass; continue R1 Claude Code provider-switch profile repair and provider smokes"
   user_action_required=false
   user_action_reason="none"
   ready_for_r0="passed_by_runtime_capacity"
@@ -180,10 +180,11 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Next Command\n\n'
   if [[ "$runtime_capacity_available" == "true" ]]; then
-    printf 'R0 is passed by live CDS-managed runtime capacity evidence. Continue R1 profile repair and provider smokes:\n\n'
+    printf 'R0 is passed by live CDS-managed runtime capacity evidence. Continue R1 Claude Code provider-switch profile repair and provider smokes:\n\n'
     printf '```bash\n'
-    printf 'CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh\n'
+    printf 'scripts/check-cds-agent-progress-consistency.sh\n'
     printf '```\n'
+    printf '\nDeepSeek/cc-switch is valid on claude-sdk when the profile uses anthropic protocol and an Anthropic-compatible baseUrl. Native api.anthropic.com is the only path that requires sk-ant.\n'
   elif [[ "$user_action_required" == "true" ]]; then
     printf 'Continue R0.7 CDS-managed runtime live evidence work. R0.7 local liveApply container path is in place; remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'

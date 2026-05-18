@@ -64,7 +64,7 @@ require_contains "$PROGRESS_OUTPUT" '| R0.5 CDS-managed runtime capacity contrac
 require_contains "$PROGRESS_OUTPUT" '| R0.6 CDS-managed runtime capacity reconciler | done_minimal |' 'progress task board has R0.6 reconciler'
 if [[ "$runtime_capacity_available" == "true" ]]; then
   require_contains "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | done_live |' 'progress task board has R0.7 live evidence'
-  require_contains "$PROGRESS_OUTPUT" '| R1 Profile repair | current_blocker |' 'progress task board moves to R1'
+  require_contains "$PROGRESS_OUTPUT" '| R1 Claude Code provider-switch profile | current_blocker |' 'progress task board moves to R1'
 else
   require_contains "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress task board has R0.7 live apply'
 fi

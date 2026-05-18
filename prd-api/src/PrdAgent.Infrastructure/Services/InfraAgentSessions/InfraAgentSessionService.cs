@@ -2078,6 +2078,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return normalized switch
         {
             InfraAgentRuntimes.ClaudeSdk => InfraAgentRuntimes.ClaudeSdk,
+            InfraAgentRuntimes.OpenAiCompatible => InfraAgentRuntimes.OpenAiCompatible,
             InfraAgentRuntimes.Codex => InfraAgentRuntimes.Codex,
             InfraAgentRuntimes.Custom => InfraAgentRuntimes.Custom,
             _ => InfraAgentRuntimes.ClaudeSdk
@@ -2167,6 +2168,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var compatibility = InfraAgentRuntimeProfileCompatibility.AnalyzeForDesiredRuntimeAdapter(
             desiredRuntimeAdapter,
+            profile.Runtime,
             profile.Protocol,
             profile.Model);
         if (compatibility.Compatible)

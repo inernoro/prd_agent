@@ -70,8 +70,8 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         decision.Compatible.ShouldBeFalse();
         decision.ReasonCode.ShouldBe("openai-compatible-non-claude-model");
         decision.Reason.ShouldContain("claude-agent-sdk");
-        decision.NextActions.ShouldContain(x => x.Contains("Anthropic 官方模板", StringComparison.Ordinal));
-        decision.NextActions.ShouldContain(x => x.Contains("不要把代码审查任务路由到 claude-agent-sdk", StringComparison.Ordinal));
+        decision.NextActions.ShouldContain(x => x.Contains("cc-switch/DeepSeek", StringComparison.Ordinal));
+        decision.NextActions.ShouldContain(x => x.Contains("raw OpenAI-compatible", StringComparison.Ordinal));
     }
 
     [Fact]

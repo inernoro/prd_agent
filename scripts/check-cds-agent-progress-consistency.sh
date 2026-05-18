@@ -69,7 +69,7 @@ fi
 require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
 require_text "$REFRESH_OUTPUT" 'runtimeCapacityStatus: `' 'refresh runtime capacity status'
 if [[ "$runtime_capacity_available" == "true" ]]; then
-  require_text "$REFRESH_OUTPUT" 'nextAction: `R0 pass; continue R1 Anthropic/Claude-compatible profile repair and provider smokes`' 'refresh R1 next action'
+  require_text "$REFRESH_OUTPUT" 'nextAction: `R0 pass; continue R1 Claude Code provider-switch profile repair and provider smokes`' 'refresh R1 next action'
   require_text "$REFRESH_OUTPUT" 'R0 is passed by live CDS-managed runtime capacity evidence' 'refresh R0 pass command'
   require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r1' 'progress overall status'
   require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R1' 'progress blocking gate'
@@ -101,7 +101,7 @@ require_text "$PROGRESS_OUTPUT" '| R0.5 CDS-managed runtime capacity contract | 
 require_text "$PROGRESS_OUTPUT" '| R0.6 CDS-managed runtime capacity reconciler | done_minimal |' 'progress R0.6 done minimal'
 if [[ "$runtime_capacity_available" == "true" ]]; then
   require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | done_live |' 'progress R0.7 done live'
-  require_text "$PROGRESS_OUTPUT" '| R1 Profile repair | current_blocker |' 'progress R1 current blocker'
+  require_text "$PROGRESS_OUTPUT" '| R1 Claude Code provider-switch profile | current_blocker |' 'progress R1 current blocker'
 else
   require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress R0.7 in progress'
 fi

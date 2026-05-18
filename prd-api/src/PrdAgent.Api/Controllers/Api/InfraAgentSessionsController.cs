@@ -747,10 +747,17 @@ public class InfraAgentSessionsController : ControllerBase
                 "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-run.sh 验证 S1。",
                 "运行 SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 smoke-cds-agent-official-sdk-controls.sh 验证 S2/S3。"
             }
+            : profile is { CompatibilityReasonCode: "openai-compatible-non-claude-model" or "runtime-adapter-mismatch" }
+                ? new[]
+                {
+                    "将默认 profile 改为 claude-sdk runtime + anthropic protocol，baseUrl 指向 cc-switch 或 DeepSeek Anthropic-compatible endpoint。",
+                    "复用现有 DeepSeek/OpenRouter provider secret；不要要求 Anthropic 原生 sk-ant，除非 baseUrl 是 https://api.anthropic.com。",
+                    "点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。"
+                }
             : new[]
             {
-                "在 CDS Agent 页面点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。",
-                "通过 CDS Agent runtime profile 表单或 CDS secret 注入 Anthropic key，并保存为默认 runtime profile。",
+                "原生 Claude 可点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。",
+                "通过 CDS Agent runtime profile 表单或 CDS secret 保存 provider secret，并保存为默认 runtime profile。",
                 "点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。"
             };
         return new SidecarRuntimeProfileRepairPlan(
@@ -790,8 +797,8 @@ public class InfraAgentSessionsController : ControllerBase
             new(
                 1,
                 "N1",
-                "配置真实 Claude/Anthropic runtime profile",
-                "用后端 Anthropic 官方模板创建默认 CDS-managed runtime profile，provider secret 只存 profile/secret store。",
+                "配置 Claude Code provider-switch profile",
+                "默认 CDS-managed runtime profile 应为 claude-sdk runtime + anthropic protocol；原生 Claude 用 Anthropic 官方 endpoint，DeepSeek/cc-switch 用 Anthropic-compatible gateway。",
                 "runtime-status.defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter=true 且 hasApiKey=true。",
                 r1Ready ? "pass" : "blocked",
                 r1Ready ? null : "R1",
@@ -891,10 +898,10 @@ public class InfraAgentSessionsController : ControllerBase
                         : "runtime-profile-incompatible");
         var profileBlockReason = profile?.CompatibilityReason
             ?? profile?.Warning
-            ?? "create a default Anthropic/Claude-compatible CDS-managed runtime profile with provider secret";
+            ?? "create a default Claude Code provider-switch CDS-managed runtime profile with provider secret";
         var profileBlockNextActions = profile?.CompatibilityNextActions is { Count: > 0 } actions
             ? actions
-            : new[] { "使用 Anthropic 官方模板创建默认 CDS-managed runtime profile，并通过 profile/secret store 保存 provider secret" };
+            : new[] { "保存 claude-sdk runtime + anthropic protocol 的默认 CDS-managed runtime profile；原生 Anthropic 才要求 sk-ant，cc-switch/DeepSeek 使用对应 provider secret" };
         var providerStatus = r1Ready ? "unblocked" : "pending";
         var providerMessage = r1Ready
             ? "默认 profile 已兼容并带 key；可以显式开启 provider smoke 验证真实 run。"
@@ -1059,6 +1066,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         var compatibility = InfraAgentRuntimeProfileCompatibility.AnalyzeForDesiredRuntimeAdapter(
             desiredRuntimeAdapter,
+            selected.Runtime,
             selected.Protocol,
             selected.Model);
         var warning = compatibility.Compatible

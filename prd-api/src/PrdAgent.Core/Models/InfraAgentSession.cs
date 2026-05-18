@@ -82,6 +82,7 @@ public class InfraAgentSession
 public static class InfraAgentRuntimes
 {
     public const string ClaudeSdk = "claude-sdk";
+    public const string OpenAiCompatible = "openai-compatible";
     public const string Codex = "codex";
     public const string Custom = "custom";
 }

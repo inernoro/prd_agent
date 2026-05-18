@@ -79,7 +79,7 @@ describe('CDS Agent execution runway', () => {
     const state = resolveExecutionRunway({
       commercialComplete: false,
       blockingCode: 'R1',
-      deploymentAdvice: '不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key。',
+      deploymentAdvice: '不要靠重新部署解决 R1；当前阻塞是 CDS-managed runtime profile/secret。',
       nextCommand: 'CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-r1-profile-repair.sh',
     });
 

@@ -305,12 +305,13 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         var now = DateTime.UtcNow;
         var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
         var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
+        var runtime = InferRuntime(protocol, model.ModelName);
         InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
 
         var profile = new InfraAgentRuntimeProfile
         {
             Name = $"系统主模型 · {model.Name}",
-            Runtime = InfraAgentRuntimes.ClaudeSdk,
+            Runtime = runtime,
             Protocol = protocol,
             BaseUrl = baseUrl,
             Model = model.ModelName.Trim(),
@@ -498,7 +499,10 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
     private static string NormalizeRuntime(string? runtime)
     {
         var normalized = NormalizeOptional(runtime);
-        return normalized is InfraAgentRuntimes.ClaudeSdk or InfraAgentRuntimes.Codex or InfraAgentRuntimes.Custom
+        return normalized is InfraAgentRuntimes.ClaudeSdk
+            or InfraAgentRuntimes.OpenAiCompatible
+            or InfraAgentRuntimes.Codex
+            or InfraAgentRuntimes.Custom
             ? normalized
             : InfraAgentRuntimes.ClaudeSdk;
     }
@@ -657,6 +661,19 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             || apiUrl.Contains("/anthropic", StringComparison.OrdinalIgnoreCase)
             ? InfraAgentRuntimeProtocols.Anthropic
             : InfraAgentRuntimeProtocols.OpenAiCompatible;
+    }
+
+    private static string InferRuntime(string protocol, string? modelName)
+    {
+        var normalizedModel = modelName?.Trim() ?? string.Empty;
+        if (string.Equals(protocol, InfraAgentRuntimeProtocols.Anthropic, StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.Contains("claude", StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase))
+        {
+            return InfraAgentRuntimes.ClaudeSdk;
+        }
+
+        return InfraAgentRuntimes.OpenAiCompatible;
     }
 
     private static string NormalizeModelBaseUrl(string apiUrl)

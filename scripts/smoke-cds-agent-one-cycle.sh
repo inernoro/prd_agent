@@ -646,7 +646,7 @@ finish_cycle() {
       },
       R1: {
         status: $gateR1,
-        evidence: "default runtime profile is Anthropic/Claude-compatible and keyed"
+        evidence: "default runtime profile is Anthropic/Claude-compatible and has a CDS-managed provider secret"
       },
       S1: {
         status: $gateS1,
@@ -942,8 +942,8 @@ if [[ "${SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL:-0}" != "1" ]]; then
   skip_step "S1 official SDK run evidence" "provider calls are disabled; set SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 after R1 passes" "provider-gated"
   skip_step "S2/S3 approval and stop controls" "provider calls are disabled; set SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 after R1 passes" "provider-gated"
 elif [[ "$r1_report_status" == "dry_run_requires_api_key" || "$r1_report_status" == "invalid_anthropic_key_format" ]]; then
-  skip_step "S1 official SDK run evidence" "blocked until R1 Anthropic/Claude-compatible profile is keyed and promoted" "provider-gated"
-  skip_step "S2/S3 approval and stop controls" "blocked until R1 Anthropic/Claude-compatible profile is keyed and promoted" "provider-gated"
+  skip_step "S1 official SDK run evidence" "blocked until R1 Anthropic/Claude-compatible profile has a CDS-managed provider secret and is promoted" "provider-gated"
+  skip_step "S2/S3 approval and stop controls" "blocked until R1 Anthropic/Claude-compatible profile has a CDS-managed provider secret and is promoted" "provider-gated"
 else
   run_step "s1-official-sdk-run" "S1 official SDK run evidence" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-run.sh" "provider-gated" || finish_cycle 1
   run_step "s2-s3-controls" "S2/S3 approval and stop controls" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-controls.sh" "provider-gated" || finish_cycle 1

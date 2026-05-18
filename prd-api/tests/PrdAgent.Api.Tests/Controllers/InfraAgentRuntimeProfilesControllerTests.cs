@@ -62,7 +62,9 @@ public class InfraAgentRuntimeProfilesControllerTests
         official.CompatibleRuntimeProfileTemplateIds.ShouldContain(InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4);
         official.RequiredEvidenceGates.ShouldBe(new[] { "R0", "A0", "R1", "S1", "S2", "S3", "V1", "N6" });
         official.MissingAdapterContracts.ShouldBeEmpty();
-        official.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("deepseek", StringComparison.OrdinalIgnoreCase));
+        official.KnownIncompatibleProfilePatterns.ShouldContain(x => x.Contains("raw openai-compatible", StringComparison.OrdinalIgnoreCase));
+        official.Notes.ShouldContain(x => x.Contains("cc-switch", StringComparison.OrdinalIgnoreCase));
+        official.NextActions.ShouldContain(x => x.Contains("cc-switch/DeepSeek", StringComparison.OrdinalIgnoreCase));
 
         var codex = items.Single(x => x.Id == InfraAgentRuntimeAdapterCompatibility.CodexPlanned);
         codex.Status.ShouldBe("planned-not-routable");

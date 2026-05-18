@@ -98,13 +98,13 @@ function protocolLabel(protocol: string): string {
 }
 
 function profileLabel(profile: InfraAgentRuntimeProfileView): string {
-  const keyState = profile.hasApiKey ? '' : ' · 需重新保存 API key';
+  const keyState = profile.hasApiKey ? '' : ' · 需重新保存 provider secret';
   return `${profile.name} · ${protocolLabel(profile.protocol)} · ${profile.model}${keyState}`;
 }
 
 function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
   if (!profile) return '未选择';
-  const keyState = profile.hasApiKey ? '' : ' · API key 需重新保存';
+  const keyState = profile.hasApiKey ? '' : ' · provider secret 需重新保存';
   return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
 }
 
@@ -138,7 +138,7 @@ function formatSessionResourcePolicy(session?: InfraAgentSessionView | null): st
 
 function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): string {
   if (!profile) return '请先保存一个模型配置。';
-  if (!profile.hasApiKey) return '当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话。';
+  if (!profile.hasApiKey) return '当前模型配置的 provider secret 无法读取，请在系统配置中重新保存后再启动远程会话。';
   if (!profile.baseUrl || !profile.model) return '当前模型配置缺少 baseUrl 或 model，请补全后再启动远程会话。';
   return '';
 }
@@ -196,7 +196,7 @@ function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): st
     const firstError = status.instances.find((item) => item.error)?.error;
     return firstError
       ? `sidecar 实例均不健康：${firstError}`
-      : 'sidecar 实例均不健康，请检查 /readyz、官方 SDK 包、workspace、token 和 provider key 配置。';
+      : 'sidecar 实例均不健康，请检查 /readyz、官方 SDK 包、workspace、token 和 provider secret 配置。';
   }
   return '';
 }
@@ -752,8 +752,8 @@ export default function CdsAgentPage() {
         }
       : null,
     nextActions: backendR1RepairPlan?.nextActions ?? [
-      '点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。',
-      '填入 Anthropic API key，并保存为默认 runtime profile。',
+      '使用 claude-sdk runtime + anthropic protocol 保存 Claude Code provider-switch profile。',
+      'DeepSeek/cc-switch 可使用自定义 provider secret；只有原生 api.anthropic.com 才要求 sk-ant。',
       '点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。',
     ],
   }), [anthropicOfficialProfileTemplate, backendR1RepairPlan, defaultRuntimeProfileDiagnostics, r1DefaultProfileBlocked]);
@@ -872,7 +872,7 @@ export default function CdsAgentPage() {
       ['人工接管', activeSession.manualTakeoverEnabled ? `已接管 · ${activeSession.manualTakeoverReason ?? '未填写原因'}` : '未接管'],
       ['事件类型', eventTypes.length > 0 ? eventTypes.join(' / ') : '暂无事件'],
       ['审批相关事件', `${approvalEvents}`],
-      ['凭据暴露', '不向前端显示 long token / API key'],
+      ['凭据暴露', '不向前端显示 long token / provider secret'],
     ];
   }, [activeConnection, activeSession, activeSessionProfile, events]);
   const runtimeDiagnostics = useMemo(() => {
@@ -964,7 +964,7 @@ export default function CdsAgentPage() {
       : [];
     const providerKeyErrorState = providerKeyErrorCode
       ? `${providerKeyErrorCode}${providerKeyErrorActions[0] ? ` · ${providerKeyErrorActions[0]}` : ''}`
-      : '无 provider key 错误';
+      : '无 provider secret 错误';
     const latestRuntimeErrorEntry = events
       .map((event) => ({ event, payload: parsePayload(event) }))
       .reverse()
@@ -1199,10 +1199,10 @@ export default function CdsAgentPage() {
         label: '默认 Claude profile',
         value: backendGateValue('R1', defaultProfileReady ? 'ready' : defaultRuntimeProfile ? 'pending' : 'missing'),
         detail: backendGateDetail('R1', defaultProfileReady
-          ? `${defaultRuntimeProfile?.name} 已兼容 ${desiredRuntimeAdapter || 'claude-agent-sdk'}，且 API key 已保存。`
+          ? `${defaultRuntimeProfile?.name} 已兼容 ${desiredRuntimeAdapter || 'claude-agent-sdk'}，且 provider secret 已保存。`
           : defaultRuntimeProfile
-          ? profileCompatibilityWarning || `${defaultRuntimeProfile.name} 仍不是 Anthropic/Claude-compatible 默认 profile，真实 S1/S2/S3 会被阻断。`
-          : '需要用 Anthropic 官方模板创建默认 runtime profile，并填入 API key.'),
+          ? profileCompatibilityWarning || `${defaultRuntimeProfile.name} 仍不是 Claude Code provider-switch profile，真实 S1/S2/S3 会被阻断。`
+          : '需要保存 claude-sdk runtime + anthropic protocol 的默认 CDS-managed runtime profile，并保存 provider secret.'),
         state: backendGateState('R1', defaultProfileReady ? 'pass' : defaultRuntimeProfile ? 'warn' : 'pending'),
         reasonCode: backendGateReasonCode('R1') || profileCompatibilityReasonCode || null,
       },
@@ -1211,8 +1211,8 @@ export default function CdsAgentPage() {
         label: '官方模板与兼容矩阵',
         value: backendGateValue('T1', templateReady ? 'ready' : 'pending'),
         detail: backendGateDetail('T1', templateReady
-          ? 'Anthropic 官方模板和 adapter compatibility 均由后端返回，不是页面硬编码。'
-          : '需要后端返回 Anthropic 官方模板和 claude-agent-sdk 兼容矩阵.'),
+          ? '原生 Anthropic 官方模板和 adapter compatibility 均由后端返回；cc-switch/DeepSeek 走自定义 provider-switch profile。'
+          : '需要后端返回原生 Anthropic 官方模板和 claude-agent-sdk 兼容矩阵.'),
         state: backendGateState('T1', templateReady ? 'pass' : 'pending'),
         reasonCode: backendGateReasonCode('T1'),
       },
@@ -1304,7 +1304,7 @@ export default function CdsAgentPage() {
         ? '商业级门禁已通过；只有新代码变更、promotion 或环境切换时才需要重新部署。'
         : defaultProfileReady
           ? '不要重复部署；下一步是显式开启 provider smoke，补齐 S1/S2/S3 的真实调用证据。'
-          : '不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile。');
+          : '不要靠重新部署解决 R1；当前阻塞是 CDS-managed runtime profile/secret，需要保存 Anthropic/Claude-compatible profile。');
     const executionNextCommand = backendExecutionPanel?.nextCommand || commercialNextCommand;
     const executionGateCounts = backendExecutionPanel?.gateCounts ?? null;
     const executionTimeline = backendExecutionPanel?.timeline ?? nextCyclePlan?.items.map((item) => ({
@@ -1356,11 +1356,11 @@ export default function CdsAgentPage() {
         label: '模型凭据',
         value: profileCompatibilityWarning ? '模型需调整' : providerKeyErrorCode ? '执行时缺失' : profileReady ? '可按请求下发' : '未就绪',
         detail: providerKeyErrorCode
-          ? (providerKeyErrorActions[0] || '本次 run 没有拿到 env、runtime profile 或 request override provider key。')
+          ? (providerKeyErrorActions[0] || '本次 run 没有拿到 CDS-managed runtime profile/secret 或 request override provider secret。')
           : profileCompatibilityWarning
           ? profileCompatibilityWarning
           : profileReady
-          ? 'Runtime profile 已具备 baseUrl、model 和可用 API key。'
+          ? 'Runtime profile 已具备 baseUrl、model 和可用 provider secret。'
           : profileBlockReason(selectedProfile),
         state: providerKeyErrorCode || profileCompatibilityWarning ? 'warn' : profileReady ? 'pass' : selectedProfile ? 'warn' : 'pending',
       },
@@ -1701,7 +1701,7 @@ export default function CdsAgentPage() {
     {
       label: 'CDS Runtime',
       value: activeRuntimeProfileWarning ? '模型需调整' : runtimeReady ? runtimeDiagnostics.adapterMode : '待配置',
-      detail: activeRuntimeProfileWarning || (activeRuntimeProfile ? `${runtimeDiagnostics.adapter} · ${profileSummary(activeRuntimeProfile)}` : '选择模型和 API key'),
+      detail: activeRuntimeProfileWarning || (activeRuntimeProfile ? `${runtimeDiagnostics.adapter} · ${profileSummary(activeRuntimeProfile)}` : '选择模型并保存 provider secret'),
       icon: Server,
       state: activeRuntimeProfileWarning ? 'warn' : runtimeReady ? 'pass' : 'pending',
     },
@@ -2482,7 +2482,7 @@ export default function CdsAgentPage() {
       apiKey: prev.apiKey,
     }));
     setProfileTest('');
-    toast.success('已套用 Anthropic 官方模板', '填入 API key 后保存为默认配置');
+    toast.success('已套用 Anthropic 官方模板', '保存 provider secret 后设为默认配置');
   }
 
   function matchingRuntimeProfileTemplate() {
@@ -2502,13 +2502,13 @@ export default function CdsAgentPage() {
   function validateProfileDraftBeforeSave(action: 'save' | 'update') {
     if (!profileDraft.baseUrl.trim() || !profileDraft.model.trim() || !profileDraft.apiKey.trim()) {
       return action === 'update'
-        ? '更新当前配置需要重新输入 baseUrl、model 和 API key'
-        : 'baseUrl、model 和 API key 都必填';
+        ? '更新当前配置需要重新输入 baseUrl、model 和 provider secret'
+        : 'baseUrl、model 和 provider secret 都必填';
     }
 
     const template = matchingRuntimeProfileTemplate();
     if (template?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && !profileDraft.apiKey.trim().startsWith('sk-ant-')) {
-      return 'Anthropic 官方模板只接受 sk-ant- 开头的 API key；不要填写 OpenRouter、OpenAI-compatible key、MAP/CDS 管理 key 或普通密码。';
+      return 'Anthropic 官方模板只接受 sk-ant- 开头的 provider secret；cc-switch/DeepSeek 自定义 key 请使用自定义 profile，不要套用原生 Anthropic 官方模板。';
     }
 
     return '';
@@ -2518,7 +2518,7 @@ export default function CdsAgentPage() {
     const profileDraftError = validateProfileDraftBeforeSave('save');
     if (profileDraftError) {
       setProfileTest(profileDraftError);
-      toast.warning(profileDraftError.includes('sk-ant-') ? 'API key 不匹配' : '模型配置不完整', profileDraftError);
+      toast.warning(profileDraftError.includes('sk-ant-') ? 'provider secret 不匹配' : '模型配置不完整', profileDraftError);
       return;
     }
     setBusy(true);
@@ -2557,7 +2557,7 @@ export default function CdsAgentPage() {
           })
         : await createInfraAgentRuntimeProfile(createInput);
       if (!res.success || !res.data?.item) {
-        toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+        toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 provider secret');
         return;
       }
 
@@ -2610,7 +2610,7 @@ export default function CdsAgentPage() {
           : (template ? '已按后端官方模板创建，可以立即点击测试模型' : '可以立即点击测试模型'),
       );
     } catch (err) {
-      toast.error('保存模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 API key');
+      toast.error('保存模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 provider secret');
     } finally {
       if (candidateId && profileDraft.isDefault && !promoted) {
         await deleteInfraAgentRuntimeProfile(candidateId).catch(() => undefined);
@@ -2627,7 +2627,7 @@ export default function CdsAgentPage() {
     const profileDraftError = validateProfileDraftBeforeSave('update');
     if (profileDraftError) {
       setProfileTest(profileDraftError);
-      toast.warning(profileDraftError.includes('sk-ant-') ? 'API key 不匹配' : '模型配置不完整', profileDraftError);
+      toast.warning(profileDraftError.includes('sk-ant-') ? 'provider secret 不匹配' : '模型配置不完整', profileDraftError);
       return;
     }
     setBusy(true);
@@ -2661,7 +2661,7 @@ export default function CdsAgentPage() {
         }
         const candidateRes = await createInfraAgentRuntimeProfile({ ...profileDraft, isDefault: false });
         if (!candidateRes.success || !candidateRes.data?.item) {
-          toast.error('更新模型配置失败', candidateRes.error?.message ?? '请检查 baseUrl、model 和 API key');
+          toast.error('更新模型配置失败', candidateRes.error?.message ?? '请检查 baseUrl、model 和 provider secret');
           return;
         }
 
@@ -2712,7 +2712,7 @@ export default function CdsAgentPage() {
 
       const res = await updateInfraAgentRuntimeProfile(activeProfile.id, profileDraft);
       if (!res.success || !res.data?.item) {
-        toast.error('更新模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+        toast.error('更新模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 provider secret');
         return;
       }
       setProfiles((prev) => [res.data.item, ...prev.filter((item) => item.id !== res.data.item.id)]);
@@ -2721,7 +2721,7 @@ export default function CdsAgentPage() {
       setProfileTest('');
       toast.success('模型配置已更新', '这是一条系统级长期配置，后续会话会继续复用');
     } catch (err) {
-      toast.error('更新模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 API key');
+      toast.error('更新模型配置失败', err instanceof Error ? err.message : '请检查 baseUrl、model 和 provider secret');
     } finally {
       if (candidateId && profileDraft.isDefault && !promoted) {
         await deleteInfraAgentRuntimeProfile(candidateId).catch(() => undefined);
@@ -3353,7 +3353,7 @@ export default function CdsAgentPage() {
                 <div className="mt-1 break-words text-sm text-white/75">{profileSummary(activeProfile)}</div>
                 <div className="mt-1 break-words text-xs text-white/50">资源边界: {formatResourcePolicy(activeProfile)}</div>
                 <div className="mt-2 rounded-md px-2 py-1 text-xs leading-relaxed text-white/45" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  支持任意兼容服务：填入 baseUrl、model 和 API key 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
+                  支持任意兼容服务：填入 baseUrl、model 和 provider secret 后保存为系统级配置，后续会话复用，不按 10 分钟过期。
                 </div>
                 {activeProfileBlockReason && (
                   <div className="mt-2 rounded-md px-2 py-2 text-xs leading-relaxed text-amber-100/85" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.26)' }}>
@@ -3494,6 +3494,7 @@ export default function CdsAgentPage() {
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
                   >
                     <option value="claude-sdk">claude-sdk</option>
+                    <option value="openai-compatible">openai-compatible</option>
                     <option value="codex">codex</option>
                     <option value="custom">custom</option>
                   </select>
@@ -3529,12 +3530,12 @@ export default function CdsAgentPage() {
                     onChange={(e) => setProfileDraft((prev) => ({ ...prev, apiKey: e.target.value }))}
                     className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
                     style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
-                    placeholder={profileDraft.protocol === 'anthropic' ? 'Anthropic API key: sk-ant-...' : 'API key'}
+                    placeholder={profileDraft.protocol === 'anthropic' && profileDraft.baseUrl.includes('api.anthropic.com') ? 'Anthropic provider secret: sk-ant-...' : 'provider secret'}
                     type="password"
                   />
                   {matchingRuntimeProfileTemplate()?.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID && (
                     <div className="text-xs leading-relaxed text-white/42">
-                      官方 claude-agent-sdk 运行时只接受 Anthropic 官方 `sk-ant-` key；OpenRouter、OpenAI-compatible key、MAP/CDS 管理 key 和普通密码不会通过 R1。
+                      这是原生 Anthropic 官方模板，只接受 `sk-ant-` provider secret。cc-switch/DeepSeek 自定义 key 可以用 `claude-sdk + anthropic protocol + 兼容 baseUrl`，不要套用此模板。
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-2">
@@ -3620,7 +3621,7 @@ export default function CdsAgentPage() {
                     {busy ? <MapSpinner size={13} /> : <RefreshCw size={13} />} 更新当前配置
                   </button>
                   <div className="text-xs leading-relaxed text-white/42">
-                    更新会覆盖当前选中的系统级配置。API key 只保存加密值，不会回显；重新保存后长期复用。
+                    更新会覆盖当前选中的系统级配置。provider secret 只保存加密值，不会回显；重新保存后长期复用。
                   </div>
                 </div>
               </details>

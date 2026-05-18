@@ -374,7 +374,7 @@ public class InfraAgentSessionsControllerTests
             defaultProfile.CompatibilityReasonCode.ShouldBe("openai-compatible-non-claude-model");
             defaultProfile.CompatibilityReason.ShouldNotBeNull().ShouldContain("OpenAI-compatible");
             defaultProfile.CompatibilityNextActions.ShouldNotBeNull()
-                .ShouldContain(x => x.Contains("不要把代码审查任务路由到 claude-agent-sdk", StringComparison.Ordinal));
+                .ShouldContain(x => x.Contains("cc-switch/DeepSeek", StringComparison.Ordinal));
             var repairPlan = diagnostics.RuntimeProfileRepairPlan.ShouldNotBeNull();
             repairPlan.Gate.ShouldBe("R1");
             repairPlan.State.ShouldBe("blocked");
@@ -382,7 +382,7 @@ public class InfraAgentSessionsControllerTests
             repairPlan.TargetProtocol.ShouldBe(InfraAgentRuntimeProtocols.Anthropic);
             repairPlan.TargetModel.ShouldBe("claude-sonnet-4-20250514");
             repairPlan.CurrentProfile.ShouldNotBeNull().Name.ShouldBe("OpenRouter DeepSeek");
-            repairPlan.NextActions.ShouldContain(x => x.Contains("准备默认 Claude 配置", StringComparison.Ordinal));
+            repairPlan.NextActions.ShouldContain(x => x.Contains("cc-switch", StringComparison.Ordinal));
             var nextCyclePlan = diagnostics.NextCyclePlan.ShouldNotBeNull();
             nextCyclePlan.Cycle.ShouldBe("official-sdk-provider-closure");
             nextCyclePlan.State.ShouldBe("profile-blocked");

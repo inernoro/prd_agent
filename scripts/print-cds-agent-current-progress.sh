@@ -108,7 +108,7 @@ if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_readiness_line="readyForR0Apply=$r0_ready; nextAction=$r0_next_action"
 fi
 if [[ "$runtime_capacity_available" == "true" ]]; then
-  r0_readiness_line="readyForR0Apply=passed_by_runtime_capacity; nextAction=continue R1 profile repair and provider smokes"
+  r0_readiness_line="readyForR0Apply=passed_by_runtime_capacity; nextAction=continue R1 Claude Code provider-switch profile and provider smokes"
 fi
 if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
   image_local_build=$(jq_read "$SIDECAR_IMAGE_BUILD_REPORT" '.status // "unknown"')
@@ -144,11 +144,13 @@ fi
 exact_next_step=""
 if [[ "$runtime_capacity_available" == "true" ]]; then
   exact_next_step=$(cat <<'EOF'
-R0 CDS-managed runtime capacity is available. Continue R1 profile repair and provider smokes; do not spend time on remote host/image fallback for the product path.
+R0 CDS-managed runtime capacity is available. Continue R1 Claude Code provider-switch profile repair and provider smokes; do not spend time on remote host/image fallback for the product path.
 
 ```bash
-CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh
+scripts/check-cds-agent-progress-consistency.sh
 ```
+
+The target path is Claude Code cloud runtime with provider switch. DeepSeek/cc-switch is valid when the profile uses claude-sdk runtime, anthropic protocol, and an Anthropic-compatible baseUrl; only native api.anthropic.com requires an sk-ant secret.
 EOF
 )
 elif [[ "$image_build_context" != "pass" ]]; then
@@ -283,8 +285,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.5 CDS-managed runtime capacity contract | done_minimal | CDS exposes /api/projects/:id/runtime-capacity and separates product runtime from operator fallback | done |
 | R0.6 CDS-managed runtime capacity reconciler | done_minimal | CDS exposes dry-run/apply reconciler and route tests prove product runtime capacity path | done |
 | R0.7 CDS-managed runtime live apply | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done_live' || printf 'in_progress') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'Live evidence shows running official SDK runtime count >0' || printf 'Local liveApply path is wired; run live evidence so sharedRunning becomes >0') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done' || printf 'next') |
-| R1 Profile repair | $([[ "$runtime_capacity_available" == "true" ]] && printf 'current_blocker' || printf 'pending') | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
-| S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R1 provider profile is available | 10-25 min |
+| R1 Claude Code provider-switch profile | $([[ "$runtime_capacity_available" == "true" ]] && printf 'current_blocker' || printf 'pending') | Keep Claude SDK runtime; allow cc-switch/DeepSeek Anthropic-compatible upstream; require sk-ant only for native Anthropic endpoint | 35-55 min |
+| S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after selected adapter/profile is available | 10-25 min |
 | V1 Visual verification | $([[ "$runtime_capacity_available" == "true" ]] && printf 'pass_dry_run' || printf 'partial') | Re-capture provider-backed runtime page after S1/S2/S3 | 3-8 min |
 
 ## Legacy Fallback Blockers
@@ -309,7 +311,7 @@ $exact_next_step
 ## Do Not Spend Time On Now
 
 - Do not repeat normal preview redeploys for this blocker.
-- Do not run provider one-cycle before R1 has a real Anthropic/Claude-compatible keyed profile.
+- Do not run provider one-cycle before R1 has a matching Claude Code provider-switch profile. Anthropic native sk-ant is required only for api.anthropic.com.
 - Do not add claude-agent-sdk-runtime-v2 back into prd-agent branch services.
 - Do not treat UI preview running as proof that shared-service runtime pool recovered.
 

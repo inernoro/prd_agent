@@ -156,6 +156,15 @@ public static class InfraAgentRuntimeProfileCompatibility
         string? protocol,
         string? model)
     {
+        return AnalyzeForDesiredRuntimeAdapter(desiredRuntimeAdapter, null, protocol, model);
+    }
+
+    public static InfraAgentRuntimeProfileCompatibilityDecision AnalyzeForDesiredRuntimeAdapter(
+        string? desiredRuntimeAdapter,
+        string? runtime,
+        string? protocol,
+        string? model)
+    {
         if (!string.Equals(desiredRuntimeAdapter, "claude-agent-sdk", StringComparison.OrdinalIgnoreCase))
         {
             return new InfraAgentRuntimeProfileCompatibilityDecision(
@@ -163,6 +172,22 @@ public static class InfraAgentRuntimeProfileCompatibility
                 "adapter-not-claude-agent-sdk",
                 "当前目标 adapter 不是 claude-agent-sdk；不套用 Claude/Anthropic profile gate。",
                 Array.Empty<string>());
+        }
+
+        if (!string.IsNullOrWhiteSpace(runtime)
+            && !string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase))
+        {
+            return new InfraAgentRuntimeProfileCompatibilityDecision(
+                false,
+                "runtime-adapter-mismatch",
+                $"当前 profile runtime={runtime}，不应被路由到 claude-agent-sdk；需要选择匹配的 official SDK adapter，或只在明确使用 Claude 时切换到 Claude profile。",
+                new[]
+                {
+                    "不要把 raw OpenAI-compatible Chat Completions endpoint 注入 Claude SDK adapter。",
+                    "如果目标是 cc-switch/DeepSeek，请保存为 claude-sdk runtime + anthropic protocol + Anthropic-compatible baseUrl/provider secret。",
+                    "只有 baseUrl=https://api.anthropic.com 的原生 Claude 路径才要求 Anthropic sk-ant provider secret。"
+                });
         }
 
         var normalizedProtocol = protocol ?? string.Empty;
@@ -192,14 +217,14 @@ public static class InfraAgentRuntimeProfileCompatibility
             "claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。",
             new[]
             {
-                "使用 Anthropic 官方模板创建默认 runtime profile，并填入有效 API key。",
-                "如果必须使用普通 OpenAI-compatible 模型，不要把代码审查任务路由到 claude-agent-sdk。",
-                "补齐其他官方 SDK adapter contract 和 S1/S2/S3 smokes 后，再允许对应 runtime 路由。"
+                "原生 Claude 可使用 Anthropic 官方模板创建默认 runtime profile。",
+                "cc-switch/DeepSeek 需使用 claude-sdk runtime + anthropic protocol，并把 baseUrl 指向 Anthropic-compatible 网关。",
+                "raw OpenAI-compatible Chat Completions endpoint 不能直接当作 Claude Code SDK 上游。"
             });
     }
 
     public static string BuildIncompatibleMessage(string profileName, string model) =>
-        $"Claude Agent SDK 路径需要 Claude/Anthropic 兼容 runtime profile；当前配置 {profileName} / {model} 可能只适合普通 OpenAI-compatible gateway。请切换到 Claude/Anthropic profile，或将该任务改走普通 OpenAI-compatible gateway。";
+        $"当前运行配置 {profileName} / {model} 与所选 agent adapter 不匹配。Claude Agent SDK 路径需要 Anthropic-compatible Messages endpoint；cc-switch/DeepSeek 可以使用 claude-sdk runtime，但 profile protocol 必须是 anthropic，baseUrl 指向兼容网关。";
 }
 
 public static class InfraAgentRuntimeProfileTemplates
@@ -234,14 +259,14 @@ public static class InfraAgentRuntimeProfileTemplates
             {
                 throw new InfraAgentRuntimeProfileException(
                     InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
-                    "Anthropic 官方模板需要填写 API key。");
+                    "Anthropic 官方模板需要填写 provider secret。");
             }
 
             if (!normalized.StartsWith("sk-ant-", StringComparison.Ordinal))
             {
                 throw new InfraAgentRuntimeProfileException(
                     InfraAgentRuntimeProfileErrorCodes.ApiKeyFormatInvalid,
-                    "Anthropic 官方模板只接受 sk-ant- 开头的 API key；不要填 OpenRouter、OpenAI-compatible 或 MAP/CDS 管理 key。");
+                    "Anthropic 官方模板只接受 sk-ant- 开头的 provider secret；cc-switch/DeepSeek 请使用自定义 profile，不要套用原生 Anthropic 官方模板。");
             }
         }
     }
@@ -258,14 +283,14 @@ public static class InfraAgentRuntimeProfileTemplates
         {
             throw new InfraAgentRuntimeProfileException(
                 InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
-                "Anthropic 官方 endpoint 需要填写 API key。");
+                "Anthropic 官方 endpoint 需要填写 provider secret。");
         }
 
         if (!normalized.StartsWith("sk-ant-", StringComparison.Ordinal))
         {
             throw new InfraAgentRuntimeProfileException(
                 InfraAgentRuntimeProfileErrorCodes.ApiKeyFormatInvalid,
-                "Anthropic 官方 endpoint 只接受 sk-ant- 开头的 API key；不要填 OpenRouter、OpenAI-compatible 或 MAP/CDS 管理 key。");
+                "Anthropic 官方 endpoint 只接受 sk-ant- 开头的 provider secret；cc-switch/DeepSeek 自定义 key 请使用对应 Anthropic-compatible baseUrl。");
         }
     }
 
@@ -304,19 +329,19 @@ public static class InfraAgentRuntimeAdapterCompatibility
             "workspace-runtime-host",
             ["code-review", "repo-readonly-analysis", "repo-tool-execution-with-map-approval"],
             [InfraAgentRuntimeProtocols.Anthropic, InfraAgentRuntimeProtocols.OpenAiCompatible],
-            ["protocol=anthropic", "model contains claude", "model starts with anthropic/"],
+            ["protocol=anthropic", "Anthropic-compatible gateway", "cc-switch/DeepSeek via ANTHROPIC_BASE_URL"],
             [InfraAgentRuntimeProfileTemplates.AnthropicOfficialClaudeSonnet4],
             ["R0", "A0", "R1", "S1", "S2", "S3", "V1", "N6"],
             [],
-            ["openai-compatible model without claude/anthropic prefix, for example deepseek/*"],
+            ["raw openai-compatible Chat Completions endpoint without Anthropic-compatible gateway"],
             [
                 "MAP/CDS 只保留 session、workspace、审批、日志、事件和产物控制面。",
                 "Agent turn loop、上下文管理和 Claude Code 工具调用归官方 claude-agent-sdk。",
-                "OpenAI-compatible gateway 只有在代理 Claude/Anthropic 模型时才适合该 adapter。"
+                "cc-switch、DeepSeek Anthropic endpoint、Kimi/GLM Anthropic-compatible endpoint 可作为 Claude Code 上游切换路径；它们不要求 Anthropic 原生 key。"
             ],
             [
-                "使用 Anthropic 官方模板创建带有效 API key 的 runtime profile。",
-                "如果必须使用普通 OpenAI-compatible 模型，请不要把任务路由到 claude-agent-sdk。"
+                "原生 Claude 选择 Anthropic 官方模板。",
+                "cc-switch/DeepSeek 选择 claude-sdk runtime + anthropic protocol，并把 baseUrl 指到兼容网关。"
             ]),
         new(
             SidecarLegacyLoop,
