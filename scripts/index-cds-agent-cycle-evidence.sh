@@ -78,6 +78,7 @@ jq -n \
     cycleDir: $cycleDir,
     summary: $summary,
     git: ($s.git // null),
+    remoteCdsBranch: ($s.remoteCdsBranch // null),
     host: ($s.host // ""),
     target: ($s.target // null),
     status: ($s.status // "unknown"),
@@ -142,6 +143,13 @@ jq -r \
   "- Status: `" + .status + "`\n" +
   "- Commercial complete: `" + (.commercialComplete|tostring) + "`\n" +
   "- Git: `" + ((.git.branch // "unknown") + "@" + (.git.commitShort // "unknown")) + "`\n" +
+  (if (.remoteCdsBranch.observed // false) then
+    "- Remote CDS branch: `" + (.remoteCdsBranch.branchId // "unknown") + "` status=`" + (.remoteCdsBranch.status // "unknown") + "` github=`" + (.remoteCdsBranch.githubCommitSha // "unknown") + "` runtime=`" + (.remoteCdsBranch.runtimeCommitSha // "unknown") + "` deployCount=`" + ((.remoteCdsBranch.deployCount // "unknown")|tostring) + "`\n" +
+    "- Remote runtime relation: `" + (.remoteCdsBranch.runtimeRelation // "unknown") + "`\n" +
+    "- Remote deploy advice: " + (.remoteCdsBranch.deployAdvice // "") + "\n"
+  else
+    "- Remote CDS branch: `not observed`\n"
+  end) +
   "- Host: `" + .host + "`" + (if (.target.source // "") != "" then " (`" + (.target.source // "") + "`)" else "" end) + "\n" +
   "- Blocking gate: `" + (.executionPanel.currentBlockingGate // "unknown") + "`\n" +
   "- Blocking reason: " + (.blockingReason // "") + "\n" +
