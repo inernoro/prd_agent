@@ -73,6 +73,9 @@ matched_patterns=()
 patterns=(
   "执行 runbook"
   "branch-isolation-apply-confirmed"
+  "remote_host_create_then_shared_runtime_deploy"
+  "CDS_AGENT_SIDECAR_IMAGE"
+  "smoke-cds-agent-shared-service-pool.sh"
   "requires approval"
   "provider opt-in"
   "commandCode"
@@ -91,7 +94,7 @@ for asset in "${candidates[@]}"; do
       current_patterns+=("$pattern")
     fi
   done
-  if (( hits >= 3 )); then
+  if (( hits >= 5 )); then
     matched_asset="$asset"
     matched_file="$file"
     matched_patterns=("${current_patterns[@]}")
