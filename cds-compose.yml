@@ -93,10 +93,8 @@ services:
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
       ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
-      # Preview 内置 official SDK sidecar 旁路：共享 CDS discovery 为空时，MAP 仍能发现本分支 sidecar。
-      # provider key 默认由 MAP runtime profile/request 按次下发，不要求 api 容器持有 ANTHROPIC_API_KEY。
-      CLAUDE_SIDECAR_BASE_URL: "http://claude-agent-sdk-runtime-v2-prd-agent:7400"
-      CLAUDE_SIDECAR_TOKEN: "dev-skip"
+      # CDS Agent runtime 必须来自 shared-service discovery 或显式外部 sidecar。
+      # 禁止把 claude-agent-sdk runtime 写成本应用分支 service，否则 main/业务分支会被 runtime 污染。
       ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
       ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__RefreshIntervalSeconds: "10"
@@ -128,31 +126,6 @@ services:
       cds.readiness-path: "/"
       cds.readiness-timeout: "600"
       cds.readiness-interval: "3"
-
-  claude-agent-sdk-runtime-v2:
-    image: python:3.12-slim
-    working_dir: /app
-    volumes:
-      - ./claude-sdk-sidecar:/app
-    ports:
-      - "7400"
-    command: >-
-      apt-get update &&
-      apt-get install -y --no-install-recommends git curl ca-certificates &&
-      rm -rf /var/lib/apt/lists/* &&
-      pip install -r requirements.txt &&
-      uvicorn app.main:app --host 0.0.0.0 --port 7400 --no-server-header
-    environment:
-      SIDECAR_TOKEN: "dev-skip"
-      SIDECAR_AGENT_ADAPTER: "claude-agent-sdk"
-      SIDECAR_PROVIDER_KEY_MODE: "runtime-profile-or-env"
-      SIDECAR_WORKSPACES_ROOT: "/tmp/claude-sidecar-workspaces"
-      SIDECAR_VERSION: "cds-preview"
-      SIDECAR_LOG_LEVEL: "INFO"
-    labels:
-      cds.readiness-path: "/readyz"
-      cds.readiness-timeout: "600"
-      cds.readiness-interval: "5"
 
   # ── Infrastructure Services (无相对路径 mount) ──
 

@@ -2,7 +2,7 @@
 
 > 日期：2026-05-18  
 > 结论级别：结构性问题，不是单次部署失误  
-> 当前状态：已确认远程 `prd-agent` 多个 branch 的 `services` 中真实存在 `claude-agent-sdk-runtime-v2-prd-agent`
+> 当前状态：已确认远程 `prd-agent` 多个 branch 的 `services` 中真实存在 `claude-agent-sdk-runtime-v2-prd-agent`；仓库侧已加本地防复发 guard，远程 state 仍需单独清理
 
 ## 一句话结论
 
@@ -182,6 +182,15 @@ CLAUDE_SIDECAR_TOKEN=dev-skip
 4. 对已有 branch services 清理 `claude-agent-sdk-runtime-v2-prd-agent` 的 stopped/error/running 记录和容器。
 5. 保留 `/cds-agent` 通过 shared-service discovery 找 runtime pool；找不到时 R0 应明确 pending，而不是自动在应用分支里塞 sidecar。
 
+仓库侧止血已落地：
+
+- `cds-compose.yml` 已移除 branch-local `claude-agent-sdk-runtime-v2` service。
+- `api.environment` 已移除 `CLAUDE_SIDECAR_BASE_URL=http://claude-agent-sdk-runtime-v2...` 和 `CLAUDE_SIDECAR_TOKEN=dev-skip` 静态旁路。
+- 新增 `scripts/smoke-cds-agent-branch-isolation.sh`，默认做本地防复发检查；设置 `SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 CDS_HOST=...` 后可审计远程 branch services。
+- 新增 `scripts/repair-cds-agent-branch-isolation.sh`，默认 dry-run 列出受影响分支与候选删除 BuildProfile；设置 `SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1` 后才会调用 CDS 删除 API。
+
+注意：这些改动阻止后续复发，但不会自动清理 CDS 远程已经存在的 BuildProfile、branch service 记录和容器。远程清理必须作为单独运维动作执行并验收。
+
 ### P1 结构修复
 
 1. 建立唯一 sidecar pool：
@@ -240,3 +249,24 @@ admin-prd-agent
 3. 再做 P1：恢复并验证 `shared-sidecar-pool-*` 真实部署。
 4. 最后重跑 one-cycle。若 R0 因共享 pool 未部署而 pending，这是正确失败；不要再把 sidecar 放回应用项目。
 
+当前远程 dry-run 结果仍有 7 个分支受影响，候选删除 BuildProfile 为：
+
+```text
+claude-agent-sdk-runtime-v2-prd-agent
+```
+
+执行清理命令：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+  bash scripts/repair-cds-agent-branch-isolation.sh
+```
+
+执行后必须复查：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
+  bash scripts/smoke-cds-agent-branch-isolation.sh
+```

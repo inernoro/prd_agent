@@ -8,18 +8,19 @@
 #   2. smoke-cds-agent-runtime-status.sh    — CDS Agent official SDK runtime pool
 #   3. smoke-cds-agent-sidecar-alias-stability.sh — API container -> sidecar alias stability
 #   4. smoke-cds-agent-official-sdk-boundary.sh — local A0 official SDK adapter boundary
-#   5. smoke-cds-agent-profile-templates.sh — CDS Agent official profile templates
-#   6. smoke-cds-agent-r1-profile-repair.sh — CDS Agent R1 repair dry-run / optional apply
-#   7. smoke-cds-agent-profile-preflight.sh — CDS Agent profile preflight gate
-#   8. smoke-cds-agent-commercial-readiness.sh — CDS Agent commercial readiness ledger
-#   9. smoke-cds-agent-official-sdk-run.sh      — CDS Agent S1 readiness / gated run
-#   10. smoke-cds-agent-official-sdk-controls.sh — CDS Agent S2/S3 readiness / gated controls
-#   11. smoke-cds-agent-workbench-visual.sh — CDS Agent V1 authenticated visual evidence (optional auth)
-#   12. smoke-cds-agent-non-code-compatibility.sh — 非代码 agent 兼容边界
-#   13. smoke-cds-agent-evidence-index.sh — CDS Agent one-cycle evidence index quality
-#   14. smoke-prd-agent.sh     — PRD 会话/Run 链路
-#   15. smoke-defect-agent.sh  — 缺陷 CRUD
-#   16. smoke-report-agent.sh — 周报 CRUD
+#   5. smoke-cds-agent-branch-isolation.sh — branch-local sidecar 防复发
+#   6. smoke-cds-agent-profile-templates.sh — CDS Agent official profile templates
+#   7. smoke-cds-agent-r1-profile-repair.sh — CDS Agent R1 repair dry-run / optional apply
+#   8. smoke-cds-agent-profile-preflight.sh — CDS Agent profile preflight gate
+#   9. smoke-cds-agent-commercial-readiness.sh — CDS Agent commercial readiness ledger
+#   10. smoke-cds-agent-official-sdk-run.sh      — CDS Agent S1 readiness / gated run
+#   11. smoke-cds-agent-official-sdk-controls.sh — CDS Agent S2/S3 readiness / gated controls
+#   12. smoke-cds-agent-workbench-visual.sh — CDS Agent V1 authenticated visual evidence (optional auth)
+#   13. smoke-cds-agent-non-code-compatibility.sh — 非代码 agent 兼容边界
+#   14. smoke-cds-agent-evidence-index.sh — CDS Agent one-cycle evidence index quality
+#   15. smoke-prd-agent.sh     — PRD 会话/Run 链路
+#   16. smoke-defect-agent.sh  — 缺陷 CRUD
+#   17. smoke-report-agent.sh — 周报 CRUD
 #
 # 每个子脚本独立返回 0/非 0;本脚本累计失败数,最后汇总。
 # 任意子脚本失败不中断后续 —— 让使用者一次跑完能看到所有问题,而
@@ -32,7 +33,7 @@
 #     bash scripts/smoke-all.sh
 #
 # 跳过某个子 Agent (例如本地没配周报):
-#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-sidecar-alias,cds-agent-boundary,cds-agent-templates,cds-agent-r1-repair,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,cds-agent-visual,cds-agent-non-code-compat,cds-agent-evidence-index,prd-agent,defect,report
+#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-sidecar-alias,cds-agent-boundary,cds-agent-branch-isolation,cds-agent-templates,cds-agent-r1-repair,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,cds-agent-visual,cds-agent-non-code-compat,cds-agent-evidence-index,prd-agent,defect,report
 #
 # CI 环境建议: fail-fast 的话把 SMOKE_FAIL_FAST=1 设上,首次失败即退出。
 # ============================================
@@ -50,6 +51,7 @@ declare -a SMOKES=(
   "cds-agent-runtime|$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh|CDS Agent Runtime"
   "cds-agent-sidecar-alias|$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh|CDS Agent Sidecar Alias Stability"
   "cds-agent-boundary|$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh|CDS Agent Official SDK Boundary"
+  "cds-agent-branch-isolation|$SCRIPT_DIR/smoke-cds-agent-branch-isolation.sh|CDS Agent Branch Isolation"
   "cds-agent-templates|$SCRIPT_DIR/smoke-cds-agent-profile-templates.sh|CDS Agent Runtime Profile Templates"
   "cds-agent-r1-repair|$SCRIPT_DIR/smoke-cds-agent-r1-profile-repair.sh|CDS Agent R1 Profile Repair"
   "cds-agent-preflight|$SCRIPT_DIR/smoke-cds-agent-profile-preflight.sh|CDS Agent Profile Preflight"

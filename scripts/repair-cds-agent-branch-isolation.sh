@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# CDS Agent branch-local sidecar 清理脚本
+#
+# 默认 dry-run，只输出会删除的 BuildProfile 与受影响分支。
+# 真正执行需要显式设置:
+#   CDS_HOST=https://cds.miduo.org \
+#   SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+#     bash scripts/repair-cds-agent-branch-isolation.sh
+#
+# 执行动作:
+#   DELETE /api/build-profiles/<sidecarProfileId>
+#
+# CDS 端 delete build-profile 会同步:
+#   - 删除项目 BuildProfile
+#   - best-effort stop 对应容器
+#   - 删除所有 branch.services[profileId] ghost rows
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CDS_PROJECT_ID="${SMOKE_CDS_PROJECT_ID:-prd-agent}"
+APPLY="${SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY:-0}"
+
+fail() {
+  printf '❌ %s\n' "$*" >&2
+  exit 1
+}
+
+ok() {
+  printf '✅ %s\n' "$*"
+}
+
+if [[ -z "${CDS_HOST:-}" ]]; then
+  fail "需要 CDS_HOST"
+fi
+if [[ ! -f "$ROOT_DIR/.claude/skills/cds/cli/cdscli.py" ]]; then
+  fail "缺少 .claude/skills/cds/cli/cdscli.py"
+fi
+for bin in jq curl; do
+  command -v "$bin" >/dev/null 2>&1 || fail "缺少依赖: $bin"
+done
+
+cds_base="${CDS_HOST%/}"
+if [[ "$cds_base" != http* ]]; then
+  cds_base="https://$cds_base"
+fi
+
+auth_args=(-H "Accept: application/json" -H "User-Agent: curl/8.5.0")
+if [[ -n "${CDS_PROJECT_KEY:-}" ]]; then
+  auth_args+=(-H "X-AI-Access-Key: $CDS_PROJECT_KEY")
+elif [[ -n "${AI_ACCESS_KEY:-}" ]]; then
+  auth_args+=(-H "X-AI-Access-Key: $AI_ACCESS_KEY")
+else
+  fail "需要 AI_ACCESS_KEY 或 CDS_PROJECT_KEY 才能调用 CDS 删除 API"
+fi
+
+printf '==========================================\n'
+printf 'CDS Agent branch-local sidecar repair\n'
+printf 'Project: %s\n' "$CDS_PROJECT_ID"
+printf 'Apply:   %s\n' "$APPLY"
+printf '==========================================\n'
+
+branch_json=$(cd "$ROOT_DIR" && CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch list --project "$CDS_PROJECT_ID")
+contaminated=$(
+  printf '%s' "$branch_json" | jq -c '
+    [.data.branches[]?
+      | {id, branch, services: ((.services // {}) | keys | map(select(test("claude-agent-sdk-runtime|claude-sidecar|sidecar.*runtime"; "i"))))}
+      | select((.services | length) > 0)]
+  '
+)
+profile_ids=$(
+  printf '%s' "$contaminated" | jq -r '.[].services[]' | sort -u
+)
+
+if [[ -z "$profile_ids" ]]; then
+  ok "远程未发现 branch-local sidecar service，无需清理"
+  exit 0
+fi
+
+printf '\n受影响分支:\n'
+printf '%s\n' "$contaminated" | jq -r '.[] | "  - " + .id + " (" + .branch + "): " + (.services | join(", "))'
+printf '\n候选删除 BuildProfile:\n'
+printf '%s\n' "$profile_ids" | sed 's/^/  - /'
+
+if [[ "$APPLY" != "1" ]]; then
+  printf '\nDRY-RUN: 未执行删除。设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 后再运行。\n'
+  exit 0
+fi
+
+printf '\n>>> 执行删除\n'
+while IFS= read -r profile_id; do
+  [[ -z "$profile_id" ]] && continue
+  tmp=$(mktemp)
+  code=$(
+    curl --max-time 30 --show-error --silent \
+      -o "$tmp" \
+      -w '%{http_code}' \
+      -X DELETE \
+      "${auth_args[@]}" \
+      "$cds_base/api/build-profiles/$profile_id"
+  )
+  body=$(cat "$tmp")
+  rm -f "$tmp"
+  if [[ "$code" != "200" ]]; then
+    printf '%s\n' "$body" >&2
+    fail "删除 $profile_id 失败: HTTP $code"
+  fi
+  ok "已删除 BuildProfile $profile_id"
+done <<< "$profile_ids"
+
+printf '\n>>> 复查远程分支污染\n'
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
+  CDS_HOST="$CDS_HOST" \
+  bash "$ROOT_DIR/scripts/smoke-cds-agent-branch-isolation.sh"
