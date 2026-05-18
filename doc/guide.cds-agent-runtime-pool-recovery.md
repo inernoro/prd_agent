@@ -125,7 +125,7 @@ wrapper 会写 `/tmp/cds-agent-branch-isolation-repair-*`，包含 pre evidence�
 
 - evidence dir: `/tmp/cds-agent-branch-isolation-repair-current`
 - verdict: `dry-run-contaminated`
-- beforeContaminatedBranchCount: `7`
+- beforeContaminatedBranchCount: `4`
 - candidateProfileIds: `claude-agent-sdk-runtime-v2-prd-agent`
 - readyForRemoteHostStep: `false`
 

@@ -284,7 +284,7 @@ CDS_HOST=https://cds.miduo.org \
 
 该计划脚本只读输出污染分支数、shared pool 状态、remote host 数量和下一步动作，并明确禁止通过普通 branch deploy 恢复 shared-service runtime pool。
 
-当前远程只读审计结果仍有 7 个分支受影响，候选删除 BuildProfile 为：
+当前远程只读审计结果仍有 4 个分支受影响，候选删除 BuildProfile 为：
 
 ```text
 claude-agent-sdk-runtime-v2-prd-agent

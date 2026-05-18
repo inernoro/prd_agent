@@ -316,7 +316,7 @@ check_docs_calibration() {
     fi
   done
 
-  require_doc_text "$quickstart" '当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
+  require_doc_text "$quickstart" '当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
     "quickstart states current runtime pool blockers"
   require_doc_text "$quickstart" '`claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层' \
     "quickstart separates official SDK from local adapter"
@@ -324,7 +324,7 @@ check_docs_calibration() {
     "next testing rejects old A10 as SDK completion proof"
   require_doc_text "$migration_plan" '不要再把历史' \
     "migration plan flags historical diagnostics"
-  require_doc_text "$migration_plan" '`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
+  require_doc_text "$migration_plan" '`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
     "migration plan names current runtime pool blockers"
   require_doc_text "$report" '旧 A10 证明“工作台 MVP 能远程干活”，但不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
     "A10 report separates MVP from current SDK gates"

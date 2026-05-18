@@ -161,7 +161,58 @@ jq -n \
         (if ($plan.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end)
       ]
     )
-  } | .missingOrUnproved = ($goal.missingOrUnproved // .runtimePoolBlockers)' > "$summary"
+  }
+  | .missingOrUnproved = ($goal.missingOrUnproved // .runtimePoolBlockers)
+  | .branchIsolation = (
+      {
+        contaminatedBranchCount: (.branchIsolationRepairDryRun.contaminatedBranchCount // .plan.contaminatedBranchCount // 0),
+        candidateProfileIds: (.branchIsolationRepairDryRun.candidateProfileIds // .plan.contaminatedProfileIds // []),
+        repairStatus: (.branchIsolationRepairDryRun.status // "unknown")
+      }
+      | .clean = ((.contaminatedBranchCount // 0) == 0)
+      | .verdict = (if .clean then "dry-run-clean" else "dry-run-contaminated" end)
+      | .readyForRemoteHostStep = .clean
+      | .nextAction = (
+          if .clean then
+            "branch isolation already clean; continue with remote host and shared runtime pool recovery"
+          else
+            "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1"
+          end
+        )
+    )
+  | .remoteHost = (
+      {
+        prepareStatus: (.remoteHostPoolPreparation.status // "unknown"),
+        existingHostCount: (.remoteHostPoolPreparation.existingHostCount // .plan.remoteHostCount // 0),
+        enabledHostCount: (.remoteHostPoolPreparation.enabledHostCount // .plan.enabledRemoteHostCount // 0),
+        missingConfig: (.remoteHostPoolPreparation.missingConfig // []),
+        sharedRunning: (.plan.sharedRunning // 0),
+        branchIsolationClean: .branchIsolation.clean
+      }
+      | .verdict = (
+          if (.branchIsolationClean | not) then "blocked-branch-isolation"
+          elif ((.prepareStatus // "") == "missing_config") then "dry-run-missing-config"
+          elif (((.enabledHostCount | tostring | tonumber?) // 0) > 0) then "dry-run-host-already-available"
+          elif ((.prepareStatus // "") == "dry_run_ready") then "dry-run-ready"
+          else "dry-run-blocked"
+          end
+        )
+      | .readyForSharedRuntimeDeploy = (.verdict == "dry-run-host-already-available")
+      | .readyForProviderSmokes = ((((.sharedRunning // 0) | tostring | tonumber?) // 0) > 0)
+      | .nextAction = (
+          if .verdict == "blocked-branch-isolation" then
+            "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
+          elif .verdict == "dry-run-missing-config" then
+            "provide missing remote host variables, then rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh"
+          elif .verdict == "dry-run-ready" then
+            "configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 after branch isolation is clean"
+          elif .verdict == "dry-run-host-already-available" then
+            "enabled remote host exists; deploy shared official SDK runtime sidecar"
+          else
+            "inspect remote host preparation and shared-service pool audit before continuing"
+          end
+        )
+    )' > "$summary"
 
 index="$OUT_DIR/evidence-index.md"
 {
@@ -182,18 +233,25 @@ index="$OUT_DIR/evidence-index.md"
   if [[ "$(jq -r '.branchIsolationRepairDryRun == null' "$summary")" == "true" ]]; then
     printf '%s\n' '- not captured'
   else
-    jq -r '"- status: `" + (.branchIsolationRepairDryRun.status // "unknown") + "`",
-      "- contaminatedBranchCount: `" + ((.branchIsolationRepairDryRun.contaminatedBranchCount // 0)|tostring) + "`",
-      "- candidateProfileIds: `" + ((.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",")) + "`"' "$summary"
+    jq -r '"- verdict: `" + (.branchIsolation.verdict // "unknown") + "`",
+      "- readyForRemoteHostStep: `" + ((.branchIsolation.readyForRemoteHostStep // false)|tostring) + "`",
+      "- nextAction: " + (.branchIsolation.nextAction // ""),
+      "- status: `" + (.branchIsolationRepairDryRun.status // "unknown") + "`",
+      "- contaminatedBranchCount: `" + ((.branchIsolation.contaminatedBranchCount // 0)|tostring) + "`",
+      "- candidateProfileIds: `" + ((.branchIsolation.candidateProfileIds // []) | join(",")) + "`"' "$summary"
   fi
   printf '\n## Remote Host Pool Preparation\n\n'
   if [[ "$(jq -r '.remoteHostPoolPreparation == null' "$summary")" == "true" ]]; then
     printf '%s\n' '- not captured'
   else
-    jq -r '"- status: `" + (.remoteHostPoolPreparation.status // "unknown") + "`",
-      "- existingHostCount: `" + ((.remoteHostPoolPreparation.existingHostCount // 0)|tostring) + "`",
-      "- enabledHostCount: `" + ((.remoteHostPoolPreparation.enabledHostCount // 0)|tostring) + "`",
-      "- missingConfig: `" + ((.remoteHostPoolPreparation.missingConfig // []) | join(",")) + "`"' "$summary"
+    jq -r '"- verdict: `" + (.remoteHost.verdict // "unknown") + "`",
+      "- readyForSharedRuntimeDeploy: `" + ((.remoteHost.readyForSharedRuntimeDeploy // false)|tostring) + "`",
+      "- readyForProviderSmokes: `" + ((.remoteHost.readyForProviderSmokes // false)|tostring) + "`",
+      "- nextAction: " + (.remoteHost.nextAction // ""),
+      "- status: `" + (.remoteHostPoolPreparation.status // "unknown") + "`",
+      "- existingHostCount: `" + ((.remoteHost.existingHostCount // 0)|tostring) + "`",
+      "- enabledHostCount: `" + ((.remoteHost.enabledHostCount // 0)|tostring) + "`",
+      "- missingConfig: `" + ((.remoteHost.missingConfig // []) | join(",")) + "`"' "$summary"
   fi
   printf '\n## Missing Or Unproved\n\n'
   if [[ "$(jq -r '.missingOrUnproved | length' "$summary")" == "0" ]]; then
@@ -244,13 +302,20 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf -- '- 其他候选官方 SDK，例如 `codex`、`openai-agents-sdk`、`google-adk`，仍为 `planned-not-routable`，避免误路由。\n'
     printf -- '- 非代码智能体兼容 smoke 已存在，防止 PRD/Defect/Literary/Visual 等智能体被 CDS sidecar runtime pool 污染。\n'
     printf -- '- runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。\n'
+    printf -- '- 总证据 summary 已聚合 branch isolation 与 remote host/shared runtime verdict，避免跨多个 `/tmp` 目录人工判断。\n'
     printf -- '- 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。\n\n'
     printf '## 下一步\n\n'
     printf '必须按这个顺序处理：\n\n'
     printf '1. 清理 `prd-agent` 的 branch-local sidecar BuildProfile/service residual。\n'
     printf '   - dry-run 证据已确认候选 profile：`%s`\n' "$(jq -r '(.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",") // "unknown"' "$summary")"
+    printf '   - verdict：`%s`\n' "$(jq -r '.branchIsolation.verdict // "unknown"' "$summary")"
+    printf '   - readyForRemoteHostStep：`%s`\n' "$(jq -r '.branchIsolation.readyForRemoteHostStep // false' "$summary")"
+    printf '   - nextAction：%s\n' "$(jq -r '.branchIsolation.nextAction // ""' "$summary")"
     printf '   - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。\n'
     printf '2. 登记至少一个 enabled CDS remote host。\n'
+    printf '   - verdict：`%s`\n' "$(jq -r '.remoteHost.verdict // "unknown"' "$summary")"
+    printf '   - readyForSharedRuntimeDeploy：`%s`\n' "$(jq -r '.remoteHost.readyForSharedRuntimeDeploy // false' "$summary")"
+    printf '   - nextAction：%s\n' "$(jq -r '.remoteHost.nextAction // ""' "$summary")"
     jq -r '(.remoteHostPoolPreparation.missingConfig // [])[]? | "   - 当前缺失：`" + . + "`"' "$summary"
     printf '3. 部署 shared official SDK runtime sidecar。\n'
     printf '   - 需要 sidecar image，例如通过 `CDS_AGENT_SIDECAR_IMAGE` 提供。\n'
@@ -286,4 +351,4 @@ fi
 printf '\nEvidence dir: %s\n' "$OUT_DIR"
 printf 'Summary:      %s\n' "$summary"
 printf 'Index:        %s\n' "$index"
-jq '{goalStatus, totalSeconds, runtimePoolBlockers, missingOrUnproved}' "$summary"
+jq '{goalStatus,totalSeconds,branchIsolation:{verdict:.branchIsolation.verdict,readyForRemoteHostStep:.branchIsolation.readyForRemoteHostStep,nextAction:.branchIsolation.nextAction},remoteHost:{verdict:.remoteHost.verdict,readyForSharedRuntimeDeploy:.remoteHost.readyForSharedRuntimeDeploy,readyForProviderSmokes:.remoteHost.readyForProviderSmokes,nextAction:.remoteHost.nextAction},runtimePoolBlockers,missingOrUnproved}' "$summary"
