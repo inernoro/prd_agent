@@ -975,6 +975,15 @@ public class MongoDbContext
             Builders<DefectShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_share_links_creator" }));
 
+        // MarketplaceSkillShareLinks：Token 唯一索引（公开匿名读端点按 token 查，必须有索引）
+        // 注：本方法按 no-auto-index 规则不在运行时执行，此处仅作 DBA 手动建索引的参考来源
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.Token),
+            new CreateIndexOptions { Name = "uniq_marketplace_skill_share_links_token", Unique = true }));
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_creator" }));
+
         // DefectFixReports：按分享链接和 Token 查询
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareLinkId).Descending(x => x.CreatedAt),
