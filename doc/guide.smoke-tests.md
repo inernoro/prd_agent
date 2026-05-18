@@ -352,6 +352,13 @@ one-cycle 还会生成 `evidence-index.json` 和 `evidence-index.md`。这是给
 bash scripts/smoke-cds-agent-evidence-index.sh /tmp/cds-agent-cycle-.../cycle-summary.json
 ```
 
+目标审计还会读取 CDS 控制面 self-update 状态，并把它和 preview runtime 状态分开展示：
+`controlPlane.commitHash` 只证明共享 CDS 控制面当前运行在哪个 commit；
+`remoteCdsBranch.runtimeCommitSha` 才证明 `/cds-agent` preview 业务容器实际运行在哪个 commit。
+二者不相等时不能直接下结论“需要部署”：如果 git drift 只有 smoke/audit/doc 等非 runtime 变更，
+审计会输出 `runtime_behind_non_runtime_drift`，建议不要 redeploy；只有出现 runtime-affecting diff
+或要验证真实远程容器行为时，才进入新的 CDS deploy/self-update 周期。
+
 `cycle-summary.json.commercialGates` 会把验收语义拆开：
 
 | Gate | 通过含义 |

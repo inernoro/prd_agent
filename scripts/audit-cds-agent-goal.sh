@@ -256,6 +256,16 @@ read_remote_branch_status() {
   CDS_HOST="$CDS_HOST" python3 "$ROOT_DIR/.claude/skills/cds/cli/cdscli.py" branch status "$SMOKE_CDS_BRANCH_ID" 2>/dev/null || return 1
 }
 
+read_control_plane_status() {
+  if [[ -z "${CDS_HOST:-}" ]]; then
+    return 1
+  fi
+  if [[ ! -f "$ROOT_DIR/.claude/skills/cds/cli/cdscli.py" ]]; then
+    return 1
+  fi
+  CDS_HOST="$CDS_HOST" python3 "$ROOT_DIR/.claude/skills/cds/cli/cdscli.py" self branches 2>/dev/null || return 1
+}
+
 cd "$ROOT_DIR"
 mkdir -p "$AUDIT_DIR"
 
@@ -354,6 +364,14 @@ remote_last_deploy_at=""
 remote_branch_source="none"
 remote_runtime_relation="not_observed"
 remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this audit."
+control_plane_status_json='null'
+control_plane_observed=false
+control_plane_current_branch=""
+control_plane_current_commit=""
+control_plane_current_subject=""
+control_plane_current_cds_touched=""
+control_plane_relation="not_observed"
+control_plane_advice="Set CDS_HOST to include CDS control-plane self-update status in this audit."
 if [[ -f "$cycle_summary" ]]; then
   now_epoch=$(date +%s)
   cycle_mtime=$(file_mtime "$cycle_summary")
@@ -449,6 +467,27 @@ elif [[ "$remote_branch_status_json" != "null" && "$(jq -r '.observed // false' 
   remote_deploy_advice=$(jq -r '.deployAdvice // "Using remote branch snapshot saved in cycle-summary; set CDS_HOST for live refresh."' <<< "$remote_branch_status_json")
 else
   remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this audit."
+fi
+
+if control_plane_raw=$(read_control_plane_status); then
+  control_plane_status_json=$(printf '%s' "$control_plane_raw" | jq -c '.data // null' 2>/dev/null || printf 'null')
+  if [[ "$control_plane_status_json" != "null" ]]; then
+    control_plane_observed=true
+    control_plane_current_branch=$(jq -r '.current // "unknown"' <<< "$control_plane_status_json")
+    control_plane_current_commit=$(jq -r '.commitHash // ""' <<< "$control_plane_status_json")
+    control_plane_current_json=$(jq -c --arg branch "$control_plane_current_branch" 'first(.branchDetails[]? | select(.name == $branch)) // null' <<< "$control_plane_status_json")
+    if [[ "$control_plane_current_json" != "null" ]]; then
+      control_plane_current_subject=$(jq -r '.subject // ""' <<< "$control_plane_current_json")
+      control_plane_current_cds_touched=$(jq -r 'if has("cdsTouched") then (.cdsTouched | tostring) else "" end' <<< "$control_plane_current_json")
+    fi
+    if [[ -n "$control_plane_current_commit" && -n "$current_git_commit_short" && "$current_git_commit_short" == "$control_plane_current_commit"* ]]; then
+      control_plane_relation="control_plane_matches_head"
+      control_plane_advice="CDS control plane is on current HEAD. This does not prove preview runtime deploy parity; use remoteCdsBranch.runtimeCommitSha for that."
+    else
+      control_plane_relation="control_plane_not_matched"
+      control_plane_advice="CDS control plane is not on current HEAD. Run self-update only when control-plane code or shared CLI behavior must be validated."
+    fi
+  fi
 fi
 
 if [[ "$boundary_status" == "pass" ]]; then
@@ -626,6 +665,13 @@ audit_json=$(
     --arg remoteBranchSource "$remote_branch_source" \
     --arg remoteRuntimeRelation "$remote_runtime_relation" \
     --arg remoteDeployAdvice "$remote_deploy_advice" \
+    --arg controlPlaneObserved "$control_plane_observed" \
+    --arg controlPlaneCurrentBranch "$control_plane_current_branch" \
+    --arg controlPlaneCurrentCommit "$control_plane_current_commit" \
+    --arg controlPlaneCurrentSubject "$control_plane_current_subject" \
+    --arg controlPlaneCurrentCdsTouched "$control_plane_current_cds_touched" \
+    --arg controlPlaneRelation "$control_plane_relation" \
+    --arg controlPlaneAdvice "$control_plane_advice" \
     --arg gateR0 "$gate_r0" \
     --arg gateA0 "$gate_a0" \
     --arg gateR1 "$gate_r1" \
@@ -654,6 +700,7 @@ audit_json=$(
     --argjson s1Details "$s1_details_json" \
     --argjson controlsDetails "$controls_details_json" \
     --argjson remoteBranchStatusRaw "$remote_branch_status_json" \
+    --argjson controlPlaneStatusRaw "$control_plane_status_json" \
     --argjson missing "$missing_json" \
     --argjson failures "$failures_json" \
     '{
@@ -693,10 +740,23 @@ audit_json=$(
         deployAdvice: $remoteDeployAdvice,
         raw: $remoteBranchStatusRaw
       },
+      controlPlane: {
+        observed: ($controlPlaneObserved == "true"),
+        branch: (if $controlPlaneCurrentBranch == "" then null else $controlPlaneCurrentBranch end),
+        commitHash: (if $controlPlaneCurrentCommit == "" then null else $controlPlaneCurrentCommit end),
+        subject: (if $controlPlaneCurrentSubject == "" then null else $controlPlaneCurrentSubject end),
+        cdsTouched: (if $controlPlaneCurrentCdsTouched == "" then null else ($controlPlaneCurrentCdsTouched == "true") end),
+        relation: $controlPlaneRelation,
+        advice: $controlPlaneAdvice,
+        raw: $controlPlaneStatusRaw
+      },
       requirements: {
         mapCdsControlPlane: {
           status: (if $gateR0 == "pass" then "proved" else "needs-remote-evidence" end),
-          gate: "R0"
+          gate: "R0",
+          controlPlaneRelation: $controlPlaneRelation,
+          remoteRuntimeRelation: $remoteRuntimeRelation,
+          note: "Control-plane self-update and preview runtime deploy are separate evidence paths."
         },
         officialSdkAdapterBoundary: {
           status: (if $boundaryStatus == "pass" then "proved" else "failed" end),
@@ -832,6 +892,17 @@ if [[ "$remote_branch_observed" == "true" ]]; then
   printf 'Remote deploy advice: %s\n' "$remote_deploy_advice"
 else
   printf 'Remote CDS branch: not observed (%s)\n' "$remote_deploy_advice"
+fi
+if [[ "$control_plane_observed" == "true" ]]; then
+  printf 'CDS control plane: branch=%s commit=%s relation=%s cdsTouched=%s subject=%s\n' \
+    "${control_plane_current_branch:-unknown}" \
+    "${control_plane_current_commit:-unknown}" \
+    "$control_plane_relation" \
+    "${control_plane_current_cds_touched:-unknown}" \
+    "${control_plane_current_subject:-unknown}"
+  printf 'Control-plane advice: %s\n' "$control_plane_advice"
+else
+  printf 'CDS control plane: not observed (%s)\n' "$control_plane_advice"
 fi
 printf 'Current blocking gate: %s\n' "${current_blocking_gate:-unknown}"
 printf 'Blocking reason: %s\n' "$blocking_reason"
