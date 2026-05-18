@@ -35,6 +35,7 @@ DOCS_CALIBRATION_LOG="$AUDIT_DIR/d0-docs-calibration.log"
 N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
 EVIDENCE_INDEX_LOG="$AUDIT_DIR/evidence-index-quality.log"
 RUNTIME_POOL_PLAN_LOG="$AUDIT_DIR/runtime-pool-recovery-plan.log"
+BRANCH_ISOLATION_MANIFEST_LOG="$AUDIT_DIR/branch-isolation-manifest.log"
 cycle_summary="${CDS_AGENT_GOAL_CYCLE_SUMMARY:-}"
 current_git_branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf '')"
 current_git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf '')"
@@ -47,7 +48,7 @@ timing_seconds=()
 timing_indices=()
 CYCLE_GIT_DIFF_PATHS=()
 CYCLE_GIT_RUNTIME_DIFF_PATHS=()
-TIMING_STEP_TOTAL=5
+TIMING_STEP_TOTAL=6
 TIMING_STEP_CURRENT=0
 AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
 AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
@@ -369,6 +370,20 @@ check_runtime_pool_recovery_plan() {
   bash "$SCRIPT_DIR/plan-cds-agent-runtime-pool-recovery.sh" >"$log" 2>&1
 }
 
+check_branch_isolation_apply_manifest() {
+  local out_dir="$AUDIT_DIR/branch-isolation-repair"
+  if [[ -z "${CDS_HOST:-}" ]]; then
+    printf 'SKIPPED: CDS_HOST is not set; branch isolation apply manifest was not observed.\n'
+    printf 'Set CDS_HOST=https://cds.miduo.org to include live dry-run manifest verification.\n'
+    return 0
+  fi
+
+  CDS_AGENT_BRANCH_ISOLATION_REPAIR_DIR="$out_dir" \
+    SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=0 \
+    bash "$SCRIPT_DIR/run-cds-agent-branch-isolation-repair-with-evidence.sh"
+  bash "$SCRIPT_DIR/smoke-cds-agent-branch-isolation-manifest.sh" "$out_dir/summary.json"
+}
+
 read_remote_branch_status() {
   if [[ -z "${CDS_HOST:-}" ]]; then
     return 1
@@ -396,6 +411,7 @@ run_step "A0 official SDK adapter boundary" env SMOKE_CDS_AGENT_BOUNDARY_REPORT=
 run_step "D0 docs current-state calibration" check_docs_calibration "$DOCS_CALIBRATION_LOG" || true
 run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
 run_step_logged "P0 branch isolation and shared pool recovery plan" "$RUNTIME_POOL_PLAN_LOG" check_runtime_pool_recovery_plan "$RUNTIME_POOL_PLAN_LOG" || true
+run_step_logged "P0 branch isolation apply manifest" "$BRANCH_ISOLATION_MANIFEST_LOG" check_branch_isolation_apply_manifest || true
 
 if [[ -z "$cycle_summary" ]]; then
   cycle_summary=$(find_latest_cycle_summary)
@@ -460,6 +476,19 @@ runtime_pool_remote_host_count="unknown"
 runtime_pool_enabled_host_count="unknown"
 runtime_pool_branch_deploy_allowed="unknown"
 runtime_pool_blockers_json='[]'
+branch_manifest_status="missing"
+branch_manifest_summary="$AUDIT_DIR/branch-isolation-repair/summary.json"
+branch_manifest_json='null'
+if [[ -s "$BRANCH_ISOLATION_MANIFEST_LOG" ]] && grep -q '^SKIPPED: CDS_HOST is not set' "$BRANCH_ISOLATION_MANIFEST_LOG"; then
+  branch_manifest_status="not_observed"
+elif [[ -s "$BRANCH_ISOLATION_MANIFEST_LOG" ]] && grep -q 'branch isolation dry-run manifest is explicit and fail-closed' "$BRANCH_ISOLATION_MANIFEST_LOG"; then
+  branch_manifest_status="pass"
+elif [[ -s "$BRANCH_ISOLATION_MANIFEST_LOG" ]]; then
+  branch_manifest_status="failed"
+fi
+if [[ -s "$branch_manifest_summary" ]]; then
+  branch_manifest_json=$(jq -c '{summary: input_filename, apply, verdict, beforeContaminatedBranchCount, applyManifest, repair: {status: .repair.status, candidateProfileIds: .repair.candidateProfileIds, deletedProfileIds: .repair.deletedProfileIds}}' "$branch_manifest_summary" 2>/dev/null || printf 'null')
+fi
 if [[ -s "$RUNTIME_POOL_PLAN_LOG" ]]; then
   if grep -q '^SKIPPED: CDS_HOST is not set' "$RUNTIME_POOL_PLAN_LOG"; then
     runtime_pool_plan_status="not_observed"
@@ -758,6 +787,9 @@ if [[ "$runtime_pool_plan_status" != "pass" ]]; then
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   failures+=("P0 branch isolation/shared pool is not recovered")
 fi
+if [[ "$branch_manifest_status" != "pass" ]]; then
+  failures+=("P0 branch isolation apply manifest did not pass")
+fi
 if [[ "$runtime_pool_blocker_count" == "0" && "$cycle_freshness_status" == "stale" ]]; then
   failures+=("one-cycle summary is stale; rerun scripts/smoke-cds-agent-one-cycle.sh for current remote/provider evidence")
 fi
@@ -792,10 +824,12 @@ missing_json=$(
     --arg gateN6 "$gate_n6" \
     --arg evidenceIndexStatus "$evidence_index_status" \
     --arg runtimePoolPlanStatus "$runtime_pool_plan_status" \
+    --arg branchManifestStatus "$branch_manifest_status" \
     --arg docsCalibrationStatus "$docs_calibration_status" \
     --arg cycleFreshness "$cycle_freshness_status" \
     --arg cycleGitStatus "$cycle_git_status" \
     --argjson runtimePoolBlockers "$runtime_pool_blockers_json" \
+    --argjson branchManifest "$branch_manifest_json" \
     '{
       gates: {
         R0: $gateR0,
@@ -809,6 +843,8 @@ missing_json=$(
       docsCalibrationStatus: $docsCalibrationStatus,
       evidenceIndexStatus: $evidenceIndexStatus,
       runtimePoolPlanStatus: $runtimePoolPlanStatus,
+      branchManifestStatus: $branchManifestStatus,
+      branchManifest: $branchManifest,
       runtimePoolBlockers: $runtimePoolBlockers,
       cycleFreshness: $cycleFreshness,
       cycleGitStatus: $cycleGitStatus
@@ -821,6 +857,7 @@ missing_json=$(
     + (if $root.docsCalibrationStatus != "pass" then [{requirement:"D0_DOCS_CALIBRATION", status:$root.docsCalibrationStatus}] else [] end)
     + (if $root.evidenceIndexStatus != "pass" then [{requirement:"EVIDENCE_INDEX", status:$root.evidenceIndexStatus}] else [] end)
     + (if $root.runtimePoolPlanStatus != "pass" then [{requirement:"P0_RUNTIME_POOL_PLAN", status:$root.runtimePoolPlanStatus}] else [] end)
+    + (if $root.branchManifestStatus != "pass" then [{requirement:"P0_BRANCH_ISOLATION_APPLY_MANIFEST", status:$root.branchManifestStatus}] else [] end)
     + $root.runtimePoolBlockers
     + (if (($root.runtimePoolBlockers | length) == 0 and ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch")) then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
@@ -856,6 +893,7 @@ audit_json=$(
     --arg n6Log "$N6_LOG" \
     --arg evidenceIndexLog "$EVIDENCE_INDEX_LOG" \
     --arg runtimePoolPlanLog "$RUNTIME_POOL_PLAN_LOG" \
+    --arg branchIsolationManifestLog "$BRANCH_ISOLATION_MANIFEST_LOG" \
     --arg cycleSummary "$cycle_summary" \
     --arg r1Report "$r1_report" \
     --arg s1Report "$s1_report" \
@@ -878,6 +916,7 @@ audit_json=$(
     --arg n6Status "$n6_status" \
     --arg evidenceIndexStatus "$evidence_index_status" \
     --arg runtimePoolPlanStatus "$runtime_pool_plan_status" \
+    --arg branchManifestStatus "$branch_manifest_status" \
     --arg r1Status "$r1_status" \
     --arg s1Status "$s1_status" \
     --arg controlsStatus "$controls_status" \
@@ -931,6 +970,7 @@ audit_json=$(
     --argjson controlsDetails "$controls_details_json" \
     --argjson runtimePoolPlan "$runtime_pool_plan_json" \
     --argjson runtimePoolBlockers "$runtime_pool_blockers_json" \
+    --argjson branchManifest "$branch_manifest_json" \
     --argjson remoteBranchStatusRaw "$remote_branch_status_json" \
     --argjson controlPlaneStatusRaw "$control_plane_status_json" \
     --argjson missing "$missing_json" \
@@ -945,6 +985,7 @@ audit_json=$(
         nonCodeCompatibilityLog: $n6Log,
         evidenceIndexLog: $evidenceIndexLog,
         runtimePoolPlanLog: $runtimePoolPlanLog,
+        branchIsolationManifestLog: $branchIsolationManifestLog,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
         r1Report: (if $r1Report == "" then null else $r1Report end),
         s1Report: (if $s1Report == "" then null else $s1Report end),
@@ -964,6 +1005,11 @@ audit_json=$(
         log: $runtimePoolPlanLog,
         plan: $runtimePoolPlan,
         blockers: $runtimePoolBlockers,
+        branchIsolationApplyManifest: {
+          status: $branchManifestStatus,
+          log: $branchIsolationManifestLog,
+          evidence: $branchManifest
+        },
         evidence: "Live CDS state must show prd-agent free of branch-local sidecar services, shared-sidecar-pool as shared-service, an enabled remote host, and a running runtime instance."
       },
       docsCalibration: {
@@ -1009,6 +1055,10 @@ audit_json=$(
           runtimePoolRecovery: {
             status: $runtimePoolPlanStatus,
             blockers: $runtimePoolBlockers,
+            branchIsolationApplyManifest: {
+              status: $branchManifestStatus,
+              evidence: $branchManifest
+            },
             branchDeploySharedPoolAllowed: ($runtimePoolPlan.branchDeploySharedPoolAllowed // null)
           },
           note: "Control-plane self-update and preview runtime deploy are separate evidence paths."
@@ -1137,6 +1187,11 @@ printf 'Runtime pool recovery: %s sharedKind=%s sharedRunning=%s contaminatedBra
   "$runtime_pool_remote_host_count" \
   "$runtime_pool_enabled_host_count" \
   "$runtime_pool_branch_deploy_allowed"
+printf 'Branch isolation apply manifest: %s\n' "$branch_manifest_status"
+if [[ "$branch_manifest_json" != "null" ]]; then
+  printf 'Branch isolation manifest endpoint: %s\n' "$(jq -r '.applyManifest.endpoint // "unknown"' <<< "$branch_manifest_json")"
+  printf 'Branch isolation manifest safety: %s\n' "$(jq -r '.applyManifest.safety // "unknown"' <<< "$branch_manifest_json")"
+fi
 if [[ "$runtime_pool_blockers_json" != "[]" ]]; then
   printf 'Runtime pool blockers:\n'
   jq -r '.[] | "  - " + .requirement + " · " + .status' <<< "$runtime_pool_blockers_json"

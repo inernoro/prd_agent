@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 17:08 Asia/Shanghai
+> 更新时间：2026-05-18 17:12 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -50,6 +50,7 @@
 - runtime-status 的下一步建议已校准为 `shared-service runtime pool`，不再把运行时恢复描述成 `branch-service sidecar`。
 - `scripts/smoke-cds-agent-sidecar-alias-stability.sh` 与 `scripts/doctor-cds-agent-runtime.sh` 已默认阻止探测 branch-local `claude-agent-sdk-runtime*` alias；只有显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` 才能用于历史污染诊断。
 - branch-local sidecar 清理 dry-run 现在会输出 `applyManifest`，明确标记 `destructive_remote_delete_build_profile`、DELETE endpoint、必需环境变量、唯一候选和确认变量等前置条件。
+- 目标审计已新增 `P0 branch isolation apply manifest` gate；有 `CDS_HOST` 时会只读生成清理 dry-run manifest 并运行 `smoke-cds-agent-branch-isolation-manifest.sh` 验证 fail-closed。
 
 ## 最新远程页面验证
 
@@ -78,6 +79,7 @@
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_BRANCH_ISOLATION_REPAIR_DIR=/tmp/cds-agent-branch-isolation-repair-manifest-current bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`：dry-run 通过，`totalSeconds=15s`，`verdict=dry-run-contaminated`，未执行删除
 - `bash scripts/smoke-cds-agent-branch-isolation-manifest.sh /tmp/cds-agent-branch-isolation-repair-manifest-current/summary.json`：通过，验证 dry-run manifest 明确且 fail-closed
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR=/tmp/cds-agent-runtime-pool-evidence-manifest-current CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh`：通过，总证据 `branchIsolation.applyManifest` 已包含同一 DELETE manifest
+- `CDS_HOST=https://cds.miduo.org CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-with-manifest.json bash scripts/audit-cds-agent-goal.sh`：按预期返回 `goalStatus=not_complete`；新增 manifest gate 通过，整体耗时 `39s`
 
 ## 最新 Branch Isolation Dry Run
 
@@ -95,16 +97,18 @@
 
 ## 最新目标审计
 
-2026-05-18 17:02 Asia/Shanghai：
+2026-05-18 17:12 Asia/Shanghai：
 
-- 报告：`/tmp/cds-agent-goal-audit-current-after-doc-fix.json`
+- 报告：`/tmp/cds-agent-goal-audit-with-manifest.json`
 - 结果：`goalStatus=not_complete`
-- 远程 runtime：当前 preview runtime commit 已匹配 `f2dc32be`
+- 远程 runtime：当前 preview runtime commit 已匹配 `51dbec7e`
 - 部署建议：`Remote runtime commit matches current HEAD; do not redeploy unless provider/profile or visual evidence requires it.`
 - CDS control plane：`control_plane_behind_non_cds_drift`，当前差异不要求 self update
+- Branch isolation apply manifest：`pass`
+- Manifest endpoint：`https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent`
 - 当前阻塞门：`R0`
 - 阻塞原因：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4, REMOTE_HOST_AVAILABLE=missing, SHARED_POOL_RUNNING=missing`
-- 最耗时步骤：runtime pool recovery plan `6s`，N6 非代码兼容 `3s`
+- 最耗时步骤：N6 非代码兼容 `16s`，branch isolation apply manifest `15s`，runtime pool recovery plan `6s`
 
 ## 下一步
 
