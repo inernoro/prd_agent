@@ -1170,7 +1170,8 @@ public static class CapsuleTypeRegistry
         AccentHue = 198,
         ConfigSchema = new()
         {
-            new() { Key = "prompt", Label = "任务提示词", FieldType = "textarea", Required = true, Placeholder = "请在远程 sandbox 中巡检 prd_agent 代码并提交 PR", HelpTip = "支持 {{variable}} 变量替换；上游输入会追加到任务上下文中" },
+            new() { Key = "prompt", Label = "只读巡检任务", FieldType = "textarea", Required = true, Placeholder = "请只读巡检当前仓库代码，指出风险、证据和建议；不要写文件、不要提交 PR", HelpTip = "P1-4 仅支持只读代码巡检；支持 {{variable}} 变量替换，上游输入会追加到任务上下文中" },
+            new() { Key = "sessionId", Label = "复用 Session", FieldType = "text", Required = false, HelpTip = "留空时创建新 CDS Agent session；填入已有 sessionId 时复用并继续发送任务" },
             new() { Key = "connectionId", Label = "CDS 连接", FieldType = "text", Required = false, HelpTip = "留空时使用最近 active CDS 连接" },
             new() { Key = "runtimeProfileId", Label = "模型运行配置", FieldType = "text", Required = false, HelpTip = "留空时使用默认模型运行配置" },
             new() { Key = "runtime", Label = "Runtime", FieldType = "select", Required = false, DefaultValue = "claude-sdk", Options = new()
@@ -1180,10 +1181,10 @@ public static class CapsuleTypeRegistry
                 new() { Value = "fake", Label = "Fake Runtime（仅用于链路自测）" },
             }},
             new() { Key = "model", Label = "模型", FieldType = "text", Required = false, Placeholder = "claude-sonnet-4-5 / gpt-5.2 / 自定义模型名" },
-            new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "confirm-dangerous", Options = new()
+            new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "readonly-auto", Options = new()
             {
-                new() { Value = "confirm-dangerous", Label = "危险工具需确认" },
                 new() { Value = "readonly-auto", Label = "只读自动允许" },
+                new() { Value = "confirm-dangerous", Label = "危险工具需确认" },
                 new() { Value = "manual-all", Label = "全部人工确认" },
             }},
             new() { Key = "workflowApprovalMode", Label = "工作流审批模式", FieldType = "select", Required = false, DefaultValue = "none", Options = new()
@@ -1205,6 +1206,7 @@ public static class CapsuleTypeRegistry
         DefaultOutputSlots = new()
         {
             new() { SlotId = "cds-agent-out", Name = "agentResult", DataType = "text", Required = true, Description = "远程 Agent 输出" },
+            new() { SlotId = "cds-agent-run", Name = "runHandle", DataType = "json", Required = false, Description = "sessionId/traceId/status/finalText/artifacts/eventsCursor 和工作台回跳" },
             new() { SlotId = "cds-agent-events", Name = "eventTimeline", DataType = "json", Required = false, Description = "事件时间线" },
             new() { SlotId = "cds-agent-log", Name = "runtimeLog", DataType = "text", Required = false, Description = "远程日志" },
         },

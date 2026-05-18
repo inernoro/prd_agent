@@ -2278,10 +2278,95 @@ const tiktokCreatorToHomepageRichTemplate: WorkflowTemplate = {
 };
 
 // ═══════════════════════════════════════════════════════════════
+// 模板: CDS Agent 只读代码巡检（P1-4 最小调度）
+// ═══════════════════════════════════════════════════════════════
+
+const cdsAgentReadonlyReviewTemplate: WorkflowTemplate = {
+  id: 'cds-agent-readonly-review',
+  name: 'CDS Agent 只读代码巡检',
+  description: 'Start -> CdsAgentRun -> Notify 的最小工作流：创建或复用 CDS Agent session，只做只读代码巡检并回跳 Agent 面板',
+  icon: 'CDS',
+  tags: ['cds-agent', 'code-review', 'readonly'],
+  requiredInputs: [
+    {
+      key: 'task',
+      label: '巡检目标',
+      type: 'textarea',
+      required: true,
+      defaultValue: '请只读巡检当前仓库代码，重点检查功能风险、边界条件、错误处理、可观测性和测试缺口。不要修改文件，不要提交 PR。输出：问题列表、证据位置、建议修复优先级。',
+      helpTip: 'P1-4 只支持只读代码巡检；需要写文件或开 PR 时先回到 CDS Agent 面板单独确认。',
+    },
+    {
+      key: 'sessionId',
+      label: '复用 Session（可选）',
+      type: 'text',
+      required: false,
+      placeholder: '留空则创建新的 CDS Agent session',
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+
+    const nodes: WorkflowNode[] = [
+      {
+        nodeId: 'n-start',
+        name: 'Start',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击运行，开始只读代码巡检' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 120, y: 220 },
+      },
+      {
+        nodeId: 'n-cds-agent',
+        name: 'CdsAgentRun',
+        nodeType: 'cds-agent',
+        config: {
+          prompt: inputs.task || '',
+          sessionId: inputs.sessionId || '',
+          toolPolicy: 'readonly-auto',
+          stopAfterRun: 'false',
+          workflowApprovalMode: 'none',
+        },
+        inputSlots: [{ slotId: 'cds-agent-in', name: 'taskContext', dataType: 'text', required: false }],
+        outputSlots: [
+          { slotId: 'cds-agent-out', name: 'agentResult', dataType: 'text', required: true },
+          { slotId: 'cds-agent-run', name: 'runHandle', dataType: 'json', required: false },
+          { slotId: 'cds-agent-events', name: 'eventTimeline', dataType: 'json', required: false },
+          { slotId: 'cds-agent-log', name: 'runtimeLog', dataType: 'text', required: false },
+        ],
+        position: { x: 440, y: 220 },
+      },
+      {
+        nodeId: 'n-notify',
+        name: 'Notify',
+        nodeType: 'notification-sender',
+        config: {
+          title: 'CDS Agent 只读巡检已触发',
+          content: '工作流已委托 CDS Agent 执行只读代码巡检，请在执行详情产物中打开 CDS 面板查看完整过程。',
+          level: 'info',
+        },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 760, y: 220 },
+      },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      edge('n-start', 'manual-out', 'n-cds-agent', 'cds-agent-in'),
+      edge('n-cds-agent', 'cds-agent-run', 'n-notify', 'notify-in'),
+    ];
+
+    return { nodes, edges, variables: [] };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
+  cdsAgentReadonlyReviewTemplate,
   committeeMonthlyTemplate,
   fullTestSuiteTemplate,
   tapdBugCollectionTemplate,

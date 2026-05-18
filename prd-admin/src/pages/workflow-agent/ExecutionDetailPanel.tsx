@@ -929,10 +929,23 @@ function LogLine({ entry }: { entry: LogEntry }) {
 // ═══════════════════════════════════════════════════════════════
 
 function NodeArtifactRow({ artifact, onPreview }: { artifact: ExecutionArtifact; onPreview: () => void }) {
+  const cdsRun = readCdsAgentRunHandle(artifact);
   return (
     <div className="flex items-center gap-2 text-xs">
       <FileText className="w-3 h-3 text-muted-foreground" />
       <span className="flex-1 truncate">{artifact.name}</span>
+      {cdsRun && (
+        <a
+          href={cdsRun.workbenchPath}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/15 transition-colors"
+          title={`跳转 CDS Agent 面板：${cdsRun.sessionId}`}
+        >
+          <ExternalLink className="w-3 h-3" />
+          CDS 面板
+        </a>
+      )}
       {artifact.tags?.includes('auto-generated') && (
         <span className="text-[8px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400">透传</span>
       )}
@@ -954,6 +967,20 @@ function NodeArtifactRow({ artifact, onPreview }: { artifact: ExecutionArtifact;
       )}
     </div>
   );
+}
+
+function readCdsAgentRunHandle(artifact: ExecutionArtifact): { sessionId: string; workbenchPath: string } | null {
+  if (artifact.slotId !== 'cds-agent-run' || !artifact.inlineContent) return null;
+  try {
+    const data = JSON.parse(artifact.inlineContent) as { kind?: string; sessionId?: string; workbenchPath?: string };
+    if (data.kind !== 'cds-agent-workflow-run' || !data.sessionId) return null;
+    return {
+      sessionId: data.sessionId,
+      workbenchPath: data.workbenchPath || `/cds-agent?sessionId=${encodeURIComponent(data.sessionId)}`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function formatBytes(bytes: number): string {

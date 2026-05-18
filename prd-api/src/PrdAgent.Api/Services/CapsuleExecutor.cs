@@ -4632,46 +4632,64 @@ function safeChart(canvasId, config) {
         if (string.IsNullOrWhiteSpace(userId))
             throw new InvalidOperationException("CDS Agent 需要执行用户上下文，请从工作流运行或配置 userId 后再执行");
 
-        var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
-        var now = DateTime.UtcNow;
-        var connection = string.IsNullOrWhiteSpace(connectionId)
-            ? await db.InfraConnections
-                .Find(x => x.Partner == "cds"
-                    && (x.Status == "active"
-                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
-                .SortByDescending(x => x.UpdatedAt)
-                .FirstOrDefaultAsync(CancellationToken.None)
-            : await db.InfraConnections
-                .Find(x => x.Id == connectionId
-                    && x.Partner == "cds"
-                    && (x.Status == "active"
-                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
-                .FirstOrDefaultAsync(CancellationToken.None);
-        if (connection == null)
-            throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+        var requestedSessionId = ReplaceVariables(GetConfigString(node, "sessionId") ?? "", variables).Trim();
+        InfraAgentSessionView? session = null;
+        InfraConnection? connection = null;
+        InfraAgentRuntimeProfile? runtimeProfile = null;
 
-        var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
-        var runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
-            ? await db.InfraAgentRuntimeProfiles
-                .Find(x => x.IsDefault)
-                .FirstOrDefaultAsync(CancellationToken.None)
-                ?? await db.InfraAgentRuntimeProfiles
-                    .Find(_ => true)
+        if (!string.IsNullOrWhiteSpace(requestedSessionId))
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "reusing", sessionId = requestedSessionId, traceId = variables.GetValueOrDefault("__traceId") });
+            session = await sessions.GetAsync(userId, requestedSessionId, CancellationToken.None);
+            if (session == null)
+                throw new InvalidOperationException($"CDS Agent session 不存在或无权限访问: {requestedSessionId}");
+        }
+        else
+        {
+            var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
+            var now = DateTime.UtcNow;
+            connection = string.IsNullOrWhiteSpace(connectionId)
+                ? await db.InfraConnections
+                    .Find(x => x.Partner == "cds"
+                        && (x.Status == "active"
+                            || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
                     .SortByDescending(x => x.UpdatedAt)
                     .FirstOrDefaultAsync(CancellationToken.None)
-            : await db.InfraAgentRuntimeProfiles
-                .Find(x => x.Id == runtimeProfileId)
-                .FirstOrDefaultAsync(CancellationToken.None);
-        if (runtimeProfile == null)
-            throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
+                : await db.InfraConnections
+                    .Find(x => x.Id == connectionId
+                        && x.Partner == "cds"
+                        && (x.Status == "active"
+                            || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (connection == null)
+                throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
 
-        var runtime = ReplaceVariables(GetConfigString(node, "runtime") ?? runtimeProfile.Runtime, variables).Trim();
+            var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
+            runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
+                ? await db.InfraAgentRuntimeProfiles
+                    .Find(x => x.IsDefault)
+                    .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? await db.InfraAgentRuntimeProfiles
+                        .Find(_ => true)
+                        .SortByDescending(x => x.UpdatedAt)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                : await db.InfraAgentRuntimeProfiles
+                    .Find(x => x.Id == runtimeProfileId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (runtimeProfile == null)
+                throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
+        }
+
+        var runtime = ReplaceVariables(GetConfigString(node, "runtime") ?? session?.Runtime ?? runtimeProfile?.Runtime ?? "", variables).Trim();
         if (string.IsNullOrWhiteSpace(runtime))
-            runtime = runtimeProfile.Runtime;
-        var model = ReplaceVariables(GetConfigString(node, "model") ?? runtimeProfile.Model, variables).Trim();
+            runtime = session?.Runtime ?? runtimeProfile?.Runtime ?? "";
+        var model = ReplaceVariables(GetConfigString(node, "model") ?? session?.Model ?? runtimeProfile?.Model ?? "", variables).Trim();
         if (string.IsNullOrWhiteSpace(model))
-            model = runtimeProfile.Model;
-        var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "confirm-dangerous", variables).Trim();
+            model = session?.Model ?? runtimeProfile?.Model ?? "";
+        if (string.IsNullOrWhiteSpace(runtime) || string.IsNullOrWhiteSpace(model))
+            throw new InvalidOperationException("CDS Agent session 缺少 runtime/model，且节点未显式配置 runtime/model");
+        var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "readonly-auto", variables).Trim();
         var hookProfileId = ReplaceVariables(GetConfigString(node, "hookProfileId") ?? "", variables).Trim();
         var workflowApprovalMode = ReplaceVariables(GetConfigString(node, "workflowApprovalMode") ?? "none", variables).Trim();
         var traceId = variables.GetValueOrDefault("__traceId");
@@ -4685,26 +4703,32 @@ function safeChart(canvasId, config) {
         if (string.IsNullOrWhiteSpace(prompt))
             throw new InvalidOperationException("CDS Agent 任务提示词不能为空");
 
-        if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection.Id, runtime, model, traceId });
-        var session = await sessions.CreateAsync(
-            userId,
-            new CreateInfraAgentSessionRequest(
-                connection.Id,
-                runtime,
-                model,
-                node.Name,
-                toolPolicy,
-                string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
-                runtimeProfile.Id,
-                traceId),
-            CancellationToken.None);
+        if (session == null)
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection!.Id, runtime, model, traceId });
+            session = await sessions.CreateAsync(
+                userId,
+                new CreateInfraAgentSessionRequest(
+                    connection!.Id,
+                    runtime,
+                    model,
+                    node.Name,
+                    toolPolicy,
+                    string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
+                    runtimeProfile!.Id,
+                    traceId),
+                CancellationToken.None);
+        }
         sb.AppendLine($"会话: {session.Id}");
         sb.AppendLine($"TraceId: {session.TraceId}");
 
-        if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id, traceId = session.TraceId });
-        session = await sessions.StartAsync(userId, session.Id, new StartInfraAgentSessionRequest(runtime, model), CancellationToken.None) ?? session;
+        if (!string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id, traceId = session.TraceId });
+            session = await sessions.StartAsync(userId, session.Id, new StartInfraAgentSessionRequest(runtime, model), CancellationToken.None) ?? session;
+        }
         sb.AppendLine($"状态: {session.Status}");
 
         if (emitEvent != null)
@@ -4775,10 +4799,43 @@ function safeChart(canvasId, config) {
         if (emitEvent != null)
             await emitEvent("cds-agent-phase", new { phase = "completed", sessionId = session.Id, status = session.Status, traceId = session.TraceId });
 
+        var workbenchPath = $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}";
+        var finalText = rendered;
+        var runHandle = new
+        {
+            kind = "cds-agent-workflow-run",
+            sessionId = session.Id,
+            cdsSessionId = session.CdsSessionId,
+            traceId = session.TraceId,
+            status = session.Status,
+            finalText,
+            artifacts = new[]
+            {
+                new { name = "CDS Agent 输出", slotId = "cds-agent-out", mimeType = "text/plain" },
+                new { name = "CDS Agent 事件", slotId = "cds-agent-events", mimeType = "application/json" },
+                new { name = "CDS Agent 日志", slotId = "cds-agent-log", mimeType = "text/plain" },
+            },
+            eventsCursor = new
+            {
+                lastSeq = eventCursor.LastSeq,
+                count = eventCursor.Events.Count,
+                isComplete = eventCursor.IsComplete,
+                cursor = eventCursor.IsComplete ? "complete" : "truncated_or_stalled",
+            },
+            workbenchPath,
+            eventStreamPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/stream",
+            eventsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/events",
+            logsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/logs",
+            isReadonly = true,
+            createdAt = DateTime.UtcNow,
+        };
+
         var eventsJson = JsonSerializer.Serialize(events, JsonPretty);
+        var handleJson = JsonSerializer.Serialize(runHandle, JsonPretty);
         return new CapsuleResult(new List<ExecutionArtifact>
         {
             MakeTextArtifact(node, "cds-agent-out", "CDS Agent 输出", rendered),
+            MakeTextArtifact(node, "cds-agent-run", "CDS Agent 运行句柄", handleJson, "application/json"),
             MakeTextArtifact(node, "cds-agent-events", "CDS Agent 事件", eventsJson, "application/json"),
             MakeTextArtifact(node, "cds-agent-log", "CDS Agent 日志", logs),
         }, sb.ToString());
