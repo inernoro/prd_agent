@@ -358,6 +358,8 @@ bash scripts/smoke-cds-agent-evidence-index.sh /tmp/cds-agent-cycle-.../cycle-su
 二者不相等时不能直接下结论“需要部署”：如果 git drift 只有 smoke/audit/doc 等非 runtime 变更，
 审计会输出 `runtime_behind_non_runtime_drift`，建议不要 redeploy；只有出现 runtime-affecting diff
 或要验证真实远程容器行为时，才进入新的 CDS deploy/self-update 周期。
+控制面自身也有同样分类：`control_plane_behind_non_cds_drift` 表示分支 HEAD 只比运行中的控制面多了
+`cdsTouched=false` 的变更，不需要为了这类证据链/文档更新再跑 self update。
 
 `cycle-summary.json.commercialGates` 会把验收语义拆开：
 

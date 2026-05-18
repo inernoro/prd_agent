@@ -368,8 +368,9 @@ control_plane_status_json='null'
 control_plane_observed=false
 control_plane_current_branch=""
 control_plane_current_commit=""
-control_plane_current_subject=""
-control_plane_current_cds_touched=""
+control_plane_branch_head_commit=""
+control_plane_branch_head_subject=""
+control_plane_branch_head_cds_touched=""
 control_plane_relation="not_observed"
 control_plane_advice="Set CDS_HOST to include CDS control-plane self-update status in this audit."
 if [[ -f "$cycle_summary" ]]; then
@@ -477,15 +478,22 @@ if control_plane_raw=$(read_control_plane_status); then
     control_plane_current_commit=$(jq -r '.commitHash // ""' <<< "$control_plane_status_json")
     control_plane_current_json=$(jq -c --arg branch "$control_plane_current_branch" 'first(.branchDetails[]? | select(.name == $branch)) // null' <<< "$control_plane_status_json")
     if [[ "$control_plane_current_json" != "null" ]]; then
-      control_plane_current_subject=$(jq -r '.subject // ""' <<< "$control_plane_current_json")
-      control_plane_current_cds_touched=$(jq -r 'if has("cdsTouched") then (.cdsTouched | tostring) else "" end' <<< "$control_plane_current_json")
+      control_plane_branch_head_commit=$(jq -r '.commitHash // ""' <<< "$control_plane_current_json")
+      control_plane_branch_head_subject=$(jq -r '.subject // ""' <<< "$control_plane_current_json")
+      control_plane_branch_head_cds_touched=$(jq -r 'if has("cdsTouched") then (.cdsTouched | tostring) else "" end' <<< "$control_plane_current_json")
     fi
     if [[ -n "$control_plane_current_commit" && -n "$current_git_commit_short" && "$current_git_commit_short" == "$control_plane_current_commit"* ]]; then
       control_plane_relation="control_plane_matches_head"
       control_plane_advice="CDS control plane is on current HEAD. This does not prove preview runtime deploy parity; use remoteCdsBranch.runtimeCommitSha for that."
+    elif [[ -n "$control_plane_branch_head_commit" && -n "$current_git_commit_short" && "$current_git_commit_short" == "$control_plane_branch_head_commit"* && "$control_plane_branch_head_cds_touched" == "false" ]]; then
+      control_plane_relation="control_plane_behind_non_cds_drift"
+      control_plane_advice="CDS control plane is behind current HEAD only by branch changes marked cdsTouched=false; do not self update for this state."
+    elif [[ -n "$control_plane_branch_head_commit" && -n "$current_git_commit_short" && "$current_git_commit_short" == "$control_plane_branch_head_commit"* && "$control_plane_branch_head_cds_touched" == "true" ]]; then
+      control_plane_relation="control_plane_behind_cds_drift"
+      control_plane_advice="CDS control plane is behind current HEAD and the branch head touched CDS code; self-update is the relevant validation path when this control-plane change must be exercised."
     else
       control_plane_relation="control_plane_not_matched"
-      control_plane_advice="CDS control plane is not on current HEAD. Run self-update only when control-plane code or shared CLI behavior must be validated."
+      control_plane_advice="CDS control plane is not on current HEAD. Inspect branch head and cdsTouched before deciding whether self-update is needed."
     fi
   fi
 fi
@@ -668,8 +676,9 @@ audit_json=$(
     --arg controlPlaneObserved "$control_plane_observed" \
     --arg controlPlaneCurrentBranch "$control_plane_current_branch" \
     --arg controlPlaneCurrentCommit "$control_plane_current_commit" \
-    --arg controlPlaneCurrentSubject "$control_plane_current_subject" \
-    --arg controlPlaneCurrentCdsTouched "$control_plane_current_cds_touched" \
+    --arg controlPlaneBranchHeadCommit "$control_plane_branch_head_commit" \
+    --arg controlPlaneBranchHeadSubject "$control_plane_branch_head_subject" \
+    --arg controlPlaneBranchHeadCdsTouched "$control_plane_branch_head_cds_touched" \
     --arg controlPlaneRelation "$control_plane_relation" \
     --arg controlPlaneAdvice "$control_plane_advice" \
     --arg gateR0 "$gate_r0" \
@@ -744,8 +753,12 @@ audit_json=$(
         observed: ($controlPlaneObserved == "true"),
         branch: (if $controlPlaneCurrentBranch == "" then null else $controlPlaneCurrentBranch end),
         commitHash: (if $controlPlaneCurrentCommit == "" then null else $controlPlaneCurrentCommit end),
-        subject: (if $controlPlaneCurrentSubject == "" then null else $controlPlaneCurrentSubject end),
-        cdsTouched: (if $controlPlaneCurrentCdsTouched == "" then null else ($controlPlaneCurrentCdsTouched == "true") end),
+        runningCommitHash: (if $controlPlaneCurrentCommit == "" then null else $controlPlaneCurrentCommit end),
+        branchHeadCommitHash: (if $controlPlaneBranchHeadCommit == "" then null else $controlPlaneBranchHeadCommit end),
+        subject: (if $controlPlaneBranchHeadSubject == "" then null else $controlPlaneBranchHeadSubject end),
+        branchHeadSubject: (if $controlPlaneBranchHeadSubject == "" then null else $controlPlaneBranchHeadSubject end),
+        cdsTouched: (if $controlPlaneBranchHeadCdsTouched == "" then null else ($controlPlaneBranchHeadCdsTouched == "true") end),
+        branchHeadCdsTouched: (if $controlPlaneBranchHeadCdsTouched == "" then null else ($controlPlaneBranchHeadCdsTouched == "true") end),
         relation: $controlPlaneRelation,
         advice: $controlPlaneAdvice,
         raw: $controlPlaneStatusRaw
@@ -898,8 +911,9 @@ if [[ "$control_plane_observed" == "true" ]]; then
     "${control_plane_current_branch:-unknown}" \
     "${control_plane_current_commit:-unknown}" \
     "$control_plane_relation" \
-    "${control_plane_current_cds_touched:-unknown}" \
-    "${control_plane_current_subject:-unknown}"
+    "${control_plane_branch_head_cds_touched:-unknown}" \
+    "${control_plane_branch_head_subject:-unknown}"
+  printf 'CDS control plane branch head: commit=%s\n' "${control_plane_branch_head_commit:-unknown}"
   printf 'Control-plane advice: %s\n' "$control_plane_advice"
 else
   printf 'CDS control plane: not observed (%s)\n' "$control_plane_advice"
