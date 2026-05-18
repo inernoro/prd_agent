@@ -659,9 +659,9 @@ public class MarketplaceSkillsController : ControllerBase
             createdByName = link.CreatedByName,
             skill = new
             {
-                skill.Id,
-                skill.Title,
-                skill.Description,
+                id = skill.Id,
+                title = skill.Title,
+                description = skill.Description,
                 iconEmoji = skill.IconEmoji,
                 coverImageUrl = skill.CoverImageUrl,
                 tags = skill.Tags ?? new List<string>(),

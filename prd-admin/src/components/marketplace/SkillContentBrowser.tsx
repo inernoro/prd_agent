@@ -264,6 +264,11 @@ export function SkillContentBrowser({
 
     return () => {
       cancelled = true;
+      // 卸载/zipUrl 变更时也作废在飞的 loadFile，否则它过了 staleness 检查
+      // 仍会 createObjectURL 写进 currentUrlRef，而 revokeUrls 已先执行，泄漏。
+      // loadSeqRef 是普通自增计数器（非 DOM 节点 ref），cleanup 里自增即其用途。
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      loadSeqRef.current++;
       revokeUrls();
     };
   }, [zipUrl, defaultFileName, loadFile, revokeUrls]);
