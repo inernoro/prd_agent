@@ -512,6 +512,8 @@ if [[ -n "$r1_report" && -f "$r1_report" ]]; then
     status: (.status // "unknown"),
     targetTemplateId: (.targetTemplateId // ""),
     suggestedCommand: (.suggestedCommand // ""),
+    suggestedRepairCommand: (.suggestedRepairCommand // ""),
+    nextCommands: (.nextCommands // null),
     defaultProfile: (.evidence.defaultProfile // null),
     repairPlan: (.evidence.repairPlan // null),
     targetTemplate: (.evidence.targetTemplate // null),

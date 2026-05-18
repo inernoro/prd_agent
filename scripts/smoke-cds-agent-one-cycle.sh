@@ -263,6 +263,9 @@ finish_cycle() {
     r1_details_json=$(jq -c '{
       status: (.status // "unknown"),
       targetTemplateId: (.targetTemplateId // ""),
+      suggestedCommand: (.suggestedCommand // ""),
+      suggestedRepairCommand: (.suggestedRepairCommand // ""),
+      nextCommands: (.nextCommands // null),
       defaultProfile: (.evidence.defaultProfile // null),
       repairPlan: (.evidence.repairPlan // null),
       targetTemplate: (.evidence.targetTemplate // null),

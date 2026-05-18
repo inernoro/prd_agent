@@ -48,6 +48,9 @@ if [[ -n "$r1_report" && -f "$r1_report" ]]; then
   r1_details_json=$(jq -c '{
     status: (.status // "unknown"),
     targetTemplateId: (.targetTemplateId // ""),
+    suggestedCommand: (.suggestedCommand // ""),
+    suggestedRepairCommand: (.suggestedRepairCommand // ""),
+    nextCommands: (.nextCommands // null),
     defaultProfile: (.evidence.defaultProfile // null),
     repairPlan: (.evidence.repairPlan // null),
     targetTemplate: (.evidence.targetTemplate // null),
@@ -114,6 +117,8 @@ jq -n \
       targetTemplate: ($s.r1.details.targetTemplate // $r1Details.targetTemplate // null),
       missingKeyGuard: ($s.r1.details.missingKeyGuard // $r1Details.missingKeyGuard // null),
       providerKeyReceived: ($s.r1.details.providerKeyReceived // $r1Details.providerKeyReceived // false),
+      suggestedRepairCommand: ($s.r1.details.suggestedRepairCommand // $r1Details.suggestedRepairCommand // ""),
+      nextCommands: ($s.r1.details.nextCommands // $r1Details.nextCommands // null),
       suggestedCommand: ($s.r1.details.suggestedCommand // $s.r1.suggestedCommand // $s.nextCommand // "")
     },
     executionPanel: ($s.executionPanel // null),
@@ -190,6 +195,7 @@ jq -r \
   "- Missing-key guard: `" + (.r1Repair.missingKeyGuard.errorCode // "unknown") + "`\n" +
   "- Provider key received: `" + ((.r1Repair.providerKeyReceived // false)|tostring) + "`\n" +
   "- Test-before-promote: backend creates a candidate Anthropic profile, tests upstream, then promotes only on success.\n" +
+  (if (.r1Repair.suggestedRepairCommand // "") != "" then "- Repair-only command: `" + (.r1Repair.suggestedRepairCommand // "") + "`\n" else "" end) +
   "- Rerun command: `" + (.r1Repair.suggestedCommand // .nextCommand // "") + "`\n\n" +
   "## Slowest Steps\n\n" +
   ((.timing.slowest // []) | map("- [" + (.phase // "") + "] " + (.name // "") + " — " + ((.durationSeconds // 0)|tostring) + "s — " + (.status // "")) | join("\n")) + "\n\n" +

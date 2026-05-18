@@ -104,7 +104,7 @@ CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518091314` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 106s，最慢的是 V1 authenticated workbench visual 33s、N6 non-code compatibility 17s、R0 sidecar alias stability 13s；V1 和 N6 都按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。对应目标审计报告是 `/tmp/cds-agent-goal-audit-fe51afb-current.json`，`cycle git match=match`，仍明确给出 `Deploy/build advice: Do not redeploy for this state`。
 
 R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本。脚本和页面都会调用后端 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile`，由后端创建非默认 Anthropic 候选 profile，调用 `/test` 验证上游可用，成功后才提升为默认 profile，并复查 `commercialReadiness.R1=pass`。页面的“保存配置 + 设为默认”和“更新当前配置 + 设为默认”都走同样的 test-before-promote 流程；测试失败时会清理候选 profile，不会覆盖当前默认配置。
-设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。
+设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。报告里的 `nextCommands` 会拆开三种动作：`dryRun` 只复查保护，`repairOnly` 只执行 R1 test-before-promote，`repairAndProviderCycle` 才会在 R1 后继续收集 S1/S2/S3 provider 证据。
 
 下一周期 N1-N6 的最小闭环以同一个接口返回的 `diagnostics.nextCyclePlan` 为准。它会明确每一步的状态、阻塞项、验收证据和停止条件；页面 Runtime 调试区只展示该计划，不能把文档里的表格复制成另一套前端逻辑。
 

@@ -39,13 +39,21 @@ write_r1_report() {
     --arg status "$status" \
     --arg host "$SMOKE_HOST" \
     --arg targetTemplateId "$target_template_id" \
-    --arg suggestedCommand "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh" \
+    --arg dryRunCommand "bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
+    --arg repairOnlyCommand "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
+    --arg repairAndProviderCycleCommand "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh" \
     --arg evidenceRaw "$evidence_json" \
     '{
       status: $status,
       host: $host,
       targetTemplateId: $targetTemplateId,
-      suggestedCommand: $suggestedCommand,
+      suggestedCommand: $repairAndProviderCycleCommand,
+      suggestedRepairCommand: $repairOnlyCommand,
+      nextCommands: {
+        dryRun: $dryRunCommand,
+        repairOnly: $repairOnlyCommand,
+        repairAndProviderCycle: $repairAndProviderCycleCommand
+      },
       evidence: (
         $evidenceRaw
         | fromjson?
