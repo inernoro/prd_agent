@@ -8,6 +8,7 @@ GOAL_AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-/tmp/cds-agent-goal-audit-r0-current.
 REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 HANDOFF_SUMMARY="${CDS_AGENT_REMOTE_HOST_HANDOFF_SUMMARY:-$REMOTE_HOST_SUMMARY}"
 N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
+R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -53,6 +54,12 @@ target_host_id=$(jq_read "$REMOTE_HOST_SUMMARY" '(if has("prepare") and .prepare
 missing_config=$(jq_read "$REMOTE_HOST_SUMMARY" '((if has("prepare") and .prepare != null then .prepare.missingConfig else [] end) // []) | join(", ")')
 invalid_config=$(jq_read "$REMOTE_HOST_SUMMARY" '((if has("prepare") and .prepare != null then .prepare.invalidConfig else [] end) // []) | join(", ")')
 total_seconds=$(jq_read "$REMOTE_HOST_SUMMARY" '.totalSeconds // "unknown"')
+r0_readiness_line="not checked"
+if [[ -f "$R0_READINESS_SUMMARY" ]]; then
+  r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
+  r0_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.nextAction // "unknown"')
+  r0_readiness_line="readyForR0Apply=$r0_ready; nextAction=$r0_next_action"
+fi
 
 if [[ -z "$missing_config" ]]; then
   missing_config="none"
@@ -79,6 +86,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Ready for shared runtime deploy: $ready_deploy
 - Ready for provider smokes: $ready_smoke
 - Evidence refresh cost: ${total_seconds}s
+- R0 local apply readiness: $r0_readiness_line
 
 ## Task Board
 
@@ -124,4 +132,5 @@ Then fill only placeholders locally. Do not paste private key contents into chat
 - remote host summary: $REMOTE_HOST_SUMMARY
 - handoff summary: $HANDOFF_SUMMARY
 - N6 summary: $N6_SUMMARY
+- R0 readiness summary: $R0_READINESS_SUMMARY
 EOF

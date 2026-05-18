@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 18:41 Asia/Shanghai
+> **更新时间**：2026-05-18 18:44 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -117,6 +117,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | current progress board | `scripts/print-cds-agent-current-progress.sh` | 1 秒内输出当前 gate、R0 blocker、下一步和 ETA | <1s |
 | runtime-status task board | `/api/infra-agent-sessions/runtime-status` -> `executionPanel.taskBoard` | 页面执行面板可直接展示阶段、状态、下一步和 ETA | controller tests 18/18 + tsc |
 | N6 current smoke summary | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 非代码 Toolbox agents 独立于 CDS sidecar pool；候选官方 SDK 仍 planned-not-routable | 27/27 pass, 3s |
+| R0 local apply readiness | `/tmp/cds-agent-r0-apply-readiness-current.json` | 本机尚不能进入 R0 apply/deploy；缺 remote host SSH 参数和 `CDS_AGENT_SIDECAR_IMAGE` | <1s |
 
 ## 7. 时间和问题账本
 
@@ -139,6 +140,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote host handoff | <1s | 参数给齐后直接按 handoff 执行，不再翻长文档 |
 | runtime-status task board | 后端测试 15s，前端 tsc 20s | 页面事实源直接返回 taskBoard/nextStepEta/timeSinkAdvice，减少人工解释成本 |
 | N6 current smoke | 3s 沙箱外；沙箱内 VSTest socket 权限失败 | N6 smoke 现在写 summary，进度面板优先读取最新 N6 结果，避免把 infra 权限误判成兼容失败 |
+| R0 local apply readiness | <1s | 先本地判定 env/summary 是否足够 apply，避免到远程写入阶段才失败 |
 
 ## 8. 不要做的事
 
@@ -154,6 +156,12 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 
 ```bash
 scripts/print-cds-agent-current-progress.sh
+```
+
+本地检查 R0 apply/deploy 是否具备输入：
+
+```bash
+scripts/preflight-cds-agent-r0-apply-readiness.sh
 ```
 
 只读刷新 R0 证据：

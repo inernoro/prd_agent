@@ -292,6 +292,28 @@
 
 优化：后续 N6 状态用 summary 校准，不再把本地执行环境权限问题当成智能体兼容性问题。
 
+### 19. R0 apply 前需要纯本地 readiness 门禁
+
+问题：`prepare-cds-agent-remote-host-pool.sh` 会访问远程 CDS；在真正 apply 前，如果本地 env 缺 host/image 或格式错误，容易把时间浪费在远程 dry-run / apply 循环里。当前 shell 只有 CDS 访问 key 和一个非目标 `CDS_HOST`，没有 remote host SSH 参数和 sidecar image。
+
+处理：
+
+- 新增 `scripts/preflight-cds-agent-r0-apply-readiness.sh`。
+- 它只读 `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json` 和本地 env，不访问远程，不打印 secret。
+- 输出 `/tmp/cds-agent-r0-apply-readiness-current.json`，字段包括 `readyForHostApply`、`readyForDeployRequest`、`readyForR0Apply`、`missingConfig`、`invalidConfig`、`warnings`。
+- `scripts/print-cds-agent-current-progress.sh` 接入该 summary，直接显示 R0 local apply readiness。
+
+证据：
+
+- `/tmp/cds-agent-r0-apply-readiness-current.json`：`readyForR0Apply=false`。
+- 当前缺失：`CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`、`CDS_AGENT_SIDECAR_IMAGE`。
+- 当前 warning：`CDS_HOST` 不是 `https://cds.miduo.org`。
+- `scripts/print-cds-agent-current-progress.sh` 当前显示 `R0 local apply readiness: readyForR0Apply=false; nextAction=provide missing env before apply`。
+
+耗时：本地 readiness <1s；进度面板 <1s；不触发远程网络。
+
+优化：R0.2/R0.3 真正执行前先跑该门禁，只有 ready 后才进入远程 apply/deploy，避免反复远程构建/部署/写入。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -303,6 +325,7 @@
 | current progress board | <1s | 可本地化 | 固定入口展示任务纵览、当前 gate、blocker、下一步 ETA |
 | runtime-status task board | 后端测试 15s，前端 tsc 20s | 可本地化 | 页面事实源输出 taskBoard/nextStepEta/timeSinkAdvice，减少聊天解释和重复部署 |
 | N6 current smoke | 3s 沙箱外；沙箱内会因 VSTest socket 权限失败 | 可本地化但需要 dotnet/VSTest 权限 | smoke 写 summary 后，进度面板直接读最新 N6 证据 |
+| R0 local apply readiness | <1s | 完全可本地化 | 先确认 env 和 dry-run summary 是否足够 apply/deploy，再决定是否触发远程写动作 |
 
 ## 当前下一步
 
