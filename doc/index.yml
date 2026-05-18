@@ -136,6 +136,7 @@ docs:
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
   guide.ai-toolbox-ops: AI 百宝箱运维指南
   guide.cds-agent-workbench: CDS Agent 工作台用户指南
+  guide.cds-agent-code-review-quickstart: CDS Agent 代码审查上手指南
   guide.cds-agent-workbench-reproduce: CDS Agent 工作台复现操作指南
   guide.cds-agent-next-agent-testing: CDS Agent 下一代测试与涌现建议
   guide.cds-agent-admin: CDS Agent 管理员指南

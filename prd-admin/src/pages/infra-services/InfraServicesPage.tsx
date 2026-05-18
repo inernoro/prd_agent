@@ -1326,6 +1326,16 @@ export default function InfraServicesPage() {
           </li>
           <li>
             <a
+              href="/doc/guide.cds-agent-code-review-quickstart.md"
+              className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
+            >
+              guide.cds-agent-code-review-quickstart.md
+              <ExternalLink size={12} />
+            </a>
+            <span className="text-white/45 ml-2">代码审查上手流程、官方 SDK 边界和当前 R1 阻塞</span>
+          </li>
+          <li>
+            <a
               href="/doc/guide.cds-agent-admin.md"
               className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200"
             >
