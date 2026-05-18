@@ -82,7 +82,7 @@
 兼容性结论：
 
 - `legacy-sidecar` 只保留为显式 fallback，不能继续扩大功能面。
-- OpenAI-compatible、OpenRouter、DeepSeek profile 可以继续服务其他文本/结构化智能体，但不能直接作为 `claude-agent-sdk` 默认 profile。
+- OpenAI-compatible、OpenRouter、DeepSeek profile 可以继续服务其他文本/结构化智能体，但不能直接作为 `claude-agent-sdk` 默认 profile；当前结构化判定必须返回 `compatibilityReasonCode=openai-compatible-non-claude-model`，并提示不要把代码审查任务路由到 `claude-agent-sdk`。
 - Codex-like adapter 目前是 `planned-not-routable`；没有官方可路由实现和明确权限/事件/cancel 映射前，不接入代码审查默认路径。
 - PRD/Defect/Literary/Visual 等非代码智能体不能被强制迁入 Claude Agent SDK sidecar，否则会引入 workspace、审批、长任务和 provider 兼容性副作用。
 
@@ -92,7 +92,7 @@
 
 | 顺序 | 任务 | 完成证据 |
 | --- | --- | --- |
-| N1 | 用 Anthropic 官方模板创建默认 runtime profile，并填入真实 API key | readiness R1 pass，`compatibleWithDesiredRuntimeAdapter=true` |
+| N1 | 用 Anthropic 官方模板创建默认 runtime profile，并填入真实 API key | readiness R1 pass，`compatibleWithDesiredRuntimeAdapter=true`；若失败，`compatibilityReasonCode` 必须明确说明原因 |
 | N2 | 运行 S1 只读审查当前仓库 | 远程 session 有 assistant 结果、repo/ref/workspace 证据，无文件变更 |
 | N3 | 运行 S2 工具审批拒绝链路 | 页面出现 MAP approval，拒绝后有 `tool_result` 证据 |
 | N4 | 运行 S3 Stop/cancel 链路 | session 进入 stopped/stopping，并有 cancel/interrupt 事件 |
@@ -104,6 +104,7 @@
 - 不把 OpenAI-compatible profile 硬适配给 Claude Agent SDK。
 - 不把 PRD/Defect/Literary/Visual 强迁到 code sidecar。
 - 不在没有 S1/S2/S3 证据时宣称商业级完成。
+- 不为了 `blocked_r1`、`openai-compatible-non-claude-model` 或 S1/S2/S3 pending 重复 self update / redeploy。
 
 ## 4. 总体架构
 

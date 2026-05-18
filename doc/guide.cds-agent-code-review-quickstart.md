@@ -49,7 +49,7 @@
 
 如果第 2 步没通过，先不要发审查 prompt；应该先看页面“当前执行结论”的 `currentBlockingGate`、`blockingReason`、`deploymentAdvice` 和 `nextCommand`，再运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
-当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`，`status=blocked_r1`、`commercialComplete=false`。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
+当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`，`status=blocked_r1`、`commercialComplete=false`。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 现在会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，`compatibilityReason=claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。`，并附带 `compatibilityNextActions`。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
 
 页面上如果出现历史会话的 approval、cancel 或 assistant 事件，也不能直接算作 S1/S2/S3 商业证据。前端现在要求 `defaultProfileReady && officialLoopReady` 后，才允许当前页面事件作为 provider gate 证据；R1 未过时，S1/S2/S3 必须保持 WAIT/pending。
 
@@ -60,7 +60,7 @@
 | 阶段 | 目的 | 入口 | 必须看到的证据 |
 | --- | --- | --- | --- |
 | R0 控制面 | 验证 MAP/CDS/sidecar pool 已连通 | `bash scripts/doctor-cds-agent-runtime.sh` | `instanceCount > 0`、`healthyCount > 0`、`loopOwner=claude-agent-sdk` |
-| R1 profile | 验证默认模型能走官方 SDK | Runtime 调试面板或 `runtime-status` | `compatibleWithDesiredRuntimeAdapter=true`，且 profile 有 API key |
+| R1 profile | 验证默认模型能走官方 SDK | Runtime 调试面板或 `runtime-status` | `compatibleWithDesiredRuntimeAdapter=true` 且 profile 有 API key；不通过时必须有 `compatibilityReasonCode` 和 `compatibilityNextActions` |
 | S1 只读审查 | 证明官方 SDK 真能读仓库并输出结论 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-run.sh` | assistant 消息、repo/ref/workspace 证据、无文件变更 |
 | S2 审批 | 证明危险动作回到 MAP 人审 | `SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-official-sdk-controls.sh` | `tool_call.status=waiting`、拒绝后有 `tool_result.source=map-tool-approval` |
 | S3 停止 | 证明 Stop 不是只改数据库状态 | 同 S2 controls 脚本 | Stop 请求后 session 进入 stopped/stopping，并有 cancel/interrupt 事件 |
@@ -84,7 +84,7 @@ SMOKE_CDS_AGENT_DOCTOR_REPORT=/tmp/cds-agent-doctor.json \
   bash scripts/doctor-cds-agent-runtime.sh
 ```
 
-报告里的 `diagnosis` 是当前结论，`nextRecommended` 是下一步动作，`aliasCheck` 证明 API 容器访问 sidecar 是否稳定，`defaultProfile.compatibleWithDesiredRuntimeAdapter` 判断 R1 是否仍阻塞。这样每次排障都能明确时间花在 runtime pool、profile、provider 真调用、视觉截图还是非代码兼容回归。
+报告里的 `diagnosis` 是当前结论，`nextRecommended` 是下一步动作，`aliasCheck` 证明 API 容器访问 sidecar 是否稳定，`defaultProfile.compatibleWithDesiredRuntimeAdapter` 判断 R1 是否仍阻塞。若 R1 阻塞，`defaultProfile.compatibilityReasonCode` 和 `defaultProfile.compatibilityReason` 是唯一应该展示给人的原因，不要再用前端字符串猜测。这样每次排障都能明确时间花在 runtime pool、profile、provider 真调用、视觉截图还是非代码兼容回归。
 
 如果要回答“这个长期目标是否已经完成”，不要只看某个页面或某次脚本退出码，先跑目标审计：
 
@@ -101,7 +101,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-heartbeat-fixed` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 75s，最慢的是 V1 authenticated workbench visual 29s、R0 sidecar alias stability 11s、runtime doctor 10s；V1 在 15s 输出 heartbeat，其他快步骤没有被人为拖慢。这类时间线就是后续判断“时间花在哪里”的主记录。对应目标审计报告是 `/tmp/cds-agent-goal-audit-current.json`，仍明确给出 `Deploy/build advice: Do not redeploy for this state`。
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518091314` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 106s，最慢的是 V1 authenticated workbench visual 33s、N6 non-code compatibility 17s、R0 sidecar alias stability 13s；V1 和 N6 都按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。对应目标审计报告是 `/tmp/cds-agent-goal-audit-fe51afb-current.json`，`cycle git match=match`，仍明确给出 `Deploy/build advice: Do not redeploy for this state`。
 
 R1 的自动化入口是 `bash scripts/smoke-cds-agent-r1-profile-repair.sh`。默认不写远程状态，只验证后端修复计划、Anthropic 官方模板和“缺 API key 不创建半成品 profile”的保护；如果要真正修复远程默认 profile，显式提供 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 后再运行同一个脚本。脚本和页面都会调用后端 `POST /api/infra-agent-runtime-profiles/templates/{templateId}/default-profile`，由后端创建非默认 Anthropic 候选 profile，调用 `/test` 验证上游可用，成功后才提升为默认 profile，并复查 `commercialReadiness.R1=pass`。页面的“保存配置 + 设为默认”和“更新当前配置 + 设为默认”都走同样的 test-before-promote 流程；测试失败时会清理候选 profile，不会覆盖当前默认配置。
 设置 `SMOKE_CDS_AGENT_R1_REPORT=/tmp/cds-agent-r1.json` 时，dry-run 也会输出当前默认 profile、后端修复计划、缺 key 保护结果和不含真实密钥的下一条命令，方便把 R1 阻塞放进诊断包。
