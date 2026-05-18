@@ -199,15 +199,15 @@ jq -n \
       elif .verdict == "blocked-branch-isolation" then
         "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
       elif .verdict == "dry-run-invalid-config" then
-        "fix invalid remote host or sidecar variables, then rerun this wrapper"
+        "fix invalid operator fallback remote host or sidecar variables, then rerun this wrapper only if explicitly using fallback recovery"
       elif .verdict == "dry-run-missing-config" then
-        "provide missing remote host variables, then rerun this wrapper"
+        "CDS-managed runtime capacity is absent; do not ask product users for remote host variables. Provide missing variables only when explicitly using operator fallback recovery, then rerun this wrapper"
       elif .verdict == "dry-run-ready" then
-        "configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 after branch isolation is clean"
+        "operator fallback configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 only when explicitly choosing fallback recovery"
       elif .verdict == "dry-run-host-already-available" then
-        "enabled remote host exists; deploy shared official SDK runtime sidecar"
+        "enabled operator fallback host exists; deploy shared official SDK runtime sidecar only as CDS operator recovery"
       elif .verdict == "applied-host-ready" then
-        "remote host is ready; rerun with CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1 and CDS_AGENT_SIDECAR_IMAGE"
+        "operator fallback remote host is ready; rerun with CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1 and CDS_AGENT_SIDECAR_IMAGE only as fallback recovery"
       elif .verdict == "applied-running" then
         "shared runtime is running; continue with MAP R0/S1/S2/S3 and one-cycle smokes"
       else

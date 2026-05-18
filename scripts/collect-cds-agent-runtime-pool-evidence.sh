@@ -228,7 +228,7 @@ jq -n \
           if (.evidenceCaptured | not) then
             "runtime pool evidence was unavailable; rerun with network/auth available before any apply or deploy"
           elif .clean then
-            "branch isolation already clean; continue with remote host and shared runtime pool recovery"
+            "branch isolation already clean; continue R0.5 CDS-managed runtime capacity; remote host recovery is operator fallback only"
           else
             "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate"
           end
@@ -261,11 +261,11 @@ jq -n \
           elif .verdict == "evidence-unavailable" then
             "remote host evidence was unavailable; rerun with network/auth available before shared runtime deploy"
           elif .verdict == "dry-run-missing-config" then
-            "provide missing remote host variables, then rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh"
+            "CDS-managed runtime capacity is absent in live evidence; do not ask product users for remote host variables. Only operator fallback may rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh with explicit remote host variables"
           elif .verdict == "dry-run-ready" then
-            "configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 after branch isolation is clean"
+            "operator fallback configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 only when explicitly choosing fallback recovery"
           elif .verdict == "dry-run-host-already-available" then
-            "enabled remote host exists; deploy shared official SDK runtime sidecar"
+            "enabled operator fallback host exists; deploy shared official SDK runtime sidecar only as CDS operator recovery"
           else
             "inspect remote host preparation and shared-service pool audit before continuing"
           end
@@ -299,7 +299,7 @@ index="$OUT_DIR/evidence-index.md"
       "- candidateProfileIds: `" + ((.branchIsolation.candidateProfileIds // []) | join(",")) + "`",
       "- confirmProfileId: `" + (.branchIsolation.confirmProfileId // "not-set") + "`"' "$summary"
   fi
-  printf '\n## Remote Host Pool Preparation\n\n'
+  printf '\n## Operator Fallback Remote Host Preparation\n\n'
   if [[ "$(jq -r '.remoteHostPoolPreparation == null' "$summary")" == "true" ]]; then
     printf '%s\n' '- not captured'
   else
@@ -325,7 +325,7 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
   updated_at="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M Asia/Shanghai')"
   status_line="R0 runtime pool blocked，目标未完成。"
   if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
-    status_line="R0 runtime pool 暂无阻塞；继续执行 R1/S1/S2/S3 验证。"
+    status_line="R0 CDS-managed runtime capacity 暂无阻塞；继续执行 R1/S1/S2/S3 验证。"
   fi
   mkdir -p "$(dirname "$STATUS_DOC")"
   {
@@ -335,9 +335,9 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf '> 状态：%s\n\n' "$status_line"
     printf '## 当前结论\n\n'
     if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
-      printf '当前只读证据没有发现 runtime pool blocker。下一步应重跑 MAP R0/S1/S2/S3/one-cycle，确认 provider 与页面证据。\n\n'
+      printf '当前只读证据没有发现 CDS-managed runtime capacity blocker。下一步应重跑 MAP R0/S1/S2/S3/one-cycle，确认 provider 与页面证据。\n\n'
     else
-      printf '现在不要做普通 preview redeploy。远程 R0 runtime pool 的结构性阻塞仍存在：\n\n'
+      printf '现在不要做普通 preview redeploy，也不要把 SSH/env/image 写成产品主路径。远程 R0V 只读证据显示 CDS-managed runtime capacity 仍缺失：\n\n'
       jq -r '.runtimePoolBlockers[] | "- `" + .requirement + " = " + .status + "`"' "$summary"
       printf '\n'
     fi
@@ -350,11 +350,11 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf '| --- | --- | --- |\n'
     jq -r '.steps[] | "| " + .name + " | " + .status + " | " + (.durationSeconds|tostring) + "s |"' "$summary"
     printf '\n## 为什么不是部署问题\n\n'
-    printf '当前阻塞不在 `prd-api` 或 `prd-admin` 普通应用代码是否能构建，而在 CDS 远程控制面 state：\n\n'
-    printf -- '- `prd-agent` 业务项目仍有 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留。\n'
-    printf -- '- `shared-sidecar-pool-mp4anabh` 是 `shared-service`，但没有 running service。\n'
-    printf -- '- CDS 系统 remote host 列表为空，没有可承载 official SDK runtime 的主机。\n\n'
-    printf '普通 preview redeploy 不能创建 shared runtime pool，也不能清理历史 branch-local sidecar residual。继续 redeploy 反而可能让用户以为构建能解决 R0。\n\n'
+    printf '当前阻塞不在 `prd-api` 或 `prd-admin` 普通应用代码是否能构建，而在 CDS-managed runtime capacity：\n\n'
+    printf -- '- `prd-agent` 业务项目 branch-local sidecar residual 当前为 `0`。\n'
+    printf -- '- `shared-sidecar-pool-mp4anabh` 是 `shared-service`，但没有 running runtime/service。\n'
+    printf -- '- CDS 系统 remote host 列表为空；这只说明 operator fallback 承载能力缺失，不能写成普通用户主路径。\n\n'
+    printf '普通 preview redeploy 不能创建 CDS-managed runtime capacity。继续 redeploy 反而可能让用户以为构建能解决 R0V。\n\n'
     printf '## 已完成\n\n'
     printf -- '- MAP/CDS 控制面与官方 SDK adapter 边界已写入后端兼容矩阵。\n'
     printf -- '- `claude-agent-sdk` 路径已作为目标 adapter；`legacy-sidecar` 只允许显式 fallback。\n'
@@ -365,20 +365,20 @@ if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
     printf -- '- 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。\n\n'
     printf '## 下一步\n\n'
     printf '必须按这个顺序处理：\n\n'
-    printf '1. 清理 `prd-agent` 的 branch-local sidecar BuildProfile/service residual。\n'
+    printf '1. 保持 `prd-agent` branch-local sidecar BuildProfile/service residual 为 0。\n'
     printf '   - dry-run 证据已确认候选 profile：`%s`\n' "$(jq -r '(.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",") // "unknown"' "$summary")"
     printf '   - verdict：`%s`\n' "$(jq -r '.branchIsolation.verdict // "unknown"' "$summary")"
     printf '   - readyForRemoteHostStep：`%s`\n' "$(jq -r '.branchIsolation.readyForRemoteHostStep // false' "$summary")"
     printf '   - nextAction：%s\n' "$(jq -r '.branchIsolation.nextAction // ""' "$summary")"
     printf '   - apply 确认变量：`SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=%s`\n' "$(jq -r '(.branchIsolation.candidateProfileIds // []) | if length == 1 then .[0] else "REVIEW_CANDIDATES" end' "$summary")"
     printf '   - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。\n'
-    printf '2. 登记至少一个 enabled CDS remote host。\n'
+    printf '2. 补齐 CDS-managed runtime capacity，而不是要求普通用户配置 remote host/env/image。\n'
     printf '   - verdict：`%s`\n' "$(jq -r '.remoteHost.verdict // "unknown"' "$summary")"
     printf '   - readyForSharedRuntimeDeploy：`%s`\n' "$(jq -r '.remoteHost.readyForSharedRuntimeDeploy // false' "$summary")"
     printf '   - nextAction：%s\n' "$(jq -r '.remoteHost.nextAction // ""' "$summary")"
     jq -r '(.remoteHostPoolPreparation.missingConfig // [])[]? | "   - 当前缺失：`" + . + "`"' "$summary"
-    printf '3. 部署 shared official SDK runtime sidecar。\n'
-    printf '   - 需要 sidecar image，例如通过 `CDS_AGENT_SIDECAR_IMAGE` 提供。\n'
+    printf '3. 只有明确选择 operator fallback recovery 时，才登记 enabled CDS remote host 并部署 shared official SDK runtime sidecar。\n'
+    printf '   - `CDS_AGENT_SIDECAR_IMAGE` 和 SSH 参数是 fallback 操作参数，不是产品主路径输入。\n'
     printf '4. 重跑 shared-service pool audit。\n'
     printf '5. R0 通过后，再进入 R1 Anthropic/Claude-compatible profile 和 S1/S2/S3 provider smokes。\n\n'
     printf '## 当前有效命令\n\n'

@@ -113,7 +113,7 @@ bash -n scripts/* correction targets = pass
 scripts/check-cds-agent-progress-consistency.sh = pass
 audit D0/D1/N6 = pass
 audit goalStatus = not_complete
-audit expected blocker = R0V managed-runtime post-check is not complete
+audit expected blocker = CDS-managed runtime capacity is missing after R0V live evidence
 ```
 
 解释：

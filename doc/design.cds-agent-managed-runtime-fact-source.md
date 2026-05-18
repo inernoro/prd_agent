@@ -81,7 +81,8 @@ RemoteHost.deploy-sidecar
 | R0.2.2 | 改造 CDS `/agent-sessions` 非 fake 路径 | done | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时返回 CDS-owned unavailable/error |
 | R0.2.3 | 将 official SDK runtime 作为 CDS-managed profile/container/transport | done_minimal | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | runtime 不进入 `prd-agent` appServices；message 能投递到 CDS-managed official SDK runtime，并写回 `runtime_init/text_delta/done` |
 | R0.2.4 | MAP adapter 改为 CDS session transport 并补 managed-runtime smoke | done | `CdsAgentAdapter` / `InfraAgentSessionService` / scripts / tests | MAP Toolbox adapter 不注入 direct runtime adapter；session message 先走 CDS；direct runtime queue 只在显式 fallback env 下启用 |
-| R0V | managed-runtime post-check/live evidence | 15-30 秒本地；live evidence 取决于 CDS state | scripts / live evidence | 检查新 fact source，不要求 SSH/image/env 作为产品主路径 |
+| R0V | managed-runtime post-check/live evidence | done_blocked | scripts / live evidence | 远程证据证明 branch isolation clean，但 CDS-managed runtime capacity 缺失；不要求 SSH/image/env 作为产品主路径 |
+| R0.5 | CDS-managed runtime capacity 收口 | 30-60 分钟 | runtime-status / audit / scripts / CDS capacity contract | 顶层 blocker 表达为 `CDS_MANAGED_RUNTIME_CAPACITY`；remote host/env/image 只作为 operator fallback |
 | R0.2.6 | 页面数据源和视觉测试 | 30-45 分钟 | runtime-status / `/cds-agent` | 页面展示 R0 facts、ETA、debug fallback，截图通过 |
 
 第一开发周期已完成：
@@ -105,11 +106,21 @@ R0.2.4 MAP adapter session transport + managed-runtime smoke
 证据：MAP Toolbox adapter 不再注入 IInfraAgentRuntimeAdapter；InfraAgentSessionService 默认经 CDS session message transport；direct runtime queue 只在 INFRA_AGENT_ENABLE_MAP_DIRECT_RUNTIME_FALLBACK 下启用
 ```
 
+R0V live evidence 已完成：
+
+```text
+/tmp/cds-agent-runtime-pool-evidence-latest/summary.json
+branch isolation = clean
+shared-sidecar-pool-mp4anabh running = 0
+enabled remote host = 0
+结论：当前缺 CDS-managed runtime capacity；remote host/env/image 只能作为 operator fallback，不是普通用户下一步。
+```
+
 下一开发周期建议只做：
 
 ```text
-R0V managed-runtime post-check/live evidence
-预计本地 15-30 秒；live evidence 取决于 CDS 当前状态
+R0.5 CDS-managed runtime capacity 收口
+预计 30-60 分钟形成最小实现计划和 guard；R0V 远程只读证据已证明当前 capacity 缺失
 ```
 
 ## 5. Smoke 设计

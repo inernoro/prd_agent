@@ -120,7 +120,7 @@ fi
 
 display_next_action="$next_action"
 if [[ "$user_action_required" == "true" ]]; then
-  display_next_action="continue R0V managed-runtime post-check before any fallback env handoff"
+  display_next_action="continue R0.5 CDS-managed runtime capacity before any fallback env handoff"
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
@@ -161,7 +161,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Next Command\n\n'
   if [[ "$user_action_required" == "true" ]]; then
-    printf 'Continue R0V managed-runtime post-check work. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
+    printf 'Continue R0.5 CDS-managed runtime capacity work. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
     printf "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md\n"
     printf 'scripts/smoke-cds-agent-map-session-transport.sh\n'

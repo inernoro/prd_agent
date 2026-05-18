@@ -911,19 +911,19 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
-  blocking_reason="Runtime pool recovery is still blocked in old evidence. R0 fact-source, CDS session ownership guard, CDS-managed official SDK transport, and MAP session transport smoke are in place; the next product step is R0V managed-runtime post-check/live evidence. Remote host/env/image are operator fallback only."
+  blocking_reason="R0V live evidence is complete and shows CDS-managed runtime capacity is missing: branch isolation is clean, but shared runtime running=0 and enabled operator fallback hosts=0. The next product step is R0.5 CDS-managed runtime capacity, not asking users for SSH/env/image."
   if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
     deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals if needed, then correct the runtime recovery model back to CDS-managed runtime before exposing any operator fallback."
   else
-    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is R0V managed-runtime post-check/live evidence, not asking the user for SSH/env/image."
+    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is R0.5 CDS-managed runtime capacity, not asking the user for SSH/env/image."
   fi
   next_command="sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md && scripts/smoke-cds-agent-map-session-transport.sh && scripts/smoke-cds-agent-shared-service-pool.sh && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --argjson blockers "$runtime_pool_blockers_json" \
     --arg command "$next_command" \
     '{
-      cycle: "r0-managed-runtime-postcheck",
-      state: "managed-runtime-postcheck-blocked",
+      cycle: "r0-cds-managed-runtime-capacity",
+      state: "cds-managed-runtime-capacity-missing",
       items: [
         {
           order: 1,
@@ -966,16 +966,34 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           code: "R0V",
           title: "R0 managed-runtime post-check/live evidence",
           goal: "用当前 CDS state 验证 MAP_TO_CDS_ONLY、CDS_MANAGED_RUNTIME_TRANSPORT、OFFICIAL_SDK_LOOP_OWNER。",
-          evidence: "managed-runtime post-check/live evidence pass，R0=pass。",
-          status: "next",
+          evidence: "R0V live evidence completed; branch isolation clean, shared runtime running=0, enabled fallback hosts=0。",
+          status: "done_blocked",
           blockedBy: null,
+          nextActions: [
+            "不要把 R0V 失败解释成普通用户需要补 SSH/env/image。"
+          ]
+        },
+        {
+          order: 5,
+          code: "R0.5",
+          title: "CDS-managed runtime capacity",
+          goal: "把顶层 blocker 从 REMOTE_HOST_AVAILABLE 收口为 CDS_MANAGED_RUNTIME_CAPACITY，并定义 CDS 内部 runtime/container/sandbox capacity contract。",
+          evidence: "runtime-status、progress board、goal audit 和 smoke 都显示 CDS_MANAGED_RUNTIME_CAPACITY；remote host/env/image 只在 legacyFallbackBlockers。",
+          status: "next",
+          blockedBy: "CDS_MANAGED_RUNTIME_CAPACITY",
           nextActions: [$command]
         }
       ],
       legacyFallbackBlockers: $blockers,
-      blockers: $blockers,
+      blockers: [
+        {
+          requirement: "CDS_MANAGED_RUNTIME_CAPACITY",
+          status: "missing",
+          evidence: "shared runtime running=0; enabled operator fallback hosts=0"
+        }
+      ],
       stopConditions: [
-        "R0V managed-runtime post-check/live evidence 完成前，不运行 provider one-cycle。",
+        "CDS_MANAGED_RUNTIME_CAPACITY 通过前，不运行 provider one-cycle。",
         "不要把 remote host/env/image 暴露为普通用户主路径。"
       ]
     }')
@@ -1003,7 +1021,7 @@ fi
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   failures+=("P0 branch isolation/shared pool plan was not observed")
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
-  failures+=("R0V managed-runtime post-check is not complete; legacy fallback pool evidence remains missing")
+  failures+=("CDS-managed runtime capacity is missing after R0V live evidence")
 fi
 if [[ "$branch_manifest_status" != "pass" && "$branch_manifest_status" != "clean_from_runtime_pool_summary" ]]; then
   failures+=("P0 branch isolation apply manifest did not pass")

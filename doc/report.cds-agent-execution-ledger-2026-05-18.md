@@ -202,10 +202,10 @@
 
 - `executionPanel.status=blocked_r0`
 - `currentBlockingGate=R0`
-- `nextCyclePlan.cycle=r0-managed-runtime-postcheck`
-- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport done_minimal、`R0.4` MAP session transport smoke done、`R0V` managed-runtime post-check。
+- `nextCyclePlan.cycle=r0-cds-managed-runtime-capacity`
+- plan items 为 `D1` 架构纠偏、`R0.3` CDS-managed official SDK runtime transport done_minimal、`R0.4` MAP session transport smoke done、`R0V` live evidence done_blocked、`R0.5` CDS-managed runtime capacity next。
 
-证据：`scripts/audit-cds-agent-goal.sh` 当前输出 `Next cycle plan: r0-managed-runtime-postcheck state=managed-runtime-postcheck-blocked items=D1,R0.3,R0.4,R0V`。
+证据：`scripts/audit-cds-agent-goal.sh` 当前输出 `Next cycle plan: r0-cds-managed-runtime-capacity state=cds-managed-runtime-capacity-missing items=D1,R0.3,R0.4,R0V,R0.5`。
 
 优化：旧 one-cycle 只作为历史 provider/profile 证据，不再决定当前执行面板的顶层状态。
 
@@ -406,7 +406,7 @@
 - `/tmp/cds-agent-goal-audit-current-with-readiness.json`：`gates.N6=pass`。
 - `requirements.otherAgentCompatibility.status=proved`。
 - `runtimePoolRecovery.applyReadiness.readyForR0Apply=false`。
-- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `R0V managed-runtime post-check is not complete; legacy fallback pool evidence remains missing`。
+- audit stdout 仍明确 `Goal status: not_complete`，当前失败仅为 `CDS-managed runtime capacity is missing after R0V live evidence`。
 
 耗时：短超时审计 15s；N6 沙箱步骤被超时停止，但 summary 将当前 N6 证据校准为 pass。
 
@@ -742,7 +742,7 @@
 处理：
 
 - `doc/status.cds-agent-current-progress.md` 第一节改为“项目级答案”。
-- 明确当前有限周期是 R0V managed-runtime post-check/live evidence，本地预计 15-30 秒，live evidence 取决于 CDS 当前状态。
+- 明确当前有限周期已推进到 R0.5 CDS-managed runtime capacity；R0V live evidence 已完成并证明 capacity 缺失。
 - 明确总共 8 步，当前在第 4 步 R0。
 - 明确当前不需要把 `CDS_AGENT_SIDECAR_IMAGE` + remote host SSH 信息当成产品主路径输入；它们只保留为 operator/debug fallback。
 - 明确优先看三个文档：当前进度面板、managed-runtime fact-source 设计、执行账本。
@@ -774,6 +774,27 @@
 耗时：本地实现和单元验证约 35-45 分钟；文档和审计口径同步约 10 分钟。
 
 优化：后续默认调试入口应先看 `cds-session-transport` 事件和 CDS session logs。只有 operator 明确打开 fallback env 时，才允许 MAP direct runtime job 参与排障，且不能作为产品验收路径。
+
+### 42. R0V live evidence 完成后，真正 blocker 是 CDS-managed runtime capacity
+
+问题：R0V 远程只读证据跑完后，旧脚本仍把 `REMOTE_HOST_AVAILABLE` / `SHARED_POOL_RUNNING` 输出成下一步，容易再次滑回“让用户补 SSH/env/image”的 external host 路线。
+
+处理：
+
+- 运行 `CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR=/tmp/cds-agent-runtime-pool-evidence-latest bash scripts/collect-cds-agent-runtime-pool-evidence.sh`。
+- 运行 `CDS_HOST=https://cds.miduo.org CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-current-readonly-live bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh`。
+- 将 evidence 脚本的 `nextAction` 改为：CDS-managed runtime capacity 缺失；不要要求产品用户提供 remote host variables；remote host 只允许 explicit operator fallback。
+- progress board 顶层从 `R0 remote host verdict` 改成 `R0 managed runtime capacity`，并把 remote host 行标为 `Operator fallback`。
+- goal audit 的下一周期从 `r0-managed-runtime-postcheck` 改成 `r0-cds-managed-runtime-capacity`，失败原因改为 `CDS-managed runtime capacity is missing after R0V live evidence`。
+
+证据：
+
+- `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json`：branch isolation `dry-run-clean`；shared runtime running `0`；enabled remote host `0`；total `17s`。
+- `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json`：`nextAction` 已明确 operator fallback，不能作为产品用户主路径。
+
+耗时：远程只读 evidence 约 17s；remote-host fallback wrapper 只读约 16s；脚本和文档校准约 10 分钟。
+
+优化：后续所有进度展示先说 `CDS_MANAGED_RUNTIME_CAPACITY`，再把 `REMOTE_HOST_AVAILABLE` / `SHARED_POOL_RUNNING` 放进 legacy fallback evidence，避免再次绕回 external host/env-driven recovery。
 
 ## 最耗时项
 

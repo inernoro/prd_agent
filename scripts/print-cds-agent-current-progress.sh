@@ -131,7 +131,7 @@ EOF
 )
 elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
   exact_next_step=$(cat <<'EOF'
-Continue R0V managed-runtime post-check work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
+Continue R0.5 CDS-managed runtime capacity work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
 sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md
@@ -211,10 +211,10 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Overall status: $status
 - Current blocking gate: $gate
 - Gate status: A0=$a0, R0=$r0, V1=$v1, N6=$n6
-- R0 remote host verdict: $verdict
-- Remote hosts enabled: $enabled_hosts
-- Shared official SDK runtime running: $shared_running
-- Ready for shared runtime deploy: $ready_deploy
+- R0 managed runtime capacity: sharedRunning=$shared_running; readyForProviderSmokes=$ready_smoke
+- Operator fallback remote host verdict: $verdict
+- Operator fallback remote hosts enabled: $enabled_hosts
+- Operator fallback ready for shared runtime deploy: $ready_deploy
 - Ready for provider smokes: $ready_smoke
 - Evidence refresh cost: ${total_seconds}s
 - R0 local apply readiness: $r0_readiness_line
@@ -238,7 +238,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.2F Operator fallback host path | fallback | Keep SSH/env/image only as CDS operator fallback | later |
 | R0.3 CDS-managed official SDK runtime | done_minimal | CDS agent sessions can dispatch to CDS-managed branch-service official SDK transport | done |
 | R0.4 MAP session transport smoke | done | MAP uses CDS session/discovery/cancel/log APIs; direct runtime queue is explicit fallback only | done |
-| R0V Post-check | in_progress | Run managed-runtime post-check/live evidence before R1/S1 provider cycle | 15-30 sec local; live evidence depends on CDS state |
+| R0V Post-check | done_blocked | Live evidence complete; shared runtime running=0 and enabled fallback hosts=0 | done |
+| R0.5 CDS-managed runtime capacity | in_progress | Define product capacity fact source/contract; keep remote host/env/image as fallback only | 30-60 min for bounded plan/guard |
 | R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |
