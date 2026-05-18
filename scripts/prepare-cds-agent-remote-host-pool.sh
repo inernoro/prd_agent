@@ -75,6 +75,7 @@ write_report() {
     --arg status "$status" \
     --arg message "$message" \
     --argjson existingHosts "$hosts_json" \
+    --argjson targetHost "$target_host_json" \
     --argjson missingConfig "$missing_config_json" \
     --argjson createdHost "$created_host_json" \
     --argjson deploy "$deploy_json" \
@@ -90,6 +91,9 @@ write_report() {
       existingHostCount: ($existingHosts.hosts | length),
       enabledHostCount: ([ $existingHosts.hosts[]? | select(.isEnabled != false) ] | length),
       existingHosts: $existingHosts.hosts,
+      targetHost: $targetHost,
+      targetHostId: ($targetHost.id // null),
+      willCreateHost: (($targetHost.id // "") == ""),
       missingConfig: $missingConfig,
       recoveryManifest: {
         safety: "remote_host_create_then_shared_runtime_deploy",
@@ -158,17 +162,36 @@ host_count=$(printf '%s' "$hosts_json" | jq -r '.hosts | length')
 enabled_host_count=$(printf '%s' "$hosts_json" | jq -r '[.hosts[]? | select(.isEnabled != false)] | length')
 ok "remoteHosts hostCount=$host_count enabled=$enabled_host_count"
 
+target_host_json='null'
+if [[ -n "${CDS_REMOTE_HOST_ID:-}" ]]; then
+  target_host_json=$(printf '%s' "$hosts_json" | jq -c --arg id "$CDS_REMOTE_HOST_ID" '.hosts[]? | select(.id == $id)' | head -n 1)
+  [[ -n "$target_host_json" ]] || target_host_json='null'
+else
+  target_host_json=$(printf '%s' "$hosts_json" | jq -c '.hosts[]? | select(.isEnabled != false)' | head -n 1)
+  [[ -n "$target_host_json" ]] || target_host_json='null'
+fi
+target_host_id=$(printf '%s' "$target_host_json" | jq -r '.id // ""')
+if [[ -n "$target_host_id" ]]; then
+  ok "target remote host id=$target_host_id"
+fi
+
 missing=()
-[[ -n "${CDS_REMOTE_HOST_NAME:-}" ]] || missing+=("CDS_REMOTE_HOST_NAME")
-[[ -n "${CDS_REMOTE_HOST_HOST:-}" ]] || missing+=("CDS_REMOTE_HOST_HOST")
-[[ -n "${CDS_REMOTE_HOST_SSH_USER:-}" ]] || missing+=("CDS_REMOTE_HOST_SSH_USER")
-if [[ -z "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY:-}" && -z "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE:-}" ]]; then
-  missing+=("CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE")
+if [[ -z "$target_host_id" ]]; then
+  [[ -n "${CDS_REMOTE_HOST_NAME:-}" ]] || missing+=("CDS_REMOTE_HOST_NAME")
+  [[ -n "${CDS_REMOTE_HOST_HOST:-}" ]] || missing+=("CDS_REMOTE_HOST_HOST")
+  [[ -n "${CDS_REMOTE_HOST_SSH_USER:-}" ]] || missing+=("CDS_REMOTE_HOST_SSH_USER")
+  if [[ -z "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY:-}" && -z "${CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE:-}" ]]; then
+    missing+=("CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE")
+  fi
 fi
 if [[ "$DEPLOY_SIDECAR" == "1" && -z "${CDS_AGENT_SIDECAR_IMAGE:-}" ]]; then
   missing+=("CDS_AGENT_SIDECAR_IMAGE")
 fi
-missing_config_json=$(printf '%s\n' "${missing[@]}" | jq -R 'select(length > 0)' | jq -s .)
+if (( ${#missing[@]} > 0 )); then
+  missing_config_json=$(printf '%s\n' "${missing[@]}" | jq -R 'select(length > 0)' | jq -s .)
+else
+  missing_config_json='[]'
+fi
 
 if (( ${#missing[@]} > 0 )); then
   printf '\n缺失配置:\n'
@@ -178,31 +201,42 @@ if (( ${#missing[@]} > 0 )); then
 fi
 
 if [[ "$APPLY" != "1" ]]; then
-  printf '\nDRY-RUN: 配置已足够创建 remote host，但未写远程。设置 CDS_AGENT_REMOTE_HOST_APPLY=1 后执行。\n'
-  write_report "dry_run_ready" "配置已足够创建 remote host，但未写远程" "null" "null"
+  if [[ -n "$target_host_id" ]]; then
+    printf '\nDRY-RUN: 已找到 enabled remote host。设置 CDS_AGENT_REMOTE_HOST_APPLY=1 后可复用该 host%s。\n' "$([[ "$DEPLOY_SIDECAR" == "1" ]] && printf ' 并部署 sidecar' || true)"
+    write_report "dry_run_ready" "已找到 enabled remote host；未写远程" "$target_host_json" "null"
+  else
+    printf '\nDRY-RUN: 配置已足够创建 remote host，但未写远程。设置 CDS_AGENT_REMOTE_HOST_APPLY=1 后执行。\n'
+    write_report "dry_run_ready" "配置已足够创建 remote host，但未写远程" "null" "null"
+  fi
   exit 0
 fi
 
-private_key=$(read_private_key)
-tags_json=$(printf '%s' "${CDS_REMOTE_HOST_TAGS:-cds-agent,shared-sidecar-pool}" | tr ',' '\n' | jq -R 'select(length > 0)' | jq -s .)
-body=$(jq -n \
-  --arg name "$CDS_REMOTE_HOST_NAME" \
-  --arg host "$CDS_REMOTE_HOST_HOST" \
-  --arg sshUser "$CDS_REMOTE_HOST_SSH_USER" \
-  --arg sshPrivateKey "$private_key" \
-  --argjson sshPort "${CDS_REMOTE_HOST_SSH_PORT:-22}" \
-  --argjson tags "$tags_json" \
-  '{name:$name, host:$host, sshUser:$sshUser, sshPrivateKey:$sshPrivateKey, sshPort:$sshPort, tags:$tags}')
+if [[ -n "$target_host_id" ]]; then
+  created_host_json="$target_host_json"
+  host_id="$target_host_id"
+  ok "using existing remote host id=$host_id"
+else
+  private_key=$(read_private_key)
+  tags_json=$(printf '%s' "${CDS_REMOTE_HOST_TAGS:-cds-agent,shared-sidecar-pool}" | tr ',' '\n' | jq -R 'select(length > 0)' | jq -s .)
+  body=$(jq -n \
+    --arg name "$CDS_REMOTE_HOST_NAME" \
+    --arg host "$CDS_REMOTE_HOST_HOST" \
+    --arg sshUser "$CDS_REMOTE_HOST_SSH_USER" \
+    --arg sshPrivateKey "$private_key" \
+    --argjson sshPort "${CDS_REMOTE_HOST_SSH_PORT:-22}" \
+    --argjson tags "$tags_json" \
+    '{name:$name, host:$host, sshUser:$sshUser, sshPrivateKey:$sshPrivateKey, sshPort:$sshPort, tags:$tags}')
 
-created_host_resp=$(curl --max-time 30 --show-error --silent --fail-with-body \
-  -X POST \
-  "${auth_args[@]}" \
-  -H "Content-Type: application/json" \
-  -d "$body" \
-  "$(cds_base_url)/api/cds-system/remote-hosts")
-created_host_json=$(printf '%s' "$created_host_resp" | jq -c '.host')
-host_id=$(printf '%s' "$created_host_json" | jq -r '.id')
-ok "created remote host id=$host_id"
+  created_host_resp=$(curl --max-time 30 --show-error --silent --fail-with-body \
+    -X POST \
+    "${auth_args[@]}" \
+    -H "Content-Type: application/json" \
+    -d "$body" \
+    "$(cds_base_url)/api/cds-system/remote-hosts")
+  created_host_json=$(printf '%s' "$created_host_resp" | jq -c '.host')
+  host_id=$(printf '%s' "$created_host_json" | jq -r '.id')
+  ok "created remote host id=$host_id"
+fi
 
 deploy_json='null'
 if [[ "$DEPLOY_SIDECAR" == "1" ]]; then

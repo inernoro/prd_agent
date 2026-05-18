@@ -99,6 +99,8 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | CDS branch status | `/tmp/cds-branch-status-final.json` | preview running, services only api/admin | ~1s |
 | goal audit summary fast | `/tmp/cds-agent-goal-audit-summary-fast.json` | `status=blocked_r0`，next plan=`R0.2/R0.3/R0V` | 11s |
 | N6 no-build test | terminal output | 27/27 pass outside sandbox socket restriction | 64ms |
+| remote host prepare fixture | `/tmp/cds-agent-remote-host-existing-report.json` | existing enabled host 可复用，`missingConfig=[]` | <1s |
+| remote host deploy fixture | `/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | existing host 部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` | <1s |
 
 ## 7. 时间和问题账本
 
@@ -114,6 +116,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | runbook publish verification | ~35s | 只在 UI 发布后跑；后端 manifest 内容用 controller tests 覆盖 |
 | runtime pool evidence | 11-14s | 保留为 R0 权威远程证据，不用 one-cycle 替代 |
 | goal audit summary | 11s | 日常看板读最近 R0 summary；只有刷新远程事实时才开 live |
+| remote host prepare fixture | <1s | 本地模拟 API 响应，先验证参数判定，避免真实远程反复试 |
 
 ## 8. 不要做的事
 

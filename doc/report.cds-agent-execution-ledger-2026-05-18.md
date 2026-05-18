@@ -34,6 +34,7 @@
 | 17:56 | N6 在目标审计中超时，需区分测试失败还是沙箱问题 | 先在沙箱内复现 `Permission denied`，再用已批准的 `dotnet test` 沙箱外跑 no-build 测试 | dotnet test 输出 | 64ms 测试执行；审计超时 62s | 27/27 pass；目标审计的 N6 是 infra/sandbox failure，不是业务回归 |
 | 17:56 | 无 live 时只显示 R0 unknown 仍不够好，因为已有 `/tmp` R0 evidence 可用 | 让 goal audit 支持 `CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY`，直接消费 `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `runtimePoolRecovery.source=summary`，当前 blocker 精确为 remote host/shared runtime |
 | 18:00 | goal audit 已识别 R0 blocker，但 `executionPanel.status` 仍继承旧 one-cycle 的 `blocked_r1`，`nextCyclePlan` 仍指向 profile closure | R0 blocker 存在时覆盖 `cycle_status=blocked_r0`，并生成 `r0-runtime-pool-recovery` 计划 | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `status=blocked_r0`，plan items=`R0.2/R0.3/R0V` |
+| 18:06 | remote host prepare 总是要求创建 host 参数，即使 CDS 已有 enabled host；这会阻塞“复用已有 host 部署 shared runtime”的路径 | 支持 `CDS_REMOTE_HOST_ID` 或第一个 enabled host 作为 target；已有 host 时不再要求 SSH 创建参数 | `/tmp/cds-agent-remote-host-existing-report.json`、`/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | <1s fixture | 复用 host 路径 `missingConfig=[]`；部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` |
 
 ## 本轮暴露的问题
 
@@ -147,6 +148,24 @@
 证据：`/tmp/cds-agent-goal-audit-summary-fast.json` 当前输出 `Next cycle plan: r0-runtime-pool-recovery state=runtime-pool-blocked items=R0.2,R0.3,R0V`。
 
 优化：旧 one-cycle 只作为历史 provider/profile 证据，不再决定当前执行面板的顶层状态。
+
+### 11. remote host prepare 不应强制创建新 host
+
+问题：恢复 R0 时可能已经存在 enabled remote host，但旧脚本仍强制要求 `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER` 和 SSH key。这会把“部署 shared runtime sidecar”误挡在“创建 host 参数缺失”上。
+
+处理：`prepare-cds-agent-remote-host-pool.sh` 现在会先选择 target host：
+
+- 优先使用 `CDS_REMOTE_HOST_ID`。
+- 未指定时复用第一个 enabled remote host。
+- 只有没有 target host 时才要求创建 host 的 SSH 参数。
+- 部署 sidecar 时单独要求 `CDS_AGENT_SIDECAR_IMAGE`。
+
+证据：
+
+- `/tmp/cds-agent-remote-host-existing-report.json`：existing enabled host dry-run，`willCreateHost=false`、`missingConfig=[]`。
+- `/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json`：existing enabled host + deploy dry-run，只缺 `CDS_AGENT_SIDECAR_IMAGE`。
+
+优化：真实执行前先用 prepare report 看 `targetHostId/willCreateHost/missingConfig`，避免把创建 host 和部署 sidecar 混成一个大黑盒。
 
 ## 最耗时项
 

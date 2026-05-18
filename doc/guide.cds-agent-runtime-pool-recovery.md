@@ -77,12 +77,30 @@ CDS_HOST=https://cds.miduo.org \
 
 如果需要创建 remote host，必须显式设置 `CDS_AGENT_REMOTE_HOST_APPLY=1`，并提供 `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE` 或 `CDS_REMOTE_HOST_SSH_PRIVATE_KEY`。触发 sidecar 部署还要额外设置 `CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1` 和 `CDS_AGENT_SIDECAR_IMAGE`。
 
+如果 CDS 已有 enabled remote host，脚本会优先复用 `CDS_REMOTE_HOST_ID` 指定的 host；未指定时复用第一个 enabled host。此时不会再要求 `CDS_REMOTE_HOST_NAME/HOST/SSH_USER/KEY`，只在部署 shared runtime sidecar 时要求 `CDS_AGENT_SIDECAR_IMAGE`。`prepare` 报告会写出：
+
+- `targetHostId`: 本次将复用或创建的 remote host id。
+- `willCreateHost`: `false` 表示复用已有 host，`true` 表示仍需创建。
+- `missingConfig`: 只列当前路径真正缺失的参数。
+
+复用已有 host 并部署 shared runtime 的最小命令形态：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+CDS_AGENT_REMOTE_HOST_APPLY=1 \
+CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1 \
+CDS_REMOTE_HOST_ID=<existing-enabled-host-id> \
+CDS_AGENT_SIDECAR_IMAGE=<official-sdk-sidecar-image> \
+  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
+```
+
 remote host wrapper 也会写 `summary.json`，关键判定字段：
 
 - `verdict`: `blocked-branch-isolation`、`dry-run-missing-config`、`dry-run-ready`、`dry-run-host-already-available`、`applied-host-ready`、`applied-running` 等。
 - `readyForSharedRuntimeDeploy`: 已具备部署 shared official SDK runtime sidecar 的前置条件。
 - `readyForProviderSmokes`: shared runtime 已 running，可以继续 MAP R0/S1/S2/S3 与 one-cycle。
 - `nextAction`: 下一步执行建议。
+- `prepare.targetHostId` / `prepare.willCreateHost`: 区分复用已有 host 还是创建新 host。
 
 如果 pre evidence 仍包含 `BRANCH_LOCAL_SIDECAR_CLEAN` blocker，apply 模式会被挡住，不会继续创建 remote host 或部署 sidecar。执行 apply 后如果没有 enabled remote host，或 deploy sidecar 后 shared runtime 仍未 running，wrapper 会非零退出。
 
