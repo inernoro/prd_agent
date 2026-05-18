@@ -746,6 +746,8 @@ export const api = {
     favorite: (id: string) => `/api/marketplace/skills/${id}/favorite`,
     unfavorite: (id: string) => `/api/marketplace/skills/${id}/unfavorite`,
     byId: (id: string) => `/api/marketplace/skills/${id}`,
+    share: (id: string) => `/api/marketplace/skills/${id}/share`,
+    publicShare: (token: string) => `/api/marketplace/skills/public/skill-share/${token}`,
   },
 
   // ============ Agent API Keys 开放接口凭据（供 AI / Agent 调用本平台开放接口） ============

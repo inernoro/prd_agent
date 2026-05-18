@@ -49,6 +49,7 @@ const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
+const SkillShareViewPage = lazy(() => import('@/pages/SkillShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
@@ -186,6 +187,7 @@ export default function App() {
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
         <Route path="/u/:username" element={<PublicProfilePage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
+        <Route path="/s/skill/:token" element={<SkillShareViewPage />} />
         {/* 统一短链 /s/{seq}（数字）— 兼容所有分享系统，老链接继续走上方专属路由 */}
         <Route path="/s/:slug" element={<ShortLinkRouter />} />
 

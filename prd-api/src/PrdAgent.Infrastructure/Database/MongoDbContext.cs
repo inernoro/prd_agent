@@ -115,6 +115,7 @@ public class MongoDbContext
 
     // 海鲜市场「技能」条目（用户上传的 zip 技能包）
     public IMongoCollection<MarketplaceSkill> MarketplaceSkills => _database.GetCollection<MarketplaceSkill>("marketplace_skills");
+    public IMongoCollection<MarketplaceSkillShareLink> MarketplaceSkillShareLinks => _database.GetCollection<MarketplaceSkillShareLink>("marketplace_skill_share_links");
 
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");

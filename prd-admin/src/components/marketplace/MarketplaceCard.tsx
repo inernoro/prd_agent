@@ -7,6 +7,7 @@ import {
   Globe,
   Hand,
   Heart,
+  Share2,
   ShieldCheck,
 } from 'lucide-react';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -20,6 +21,8 @@ import {
   type MarketplaceSkill,
 } from '@/lib/marketplaceTypes';
 import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
+import { SkillDetailModal } from './SkillDetailModal';
+import { useSkillShare } from './useSkillShare';
 
 export interface MarketplaceCardProps {
   item: MixedMarketplaceItem;
@@ -128,6 +131,8 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
 }) => {
   const typeDef = CONFIG_TYPE_REGISTRY[item.type] as ConfigTypeDefinition | undefined;
   const [localForking, setLocalForking] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const { sharing, shareSkill } = useSkillShare();
   const cardRef = React.useRef<HTMLDivElement>(null);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -194,12 +199,16 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   return (
     <div
       ref={cardRef}
-      className="mkt-card"
+      className={`mkt-card${coverUrl ? ' has-cover' : ''}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
+      onClick={() => {
+        if (item.type === 'skill') setDetailOpen(true);
+      }}
       style={{
         backgroundImage: cardGradient,
         ['--glow' as string]: ra(color.bg, 0.45),
+        cursor: item.type === 'skill' ? 'pointer' : undefined,
       }}
     >
       {/* Full-bleed cover image (when available) */}
@@ -296,11 +305,28 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             {item.type === 'skill' && (
               <SkillFavorite item={item.data as MarketplaceSkill} />
             )}
+            {item.type === 'skill' && (
+              <Button
+                size="xs"
+                variant="secondary"
+                disabled={sharing}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void shareSkill(item.data.id);
+                }}
+                title="生成公开分享链接"
+              >
+                <Share2 size={11} />
+              </Button>
+            )}
             {canEdit && (
               <Button
                 size="xs"
                 variant="secondary"
-                onClick={() => onEdit?.(item)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit?.(item);
+                }}
                 title="编辑"
               >
                 <Edit3 size={11} />
@@ -310,7 +336,10 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
               size="xs"
               variant="secondary"
               disabled={forking || localForking}
-              onClick={handleForkClick}
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleForkClick();
+              }}
             >
               <Hand size={11} />
               {forking || localForking ? '...' : '拿来吧'}
@@ -318,6 +347,14 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           </div>
         </div>
       </div>
+
+      {detailOpen && item.type === 'skill' && (
+        <SkillDetailModal
+          open={detailOpen}
+          skill={item.data as MarketplaceSkill}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
     </div>
   );
 };
