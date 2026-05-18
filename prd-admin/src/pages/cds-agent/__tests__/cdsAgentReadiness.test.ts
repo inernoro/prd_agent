@@ -60,6 +60,21 @@ describe('CDS Agent provider readiness evidence', () => {
 });
 
 describe('CDS Agent execution runway', () => {
+  it('classifies R0 runtime pool evidence as no redeploy and no provider call', () => {
+    const state = resolveExecutionRunway({
+      commercialComplete: false,
+      blockingCode: 'R0',
+      deploymentAdvice: '不要靠普通 preview redeploy 解决 R0；先采集 runtime pool evidence。',
+      nextCommand: 'CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh',
+    });
+
+    expect(state.deployDecision).toBe('skip-deploy');
+    expect(state.deployLabel).toBe('不需要重新部署');
+    expect(state.commandKind).toBe('runtime-pool-evidence');
+    expect(state.commandLabel).toBe('R0 证据采集');
+    expect(state.providerCallRisk).toBe('none');
+  });
+
   it('classifies R1 dry-run as no redeploy and no provider call', () => {
     const state = resolveExecutionRunway({
       commercialComplete: false,

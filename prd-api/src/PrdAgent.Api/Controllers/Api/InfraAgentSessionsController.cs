@@ -79,7 +79,11 @@ public class InfraAgentSessionsController : ControllerBase
             profile);
         var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profile);
         var nextCyclePlan = BuildNextCyclePlan(profile, runtimeProfileRepairPlan);
-        var debugCommands = BuildDebugCommands(profile, BuildRemoteSmokePrefix(_configuration));
+        var debugCommands = BuildDebugCommands(
+            baseDiagnostics,
+            desiredRuntimeAdapter,
+            profile,
+            BuildRemoteSmokePrefix(_configuration));
         var executionPanel = BuildExecutionPanel(commercialReadiness, nextCyclePlan, debugCommands);
         var diagnostics = baseDiagnostics with
         {
@@ -162,7 +166,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "先跑 doctor 定位 runtime pool/sidecar 发现问题；只有确认远程容器、授权或服务版本不匹配时才需要 self update 或 redeploy。";
+            return "不要靠普通 preview redeploy 解决 R0；先采集 runtime pool evidence，确认 branch-local sidecar contamination、remote host、shared pool running 状态，再按恢复 runbook 处理。";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase)
@@ -200,7 +204,8 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return debugCommands.FirstOrDefault(x => x.Code == "doctor");
+            return debugCommands.FirstOrDefault(x => x.Code == "runtime-pool-evidence")
+                ?? debugCommands.FirstOrDefault(x => x.Code == "doctor");
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -222,9 +227,13 @@ public class InfraAgentSessionsController : ControllerBase
     }
 
     private static IReadOnlyList<SidecarDebugCommand> BuildDebugCommands(
+        SidecarPoolDiagnostics diagnostics,
+        string desiredRuntimeAdapter,
         SidecarRuntimeProfileDiagnostics? profile,
         string remoteSmokePrefix)
     {
+        var r0Ready = IsR0Ready(diagnostics, desiredRuntimeAdapter);
+        var r0Status = r0Ready ? "pass" : "blocked";
         var r1Ready = profile is
         {
             HasApiKey: true,
@@ -235,6 +244,27 @@ public class InfraAgentSessionsController : ControllerBase
         var providerBlockedBy = r1Ready ? null : "R1";
         return new[]
         {
+            new SidecarDebugCommand(
+                "runtime-pool-evidence",
+                "R0 runtime pool 证据",
+                remoteSmokePrefix + "CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh",
+                "只读采集 branch-local sidecar contamination、remote host、shared-service pool running 状态和恢复顺序；当前 R0 阻塞时优先跑它。",
+                r0Status,
+                r0Ready ? null : "R0"),
+            new SidecarDebugCommand(
+                "branch-isolation-dry-run",
+                "Branch sidecar 清理预检",
+                remoteSmokePrefix + "bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
+                "默认 dry-run，生成清理前后证据目录；显式 apply 前先确认候选 BuildProfile。",
+                r0Status,
+                r0Ready ? null : "R0"),
+            new SidecarDebugCommand(
+                "remote-host-prepare",
+                "Remote host 准备预检",
+                remoteSmokePrefix + "bash scripts/prepare-cds-agent-remote-host-pool.sh",
+                "默认只读检查 CDS remote host 是否存在、缺哪些 SSH/image 配置；不会创建主机。",
+                r0Status,
+                r0Ready ? null : "R0"),
             new SidecarDebugCommand(
                 "doctor",
                 "本地诊断",
@@ -425,13 +455,11 @@ public class InfraAgentSessionsController : ControllerBase
         string desiredRuntimeAdapter,
         SidecarRuntimeProfileDiagnostics? profile)
     {
-        var officialInstances = diagnostics.Instances.Count(x =>
-            string.Equals(x.LoopOwner, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
-            || x.SdkLoopEnabled == true);
-        var r0Ready = diagnostics.InstanceCount > 0
-            && diagnostics.HealthyCount > 0
-            && officialInstances > 0
-            && string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase);
+        var officialInstances = CountOfficialSdkInstances(diagnostics);
+        var r0Ready = IsR0Ready(diagnostics, desiredRuntimeAdapter);
+        var r0NextActions = r0Ready
+            ? Array.Empty<string>()
+            : BuildRuntimePoolRecoveryActions(diagnostics);
         var a0Ready = string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
             && InfraAgentRuntimeAdapterCompatibility.All.Any(x =>
                 string.Equals(x.Id, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
@@ -476,8 +504,8 @@ public class InfraAgentSessionsController : ControllerBase
                 r0Ready ? "pass" : "pending",
                 r0Ready
                     ? $"pool={diagnostics.HealthyCount}/{diagnostics.InstanceCount} officialInstances={officialInstances}"
-                    : $"instanceCount={diagnostics.InstanceCount} healthyCount={diagnostics.HealthyCount} officialInstances={officialInstances}",
-                r0Ready ? Array.Empty<string>() : diagnostics.NextActions),
+                    : BuildR0BlockedMessage(diagnostics, officialInstances),
+                r0NextActions),
             new(
                 "A0",
                 "Official SDK adapter boundary",
@@ -520,10 +548,68 @@ public class InfraAgentSessionsController : ControllerBase
             .ToArray();
         var overall = passed == gates.Count
             ? "ready-for-visual-evidence"
-            : r1Ready
-                ? "provider-smokes-required"
-                : "profile-blocked";
+            : !r0Ready
+                ? "runtime-pool-blocked"
+                : r1Ready
+                    ? "provider-smokes-required"
+                    : "profile-blocked";
         return new SidecarCommercialReadinessDiagnostics(overall, passed, gates.Count, gates, pending);
+    }
+
+    private static int CountOfficialSdkInstances(SidecarPoolDiagnostics diagnostics)
+    {
+        return diagnostics.Instances.Count(x =>
+            string.Equals(x.LoopOwner, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+            || x.SdkLoopEnabled == true);
+    }
+
+    private static bool IsR0Ready(SidecarPoolDiagnostics diagnostics, string desiredRuntimeAdapter)
+    {
+        return diagnostics.InstanceCount > 0
+            && diagnostics.HealthyCount > 0
+            && CountOfficialSdkInstances(diagnostics) > 0
+            && string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildR0BlockedMessage(SidecarPoolDiagnostics diagnostics, int officialInstances)
+    {
+        var metrics = diagnostics.DiscoveryMetrics;
+        var parts = new List<string>
+        {
+            $"instanceCount={diagnostics.InstanceCount}",
+            $"healthyCount={diagnostics.HealthyCount}",
+            $"officialInstances={officialInstances}"
+        };
+        if (metrics?.RunningBranchServiceCount is int runningBranchServices)
+        {
+            parts.Add($"runningBranchServiceCount={runningBranchServices}");
+        }
+        if (metrics?.RuntimeBranchServiceCount is int runtimeBranchServices)
+        {
+            parts.Add($"runtimeBranchServiceCount={runtimeBranchServices}");
+        }
+        if (metrics?.EmptyEndpoints is int emptyEndpoints)
+        {
+            parts.Add($"emptyEndpoints={emptyEndpoints}");
+        }
+        parts.Add("next=collect runtime pool evidence before redeploy");
+        return string.Join(" ", parts);
+    }
+
+    private static IReadOnlyList<string> BuildRuntimePoolRecoveryActions(SidecarPoolDiagnostics diagnostics)
+    {
+        var actions = new List<string>
+        {
+            "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，先得到 branch-local sidecar、remote host、shared pool running 的同一份证据。",
+            "如果 evidence 显示 branch-local sidecar contamination，先用 scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh dry-run 确认候选 BuildProfile，再按审批执行清理。",
+            "如果 evidence 显示 remote host missing，先用 scripts/prepare-cds-agent-remote-host-pool.sh 检查缺失的 SSH/image 配置；不要通过普通 preview redeploy 解决。",
+            "shared-service runtime pool 恢复 running official SDK instance 后，再重跑 MAP R0/S1/S2/S3/one-cycle。"
+        };
+        if (diagnostics.NextActions is { Count: > 0 })
+        {
+            actions.AddRange(diagnostics.NextActions.Take(3));
+        }
+        return actions;
     }
 
     private async Task<SidecarRuntimeProfileDiagnostics?> ResolveDefaultRuntimeProfileDiagnosticsAsync(

@@ -3881,6 +3881,8 @@ export default function CdsAgentPage() {
                               ? '只读预检，不写默认 profile。'
                               : runtimeDiagnostics.executionRunway.commandKind === 'profile-repair'
                                 ? '先测候选 profile，通过后再提升默认。'
+                                : runtimeDiagnostics.executionRunway.commandKind === 'runtime-pool-evidence'
+                                  ? '只读采集 runtime pool 恢复证据。'
                                 : runtimeDiagnostics.executionRunway.commandKind === 'provider-cycle'
                                   ? '完整闭环，受 provider opt-in 保护。'
                                   : runtimeDiagnostics.executionRunway.commandKind === 'doctor'

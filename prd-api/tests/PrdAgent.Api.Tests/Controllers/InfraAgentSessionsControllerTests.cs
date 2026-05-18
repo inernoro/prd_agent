@@ -390,17 +390,21 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N2").BlockedBy.ShouldBe("R1");
             nextCyclePlan.StopConditions.ShouldContain(x => x.Contains("N1-N5", StringComparison.Ordinal));
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Single(x => x.Code == "runtime-pool-evidence").Status.ShouldBe("blocked");
+            debugCommands.Single(x => x.Code == "runtime-pool-evidence").Command.ShouldContain("collect-cds-agent-runtime-pool-evidence.sh");
+            debugCommands.Single(x => x.Code == "branch-isolation-dry-run").BlockedBy.ShouldBe("R0");
+            debugCommands.Single(x => x.Code == "remote-host-prepare").BlockedBy.ShouldBe("R0");
             debugCommands.Single(x => x.Code == "official-sdk-boundary").Command.ShouldBe("bash scripts/smoke-cds-agent-official-sdk-boundary.sh");
             debugCommands.Single(x => x.Code == "r1-apply").BlockedBy.ShouldBe("Anthropic API key");
             debugCommands.Single(x => x.Code == "provider-cycle").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "provider-cycle").BlockedBy.ShouldBe("R1");
             var executionPanel = diagnostics.ExecutionPanel.ShouldNotBeNull();
-            executionPanel.Status.ShouldBe("profile-blocked");
+            executionPanel.Status.ShouldBe("runtime-pool-blocked");
             executionPanel.CommercialComplete.ShouldBeFalse();
             executionPanel.CurrentBlockingGate.ShouldBe("R0");
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
-            executionPanel.DeploymentAdvice.ShouldContain("doctor");
-            executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/doctor-cds-agent-runtime.sh");
+            executionPanel.DeploymentAdvice.ShouldContain("runtime pool evidence");
+            executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
             executionPanel.StepIndex.ShouldBe(1);
@@ -506,6 +510,7 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N6").NextActions.ShouldNotBeNull()
                 .ShouldContain("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Single(x => x.Code == "runtime-pool-evidence").Status.ShouldBe("pass");
             debugCommands.Select(x => x.Code).ShouldContain("doctor");
             debugCommands.Select(x => x.Code).ShouldContain("official-sdk-boundary");
             debugCommands.Single(x => x.Code == "non-code-compat").Command.ShouldBe("bash scripts/smoke-cds-agent-non-code-compatibility.sh");
@@ -559,12 +564,14 @@ public class InfraAgentSessionsControllerTests
         var diagnosticsProperty = data.GetType().GetProperty("diagnostics").ShouldNotBeNull();
         var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
         var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+        debugCommands.Single(x => x.Code == "runtime-pool-evidence").Command
+            .ShouldBe("CDS_HOST=https://cds.example.test CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
         debugCommands.Single(x => x.Code == "doctor").Command
             .ShouldBe("CDS_HOST=https://cds.example.test bash scripts/doctor-cds-agent-runtime.sh");
         debugCommands.Single(x => x.Code == "r1-apply").Command
             .ShouldStartWith("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=");
         diagnostics.ExecutionPanel.ShouldNotBeNull().NextCommand
-            .ShouldBe("CDS_HOST=https://cds.example.test bash scripts/doctor-cds-agent-runtime.sh");
+            .ShouldBe("CDS_HOST=https://cds.example.test CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
     }
 
     private static InfraAgentSessionsController BuildController(

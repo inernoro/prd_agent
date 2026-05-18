@@ -27,7 +27,7 @@ export type ExecutionRunwayInput = {
 export type ExecutionRunwayState = {
   deployDecision: 'skip-deploy' | 'deploy-only-on-change' | 'diagnose-first';
   deployLabel: string;
-  commandKind: 'none' | 'doctor' | 'profile-dry-run' | 'profile-repair' | 'provider-cycle' | 'local-guardrail';
+  commandKind: 'none' | 'doctor' | 'runtime-pool-evidence' | 'profile-dry-run' | 'profile-repair' | 'provider-cycle' | 'local-guardrail';
   commandLabel: string;
   providerCallRisk: 'none' | 'requires-explicit-opt-in';
   providerCallLabel: string;
@@ -63,7 +63,8 @@ export function resolveExecutionRunway(input: ExecutionRunwayInput): ExecutionRu
   if (input.commercialComplete) {
     deployDecision = 'deploy-only-on-change';
   } else if (
-    blockingCode === 'R1'
+    blockingCode === 'R0'
+    || blockingCode === 'R1'
     || blockingCode.startsWith('S')
     || deploymentAdvice.includes('不要靠重新部署')
     || deploymentAdvice.includes('不要重复部署')
@@ -73,7 +74,9 @@ export function resolveExecutionRunway(input: ExecutionRunwayInput): ExecutionRu
   }
 
   let commandKind: ExecutionRunwayState['commandKind'] = 'none';
-  if (nextCommand.includes('doctor-cds-agent-runtime.sh')) {
+  if (nextCommand.includes('collect-cds-agent-runtime-pool-evidence.sh')) {
+    commandKind = 'runtime-pool-evidence';
+  } else if (nextCommand.includes('doctor-cds-agent-runtime.sh')) {
     commandKind = 'doctor';
   } else if (nextCommand.includes('smoke-cds-agent-r1-profile-repair.sh')) {
     commandKind = nextCommand.includes('SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=')
@@ -92,7 +95,9 @@ export function resolveExecutionRunway(input: ExecutionRunwayInput): ExecutionRu
       : '先诊断再决定';
   const commandLabel = commandKind === 'doctor'
     ? '只读 doctor'
-    : commandKind === 'profile-dry-run'
+    : commandKind === 'runtime-pool-evidence'
+      ? 'R0 证据采集'
+      : commandKind === 'profile-dry-run'
       ? 'R1 dry-run'
       : commandKind === 'profile-repair'
         ? 'R1 test-before-promote'
