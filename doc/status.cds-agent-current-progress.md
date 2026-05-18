@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 17:05 Asia/Shanghai
+> 更新时间：2026-05-18 17:08 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -14,17 +14,17 @@
 
 最新只读证据目录：
 
-- `/tmp/cds-agent-runtime-pool-evidence-20260518165720`
-- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518165720/summary.json`
-- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518165720/evidence-index.md`
+- `/tmp/cds-agent-runtime-pool-evidence-manifest-current`
+- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-manifest-current/summary.json`
+- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-manifest-current/evidence-index.md`
 
-本次证据采集总耗时 `12s`：
+本次证据采集总耗时 `14s`：
 
 | 步骤 | 状态 | 耗时 |
 | --- | --- | --- |
-| runtime pool recovery plan | pass | 4s |
+| runtime pool recovery plan | pass | 5s |
 | branch isolation repair dry-run | pass | 2s |
-| remote host pool preparation | pass | 1s |
+| remote host pool preparation | pass | 2s |
 | shared-service pool audit | blocked | 5s |
 
 ## 为什么不是部署问题
@@ -76,6 +76,8 @@
 - `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-sidecar-alias-stability.sh`：按预期拒绝默认 branch-local alias probe，除非显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1`
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-current-after-doc-fix.json bash scripts/audit-cds-agent-goal.sh`：按预期返回 `goalStatus=not_complete`，本地 guardrail 耗时 `11s`，阻塞为 R0 runtime pool 未恢复
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_BRANCH_ISOLATION_REPAIR_DIR=/tmp/cds-agent-branch-isolation-repair-manifest-current bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`：dry-run 通过，`totalSeconds=15s`，`verdict=dry-run-contaminated`，未执行删除
+- `bash scripts/smoke-cds-agent-branch-isolation-manifest.sh /tmp/cds-agent-branch-isolation-repair-manifest-current/summary.json`：通过，验证 dry-run manifest 明确且 fail-closed
+- `CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR=/tmp/cds-agent-runtime-pool-evidence-manifest-current CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh`：通过，总证据 `branchIsolation.applyManifest` 已包含同一 DELETE manifest
 
 ## 最新 Branch Isolation Dry Run
 

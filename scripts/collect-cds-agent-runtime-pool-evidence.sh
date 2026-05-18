@@ -212,6 +212,7 @@ jq -n \
         evidenceCaptured: (.branchIsolationRepairDryRun != null or .plan != null),
         contaminatedBranchCount: (.branchIsolationRepairDryRun.contaminatedBranchCount // .plan.contaminatedBranchCount // null),
         candidateProfileIds: (.branchIsolationRepairDryRun.candidateProfileIds // .plan.contaminatedProfileIds // []),
+        applyManifest: (.branchIsolationRepairDryRun.applyManifest // null),
         confirmProfileId: (.branchIsolationRepairDryRun.confirmProfileId // null),
         repairStatus: (.branchIsolationRepairDryRun.status // "unknown")
       }
