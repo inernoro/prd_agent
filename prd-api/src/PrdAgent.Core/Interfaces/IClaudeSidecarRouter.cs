@@ -293,7 +293,10 @@ public sealed record SidecarCommandApplyManifest(
     string Endpoint,
     IReadOnlyList<string> RequiredEnv,
     IReadOnlyList<SidecarCommandApplyPrecondition> Preconditions,
-    string ExpectedPostCheck
+    string ExpectedPostCheck,
+    string? LocalPreflightCommand = null,
+    IReadOnlyList<string>? ReportFields = null,
+    IReadOnlyList<string>? OptionalEnv = null
 );
 
 public sealed record SidecarCommandApplyPrecondition(

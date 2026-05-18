@@ -432,6 +432,10 @@ public class InfraAgentSessionsControllerTests
             remoteHostRunbook.ApplyManifest.Method.ShouldBe("POST");
             remoteHostRunbook.ApplyManifest.RequiredEnv.ShouldContain("CDS_AGENT_SIDECAR_IMAGE");
             remoteHostRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "enabled_remote_host").Actual.ShouldBe("0");
+            remoteHostRunbook.ApplyManifest.LocalPreflightCommand.ShouldContain("run-cds-agent-remote-host-pool-with-evidence.sh");
+            remoteHostRunbook.ApplyManifest.ReportFields.ShouldNotBeNull().ShouldContain("prepare.preflightReady");
+            remoteHostRunbook.ApplyManifest.ReportFields.ShouldContain("prepare.invalidConfig");
+            remoteHostRunbook.ApplyManifest.OptionalEnv.ShouldNotBeNull().ShouldContain("CDS_REMOTE_HOST_ID");
             remoteHostRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-shared-service-pool.sh");
             executionPanel.Runbook.Single(x => x.Code == "R0-branch-clean-apply").BlockedBy.ShouldBe("explicit profile deletion approval");
             executionPanel.GateCounts["pass"].ShouldBe(2);

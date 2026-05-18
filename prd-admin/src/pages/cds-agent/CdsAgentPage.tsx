@@ -4023,6 +4023,20 @@ export default function CdsAgentPage() {
                                         </span>
                                       ))}
                                     </div>
+                                    {item.applyManifest.localPreflightCommand && (
+                                      <div className="truncate text-white/42">
+                                        preflight: {item.applyManifest.localPreflightCommand}
+                                      </div>
+                                    )}
+                                    {!!item.applyManifest.reportFields?.length && (
+                                      <div className="flex flex-wrap gap-1">
+                                        {item.applyManifest.reportFields.slice(0, 6).map((field) => (
+                                          <span key={field} className="rounded px-1.5 py-0.5 font-semibold text-sky-50/66" style={{ background: 'rgba(56,189,248,0.08)' }}>
+                                            {field}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
                                 )}
                               </div>

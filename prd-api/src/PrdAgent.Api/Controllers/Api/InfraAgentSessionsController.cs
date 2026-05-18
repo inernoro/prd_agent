@@ -283,7 +283,24 @@ public class InfraAgentSessionsController : ControllerBase
                         "false",
                         false)
                 },
-                "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh");
+                "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh",
+                "CDS_HOST=https://cds.miduo.org CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
+                new[]
+                {
+                    "prepare.preflightReady",
+                    "prepare.targetHostId",
+                    "prepare.willCreateHost",
+                    "prepare.missingConfig",
+                    "prepare.invalidConfig",
+                    "verdict"
+                },
+                new[]
+                {
+                    "CDS_REMOTE_HOST_ID",
+                    "CDS_REMOTE_HOST_SSH_PORT",
+                    "CDS_AGENT_SIDECAR_PORT",
+                    "CDS_AGENT_SIDECAR_RELEASE_TAG"
+                });
         }
 
         if (!string.Equals(commandCode, "branch-isolation-apply-confirmed", StringComparison.OrdinalIgnoreCase))
@@ -321,7 +338,16 @@ public class InfraAgentSessionsController : ControllerBase
                     "0",
                     false)
             },
-            "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh");
+            "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh",
+            "CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
+            new[]
+            {
+                "verdict",
+                "beforeContaminatedBranchCount",
+                "afterContaminatedBranchCount",
+                "applyManifest.preconditions"
+            },
+            null);
     }
 
     private static string BuildCommandSafety(string? commandCode)

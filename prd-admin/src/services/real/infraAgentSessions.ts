@@ -314,6 +314,9 @@ export interface InfraAgentRuntimeDiagnostics {
           passed: boolean;
         }> | null;
         expectedPostCheck?: string | null;
+        localPreflightCommand?: string | null;
+        reportFields?: string[] | null;
+        optionalEnv?: string[] | null;
       } | null;
     }> | null;
     gateCounts: Record<string, number>;

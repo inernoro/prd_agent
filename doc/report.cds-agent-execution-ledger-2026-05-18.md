@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 18:08 Asia/Shanghai：
+截至 2026-05-18 18:18 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -37,6 +37,7 @@
 | 18:06 | remote host prepare 总是要求创建 host 参数，即使 CDS 已有 enabled host；这会阻塞“复用已有 host 部署 shared runtime”的路径 | 支持 `CDS_REMOTE_HOST_ID` 或第一个 enabled host 作为 target；已有 host 时不再要求 SSH 创建参数 | `/tmp/cds-agent-remote-host-existing-report.json`、`/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | <1s fixture | 复用 host 路径 `missingConfig=[]`；部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` |
 | 18:08 | 沙箱内只读 live dry-run DNS 失败时，wrapper 把 `evidence-unavailable` 误判成 `blocked-branch-isolation` | 沙箱外重跑只读 dry-run确认真实远程状态；同时修 wrapper verdict 优先区分证据不可用 | `/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json`、`/tmp/cds-agent-remote-host-pool-current-readonly-unavailable-fixed/summary.json` | 18s live；<1s fixture | 远程真实缺 enabled host；网络/鉴权失败现在输出 `evidence-unavailable` |
 | 18:10 | apply 前仍可能到远程才发现 SSH host、port、key、image 参数格式不合法 | prepare dry-run 增加 `invalidConfig/preflightReady`，并让 wrapper 顶层支持 `dry-run-invalid-config` | `/tmp/cds-agent-remote-host-invalid-report.json` | <1s fixture | host URL、非数字 SSH port、非私钥内容会在本地 dry-run 阶段拦截 |
+| 18:18 | 脚本已有 `preflightReady/invalidConfig`，但页面 execution panel 仍只展示老的 required env 和 preconditions | 后端 `ApplyManifest` 增加 `localPreflightCommand/reportFields/optionalEnv`，前端展示 preflight 命令和报告字段 | `InfraAgentSessionsControllerTests`、`pnpm --prefix prd-admin tsc` | dotnet 有效测试约 8s；tsc 通过 | 页面能指向 `prepare.preflightReady/invalidConfig`，不再只让人猜环境变量 |
 
 ## 本轮暴露的问题
 
@@ -198,6 +199,21 @@
 证据：`/tmp/cds-agent-remote-host-invalid-report.json` 显示 `status=invalid_config`、`preflightReady=false`，并列出 host URL、SSH port、private key 三类错误。
 
 优化：执行写入前先看 `preflightReady=true`，否则不进入 apply。
+
+### 14. 页面执行面必须看到 preflight 证据字段
+
+问题：`prepare` 脚本已经输出 `preflightReady`、`targetHostId`、`willCreateHost`、`missingConfig`、`invalidConfig`，但后端 runbook manifest 和前端 execution panel 只展示 required env 和 preconditions。用户在页面上仍看不到“应该先跑哪个本地 preflight、看哪些字段”。
+
+处理：
+
+- `SidecarCommandApplyManifest` 增加 `LocalPreflightCommand`、`ReportFields`、`OptionalEnv`。
+- remote host runbook 返回 `run-cds-agent-remote-host-pool-with-evidence.sh` preflight 命令。
+- manifest 明确报告字段：`prepare.preflightReady`、`prepare.targetHostId`、`prepare.willCreateHost`、`prepare.missingConfig`、`prepare.invalidConfig`、`verdict`。
+- 前端 execution panel 展示 preflight 命令和报告字段 chip。
+
+证据：`InfraAgentSessionsControllerTests` 18/18 通过；`pnpm --prefix prd-admin tsc` 通过。
+
+优化：页面下一步应该围绕 preflight report 判断，而不是只读静态 env 列表。
 
 ## 最耗时项
 
