@@ -73,9 +73,8 @@ matched_patterns=()
 patterns=(
   "执行 runbook"
   "branch-isolation-apply-confirmed"
-  "remote_host_create_then_shared_runtime_deploy"
-  "CDS_AGENT_SIDECAR_IMAGE"
-  "smoke-cds-agent-shared-service-pool.sh"
+  "applyManifest"
+  "preconditions"
   "requires approval"
   "provider opt-in"
   "commandCode"

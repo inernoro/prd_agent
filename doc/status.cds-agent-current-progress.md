@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 17:24 Asia/Shanghai
+> 更新时间：2026-05-18 17:35 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：branch-local sidecar 污染已清理；R0 runtime pool 仍 blocked，目标未完成。
 
@@ -14,9 +14,9 @@
 
 最新只读证据目录：
 
-- `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean`
-- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean/summary.json`
-- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-after-branch-clean/evidence-index.md`
+- `/tmp/cds-agent-runtime-pool-evidence-current-clean`
+- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-current-clean/summary.json`
+- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-current-clean/evidence-index.md`
 
 本次证据采集总耗时 `11s`：
 
@@ -53,28 +53,36 @@
 - branch-local sidecar 清理 dry-run 现在会输出 `applyManifest`，明确标记 `destructive_remote_delete_build_profile`、DELETE endpoint、必需环境变量、唯一候选和确认变量等前置条件。
 - 目标审计已新增 `P0 branch isolation apply manifest` gate；有 `CDS_HOST` 时会只读生成清理 dry-run manifest 并运行 `smoke-cds-agent-branch-isolation-manifest.sh` 验证 fail-closed。
 - 2026-05-18 17:22 经用户精确批准，已执行远程 branch-local sidecar 清理；复查显示 `beforeContaminatedBranchCount=4`、`afterContaminatedBranchCount=0`，`prd-agent` appServices 已不再包含 `claude-agent-sdk-runtime-v2-prd-agent`。
+- remote host/shared runtime 恢复 runbook 现在也有结构化 `applyManifest`：页面可显示 `POST /api/cds-system/remote-hosts`、`deploy-sidecar`、所需 env、前置条件和 `smoke-cds-agent-shared-service-pool.sh` post-check。
+- 发布验证脚本已校准为检查前端 bundle 的 `applyManifest/preconditions` 渲染能力；后端 manifest 具体内容由 `InfraAgentSessionsControllerTests` 覆盖。
 
 ## 最新远程页面验证
 
-2026-05-18 16:40 Asia/Shanghai 只读验证：
+2026-05-18 17:35 Asia/Shanghai 只读验证：
 
 - CDS 分支：`prd-agent-codex-cds-agent-workbench-ui`
-- 远程 commit：`d80e65d0` / `feat: render cds agent execution runbook`
+- 远程 commit：`81e52b1f` / `feat: surface shared runtime host recovery manifest`
 - 分支状态：`running`
 - `/cds-agent` HTTP：`200`
-- 远程入口资源：`/assets/index-DAolpcjY-local.js`
-- 命中 runbook 页面 chunk：`assets/index-vu_T_VIY-local.js`
-- chunk 中已包含执行 runbook 渲染、`branch-isolation-apply-confirmed`、`requires approval`、`provider opt-in` 等发布后代码。
+- 远程入口资源：`/assets/index-B_aVYjSX-local.js`
+- 命中 runbook 页面 chunk：`assets/index-D_MWXu97-local.js`
+- bundle publish summary：`/tmp/cds-agent-runbook-published/summary.json`
+- chunk 中已包含执行 runbook 渲染、`applyManifest`、`preconditions`、`requires approval`、`provider opt-in`、`commandCode` 等发布后代码。
 
 限制：本地 headless 截图被登录页拦截，只能证明远程构建资源已发布，不能替代登录后的像素级视觉截图。
 
 ## 最新本地验证
 
-2026-05-18 16:54 Asia/Shanghai：
+2026-05-18 17:35 Asia/Shanghai：
 
+- `bash -n scripts/verify-cds-agent-runbook-published.sh`：通过
+- `bash scripts/verify-cds-agent-runbook-published.sh`：通过，命中 `assets/index-D_MWXu97-local.js`，matchedPatterns=`执行 runbook, applyManifest, preconditions, requires approval, provider opt-in, commandCode`
+- `pnpm --prefix prd-admin tsc`：通过
+- `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --no-restore --filter FullyQualifiedName~InfraAgentSessionsControllerTests`：通过，18/18
+- `git diff --check`：通过
+- `CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR=/tmp/cds-agent-runtime-pool-evidence-current-clean CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh`：通过，总证据为 `branchIsolation=dry-run-clean`、`remoteHost=dry-run-missing-config`
 - `bash -n scripts/doctor-cds-agent-runtime.sh`：通过
 - `bash -n scripts/smoke-cds-agent-sidecar-alias-stability.sh`：通过
-- `git diff --check`：通过
 - `dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj --no-restore --filter FullyQualifiedName~DynamicSidecarRegistryTests`：通过，18/18
 - `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-sidecar-alias-stability.sh`：按预期拒绝默认 branch-local alias probe，除非显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1`
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-current-after-doc-fix.json bash scripts/audit-cds-agent-goal.sh`：按预期返回 `goalStatus=not_complete`，本地 guardrail 耗时 `11s`，阻塞为 R0 runtime pool 未恢复
