@@ -9,6 +9,8 @@ REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host
 HANDOFF_SUMMARY="${CDS_AGENT_REMOTE_HOST_HANDOFF_SUMMARY:-$REMOTE_HOST_SUMMARY}"
 N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
 R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -18,6 +20,12 @@ fail() {
 command -v jq >/dev/null 2>&1 || fail "missing dependency: jq"
 [[ -f "$GOAL_AUDIT" ]] || fail "goal audit not found: $GOAL_AUDIT"
 [[ -f "$REMOTE_HOST_SUMMARY" ]] || fail "remote host summary not found: $REMOTE_HOST_SUMMARY"
+
+if [[ -x "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" ]]; then
+  CDS_AGENT_R0_READINESS_REPORT="$R0_READINESS_SUMMARY" \
+  CDS_AGENT_REMOTE_HOST_SUMMARY="$REMOTE_HOST_SUMMARY" \
+    bash "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" >/dev/null 2>&1 || true
+fi
 
 jq_read() {
   local file="$1"
@@ -55,9 +63,13 @@ missing_config=$(jq_read "$REMOTE_HOST_SUMMARY" '((if has("prepare") and .prepar
 invalid_config=$(jq_read "$REMOTE_HOST_SUMMARY" '((if has("prepare") and .prepare != null then .prepare.invalidConfig else [] end) // []) | join(", ")')
 total_seconds=$(jq_read "$REMOTE_HOST_SUMMARY" '.totalSeconds // "unknown"')
 r0_readiness_line="not checked"
+image_readiness="unknown"
+image_next_action="unknown"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
   r0_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.nextAction // "unknown"')
+  image_readiness=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.status // "unknown"')
+  image_next_action=$(jq_read "$R0_READINESS_SUMMARY" '.imageReadiness.nextAction // "unknown"')
   r0_readiness_line="readyForR0Apply=$r0_ready; nextAction=$r0_next_action"
 fi
 
@@ -72,7 +84,7 @@ cat <<EOF
 # CDS Agent Progress Board
 
 Generated: $(date '+%Y-%m-%d %H:%M:%S %Z')
-Branch: $(git branch --show-current 2>/dev/null || printf 'unknown')
+Branch: $(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf 'unknown')
 Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK adapters.
 
 ## Current State
@@ -87,6 +99,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Ready for provider smokes: $ready_smoke
 - Evidence refresh cost: ${total_seconds}s
 - R0 local apply readiness: $r0_readiness_line
+- Sidecar image readiness: $image_readiness; $image_next_action
 
 ## Task Board
 
@@ -105,6 +118,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 
 - missingConfig: $missing_config
 - invalidConfig: $invalid_config
+- imageReadiness: $image_readiness
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
 
