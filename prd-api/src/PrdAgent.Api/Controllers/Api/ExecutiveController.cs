@@ -1,6 +1,8 @@
 using System.Linq.Expressions;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -492,9 +494,11 @@ public class ExecutiveController : ControllerBase
             { "/api/video-agent/", "video-agent" },
         };
 
+        var aggOpts = new AggregateOptions { AllowDiskUse = true };
+
         // LLM 维度：服务端按 {AppCallerCode,UserId} 分组（基数 = 不同 appcaller×用户，
         // 远小于日志条数），再在内存做 NormalizeAppKey 归一。不再把整张 llmrequestlogs 拉回。
-        var llmGroups = await _db.LlmRequestLogs.Aggregate()
+        var llmGroups = await _db.LlmRequestLogs.Aggregate(aggOpts)
             .Match(l => l.StartedAt >= periodStart && l.AppCallerCode != null && l.UserId != null)
             .Group(l => new { l.AppCallerCode, l.UserId },
                    g => new { g.Key.AppCallerCode, g.Key.UserId, C = g.Count() })
@@ -511,26 +515,60 @@ public class ExecutiveController : ControllerBase
             inner[row.UserId] = inner.GetValueOrDefault(row.UserId) + row.C;
         }
 
-        // API 维度（写操作）：服务端按 {Path,UserId} 分组，再在内存做路由前缀→appKey 映射。
-        var apiGroups = await _db.ApiRequestLogs.Aggregate()
-            .Match(l => l.StartedAt >= periodStart && l.Method != "GET"
-                        && l.StatusCode >= 200 && l.StatusCode < 400)
-            .Group(l => new { l.Path, l.UserId },
-                   g => new { g.Key.Path, g.Key.UserId, C = g.Count() })
+        // API 维度（写操作）：Path 含资源 GUID（如 /api/prd-agent/sessions/{guid}/messages），
+        // 若按原始 Path 分组基数≈文档数，既失去聚合意义又会撞 $group 100MB 内存上限。
+        // 改为在管道内用 $switch 把 Path 前缀直接归一成 appKey，再按 {appKey,UserId} 分组，
+        // 基数收敛到 ≈7×用户数（与 LLM 维度同量级）。
+        var apiPrefixRegex = "^(" + string.Join("|", agentRoutePrefixes.Keys.Select(Regex.Escape)) + ")";
+        var switchBranches = new BsonArray(agentRoutePrefixes.Select(kv => new BsonDocument
+        {
+            { "case", new BsonDocument("$regexMatch", new BsonDocument
+                {
+                    { "input", "$Path" },
+                    { "regex", "^" + Regex.Escape(kv.Key) },
+                    { "options", "i" },
+                }) },
+            { "then", kv.Value },
+        }));
+
+        var apiPipeline = new BsonDocument[]
+        {
+            new("$match", new BsonDocument
+            {
+                { "StartedAt", new BsonDocument("$gte", periodStart) },
+                { "Method", new BsonDocument("$ne", "GET") },
+                { "StatusCode", new BsonDocument { { "$gte", 200 }, { "$lt", 400 } } },
+                { "UserId", new BsonDocument("$nin", new BsonArray { BsonNull.Value, "anonymous" }) },
+                { "Path", new BsonRegularExpression(apiPrefixRegex, "i") },
+            }),
+            new("$set", new BsonDocument("_ak", new BsonDocument("$switch", new BsonDocument
+            {
+                { "branches", switchBranches },
+                { "default", BsonNull.Value },
+            }))),
+            new("$match", new BsonDocument("_ak", new BsonDocument("$ne", BsonNull.Value))),
+            new("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "ak", "$_ak" }, { "u", "$UserId" } } },
+                { "c", new BsonDocument("$sum", 1) },
+            }),
+        };
+
+        var apiGroups = await _db.ApiRequestLogs
+            .Aggregate<BsonDocument>(apiPipeline, aggOpts)
             .ToListAsync();
 
         var apiAgentUserCounts = new Dictionary<string, Dictionary<string, int>>();
         foreach (var row in apiGroups)
         {
-            if (row.UserId == null || row.UserId == "anonymous" || !userIds.Contains(row.UserId)) continue;
-            string? matchedKey = null;
-            foreach (var kv in agentRoutePrefixes)
-                if (row.Path != null && row.Path.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase))
-                { matchedKey = kv.Value; break; }
-            if (matchedKey == null) continue;
+            var id = row["_id"].AsBsonDocument;
+            var matchedKey = id["ak"].AsString;
+            var uid = id["u"].IsString ? id["u"].AsString : null;
+            if (string.IsNullOrEmpty(uid) || !userIds.Contains(uid)) continue;
+            var c = row["c"].ToInt32();
             if (!apiAgentUserCounts.TryGetValue(matchedKey, out var inner))
                 apiAgentUserCounts[matchedKey] = inner = new Dictionary<string, int>();
-            inner[row.UserId] = inner.GetValueOrDefault(row.UserId) + row.C;
+            inner[uid] = inner.GetValueOrDefault(uid) + c;
         }
 
         // 合并两个数据源

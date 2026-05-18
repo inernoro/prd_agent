@@ -215,19 +215,31 @@ public class SubmissionsController : ControllerBase
         var total = await _db.Submissions.CountDocumentsAsync(filter);
 
         // 热度排序（带时间衰减），公式权威定义见 PrdAgent.Core.Helpers.GalleryRanking。
-        // ageHours = max(0, (NOW - CreatedAt) / 3600000ms)
+        // ageHours = max(0, (refNow - CreatedAt) / 3600000ms)
         // hot      = (LikeCount*LikeWeight + ViewCount) / pow(ageHours + 2, Gravity)
-        // 末尾按 _id desc 做稳定且唯一的 tiebreaker —— 彻底消除分页重复。
+        // 末尾按 _id desc 做稳定且唯一的 tiebreaker。
+        //
+        // refNow 不直接用 $$NOW：偏移分页（$skip/$limit）下，第 1 页与第 2 页若不是
+        // 同一瞬间发起，$$NOW 不同 → 时间衰减分被不同基准重算 → 边界作品在两页间漂移，
+        // 仍会出现重复/漏项。把基准时间按 10 分钟取桶（$dateTrunc），同一 10 分钟窗口内
+        // 所有翻页请求使用完全相同的基准 → 分页稳定；排名每 10 分钟刷新一次。
         var matchDoc = filter.Render(new RenderArgs<Submission>(
             _db.Submissions.DocumentSerializer,
             _db.Submissions.Settings.SerializerRegistry));
+
+        var refNowExpr = new BsonDocument("$dateTrunc", new BsonDocument
+        {
+            { "date", "$$NOW" },
+            { "unit", "minute" },
+            { "binSize", 10 },
+        });
 
         var ageHoursExpr = new BsonDocument("$max", new BsonArray
         {
             0.0,
             new BsonDocument("$divide", new BsonArray
             {
-                new BsonDocument("$subtract", new BsonArray { "$$NOW", "$CreatedAt" }),
+                new BsonDocument("$subtract", new BsonArray { refNowExpr, "$CreatedAt" }),
                 3600000.0,
             }),
         });
