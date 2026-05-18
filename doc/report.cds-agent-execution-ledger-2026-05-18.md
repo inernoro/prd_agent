@@ -43,6 +43,7 @@
 - 已修复：CDS `/agent-sessions` 非 fake runtime message 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时由 CDS 返回 `cds_managed_runtime_unavailable`，避免再次把执行归属推回 MAP。
 - 已推进：CDS-managed official SDK runtime transport 已有最小闭环；CDS 可从 shared-service branch service 发现 `claude-agent-sdk` runtime，并投递 `/v1/agent/run` 后写回 `runtime_init/text_delta/done`。
 - 已完成：R0.7 CDS-managed runtime live evidence。真实 CDS shared-service runtime 已有 running official SDK runtime。
+- 已修正：one-cycle/R0/readiness 事实源不再把 `ANTHROPIC_API_KEY` 缺失误判为 R0 runtime capacity failure；该状态归入 R1。
 - 当前未解决：R1 Anthropic/Claude-compatible provider profile 和 S1/S2/S3 provider one-cycle 仍未完成；当前目标保持 `not_complete`。
 
 ## 执行时间线
@@ -100,6 +101,10 @@
 | 23:20 | 旧方案仍要求预构建 sidecar image，容易把产品路径拖回 operator env/image | managed runtime BuildProfile 改为 `python:3.12-slim` 从仓库源码安装 requirements 并启动 uvicorn，不再要求用户提供 `CDS_AGENT_SIDECAR_IMAGE` | `cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-instances.test.ts` | route test <1s；CDS build 通过；self-update 约 29s | CDS control plane 更新到 `89324dcb` |
 | 23:41 | 需要真实证明 R0 不再缺 capacity | 在远程 CDS shared-service project 上 issue/accept pairing token，调用 `/runtime-capacity` 和 `/runtime-capacity/reconcile liveApply`，再读 after evidence | `/tmp/cds-agent-runtime-live-apply-current.json`、`/tmp/cds-agent-runtime-live-apply-current.log` | 7.7s | `status=available`、`runningOfficialSdkRuntimeCount=1`、runtime owner=`cds-managed-runtime`、adapter=`claude-agent-sdk`、port=`10618` |
 | 23:50 | 进度面板仍按旧 R0.7 阻塞口径读 `/tmp` 旧证据 | 让 collect/audit/progress/refresh/check/smoke 消费 runtime capacity summary；R0 available 时自动转到 R1 blocker | `scripts/audit-cds-agent-goal.sh`、`scripts/collect-cds-agent-runtime-pool-evidence.sh`、`scripts/print-cds-agent-current-progress.sh`、`scripts/refresh-cds-agent-r0-status.sh` | 本地脚本修正 | 当前权威状态：R0=pass，currentBlockingGate=R1 |
+| 23:57 | R1 是否能继续不清楚，且不能泄露 key | 检查本地环境变量只输出 present/missing；运行 R1 repair dry-run | `/tmp/cds-agent-r1-dryrun-current.json` | 7s | 本地无 Anthropic key；dry-run 通过，官方 Anthropic 模板、缺 key guard、非 Anthropic key 拦截均通过 |
+| 00:00 | one-cycle dry-run 又把 `/readyz` 缺 `ANTHROPIC_API_KEY` 判成 R0 failure | 修正 `smoke-cds-agent-runtime-status.sh`：CDS pairing runtime 已发现且只因 Anthropic key 不 ready 时，R0 discovery/capacity pass，blocker 归 R1 | `scripts/smoke-cds-agent-runtime-status.sh` | runtime-status smoke 12s | R0 runtime-status smoke 通过，输出 `blocked by R1 Anthropic key/profile` |
+| 00:01 | one-cycle 仍运行 branch-local alias `claude-agent-sdk-runtime-v2-prd-agent` 稳定性检查 | 修正 `smoke-cds-agent-one-cycle.sh`：默认跳过 legacy branch-local alias probe，除非显式 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` | `/tmp/cds-agent-cycle-20260519000019/cycle-summary.json` | 约 17s 暴露问题 | 旧 alias 不再作为 R0 主路径验收 |
+| 00:03 | commercial-readiness 后端事实源仍把 CDS pairing runtime 缺 Anthropic key 判为 R0 | 修正 `InfraAgentSessionsController` 的 R0 readiness：CDS-managed runtime capacity/ownership 已存在且只缺 provider key时，R0=pass、currentBlockingGate=R1；补 controller test | `InfraAgentSessionsControllerTests` | 19/19 pass | 本地后端事实源已校准；远程需部署后复跑 one-cycle |
 
 ## 本轮暴露的问题
 

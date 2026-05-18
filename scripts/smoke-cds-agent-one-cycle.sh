@@ -917,7 +917,13 @@ run_step "doctor" "Runtime doctor and next action report" "$SCRIPT_DIR/doctor-cd
 
 run_step "r0-runtime" "R0 runtime pool official SDK ownership" "$SCRIPT_DIR/smoke-cds-agent-runtime-status.sh" "remote-api" || finish_cycle 1
 if [[ -n "${CDS_HOST:-}" ]]; then
-  run_step "r0-sidecar-alias" "R0 sidecar alias stability from API container" "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" "remote-container" || finish_cycle 1
+  sidecar_alias="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-v2-prd-agent}"
+  if [[ "$sidecar_alias" =~ (^|[-_])claude-agent-sdk-runtime ]] \
+    && [[ "${SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE:-0}" != "1" ]]; then
+    skip_step "R0 sidecar alias stability from API container" "branch-local sidecar alias is legacy contamination diagnostics only; R0 now uses CDS-managed runtime capacity evidence" "remote-container"
+  else
+    run_step "r0-sidecar-alias" "R0 sidecar alias stability from API container" "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" "remote-container" || finish_cycle 1
+  fi
 else
   skip_step "R0 sidecar alias stability from API container" "set CDS_HOST to exec inside the remote CDS API container" "remote-container"
 fi

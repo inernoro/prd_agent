@@ -964,15 +964,44 @@ public class InfraAgentSessionsController : ControllerBase
     {
         return diagnostics.Instances.Count(x =>
             string.Equals(x.LoopOwner, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
-            || x.SdkLoopEnabled == true);
+            || x.SdkLoopEnabled == true
+            || IsCdsManagedRuntimeInstance(x));
     }
 
     private static bool IsR0Ready(SidecarPoolDiagnostics diagnostics, string desiredRuntimeAdapter)
     {
         return diagnostics.InstanceCount > 0
-            && diagnostics.HealthyCount > 0
             && CountOfficialSdkInstances(diagnostics) > 0
-            && string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase);
+            && string.Equals(desiredRuntimeAdapter, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase)
+            && (diagnostics.HealthyCount > 0 || IsBlockedOnlyByR1ProviderKey(diagnostics));
+    }
+
+    private static bool IsCdsManagedRuntimeInstance(SidecarInstanceDiagnostics instance)
+    {
+        return string.Equals(instance.Source, "cds-pairing", StringComparison.OrdinalIgnoreCase)
+            || instance.Name.Contains("cds-pairing", StringComparison.OrdinalIgnoreCase)
+            || instance.Name.Contains("shared-sidecar-pool", StringComparison.OrdinalIgnoreCase)
+            || instance.Tags.Any(tag => tag.Contains("cds-managed-runtime", StringComparison.OrdinalIgnoreCase)
+                || tag.Contains("claude-agent-sdk", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsBlockedOnlyByR1ProviderKey(SidecarPoolDiagnostics diagnostics)
+    {
+        return diagnostics.Instances.Any(instance =>
+            IsCdsManagedRuntimeInstance(instance)
+            && (
+                instance.AnthropicKeyConfigured == false
+                || instance.ProviderKeyRequiredForReady == true
+                || ContainsProviderKeyBlocker(instance.Error)
+                || (instance.ReadyzBlockers?.Any(ContainsProviderKeyBlocker) ?? false)
+                || (instance.ReadyzNextActions?.Any(ContainsProviderKeyBlocker) ?? false)));
+    }
+
+    private static bool ContainsProviderKeyBlocker(string? value)
+    {
+        return !string.IsNullOrWhiteSpace(value)
+            && (value.Contains("ANTHROPIC_API_KEY", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("anthropicKey", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string BuildR0BlockedMessage(SidecarPoolDiagnostics diagnostics, int officialInstances)

@@ -586,6 +586,88 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task RuntimeStatus_ShouldTreatCdsManagedRuntimeMissingAnthropicKeyAsR1Blocker()
+    {
+        var previous = Environment.GetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar);
+        var service = new Mock<IInfraAgentSessionService>();
+        var router = new Mock<IClaudeSidecarRouter>();
+        var profiles = new Mock<IInfraAgentRuntimeProfileService>();
+        router
+            .Setup(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SidecarPoolDiagnostics(
+                true,
+                1,
+                0,
+                new[]
+                {
+                    new SidecarInstanceDiagnostics(
+                        "cds-pairing:conn:shared-sidecar-pool-mp4anabh-main",
+                        "http://runtime",
+                        "cds-pairing",
+                        Array.Empty<string>(),
+                        true,
+                        false,
+                        503,
+                        false,
+                        false,
+                        true,
+                        true,
+                        null,
+                        null,
+                        "{\"ready\":false,\"anthropicKey\":false,\"sidecarToken\":true}",
+                        ReadyzBlockers: new[] { "缺少 ANTHROPIC_API_KEY" })
+                },
+                NextActions: new[] { "使用 Anthropic 官方模板创建默认 runtime profile，并填入有效 API key。" }));
+        profiles
+            .Setup(x => x.ListAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<InfraAgentRuntimeProfileView>
+            {
+                new(
+                    "profile-1",
+                    "OpenRouter DeepSeek",
+                    InfraAgentRuntimes.ClaudeSdk,
+                    InfraAgentRuntimeProtocols.OpenAiCompatible,
+                    "https://openrouter.ai/api/v1",
+                    "deepseek/deepseek-v4-pro",
+                    2,
+                    4096,
+                    900,
+                    InfraAgentRuntimeNetworkPolicies.Restricted,
+                    30,
+                    true,
+                    true,
+                    DateTime.UtcNow,
+                    DateTime.UtcNow)
+            });
+        try
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, null);
+            var controller = BuildController(service.Object, "user-1", router.Object, runtimeProfiles: profiles.Object);
+
+            var result = await controller.RuntimeStatus(refreshDiscovery: false, CancellationToken.None);
+
+            var objectResult = result.ShouldBeOfType<OkObjectResult>();
+            var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+            var data = response.Data.ShouldNotBeNull();
+            var diagnosticsProperty = data.GetType().GetProperty("diagnostics").ShouldNotBeNull();
+            var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
+            var readiness = diagnostics.CommercialReadiness.ShouldNotBeNull();
+            readiness.Gates.Single(x => x.Code == "R0").Status.ShouldBe("pass");
+            readiness.Gates.Single(x => x.Code == "R1").Status.ShouldBe("pending");
+            readiness.Overall.ShouldBe("profile-blocked");
+            var executionPanel = diagnostics.ExecutionPanel.ShouldNotBeNull();
+            executionPanel.CurrentBlockingGate.ShouldBe("R1");
+            executionPanel.NextCommandCode.ShouldBe("r1-dry-run");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.7").Status.ShouldBe("done");
+            executionPanel.TaskBoard.Single(x => x.Code == "R1").Status.ShouldBe("active");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(InfraAgentRuntimeAdapterDefaults.RuntimeAdapterEnvVar, previous);
+        }
+    }
+
+    [Fact]
     public async Task RuntimeStatus_ShouldUseConfiguredRemoteSmokeHostInDebugCommands()
     {
         var service = new Mock<IInfraAgentSessionService>();
