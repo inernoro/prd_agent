@@ -201,7 +201,7 @@ jq -r \
     "## Visual Coverage\n\n" +
     "- Assertions passed: `" + ((.visualCoverage.assertionsPassed // false)|tostring) + "`\n" +
     "- Required text count: `" + (((.visualCoverage.required // []) | length)|tostring) + "`\n" +
-    "- Execution runway assertions: `" + (((.visualCoverage.required // []) | map(select(. == "部署判定" or . == "命令性质" or . == "Provider 调用" or . == "不需要重新部署" or . == "R1 dry-run" or . == "不会触发真实 provider 调用")) | join(" / ")) // "") + "`\n\n"
+    "- Execution runway assertions: `" + (((.visualCoverage.required // []) | map(select(. == "执行链路" or . == "CDS Runtime" or . == "模型需调整" or . == "Claude/Anthropic" or . == "MAP 会话" or . == "Worker Sandbox")) | join(" / ")) // "") + "`\n\n"
   else "" end) +
   "## Gates\n\n" +
   (["R0","A0","R1","S1","S2S3","V1","N6"] | map(gate_line(.)) | join("\n")) + "\n\n" +

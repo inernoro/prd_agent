@@ -5,8 +5,8 @@
 #
 # Authenticated V1 check for /cds-agent. This script does not call the
 # model provider. It opens the real workbench in headless Chrome, injects
-# an admin JWT into the persisted auth store, waits for the runtime debug
-# panel, and captures a screenshot as visual evidence.
+# an admin JWT into the persisted auth store, waits for the current execution
+# runway/workbench signals, and captures a screenshot as visual evidence.
 #
 # Required auth, choose one:
 #   SMOKE_CDS_AGENT_ACCESS_TOKEN=<jwt>
@@ -419,30 +419,21 @@ async function main() {
     const text = textResult.result?.value || '';
     const required = [
       'CDS Agent',
-      '当前执行面板',
-      'Runtime 调试',
-      '当前执行结论',
-      '重新部署',
-      '部署判定',
-      '命令性质',
-      'Provider 调用',
-      '不需要重新部署',
-      'R1 dry-run',
-      '不会触发真实 provider 调用',
-      '商业级',
-      'READINESS LEDGER',
-      '下一周期最小闭环',
-      'official-sdk-provider-closure',
-      'profile-blocked',
-      'N1',
-      'N6',
-      '停止条件',
-      'ADAPTER 兼容性',
-      'Legacy loop import',
-      'lazy-explicit-fallback',
-      '默认路由',
-      '缺失 adapter contract',
-      '候选 adapter 边界'
+      '执行链路',
+      'CDS Runtime',
+      '模型需调整',
+      'Claude Agent SDK',
+      'Claude/Anthropic',
+      'Worker Sandbox',
+      'MAP 会话',
+      '连接已授权',
+      '受限网络',
+      '刷新',
+      '专业模式',
+      '当前事件',
+      '工具事件',
+      '可见产物',
+      'trace'
     ];
     const missing = required.filter((item) => !text.includes(item));
     if (textDump) {
@@ -464,7 +455,7 @@ async function main() {
     await send('Runtime.evaluate', {
       expression: `(() => {
         const nodes = Array.from(document.querySelectorAll('section, div, article'))
-          .filter((node) => (node.innerText || '').includes('当前执行面板'))
+          .filter((node) => (node.innerText || '').includes('CDS Runtime'))
           .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
         const el = nodes[0];
         if (el) {
@@ -513,30 +504,22 @@ async function waitForWorkbench(send, cdp) {
     const text = res?.result?.value || '';
     lastText = text;
     try { fs.writeFileSync(textDump, text); } catch {}
-    if (text.includes('当前执行面板')
-      && text.includes('Runtime 调试')
-      && text.includes('商业级')
-      && text.includes('当前执行结论')
-      && text.includes('重新部署')
-      && text.includes('部署判定')
-      && text.includes('命令性质')
-      && text.includes('Provider 调用')
-      && text.includes('不需要重新部署')
-      && text.includes('R1 dry-run')
-      && text.includes('不会触发真实 provider 调用')
-      && text.includes('READINESS LEDGER')
-      && text.includes('下一周期最小闭环')
-      && text.includes('official-sdk-provider-closure')
-      && text.includes('profile-blocked')
-      && text.includes('N1')
-      && text.includes('N6')
-      && text.includes('停止条件')
-      && text.includes('ADAPTER 兼容性')
-      && text.includes('Legacy loop import')
-      && text.includes('lazy-explicit-fallback')
-      && text.includes('默认路由')
-      && text.includes('缺失 adapter contract')
-      && text.includes('候选 adapter 边界')) return;
+    if (text.includes('CDS Agent')
+      && text.includes('执行链路')
+      && text.includes('CDS Runtime')
+      && text.includes('模型需调整')
+      && text.includes('Claude Agent SDK')
+      && text.includes('Claude/Anthropic')
+      && text.includes('Worker Sandbox')
+      && text.includes('MAP 会话')
+      && text.includes('连接已授权')
+      && text.includes('受限网络')
+      && text.includes('刷新')
+      && text.includes('专业模式')
+      && text.includes('当前事件')
+      && text.includes('工具事件')
+      && text.includes('可见产物')
+      && text.includes('trace')) return;
     if (text.includes('无权限访问')) throw new Error('Authenticated user lacks permission for /cds-agent');
     if (text.includes('登录') && text.includes('密码') && !text.includes('CDS Agent')) {
       throw new Error('Auth store injection failed; still on login page');
@@ -549,7 +532,7 @@ async function waitForWorkbench(send, cdp) {
   } catch {}
   const eventSummary = cdp.eventSummary();
   const suffix = eventSummary.length ? `; events=${eventSummary.join(' | ')}` : '';
-  throw new Error(`Workbench runtime debug panel did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}${suffix}`);
+  throw new Error(`Workbench execution runway did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}${suffix}`);
 }
 
 main().catch((err) => {

@@ -105,6 +105,9 @@
 | 00:00 | one-cycle dry-run 又把 `/readyz` 缺 `ANTHROPIC_API_KEY` 判成 R0 failure | 修正 `smoke-cds-agent-runtime-status.sh`：CDS pairing runtime 已发现且只因 Anthropic key 不 ready 时，R0 discovery/capacity pass，blocker 归 R1 | `scripts/smoke-cds-agent-runtime-status.sh` | runtime-status smoke 12s | R0 runtime-status smoke 通过，输出 `blocked by R1 Anthropic key/profile` |
 | 00:01 | one-cycle 仍运行 branch-local alias `claude-agent-sdk-runtime-v2-prd-agent` 稳定性检查 | 修正 `smoke-cds-agent-one-cycle.sh`：默认跳过 legacy branch-local alias probe，除非显式 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` | `/tmp/cds-agent-cycle-20260519000019/cycle-summary.json` | 约 17s 暴露问题 | 旧 alias 不再作为 R0 主路径验收 |
 | 00:03 | commercial-readiness 后端事实源仍把 CDS pairing runtime 缺 Anthropic key 判为 R0 | 修正 `InfraAgentSessionsController` 的 R0 readiness：CDS-managed runtime capacity/ownership 已存在且只缺 provider key时，R0=pass、currentBlockingGate=R1；补 controller test | `InfraAgentSessionsControllerTests` | 19/19 pass | 本地后端事实源已校准；远程需部署后复跑 one-cycle |
+| 00:08 | 远程后端事实源需要验证 | CDS 自动部署 `8ebe22e1` 后运行 commercial readiness | `/tmp/cds-agent-commercial-readiness-current.json` | 15s | R0 pass；R1 pending；S1/S2/S3 pending；V1 reachable |
+| 00:10 | one-cycle 仍在 R1 未通过时硬跑 provider-gated S1/S2/S3，并且视觉断言等旧文案 | 修正 one-cycle：provider calls 未显式开启时跳过 S1/S2/S3；修正视觉脚本验证当前页面的执行链路/CDS Runtime/模型需调整等信号 | `scripts/smoke-cds-agent-one-cycle.sh`、`scripts/smoke-cds-agent-workbench-visual.sh` | 视觉单跑 30s | V1 视觉通过，截图 `/tmp/cds-agent-workbench-visual-current.png` |
+| 00:15 | 需要当前 HEAD 的完整周期证据 | 重跑 one-cycle dry-run，不调用 provider，不部署 | `/tmp/cds-agent-cycle-20260519001522/cycle-summary.json` | 77s | `blocked_r1`，失败数 0；R0/A0/V1/N6 pass；R1/S1/S2/S3 pending/skipped |
 
 ## 本轮暴露的问题
 

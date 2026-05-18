@@ -100,13 +100,12 @@ esac
 
 assert_nonempty "$(jq -r '.providerPrerequisites.status // ""' "$json_index")" "providerPrerequisites.status"
 assert_eq "$(jq -r '.visualCoverage.assertionsPassed // false' "$json_index")" "true" "visualCoverage.assertionsPassed"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "部署判定" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "命令性质" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Provider 调用" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Legacy loop import" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "lazy-explicit-fallback" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "R1 dry-run" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "不会触发真实 provider 调用" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "执行链路" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "CDS Runtime" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "模型需调整" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Claude/Anthropic" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "MAP 会话" "visualCoverage.required"
+assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Worker Sandbox" "visualCoverage.required"
 provider_calls_requested=$(jq -r 'if (.providerPrerequisites | has("providerCallsRequested")) then (.providerPrerequisites.providerCallsRequested | tostring) else "" end' "$json_index")
 r1_repair_key_provided=$(jq -r 'if (.providerPrerequisites | has("r1RepairKeyProvided")) then (.providerPrerequisites.r1RepairKeyProvided | tostring) else "" end' "$json_index")
 can_collect_provider_smokes=$(jq -r 'if (.providerPrerequisites | has("canCollectProviderSmokes")) then (.providerPrerequisites.canCollectProviderSmokes | tostring) else "" end' "$json_index")

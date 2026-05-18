@@ -123,7 +123,7 @@ ssh root@62.146.168.225
 | `R0V_MANAGED_RUNTIME_POSTCHECK` | done | live evidence 显示 branch isolation clean，CDS-managed runtime capacity available |
 | `CDS_MANAGED_RUNTIME_CAPACITY` | pass_live | `/tmp/cds-agent-runtime-live-apply-current.json` 与 `/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json` 显示 `runningOfficialSdkRuntimeCount=1` |
 | `R1_DRY_RUN_GUARDS` | pass_dry_run | `/tmp/cds-agent-r1-dryrun-current.json` 显示 Anthropic 官方模板、缺 key guard、非 Anthropic key 拦截均通过 |
-| `ONE_CYCLE_FACT_SOURCE` | local_fix_ready | 本地已修正 one-cycle/R0/readiness 把缺 `ANTHROPIC_API_KEY` 归入 R1；远程需部署后复跑 one-cycle |
+| `ONE_CYCLE_FACT_SOURCE` | pass_remote_dry_run | `/tmp/cds-agent-cycle-20260519001522/cycle-summary.json` 显示 `R0=pass A0=pass R1=pending V1=pass N6=pass`，失败数 0 |
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
 | `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行；也可直接提供其他可 pull registry image |
