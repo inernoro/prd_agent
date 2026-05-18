@@ -457,7 +457,11 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     revealTimersRef.current.delete(parentId);
     const slot = slotsRef.current.get(parentId);
     const buf = pendingByParentRef.current.get(parentId) ?? [];
-    const node = buf.shift();
+    // 与 flushPending 去重逻辑保持一致：跳过已落位的重复节点（SSE 偶发重发 /
+    // 与 flushPending 抢同一缓冲），避免重复 React Flow 节点 + nodeCount 多计
+    const existing = new Set(backendNodesRef.current.map(n => n.id));
+    let node = buf.shift();
+    while (node && existing.has(node.id)) node = buf.shift();
     if (!node || !slot) {
       cleanupParent(parentId);
       buildFlow();
@@ -514,6 +518,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       },
       onDone: (data) => {
         const pid = emergeAnchorRef.current;
+        emergeAnchorRef.current = null; // 防止陈旧锚点把后续探索的节点误导到无槽 key
         if (pid) finishGeneration(pid);
         const d = data as { totalNew?: number; error?: string };
         if (d.error) toast.error('涌现失败', d.error);
@@ -522,6 +527,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       },
       onError: (msg) => {
         const pid = emergeAnchorRef.current;
+        emergeAnchorRef.current = null; // 防止陈旧锚点把后续探索的节点误导到无槽 key
         // 已到达的持久化节点先落位再收尾，避免丢节点（Bugbot medium）
         if (pid) { flushPending(pid); cleanupParent(pid); buildFlow(); }
         toast.error('涌现失败', msg);
