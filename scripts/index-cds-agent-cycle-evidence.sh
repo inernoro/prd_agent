@@ -42,6 +42,18 @@ fi
 cycle_dir="$(cd "$(dirname "$summary")" && pwd)"
 json_out="$cycle_dir/evidence-index.json"
 md_out="$cycle_dir/evidence-index.md"
+r1_report="$(jq -r '.r1.report // ""' "$summary")"
+r1_details_json='null'
+if [[ -n "$r1_report" && -f "$r1_report" ]]; then
+  r1_details_json=$(jq -c '{
+    status: (.status // "unknown"),
+    targetTemplateId: (.targetTemplateId // ""),
+    defaultProfile: (.evidence.defaultProfile // null),
+    repairPlan: (.evidence.repairPlan // null),
+    targetTemplate: (.evidence.targetTemplate // null),
+    providerKeyReceived: (.evidence.providerKeyReceived // false)
+  }' "$r1_report")
+fi
 
 jq -n \
   --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -58,6 +70,7 @@ jq -n \
   --arg controlsLog "$cycle_dir/s2-s3-controls.log" \
   --arg visualLog "$cycle_dir/v1-visual.log" \
   --arg n6Log "$cycle_dir/n6-non-code-boundary.log" \
+  --argjson r1Details "$r1_details_json" \
   --argjson s "$(jq '.' "$summary")" \
   '{
     schemaVersion: "cds-agent-cycle-evidence-index/v1",
@@ -73,6 +86,16 @@ jq -n \
     deploymentAdvice: ($s.deploymentAdvice // ""),
     failure: ($s.failure // null),
     nextCommand: ($s.nextCommand // ""),
+    providerReadiness: {
+      status: ($s.commercialGates.R1.status // "unknown"),
+      reportStatus: ($r1Details.status // "unknown"),
+      defaultProfile: ($r1Details.defaultProfile // null),
+      compatibilityReasonCode: ($r1Details.defaultProfile.compatibilityReasonCode // null),
+      compatibilityReason: ($r1Details.defaultProfile.compatibilityReason // $r1Details.defaultProfile.warning // null),
+      compatibilityNextActions: ($r1Details.defaultProfile.compatibilityNextActions // []),
+      targetTemplate: ($r1Details.targetTemplate // null),
+      targetTemplateId: ($r1Details.targetTemplateId // "")
+    },
     executionPanel: ($s.executionPanel // null),
     gates: ($s.commercialGates // {}),
     gatesNotPass: ($s.commercialGatesNotPass // []),
@@ -122,6 +145,7 @@ jq -r \
   "- Host: `" + .host + "`" + (if (.target.source // "") != "" then " (`" + (.target.source // "") + "`)" else "" end) + "\n" +
   "- Blocking gate: `" + (.executionPanel.currentBlockingGate // "unknown") + "`\n" +
   "- Blocking reason: " + (.blockingReason // "") + "\n" +
+  (if (.providerReadiness.compatibilityReasonCode // "") != "" then "- R1 reason: `" + (.providerReadiness.compatibilityReasonCode // "") + "` — " + (.providerReadiness.compatibilityReason // "") + "\n" else "" end) +
   (if (.failure.kind // "none") != "none" then "- Failure kind: `" + (.failure.kind // "unknown") + "`\n" else "" end) +
   (if (.failure.advice // "") != "" then "- Failure advice: " + (.failure.advice // "") + "\n" else "" end) +
   "- Deploy/build advice: " + (.deploymentAdvice // "") + "\n" +
