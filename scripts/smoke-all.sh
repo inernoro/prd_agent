@@ -16,9 +16,10 @@
 #   10. smoke-cds-agent-official-sdk-controls.sh — CDS Agent S2/S3 readiness / gated controls
 #   11. smoke-cds-agent-workbench-visual.sh — CDS Agent V1 authenticated visual evidence (optional auth)
 #   12. smoke-cds-agent-non-code-compatibility.sh — 非代码 agent 兼容边界
-#   13. smoke-prd-agent.sh     — PRD 会话/Run 链路
-#   14. smoke-defect-agent.sh  — 缺陷 CRUD
-#   15. smoke-report-agent.sh — 周报 CRUD
+#   13. smoke-cds-agent-evidence-index.sh — CDS Agent one-cycle evidence index quality
+#   14. smoke-prd-agent.sh     — PRD 会话/Run 链路
+#   15. smoke-defect-agent.sh  — 缺陷 CRUD
+#   16. smoke-report-agent.sh — 周报 CRUD
 #
 # 每个子脚本独立返回 0/非 0;本脚本累计失败数,最后汇总。
 # 任意子脚本失败不中断后续 —— 让使用者一次跑完能看到所有问题,而
@@ -31,7 +32,7 @@
 #     bash scripts/smoke-all.sh
 #
 # 跳过某个子 Agent (例如本地没配周报):
-#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-sidecar-alias,cds-agent-boundary,cds-agent-templates,cds-agent-r1-repair,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,cds-agent-visual,cds-agent-non-code-compat,prd-agent,defect,report
+#   SMOKE_SKIP="report"   # 用逗号或空格分隔: health,cds-agent-runtime,cds-agent-sidecar-alias,cds-agent-boundary,cds-agent-templates,cds-agent-r1-repair,cds-agent-preflight,cds-agent-readiness,cds-agent-s1,cds-agent-controls,cds-agent-visual,cds-agent-non-code-compat,cds-agent-evidence-index,prd-agent,defect,report
 #
 # CI 环境建议: fail-fast 的话把 SMOKE_FAIL_FAST=1 设上,首次失败即退出。
 # ============================================
@@ -57,6 +58,7 @@ declare -a SMOKES=(
   "cds-agent-controls|$SCRIPT_DIR/smoke-cds-agent-official-sdk-controls.sh|CDS Agent Official SDK Controls"
   "cds-agent-visual|$SCRIPT_DIR/smoke-cds-agent-workbench-visual.sh|CDS Agent Workbench Visual"
   "cds-agent-non-code-compat|$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh|CDS Agent Non-code Compatibility"
+  "cds-agent-evidence-index|$SCRIPT_DIR/smoke-cds-agent-evidence-index.sh|CDS Agent Evidence Index"
   "prd-agent|$SCRIPT_DIR/smoke-prd-agent.sh|PRD Agent"
   "defect|$SCRIPT_DIR/smoke-defect-agent.sh|Defect Agent"
   "report|$SCRIPT_DIR/smoke-report-agent.sh|Report Agent"

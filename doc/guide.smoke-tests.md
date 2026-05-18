@@ -344,6 +344,13 @@ bash scripts/smoke-cds-agent-one-cycle.sh
 
 one-cycle 还会生成 `evidence-index.json` 和 `evidence-index.md`。这是给人工排障和交付复盘看的
 诊断包入口，聚合 summary、gates、当前阻塞、下一条命令、最慢步骤、截图、R1/S1/S2/S3 报告和关键日志路径。
+它必须显示 `remoteCdsBranch`，包括 GitHub commit、runtime commit、deployCount、runtime relation 和 deploy advice；
+也必须显示 R1 修复路径，包括当前 profile、目标 Anthropic 模板、`api_key_required` 缺 key 保护、provider key 是否收到和 test-before-promote 语义。
+可以用下面的本地 smoke 锁住 evidence index 质量：
+
+```bash
+bash scripts/smoke-cds-agent-evidence-index.sh /tmp/cds-agent-cycle-.../cycle-summary.json
+```
 
 `cycle-summary.json.commercialGates` 会把验收语义拆开：
 
