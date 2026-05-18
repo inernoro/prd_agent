@@ -196,6 +196,11 @@ public static class AdminPermissionCatalog
     public const string PrReviewUse = "pr-review.use";
 
     /// <summary>
+    /// 赋码产线 Agent 权限：产线采集关联与示意图生成
+    /// </summary>
+    public const string MarkingLineAgentUse = "marking-line-agent.use";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -318,6 +323,8 @@ public static class AdminPermissionCatalog
         new(ReviewAgentAppealReview, "产品评审智能体-申诉受理", "审理用户对评审结果的申诉（通过 / 驳回）"),
 
         new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
+
+        new(MarkingLineAgentUse, "赋码产线智能体", "产线采集关联说明与工业示意风格示意图生成"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),

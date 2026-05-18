@@ -25,6 +25,7 @@ globs: ["prd-api/src/**/*.cs"]
 | `report-agent` | 周报管理 |
 | `review-agent` | 产品评审员 |
 | `pr-review` | PR 审查工作台 |
+| `marking-line-agent` | 赋码产线 |
 
 ## 水印配置
 

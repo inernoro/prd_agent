@@ -29,7 +29,8 @@ public static class AdminMenuCatalog
         new("my-assets", "/my-assets", "我的资源", "图片、文档与附件", "FolderHeart", 40, "personal"),
         new("web-pages", "/web-pages", "网页托管", "创建与管理网页", "Globe", 45, "personal"),
         new("document-store", "/document-store", "知识库", "文档存储与知识管理", "Library", 46, "personal"),
-        new("emergence", "/emergence", "涌现探索", "可视化功能涌现与创意探索", "Sparkle", 47, "personal"),
+        new("marking-line-agent", "/marking-line-agent", "赋码产线", "瓶箱码采集关联与产线示意", "Factory", 47, "personal"),
+        new("emergence", "/emergence", "涌现探索", "可视化功能涌现与创意探索", "Sparkle", 48, "personal"),
 
         // ── 系统管理 (admin) ──
         new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),

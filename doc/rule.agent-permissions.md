@@ -34,6 +34,7 @@
 | 周报 Agent | `report-agent.use` | 周报创建与管理 |
 | 工作流引擎 | `workflow-agent.use` | 自动化工作流 |
 | 数据迁移 Agent | `data-migration-agent.use` | 数据映射与迁移 |
+| 赋码产线 Agent | `marking-line-agent.use` | 产线采集关联与示意图生成 |
 
 ### 1.2 Agent 管理权限（`{app-key}.manage`）
 
