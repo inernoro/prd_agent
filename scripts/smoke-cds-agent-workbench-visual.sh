@@ -164,6 +164,7 @@ class CdpSocket {
     this.nextId = 1;
     this.pending = new Map();
     this.buffer = Buffer.alloc(0);
+    this.events = [];
   }
 
   connect() {
@@ -243,8 +244,42 @@ class CdpSocket {
         this.pending.delete(msg.id);
         if (msg.error) reject(new Error(`${msg.error.code}: ${msg.error.message}`));
         else resolve(msg.result);
+      } else if (msg.method) {
+        this.recordEvent(msg);
       }
     }
+  }
+
+  recordEvent(msg) {
+    if (![
+      'Runtime.exceptionThrown',
+      'Runtime.consoleAPICalled',
+      'Log.entryAdded',
+      'Network.loadingFailed'
+    ].includes(msg.method)) return;
+    this.events.push(msg);
+    if (this.events.length > 40) this.events.shift();
+  }
+
+  eventSummary() {
+    return this.events.map((event) => {
+      if (event.method === 'Runtime.exceptionThrown') {
+        const details = event.params?.exceptionDetails || {};
+        return `exception: ${details.text || ''} ${details.exception?.description || details.exception?.value || ''}`.trim();
+      }
+      if (event.method === 'Runtime.consoleAPICalled') {
+        const args = (event.params?.args || []).map((arg) => arg.value || arg.description || arg.type).join(' ');
+        return `console.${event.params?.type || 'log'}: ${args}`.trim();
+      }
+      if (event.method === 'Log.entryAdded') {
+        const entry = event.params?.entry || {};
+        return `log.${entry.level || 'info'}: ${entry.text || ''}`.trim();
+      }
+      if (event.method === 'Network.loadingFailed') {
+        return `network.failed: ${event.params?.errorText || ''} ${event.params?.blockedReason || ''}`.trim();
+      }
+      return event.method;
+    }).filter(Boolean).slice(-12);
   }
 
   send(method, params = {}, sessionId = undefined) {
@@ -305,6 +340,8 @@ async function main() {
     const send = (method, params = {}) => cdp.send(method, params, sessionId);
     await send('Page.enable');
     await send('Runtime.enable');
+    await send('Log.enable');
+    await send('Network.enable');
     if (authMode === 'ai-access-key') {
       await send('Page.addScriptToEvaluateOnNewDocument', {
         source: `
@@ -371,7 +408,7 @@ async function main() {
       awaitPromise: true
     });
     await send('Page.navigate', { url });
-    await waitForWorkbench(send);
+    await waitForWorkbench(send, cdp);
     const textResult = await send('Runtime.evaluate', {
       expression: 'document.body.innerText',
       returnByValue: true
@@ -436,7 +473,7 @@ async function waitForReady(send) {
   throw new Error('Page did not reach readyState=complete');
 }
 
-async function waitForWorkbench(send) {
+async function waitForWorkbench(send, cdp) {
   const deadline = Date.now() + 45000;
   let lastText = '';
   while (Date.now() < deadline) {
@@ -468,7 +505,9 @@ async function waitForWorkbench(send) {
     const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     fs.writeFileSync(screenshot.replace(/\.png$/i, '.failure.png'), Buffer.from(shot.data, 'base64'));
   } catch {}
-  throw new Error(`Workbench runtime debug panel did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}`);
+  const eventSummary = cdp.eventSummary();
+  const suffix = eventSummary.length ? `; events=${eventSummary.join(' | ')}` : '';
+  throw new Error(`Workbench runtime debug panel did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}${suffix}`);
 }
 
 main().catch((err) => {
