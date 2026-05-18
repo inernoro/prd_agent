@@ -85,6 +85,17 @@ assert_nonempty "$(jq -r '.remoteCdsBranch.runtimeCommitSha // ""' "$json_index"
 assert_nonempty "$(jq -r '.remoteCdsBranch.runtimeRelation // ""' "$json_index")" "remoteCdsBranch.runtimeRelation"
 assert_contains "$(jq -r '.remoteCdsBranch.deployAdvice // ""' "$json_index")" "self update" "remoteCdsBranch.deployAdvice"
 
+assert_nonempty "$(jq -r '.providerPrerequisites.status // ""' "$json_index")" "providerPrerequisites.status"
+provider_calls_requested=$(jq -r 'if (.providerPrerequisites | has("providerCallsRequested")) then (.providerPrerequisites.providerCallsRequested | tostring) else "" end' "$json_index")
+r1_repair_key_provided=$(jq -r 'if (.providerPrerequisites | has("r1RepairKeyProvided")) then (.providerPrerequisites.r1RepairKeyProvided | tostring) else "" end' "$json_index")
+can_collect_provider_smokes=$(jq -r 'if (.providerPrerequisites | has("canCollectProviderSmokes")) then (.providerPrerequisites.canCollectProviderSmokes | tostring) else "" end' "$json_index")
+[[ "$provider_calls_requested" == "true" || "$provider_calls_requested" == "false" ]] || fail "providerPrerequisites.providerCallsRequested must be boolean"
+[[ "$r1_repair_key_provided" == "true" || "$r1_repair_key_provided" == "false" ]] || fail "providerPrerequisites.r1RepairKeyProvided must be boolean"
+[[ "$can_collect_provider_smokes" == "true" || "$can_collect_provider_smokes" == "false" ]] || fail "providerPrerequisites.canCollectProviderSmokes must be boolean"
+if [[ "$provider_calls_requested" == "false" || "$r1_repair_key_provided" == "false" ]]; then
+  assert_eq "$can_collect_provider_smokes" "false" "providerPrerequisites.canCollectProviderSmokes"
+fi
+
 assert_nonempty "$(jq -r '.r1Repair.status // ""' "$json_index")" "r1Repair.status"
 assert_nonempty "$(jq -r '.r1Repair.currentProfile.name // ""' "$json_index")" "r1Repair.currentProfile.name"
 assert_nonempty "$(jq -r '.r1Repair.currentProfile.protocol // ""' "$json_index")" "r1Repair.currentProfile.protocol"
@@ -92,10 +103,14 @@ assert_nonempty "$(jq -r '.r1Repair.currentProfile.model // ""' "$json_index")" 
 assert_nonempty "$(jq -r '.r1Repair.targetTemplate.id // .r1Repair.repairPlan.targetTemplateId // ""' "$json_index")" "r1Repair.targetTemplate"
 assert_eq "$(jq -r '.r1Repair.missingKeyGuard.errorCode // ""' "$json_index")" "api_key_required" "r1Repair.missingKeyGuard.errorCode"
 assert_eq "$(jq -r '.r1Repair.providerKeyReceived // false' "$json_index")" "false" "r1Repair.providerKeyReceived"
-assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.suggestedCommand"
+assert_nonempty "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "r1Repair.suggestedCommand"
+if [[ "$status" == "blocked_r1" ]]; then
+  assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.suggestedCommand"
+fi
 
 md_text=$(cat "$md_index")
 assert_contains "$md_text" "Remote CDS branch" "evidence-index.md"
+assert_contains "$md_text" "Provider prerequisites" "evidence-index.md"
 assert_contains "$md_text" "R1 Repair Path" "evidence-index.md"
 assert_contains "$md_text" "Missing-key guard: \`api_key_required\`" "evidence-index.md"
 assert_contains "$md_text" "Test-before-promote" "evidence-index.md"

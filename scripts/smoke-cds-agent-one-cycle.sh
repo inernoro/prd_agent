@@ -208,6 +208,8 @@ finish_cycle() {
   local controls_details_json="null"
   local provider_calls_enabled=false
   local r1_repair_apply=false
+  local provider_prerequisite_status="readiness_only"
+  local provider_prerequisite_advice="Provider calls are disabled; set SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 after R1 is pass."
   local cycle_status="pending"
   local next_command=""
   local pending_has_r1=false
@@ -296,6 +298,16 @@ finish_cycle() {
   fi
   if [[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
     r1_repair_apply=true
+  fi
+  if [[ "$provider_calls_enabled" == "true" && "$r1_repair_apply" == "true" ]]; then
+    provider_prerequisite_status="provider_and_r1_repair_requested"
+    provider_prerequisite_advice="This cycle may close R1 and collect S1/S2/S3 only if the supplied Anthropic key passes backend test-before-promote."
+  elif [[ "$provider_calls_enabled" == "true" ]]; then
+    provider_prerequisite_status="provider_requested_without_r1_repair_key"
+    provider_prerequisite_advice="Provider calls were requested, but no SMOKE_CDS_AGENT_ANTHROPIC_API_KEY was provided; R1 cannot be repaired by this cycle."
+  elif [[ "$r1_repair_apply" == "true" ]]; then
+    provider_prerequisite_status="r1_repair_key_without_provider_calls"
+    provider_prerequisite_advice="An Anthropic key was provided for R1 repair, but S1/S2/S3 provider smokes remain disabled until SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1."
   fi
 
   if remote_status_raw=$(read_remote_branch_status); then
@@ -554,6 +566,8 @@ finish_cycle() {
     --arg failureKind "$failure_kind" \
     --arg failureAdvice "$failure_advice" \
     --arg narrowRerunCommand "$narrow_rerun_command" \
+    --arg providerPrerequisiteStatus "$provider_prerequisite_status" \
+    --arg providerPrerequisiteAdvice "$provider_prerequisite_advice" \
     --arg remoteBranchObserved "$remote_branch_observed" \
     --arg remoteBranchId "$remote_branch_id" \
     --arg remoteBranchStatus "$remote_branch_status" \
@@ -687,6 +701,14 @@ finish_cycle() {
       exitCode: $exitCode,
       providerCallsEnabled: $providerCallsEnabled,
       r1RepairApply: $r1RepairApply,
+      providerPrerequisites: {
+        status: $providerPrerequisiteStatus,
+        advice: $providerPrerequisiteAdvice,
+        providerCallsRequested: $providerCallsEnabled,
+        r1RepairKeyProvided: $r1RepairApply,
+        canAttemptR1Repair: $r1RepairApply,
+        canCollectProviderSmokes: ($providerCallsEnabled and $r1RepairApply)
+      },
       readiness: {
         overall: $readinessOverall,
         report: $readinessReport,
@@ -782,6 +804,7 @@ finish_cycle() {
   printf 'Evidence dir: %s\n' "$SMOKE_CDS_AGENT_CYCLE_DIR"
   printf 'Cycle status: %s\n' "$cycle_status"
   printf 'Commercial complete: %s\n' "$commercial_complete"
+  printf 'Provider prerequisites: %s · %s\n' "$provider_prerequisite_status" "$provider_prerequisite_advice"
   if [[ -n "$blocking_reason" ]]; then
     printf 'Blocking reason: %s\n' "$blocking_reason"
   fi

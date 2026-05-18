@@ -88,6 +88,14 @@ jq -n \
     deploymentAdvice: ($s.deploymentAdvice // ""),
     failure: ($s.failure // null),
     nextCommand: ($s.nextCommand // ""),
+    providerPrerequisites: ($s.providerPrerequisites // {
+      status: (if ($s.providerCallsEnabled // false) then "provider_requested_legacy_summary" else "readiness_only" end),
+      advice: "",
+      providerCallsRequested: ($s.providerCallsEnabled // false),
+      r1RepairKeyProvided: ($s.r1RepairApply // false),
+      canAttemptR1Repair: ($s.r1RepairApply // false),
+      canCollectProviderSmokes: (($s.providerCallsEnabled // false) and ($s.r1RepairApply // false))
+    }),
     providerReadiness: ($s.providerReadiness // {
       status: ($s.commercialGates.R1.status // "unknown"),
       reportStatus: ($r1Details.status // "unknown"),
@@ -162,6 +170,8 @@ jq -r \
     "- Remote CDS branch: `not observed`\n"
   end) +
   "- Host: `" + .host + "`" + (if (.target.source // "") != "" then " (`" + (.target.source // "") + "`)" else "" end) + "\n" +
+  "- Provider prerequisites: `" + (.providerPrerequisites.status // "unknown") + "` providerCallsRequested=`" + ((.providerPrerequisites.providerCallsRequested // false)|tostring) + "` r1RepairKeyProvided=`" + ((.providerPrerequisites.r1RepairKeyProvided // false)|tostring) + "` canCollectProviderSmokes=`" + ((.providerPrerequisites.canCollectProviderSmokes // false)|tostring) + "`\n" +
+  (if (.providerPrerequisites.advice // "") != "" then "- Provider prerequisite advice: " + (.providerPrerequisites.advice // "") + "\n" else "" end) +
   "- Blocking gate: `" + (.executionPanel.currentBlockingGate // "unknown") + "`\n" +
   "- Blocking reason: " + (.blockingReason // "") + "\n" +
   (if (.providerReadiness.compatibilityReasonCode // "") != "" then "- R1 reason: `" + (.providerReadiness.compatibilityReasonCode // "") + "` — " + (.providerReadiness.compatibilityReason // "") + "\n" else "" end) +
