@@ -49,6 +49,10 @@ registry_image="${CDS_AGENT_SIDECAR_IMAGE:-$current_image}"
 CDS_AGENT_SIDECAR_IMAGE="$registry_image" \
   "$SCRIPT_DIR/verify-cds-agent-sidecar-registry-image.sh" >/dev/null || true
 
+# Optional read-only GitHub Actions check. Default is dry-run and does not call
+# GitHub unless CDS_AGENT_WORKFLOW_CHECK=1 is set.
+"$SCRIPT_DIR/check-cds-agent-sidecar-workflow.sh" >/dev/null || true
+
 "$SCRIPT_DIR/preflight-cds-agent-r0-apply-readiness.sh" >/dev/null
 "$SCRIPT_DIR/print-cds-agent-r0-operator-handoff.sh" >/dev/null
 CDS_AGENT_LIFECYCLE_OVERVIEW="$LIFECYCLE_OUTPUT" \
@@ -57,6 +61,7 @@ CDS_AGENT_LIFECYCLE_OVERVIEW="$LIFECYCLE_OUTPUT" \
 
 readiness="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 registry_report="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
+workflow_report="${CDS_AGENT_WORKFLOW_REPORT:-/tmp/cds-agent-sidecar-workflow-current.json}"
 operator_handoff="${CDS_AGENT_R0_OPERATOR_HANDOFF:-/tmp/cds-agent-r0-operator-handoff-current.md}"
 publish_handoff="${CDS_AGENT_SIDECAR_PUBLISH_HANDOFF:-/tmp/cds-agent-sidecar-publish-handoff-current.md}"
 
@@ -66,6 +71,8 @@ missing_config="unknown"
 registry_status="unknown"
 registry_visible="unknown"
 remote_pull_status="unknown"
+workflow_status="unknown"
+workflow_run="unknown"
 if [[ -f "$readiness" ]]; then
   ready_for_r0="$(jq -r '.readyForR0Apply // false' "$readiness")"
   next_action="$(jq -r '.nextAction // "unknown"' "$readiness")"
@@ -73,6 +80,10 @@ if [[ -f "$readiness" ]]; then
   registry_status="$(jq -r '.imageReadiness.registryManifest.status // "unknown"' "$readiness")"
   registry_visible="$(jq -r '.imageReadiness.registryManifest.visible // false' "$readiness")"
   remote_pull_status="$(jq -r '.imageReadiness.remotePull.status // "unknown"' "$readiness")"
+fi
+if [[ -f "$workflow_report" ]]; then
+  workflow_status="$(jq -r '.status // "unknown"' "$workflow_report")"
+  workflow_run="$(jq -r '.latestRun.id // "none"' "$workflow_report")"
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
@@ -88,10 +99,13 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- missingConfig: `%s`\n' "${missing_config:-none}"
   printf -- '- registryManifestStatus: `%s`\n' "$registry_status"
   printf -- '- registryManifestVisible: `%s`\n' "$registry_visible"
+  printf -- '- workflowStatus: `%s`\n' "$workflow_status"
+  printf -- '- workflowRun: `%s`\n' "$workflow_run"
   printf -- '- remotePullStatus: `%s`\n\n' "$remote_pull_status"
 
   printf '## Evidence\n\n'
   printf -- '- publish handoff: `%s`\n' "$publish_handoff"
+  printf -- '- workflow report: `%s`\n' "$workflow_report"
   printf -- '- registry report: `%s`\n' "$registry_report"
   printf -- '- readiness report: `%s`\n' "$readiness"
   printf -- '- operator handoff: `%s`\n' "$operator_handoff"

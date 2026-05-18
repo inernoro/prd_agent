@@ -26,7 +26,8 @@
 - 已解决：sidecar image 发布后到 remote host SSH pull 前增加只读 registry manifest 验证门，减少远程排障面。
 - 已解决：R0 readiness 与 operator handoff 已消费 registry manifest / remote pull 报告，能显示它们是否匹配当前 `CDS_AGENT_SIDECAR_IMAGE`。
 - 已解决：R0 operator handoff 优先显示当前 HEAD 对应 GHCR image，旧 publish report candidate 不再覆盖当前发布目标。
-- 已解决：新增一键只读 R0 状态刷新入口，统一刷新 handoff/readiness/operator/lifecycle/progress，减少旧 `/tmp` 证据干扰。
+- 已解决：新增一键只读 R0 状态刷新入口，统一刷新 handoff/workflow/readiness/operator/lifecycle/progress，减少旧 `/tmp` 证据干扰。
+- 已解决：新增 GitHub Actions workflow 状态检查脚本，默认 dry-run；显式开启后把 workflow 404/API 失败写入结构化报告。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -69,6 +70,7 @@
 | 20:10 | readiness 仍只看 image 是否提供，不看 registry manifest / remote pull 是否属于当前 image | `preflight-cds-agent-r0-apply-readiness.sh` 和 R0 handoff 增加 registryManifest/remotePull 匹配状态 | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 发布后刷新一个 readiness 即可看到 image -> manifest -> remote pull 链路 |
 | 20:11 | operator handoff 仍可能显示旧 publish report candidate，和当前 commit 的 workflow image 不一致 | handoff 从 git remote + HEAD 推导 `currentSidecarImage`，并优先作为 `imagePublishCandidate` | `/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 当前候选统一为 `ghcr.io/inernoro/prd-agent/claude-sidecar:e25e3f64a433` |
 | 20:14 | 每次提交后需要分别运行多个脚本刷新 `/tmp` 证据，容易让 progress board、handoff、readiness 不在同一 commit | 新增 `scripts/refresh-cds-agent-r0-status.sh` | `/tmp/cds-agent-r0-status-refresh-current.md` | <3s | 一个命令刷新 publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress |
+| 20:18 | 手动发布 workflow 是否存在/是否运行只能靠打开 GitHub 页面；`gh api` 当前返回 404 时没有结构化沉淀 | 新增 `scripts/check-cds-agent-sidecar-workflow.sh`，并由 refresh 脚本默认 dry-run 调用 | `/tmp/cds-agent-sidecar-workflow-current.json` | <1s dry-run；显式检查约 1s | workflow 404/API 失败会进入报告，不再散落在终端 |
 
 ## 本轮暴露的问题
 
@@ -652,6 +654,25 @@
 
 优化：日常查看入口从“跑多个脚本并人工对齐”收敛到一个只读刷新命令。
 
+### 37. GitHub Actions 发布状态需要结构化检查
+
+问题：sidecar image 推荐通过 GitHub Actions 手动发布，但 workflow 是否已被 GitHub 索引、是否有 run、最近 run 是否成功，不应靠人工打开网页判断。实际只读探测中，`gh api repos/inernoro/prd_agent/actions/...` 返回过 404，这也需要被沉淀为证据。
+
+处理：
+
+- 新增 `scripts/check-cds-agent-sidecar-workflow.sh`。
+- 默认 dry-run，不访问 GitHub。
+- 显式设置 `CDS_AGENT_WORKFLOW_CHECK=1` 后使用 `gh api` 只读查询 workflow runs。
+- 将 `dry_run_ready`、`workflow_not_found`、`api_failed`、`no_runs`、`run_in_progress`、`run_success` 写入 `/tmp/cds-agent-sidecar-workflow-current.json`。
+- `scripts/refresh-cds-agent-r0-status.sh` 默认调用该脚本 dry-run，并在总刷新报告中展示 `workflowStatus`。
+
+证据：
+
+- `/tmp/cds-agent-sidecar-workflow-current.json`。
+- `/tmp/cds-agent-r0-status-refresh-current.md` 展示 workflowStatus/workflowRun。
+
+优化：R0.0 发布链路从“打开网页看”推进到“可选只读 API 检查 + 结构化报告”。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -675,6 +696,7 @@
 | remote sidecar pull dry-run | <1s | 部分本地化 | 先校验 SSH/image 输入；显式开启后才访问目标 host 执行 docker pull |
 | dynamic exact next step | <1s | 完全可本地化 | 按 gate 顺序给下一条命令，减少人工在多个 handoff 之间判断 |
 | R0 status refresh bundle | <3s | 完全可本地化 | 一个命令刷新所有本地只读 R0 证据，减少旧 `/tmp` 文件影响判断 |
+| sidecar workflow status check | <1s dry-run；显式 API 检查约 1s | 部分本地化 | workflow 索引/运行状态进入结构化报告，避免人工打开 GitHub 页面判断 |
 
 ## 当前下一步
 

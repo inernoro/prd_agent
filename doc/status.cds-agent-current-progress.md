@@ -33,7 +33,7 @@ scripts/print-cds-agent-current-progress.sh
 scripts/print-cds-agent-lifecycle-overview.sh
 ```
 
-这些命令只读，不部署、不写远程、不输出 secret。`refresh-cds-agent-r0-status.sh` 会统一刷新 publish handoff、registry dry-run、readiness、operator handoff、lifecycle 和 progress board，避免多个 `/tmp` 证据文件停留在不同 commit。
+这些命令只读，不部署、不写远程、不输出 secret。`refresh-cds-agent-r0-status.sh` 默认只做本地刷新；只有显式设置 `CDS_AGENT_WORKFLOW_CHECK=1` 才查询 GitHub Actions 状态。它会统一刷新 publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle 和 progress board，避免多个 `/tmp` 证据文件停留在不同 commit。
 
 ## 2. 阶段总览
 
@@ -157,9 +157,10 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | progress board exact next step | `scripts/print-cds-agent-current-progress.sh` | 根据 image context/build/publish、remote pull、remote host gate 顺序动态选择下一步；当前指向确定 candidate tag 的 registry dry-run | <1s |
 | local registry tag | `/tmp/cds-agent-sidecar-image-publish-current.json` | 本地 tag 已创建，未 push、未 deploy | <1s |
 | manual CI publish workflow | `.github/workflows/cds-sidecar-image.yml` | 手动触发，默认 tag 为 commit SHA；不会随普通 push 自动发布 | local syntax/read |
+| sidecar workflow status | `/tmp/cds-agent-sidecar-workflow-current.json` | 默认 dry-run；显式 `CDS_AGENT_WORKFLOW_CHECK=1` 后只读查询 GitHub Actions workflow/runs | <1s dry-run |
 | sidecar publish handoff | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | 输出 GitHub Actions 手动发布 URL、image tag、CLI 等价命令和本机 push 替代路径 | <1s |
 | sidecar registry manifest verify | `/tmp/cds-agent-sidecar-registry-image-current.json` | 默认 dry-run；显式 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 后只读查询 GHCR manifest | <1s dry-run |
-| R0 status refresh bundle | `/tmp/cds-agent-r0-status-refresh-current.md` | 一键刷新当前 HEAD image、publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress board | <3s |
+| R0 status refresh bundle | `/tmp/cds-agent-r0-status-refresh-current.md` | 一键刷新当前 HEAD image、publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle、progress board | <3s |
 
 ## 7. 时间和问题账本
 
