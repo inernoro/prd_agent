@@ -553,6 +553,9 @@ audit_json=$(
           status: (if $gateR1 == "pass" then "proved" else "pending" end),
           gate: "R1",
           reportStatus: $r1Status,
+          compatibilityReasonCode: ($r1Details.defaultProfile.compatibilityReasonCode // null),
+          compatibilityReason: ($r1Details.defaultProfile.compatibilityReason // null),
+          compatibilityNextActions: ($r1Details.defaultProfile.compatibilityNextActions // []),
           details: $r1Details
         },
         providerBackedRuns: {
@@ -658,6 +661,14 @@ if [[ "$r1_details_json" != "null" ]]; then
     "$(jq -r '.defaultProfile.model // "unknown"' <<< "$r1_details_json")" \
     "$(jq -r 'if .defaultProfile | has("compatibleWithDesiredRuntimeAdapter") then (.defaultProfile.compatibleWithDesiredRuntimeAdapter | tostring) else "unknown" end' <<< "$r1_details_json")" \
     "$(jq -r 'if .defaultProfile | has("hasApiKey") then (.defaultProfile.hasApiKey | tostring) else "unknown" end' <<< "$r1_details_json")"
+  r1_reason_code=$(jq -r '.defaultProfile.compatibilityReasonCode // ""' <<< "$r1_details_json")
+  r1_reason=$(jq -r '.defaultProfile.compatibilityReason // .defaultProfile.warning // ""' <<< "$r1_details_json")
+  if [[ -n "$r1_reason_code" || -n "$r1_reason" ]]; then
+    printf 'R1 profile reason: %s%s%s\n' \
+      "${r1_reason_code:-unknown}" \
+      "$([[ -n "$r1_reason" ]] && printf ' · ' || true)" \
+      "$r1_reason"
+  fi
   printf 'R1 target: %s / %s / %s\n' \
     "$(jq -r '.targetTemplateId // "unknown"' <<< "$r1_details_json")" \
     "$(jq -r '.targetTemplate.protocol // "unknown"' <<< "$r1_details_json")" \
