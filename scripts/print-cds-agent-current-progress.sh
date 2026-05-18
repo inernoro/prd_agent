@@ -131,15 +131,11 @@ EOF
 )
 elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
   exact_next_step=$(cat <<'EOF'
-Provide the two R0 external inputs first. The sidecar image can come from any registry the target remote host can `docker pull`; GHCR is only an optional candidate path.
+Start the R0 CDS-managed runtime design using the completed correction plan as the boundary. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
-CDS_AGENT_SIDECAR_IMAGE=<pullable-registry-image>
-CDS_REMOTE_HOST_NAME=<name>
-CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol>
-CDS_REMOTE_HOST_SSH_USER=<ssh-user>
-CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file>
-scripts/refresh-cds-agent-r0-status.sh
+sed -n '1,140p' doc/plan.cds-agent-runtime-correction-limited.md
+scripts/check-cds-agent-progress-consistency.sh
 ```
 EOF
 )
@@ -220,7 +216,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Ready for provider smokes: $ready_smoke
 - Evidence refresh cost: ${total_seconds}s
 - R0 local apply readiness: $r0_readiness_line
-- Sidecar image readiness: $image_readiness; $image_next_action
+- Legacy fallback sidecar image readiness: $image_readiness; $image_next_action
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
 - Sidecar registry publish: $image_publish
@@ -235,18 +231,19 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | --- | --- | --- | --- |
 | A0 Official SDK adapter boundary | done | Keep legacy loop as explicit fallback only | done |
 | R0.1 Branch-local sidecar cleanup | done | Keep branch services api/admin only | done |
-| R0.2 Remote host carrier | blocked | Provide/apply remote host SSH config | 1-3 min |
-| R0.3 Shared official SDK runtime | blocked | Deploy shared sidecar image on enabled host | 2-5 min |
-| R0V Post-check | waiting | Run shared-service pool smoke after R0.2/R0.3 | 15-30 sec |
+| D1 Runtime architecture correction | done | Keep CDS-managed runtime/container/sandbox as product path | done |
+| R0.2 Operator fallback host path | fallback | Keep SSH/env/image only as CDS operator fallback | later |
+| R0.3 CDS-managed official SDK runtime | next | Redesign recovery around CDS-managed runtime facts | 20-40 min |
+| R0V Post-check | waiting | Run shared-service pool smoke after CDS-managed runtime path is corrected | 15-30 sec |
 | R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |
 
-## Current Blockers
+## Legacy Fallback Blockers
 
-- missingConfig: $missing_config
+- fallbackMissingConfig: $missing_config
 - invalidConfig: $invalid_config
-- imageReadiness: $image_readiness
+- fallbackImageReadiness: $image_readiness
 - imageBuildContext: $image_build_context
 - imageLocalBuild: $image_local_build
 - imagePublish: $image_publish

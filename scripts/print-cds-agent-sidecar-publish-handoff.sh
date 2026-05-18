@@ -53,7 +53,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- generatedAt: `%s`\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf -- '- workflow: `%s`\n' "$WORKFLOW"
   printf -- '- actionsUrl: `%s`\n' "$actions_url"
-  printf -- '- requiredImageInput: `CDS_AGENT_SIDECAR_IMAGE`\n'
+  printf -- '- operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`\n'
   printf -- '- candidateImage: `%s`\n' "$candidate_image"
   printf -- '- candidateSource: `%s`\n' "$candidate_source"
   if [[ -n "$reported_candidate" && "$reported_candidate" != "$candidate_image" ]]; then

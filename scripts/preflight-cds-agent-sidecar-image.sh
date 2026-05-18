@@ -100,14 +100,14 @@ image_value=""
 image_safe=false
 image_has_tag=false
 image_registry_qualified=false
-image_next_action="publish a pullable sidecar image and set CDS_AGENT_SIDECAR_IMAGE"
+image_next_action="operator fallback only: publish a pullable image only when explicitly using fallback recovery"
 
 if [[ -n "${CDS_AGENT_SIDECAR_IMAGE:-}" ]]; then
   image_value="$CDS_AGENT_SIDECAR_IMAGE"
   if safe_docker_image_ref "$CDS_AGENT_SIDECAR_IMAGE"; then
     image_safe=true
     image_status="provided_unverified"
-    image_next_action="verify the target remote host can docker pull this image"
+    image_next_action="operator fallback only: verify the target remote host can docker pull this image"
   else
     image_status="invalid"
     image_next_action="use only CDS-safe docker image characters: [a-zA-Z0-9._-/:@]"

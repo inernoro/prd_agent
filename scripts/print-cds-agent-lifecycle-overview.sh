@@ -117,7 +117,7 @@ $deployment_advice
 | --- | --- | --- | --- | --- |
 | 1 | Design and boundary: MAP/CDS as control plane, official SDK owns loop | $(stage_state "$a0") | A0=$a0, adapter boundary smoke | Keep legacy loop explicit fallback only |
 | 2 | Other-agent compatibility | $(stage_state "$n6") | N6=$n6, non-code/candidate SDK smoke | Re-run after provider cycle |
-| 3 | R0 shared official SDK runtime pool | $(stage_state "$r0") | R0=$r0, readyForR0Apply=$ready_for_r0 | Provide remote host SSH config and sidecar image |
+| 3 | R0 CDS-managed official SDK runtime pool | $(stage_state "$r0") | R0=$r0, readyForR0Apply=$ready_for_r0 | Redesign runtime facts inside CDS; SSH/image are fallback only |
 | 4 | R1 Anthropic/Claude profile | $(stage_state "$r1") | R1=$r1 | Configure compatible default profile after R0 |
 | 5 | S1 provider read-only run | $(stage_state "$s1") | S1=$s1 | Run after R0/R1 with explicit provider opt-in |
 | 6 | S2/S3 approval and interrupt controls | $(stage_state "$s2s3") | S2S3=$s2s3 | Run approval/stop smokes after S1 |
@@ -127,10 +127,10 @@ $deployment_advice
 ## Distance To Target
 
 - Done: A0 official SDK boundary; N6 compatibility; progress/audit/handoff observability.
-- Blocking now: R0 remote runtime pool.
+- Blocking now: R0 CDS-managed runtime pool.
 - Not yet started in current valid cycle: R1, S1, S2/S3, final live V1.
-- Missing R0 inputs: $missing_config
-- Sidecar image readiness: $image_readiness; $image_next_action
+- Legacy fallback missing inputs: $missing_config
+- Legacy fallback sidecar image readiness: $image_readiness; $image_next_action
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
 - Sidecar registry publish: $image_publish

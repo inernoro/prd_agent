@@ -166,13 +166,13 @@ if [[ "$invalid_count" -eq 0 ]]; then
   fi
 fi
 
-next_action="provide missing env before apply"
+next_action="start R0 CDS-managed runtime design before any fallback env handoff"
 if [[ "$invalid_count" -gt 0 ]]; then
-  next_action="fix invalid env before any apply"
+  next_action="fix invalid fallback env before any operator apply"
 elif [[ "$ready_for_r0_apply" == "true" ]]; then
-  next_action="run remote host apply + shared runtime deploy with evidence"
+  next_action="operator fallback ready: run remote host apply + shared runtime deploy with evidence"
 elif [[ "$ready_for_host_apply" == "true" ]]; then
-  next_action="provide CDS_AGENT_SIDECAR_IMAGE before shared runtime deploy"
+  next_action="operator fallback image input required before shared runtime deploy"
 fi
 
 mkdir -p "$(dirname "$REPORT")"

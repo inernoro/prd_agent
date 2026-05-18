@@ -102,20 +102,25 @@ fi
 if [[ "$ready_for_r0" != "true" ]]; then
   if [[ "$workflow_status" == "workflow_file_on_branch_not_indexed" && "$registry_visible" != "true" ]]; then
     user_action_required=true
-    user_action_reason="sidecar image is not published; GitHub Actions is only one optional publish path and its workflow exists only on a non-indexed branch"
-    unblock_option_a="merge or expose .github/workflows/cds-sidecar-image.yml on a GitHub Actions dispatchable branch, then run CDS_AGENT_WORKFLOW_CHECK=1 scripts/refresh-cds-agent-r0-status.sh"
-    unblock_option_b="provide any pullable CDS_AGENT_SIDECAR_IMAGE, or explicitly approve local push of $candidate_image, then verify registry manifest"
+    user_action_reason="legacy sidecar image publish evidence is incomplete; this is operator/debug fallback evidence, not the product path"
+    unblock_option_a="run doc/plan.cds-agent-runtime-correction-limited.md and keep CDS-managed runtime as the product path"
+    unblock_option_b="if operating the fallback path only, verify image publication outside the normal user path"
   elif [[ "$missing_config" == *"CDS_REMOTE_HOST_"* ]]; then
     user_action_required=true
-    user_action_reason="remote host SSH inputs are missing, so CDS cannot register an enabled host or deploy shared runtime"
-    unblock_option_a="provide CDS_REMOTE_HOST_NAME, CDS_REMOTE_HOST_HOST, CDS_REMOTE_HOST_SSH_USER, and CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE"
-    unblock_option_b="provide an existing CDS_REMOTE_HOST_ID plus a pullable CDS_AGENT_SIDECAR_IMAGE"
+    user_action_reason="legacy remote host SSH inputs are missing; SSH/env values are CDS operator/debug fallback details, not the product path"
+    unblock_option_a="run doc/plan.cds-agent-runtime-correction-limited.md and redesign R0 around CDS-managed runtime capacity"
+    unblock_option_b="use SSH/env only when explicitly operating a fallback recovery path"
   elif [[ "$missing_config" == *"CDS_AGENT_SIDECAR_IMAGE"* ]]; then
     user_action_required=true
-    user_action_reason="CDS_AGENT_SIDECAR_IMAGE is missing"
-    unblock_option_a="set CDS_AGENT_SIDECAR_IMAGE to any registry image the target remote host can docker pull"
-    unblock_option_b="provide another registry image that the remote host can docker pull"
+    user_action_reason="legacy sidecar image input is missing; image/env is an operator/debug fallback detail, not the product path"
+    unblock_option_a="run doc/plan.cds-agent-runtime-correction-limited.md and move image/profile responsibility behind CDS-managed runtime"
+    unblock_option_b="use image/env only when explicitly operating a fallback recovery path"
   fi
+fi
+
+display_next_action="$next_action"
+if [[ "$user_action_required" == "true" ]]; then
+  display_next_action="start R0 CDS-managed runtime design before any fallback env handoff"
 fi
 
 mkdir -p "$(dirname "$OUTPUT")"
@@ -124,12 +129,12 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- generatedAt: `%s`\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   printf -- '- branch: `%s`\n' "$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf unknown)"
   printf -- '- commit: `%s`\n' "$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
-  printf -- '- requiredImageInput: `CDS_AGENT_SIDECAR_IMAGE`\n'
+  printf -- '- operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`\n'
   printf -- '- imageSource: `%s`\n' "$image_source"
   printf -- '- candidateSidecarImage: `%s`\n' "$candidate_image"
   printf -- '- registryCheckImage: `%s`\n' "$registry_image"
   printf -- '- readyForR0Apply: `%s`\n' "$ready_for_r0"
-  printf -- '- nextAction: `%s`\n' "$next_action"
+  printf -- '- nextAction: `%s`\n' "$display_next_action"
   printf -- '- missingConfig: `%s`\n' "${missing_config:-none}"
   printf -- '- registryManifestStatus: `%s`\n' "$registry_status"
   printf -- '- registryManifestVisible: `%s`\n' "$registry_visible"
@@ -140,7 +145,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- userActionReason: `%s`\n\n' "$user_action_reason"
 
   if [[ "$user_action_required" == "true" ]]; then
-    printf '## Required External Action\n\n'
+    printf '## Required Correction Action\n\n'
     printf -- '- optionA: `%s`\n' "$unblock_option_a"
     printf -- '- optionB: `%s`\n\n' "$unblock_option_b"
   fi
@@ -156,14 +161,10 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Next Command\n\n'
   if [[ "$user_action_required" == "true" ]]; then
-    printf 'Provide the missing R0 external inputs, then refresh the status bundle:\n\n'
+    printf 'Start R0 CDS-managed runtime design. Remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
-    printf 'CDS_AGENT_SIDECAR_IMAGE=<pullable-registry-image> \\\n'
-    printf 'CDS_REMOTE_HOST_NAME=<name> \\\n'
-    printf 'CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol> \\\n'
-    printf 'CDS_REMOTE_HOST_SSH_USER=<ssh-user> \\\n'
-    printf 'CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file> \\\n'
-    printf 'scripts/refresh-cds-agent-r0-status.sh\n'
+    printf "sed -n '1,140p' doc/plan.cds-agent-runtime-correction-limited.md\n"
+    printf 'scripts/check-cds-agent-progress-consistency.sh\n'
     printf '```\n'
   else
     printf '```bash\n'

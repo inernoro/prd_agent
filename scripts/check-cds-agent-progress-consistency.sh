@@ -46,20 +46,23 @@ require_file "$REFRESH_OUTPUT"
 require_file "$PROGRESS_OUTPUT"
 require_file "$STATUS_DOC"
 
-require_text "$REFRESH_OUTPUT" 'requiredImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh required image input'
-require_text "$REFRESH_OUTPUT" 'nextAction: `provide missing env before apply`' 'refresh next action'
-require_text "$REFRESH_OUTPUT" 'CDS_AGENT_SIDECAR_IMAGE=<pullable-registry-image>' 'refresh next command image'
-require_text "$REFRESH_OUTPUT" 'CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol>' 'refresh next command host'
+require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
+require_text "$REFRESH_OUTPUT" 'nextAction: `start R0 CDS-managed runtime design before any fallback env handoff`' 'refresh next action'
+require_text "$REFRESH_OUTPUT" 'Start R0 CDS-managed runtime design' 'refresh R0 design next command'
+require_text "$REFRESH_OUTPUT" 'operator/debug fallback details, not the product path' 'refresh fallback scope'
+require_text "$REFRESH_OUTPUT" 'doc/plan.cds-agent-runtime-correction-limited.md' 'refresh next command plan'
 
 require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r0' 'progress overall status'
 require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R0' 'progress blocking gate'
-require_text "$PROGRESS_OUTPUT" 'Provide the two R0 external inputs first.' 'progress exact next step'
-require_text "$PROGRESS_OUTPUT" 'GHCR is only an optional candidate path.' 'progress GHCR scope'
-require_text "$PROGRESS_OUTPUT" 'CDS_AGENT_SIDECAR_IMAGE=<pullable-registry-image>' 'progress next command image'
+require_text "$PROGRESS_OUTPUT" 'Start the R0 CDS-managed runtime design using the completed correction plan as the boundary' 'progress exact next step'
+require_text "$PROGRESS_OUTPUT" 'operator/debug fallback details, not the product path' 'progress fallback scope'
+require_text "$PROGRESS_OUTPUT" 'doc/plan.cds-agent-runtime-correction-limited.md' 'progress next command plan'
+require_text "$PROGRESS_OUTPUT" '| D1 Runtime architecture correction | done |' 'progress D1 done'
+require_text "$PROGRESS_OUTPUT" '| R0.3 CDS-managed official SDK runtime | next |' 'progress R0 next'
 
-require_text "$STATUS_DOC" '当前不能按这个倒计时执行，因为 R0 仍缺外部输入' 'status doc R0 blocker'
-require_text "$STATUS_DOC" 'GHCR 只是当前仓库场景下自动推导的候选发布路径，不是架构目标' 'status doc GHCR scope'
-require_text "$STATUS_DOC" '当前指向补齐 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数' 'status doc exact next step'
+require_text "$STATUS_DOC" 'Claude SDK Agent 是 CDS-managed runtime/container/sandbox' 'status doc managed runtime'
+require_text "$STATUS_DOC" '只能作为 CDS operator/debug fallback，不能作为普通用户主路径' 'status doc fallback scope'
+require_text "$STATUS_DOC" 'doc/plan.cds-agent-runtime-correction-limited.md' 'status doc correction plan'
 
 printf 'CDS Agent progress consistency: pass\n'
 printf -- '- refresh: %s\n' "$REFRESH_OUTPUT"

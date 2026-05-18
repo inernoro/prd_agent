@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:41 Asia/Shanghai：
+截至 2026-05-18 21:53 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -22,19 +22,22 @@
 - 已解决：registry candidate tag 可由 git remote/commit 自动推导；进度面板下一步不再要求手填占位符。
 - 已解决：候选 GHCR tag 已在本地 Docker 中创建；仍未 push。
 - 已解决：GHCR 发布增加手动 GitHub Actions 入口，不再只能由本机 Codex push。
-- 已解决：GHCR 手动发布入口有只读 handoff；当明确选择 GHCR 候选路径时可用 handoff，默认 R0 下一步仍是补齐 pullable image 与 remote host 参数。
+- 已解决：GHCR 手动发布入口有只读 handoff；当明确选择 fallback 路径时可用，但默认产品下一步已纠正为 CDS-managed runtime 事实源。
 - 已解决：sidecar image 发布后到 remote host SSH pull 前增加只读 registry manifest 验证门，减少远程排障面。
 - 已解决：R0 readiness 与 operator handoff 已消费 registry manifest / remote pull 报告，能显示它们是否匹配当前 `CDS_AGENT_SIDECAR_IMAGE`。
 - 已解决：R0 operator handoff 优先显示当前 HEAD 对应 GHCR image，旧 publish report candidate 不再覆盖当前发布目标。
 - 已解决：新增一键只读 R0 状态刷新入口，统一刷新 handoff/workflow/readiness/operator/lifecycle/progress，减少旧 `/tmp` 证据干扰。
 - 已解决：新增 GitHub Actions workflow 状态检查脚本，默认 dry-run；显式开启后把 workflow 404/API 失败写入结构化报告。
 - 已确认：workflow 文件已存在于 `codex/cds-agent-workbench-ui`，但 GitHub Actions workflow API 仍不可 dispatch/list，状态为 `workflow_file_on_branch_not_indexed`。
-- 已校准：GHCR 降级为候选路径；R0 主输入是任意 remote host 可 `docker pull` 的 `CDS_AGENT_SIDECAR_IMAGE`。
+- 已校准：GHCR 降级为候选 fallback；R0 产品主线是 CDS-managed runtime/container/sandbox，不是 remote host/image 输入。
 - 已校准：`doc/status.cds-agent-current-progress.md` 第一屏现在直接回答预计结束时间、总步骤、当前位置、需要用户协助项和关键文档。
-- 已校准：进度面板 `Exact Next Step` 在缺 remote host 和 image 时不再默认指向 GHCR publish handoff，而是先要求补齐 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数。
+- 已校准：进度面板 `Exact Next Step` 在缺 legacy host/image 证据时不再要求补 env，而是先执行有限架构纠偏计划。
 - 已校准：R0 status refresh 的 `Next Command` 与进度面板同口径，不再把 GHCR publish 伪装成唯一下一步。
 - 已补齐：新增本地 progress consistency check，防止 refresh、progress board、主文档再次出现不同步的下一步。
 - 已补齐：goal audit 现在把 progress consistency 作为 D1 guardrail；同时 N6 沙箱内失败不会覆盖 canonical N6 pass summary。
+- 已纠偏：用户确认最终目标不是 `MAP -> CDS -> external agent host`，而是 `MAP -> CDS -> CDS-managed Claude SDK runtime/container/sandbox`。
+- 已纠偏：`CDS_REMOTE_HOST_*`、SSH 私钥、sidecar image、env 只能作为 operator/debug fallback，不能作为普通用户主路径，也不能写成当前产品下一步。
+- 已启动：新增有限纠偏计划 `doc/plan.cds-agent-runtime-correction-limited.md`，本轮只校准文档入口和本地事实源，不实现 runtime。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -84,6 +87,7 @@
 | 20:39 | R0 status refresh 底部 `Next Command` 仍固定指向 publish handoff，和进度面板冲突 | 调整 `scripts/refresh-cds-agent-r0-status.sh`：`userActionRequired=true` 时直接输出缺失输入刷新命令 | `/tmp/cds-agent-r0-status-refresh-current.md` | <1s | refresh 报告与 progress board 同口径 |
 | 20:48 | 多个进度面之间靠人工目测保持一致，容易再次漂移 | 新增 `scripts/check-cds-agent-progress-consistency.sh`，自动刷新并断言 refresh、progress board、主文档同口径 | terminal output | <3s | `CDS Agent progress consistency: pass` |
 | 20:51 | consistency check 单独通过，但接入 goal audit 时继承了“尚未生成”的 `CDS_AGENT_GOAL_AUDIT_REPORT` 导致假失败；同时 N6 沙箱失败会覆盖 canonical summary | consistency check 在 in-progress audit report 不存在时回退默认目标审计输入；goal audit 内 N6 attempt 写入 audit dir，只有 pass 才更新 canonical summary | `/tmp/cds-agent-goal-audit-with-progress-consistency.json`、`/tmp/cds-agent-n6-non-code-compatibility-current.json` | audit 约 10s；沙箱外 N6 约 30s | D1=pass，N6=pass；本地审计唯一失败收敛到 R0 runtime pool 未恢复 |
+| 21:35 | 用户明确指出 remote-host/env 路线偏离原始 CDS 设计，要求新建有限计划并先纠正文档 | 新增 `doc/plan.cds-agent-runtime-correction-limited.md`；主进度文档第一屏改为 CDS-managed runtime 纠偏；progress/refresh 下一步改为纠偏计划 | 本文档、`doc/status.cds-agent-current-progress.md`、progress consistency | 预计 65-90m，本轮先完成入口校准 | remote host/env 被降级为 operator fallback，不再作为产品主路径 |
 
 ## 本轮暴露的问题
 
@@ -353,7 +357,7 @@
 - `/tmp/cds-agent-r0-apply-readiness-current.json`：`readyForR0Apply=false`。
 - 当前缺失：`CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`、`CDS_AGENT_SIDECAR_IMAGE`。
 - 当前 warning：`CDS_HOST` 不是 `https://cds.miduo.org`。
-- `scripts/print-cds-agent-current-progress.sh` 当前显示 `R0 local apply readiness: readyForR0Apply=false; nextAction=provide missing env before apply`。
+- 当时 `scripts/print-cds-agent-current-progress.sh` 把 R0 readiness 的下一步写成补 env；21:35 后已纠正为先进入 R0 CDS-managed runtime 事实源设计。
 
 耗时：本地 readiness <1s；进度面板 <1s；不触发远程网络。
 
@@ -720,7 +724,7 @@
 证据：
 
 - publish handoff 第一屏写明“Use any registry image that the target remote host can docker pull”。
-- R0 status refresh 写出 `requiredImageInput=CDS_AGENT_SIDECAR_IMAGE`、`candidateSidecarImage`、`registryCheckImage`。
+- R0 status refresh 当时写出 `requiredImageInput=CDS_AGENT_SIDECAR_IMAGE`、`candidateSidecarImage`、`registryCheckImage`；21:35 后已改为 `operatorFallbackImageInput=CDS_AGENT_SIDECAR_IMAGE`，避免把 image 写成产品主输入。
 
 优化：R0 发布路径从“GHCR 优先”收敛为“任意可 pull registry image 优先，GHCR 只是候选”。
 
