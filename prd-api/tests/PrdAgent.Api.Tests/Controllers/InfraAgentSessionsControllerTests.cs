@@ -390,6 +390,8 @@ public class InfraAgentSessionsControllerTests
             nextCyclePlan.Items.Single(x => x.Code == "N2").BlockedBy.ShouldBe("R1");
             nextCyclePlan.StopConditions.ShouldContain(x => x.Contains("N1-N5", StringComparison.Ordinal));
             var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+            debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Status.ShouldBe("blocked");
+            debugCommands.Single(x => x.Code == "managed-runtime-fact-source").Command.ShouldContain("doc/design.cds-agent-managed-runtime-fact-source.md");
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "runtime-pool-evidence").Command.ShouldContain("collect-cds-agent-runtime-pool-evidence.sh");
             debugCommands.Single(x => x.Code == "branch-isolation-dry-run").BlockedBy.ShouldBe("R0");
@@ -407,9 +409,9 @@ public class InfraAgentSessionsControllerTests
             executionPanel.CommercialComplete.ShouldBeFalse();
             executionPanel.CurrentBlockingGate.ShouldBe("R0");
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
-            executionPanel.DeploymentAdvice.ShouldContain("runtime pool evidence");
-            executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
-            executionPanel.NextCommandCode.ShouldBe("runtime-pool-evidence");
+            executionPanel.DeploymentAdvice.ShouldContain("R0 fact source");
+            executionPanel.NextCommand.ShouldContain("doc/design.cds-agent-managed-runtime-fact-source.md");
+            executionPanel.NextCommandCode.ShouldBe("managed-runtime-fact-source");
             executionPanel.NextCommandSafety.ShouldContain("read-only");
             executionPanel.Runbook.Select(x => x.Code).ShouldBe(new[]
             {
@@ -427,16 +429,9 @@ public class InfraAgentSessionsControllerTests
             applyRunbook.ApplyManifest.Endpoint.ShouldBe("https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
             applyRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "unique_candidate_profile").Passed.ShouldBeFalse();
             applyRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-branch-isolation.sh");
-            var remoteHostRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "remote-host-prepare");
-            remoteHostRunbook.ApplyManifest.ShouldNotBeNull().Safety.ShouldBe("remote_host_create_then_shared_runtime_deploy");
-            remoteHostRunbook.ApplyManifest.Method.ShouldBe("POST");
-            remoteHostRunbook.ApplyManifest.RequiredEnv.ShouldContain("CDS_AGENT_SIDECAR_IMAGE");
-            remoteHostRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "enabled_remote_host").Actual.ShouldBe("0");
-            remoteHostRunbook.ApplyManifest.LocalPreflightCommand.ShouldContain("run-cds-agent-remote-host-pool-with-evidence.sh");
-            remoteHostRunbook.ApplyManifest.ReportFields.ShouldNotBeNull().ShouldContain("prepare.preflightReady");
-            remoteHostRunbook.ApplyManifest.ReportFields.ShouldContain("prepare.invalidConfig");
-            remoteHostRunbook.ApplyManifest.OptionalEnv.ShouldNotBeNull().ShouldContain("CDS_REMOTE_HOST_ID");
-            remoteHostRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-shared-service-pool.sh");
+            var managedRuntimeRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "managed-runtime-fact-source");
+            managedRuntimeRunbook.ApplyManifest.ShouldBeNull();
+            managedRuntimeRunbook.Safety.ShouldContain("no SSH");
             executionPanel.Runbook.Single(x => x.Code == "R0-branch-clean-apply").BlockedBy.ShouldBe("explicit profile deletion approval");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
@@ -448,10 +443,10 @@ public class InfraAgentSessionsControllerTests
             executionPanel.Timeline.Count.ShouldBe(6);
             executionPanel.TaskBoard.Count.ShouldBe(7);
             executionPanel.TaskBoard.Single(x => x.Code == "A0").Status.ShouldBe("done");
-            executionPanel.TaskBoard.Single(x => x.Code == "R0.2").EstimatedDuration.ShouldContain("1-3 min");
-            executionPanel.TaskBoard.Single(x => x.Code == "R0.3").NextAction.ShouldContain("Deploy official SDK sidecar image");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.2").EstimatedDuration.ShouldContain("20-40 min");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.3").NextAction.ShouldContain("CDS-managed container/sandbox");
             executionPanel.NextStepEta.ShouldContain("R0.2");
-            executionPanel.TimeSinkAdvice.ShouldContain("preview redeploys");
+            executionPanel.TimeSinkAdvice.ShouldContain("SSH/image/env");
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");
         }
@@ -616,7 +611,7 @@ public class InfraAgentSessionsControllerTests
         debugCommands.Single(x => x.Code == "r1-apply").Command
             .ShouldStartWith("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=");
         diagnostics.ExecutionPanel.ShouldNotBeNull().NextCommand
-            .ShouldBe("CDS_HOST=https://cds.example.test CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
+            .ShouldBe("sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh");
     }
 
     private static InfraAgentSessionsController BuildController(

@@ -197,24 +197,24 @@ public class InfraAgentSessionsController : ControllerBase
                 "R0.1",
                 "Runtime pool evidence and branch isolation",
                 r0Done ? "done" : r0Active ? "active" : "waiting",
-                r0Done ? "Keep branch services restricted to api/admin." : "Collect runtime pool evidence before any deploy or provider smoke.",
+                r0Done ? "Keep branch services restricted to api/admin." : "Collect CDS-managed runtime facts before any deploy or provider smoke.",
                 r0Done ? "done" : "15-45 sec",
                 "scripts/collect-cds-agent-runtime-pool-evidence.sh"),
             new SidecarExecutionTask(
                 3,
                 "R0.2",
-                "Remote host carrier",
-                r0Done ? "done" : r0Active ? "blocked" : "waiting",
-                r0Done ? "Remote host carrier is available." : "Provide/apply enabled remote host SSH config.",
-                r0Done ? "done" : "1-3 min after host params",
-                "scripts/run-cds-agent-remote-host-pool-with-evidence.sh prepare.preflightReady"),
+                "CDS-managed runtime fact source",
+                r0Done ? "done" : r0Active ? "next" : "waiting",
+                r0Done ? "CDS-managed runtime facts are healthy." : "Design R0 around CDS project/profile/container/session facts; SSH/image are fallback only.",
+                r0Done ? "done" : "20-40 min",
+                "doc/design.cds-agent-managed-runtime-fact-source.md"),
             new SidecarExecutionTask(
                 4,
                 "R0.3",
-                "Shared official SDK runtime",
-                r0Done ? "done" : r0Active ? "blocked" : "waiting",
-                r0Done ? "Shared official SDK runtime is discoverable." : "Deploy official SDK sidecar image onto enabled remote host.",
-                r0Done ? "done" : "2-5 min after image/host",
+                "CDS-managed official SDK runtime",
+                r0Done ? "done" : r0Active ? "pending" : "waiting",
+                r0Done ? "Official SDK runtime is discoverable through CDS." : "Create/restore the official SDK runtime as a CDS-managed container/sandbox, not an external host product layer.",
+                r0Done ? "done" : "45-90 min after R0.2",
                 "scripts/smoke-cds-agent-shared-service-pool.sh"),
             new SidecarExecutionTask(
                 5,
@@ -247,7 +247,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "R0.2 1-3 min after remote host params; R0.3 2-5 min after sidecar image; R0V 15-30 sec.";
+            return "R0.2 CDS-managed runtime fact source 20-40 min; R0.3 managed official SDK runtime 45-90 min; R0V 15-30 sec.";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -272,7 +272,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "Do not spend time on normal preview redeploys; the long path is remote CDS state. Use local preflight first, then run one remote apply/deploy with evidence.";
+            return "Do not spend time on normal preview redeploys or asking for SSH/image/env; the long path is correcting the CDS-managed runtime fact source, then one targeted smoke.";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -320,9 +320,9 @@ public class InfraAgentSessionsController : ControllerBase
             BuildRunbookStep(
                 4,
                 "R0-shared-runtime-pool",
-                "准备 remote host 并恢复 shared official SDK runtime",
-                "remote-host-prepare",
-                r0Active ? "blocked" : "pass",
+                "设计 CDS-managed official SDK runtime fact source",
+                "managed-runtime-fact-source",
+                r0Active ? "next" : "pass",
                 r0Active ? "branch isolation clean" : null,
                 debugCommands),
             BuildRunbookStep(
@@ -482,7 +482,8 @@ public class InfraAgentSessionsController : ControllerBase
             "runtime-pool-evidence" => "read-only; no delete, deploy, restart, or provider call",
             "branch-isolation-dry-run" => "read-only dry-run; no remote deletion",
             "branch-isolation-apply-confirmed" => "destructive remote state change; deletes the confirmed BuildProfile and requires post-check",
-            "remote-host-prepare" => "dry-run by default; remote host apply/deploy requires explicit env flags",
+            "managed-runtime-fact-source" => "read-only design/fact-source check; no SSH, image push, deploy, restart, or provider call",
+            "remote-host-prepare" => "operator/debug fallback only; dry-run by default; not the product path",
             "doctor" => "read-only local/remote diagnostics",
             "official-sdk-boundary" => "read-only local contract smoke",
             "r1-dry-run" => "read-only/default-safe profile repair preview",
@@ -505,7 +506,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "不要靠普通 preview redeploy 解决 R0；先采集 runtime pool evidence，确认 branch-local sidecar contamination、remote host、shared pool running 状态，再按恢复 runbook 处理。";
+            return "不要靠普通 preview redeploy 解决 R0，也不要向用户索要 SSH/image/env；先把 R0 fact source 改回 CDS-managed runtime/project/profile/container/session。";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase)
@@ -543,7 +544,8 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return debugCommands.FirstOrDefault(x => x.Code == "runtime-pool-evidence")
+            return debugCommands.FirstOrDefault(x => x.Code == "managed-runtime-fact-source")
+                ?? debugCommands.FirstOrDefault(x => x.Code == "runtime-pool-evidence")
                 ?? debugCommands.FirstOrDefault(x => x.Code == "doctor");
         }
 
@@ -584,10 +586,17 @@ public class InfraAgentSessionsController : ControllerBase
         return new[]
         {
             new SidecarDebugCommand(
+                "managed-runtime-fact-source",
+                "R0 CDS-managed runtime fact source",
+                "sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh",
+                "只读查看 R0 新事实源设计；确认 MAP 只连 CDS，CDS 管理 runtime/container/sandbox，SSH/image/env 仅为 operator fallback。",
+                r0Status,
+                r0Ready ? null : "R0"),
+            new SidecarDebugCommand(
                 "runtime-pool-evidence",
                 "R0 runtime pool 证据",
                 remoteSmokePrefix + "CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh",
-                "只读采集 branch-local sidecar contamination、remote host、shared-service pool running 状态和恢复顺序；当前 R0 阻塞时优先跑它。",
+                "只读采集 branch-local sidecar contamination、shared-service pool running 状态和 legacy fallback 证据；不是要求用户补 SSH/image/env。",
                 r0Status,
                 r0Ready ? null : "R0"),
             new SidecarDebugCommand(
@@ -606,9 +615,9 @@ public class InfraAgentSessionsController : ControllerBase
                 r0Ready ? null : "R0 approval"),
             new SidecarDebugCommand(
                 "remote-host-prepare",
-                "Remote host 准备预检",
+                "Operator fallback remote host 预检",
                 remoteSmokePrefix + "bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
-                "默认 dry-run，生成 pre evidence、remote host prepare report 和 summary；显式 apply/deploy 前先确认缺失配置。",
+                "仅限 operator/debug fallback；默认 dry-run，不能作为普通用户路径或当前产品下一步。",
                 r0Status,
                 r0Ready ? null : "R0"),
             new SidecarDebugCommand(
@@ -938,7 +947,7 @@ public class InfraAgentSessionsController : ControllerBase
         {
             parts.Add($"emptyEndpoints={emptyEndpoints}");
         }
-        parts.Add("next=collect runtime pool evidence before redeploy");
+        parts.Add("next=CDS-managed runtime fact source before any deploy");
         return string.Join(" ", parts);
     }
 
@@ -946,11 +955,12 @@ public class InfraAgentSessionsController : ControllerBase
     {
         var actions = new List<string>
         {
-            "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，先得到 branch-local sidecar、remote host、shared pool running 的同一份证据。",
+            "先查看 doc/design.cds-agent-managed-runtime-fact-source.md，把 R0 fact source 收回到 CDS-managed runtime/project/profile/container/session。",
+            "运行 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh，先得到 branch-local sidecar、shared pool running 和 legacy fallback 的同一份证据。",
             "如果 evidence 显示 branch-local sidecar contamination，先用 scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh dry-run 确认候选 BuildProfile，再按审批执行清理。",
             "执行 branch isolation apply 时必须设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=claude-agent-sdk-runtime-v2-prd-agent，避免误删其它 BuildProfile。",
-            "如果 evidence 显示 remote host missing，先用 scripts/run-cds-agent-remote-host-pool-with-evidence.sh 检查缺失的 SSH/image 配置并保留 pre/post evidence；不要通过普通 preview redeploy 解决。",
-            "shared-service runtime pool 恢复 running official SDK instance 后，再重跑 MAP R0/S1/S2/S3/one-cycle。"
+            "如果 evidence 显示 remote host missing，只把它归入 operator/debug fallback；不要把 SSH/image/env 暴露成普通用户产品下一步。",
+            "CDS-managed runtime pool 恢复 running official SDK instance 后，再重跑 MAP R0/S1/S2/S3/one-cycle。"
         };
         if (diagnostics.NextActions is { Count: > 0 })
         {

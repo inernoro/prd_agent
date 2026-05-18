@@ -885,7 +885,7 @@ if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery was not observed in this audit. Use the completed CDS-managed runtime correction plan as the boundary before treating any remote host/env input as fallback."
   deployment_advice="Do not redeploy for this state. Correct the facts and docs back to CDS-managed runtime/container/sandbox; SSH/env/image values are operator fallback only."
-  next_command="sed -n '1,140p' doc/plan.cds-agent-runtime-correction-limited.md && scripts/check-cds-agent-progress-consistency.sh"
+  next_command="sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --arg command "$next_command" \
     '{
@@ -895,9 +895,9 @@ if [[ "$runtime_pool_plan_status" != "pass" ]]; then
         {
           order: 1,
           code: "R0E",
-          title: "完成 CDS-managed runtime 架构纠偏",
+          title: "建立 CDS-managed runtime fact source",
           goal: "确认 MAP 只连 CDS，CDS 管理 Claude SDK runtime/container/sandbox，remote host/env 只作 operator fallback。",
-          evidence: "纠偏计划、主进度、progress board、refresh 报告和 goal audit 口径一致。",
+          evidence: "R0 fact-source 设计、runtime-status execution panel、controller tests 和 progress consistency 口径一致。",
           status: "next",
           blockedBy: "R0",
           nextActions: [$command]
@@ -911,13 +911,13 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
-  blocking_reason="Runtime pool recovery is still blocked in old evidence. D1 correction is complete; the next product step is R0 CDS-managed runtime fact-source design. Remote host/env/image are operator fallback only."
+  blocking_reason="Runtime pool recovery is still blocked in old evidence. R0 fact-source design is in progress; the next product step is CDS agent session execution ownership. Remote host/env/image are operator fallback only."
   if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
     deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals if needed, then correct the runtime recovery model back to CDS-managed runtime before exposing any operator fallback."
   else
-    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is R0 CDS-managed runtime fact-source design, not asking the user for SSH/env/image."
+    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is CDS agent session execution ownership, not asking the user for SSH/env/image."
   fi
-  next_command="sed -n '1,140p' doc/plan.cds-agent-runtime-correction-limited.md && scripts/check-cds-agent-progress-consistency.sh"
+  next_command="sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --argjson blockers "$runtime_pool_blockers_json" \
     --arg command "$next_command" \
@@ -942,7 +942,7 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           code: "R0.2",
           title: "重定义 CDS-managed runtime 恢复事实源",
           goal: "让 CDS 的容器/分支/runtime/sandbox 能表达 Claude SDK runtime 恢复状态。",
-          evidence: "runtime-status/taskBoard 不要求普通用户补 SSH/env/image。",
+          evidence: "doc/design.cds-agent-managed-runtime-fact-source.md 与 runtime-status/taskBoard 不要求普通用户补 SSH/env/image。",
           status: "next",
           blockedBy: null,
           nextActions: [

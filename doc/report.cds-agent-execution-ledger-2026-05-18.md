@@ -38,7 +38,9 @@
 - 已纠偏：用户确认最终目标不是 `MAP -> CDS -> external agent host`，而是 `MAP -> CDS -> CDS-managed Claude SDK runtime/container/sandbox`。
 - 已纠偏：`CDS_REMOTE_HOST_*`、SSH 私钥、sidecar image、env 只能作为 operator/debug fallback，不能作为普通用户主路径，也不能写成当前产品下一步。
 - 已启动：新增有限纠偏计划 `doc/plan.cds-agent-runtime-correction-limited.md`，本轮只校准文档入口和本地事实源，不实现 runtime。
-- 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
+- 已设计：新增 R0 fact source 设计 `doc/design.cds-agent-managed-runtime-fact-source.md`，把 R0 blocker 改成 CDS-managed runtime/project/profile/container/session，而不是 remote host/image/env。
+- 已校准：runtime-status execution panel 的 R0.2/R0.3、NextCommand、runbook 和 task board 已指向 CDS-managed runtime fact source；remote host/image 只作为 operator fallback debug。
+- 未解决：CDS `/agent-sessions` 非 fake runtime 执行仍需改造；当前目标保持 `not_complete`。
 
 ## 执行时间线
 
@@ -88,6 +90,7 @@
 | 20:48 | 多个进度面之间靠人工目测保持一致，容易再次漂移 | 新增 `scripts/check-cds-agent-progress-consistency.sh`，自动刷新并断言 refresh、progress board、主文档同口径 | terminal output | <3s | `CDS Agent progress consistency: pass` |
 | 20:51 | consistency check 单独通过，但接入 goal audit 时继承了“尚未生成”的 `CDS_AGENT_GOAL_AUDIT_REPORT` 导致假失败；同时 N6 沙箱失败会覆盖 canonical summary | consistency check 在 in-progress audit report 不存在时回退默认目标审计输入；goal audit 内 N6 attempt 写入 audit dir，只有 pass 才更新 canonical summary | `/tmp/cds-agent-goal-audit-with-progress-consistency.json`、`/tmp/cds-agent-n6-non-code-compatibility-current.json` | audit 约 10s；沙箱外 N6 约 30s | D1=pass，N6=pass；本地审计唯一失败收敛到 R0 runtime pool 未恢复 |
 | 21:35 | 用户明确指出 remote-host/env 路线偏离原始 CDS 设计，要求新建有限计划并先纠正文档 | 新增 `doc/plan.cds-agent-runtime-correction-limited.md`；主进度文档第一屏改为 CDS-managed runtime 纠偏；progress/refresh 下一步改为纠偏计划 | 本文档、`doc/status.cds-agent-current-progress.md`、progress consistency | 预计 65-90m，本轮先完成入口校准 | remote host/env 被降级为 operator fallback，不再作为产品主路径 |
+| 22:02 | D1 完成后 runtime-status 后端仍把 R0.2/R0.3 写成 remote host carrier / deploy sidecar image | 新增 R0 fact-source 设计文档；修正 runtime-status execution panel、debug command、task board、controller tests | `doc/design.cds-agent-managed-runtime-fact-source.md`、`InfraAgentSessionsControllerTests` | controller tests 18/18，约 11s | 页面数据源主线已改为 CDS-managed runtime fact source；下一步是 CDS `/agent-sessions` execution 改造 |
 
 ## 本轮暴露的问题
 
