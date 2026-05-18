@@ -240,6 +240,7 @@ docs:
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
   debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
   debt.cds-state-json: CDS state.json 影子存储债务台账
+  debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
