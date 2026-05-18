@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:10 Asia/Shanghai：
+截至 2026-05-18 20:14 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -26,6 +26,7 @@
 - 已解决：sidecar image 发布后到 remote host SSH pull 前增加只读 registry manifest 验证门，减少远程排障面。
 - 已解决：R0 readiness 与 operator handoff 已消费 registry manifest / remote pull 报告，能显示它们是否匹配当前 `CDS_AGENT_SIDECAR_IMAGE`。
 - 已解决：R0 operator handoff 优先显示当前 HEAD 对应 GHCR image，旧 publish report candidate 不再覆盖当前发布目标。
+- 已解决：新增一键只读 R0 状态刷新入口，统一刷新 handoff/readiness/operator/lifecycle/progress，减少旧 `/tmp` 证据干扰。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -67,6 +68,7 @@
 | 20:03 | image 发布成功与 remote host pull 失败之间缺少中间诊断，容易把 registry 不可见误判成 host/SSH 问题 | 新增 `scripts/verify-cds-agent-sidecar-registry-image.sh`，默认 dry-run，显式开启后只读查询 GHCR manifest | `/tmp/cds-agent-sidecar-registry-image-current.json` | <1s dry-run | 新增 `SIDECAR_REGISTRY_MANIFEST` gate；handoff 输出发布后验证命令 |
 | 20:10 | readiness 仍只看 image 是否提供，不看 registry manifest / remote pull 是否属于当前 image | `preflight-cds-agent-r0-apply-readiness.sh` 和 R0 handoff 增加 registryManifest/remotePull 匹配状态 | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 发布后刷新一个 readiness 即可看到 image -> manifest -> remote pull 链路 |
 | 20:11 | operator handoff 仍可能显示旧 publish report candidate，和当前 commit 的 workflow image 不一致 | handoff 从 git remote + HEAD 推导 `currentSidecarImage`，并优先作为 `imagePublishCandidate` | `/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 当前候选统一为 `ghcr.io/inernoro/prd-agent/claude-sidecar:e25e3f64a433` |
+| 20:14 | 每次提交后需要分别运行多个脚本刷新 `/tmp` 证据，容易让 progress board、handoff、readiness 不在同一 commit | 新增 `scripts/refresh-cds-agent-r0-status.sh` | `/tmp/cds-agent-r0-status-refresh-current.md` | <3s | 一个命令刷新 publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress |
 
 ## 本轮暴露的问题
 
@@ -633,6 +635,23 @@
 
 优化：R0 发布目标现在由当前 commit 决定，避免手动发布错旧 image。
 
+### 36. R0 状态刷新需要一个单入口
+
+问题：publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress board 分散在多个脚本中。每次提交后，如果只刷新其中一部分，用户看到的 image tag、blocker 和下一步可能来自不同时间点。
+
+处理：
+
+- 新增 `scripts/refresh-cds-agent-r0-status.sh`。
+- 默认只读：不 push、不访问 GitHub、不 SSH、不部署。
+- 推导当前 HEAD 对应 GHCR image，并用它刷新 registry dry-run 报告。
+- 统一生成 `/tmp/cds-agent-r0-status-refresh-current.md`、publish handoff、readiness、operator handoff、lifecycle overview、progress board。
+
+证据：
+
+- `/tmp/cds-agent-r0-status-refresh-current.md` 记录 currentSidecarImage、registryCheckImage、readyForR0Apply、nextAction、missingConfig、registryManifestStatus、remotePullStatus 和所有证据路径。
+
+优化：日常查看入口从“跑多个脚本并人工对齐”收敛到一个只读刷新命令。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -655,6 +674,7 @@
 | sidecar registry manifest verify | <1s dry-run；真实 GHCR 查询通常 1-5s | 部分本地化 | 先确认 image tag 在 registry 可见，再进入 remote host SSH/docker pull |
 | remote sidecar pull dry-run | <1s | 部分本地化 | 先校验 SSH/image 输入；显式开启后才访问目标 host 执行 docker pull |
 | dynamic exact next step | <1s | 完全可本地化 | 按 gate 顺序给下一条命令，减少人工在多个 handoff 之间判断 |
+| R0 status refresh bundle | <3s | 完全可本地化 | 一个命令刷新所有本地只读 R0 证据，减少旧 `/tmp` 文件影响判断 |
 
 ## 当前下一步
 

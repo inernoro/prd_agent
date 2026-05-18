@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 20:10 Asia/Shanghai
+> **更新时间**：2026-05-18 20:14 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -28,11 +28,12 @@
 固定查看入口：
 
 ```bash
+scripts/refresh-cds-agent-r0-status.sh
 scripts/print-cds-agent-current-progress.sh
 scripts/print-cds-agent-lifecycle-overview.sh
 ```
 
-该命令只读，不部署、不写远程、不输出 secret；它会直接展示当前 gate、任务看板、blocker、下一步和预计耗时。
+这些命令只读，不部署、不写远程、不输出 secret。`refresh-cds-agent-r0-status.sh` 会统一刷新 publish handoff、registry dry-run、readiness、operator handoff、lifecycle 和 progress board，避免多个 `/tmp` 证据文件停留在不同 commit。
 
 ## 2. 阶段总览
 
@@ -158,6 +159,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | manual CI publish workflow | `.github/workflows/cds-sidecar-image.yml` | 手动触发，默认 tag 为 commit SHA；不会随普通 push 自动发布 | local syntax/read |
 | sidecar publish handoff | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | 输出 GitHub Actions 手动发布 URL、image tag、CLI 等价命令和本机 push 替代路径 | <1s |
 | sidecar registry manifest verify | `/tmp/cds-agent-sidecar-registry-image-current.json` | 默认 dry-run；显式 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 后只读查询 GHCR manifest | <1s dry-run |
+| R0 status refresh bundle | `/tmp/cds-agent-r0-status-refresh-current.md` | 一键刷新当前 HEAD image、publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress board | <3s |
 
 ## 7. 时间和问题账本
 
@@ -205,6 +207,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 查看当前任务纵览：
 
 ```bash
+scripts/refresh-cds-agent-r0-status.sh
 scripts/print-cds-agent-current-progress.sh
 ```
 
