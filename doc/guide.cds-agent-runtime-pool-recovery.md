@@ -61,6 +61,23 @@ CDS_HOST=https://cds.miduo.org \
 
 它会创建 `/tmp/cds-agent-runtime-pool-evidence-*` 目录，写入 `summary.json` 和 `evidence-index.md`。默认会同时跑 runtime pool plan、branch isolation repair dry-run、shared-service pool audit 和 goal audit；如只想快速采集 runtime pool 证据，设置 `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0`。dry-run 会额外写 `branch-isolation-repair-dry-run.json`，用于确认真正清理前会删除哪个 BuildProfile。
 
+真正执行 branch-local sidecar 清理时，使用带前后证据的 wrapper。默认仍是 dry-run：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
+```
+
+显式执行清理时才设置：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \
+  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh
+```
+
+wrapper 会写 `/tmp/cds-agent-branch-isolation-repair-*`，包含 pre evidence、repair report、post branch isolation smoke 和 post evidence。若 post check 仍失败，`summary.json` 会保留删除结果与复查失败状态，便于继续定位。
+
 ## 发布前检查
 
 在考虑更新共享 CDS 控制面前，先在当前分支确认这些本地检查已经通过：

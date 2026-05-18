@@ -153,7 +153,15 @@ done <<< "$profile_ids"
 deleted_profiles_json=$(printf '%s\n' "${deleted_profiles[@]}" | jq -R 'select(length > 0)' | jq -s .)
 
 printf '\n>>> 复查远程分支污染\n'
+set +e
 SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
   CDS_HOST="$CDS_HOST" \
   bash "$ROOT_DIR/scripts/smoke-cds-agent-branch-isolation.sh"
-write_report "applied" "已删除候选 BuildProfile 并完成复查" "$deleted_profiles_json"
+verify_rc=$?
+set -e
+if (( verify_rc == 0 )); then
+  write_report "applied_verified" "已删除候选 BuildProfile 并完成复查" "$deleted_profiles_json"
+  exit 0
+fi
+write_report "applied_verify_failed" "已删除候选 BuildProfile，但复查仍失败；查看脚本输出继续排查" "$deleted_profiles_json"
+exit "$verify_rc"
