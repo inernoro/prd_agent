@@ -74,7 +74,11 @@ if ! safe_docker_image_ref "$IMAGE"; then
 elif [[ ! -f "$DOCKERFILE" ]]; then
   write_report "missing_dockerfile" "dockerfile not found" false 2
 elif ! docker version >/dev/null 2>"$LOG"; then
-  write_report "docker_unavailable" "docker daemon is not reachable" false 125
+  if grep -qi 'permission denied' "$LOG"; then
+    write_report "docker_permission_denied" "docker socket access was denied; run this smoke with Docker permissions" false 125
+  else
+    write_report "docker_unavailable" "docker daemon is not reachable" false 125
+  fi
 else
   if docker build -t "$IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT" >"$LOG" 2>&1; then
     write_report "build_pass" "local docker build succeeded" true 0
