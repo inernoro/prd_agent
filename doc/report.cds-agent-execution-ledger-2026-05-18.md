@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:03 Asia/Shanghai：
+截至 2026-05-18 20:10 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -24,6 +24,8 @@
 - 已解决：GHCR 发布增加手动 GitHub Actions 入口，不再只能由本机 Codex push。
 - 已解决：GHCR 手动发布入口有只读 handoff，进度面板默认指向 handoff 而不是本机 push；handoff 使用当前 commit tag，避免旧本地候选 tag 混淆。
 - 已解决：sidecar image 发布后到 remote host SSH pull 前增加只读 registry manifest 验证门，减少远程排障面。
+- 已解决：R0 readiness 与 operator handoff 已消费 registry manifest / remote pull 报告，能显示它们是否匹配当前 `CDS_AGENT_SIDECAR_IMAGE`。
+- 已解决：R0 operator handoff 优先显示当前 HEAD 对应 GHCR image，旧 publish report candidate 不再覆盖当前发布目标。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -63,6 +65,8 @@
 | 19:58 | workflow 存在但执行入口仍分散，进度面板默认仍容易让人走本机 push | 新增 `scripts/print-cds-agent-sidecar-publish-handoff.sh`，并让进度面板默认指向它 | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | <1s | Handoff 输出 Actions URL、image tag、CLI 等价命令、本机 push 替代命令 |
 | 20:00 | handoff 同时展示 workflow tag 和旧 local candidate，容易让人以为有两个目标 image | local push alternative 改为先按当前 commit tag retag，再 push；旧 candidate 只作为 previousLocalCandidate | handoff script diff | <1s | 发布目标统一到当前 commit tag |
 | 20:03 | image 发布成功与 remote host pull 失败之间缺少中间诊断，容易把 registry 不可见误判成 host/SSH 问题 | 新增 `scripts/verify-cds-agent-sidecar-registry-image.sh`，默认 dry-run，显式开启后只读查询 GHCR manifest | `/tmp/cds-agent-sidecar-registry-image-current.json` | <1s dry-run | 新增 `SIDECAR_REGISTRY_MANIFEST` gate；handoff 输出发布后验证命令 |
+| 20:10 | readiness 仍只看 image 是否提供，不看 registry manifest / remote pull 是否属于当前 image | `preflight-cds-agent-r0-apply-readiness.sh` 和 R0 handoff 增加 registryManifest/remotePull 匹配状态 | `/tmp/cds-agent-r0-apply-readiness-current.json`、`/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 发布后刷新一个 readiness 即可看到 image -> manifest -> remote pull 链路 |
+| 20:11 | operator handoff 仍可能显示旧 publish report candidate，和当前 commit 的 workflow image 不一致 | handoff 从 git remote + HEAD 推导 `currentSidecarImage`，并优先作为 `imagePublishCandidate` | `/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 当前候选统一为 `ghcr.io/inernoro/prd-agent/claude-sidecar:e25e3f64a433` |
 
 ## 本轮暴露的问题
 
@@ -596,6 +600,39 @@
 
 优化：R0.3 前置链路从“publish -> remote SSH pull”拆为“publish -> registry manifest visible -> remote SSH pull”，减少远程环境排障。
 
+### 34. R0 readiness 应消费 image 后置验证结果
+
+问题：新增 registry manifest 验证后，如果 readiness 不读取该报告，执行者仍要人工比较 `CDS_AGENT_SIDECAR_IMAGE`、registry manifest 报告和 remote pull 报告是否是同一个 image。
+
+处理：
+
+- `scripts/preflight-cds-agent-r0-apply-readiness.sh` 增加 `imageReadiness.registryManifest` 与 `imageReadiness.remotePull`。
+- 两个字段都包含 report、status、结果布尔值、image 和 `matchesCurrentImage`。
+- `scripts/print-cds-agent-r0-operator-handoff.sh` 展示 `imageRegistryManifest` 与 `imageRegistryVisible`。
+
+证据：
+
+- `/tmp/cds-agent-r0-apply-readiness-current.json` 可直接检查当前 image、manifest、remote pull 是否同源。
+- `/tmp/cds-agent-r0-operator-handoff-current.md` 展示 registry manifest 状态。
+
+优化：R0 readiness 从“只看 env 是否给齐”推进到“env + image publish evidence + registry manifest + remote pull evidence 同屏判断”。
+
+### 35. R0 handoff 不应被旧 publish report tag 误导
+
+问题：每次提交后，GitHub Actions 推荐 image tag 应随当前 HEAD 更新；但 `/tmp/cds-agent-sidecar-image-publish-current.json` 可能仍保存旧本地 tag。如果 operator handoff 直接采用旧 candidate，会和 publish handoff 出现两个目标 image。
+
+处理：
+
+- `scripts/print-cds-agent-r0-operator-handoff.sh` 从 git remote + 当前 HEAD 推导 `currentSidecarImage`。
+- 当 publish report candidate 为空或不等于当前 image 时，operator handoff 优先显示当前 image。
+- 旧 publish target 仍保留为历史证据字段，不再作为下一次发布目标。
+
+证据：
+
+- `/tmp/cds-agent-r0-operator-handoff-current.md` 当前 `imagePublishCandidate` 和 `currentSidecarImage` 均为 `ghcr.io/inernoro/prd-agent/claude-sidecar:e25e3f64a433`。
+
+优化：R0 发布目标现在由当前 commit 决定，避免手动发布错旧 image。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -607,7 +644,7 @@
 | current progress board | <1s | 可本地化 | 固定入口展示任务纵览、当前 gate、blocker、下一步 ETA |
 | runtime-status task board | 后端测试 15s，前端 tsc 20s | 可本地化 | 页面事实源输出 taskBoard/nextStepEta/timeSinkAdvice，减少聊天解释和重复部署 |
 | N6 current smoke | 3s 沙箱外；沙箱内会因 VSTest socket 权限失败 | 可本地化但需要 dotnet/VSTest 权限 | smoke 写 summary 后，进度面板直接读最新 N6 证据 |
-| R0 local apply readiness | <1s | 完全可本地化 | 先确认 env 和 dry-run summary 是否足够 apply/deploy，再决定是否触发远程写动作 |
+| R0 local apply readiness | <1s | 完全可本地化 | 先确认 env、dry-run summary、image、registry manifest 和 remote pull 是否足够 apply/deploy，再决定是否触发远程写动作 |
 | R0 operator handoff bundle | <2s | 完全可本地化 | 单文件交接状态、缺失输入、ETA、安全命令和禁止事项 |
 | goal audit with readiness | 15s；N6 沙箱步骤超时但 summary 校准为 pass | 部分可本地化 | audit 消费 N6 summary 和 R0 readiness，当前唯一失败收敛到 R0 runtime pool 未恢复 |
 | lifecycle overview | <1s | 完全可本地化 | 固定回答完整生命周期进度、剩余距离和关键路径 |

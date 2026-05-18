@@ -10,7 +10,9 @@ READINESS_REPORT="${CDS_AGENT_R0_READINESS_REPORT:-/tmp/cds-agent-r0-apply-readi
 OUTPUT="${CDS_AGENT_R0_OPERATOR_HANDOFF:-/tmp/cds-agent-r0-operator-handoff-current.md}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
+SIDECAR_REGISTRY_VERIFY_REPORT="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
 REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
+REMOTE="${CDS_AGENT_GITHUB_REMOTE:-origin}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -19,6 +21,25 @@ fail() {
 
 command -v jq >/dev/null 2>&1 || fail "missing dependency: jq"
 [[ -f "$SUMMARY" ]] || fail "remote host summary not found: $SUMMARY"
+
+derive_current_sidecar_image() {
+  local repo_url owner_repo short_sha image
+  repo_url="$(git remote get-url "$REMOTE" 2>/dev/null || printf '')"
+  owner_repo="inernoro/prd_agent"
+  case "$repo_url" in
+    https://github.com/*/*.git|https://github.com/*/*)
+      owner_repo="${repo_url#https://github.com/}"
+      owner_repo="${owner_repo%.git}"
+      ;;
+    git@github.com:*/*.git|git@github.com:*/*)
+      owner_repo="${repo_url#git@github.com:}"
+      owner_repo="${owner_repo%.git}"
+      ;;
+  esac
+  short_sha="$(git rev-parse --short=12 HEAD 2>/dev/null || printf local)"
+  image="ghcr.io/${owner_repo%/*}/${owner_repo#*/}/claude-sidecar:$short_sha"
+  printf '%s' "$image" | tr '[:upper:]_' '[:lower:]-'
+}
 
 # Refresh local readiness first. It is local-only and does not call CDS.
 CDS_AGENT_REMOTE_HOST_SUMMARY="$SUMMARY" \
@@ -44,6 +65,8 @@ warnings=$(jq -r '(.warnings // []) | join("; ")' "$READINESS_REPORT")
 image_status=$(jq -r '.imageReadiness.status // "unknown"' "$READINESS_REPORT")
 image_next_action=$(jq -r '.imageReadiness.nextAction // "unknown"' "$READINESS_REPORT")
 image_build_context_status=$(jq -r '.imageReadiness.buildContextStatus // "unknown"' "$READINESS_REPORT")
+image_registry_manifest=$(jq -r '.imageReadiness.registryManifest.status // "not checked"' "$READINESS_REPORT")
+image_registry_visible=$(jq -r '.imageReadiness.registryManifest.visible // false' "$READINESS_REPORT")
 image_preflight_report=$(jq -r '.imageReadiness.preflightReport // "unknown"' "$READINESS_REPORT")
 image_build_command=$(jq -r '.imageReadiness.candidateBuildCommand // ""' "$READINESS_REPORT")
 image_push_command=$(jq -r '.imageReadiness.candidatePushCommand // ""' "$READINESS_REPORT")
@@ -54,10 +77,14 @@ fi
 image_publish="not checked"
 image_publish_target="missing"
 image_publish_candidate="missing"
+current_sidecar_image="$(derive_current_sidecar_image)"
 if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq -r '.status // "unknown"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
   image_publish_target=$(jq -r '.targetImage // "missing"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
   image_publish_candidate=$(jq -r '.candidateTargetImage // "missing"' "$SIDECAR_IMAGE_PUBLISH_REPORT")
+fi
+if [[ "$image_publish_candidate" == "missing" || "$image_publish_candidate" != "$current_sidecar_image" ]]; then
+  image_publish_candidate="$current_sidecar_image"
 fi
 remote_pull="not checked"
 if [[ -f "$REMOTE_PULL_REPORT" ]]; then
@@ -95,6 +122,9 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- imagePublish: `%s`\n' "$image_publish"
   printf -- '- imagePublishTarget: `%s`\n' "$image_publish_target"
   printf -- '- imagePublishCandidate: `%s`\n' "$image_publish_candidate"
+  printf -- '- currentSidecarImage: `%s`\n' "$current_sidecar_image"
+  printf -- '- imageRegistryManifest: `%s`\n' "$image_registry_manifest"
+  printf -- '- imageRegistryVisible: `%s`\n' "$image_registry_visible"
   printf -- '- remotePull: `%s`\n' "$remote_pull"
   printf -- '- imagePreflightReport: `%s`\n' "$image_preflight_report"
   printf -- '- imageNextAction: `%s`\n\n' "$image_next_action"
@@ -119,6 +149,7 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf 'Local docker build smoke is `%s`; build smoke never pushes or deploys.\n\n' "$image_local_build"
   printf 'Registry publish status is `%s`; publish requires `CDS_AGENT_SIDECAR_IMAGE_PUSH=1`.\n\n' "$image_publish"
   printf 'Candidate registry tag is `%s`.\n\n' "$image_publish_candidate"
+  printf 'Registry manifest status is `%s`; verify it before remote host SSH pull.\n\n' "$image_registry_manifest"
   printf 'Remote host docker pull status is `%s`; pull verification requires `CDS_AGENT_REMOTE_PULL_VERIFY=1` and SSH credentials.\n\n' "$remote_pull"
   if [[ -n "$image_build_command" ]]; then
     printf 'Candidate local build command:\n\n'
@@ -139,6 +170,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 scripts/preflight-cds-agent-r0-apply-readiness.sh
 scripts/smoke-cds-agent-sidecar-image-build.sh
 scripts/publish-cds-agent-sidecar-image.sh
+scripts/verify-cds-agent-sidecar-registry-image.sh
 scripts/verify-cds-agent-remote-sidecar-pull.sh
 scripts/print-cds-agent-current-progress.sh
 ```

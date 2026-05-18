@@ -14,6 +14,8 @@ SIDECAR_DOCKERFILE="${CDS_AGENT_SIDECAR_DOCKERFILE:-claude-sdk-sidecar/Dockerfil
 SIDECAR_BUILD_CONTEXT="${CDS_AGENT_SIDECAR_BUILD_CONTEXT:-claude-sdk-sidecar}"
 SIDECAR_CANDIDATE_IMAGE="${CDS_AGENT_SIDECAR_CANDIDATE_IMAGE:-prd-agent/claude-sidecar:latest}"
 SIDECAR_IMAGE_PREFLIGHT_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PREFLIGHT_REPORT:-/tmp/cds-agent-sidecar-image-preflight-current.json}"
+SIDECAR_REGISTRY_VERIFY_REPORT="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
+REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -99,6 +101,12 @@ fi
 
 image_preflight='null'
 image_build_context_status="unknown"
+registry_manifest_status="not checked"
+registry_manifest_visible=false
+registry_report_image=""
+remote_pull_status="not checked"
+remote_pull_passed=false
+remote_pull_report_image=""
 if [[ -x "$SCRIPT_DIR/preflight-cds-agent-sidecar-image.sh" ]]; then
   CDS_AGENT_SIDECAR_IMAGE_PREFLIGHT_REPORT="$SIDECAR_IMAGE_PREFLIGHT_REPORT" \
   CDS_AGENT_SIDECAR_DOCKERFILE="$SIDECAR_DOCKERFILE" \
@@ -117,6 +125,26 @@ if [[ -f "$SIDECAR_IMAGE_PREFLIGHT_REPORT" ]]; then
   fi
   if [[ "$image_status" == "invalid" ]]; then
     invalid=$(append_json_string "$invalid" "CDS_AGENT_SIDECAR_IMAGE is not safe for CDS docker pull/run")
+  fi
+fi
+
+if [[ -f "$SIDECAR_REGISTRY_VERIFY_REPORT" ]]; then
+  registry_manifest_status=$(jq -r '.status // "unknown"' "$SIDECAR_REGISTRY_VERIFY_REPORT")
+  registry_manifest_visible=$(jq -r '.manifestVisible // false' "$SIDECAR_REGISTRY_VERIFY_REPORT")
+  registry_report_image=$(jq -r '.image // ""' "$SIDECAR_REGISTRY_VERIFY_REPORT")
+fi
+if [[ -f "$REMOTE_PULL_REPORT" ]]; then
+  remote_pull_status=$(jq -r '.status // "unknown"' "$REMOTE_PULL_REPORT")
+  remote_pull_passed=$(jq -r '.pullPassed // false' "$REMOTE_PULL_REPORT")
+  remote_pull_report_image=$(jq -r '.image // ""' "$REMOTE_PULL_REPORT")
+fi
+
+if [[ -n "$image_value" ]]; then
+  if [[ "$registry_manifest_visible" != "true" || "$registry_report_image" != "$image_value" ]]; then
+    warnings=$(append_json_string "$warnings" "sidecar registry manifest has not been verified for CDS_AGENT_SIDECAR_IMAGE")
+  fi
+  if [[ "$remote_pull_passed" != "true" || "$remote_pull_report_image" != "$image_value" ]]; then
+    warnings=$(append_json_string "$warnings" "remote host docker pull has not passed for CDS_AGENT_SIDECAR_IMAGE")
   fi
 fi
 
@@ -174,6 +202,14 @@ jq -n \
   --arg imageNextAction "$image_next_action" \
   --arg imagePreflightReport "$SIDECAR_IMAGE_PREFLIGHT_REPORT" \
   --arg imageBuildContextStatus "$image_build_context_status" \
+  --arg registryReport "$SIDECAR_REGISTRY_VERIFY_REPORT" \
+  --arg registryManifestStatus "$registry_manifest_status" \
+  --arg registryReportImage "$registry_report_image" \
+  --argjson registryManifestVisible "$registry_manifest_visible" \
+  --arg remotePullReport "$REMOTE_PULL_REPORT" \
+  --arg remotePullStatus "$remote_pull_status" \
+  --arg remotePullReportImage "$remote_pull_report_image" \
+  --argjson remotePullPassed "$remote_pull_passed" \
   --argjson imagePreflight "$image_preflight" \
   '{
     generatedAt: $generatedAt,
@@ -206,7 +242,21 @@ jq -n \
       nextAction: $imageNextAction,
       preflightReport: $imagePreflightReport,
       buildContextStatus: $imageBuildContextStatus,
-      preflight: $imagePreflight
+      preflight: $imagePreflight,
+      registryManifest: {
+        report: $registryReport,
+        status: $registryManifestStatus,
+        visible: $registryManifestVisible,
+        image: (if $registryReportImage == "" then null else $registryReportImage end),
+        matchesCurrentImage: ($registryReportImage != "" and $registryReportImage == $imageValue)
+      },
+      remotePull: {
+        report: $remotePullReport,
+        status: $remotePullStatus,
+        passed: $remotePullPassed,
+        image: (if $remotePullReportImage == "" then null else $remotePullReportImage end),
+        matchesCurrentImage: ($remotePullReportImage != "" and $remotePullReportImage == $imageValue)
+      }
     },
     safeHandoffCommand: ("scripts/print-cds-agent-remote-host-handoff.sh " + $summary)
   }' > "$tmp_report"
@@ -226,5 +276,7 @@ jq -r '
   "- warnings: `" + ((.warnings // []) | join(", ")) + "`",
   "- imageReadiness: `" + (.imageReadiness.status // "unknown") + "`",
   "- imageBuildContext: `" + (.imageReadiness.buildContextStatus // "unknown") + "`",
+  "- imageRegistryManifest: `" + (.imageReadiness.registryManifest.status // "unknown") + "`",
+  "- imageRemotePull: `" + (.imageReadiness.remotePull.status // "unknown") + "`",
   "- imageNextAction: `" + (.imageReadiness.nextAction // "unknown") + "`"
 ' "$REPORT"
