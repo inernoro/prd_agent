@@ -52,6 +52,15 @@ CDS_HOST=https://cds.miduo.org \
 
 它会输出当前污染分支数、shared pool running 状态、remote host 数量和下一步命令。计划脚本还会明确标出禁止路径：不能用 `cdscli branch create/deploy shared-sidecar-pool-mp4anabh main` 恢复 runtime pool，因为 shared-service runtime 不是普通 branch preview。
 
+如果需要一次性沉淀“当前进度、耗时、阻塞项和证据路径”，跑只读证据采集：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+  bash scripts/collect-cds-agent-runtime-pool-evidence.sh
+```
+
+它会创建 `/tmp/cds-agent-runtime-pool-evidence-*` 目录，写入 `summary.json` 和 `evidence-index.md`。默认会同时跑 runtime pool plan、shared-service pool audit 和 goal audit；如只想快速采集 runtime pool 证据，设置 `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0`。
+
 ## 发布前检查
 
 在考虑更新共享 CDS 控制面前，先在当前分支确认这些本地检查已经通过：
