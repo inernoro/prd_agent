@@ -59,7 +59,7 @@ CDS_HOST=https://cds.miduo.org \
   bash scripts/collect-cds-agent-runtime-pool-evidence.sh
 ```
 
-它会创建 `/tmp/cds-agent-runtime-pool-evidence-*` 目录，写入 `summary.json` 和 `evidence-index.md`。默认会同时跑 runtime pool plan、shared-service pool audit 和 goal audit；如只想快速采集 runtime pool 证据，设置 `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0`。
+它会创建 `/tmp/cds-agent-runtime-pool-evidence-*` 目录，写入 `summary.json` 和 `evidence-index.md`。默认会同时跑 runtime pool plan、branch isolation repair dry-run、shared-service pool audit 和 goal audit；如只想快速采集 runtime pool 证据，设置 `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0`。dry-run 会额外写 `branch-isolation-repair-dry-run.json`，用于确认真正清理前会删除哪个 BuildProfile。
 
 ## 发布前检查
 

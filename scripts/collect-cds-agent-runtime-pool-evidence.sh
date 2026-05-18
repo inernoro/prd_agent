@@ -3,6 +3,7 @@
 #
 # 输出一个目录，包含:
 #   - recovery plan
+#   - branch isolation repair dry-run
 #   - shared-service pool audit
 #   - optional goal audit
 #   - summary.json / evidence-index.md
@@ -70,6 +71,8 @@ run_capture() {
 }
 
 plan_log="$OUT_DIR/runtime-pool-recovery-plan.log"
+repair_dry_run_log="$OUT_DIR/branch-isolation-repair-dry-run.log"
+repair_dry_run_report="$OUT_DIR/branch-isolation-repair-dry-run.json"
 shared_pool_log="$OUT_DIR/shared-service-pool-audit.log"
 goal_audit_log="$OUT_DIR/goal-audit.log"
 goal_audit_report="$OUT_DIR/goal-audit.json"
@@ -77,6 +80,9 @@ goal_audit_report="$OUT_DIR/goal-audit.json"
 if [[ -n "${CDS_HOST:-}" ]]; then
   run_capture "runtime pool recovery plan" "$plan_log" \
     bash "$ROOT_DIR/scripts/plan-cds-agent-runtime-pool-recovery.sh"
+  run_capture "branch isolation repair dry-run" "$repair_dry_run_log" \
+    env SMOKE_CDS_AGENT_BRANCH_ISOLATION_REPAIR_REPORT="$repair_dry_run_report" \
+        bash "$ROOT_DIR/scripts/repair-cds-agent-branch-isolation.sh"
   run_capture "shared-service pool audit" "$shared_pool_log" \
     env SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash "$ROOT_DIR/scripts/smoke-cds-agent-shared-service-pool.sh"
 else
@@ -100,6 +106,10 @@ goal_json='null'
 if [[ -s "$goal_audit_report" ]]; then
   goal_json=$(jq -c . "$goal_audit_report" 2>/dev/null || printf 'null')
 fi
+repair_json='null'
+if [[ -s "$repair_dry_run_report" ]]; then
+  repair_json=$(jq -c . "$repair_dry_run_report" 2>/dev/null || printf 'null')
+fi
 
 summary="$OUT_DIR/summary.json"
 jq -n \
@@ -111,6 +121,7 @@ jq -n \
   --argjson seconds "[$step_seconds]" \
   --argjson logs "[$step_logs]" \
   --argjson plan "$plan_json" \
+  --argjson repair "$repair_json" \
   --argjson goal "$goal_json" \
   '{
     createdAt: $createdAt,
@@ -124,6 +135,7 @@ jq -n \
     }],
     totalSeconds: ($seconds | add // 0),
     plan: $plan,
+    branchIsolationRepairDryRun: $repair,
     goalStatus: ($goal.goalStatus // null),
     runtimePoolBlockers: (
       $goal.runtimePoolRecovery.blockers //
@@ -149,6 +161,14 @@ index="$OUT_DIR/evidence-index.md"
     printf '%s\n' '- none'
   else
     jq -r '.runtimePoolBlockers[] | "- `" + .requirement + "` · " + .status' "$summary"
+  fi
+  printf '\n## Branch Isolation Repair Dry Run\n\n'
+  if [[ "$(jq -r '.branchIsolationRepairDryRun == null' "$summary")" == "true" ]]; then
+    printf '%s\n' '- not captured'
+  else
+    jq -r '"- status: `" + (.branchIsolationRepairDryRun.status // "unknown") + "`",
+      "- contaminatedBranchCount: `" + ((.branchIsolationRepairDryRun.contaminatedBranchCount // 0)|tostring) + "`",
+      "- candidateProfileIds: `" + ((.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",")) + "`"' "$summary"
   fi
   printf '\n## Missing Or Unproved\n\n'
   if [[ "$(jq -r '.missingOrUnproved | length' "$summary")" == "0" ]]; then

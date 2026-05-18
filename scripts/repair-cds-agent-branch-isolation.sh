@@ -20,6 +20,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CDS_PROJECT_ID="${SMOKE_CDS_PROJECT_ID:-prd-agent}"
 APPLY="${SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY:-0}"
+REPORT="${SMOKE_CDS_AGENT_BRANCH_ISOLATION_REPAIR_REPORT:-}"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+STARTED_EPOCH="$(date +%s)"
 
 fail() {
   printf '❌ %s\n' "$*" >&2
@@ -28,6 +31,40 @@ fail() {
 
 ok() {
   printf '✅ %s\n' "$*"
+}
+
+write_report() {
+  local status="$1"
+  local message="$2"
+  local deleted_profiles_json="${3:-[]}"
+  [[ -n "$REPORT" ]] || return 0
+  mkdir -p "$(dirname "$REPORT")"
+  jq -n \
+    --arg startedAt "$STARTED_AT" \
+    --arg finishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson elapsedSeconds "$(( $(date +%s) - STARTED_EPOCH ))" \
+    --arg cdsHost "$cds_base" \
+    --arg projectId "$CDS_PROJECT_ID" \
+    --arg apply "$APPLY" \
+    --arg status "$status" \
+    --arg message "$message" \
+    --argjson contaminated "$contaminated" \
+    --argjson profileIds "$profile_ids_json" \
+    --argjson deletedProfiles "$deleted_profiles_json" \
+    '{
+      startedAt: $startedAt,
+      finishedAt: $finishedAt,
+      elapsedSeconds: $elapsedSeconds,
+      cdsHost: $cdsHost,
+      projectId: $projectId,
+      apply: ($apply == "1"),
+      status: $status,
+      message: $message,
+      contaminatedBranchCount: ($contaminated | length),
+      contaminatedBranches: $contaminated,
+      candidateProfileIds: $profileIds,
+      deletedProfileIds: $deletedProfiles
+    }' > "$REPORT"
 }
 
 if [[ -z "${CDS_HOST:-}" ]]; then
@@ -71,9 +108,11 @@ contaminated=$(
 profile_ids=$(
   printf '%s' "$contaminated" | jq -r '.[].services[]' | sort -u
 )
+profile_ids_json=$(printf '%s\n' "$profile_ids" | jq -R 'select(length > 0)' | jq -s .)
 
 if [[ -z "$profile_ids" ]]; then
   ok "远程未发现 branch-local sidecar service，无需清理"
+  write_report "clean" "远程未发现 branch-local sidecar service，无需清理" "[]"
   exit 0
 fi
 
@@ -84,10 +123,12 @@ printf '%s\n' "$profile_ids" | sed 's/^/  - /'
 
 if [[ "$APPLY" != "1" ]]; then
   printf '\nDRY-RUN: 未执行删除。设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 后再运行。\n'
+  write_report "dry_run" "未执行删除；设置 SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 后再运行" "[]"
   exit 0
 fi
 
 printf '\n>>> 执行删除\n'
+deleted_profiles=()
 while IFS= read -r profile_id; do
   [[ -z "$profile_id" ]] && continue
   tmp=$(mktemp)
@@ -106,9 +147,13 @@ while IFS= read -r profile_id; do
     fail "删除 $profile_id 失败: HTTP $code"
   fi
   ok "已删除 BuildProfile $profile_id"
+  deleted_profiles+=("$profile_id")
 done <<< "$profile_ids"
+
+deleted_profiles_json=$(printf '%s\n' "${deleted_profiles[@]}" | jq -R 'select(length > 0)' | jq -s .)
 
 printf '\n>>> 复查远程分支污染\n'
 SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
   CDS_HOST="$CDS_HOST" \
   bash "$ROOT_DIR/scripts/smoke-cds-agent-branch-isolation.sh"
+write_report "applied" "已删除候选 BuildProfile 并完成复查" "$deleted_profiles_json"
