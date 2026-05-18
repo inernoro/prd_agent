@@ -605,6 +605,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       const result = reconcileCdsManagedRuntimeCapacity(deps.stateService, service, project, {
         apply: req.body?.apply === true,
         liveApply: req.body?.liveApply === true,
+        force: req.body?.force === true,
         hostPort,
         now: new Date().toISOString(),
         containerService: deps.containerService,
@@ -957,6 +958,7 @@ const CDS_MANAGED_RUNTIME_CONTAINER_NAME = 'cds-claude-agent-sdk-runtime';
 interface CdsManagedRuntimeReconcileOptions {
   apply: boolean;
   liveApply: boolean;
+  force?: boolean;
   hostPort?: number;
   now: string;
   containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
@@ -1067,24 +1069,25 @@ async function reconcileCdsManagedRuntimeCapacity(
 ): Promise<Record<string, unknown>> {
   const before = collectProjectRuntimeInstances(stateService, service, project);
   const alreadyAvailable = before.capacity.status === 'available';
+  const shouldSkipApply = alreadyAvailable && !options.force;
   const planned = planCdsManagedRuntimeCapacity(stateService, project, {
     hostPort: options.hostPort,
     liveApply: options.liveApply,
-    alreadyAvailable,
+    alreadyAvailable: shouldSkipApply,
   });
 
-  if (!options.apply || alreadyAvailable) {
+  if (!options.apply || shouldSkipApply) {
     return {
       requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
       applied: false,
-      status: alreadyAvailable ? 'available' : 'planned',
+      status: shouldSkipApply ? 'available' : 'planned',
       runtimeOwnedBy: 'cds-managed-runtime',
       loopOwner: 'claude-agent-sdk',
       productPathOnly: true,
       fallbackScope: 'operator-debug-only',
       plan: planned,
       capacity: before.capacity,
-      nextAction: alreadyAvailable
+      nextAction: shouldSkipApply
         ? 'CDS-managed official SDK runtime capacity already exists; continue with R1/S1/S2/S3.'
         : 'Apply this CDS-managed runtime reconcile plan with liveApply=true to start the CDS-managed container; do not ask product users for SSH/env/image.',
     };
@@ -1363,6 +1366,7 @@ function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
       SIDECAR_AGENT_ADAPTER: 'claude-agent-sdk',
       SIDECAR_RUNTIME_OWNER: 'cds-managed-runtime',
       SIDECAR_LOOP_OWNER: 'claude-agent-sdk',
+      SIDECAR_PROVIDER_KEY_MODE: 'runtime-profile-or-env',
       SIDECAR_TOKEN: 'cds-managed',
     },
     readinessProbe: {

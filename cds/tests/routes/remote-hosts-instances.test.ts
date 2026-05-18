@@ -463,6 +463,7 @@ describe('Remote hosts project instances route', () => {
           expect(profile.dockerImage).toBe('python:3.12-slim');
           expect(profile.command).toContain('pip install');
           expect(profile.env?.SIDECAR_AGENT_ADAPTER).toBe('claude-agent-sdk');
+          expect(profile.env?.SIDECAR_PROVIDER_KEY_MODE).toBe('runtime-profile-or-env');
           expect(service.hostPort).toBeGreaterThanOrEqual(19000);
           onOutput?.('managed runtime container started');
         },
@@ -517,6 +518,23 @@ describe('Remote hosts project instances route', () => {
       runtimeAdapter: 'claude-agent-sdk',
       loopOwner: 'claude-agent-sdk',
     });
+
+    const forced = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/runtime-capacity/reconcile`,
+      longToken,
+      { apply: true, liveApply: true, force: true },
+    );
+
+    expect(forced.status).toBe(200);
+    expect(forced.body.applied).toBe(true);
+    expect(containerCalls.map(call => call.kind)).toEqual([
+      'runService',
+      'waitForReadiness',
+      'runService',
+      'waitForReadiness',
+    ]);
   });
 
   it('does not expose branch services for regular projects through instance discovery', async () => {

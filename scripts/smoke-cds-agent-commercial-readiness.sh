@@ -238,7 +238,6 @@ smoke_assert_contains "$n6_evidence" "planned-not-routable" "nextCyclePlan.N6.ev
 smoke_assert_contains "$(printf '%s' "$next_cycle_plan" | jq -r '.stopConditions[]?')" "N1-N5" "nextCyclePlan.stopConditions"
 smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.commercialComplete')" "false" "executionPanel.commercialComplete"
 smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.stepTotal')" "6" "executionPanel.stepTotal"
-smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.currentStep.code // ""')" "N1" "executionPanel.currentStep.code"
 smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '[.timeline[]? | select(.code == "N6")] | length')" "1" "executionPanel.timeline.N6"
 profile_name=$(printf '%s' "$default_profile" | jq -r '.name // "unknown"')
 profile_protocol=$(printf '%s' "$default_profile" | jq -r '.protocol // "unknown"')
@@ -248,6 +247,11 @@ profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleW
 profile_reason_code=$(printf '%s' "$default_profile" | jq -r '.compatibilityReasonCode // ""')
 profile_reason=$(printf '%s' "$default_profile" | jq -r '.compatibilityReason // ""')
 commercial_reason_code=$(printf '%s' "$r1_gate" | jq -r '.reasonCode // ""')
+expected_current_step="N1"
+if [[ "$profile_compatible" == "true" && "$profile_has_key" == "true" ]]; then
+  expected_current_step="N2"
+fi
+smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.currentStep.code // ""')" "$expected_current_step" "executionPanel.currentStep.code"
 printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s reason=%s\n' \
   "$profile_name" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible" "${profile_reason_code:-none}"
 if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
