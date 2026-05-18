@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:46 Asia/Shanghai：
+截至 2026-05-18 19:52 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -20,6 +20,7 @@
 - 已解决：remote host `docker pull` 已纳入独立 dry-run/显式 SSH 验证门禁。
 - 已解决：当前进度面板的 `Exact Next Step` 已改成按 gate 顺序动态输出。
 - 已解决：registry candidate tag 可由 git remote/commit 自动推导；进度面板下一步不再要求手填占位符。
+- 已解决：候选 GHCR tag 已在本地 Docker 中创建；仍未 push。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -54,6 +55,7 @@
 | 19:36 | 即使 image 已 push，也还需要证明目标 remote host 能 `docker pull` | 新增 `scripts/verify-cds-agent-remote-sidecar-pull.sh`，默认 dry-run；只有 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` | `/tmp/cds-agent-remote-sidecar-pull-current.json`、`/tmp/cds-agent-remote-pull-dryrun-ready.json` | <1s dry-run | 当前默认 `missing_config`；示例参数 dry-run 为 `dry_run_ready`，未 SSH、未 deploy |
 | 19:39 | 进度面板虽然显示多个 gate，但 `Exact Next Step` 固定指向 remote-host handoff，容易跳过 registry/pull 门禁 | `scripts/print-cds-agent-current-progress.sh` 改为按 gate 顺序选择下一步：context -> local build -> registry publish -> remote pull -> remote host apply/deploy | terminal output | <1s | 当前下一步明确是提供 registry-qualified `CDS_AGENT_SIDECAR_IMAGE` 并跑 publish dry-run |
 | 19:46 | 下一步命令仍有 `<registry>` 占位符，且首次用 unquoted heredoc 拼动态 Markdown 时触发了 shell command substitution 风险 | `publish-cds-agent-sidecar-image.sh` 从 git remote/commit 推导 candidate tag；progress board 改用 `printf` 生成动态命令，保持只读 | `/tmp/cds-agent-sidecar-image-publish-current.json`、progress board output | <1s | candidate=`ghcr.io/inernoro/prd-agent/claude-sidecar:12a488c3f4fa`；面板生成不执行 publish |
+| 19:52 | GHCR push 需要明确批准，但本地 tag 还可以安全推进 | 执行 `CDS_AGENT_SIDECAR_IMAGE=ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84 CDS_AGENT_SIDECAR_IMAGE_TAG=1 scripts/publish-cds-agent-sidecar-image.sh` | `/tmp/cds-agent-sidecar-image-publish-current.json`、`docker image inspect` | <1s | `tagPassed=true`、`pushAttempted=false`；本地 tag 和 source image 指向同一 image id |
 
 ## 本轮暴露的问题
 
@@ -520,6 +522,23 @@
 - 当前 progress board 的 `Exact Next Step` 直接输出该 candidate dry-run 命令。
 
 优化：面板现在既给具体命令，又保持只读；不再靠用户手动拼 registry tag。
+
+### 30. 外部 push 前先完成本地 registry tag
+
+问题：GHCR push 属于外部 registry 写入，需要明确批准；但在批准前仍可以完成本地 `docker tag`，把本地 build artifact 和目标 registry tag 对齐，减少 push 之后才发现 tag 参数错误的风险。
+
+处理：
+
+- 使用 `CDS_AGENT_SIDECAR_IMAGE_TAG=1` 只执行 `docker tag`。
+- 没有设置 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1`，因此没有 push。
+- `scripts/print-cds-agent-current-progress.sh` 增加 `Sidecar local registry tag` 和 `Sidecar push attempted`。
+
+证据：
+
+- `/tmp/cds-agent-sidecar-image-publish-current.json` 当前 `tagPassed=true`、`pushAttempted=false`。
+- `docker image inspect` 显示 `prd-agent/claude-sidecar:latest` 与 `ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84` 指向同一 image id。
+
+优化：registry 阶段现在拆成 local tag 和 external push；外部写入仍保持显式批准。
 
 ## 最耗时项
 

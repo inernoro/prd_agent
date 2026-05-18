@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 19:46 Asia/Shanghai
+> **更新时间**：2026-05-18 19:52 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -20,6 +20,7 @@
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
 | `SIDECAR_REGISTRY_PUBLISH` | blocked | 默认 dry-run 显示 `missing_target_image`；需要 registry-qualified `CDS_AGENT_SIDECAR_IMAGE`，显式 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` 才 push |
+| `SIDECAR_LOCAL_REGISTRY_TAG` | pass | 候选 tag `ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84` 已本地创建；`pushAttempted=false` |
 | `REMOTE_HOST_PULL` | blocked | 默认报告 `missing_config`；需要 remote host SSH 参数和 registry image，显式 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` |
 
 固定查看入口：
@@ -59,6 +60,7 @@ scripts/print-cds-agent-lifecycle-overview.sh
 | sidecar build context | `pass` | `/tmp/cds-agent-sidecar-image-preflight-current.json` |
 | sidecar local docker build | `build_pass` | `/tmp/cds-agent-sidecar-image-build-current.json` |
 | sidecar registry publish | `missing_target_image` | `/tmp/cds-agent-sidecar-image-publish-current.json` |
+| sidecar local registry tag | `tagPassed=true` | `/tmp/cds-agent-sidecar-image-publish-current.json` |
 | remote host docker pull | `missing_config` | `/tmp/cds-agent-remote-sidecar-pull-current.json` |
 
 ## 4. 下一步最小计划
@@ -138,6 +140,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | sidecar image publish dry-run | `/tmp/cds-agent-sidecar-image-publish-current.json` | 默认不 push；当前缺 registry-qualified target image | <1s |
 | remote sidecar pull dry-run | `/tmp/cds-agent-remote-sidecar-pull-current.json` | 默认不 SSH；当前缺 image、host、ssh user、ssh key | <1s |
 | progress board exact next step | `scripts/print-cds-agent-current-progress.sh` | 根据 image context/build/publish、remote pull、remote host gate 顺序动态选择下一步；当前指向确定 candidate tag 的 registry dry-run | <1s |
+| local registry tag | `/tmp/cds-agent-sidecar-image-publish-current.json` | 本地 tag 已创建，未 push、未 deploy | <1s |
 
 ## 7. 时间和问题账本
 

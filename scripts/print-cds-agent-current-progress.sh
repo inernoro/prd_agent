@@ -72,6 +72,8 @@ image_build_context="unknown"
 image_local_build="not checked"
 image_publish="not checked"
 image_publish_candidate="ghcr.io/inernoro/prd-agent/claude-sidecar:$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
+image_publish_tag="not checked"
+image_push_attempted="false"
 remote_pull="not checked"
 if [[ -f "$R0_READINESS_SUMMARY" ]]; then
   r0_ready=$(jq_read "$R0_READINESS_SUMMARY" '.readyForR0Apply // false')
@@ -86,6 +88,8 @@ if [[ -f "$SIDECAR_IMAGE_BUILD_REPORT" ]]; then
 fi
 if [[ -f "$SIDECAR_IMAGE_PUBLISH_REPORT" ]]; then
   image_publish=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.status // "unknown"')
+  image_publish_tag=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.tagPassed // false')
+  image_push_attempted=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.pushAttempted // false')
   image_publish_candidate=$(jq_read "$SIDECAR_IMAGE_PUBLISH_REPORT" '.candidateTargetImage // empty')
   [[ -n "$image_publish_candidate" ]] || image_publish_candidate="ghcr.io/inernoro/prd-agent/claude-sidecar:$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf local)"
 fi
@@ -191,6 +195,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - Sidecar build context: $image_build_context
 - Sidecar local docker build: $image_local_build
 - Sidecar registry publish: $image_publish
+- Sidecar local registry tag: $image_publish_tag
+- Sidecar push attempted: $image_push_attempted
 - Remote host docker pull: $remote_pull
 
 ## Task Board
@@ -214,6 +220,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 - imageBuildContext: $image_build_context
 - imageLocalBuild: $image_local_build
 - imagePublish: $image_publish
+- imagePublishTag: $image_publish_tag
+- imagePushAttempted: $image_push_attempted
 - remotePull: $remote_pull
 - targetHostId: $target_host_id
 - willCreateHost: $will_create_host
