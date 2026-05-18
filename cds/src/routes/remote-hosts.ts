@@ -763,13 +763,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     if (session.runtime !== 'fake') {
       const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session);
       if (transport) {
-        const result = await runCdsManagedOfficialSdkTransport(session, content, transport);
+        startCdsManagedOfficialSdkTransport(session, content, transport);
+        session.updatedAt = new Date().toISOString();
         res.status(202).json({
           item: toCdsAgentSessionView(session),
-          accepted: result.accepted,
+          accepted: true,
           runtimeOwnedBy: 'cds-managed-runtime',
           transport: toCdsManagedRuntimeTransportView(transport),
-          ...(result.error ? { error: result.error } : {}),
         });
         return;
       }
@@ -1694,6 +1694,29 @@ function toCdsManagedRuntimeTransportView(transport: CdsManagedRuntimeTransport)
     loopOwner: transport.loopOwner,
     auth: transport.authToken ? { configured: true, source: transport.authTokenSource } : { configured: false },
   };
+}
+
+function startCdsManagedOfficialSdkTransport(
+  session: CdsAgentSession,
+  content: string,
+  transport: CdsManagedRuntimeTransport,
+): void {
+  void Promise.resolve()
+    .then(() => runCdsManagedOfficialSdkTransport(session, content, transport))
+    .catch((err) => {
+      const error = {
+        code: 'cds_managed_runtime_transport_background_failed',
+        message: err instanceof Error ? err.message : String(err),
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        retryable: true,
+      };
+      session.status = 'failed';
+      session.updatedAt = new Date().toISOString();
+      pushCdsAgentEvent(session, 'error', error);
+      session.logs.push(`[${session.updatedAt}] runtime transport background failed owner=cds-managed-runtime`);
+    });
 }
 
 async function runCdsManagedOfficialSdkTransport(

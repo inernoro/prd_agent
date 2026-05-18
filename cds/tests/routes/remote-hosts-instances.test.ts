@@ -49,6 +49,15 @@ async function request(
   });
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`waitFor timeout after ${timeoutMs}ms`);
+}
+
 const previewEnvKeys = [
   'CDS_PREVIEW_DOMAIN',
   'PREVIEW_DOMAIN',
@@ -447,6 +456,7 @@ describe('Remote hosts project instances route', () => {
       loopOwner: 'claude-agent-sdk',
     });
     expect(sent.body.transport.baseUrl).toBe(`http://127.0.0.1:${runtime.port}`);
+    await waitFor(() => runtime.requests.length === 1);
     expect(runtime.requests).toHaveLength(1);
   });
 
@@ -718,7 +728,7 @@ describe('Remote hosts project instances route', () => {
     expect(sent.status).toBe(202);
     expect(sent.body.accepted).toBe(true);
     expect(sent.body.runtimeOwnedBy).toBe('cds-managed-runtime');
-    expect(sent.body.item.status).toBe('idle');
+    expect(sent.body.item.status).toBe('running');
     expect(sent.body.transport).toMatchObject({
       source: 'cds-branch-service',
       runtimeOwnedBy: 'cds-managed-runtime',
@@ -729,6 +739,7 @@ describe('Remote hosts project instances route', () => {
     });
     expect(sent.body.transport.baseUrl).toBe(`http://127.0.0.1:${runtime.port}`);
     expect(sent.body.transport).not.toHaveProperty('authToken');
+    await waitFor(() => runtime.requests.length === 1);
     expect(runtime.requests).toHaveLength(1);
     expect(runtime.requests[0].authorization).toBe('Bearer dev-skip');
     expect(runtime.requests[0].body).toMatchObject({
@@ -856,6 +867,7 @@ describe('Remote hosts project instances route', () => {
       hostPort: runtime.port,
       profileId: 'claude-agent-sdk-runtime',
     });
+    await waitFor(() => runtime.requests.length === 1);
     expect(runtime.requests).toHaveLength(1);
     expect(runtime.requests[0].body).toMatchObject({
       baseUrl: 'https://openrouter.ai/api',

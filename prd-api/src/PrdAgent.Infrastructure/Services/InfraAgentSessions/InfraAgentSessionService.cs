@@ -990,6 +990,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 StatusCodes.Status404NotFound);
         }
 
+        await TryImportCdsStreamEventsAsync(session, ct);
+
         var take = Math.Clamp(limit <= 0 ? 100 : limit, 1, 500);
         var items = await _db.InfraAgentEvents
             .Find(x => x.SessionId == sessionId && x.Seq > afterSeq)
@@ -1013,6 +1015,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "会话不存在",
                 StatusCodes.Status404NotFound);
         }
+
+        await TryImportCdsStreamEventsAsync(session, ct);
 
         var take = Math.Clamp(limit <= 0 ? 100 : limit, 1, 500);
         var items = await _db.InfraAgentMessages
@@ -1225,6 +1229,26 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         return doc.RootElement.GetProperty("item").Clone();
+    }
+
+    private async Task TryImportCdsStreamEventsAsync(InfraAgentSession session, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return;
+
+        try
+        {
+            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+            var token = await GetLongTokenAsync(connection.Id, ct);
+            await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to import CDS stream events for infra agent session {SessionId} cdsSession={CdsSessionId}",
+                session.Id,
+                session.CdsSessionId);
+        }
     }
 
     private async Task ImportCdsStreamEventsAsync(
