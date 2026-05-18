@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 17:01 Asia/Shanghai
+> 更新时间：2026-05-18 17:05 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -49,6 +49,7 @@
 - runtime-status 已下发机器可读 `runbook[]`、`nextCommandCode`、`nextCommandSafety`，页面已渲染执行 runbook，标明只读、远程删除、remote host apply/deploy 和 provider opt-in 边界。
 - runtime-status 的下一步建议已校准为 `shared-service runtime pool`，不再把运行时恢复描述成 `branch-service sidecar`。
 - `scripts/smoke-cds-agent-sidecar-alias-stability.sh` 与 `scripts/doctor-cds-agent-runtime.sh` 已默认阻止探测 branch-local `claude-agent-sdk-runtime*` alias；只有显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1` 才能用于历史污染诊断。
+- branch-local sidecar 清理 dry-run 现在会输出 `applyManifest`，明确标记 `destructive_remote_delete_build_profile`、DELETE endpoint、必需环境变量、唯一候选和确认变量等前置条件。
 
 ## 最新远程页面验证
 
@@ -74,6 +75,21 @@
 - `dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj --no-restore --filter FullyQualifiedName~DynamicSidecarRegistryTests`：通过，18/18
 - `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-sidecar-alias-stability.sh`：按预期拒绝默认 branch-local alias probe，除非显式设置 `SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE=1`
 - `CDS_HOST=https://cds.miduo.org CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-current-after-doc-fix.json bash scripts/audit-cds-agent-goal.sh`：按预期返回 `goalStatus=not_complete`，本地 guardrail 耗时 `11s`，阻塞为 R0 runtime pool 未恢复
+- `CDS_HOST=https://cds.miduo.org CDS_AGENT_BRANCH_ISOLATION_REPAIR_DIR=/tmp/cds-agent-branch-isolation-repair-manifest-current bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh`：dry-run 通过，`totalSeconds=15s`，`verdict=dry-run-contaminated`，未执行删除
+
+## 最新 Branch Isolation Dry Run
+
+2026-05-18 17:05 Asia/Shanghai：
+
+- 目录：`/tmp/cds-agent-branch-isolation-repair-manifest-current`
+- 报告：`/tmp/cds-agent-branch-isolation-repair-manifest-current/summary.json`
+- verdict：`dry-run-contaminated`
+- beforeContaminatedBranchCount：`4`
+- candidateProfileIds：`claude-agent-sdk-runtime-v2-prd-agent`
+- safety：`destructive_remote_delete_build_profile`
+- endpoint：`https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent`
+- 前置条件：`unique_candidate_profile=true`，`confirmation_matches_candidate=false`，`apply_flag_enabled=false`
+- 说明：这是只读 dry-run，没有执行 DELETE。
 
 ## 最新目标审计
 

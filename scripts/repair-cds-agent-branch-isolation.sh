@@ -67,7 +67,46 @@ write_report() {
       contaminatedBranchCount: ($contaminated | length),
       contaminatedBranches: $contaminated,
       candidateProfileIds: $profileIds,
-      deletedProfileIds: $deletedProfiles
+      deletedProfileIds: $deletedProfiles,
+      applyManifest: {
+        safety: "destructive_remote_delete_build_profile",
+        method: "DELETE",
+        endpoint: (
+          if ($profileIds | length) == 1
+          then ($cdsHost + "/api/build-profiles/" + $profileIds[0])
+          else null
+          end
+        ),
+        requiredEnv: [
+          "CDS_HOST",
+          "AI_ACCESS_KEY or CDS_PROJECT_KEY",
+          "SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1",
+          "SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=<unique candidateProfileIds[0]>"
+        ],
+        preconditions: [
+          {
+            code: "unique_candidate_profile",
+            expected: 1,
+            actual: ($profileIds | length),
+            passed: (($profileIds | length) == 1)
+          },
+          {
+            code: "confirmation_matches_candidate",
+            expected: (
+              if ($profileIds | length) == 1 then $profileIds[0] else null end
+            ),
+            actual: (if $confirmProfileId == "" then null else $confirmProfileId end),
+            passed: (($profileIds | length) == 1 and $confirmProfileId == $profileIds[0])
+          },
+          {
+            code: "apply_flag_enabled",
+            expected: "1",
+            actual: $apply,
+            passed: ($apply == "1")
+          }
+        ],
+        expectedPostCheck: "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh"
+      }
     }' > "$REPORT"
 }
 

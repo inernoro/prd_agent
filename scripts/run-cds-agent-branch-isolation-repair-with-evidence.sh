@@ -145,7 +145,8 @@ jq -n \
     pre: $pre,
     post: $post,
     beforeContaminatedBranchCount: ($pre.branchIsolationRepairDryRun.contaminatedBranchCount // $pre.plan.contaminatedBranchCount // null),
-    afterContaminatedBranchCount: ($post.branchIsolationRepairDryRun.contaminatedBranchCount // $post.plan.contaminatedBranchCount // null)
+    afterContaminatedBranchCount: ($post.branchIsolationRepairDryRun.contaminatedBranchCount // $post.plan.contaminatedBranchCount // null),
+    applyManifest: ($repair.applyManifest // null)
   }
   | .branchIsolationClean = (
       if .apply then
@@ -194,13 +195,15 @@ index="$OUT_DIR/evidence-index.md"
   printf '\n## Repair\n\n'
   jq -r '"- status: `" + (.repair.status // "unknown") + "`",
     "- candidateProfileIds: `" + ((.repair.candidateProfileIds // []) | join(",")) + "`",
-    "- deletedProfileIds: `" + ((.repair.deletedProfileIds // []) | join(",")) + "`"' "$summary"
+    "- deletedProfileIds: `" + ((.repair.deletedProfileIds // []) | join(",")) + "`",
+    "- safety: `" + (.applyManifest.safety // "unknown") + "`",
+    "- endpoint: `" + (.applyManifest.endpoint // "n/a") + "`"' "$summary"
 } > "$index"
 
 printf '\nEvidence dir: %s\n' "$OUT_DIR"
 printf 'Summary:      %s\n' "$summary"
 printf 'Index:        %s\n' "$index"
-jq '{apply,totalSeconds,verdict,readyForRemoteHostStep,nextAction,beforeContaminatedBranchCount,afterContaminatedBranchCount,repair:{status:.repair.status,candidateProfileIds:.repair.candidateProfileIds,deletedProfileIds:.repair.deletedProfileIds}}' "$summary"
+jq '{apply,totalSeconds,verdict,readyForRemoteHostStep,nextAction,beforeContaminatedBranchCount,afterContaminatedBranchCount,applyManifest,repair:{status:.repair.status,candidateProfileIds:.repair.candidateProfileIds,deletedProfileIds:.repair.deletedProfileIds}}' "$summary"
 
 if [[ "$APPLY" == "1" && "$(jq -r '.verdict' "$summary")" == "apply-confirm-failed" ]]; then
   printf '❌ branch isolation repair apply was blocked before DELETE by profile confirmation guard; see %s\n' "$index" >&2
