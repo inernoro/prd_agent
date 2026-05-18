@@ -441,6 +441,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     const added: EmergenceNodeType[] = [];
     for (const node of buf) {
       if (existing.has(node.id)) continue;
+      existing.add(node.id); // 同一 flush 批内的重复 node 事件也要去重
       positions.set(node.id, { x: baseX + (startFilled + added.length) * LEAF_WIDTH, y });
       added.push(node);
     }
