@@ -205,6 +205,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[2].content["sdkResult"]["total_cost_usd"], 0.0123)
         self.assertEqual(events[-1].content["sdkResult"]["duration_ms"], 1234)
         self.assertEqual(events[0].content["allowedTools"], ["Read", "Grep", "Glob"])
+        self.assertEqual(events[0].content["disallowedTools"], ["Bash", "Edit", "Write"])
         self.assertEqual(events[0].content["permissionMode"], "default")
         self.assertEqual(events[0].content["builtinWriteToolsEnabled"], False)
         self.assertEqual(events[0].content["approvalBridge"], "sdk-can-use-tool")
@@ -217,6 +218,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0].content["apiKeyConfigured"], True)
         self.assertEqual(events[0].content["workspaceSource"], "unset")
         self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_API_KEY"], "sk-env-test")
+        self.assertEqual(LAST_OPTIONS.kwargs["disallowed_tools"], ["Bash", "Edit", "Write"])
 
     async def test_missing_provider_key_is_structured_error_before_sdk_run(self) -> None:
         os.environ.pop("ANTHROPIC_API_KEY", None)
@@ -270,6 +272,8 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.content["permissionMode"], "acceptEdits")
         self.assertEqual(first.content["builtinWriteToolsEnabled"], True)
         self.assertEqual(first.content["builtinWriteTools"], ["Bash", "Edit", "Write"])
+        self.assertEqual(first.content["disallowedTools"], [])
+        self.assertEqual(LAST_OPTIONS.kwargs["disallowed_tools"], [])
 
     async def test_runtime_init_reports_request_provider_override(self) -> None:
         req = build_request().model_copy(update={

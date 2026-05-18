@@ -99,6 +99,17 @@ async def run_official_agent(
         "CLAUDE_AGENT_SDK_ALLOWED_TOOLS",
         "Read,Grep,Glob",
     )
+    dangerous_builtin_tools = {"bash": "Bash", "edit": "Edit", "write": "Write"}
+    explicitly_allowed = {name.lower() for name in builtin_allowed}
+    default_disallowed = [
+        canonical
+        for key, canonical in dangerous_builtin_tools.items()
+        if key not in explicitly_allowed
+    ]
+    builtin_disallowed = _csv_env(
+        "CLAUDE_AGENT_SDK_DISALLOWED_TOOLS",
+        ",".join(default_disallowed),
+    )
     unsafe_builtin_tools = sorted(
         {name for name in builtin_allowed if name.lower() in {"bash", "edit", "write"}}
     )
@@ -161,6 +172,7 @@ async def run_official_agent(
     options = ClaudeAgentOptions(
         tools={"type": "preset", "preset": "claude_code"},
         allowed_tools=[*builtin_allowed, *sdk_tooling.map_tool_names],
+        disallowed_tools=builtin_disallowed,
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
@@ -185,6 +197,7 @@ async def run_official_agent(
             "mapSessionId": req.map_session_id,
             "traceId": req.trace_id,
             "allowedTools": [*builtin_allowed, *sdk_tooling.map_tool_names],
+            "disallowedTools": builtin_disallowed,
             "permissionMode": permission_mode,
             "cwd": cwd,
             "workspaceSource": workspace_source,

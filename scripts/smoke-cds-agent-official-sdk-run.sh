@@ -252,7 +252,17 @@ while (( $(date +%s) < deadline )); do
         | select((.toolName // "" | ascii_downcase) | test("bash|edit|write"))
       ] | length
     ')
+    dangerous_builtin_count=$(printf '%s' "$events_resp" | jq -r '
+      [
+        .data.items[]?
+        | (.payloadJson | fromjson? // {})
+        | select((.source // "") == "claude-agent-sdk")
+        | select((.payload.type // "") == "tool_use")
+        | select((.payload.tool_name // "" | ascii_downcase) | test("^(bash|edit|write)$"))
+      ] | length
+    ')
     smoke_assert_eq "$dangerous_approval_count" "0" "S1 dangerous approval count"
+    smoke_assert_eq "$dangerous_builtin_count" "0" "S1 dangerous builtin tool use count"
     assistant_preview=$(printf '%s' "$messages_resp" | jq -r '[.data.items[]? | select(.role == "assistant") | .content] | join("\n---\n") | .[0:1000]')
     evidence_json=$(jq -n \
       --arg runtimeAdapter "claude-agent-sdk" \
@@ -263,6 +273,7 @@ while (( $(date +%s) < deadline )); do
       --arg gitRef "$evidence_ref" \
       --argjson assistantMessages "$assistant_count" \
       --argjson dangerousApprovals "$dangerous_approval_count" \
+      --argjson dangerousBuiltinTools "$dangerous_builtin_count" \
       --arg assistantPreview "$assistant_preview" \
       '{
         runtimeAdapter: $runtimeAdapter,
@@ -273,6 +284,7 @@ while (( $(date +%s) < deadline )); do
         gitRef: $gitRef,
         assistantMessages: $assistantMessages,
         dangerousApprovals: $dangerousApprovals,
+        dangerousBuiltinTools: $dangerousBuiltinTools,
         assistantPreview: $assistantPreview
       }')
     write_s1_report "pass" "$evidence_json"

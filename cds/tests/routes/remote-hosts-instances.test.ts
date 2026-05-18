@@ -618,6 +618,8 @@ describe('Remote hosts project instances route', () => {
         modelProtocol: 'anthropic',
         modelApiKey: 'provider-secret',
         runtimeProfileId: 'map-runtime-profile-id',
+        gitRepository: 'inernoro/prd_agent',
+        gitRef: 'main',
       },
     );
 
@@ -628,6 +630,8 @@ describe('Remote hosts project instances route', () => {
       modelProtocol: 'anthropic',
       hasModelApiKey: true,
       runtimeProfileId: 'map-runtime-profile-id',
+      gitRepository: 'inernoro/prd_agent',
+      gitRef: 'main',
     });
     expect(JSON.stringify(created.body.item)).not.toContain('provider-secret');
     const sessionId = created.body.item.id;
@@ -683,6 +687,8 @@ describe('Remote hosts project instances route', () => {
         modelProtocol: 'anthropic',
         modelApiKey: 'provider-secret',
         runtimeProfileId: 'map-runtime-profile-id',
+        gitRepository: 'inernoro/prd_agent',
+        gitRef: 'main',
       },
     );
 
@@ -693,6 +699,8 @@ describe('Remote hosts project instances route', () => {
       modelProtocol: 'anthropic',
       hasModelApiKey: true,
       runtimeProfileId: 'map-runtime-profile-id',
+      gitRepository: 'inernoro/prd_agent',
+      gitRef: 'main',
     });
     expect(JSON.stringify(created.body.item)).not.toContain('provider-secret');
     const sessionId = created.body.item.id;
@@ -728,6 +736,8 @@ describe('Remote hosts project instances route', () => {
       baseUrl: 'https://openrouter.ai/api',
       apiKey: 'provider-secret',
       protocol: 'anthropic',
+      gitRepository: 'inernoro/prd_agent',
+      gitRef: 'main',
     });
     expect(runtime.requests[0].body).not.toHaveProperty('profile');
 
@@ -822,6 +832,8 @@ describe('Remote hosts project instances route', () => {
         modelBaseUrl: 'https://openrouter.ai/api',
         modelApiKey: 'provider-secret',
         runtimeProfileId: 'map-runtime-profile-id',
+        gitRepository: 'inernoro/prd_agent',
+        gitRef: 'main',
       },
     );
     expect(created.status).toBe(201);
@@ -846,6 +858,8 @@ describe('Remote hosts project instances route', () => {
     expect(runtime.requests[0].body).toMatchObject({
       baseUrl: 'https://openrouter.ai/api',
       apiKey: 'provider-secret',
+      gitRepository: 'inernoro/prd_agent',
+      gitRef: 'main',
     });
     expect(runtime.requests[0].body).not.toHaveProperty('profile');
   });

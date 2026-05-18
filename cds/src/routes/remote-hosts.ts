@@ -643,6 +643,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const modelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0
       ? req.body.modelApiKey
       : null;
+    const workspaceRoot = typeof req.body?.workspaceRoot === 'string' ? req.body.workspaceRoot : null;
+    const gitRepository = typeof req.body?.gitRepository === 'string' ? req.body.gitRepository : null;
+    const gitRef = typeof req.body?.gitRef === 'string' ? req.body.gitRef : null;
     const hasModelApiKey = Boolean(modelApiKey);
     const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
@@ -662,6 +665,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       modelBaseUrl,
       modelProtocol,
       modelApiKey,
+      workspaceRoot,
+      gitRepository,
+      gitRef,
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       resourcePolicy,
@@ -682,6 +688,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       model: session.model,
       modelBaseUrl,
       modelProtocol,
+      workspaceRoot,
+      gitRepository,
+      gitRef,
       runtimeProfileId: session.runtimeProfileId,
       modelCredential: hasModelApiKey ? 'configured' : 'missing',
       resourcePolicy,
@@ -1473,6 +1482,9 @@ interface CdsAgentSession {
   modelBaseUrl: string | null;
   modelProtocol: string | null;
   modelApiKey: string | null;
+  workspaceRoot: string | null;
+  gitRepository: string | null;
+  gitRef: string | null;
   hasModelApiKey: boolean;
   runtimeProfileId: string | null;
   resourcePolicy: CdsAgentResourcePolicy;
@@ -1564,6 +1576,9 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     model: session.model,
     modelBaseUrl: session.modelBaseUrl,
     modelProtocol: session.modelProtocol,
+    workspaceRoot: session.workspaceRoot,
+    gitRepository: session.gitRepository,
+    gitRef: session.gitRef,
     hasModelApiKey: session.hasModelApiKey,
     runtimeProfileId: session.runtimeProfileId,
     resourcePolicy: session.resourcePolicy,
@@ -1703,6 +1718,9 @@ async function runCdsManagedOfficialSdkTransport(
     baseUrl: session.modelBaseUrl || undefined,
     apiKey: session.modelApiKey || undefined,
     protocol: session.modelProtocol || undefined,
+    workspaceRoot: session.workspaceRoot || undefined,
+    gitRepository: session.gitRepository || undefined,
+    gitRef: session.gitRef || undefined,
     systemPrompt: [
       'You are running as a CDS-managed Claude SDK runtime.',
       'MAP is only the control-plane client; CDS owns runtime/container/sandbox execution.',

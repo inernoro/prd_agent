@@ -169,6 +169,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 modelProtocol = runtimeProfile?.Protocol,
                 modelApiKey = runtimeProfile?.ApiKey,
                 runtimeProfileId = runtimeProfile?.Id ?? session.RuntimeProfileId,
+                workspaceRoot = session.WorkspaceRoot,
+                gitRepository = session.GitRepository,
+                gitRef = session.GitRef,
                 resourcePolicy = new
                 {
                     cpuCores = resourceCpuCores,
