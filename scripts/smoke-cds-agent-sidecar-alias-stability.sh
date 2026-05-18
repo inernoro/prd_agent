@@ -18,6 +18,8 @@
 #   SMOKE_CDS_AGENT_SIDECAR_PORT         default: 7400
 #   SMOKE_CDS_AGENT_ALIAS_ATTEMPTS       default: 6
 #   SMOKE_CDS_AGENT_ALIAS_DIAGNOSE_IPS   default: 1
+#   SMOKE_CDS_AGENT_BRANCH_EXEC_RETRIES  default: 4
+#   SMOKE_CDS_AGENT_BRANCH_EXEC_RETRY_SECONDS default: 3
 # ============================================
 
 set -euo pipefail
@@ -32,7 +34,39 @@ SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk
 SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
 SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-6}"
 SMOKE_CDS_AGENT_ALIAS_DIAGNOSE_IPS="${SMOKE_CDS_AGENT_ALIAS_DIAGNOSE_IPS:-1}"
+SMOKE_CDS_AGENT_BRANCH_EXEC_RETRIES="${SMOKE_CDS_AGENT_BRANCH_EXEC_RETRIES:-4}"
+SMOKE_CDS_AGENT_BRANCH_EXEC_RETRY_SECONDS="${SMOKE_CDS_AGENT_BRANCH_EXEC_RETRY_SECONDS:-3}"
 SMOKE_STEP_TOTAL=5
+
+branch_exec_resp=""
+
+branch_exec_with_retry() {
+  local label="$1"
+  local cmd="$2"
+  local attempt
+  local ok
+  local exit_code
+  local stderr
+
+  branch_exec_resp=""
+  for attempt in $(seq 1 "$SMOKE_CDS_AGENT_BRANCH_EXEC_RETRIES"); do
+    branch_exec_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$cmd")
+    ok=$(printf '%s' "$branch_exec_resp" | jq -r '.ok // false')
+    exit_code=$(printf '%s' "$branch_exec_resp" | jq -r '.data.exitCode // -1')
+    stderr=$(printf '%s' "$branch_exec_resp" | jq -r '.data.stderr // ""')
+    if [[ "$ok" == "true" && "$exit_code" == "0" ]]; then
+      return 0
+    fi
+    if (( attempt < SMOKE_CDS_AGENT_BRANCH_EXEC_RETRIES )) && printf '%s' "$stderr" | grep -Eq 'No such container|container .* is not running|is restarting'; then
+      printf '%s exec not ready yet (attempt %s/%s, exit=%s), retrying in %ss...\n' \
+        "$label" "$attempt" "$SMOKE_CDS_AGENT_BRANCH_EXEC_RETRIES" "$exit_code" "$SMOKE_CDS_AGENT_BRANCH_EXEC_RETRY_SECONDS"
+      sleep "$SMOKE_CDS_AGENT_BRANCH_EXEC_RETRY_SECONDS"
+      continue
+    fi
+    return 1
+  done
+  return 1
+}
 
 smoke_init "CDS Agent Sidecar Alias Stability"
 
@@ -52,7 +86,8 @@ remote_cmd="echo hosts; getent hosts ${SMOKE_CDS_AGENT_SIDECAR_ALIAS} || true; p
 for attempt in $(seq 1 "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS"); do
   remote_cmd="${remote_cmd}echo sample=${attempt}; curl -sS --max-time 10 ${remote_url} || true; printf '\\n---cds-agent-alias-sample---\\n'; sleep 1; "
 done
-exec_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$remote_cmd")
+branch_exec_with_retry "readyz alias" "$remote_cmd" || true
+exec_resp="$branch_exec_resp"
 smoke_verbose "$exec_resp"
 smoke_assert_eq "$(printf '%s' "$exec_resp" | jq -r '.ok')" "true" "cdscli.branch.exec.ok"
 smoke_assert_eq "$(printf '%s' "$exec_resp" | jq -r '.data.exitCode')" "0" "cdscli.branch.exec.exitCode"
@@ -72,7 +107,8 @@ if [[ "$SMOKE_CDS_AGENT_ALIAS_DIAGNOSE_IPS" == "1" ]]; then
       [[ -z "$ip" ]] && continue
       diag_cmd="${diag_cmd}echo ip=${ip}; curl -sS --max-time 5 http://${ip}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/readyz || true; printf '\\n---cds-agent-alias-ip---\\n'; "
     done <<< "$ip_list"
-    diag_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$diag_cmd")
+    branch_exec_with_retry "ip diagnostics" "$diag_cmd" || true
+    diag_resp="$branch_exec_resp"
     smoke_assert_eq "$(printf '%s' "$diag_resp" | jq -r '.ok')" "true" "cdscli.branch.exec.ipDiagnostics.ok"
     smoke_assert_eq "$(printf '%s' "$diag_resp" | jq -r '.data.exitCode')" "0" "cdscli.branch.exec.ipDiagnostics.exitCode"
     diag_stdout=$(printf '%s' "$diag_resp" | jq -r '.data.stdout // ""')
@@ -100,8 +136,9 @@ smoke_assert_eq "$lazy_legacy_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "legacyLo
 smoke_ok "all ${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS} attempts returned ready=true, loopOwner=claude-agent-sdk, and legacyLoopImport=lazy-explicit-fallback"
 
 smoke_step "确认未知 runtimeAdapter 不会回退 legacy"
-unsupported_cmd="curl -sS -N --max-time 20 -H 'Authorization: Bearer dev-skip' -H 'Content-Type: application/json' -d '{\"runId\":\"unsupported-adapter-smoke\",\"runtimeAdapter\":\"codex\",\"prompt\":\"should not run\"}' http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/v1/agent/run | head -20"
-unsupported_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$unsupported_cmd")
+unsupported_cmd="curl -sS -N --max-time 20 -H 'Authorization: Bearer dev-skip' -H 'Content-Type: application/json' -d '{\"runId\":\"unsupported-adapter-smoke\",\"runtimeAdapter\":\"codex\",\"prompt\":\"should not run\"}' http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/v1/agent/run || true"
+branch_exec_with_retry "unsupported adapter" "$unsupported_cmd" || true
+unsupported_resp="$branch_exec_resp"
 smoke_verbose "$unsupported_resp"
 smoke_assert_eq "$(printf '%s' "$unsupported_resp" | jq -r '.ok')" "true" "unsupportedAdapter.exec.ok"
 smoke_assert_eq "$(printf '%s' "$unsupported_resp" | jq -r '.data.exitCode')" "0" "unsupportedAdapter.exec.exitCode"
