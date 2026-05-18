@@ -113,7 +113,7 @@ bash -n scripts/* correction targets = pass
 scripts/check-cds-agent-progress-consistency.sh = pass
 audit D0/D1/N6 = pass
 audit goalStatus = not_complete
-audit expected blocker = R0 CDS-managed official SDK runtime transport is not complete
+audit expected blocker = R0 MAP session transport smoke is not complete
 ```
 
 解释：

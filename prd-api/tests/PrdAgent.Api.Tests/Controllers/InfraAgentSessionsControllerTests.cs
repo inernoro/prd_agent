@@ -441,11 +441,12 @@ public class InfraAgentSessionsControllerTests
             executionPanel.PendingSteps.ShouldBe(6);
             executionPanel.CurrentStep.ShouldNotBeNull().Code.ShouldBe("N1");
             executionPanel.Timeline.Count.ShouldBe(6);
-            executionPanel.TaskBoard.Count.ShouldBe(7);
+            executionPanel.TaskBoard.Count.ShouldBe(8);
             executionPanel.TaskBoard.Single(x => x.Code == "A0").Status.ShouldBe("done");
-            executionPanel.TaskBoard.Single(x => x.Code == "R0.2").EstimatedDuration.ShouldContain("20-40 min");
-            executionPanel.TaskBoard.Single(x => x.Code == "R0.3").NextAction.ShouldContain("CDS-managed container/sandbox");
-            executionPanel.NextStepEta.ShouldContain("R0.2");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.2").Status.ShouldBe("done");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.3").Status.ShouldBe("done_minimal");
+            executionPanel.TaskBoard.Single(x => x.Code == "R0.4").NextAction.ShouldContain("MAP uses CDS session");
+            executionPanel.NextStepEta.ShouldContain("R0.4");
             executionPanel.TimeSinkAdvice.ShouldContain("SSH/image/env");
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
             nextActions.ShouldContain("为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile，或将该任务改走普通 OpenAI-compatible gateway");

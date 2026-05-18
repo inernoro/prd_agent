@@ -166,7 +166,7 @@ if [[ "$invalid_count" -eq 0 ]]; then
   fi
 fi
 
-next_action="continue R0.2.3 CDS-managed official SDK runtime transport before any fallback env handoff"
+next_action="continue R0.2.4 MAP adapter session transport and managed-runtime smoke before any fallback env handoff"
 if [[ "$invalid_count" -gt 0 ]]; then
   next_action="fix invalid fallback env before any operator apply"
 elif [[ "$ready_for_r0_apply" == "true" ]]; then

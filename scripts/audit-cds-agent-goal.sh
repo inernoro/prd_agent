@@ -911,19 +911,19 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
-  blocking_reason="Runtime pool recovery is still blocked in old evidence. R0 fact-source and CDS session ownership guard are in place; the next product step is CDS-managed official SDK runtime transport. Remote host/env/image are operator fallback only."
+  blocking_reason="Runtime pool recovery is still blocked in old evidence. R0 fact-source, CDS session ownership guard, and minimal CDS-managed official SDK transport are in place; the next product step is MAP adapter session transport plus managed-runtime smoke. Remote host/env/image are operator fallback only."
   if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
     deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals if needed, then correct the runtime recovery model back to CDS-managed runtime before exposing any operator fallback."
   else
-    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is CDS-managed official SDK runtime transport, not asking the user for SSH/env/image."
+    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is MAP adapter session transport plus managed-runtime smoke, not asking the user for SSH/env/image."
   fi
   next_command="sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && dotnet test prd-api/tests/PrdAgent.Api.Tests --filter InfraAgentSessionsControllerTests --no-restore && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --argjson blockers "$runtime_pool_blockers_json" \
     --arg command "$next_command" \
     '{
-      cycle: "r0-cds-managed-runtime-transport",
-      state: "runtime-transport-blocked",
+      cycle: "r0-map-session-transport-smoke",
+      state: "map-session-transport-blocked",
       items: [
         {
           order: 1,
@@ -942,28 +942,40 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
           code: "R0.3",
           title: "接入 CDS-managed official SDK runtime transport",
           goal: "让 CDS 的容器/分支/runtime/sandbox 承载 Claude SDK runtime，并由 /agent-sessions 投递消息。",
-          evidence: "非 fake session ownership guard 已完成；下一步需要 runtime/profile/container/session transport。",
-          status: "next",
+          evidence: "非 fake session ownership guard 与最小 branch-service official SDK transport 已完成。",
+          status: "done_minimal",
           blockedBy: null,
           nextActions: [
-            "实现 CDS-managed official SDK runtime transport，不以 external agent host 作为产品模型。"
+            "保持 CDS-owned transport；不要回退到 MAP sidecar bridge。"
           ]
         },
         {
           order: 3,
+          code: "R0.4",
+          title: "MAP adapter session transport + managed-runtime smoke",
+          goal: "证明 MAP 只调用 CDS session/discovery/cancel/log API，且 official SDK loop owner 可观测。",
+          evidence: "MAP_TO_CDS_ONLY、CDS_MANAGED_RUNTIME_TRANSPORT、OFFICIAL_SDK_LOOP_OWNER smoke 通过。",
+          status: "next",
+          blockedBy: null,
+          nextActions: [
+            "审计 MAP adapter 直连 runtime 风险，并补 managed-runtime smoke。"
+          ]
+        },
+        {
+          order: 4,
           code: "R0V",
           title: "复跑 R0 runtime pool evidence",
           goal: "用当前 CDS state 更新 goal audit 和进度面板。",
           evidence: "runtimePoolBlockers=[]，R0=pass。",
           status: "waiting",
-          blockedBy: "R0.3",
+          blockedBy: "R0.4",
           nextActions: [$command]
         }
       ],
       legacyFallbackBlockers: $blockers,
       blockers: $blockers,
       stopConditions: [
-        "R0 CDS-managed official SDK runtime transport 完成前，不运行 provider one-cycle。",
+        "R0 MAP session transport 与 managed-runtime smoke 完成前，不运行 provider one-cycle。",
         "不要把 remote host/env/image 暴露为普通用户主路径。"
       ]
     }')
@@ -991,7 +1003,7 @@ fi
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   failures+=("P0 branch isolation/shared pool plan was not observed")
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
-  failures+=("R0 CDS-managed official SDK runtime transport is not complete; legacy fallback pool evidence remains missing")
+  failures+=("R0 MAP session transport smoke is not complete; legacy fallback pool evidence remains missing")
 fi
 if [[ "$branch_manifest_status" != "pass" && "$branch_manifest_status" != "clean_from_runtime_pool_summary" ]]; then
   failures+=("P0 branch isolation apply manifest did not pass")

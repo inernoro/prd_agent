@@ -117,7 +117,7 @@ $deployment_advice
 | --- | --- | --- | --- | --- |
 | 1 | Design and boundary: MAP/CDS as control plane, official SDK owns loop | $(stage_state "$a0") | A0=$a0, adapter boundary smoke | Keep legacy loop explicit fallback only |
 | 2 | Other-agent compatibility | $(stage_state "$n6") | N6=$n6, non-code/candidate SDK smoke | Re-run after provider cycle |
-| 3 | R0 CDS-managed official SDK runtime pool | $(stage_state "$r0") | R0=$r0, readyForR0Apply=$ready_for_r0 | Implement CDS-managed official SDK runtime transport; SSH/image are fallback only |
+| 3 | R0 CDS-managed official SDK runtime pool | $(stage_state "$r0") | R0=$r0, readyForR0Apply=$ready_for_r0 | Prove MAP session transport and managed-runtime smoke; SSH/image are fallback only |
 | 4 | R1 Anthropic/Claude profile | $(stage_state "$r1") | R1=$r1 | Configure compatible default profile after R0 |
 | 5 | S1 provider read-only run | $(stage_state "$s1") | S1=$s1 | Run after R0/R1 with explicit provider opt-in |
 | 6 | S2/S3 approval and interrupt controls | $(stage_state "$s2s3") | S2S3=$s2s3 | Run approval/stop smokes after S1 |

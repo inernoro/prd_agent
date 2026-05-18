@@ -204,20 +204,28 @@ public class InfraAgentSessionsController : ControllerBase
                 3,
                 "R0.2",
                 "CDS-managed runtime fact source",
-                r0Done ? "done" : r0Active ? "next" : "waiting",
-                r0Done ? "CDS-managed runtime facts are healthy." : "Design R0 around CDS project/profile/container/session facts; SSH/image are fallback only.",
-                r0Done ? "done" : "20-40 min",
+                "done",
+                "Fact source and non-fake session ownership guard are in place; SSH/image remain fallback only.",
+                "done",
                 "doc/design.cds-agent-managed-runtime-fact-source.md"),
             new SidecarExecutionTask(
                 4,
                 "R0.3",
                 "CDS-managed official SDK runtime",
-                r0Done ? "done" : r0Active ? "pending" : "waiting",
-                r0Done ? "Official SDK runtime is discoverable through CDS." : "Create/restore the official SDK runtime as a CDS-managed container/sandbox, not an external host product layer.",
-                r0Done ? "done" : "45-90 min after R0.2",
-                "scripts/smoke-cds-agent-shared-service-pool.sh"),
+                "done_minimal",
+                "CDS agent sessions can dispatch to a CDS-managed branch-service official SDK transport.",
+                "done",
+                "cds/tests/routes/remote-hosts-instances.test.ts"),
             new SidecarExecutionTask(
                 5,
+                "R0.4",
+                "MAP session transport smoke",
+                r0Done ? "done" : r0Active ? "next" : "waiting",
+                r0Done ? "MAP session transport evidence is healthy." : "Prove MAP uses CDS session/discovery/cancel/log APIs and does not direct-connect runtime.",
+                r0Done ? "done" : "45-70 min",
+                "scripts/check-cds-agent-progress-consistency.sh"),
+            new SidecarExecutionTask(
+                6,
                 "R1",
                 "Default Claude/Anthropic profile",
                 r1Done ? "done" : r1Active ? "active" : r0Done ? "next" : "blocked",
@@ -225,7 +233,7 @@ public class InfraAgentSessionsController : ControllerBase
                 r1Done ? "done" : "5-15 min",
                 "scripts/smoke-cds-agent-r1-profile-repair.sh"),
             new SidecarExecutionTask(
-                6,
+                7,
                 "S1-S3",
                 "Provider read/approval/stop cycle",
                 providerDone ? "done" : providerActive ? "active" : r0Done && r1Done ? "next" : "blocked",
@@ -233,7 +241,7 @@ public class InfraAgentSessionsController : ControllerBase
                 providerDone ? "done" : "10-25 min",
                 "scripts/smoke-cds-agent-official-sdk-run.sh + scripts/smoke-cds-agent-official-sdk-controls.sh"),
             new SidecarExecutionTask(
-                7,
+                8,
                 "V1",
                 "Real runtime visual verification",
                 providerDone ? "next" : "blocked",
@@ -247,7 +255,7 @@ public class InfraAgentSessionsController : ControllerBase
     {
         if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
         {
-            return "R0.2 CDS-managed runtime fact source 20-40 min; R0.3 managed official SDK runtime 45-90 min; R0V 15-30 sec.";
+            return "R0.4 MAP session transport smoke 45-70 min; R0V 15-30 sec.";
         }
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
@@ -587,9 +595,9 @@ public class InfraAgentSessionsController : ControllerBase
         {
             new SidecarDebugCommand(
                 "managed-runtime-fact-source",
-                "R0 CDS-managed runtime fact source",
+                "R0 MAP/session transport smoke",
                 "sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md && bash scripts/check-cds-agent-progress-consistency.sh",
-                "只读查看 R0 新事实源设计；确认 MAP 只连 CDS，CDS 管理 runtime/container/sandbox，SSH/image/env 仅为 operator fallback。",
+                "只读确认 R0.2/R0.3 已完成，下一步聚焦 MAP_TO_CDS_ONLY、CDS_MANAGED_RUNTIME_TRANSPORT、OFFICIAL_SDK_LOOP_OWNER；SSH/image/env 仅为 operator fallback。",
                 r0Status,
                 r0Ready ? null : "R0"),
             new SidecarDebugCommand(

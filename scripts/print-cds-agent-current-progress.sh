@@ -131,7 +131,7 @@ EOF
 )
 elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
   exact_next_step=$(cat <<'EOF'
-Continue R0.2.3 CDS-managed official SDK runtime transport work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
+Continue R0.2.4 MAP adapter session transport and managed-runtime smoke work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
 sed -n '1,220p' doc/design.cds-agent-managed-runtime-fact-source.md
@@ -235,8 +235,9 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | D1 Runtime architecture correction | done | Keep CDS-managed runtime/container/sandbox as product path | done |
 | R0.2 CDS-managed runtime fact source | done | Session ownership guard is in place; non-fake messages no longer delegate to MAP sidecar bridge | done |
 | R0.2F Operator fallback host path | fallback | Keep SSH/env/image only as CDS operator fallback | later |
-| R0.3 CDS-managed official SDK runtime | in_progress | Implement CDS-managed official SDK runtime transport/profile/container | 45-90 min |
-| R0V Post-check | waiting | Run managed-runtime fact-source smoke after runtime transport exists | 15-30 sec |
+| R0.3 CDS-managed official SDK runtime | done_minimal | CDS agent sessions can dispatch to CDS-managed branch-service official SDK transport | done |
+| R0.4 MAP session transport smoke | in_progress | Prove MAP uses CDS session/discovery/cancel/log APIs and no direct runtime instance | 45-70 min |
+| R0V Post-check | waiting | Run managed-runtime fact-source smoke after MAP transport evidence exists | 15-30 sec |
 | R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |

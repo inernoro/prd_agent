@@ -2,7 +2,7 @@
 
 > **更新时间**：2026-05-18 22:08 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
-> **当前阶段**：D1 架构纠偏已完成；R0.2.2 session ownership guard 已完成；下一步进入 CDS-managed official SDK runtime transport
+> **当前阶段**：D1 架构纠偏已完成；R0.2.2/R0.2.3 CDS session ownership + official SDK transport 已完成最小闭环；下一步进入 MAP adapter/smoke 校准
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，当前文档和本地事实源已把 operator/debug 参数降级为 fallback。
 
 ## 0. 架构纠偏声明
@@ -36,7 +36,8 @@ D1 视觉测试决策：done
 R0 CDS-managed runtime fact-source 设计：done
 runtime-status 执行面板 R0 主线校准：done
 R0.2.2 CDS agent session execution ownership guard：done
-下一步 R0.2.3 CDS-managed official SDK runtime transport：45-90 分钟
+R0.2.3 CDS-managed official SDK runtime transport：done_minimal
+下一步 R0.2.4 MAP adapter session transport + managed-runtime smoke：45-70 分钟
 ```
 
 这不是完成整个商业级工作台的时间，而是把当前路线从 external host/env-driven recovery 纠正回 CDS-managed runtime 架构的有限周期。
@@ -48,7 +49,7 @@ R0.2.2 CDS agent session execution ownership guard：done
 | 1 | A0 官方 SDK adapter 边界 | done | 0 |
 | 2 | N6 其他智能体兼容性 | done | 0 |
 | 3 | D1 架构纠偏计划 | done | 0 |
-| 4 | R0 CDS-managed runtime 恢复设计 | in_progress | R0.2.3 剩 45-90 分钟 |
+| 4 | R0 CDS-managed runtime 恢复设计 | in_progress | R0.2.4 剩 45-70 分钟 |
 | 5 | R1 Claude/Anthropic profile 修正 | pending | R0 事实源纠偏后 5-15 分钟 |
 | 6 | S1/S2/S3 one-cycle | pending | R0/R1 后 10-25 分钟 |
 | 7 | V1 真实页面视觉/交互验证 | pending | 页面数据源纠偏后 5-10 分钟 |
@@ -98,7 +99,7 @@ ssh root@62.146.168.225
 
 ## 2. 一句话进度
 
-`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，不会再把 message delegation 推回 MAP sidecar bridge；下一步是接上 CDS-managed official SDK runtime transport。
+`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；下一步是证明 MAP adapter 只走 CDS session transport，并补 managed-runtime smoke。
 
 当前有效 blocker：
 
@@ -109,7 +110,8 @@ ssh root@62.146.168.225
 | `REMOTE_HOST_ENV_AS_PRODUCT_PATH` | rejected | SSH、remote host、image、env 只能是 operator/debug fallback |
 | `R0_FACT_SOURCE` | designed | `doc/design.cds-agent-managed-runtime-fact-source.md` 已定义新 gate；runtime-status execution panel 已指向它 |
 | `CDS_AGENT_SESSION_EXECUTION_OWNED_BY_CDS` | pass_guarded | CDS `/agent-sessions` 非 fake runtime 不再返回“delegated to MAP sidecar bridge”；runtime 缺失时由 CDS 返回 `cds_managed_runtime_unavailable` |
-| `CDS_MANAGED_RUNTIME_TRANSPORT` | pending | 下一步接入 CDS-managed official SDK runtime/profile/container/session transport |
+| `CDS_MANAGED_RUNTIME_TRANSPORT` | pass_minimal | CDS `/agent-sessions` 可发现 shared-service branch runtime 并投递 `/v1/agent/run`，事件写回 `runtime_init/text_delta/done` |
+| `MAP_TO_CDS_SESSION_TRANSPORT` | pending | 下一步证明 MAP adapter 不直连 runtime，只调用 CDS session/discovery/cancel/log API |
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
 | `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行；也可直接提供其他可 pull registry image |
@@ -146,7 +148,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | A0 官方 SDK adapter 边界 | [x] | `smoke-cds-agent-official-sdk-boundary.sh`、helper tests | 已完成 | 保持 legacy loop 只作显式 fallback |
 | R0.1 业务分支去污染 | [x] | `/tmp/cds-agent-branch-isolation-repair-apply-current/summary.json` | 已完成 | 防回归 |
 | D1 架构纠偏 | [x] | `doc/plan.cds-agent-runtime-correction-limited.md` | 已完成 | 作为 R0 设计边界 |
-| R0 CDS-managed runtime pool | [~] | `doc/design.cds-agent-managed-runtime-fact-source.md`、runtime-status task board、CDS route test | in_progress | 接入 CDS-managed official SDK runtime transport，不把 env 当产品主路径 |
+| R0 CDS-managed runtime pool | [~] | `doc/design.cds-agent-managed-runtime-fact-source.md`、runtime-status task board、CDS route test | in_progress | 校准 MAP adapter session transport 和 managed-runtime smoke，不把 env 当产品主路径 |
 | R1 Claude/Anthropic profile | [x] 模板/预检就绪 | runtime-status profile diagnostics | pending | R0 通过后配置默认 profile |
 | S1/S2/S3 one-cycle | [x] smoke 框架就绪 | one-cycle summary | pending | R0/R1 通过后跑只读、审批、取消 |
 | V1 视觉验证 | [x] 页面支持 | bundle publish check | partial | R0/R1/S1 后做登录态截图 |
@@ -169,13 +171,13 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 
 ## 5. 下一步最小计划
 
-下一轮只做 R0.2.3 CDS-managed official SDK runtime transport，不做普通 preview redeploy，不把 SSH/env/image 重新提升为产品路径。
+下一轮只做 R0.2.4 MAP adapter session transport + managed-runtime smoke，不做普通 preview redeploy，不把 SSH/env/image 重新提升为产品路径。
 
 | 顺序 | 动作 | 需要输入 | 成功证据 |
 | --- | --- | --- | --- |
-| 1 | 接入 CDS-managed official SDK runtime transport | 无新增输入 | `/agent-sessions` message 能投递到 CDS-owned runtime，而不是 MAP sidecar bridge |
+| 1 | MAP adapter session transport 审计/校准 | 无新增输入 | MAP 不直连 runtime instance，只调用 CDS session/discovery/cancel/log API |
 | 2 | 增加 R0 managed-runtime smoke | 无新增输入 | 检查 `CDS_AGENT_SESSION_EXECUTION_OWNED_BY_CDS`、`CDS_MANAGED_RUNTIME_TRANSPORT`、`OFFICIAL_SDK_LOOP_OWNER`、`MAP_TO_CDS_ONLY` |
-| 3 | MAP adapter 切到 CDS session transport | 无新增输入 | MAP 不直连 runtime instance，只调用 CDS session/discovery/cancel/log API |
+| 3 | 更新 runtime-status 页面数据源 | 无新增输入 | 页面显示 R0.2.3 transport done_minimal，下一步是 MAP/session smoke |
 | 4 | 更新页面数据源后再做视觉测试 | 页面数据源已修正后再触发 | 页面不显示 SSH/env/image 为主下一步，且能显示 runtime transport 状态 |
 
 ## 6. 已完成清单
@@ -200,7 +202,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | remote host recovery dry-run | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` | `dry-run-missing-config` | 14s |
 | runbook publish verification | `/tmp/cds-agent-runbook-published/summary.json` | bundle has `applyManifest/preconditions` rendering | ~35s |
 | CDS branch status | `/tmp/cds-branch-status-final.json` | preview running, services only api/admin | ~1s |
-| goal audit summary fast | `/tmp/cds-agent-goal-audit-summary-fast.json` | `status=blocked_r0`，next plan=`R0.2/R0.3/R0V` | 11s |
+| goal audit summary fast | `/tmp/cds-agent-goal-audit-summary-fast.json` | `status=blocked_r0`，next plan=`D1/R0.3/R0.4/R0V` | 10-12s |
 | N6 no-build test | terminal output | 27/27 pass outside sandbox socket restriction | 64ms |
 | remote host prepare fixture | `/tmp/cds-agent-remote-host-existing-report.json` | existing enabled host 可复用，`missingConfig=[]` | <1s |
 | remote host deploy fixture | `/tmp/cds-agent-remote-host-existing-deploy-missing-image-report.json` | existing host 部署路径只缺 `CDS_AGENT_SIDECAR_IMAGE` | <1s |
@@ -230,6 +232,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | R0 status refresh bundle | `/tmp/cds-agent-r0-status-refresh-current.md` | 一键刷新当前 HEAD image、publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle、progress board | <3s |
 | progress consistency check | `scripts/check-cds-agent-progress-consistency.sh` | 断言 refresh、progress board、主进度文档对 R0 blocker、GHCR scope、Exact Next Step 的口径一致 | <3s |
 | CDS route ownership test | `cds/tests/routes/remote-hosts-instances.test.ts` | 非 fake runtime message 由 CDS 返回 `cds_managed_runtime_unavailable`，不再委托 MAP sidecar bridge | 3/3，约 0.5s |
+| CDS route transport test | `cds/tests/routes/remote-hosts-instances.test.ts` | 非 fake runtime message 经 CDS-managed branch service transport 投递 `/v1/agent/run`，事件含 `runtime_init` 与 `loopOwner=claude-agent-sdk` | 4/4，约 0.9s |
 
 ## 8. 时间和问题账本
 
@@ -369,7 +372,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-summary-fast.json \
 ```text
 Cycle status: blocked_r0
 Current blocking gate: R0
-Next cycle plan: r0-cds-managed-runtime-transport state=runtime-transport-blocked items=D1,R0.3,R0V
+Next cycle plan: r0-map-session-transport-smoke state=map-session-transport-blocked items=D1,R0.3,R0.4,R0V
 ```
 
 只读刷新 remote host recovery manifest：
