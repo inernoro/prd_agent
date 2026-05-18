@@ -131,7 +131,7 @@ EOF
 )
 elif [[ "$missing_config" != "none" || "$image_readiness" == "missing" ]]; then
   exact_next_step=$(cat <<'EOF'
-Continue R0.5 CDS-managed runtime capacity work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
+Continue R0.6 CDS-managed runtime capacity reconciler work. `CDS_REMOTE_HOST_*`, SSH keys, and `CDS_AGENT_SIDECAR_IMAGE` are operator/debug fallback details, not the product path.
 
 ```bash
 sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md
@@ -239,7 +239,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.3 CDS-managed official SDK runtime | done_minimal | CDS agent sessions can dispatch to CDS-managed branch-service official SDK transport | done |
 | R0.4 MAP session transport smoke | done | MAP uses CDS session/discovery/cancel/log APIs; direct runtime queue is explicit fallback only | done |
 | R0V Post-check | done_blocked | Live evidence complete; shared runtime running=0 and enabled fallback hosts=0 | done |
-| R0.5 CDS-managed runtime capacity | in_progress | Define product capacity fact source/contract; keep remote host/env/image as fallback only | 30-60 min for bounded plan/guard |
+| R0.5 CDS-managed runtime capacity contract | done_minimal | CDS exposes /api/projects/:id/runtime-capacity and separates product runtime from operator fallback | done |
+| R0.6 CDS-managed runtime capacity reconciler | in_progress | Make CDS create/start/recover official SDK runtime capacity itself | next |
 | R1 Profile repair | pending | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
 | S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
 | V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |

@@ -258,6 +258,9 @@ describe('Remote hosts project instances route', () => {
       branchId: 'shared-main',
       branch: 'main',
       serviceKind: 'branch-service',
+      capacityRole: 'runtime-service',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      runtimeAdapter: 'unknown',
       projectKind: 'shared-service',
       host: 'cds-shared-sidecar-api',
       port: 17400,
@@ -267,6 +270,71 @@ describe('Remote hosts project instances route', () => {
       tags: ['system', 'default', 'cds-sidecar', 'profile:api-prd-agent', 'branch:main'],
       hostName: 'api-prd-agent',
       hostId: 'shared-main',
+    });
+    expect(res.body.capacity).toMatchObject({
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      status: 'missing',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPath: {
+        runningOfficialSdkRuntimeCount: 0,
+        branchRuntimeServiceCount: 1,
+      },
+      legacyFallback: {
+        scope: 'operator-debug-only',
+      },
+    });
+  });
+
+  it('exposes CDS-managed runtime capacity as product gate separate from fallback hosts', async () => {
+    process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const missing = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
+
+    expect(missing.status).toBe(200);
+    expect(missing.body.capacity).toMatchObject({
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      status: 'missing',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPath: {
+        projectKind: 'shared-service',
+        runningOfficialSdkRuntimeCount: 0,
+      },
+      legacyFallback: {
+        enabledRemoteHostCount: 0,
+        runningFallbackInstanceCount: 0,
+        scope: 'operator-debug-only',
+      },
+    });
+    expect(missing.body.capacity.nextAction).toContain('CDS-managed official SDK runtime');
+    expect(missing.body.capacity.nextAction).not.toContain('CDS_REMOTE_HOST');
+
+    const runtime = await startMockOfficialSdkRuntime();
+    addSharedOfficialSdkRuntime(projectId, runtime.port);
+
+    const available = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
+
+    expect(available.status).toBe(200);
+    expect(available.body.instances).toHaveLength(1);
+    expect(available.body.instances[0]).toMatchObject({
+      capacityRole: 'product-runtime',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      runtimeAdapter: 'claude-agent-sdk',
+      loopOwner: 'claude-agent-sdk',
+    });
+    expect(available.body.capacity).toMatchObject({
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      status: 'available',
+      productPath: {
+        runningOfficialSdkRuntimeCount: 1,
+      },
+      legacyFallback: {
+        enabledRemoteHostCount: 0,
+        runningFallbackInstanceCount: 0,
+      },
     });
   });
 

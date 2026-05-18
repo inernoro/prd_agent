@@ -911,19 +911,19 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   cycle_status="blocked_r0"
   gate_r0="pending"
   current_blocking_gate="R0"
-  blocking_reason="R0V live evidence is complete and shows CDS-managed runtime capacity is missing: branch isolation is clean, but shared runtime running=0 and enabled operator fallback hosts=0. The next product step is R0.5 CDS-managed runtime capacity, not asking users for SSH/env/image."
+  blocking_reason="R0V live evidence is complete and R0.5 capacity contract is in place, but CDS-managed runtime capacity is still missing: branch isolation is clean, shared runtime running=0, and enabled operator fallback hosts=0. The next product step is R0.6 CDS-managed runtime capacity reconciler, not asking users for SSH/env/image."
   if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
     deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals if needed, then correct the runtime recovery model back to CDS-managed runtime before exposing any operator fallback."
   else
-    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is R0.5 CDS-managed runtime capacity, not asking the user for SSH/env/image."
+    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; the next product step is R0.6 CDS-managed runtime capacity reconciler, not asking the user for SSH/env/image."
   fi
   next_command="sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md && scripts/smoke-cds-agent-map-session-transport.sh && scripts/smoke-cds-agent-shared-service-pool.sh && scripts/check-cds-agent-progress-consistency.sh"
   next_cycle_plan_json=$(jq -n \
     --argjson blockers "$runtime_pool_blockers_json" \
     --arg command "$next_command" \
     '{
-      cycle: "r0-cds-managed-runtime-capacity",
-      state: "cds-managed-runtime-capacity-missing",
+      cycle: "r0-cds-managed-runtime-reconciler",
+      state: "cds-managed-runtime-reconciler-missing",
       items: [
         {
           order: 1,
@@ -976,9 +976,21 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
         {
           order: 5,
           code: "R0.5",
-          title: "CDS-managed runtime capacity",
+          title: "CDS-managed runtime capacity contract",
           goal: "把顶层 blocker 从 REMOTE_HOST_AVAILABLE 收口为 CDS_MANAGED_RUNTIME_CAPACITY，并定义 CDS 内部 runtime/container/sandbox capacity contract。",
-          evidence: "runtime-status、progress board、goal audit 和 smoke 都显示 CDS_MANAGED_RUNTIME_CAPACITY；remote host/env/image 只在 legacyFallbackBlockers。",
+          evidence: "runtime-status、progress board、goal audit、smoke 和 CDS /runtime-capacity contract 都显示 CDS_MANAGED_RUNTIME_CAPACITY；remote host/env/image 只在 legacyFallbackBlockers。",
+          status: "done_minimal",
+          blockedBy: "CDS_MANAGED_RUNTIME_CAPACITY",
+          nextActions: [
+            "保持 /api/projects/:id/runtime-capacity 作为 CDS capacity SSOT。"
+          ]
+        },
+        {
+          order: 6,
+          code: "R0.6",
+          title: "CDS-managed runtime capacity reconciler",
+          goal: "让 CDS 自己创建/启动/恢复 official SDK runtime capacity，而不是要求普通用户提供 SSH/env/image。",
+          evidence: "CDS-managed official SDK runtime running count > 0；R0=pass。",
           status: "next",
           blockedBy: "CDS_MANAGED_RUNTIME_CAPACITY",
           nextActions: [$command]
@@ -1021,7 +1033,7 @@ fi
 if [[ "$runtime_pool_plan_status" != "pass" ]]; then
   failures+=("P0 branch isolation/shared pool plan was not observed")
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
-  failures+=("CDS-managed runtime capacity is missing after R0V live evidence")
+  failures+=("CDS-managed runtime capacity reconciler has not produced running official SDK runtime")
 fi
 if [[ "$branch_manifest_status" != "pass" && "$branch_manifest_status" != "clean_from_runtime_pool_summary" ]]; then
   failures+=("P0 branch isolation apply manifest did not pass")

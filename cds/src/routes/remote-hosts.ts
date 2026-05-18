@@ -475,6 +475,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       }
       instances.push({
         deploymentId: dep.id,
+        serviceKind: 'operator-fallback-deployment',
+        capacityRole: 'operator-fallback',
         host: host.host,
         port: extractPortFromLogs(dep) ?? 7400,
         healthy: dep.containerHealthOk !== false,
@@ -506,12 +508,17 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
           discovery.runtimeBranchServiceCount += 1;
           const previewSlug = computePreviewSlug(branch.branch, projectSlug);
           const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+          const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
           instances.push({
             deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
             profileId: serviceState.profileId,
             branchId: branch.id,
             branch: branch.branch,
             serviceKind: 'branch-service',
+            capacityRole: officialSdkRuntime ? 'product-runtime' : 'runtime-service',
+            runtimeOwnedBy: 'cds-managed-runtime',
+            runtimeAdapter: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
+            loopOwner: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
             projectKind: project.kind,
             host: serviceState.containerName,
             port: serviceState.hostPort,
@@ -527,7 +534,34 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       }
     }
 
-    res.json({ projectId, instances, discovery });
+    const capacity = buildCdsManagedRuntimeCapacity(project, instances, discovery, service.list());
+    res.json({ projectId, instances, discovery, capacity });
+  });
+
+  router.get('/projects/:id/runtime-capacity', (req, res) => {
+    const projectId = req.params.id;
+    const token = extractBearerToken(req.headers.authorization);
+    const connection = pairing.authenticateLongToken(token);
+    if (!connection) {
+      res.status(401).json({ error: { code: 'invalid_long_token', message: 'invalid connection token' } });
+      return;
+    }
+    if (connection.projectId !== projectId) {
+      res.status(403).json({ error: { code: 'project_mismatch', message: 'connection token cannot access this project' } });
+      return;
+    }
+    if (!connection.scopes.includes('instance:read')) {
+      res.status(403).json({ error: { code: 'scope_denied', message: 'connection token lacks instance:read' } });
+      return;
+    }
+    const project = deps.stateService.getProject(projectId);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+
+    const instancesResponse = collectProjectRuntimeInstances(deps.stateService, service, project);
+    res.json({ projectId, ...instancesResponse });
   });
 
   router.post('/projects/:id/agent-sessions', async (req, res) => {
@@ -838,6 +872,162 @@ export function isRuntimeBranchService(profileId: string, profileName?: string, 
   if (!text.trim()) return false;
   if (/\b(admin|web|frontend|ui|dashboard)\b/.test(text.replace(/[-_]/g, ' '))) return false;
   return /\b(api|sidecar|runtime|worker|agent)\b/.test(text.replace(/[-_]/g, ' '));
+}
+
+interface ProjectRuntimeDiscovery {
+  projectKind: string;
+  deploymentCount: number;
+  runningDeploymentCount: number;
+  disabledHostDeploymentCount: number;
+  branchCount: number;
+  runningBranchCount: number;
+  runningBranchServiceCount: number;
+  runtimeBranchServiceCount: number;
+  skippedBranchServiceCount: number;
+  previewRootConfigured: boolean;
+}
+
+interface ProjectRuntimeInstancesResponse {
+  instances: Array<Record<string, unknown>>;
+  discovery: ProjectRuntimeDiscovery;
+  capacity: Record<string, unknown>;
+}
+
+function collectProjectRuntimeInstances(
+  stateService: StateService,
+  service: RemoteHostService,
+  project: Project,
+): ProjectRuntimeInstancesResponse {
+  const latest = stateService.getLatestDeploymentsByProject(project.id);
+  const instances: Array<Record<string, unknown>> = [];
+  const discovery: ProjectRuntimeDiscovery = {
+    projectKind: project.kind || 'unknown',
+    deploymentCount: latest.length,
+    runningDeploymentCount: 0,
+    disabledHostDeploymentCount: 0,
+    branchCount: 0,
+    runningBranchCount: 0,
+    runningBranchServiceCount: 0,
+    runtimeBranchServiceCount: 0,
+    skippedBranchServiceCount: 0,
+    previewRootConfigured: false,
+  };
+
+  for (const dep of latest) {
+    if (dep.status !== 'running') continue;
+    discovery.runningDeploymentCount += 1;
+    const host = service.getRaw(dep.hostId);
+    if (!host || !host.isEnabled) {
+      discovery.disabledHostDeploymentCount += 1;
+      continue;
+    }
+    instances.push({
+      deploymentId: dep.id,
+      serviceKind: 'operator-fallback-deployment',
+      capacityRole: 'operator-fallback',
+      host: host.host,
+      port: extractPortFromLogs(dep) ?? 7400,
+      healthy: dep.containerHealthOk !== false,
+      version: dep.releaseTag,
+      deployedAt: dep.startedAt,
+      tags: host.tags,
+      hostName: host.name,
+      hostId: host.id,
+    });
+  }
+
+  if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
+    const projectSlug = project.slug || project.id;
+    const previewRoot = resolvePreviewRootDomain();
+    discovery.previewRootConfigured = Boolean(previewRoot);
+    const branches = stateService.getBranchesForProject(project.id);
+    discovery.branchCount = branches.length;
+    for (const branch of branches) {
+      if (branch.status !== 'running') continue;
+      discovery.runningBranchCount += 1;
+      for (const serviceState of Object.values(branch.services || {})) {
+        if (serviceState.status !== 'running') continue;
+        discovery.runningBranchServiceCount += 1;
+        const profile = stateService.getBuildProfile(serviceState.profileId);
+        if (!isRuntimeBranchService(serviceState.profileId, profile?.name, serviceState.containerName)) {
+          discovery.skippedBranchServiceCount += 1;
+          continue;
+        }
+        discovery.runtimeBranchServiceCount += 1;
+        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
+        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
+        instances.push({
+          deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
+          profileId: serviceState.profileId,
+          branchId: branch.id,
+          branch: branch.branch,
+          serviceKind: 'branch-service',
+          capacityRole: officialSdkRuntime ? 'product-runtime' : 'runtime-service',
+          runtimeOwnedBy: 'cds-managed-runtime',
+          runtimeAdapter: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
+          loopOwner: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
+          projectKind: project.kind,
+          host: serviceState.containerName,
+          port: serviceState.hostPort,
+          baseUrl,
+          healthy: true,
+          version: branch.githubCommitSha,
+          deployedAt: branch.lastDeployAt || branch.createdAt,
+          tags: ['system', 'default', 'cds-sidecar', `profile:${serviceState.profileId}`, `branch:${branch.branch}`],
+          hostName: profile?.name || serviceState.profileId,
+          hostId: branch.id,
+        });
+      }
+    }
+  }
+
+  return {
+    instances,
+    discovery,
+    capacity: buildCdsManagedRuntimeCapacity(project, instances, discovery, service.list()),
+  };
+}
+
+function buildCdsManagedRuntimeCapacity(
+  project: Project,
+  instances: Array<Record<string, unknown>>,
+  discovery: ProjectRuntimeDiscovery,
+  remoteHosts: Array<{ isEnabled?: boolean }>,
+): Record<string, unknown> {
+  const productRuntimeInstances = instances.filter(instance =>
+    instance.capacityRole === 'product-runtime'
+    && instance.runtimeOwnedBy === 'cds-managed-runtime'
+    && instance.runtimeAdapter === 'claude-agent-sdk'
+    && instance.loopOwner === 'claude-agent-sdk'
+    && instance.healthy !== false);
+  const legacyFallbackInstances = instances.filter(instance =>
+    instance.capacityRole === 'operator-fallback');
+  const enabledFallbackHostCount = remoteHosts.filter(host => host.isEnabled !== false).length;
+  const available = project.kind === 'shared-service' && productRuntimeInstances.length > 0;
+
+  return {
+    requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+    status: available ? 'available' : 'missing',
+    runtimeOwnedBy: 'cds-managed-runtime',
+    loopOwner: 'claude-agent-sdk',
+    productPath: {
+      projectKind: project.kind,
+      runningOfficialSdkRuntimeCount: productRuntimeInstances.length,
+      branchRuntimeServiceCount: discovery.runtimeBranchServiceCount,
+      runningBranchServiceCount: discovery.runningBranchServiceCount,
+      previewRootConfigured: discovery.previewRootConfigured,
+    },
+    legacyFallback: {
+      runningDeploymentCount: discovery.runningDeploymentCount,
+      enabledRemoteHostCount: enabledFallbackHostCount,
+      runningFallbackInstanceCount: legacyFallbackInstances.length,
+      scope: 'operator-debug-only',
+    },
+    nextAction: available
+      ? 'CDS-managed runtime capacity is available; continue with R1/S1/S2/S3.'
+      : 'Provision or start a CDS-managed official SDK runtime/container/sandbox inside the shared-service project; do not ask product users for SSH/env/image.',
+  };
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';

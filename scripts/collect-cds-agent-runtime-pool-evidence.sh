@@ -228,7 +228,7 @@ jq -n \
           if (.evidenceCaptured | not) then
             "runtime pool evidence was unavailable; rerun with network/auth available before any apply or deploy"
           elif .clean then
-            "branch isolation already clean; continue R0.5 CDS-managed runtime capacity; remote host recovery is operator fallback only"
+            "branch isolation already clean; continue R0.6 CDS-managed runtime capacity reconciler; remote host recovery is operator fallback only"
           else
             "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate"
           end
