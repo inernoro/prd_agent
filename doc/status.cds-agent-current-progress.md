@@ -17,6 +17,7 @@
 - `/tmp/cds-agent-runtime-pool-evidence-20260518152545`
 - `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/summary.json`
 - `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/evidence-index.md`
+- remote host wrapper dry-run: `/tmp/cds-agent-remote-host-pool-20260518152907`
 
 本次证据采集总耗时 `13s`：
 
@@ -58,6 +59,7 @@
    - 当前缺失：`CDS_REMOTE_HOST_HOST`
    - 当前缺失：`CDS_REMOTE_HOST_SSH_USER`
    - 当前缺失：`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`
+   - dry-run wrapper 已验证：`/tmp/cds-agent-remote-host-pool-20260518152907`
 3. 部署 shared official SDK runtime sidecar。
    - 需要 sidecar image，例如通过 `CDS_AGENT_SIDECAR_IMAGE` 提供。
 4. 重跑 shared-service pool audit。
@@ -85,7 +87,7 @@ remote host 准备 dry-run：
 
 ```bash
 CDS_HOST=https://cds.miduo.org \
-  bash scripts/prepare-cds-agent-remote-host-pool.sh
+  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
 ```
 
 目标审计：
