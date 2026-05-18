@@ -23,13 +23,48 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_PROJECT="$ROOT_DIR/prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj"
 FILTER="FullyQualifiedName~CdsAgentRuntimeCompatibilityTests|FullyQualifiedName~InfraAgentRuntimeProfilesControllerTests"
+DOTNET_BIN="${DOTNET_BIN:-}"
+
+dotnet_has_net8_runtime() {
+  local candidate="$1"
+  [[ -n "$candidate" ]] || return 1
+  command -v "$candidate" >/dev/null 2>&1 || return 1
+  "$candidate" --list-runtimes 2>/dev/null | grep -Eq '^Microsoft\.NETCore\.App 8\.'
+}
+
+resolve_dotnet_bin() {
+  local candidates=()
+  if [[ -n "${DOTNET_BIN:-}" ]]; then
+    candidates+=("$DOTNET_BIN")
+  fi
+  candidates+=(
+    dotnet
+    /opt/homebrew/opt/dotnet@8/bin/dotnet
+    /usr/local/share/dotnet/dotnet
+    /opt/homebrew/bin/dotnet
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if dotnet_has_net8_runtime "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "${DOTNET_BIN:-dotnet}"
+  return 0
+}
+
+DOTNET_BIN="$(resolve_dotnet_bin)"
 
 printf '==========================================\n'
 printf '冒烟测试: CDS Agent Non-code Compatibility\n'
 printf '项目:     %s\n' "$TEST_PROJECT"
 printf '过滤器:   %s\n' "$FILTER"
+printf 'dotnet:   %s\n' "$DOTNET_BIN"
 printf '==========================================\n\n'
 
-dotnet test "$TEST_PROJECT" --filter "$FILTER"
+"$DOTNET_BIN" test "$TEST_PROJECT" --filter "$FILTER"
 
 printf '\n✅ N6 ready: non-code Toolbox agents remain independent from CDS sidecar runtime pool; candidate official SDK adapters remain planned-not-routable until contracts and provider smokes pass\n'

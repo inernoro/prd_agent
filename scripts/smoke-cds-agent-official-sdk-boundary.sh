@@ -23,7 +23,7 @@ WORKSPACE_FILE="$ROOT_DIR/claude-sdk-sidecar/app/workspace.py"
 LEGACY_FILE="$ROOT_DIR/claude-sdk-sidecar/app/agent_loop.py"
 REQ_FILE="$ROOT_DIR/claude-sdk-sidecar/requirements.txt"
 REPORT="${SMOKE_CDS_AGENT_BOUNDARY_REPORT:-}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-}"
 OFFICIAL_ADAPTER_MAX_LINES="${SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES:-320}"
 BRIDGE_SUPPORT_MAX_LINES="${SMOKE_CDS_AGENT_BRIDGE_SUPPORT_MAX_LINES:-650}"
 BRIDGE_TOTAL_MAX_LINES="${SMOKE_CDS_AGENT_BRIDGE_TOTAL_MAX_LINES:-850}"
@@ -85,6 +85,42 @@ line_count() {
   awk 'END { print NR }' "$1"
 }
 
+python_can_import_sidecar_deps() {
+  local candidate="$1"
+  [[ -n "$candidate" ]] || return 1
+  command -v "$candidate" >/dev/null 2>&1 || return 1
+  "$candidate" - <<'PY' >/dev/null 2>&1
+import fastapi  # noqa: F401
+import pydantic  # noqa: F401
+import starlette  # noqa: F401
+PY
+}
+
+resolve_python_bin() {
+  local candidates=()
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    candidates+=("$PYTHON_BIN")
+  fi
+  candidates+=(
+    python3
+    /opt/anaconda3/bin/python3
+    /opt/homebrew/bin/python3
+    /usr/local/bin/python3
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if python_can_import_sidecar_deps "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "${PYTHON_BIN:-python3}"
+  return 0
+}
+
+PYTHON_BIN="$(resolve_python_bin)"
 official_lines=$(line_count "$OFFICIAL_FILE")
 legacy_lines=$(line_count "$LEGACY_FILE")
 support_lines_json=$(
@@ -175,6 +211,7 @@ if [[ -n "$REPORT" ]]; then
     --arg legacyFile "claude-sdk-sidecar/app/agent_loop.py" \
     --arg routingTest "$ROUTING_TEST" \
     --arg routingTestStatus "$routing_test_status" \
+    --arg pythonBin "$PYTHON_BIN" \
     --argjson officialLines "$official_lines" \
     --argjson legacyLines "$legacy_lines" \
     --argjson officialMaxLines "$OFFICIAL_ADAPTER_MAX_LINES" \
@@ -209,7 +246,8 @@ if [[ -n "$REPORT" ]]; then
       },
       executableEvidence: {
         routingTest: $routingTest,
-        routingTestStatus: $routingTestStatus
+        routingTestStatus: $routingTestStatus,
+        pythonBin: $pythonBin
       },
       assertionsFailed: $failures
     }' > "$REPORT"
@@ -220,7 +258,7 @@ printf 'Official adapter lines: %s/%s\n' "$official_lines" "$OFFICIAL_ADAPTER_MA
 printf 'Bridge support lines: %s/%s\n' "$support_total_lines" "$BRIDGE_SUPPORT_MAX_LINES"
 printf 'Bridge total lines: %s/%s\n' "$bridge_total_lines" "$BRIDGE_TOTAL_MAX_LINES"
 printf 'Legacy loop lines: %s\n' "$legacy_lines"
-printf 'Routing unit test: %s (%s)\n' "$routing_test_status" "$ROUTING_TEST"
+printf 'Routing unit test: %s (%s via %s)\n' "$routing_test_status" "$ROUTING_TEST" "$PYTHON_BIN"
 if (( ${#failures[@]} > 0 )); then
   printf 'Boundary failures:\n' >&2
   for failure in "${failures[@]}"; do
