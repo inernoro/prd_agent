@@ -161,7 +161,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Next Command\n\n'
   if [[ "$user_action_required" == "true" ]]; then
-    printf 'Continue R0.7 CDS-managed runtime live apply work. R0.6 local reconciler/API is in place; remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
+    printf 'Continue R0.7 CDS-managed runtime live evidence work. R0.7 local liveApply container path is in place; remote host, SSH, image, and env values are operator/debug fallback details, not the product path:\n\n'
     printf '```bash\n'
     printf "sed -n '70,120p' doc/design.cds-agent-managed-runtime-fact-source.md\n"
     printf 'npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts\n'

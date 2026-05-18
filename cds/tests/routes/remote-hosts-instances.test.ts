@@ -74,12 +74,12 @@ describe('Remote hosts project instances route', () => {
     for (const key of previewEnvKeys) delete process.env[key];
   });
 
-  async function startServer() {
+  async function startServer(routerOverrides: Partial<Parameters<typeof createRemoteHostsRouter>[0]> = {}) {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-instances-route-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     const app = express();
     app.use(express.json());
-    app.use('/api', createRemoteHostsRouter({ stateService }));
+    app.use('/api', createRemoteHostsRouter({ stateService, ...routerOverrides }));
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', () => resolve());
     });
@@ -364,6 +364,7 @@ describe('Remote hosts project instances route', () => {
     expect(planned.body.plan.map((step: any) => step.step)).toEqual([
       'ensure-build-profile',
       'ensure-branch-service',
+      'start-cds-managed-container',
       'verify-product-capacity',
     ]);
     expect(JSON.stringify(planned.body)).not.toContain('CDS_REMOTE_HOST');
@@ -447,6 +448,73 @@ describe('Remote hosts project instances route', () => {
     });
     expect(sent.body.transport.baseUrl).toBe(`http://127.0.0.1:${runtime.port}`);
     expect(runtime.requests).toHaveLength(1);
+  });
+
+  it('live-applies CDS-managed official SDK runtime through the injected CDS container service', async () => {
+    process.env.CDS_PREVIEW_DOMAIN = 'preview.example.test';
+    const containerCalls: any[] = [];
+    await startServer({
+      config: { portStart: 19000 },
+      containerService: {
+        async runService(branch, profile, service, onOutput, customEnv) {
+          containerCalls.push({ kind: 'runService', branch, profile, service: { ...service }, customEnv });
+          expect(branch.worktreePath).toBe(process.cwd());
+          expect(profile.id).toBe('claude-agent-sdk-runtime');
+          expect(profile.env?.SIDECAR_AGENT_ADAPTER).toBe('claude-agent-sdk');
+          expect(service.hostPort).toBeGreaterThanOrEqual(19000);
+          onOutput?.('managed runtime container started');
+        },
+        async waitForReadiness(hostPort, probe, onAttempt) {
+          containerCalls.push({ kind: 'waitForReadiness', hostPort, probe });
+          expect(probe?.path).toBe('/readyz');
+          onAttempt?.({ attempt: 1, max: 1, stage: 'http', ok: true });
+          return true;
+        },
+      },
+    });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+
+    const applied = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/runtime-capacity/reconcile`,
+      longToken,
+      { apply: true, liveApply: true },
+    );
+
+    expect(applied.status).toBe(200);
+    expect(applied.body).toMatchObject({
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      applied: true,
+      status: 'available',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPathOnly: true,
+      liveApply: {
+        requested: true,
+        attempted: true,
+        status: 'running',
+        fallbackScope: 'operator-debug-only',
+      },
+      capacity: {
+        status: 'available',
+        productPath: {
+          runningOfficialSdkRuntimeCount: 1,
+        },
+      },
+    });
+    expect(JSON.stringify(applied.body)).not.toContain('CDS_REMOTE_HOST');
+    expect(containerCalls.map(call => call.kind)).toEqual(['runService', 'waitForReadiness']);
+
+    const available = await request(server, 'GET', `/api/projects/${projectId}/runtime-capacity`, longToken);
+    expect(available.status).toBe(200);
+    expect(available.body.instances[0]).toMatchObject({
+      branch: 'cds-managed-runtime',
+      capacityRole: 'product-runtime',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      runtimeAdapter: 'claude-agent-sdk',
+      loopOwner: 'claude-agent-sdk',
+    });
   });
 
   it('does not expose branch services for regular projects through instance discovery', async () => {

@@ -253,7 +253,7 @@ public class InfraAgentSessionsController : ControllerBase
                 "R0.7",
                 "CDS-managed runtime live apply",
                 r0Done ? "done" : r0Active ? "active" : "waiting",
-                r0Done ? "Live runtime capacity is available." : "Wire reconciler to actual CDS container start/recover so official SDK runtime is running.",
+                r0Done ? "Live runtime capacity is available." : "Local liveApply uses CDS container service; run live evidence until official SDK runtime is running.",
                 r0Done ? "done" : "next",
                 "CDS runtime-capacity/reconcile + live evidence"),
             new SidecarExecutionTask(

@@ -922,6 +922,27 @@ scripts/audit-cds-agent-goal.sh
 
 剩余：R0.7 需要把 reconciler 接到真实 CDS container start/recover 与 live evidence，使 shared-service official SDK runtime running > 0。
 
+## 2026-05-18 23:35 CST - R0.7 liveApply 接入 CDS container service
+
+问题：R0.6 apply 只能写 BuildProfile + branch-service fact；如果不给测试 hostPort，它还不能证明 CDS 自己会启动 runtime/container/sandbox。
+
+处理：
+
+- `createRemoteHostsRouter` 注入可选 `containerService` 和 `config.portStart`；生产 `server.ts` 已传入真实 CDS `ContainerService`。
+- `/api/projects/:id/runtime-capacity/reconcile` 支持 `{ apply: true, liveApply: true }`。
+- liveApply 路径会分配 host port，调用 `ContainerService.runService`，随后调用 `waitForReadiness('/readyz')`。
+- 成功后 branch/service 状态置为 `running`，`/runtime-capacity` 返回 `available`；失败时记录 `start_failed` 或 `readiness_failed`，但仍保持 remote host/env/image 为 `operator-debug-only`。
+- CDS route test 新增“injected CDS container service”用例，证明路径调用的是 CDS container service，不是 external agent host。
+
+耗时：约 25 分钟。
+
+验证：
+
+- `npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts`：7/7 pass。
+- `npm --prefix cds run build`：pass。
+
+剩余：还需要在真实 CDS shared-service runtime 上执行 live evidence，使远程 summary 中 `sharedRunning > 0`，R0 才能从 pending 变为 pass。
+
 ## 承诺的记录方式
 
 后续继续推进时，每轮必须更新：

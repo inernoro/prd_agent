@@ -27,7 +27,9 @@ import crypto from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
+import type { ContainerService } from '../services/container.js';
 import type { BranchEntry, BuildProfile, Project, ServiceDeployment, ServiceState } from '../types.js';
+import type { CdsConfig } from '../types.js';
 import {
   RemoteHostService,
   type RemoteHostInput,
@@ -43,6 +45,8 @@ import { computePreviewSlug } from '../services/preview-slug.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  config?: Pick<CdsConfig, 'portStart'>;
 }
 
 export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
@@ -564,7 +568,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.json({ projectId, ...instancesResponse });
   });
 
-  router.post('/projects/:id/runtime-capacity/reconcile', (req, res) => {
+  router.post('/projects/:id/runtime-capacity/reconcile', async (req, res) => {
     const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
@@ -600,10 +604,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     try {
       const result = reconcileCdsManagedRuntimeCapacity(deps.stateService, service, project, {
         apply: req.body?.apply === true,
+        liveApply: req.body?.liveApply === true,
         hostPort,
         now: new Date().toISOString(),
+        containerService: deps.containerService,
+        portStart: deps.config?.portStart,
       });
-      res.json({ projectId: project.id, ...result });
+      res.json({ projectId: project.id, ...(await result) });
     } catch (err) {
       res.status(409).json({
         error: {
@@ -949,8 +956,11 @@ const CDS_MANAGED_RUNTIME_CONTAINER_NAME = 'cds-claude-agent-sdk-runtime';
 
 interface CdsManagedRuntimeReconcileOptions {
   apply: boolean;
+  liveApply: boolean;
   hostPort?: number;
   now: string;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  portStart?: number;
 }
 
 function collectProjectRuntimeInstances(
@@ -1049,15 +1059,19 @@ function collectProjectRuntimeInstances(
   };
 }
 
-function reconcileCdsManagedRuntimeCapacity(
+async function reconcileCdsManagedRuntimeCapacity(
   stateService: StateService,
   service: RemoteHostService,
   project: Project,
   options: CdsManagedRuntimeReconcileOptions,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const before = collectProjectRuntimeInstances(stateService, service, project);
   const alreadyAvailable = before.capacity.status === 'available';
-  const planned = planCdsManagedRuntimeCapacity(stateService, project, options.hostPort, alreadyAvailable);
+  const planned = planCdsManagedRuntimeCapacity(stateService, project, {
+    hostPort: options.hostPort,
+    liveApply: options.liveApply,
+    alreadyAvailable,
+  });
 
   if (!options.apply || alreadyAvailable) {
     return {
@@ -1072,7 +1086,7 @@ function reconcileCdsManagedRuntimeCapacity(
       capacity: before.capacity,
       nextAction: alreadyAvailable
         ? 'CDS-managed official SDK runtime capacity already exists; continue with R1/S1/S2/S3.'
-        : 'Apply this CDS-managed runtime reconcile plan; do not ask product users for SSH/env/image.',
+        : 'Apply this CDS-managed runtime reconcile plan with liveApply=true to start the CDS-managed container; do not ask product users for SSH/env/image.',
     };
   }
 
@@ -1089,30 +1103,37 @@ function reconcileCdsManagedRuntimeCapacity(
     stateService.addBuildProfile(profile);
   }
 
+  const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
+  const existingService = branch?.services?.[CDS_MANAGED_RUNTIME_PROFILE_ID];
+  const hostPort = options.hostPort
+    || existingService?.hostPort
+    || (options.liveApply && options.portStart ? stateService.allocatePort(options.portStart) : 0);
   const serviceState: ServiceState = {
     profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
     containerName: CDS_MANAGED_RUNTIME_CONTAINER_NAME,
-    hostPort: options.hostPort || 0,
-    status: options.hostPort ? 'running' : 'starting',
+    hostPort,
+    status: hostPort && !options.liveApply ? 'running' : 'starting',
   };
-  const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
   let branchChange: 'created' | 'updated' = 'created';
   let serviceChange: 'created' | 'updated' = 'created';
+  let managedBranch: BranchEntry;
   if (branch) {
     branch.services = branch.services || {};
     serviceChange = branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] ? 'updated' : 'created';
     branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] = serviceState;
-    branch.status = options.hostPort ? 'running' : 'idle';
+    branch.status = hostPort && !options.liveApply ? 'running' : 'idle';
+    branch.worktreePath = process.cwd();
     branch.lastAccessedAt = options.now;
     branch.lastDeployAt = options.now;
     branchChange = 'updated';
+    managedBranch = branch;
   } else {
-    stateService.addBranch({
+    managedBranch = {
       id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
       projectId: project.id,
       branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
-      worktreePath: `${process.cwd()}/.cds-managed-runtime/${slugifyRuntimeSegment(project.id)}`,
-      status: options.hostPort ? 'running' : 'idle',
+      worktreePath: process.cwd(),
+      status: hostPort && !options.liveApply ? 'running' : 'idle',
       services: {
         [CDS_MANAGED_RUNTIME_PROFILE_ID]: serviceState,
       },
@@ -1120,7 +1141,25 @@ function reconcileCdsManagedRuntimeCapacity(
       lastAccessedAt: options.now,
       lastDeployAt: options.now,
       githubCommitSha: 'cds-managed-runtime',
-    });
+    };
+    stateService.addBranch(managedBranch);
+  }
+  stateService.save();
+
+  let liveApply: Record<string, unknown> = {
+    requested: options.liveApply,
+    attempted: false,
+    status: options.liveApply ? 'not_started' : 'not_requested',
+  };
+  if (options.liveApply) {
+    liveApply = await startCdsManagedRuntimeContainer(
+      stateService,
+      project,
+      managedBranch,
+      profile,
+      serviceState,
+      options,
+    );
   }
 
   const after = collectProjectRuntimeInstances(stateService, service, project);
@@ -1140,24 +1179,25 @@ function reconcileCdsManagedRuntimeCapacity(
     profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
     branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
     containerName: CDS_MANAGED_RUNTIME_CONTAINER_NAME,
+    liveApply,
     capacity: after.capacity,
     nextAction: after.capacity.status === 'available'
       ? 'CDS-managed official SDK runtime capacity is available; continue with R1/S1/S2/S3.'
-      : 'CDS accepted the managed runtime profile and branch-service record; continue the CDS container start path without SSH/env/image handoff.',
+      : 'CDS accepted the managed runtime profile and branch-service record, but live capacity is not available yet; inspect liveApply status and continue CDS container start without SSH/env/image handoff.',
   };
 }
 
 function planCdsManagedRuntimeCapacity(
   stateService: StateService,
   project: Project,
-  hostPort: number | undefined,
-  alreadyAvailable: boolean,
+  options: { hostPort?: number; liveApply: boolean; alreadyAvailable: boolean },
 ): Array<Record<string, unknown>> {
-  if (alreadyAvailable) {
+  if (options.alreadyAvailable) {
     return [{ step: 'verify-capacity', state: 'already_available' }];
   }
   const profile = stateService.getBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID);
   const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
+  const liveApplyState = options.liveApply ? 'start_container' : 'not_requested';
   return [
     {
       step: 'ensure-build-profile',
@@ -1170,7 +1210,13 @@ function planCdsManagedRuntimeCapacity(
       step: 'ensure-branch-service',
       branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
       state: branch ? 'update_existing' : 'create',
-      targetServiceStatus: hostPort ? 'running' : 'starting',
+      targetServiceStatus: options.hostPort && !options.liveApply ? 'running' : 'starting',
+    },
+    {
+      step: 'start-cds-managed-container',
+      state: liveApplyState,
+      runtimeOwnedBy: 'cds-managed-runtime',
+      fallbackScope: 'operator-debug-only',
     },
     {
       step: 'verify-product-capacity',
@@ -1179,6 +1225,128 @@ function planCdsManagedRuntimeCapacity(
       fallbackScope: 'operator-debug-only',
     },
   ];
+}
+
+async function startCdsManagedRuntimeContainer(
+  stateService: StateService,
+  project: Project,
+  branch: BranchEntry,
+  profile: BuildProfile,
+  serviceState: ServiceState,
+  options: CdsManagedRuntimeReconcileOptions,
+): Promise<Record<string, unknown>> {
+  if (!options.containerService) {
+    serviceState.status = 'starting';
+    branch.status = 'idle';
+    stateService.save();
+    return {
+      requested: true,
+      attempted: false,
+      status: 'missing_container_service',
+      message: 'CDS container service is not injected into the runtime capacity reconciler.',
+      fallbackScope: 'operator-debug-only',
+    };
+  }
+  if (!serviceState.hostPort || serviceState.hostPort <= 0) {
+    serviceState.status = 'starting';
+    branch.status = 'idle';
+    stateService.save();
+    return {
+      requested: true,
+      attempted: false,
+      status: 'missing_host_port',
+      message: 'CDS could not allocate a host port for the managed runtime container.',
+      fallbackScope: 'operator-debug-only',
+    };
+  }
+
+  const logs: string[] = [];
+  const startedAt = Date.now();
+  serviceState.status = 'building';
+  branch.status = 'building';
+  branch.lastDeployAt = options.now;
+  stateService.save();
+
+  try {
+    await options.containerService.runService(
+      branch,
+      profile,
+      serviceState,
+      (chunk) => {
+        logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
+        if (logs.length > 20) logs.splice(0, logs.length - 20);
+      },
+      stateService.getCustomEnv(project.id),
+    );
+
+    serviceState.status = 'starting';
+    branch.status = 'starting';
+    stateService.save();
+
+    const ready = await options.containerService.waitForReadiness(
+      serviceState.hostPort,
+      profile.readinessProbe,
+      (info) => {
+        logs.push(`readiness ${info.stage} ${info.attempt}/${info.max} ${info.ok ? 'ok' : info.error || 'failed'}`);
+        if (logs.length > 20) logs.splice(0, logs.length - 20);
+      },
+      (chunk) => {
+        logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
+        if (logs.length > 20) logs.splice(0, logs.length - 20);
+      },
+    );
+
+    if (!ready) {
+      serviceState.status = 'error';
+      serviceState.errorMessage = 'CDS-managed official SDK runtime readiness probe failed';
+      branch.status = 'error';
+      branch.errorMessage = serviceState.errorMessage;
+      stateService.save();
+      return {
+        requested: true,
+        attempted: true,
+        status: 'readiness_failed',
+        hostPort: serviceState.hostPort,
+        durationMs: Date.now() - startedAt,
+        logs,
+        fallbackScope: 'operator-debug-only',
+      };
+    }
+
+    serviceState.status = 'running';
+    serviceState.errorMessage = undefined;
+    branch.status = 'running';
+    branch.errorMessage = undefined;
+    branch.lastAccessedAt = new Date().toISOString();
+    branch.lastDeployAt = branch.lastAccessedAt;
+    stateService.save();
+    return {
+      requested: true,
+      attempted: true,
+      status: 'running',
+      hostPort: serviceState.hostPort,
+      durationMs: Date.now() - startedAt,
+      logs,
+      fallbackScope: 'operator-debug-only',
+    };
+  } catch (err) {
+    const message = (err as Error).message;
+    serviceState.status = 'error';
+    serviceState.errorMessage = message;
+    branch.status = 'error';
+    branch.errorMessage = message;
+    stateService.save();
+    return {
+      requested: true,
+      attempted: true,
+      status: 'start_failed',
+      hostPort: serviceState.hostPort,
+      durationMs: Date.now() - startedAt,
+      error: message,
+      logs,
+      fallbackScope: 'operator-debug-only',
+    };
+  }
 }
 
 function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {

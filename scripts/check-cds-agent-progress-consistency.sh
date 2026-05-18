@@ -59,13 +59,13 @@ require_file "$STATUS_DOC"
 
 require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
 require_text "$REFRESH_OUTPUT" 'nextAction: `continue R0.7 CDS-managed runtime live apply before any fallback env handoff`' 'refresh next action'
-require_text "$REFRESH_OUTPUT" 'Continue R0.7 CDS-managed runtime live apply work' 'refresh R0 design next command'
+require_text "$REFRESH_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'refresh R0 design next command'
 require_text "$REFRESH_OUTPUT" 'operator/debug fallback details, not the product path' 'refresh fallback scope'
 require_text "$REFRESH_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'refresh next command design'
 
 require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r0' 'progress overall status'
 require_text "$PROGRESS_OUTPUT" 'Current blocking gate: R0' 'progress blocking gate'
-require_text "$PROGRESS_OUTPUT" 'Continue R0.7 CDS-managed runtime live apply work' 'progress exact next step'
+require_text "$PROGRESS_OUTPUT" 'Continue R0.7 CDS-managed runtime live evidence work' 'progress exact next step'
 require_text "$PROGRESS_OUTPUT" 'operator/debug fallback details, not the product path' 'progress fallback scope'
 require_text "$PROGRESS_OUTPUT" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'progress next command design'
 require_text "$PROGRESS_OUTPUT" 'R0 managed runtime capacity: sharedRunning=' 'progress managed runtime capacity'
