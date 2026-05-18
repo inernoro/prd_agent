@@ -252,6 +252,26 @@
 
 优化：后续每轮先更新 evidence，再用该命令给用户汇报，不再让用户从长文档和 `/tmp` JSON 里拼进度。
 
+### 17. 页面执行面板需要直接展示任务纵览和 ETA
+
+问题：本地 `scripts/print-cds-agent-current-progress.sh` 已能解释进度，但最终用户看的是 MAP/CDS 页面。旧 `runtime-status.executionPanel` 有 runbook、gateCounts 和 nextCommand，却没有一个稳定的 task board 字段，页面仍需要把多个诊断块拼起来才能理解“完成了几个、卡在第几个、下一步多久”。
+
+处理：
+
+- `SidecarExecutionPanel` 增加 `taskBoard`、`nextStepEta`、`timeSinkAdvice`。
+- 后端按 A0/R0.1/R0.2/R0.3/R1/S1-S3/V1 生成阶段看板，标明状态、下一步、ETA 和证据入口。
+- CDS Agent 页面新增“任务纵览与 ETA”区块，并在当前执行结论顶部展示“下一步耗时”和“耗时控制”。
+
+证据：
+
+- `dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter InfraAgentSessionsControllerTests --no-restore`：18/18 pass（沙箱外；沙箱内 MSBuild named pipe 权限失败）。
+- `pnpm --prefix prd-admin tsc`：pass。
+- `git diff --check`：pass。
+
+耗时：后端目标单测 15s；前端 tsc 20s；diff check <1s。
+
+优化：用户以后看页面就能看到任务纵览和 ETA，不需要等待我在聊天里解释当前第几步。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -261,6 +281,7 @@
 | runtime pool evidence | 11-14s | 不可完全本地化 | 它查远程 CDS state，保留为 R0 权威证据，不用 one-cycle 替代 |
 | controller tests | 18 tests，<1s 测试执行；构建有 warnings | 可本地化 | 只跑 `InfraAgentSessionsControllerTests` 覆盖 execution panel 内容 |
 | current progress board | <1s | 可本地化 | 固定入口展示任务纵览、当前 gate、blocker、下一步 ETA |
+| runtime-status task board | 后端测试 15s，前端 tsc 20s | 可本地化 | 页面事实源输出 taskBoard/nextStepEta/timeSinkAdvice，减少聊天解释和重复部署 |
 
 ## 当前下一步
 

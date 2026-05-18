@@ -338,6 +338,17 @@ export interface InfraAgentRuntimeDiagnostics {
       status: string;
       blockedBy?: string | null;
     }> | null;
+    taskBoard?: Array<{
+      order: number;
+      code: string;
+      title: string;
+      status: string;
+      nextAction: string;
+      estimatedDuration: string;
+      evidence: string;
+    }> | null;
+    nextStepEta?: string | null;
+    timeSinkAdvice?: string | null;
   } | null;
   discoveryMetrics?: {
     totalConnections?: number | null;

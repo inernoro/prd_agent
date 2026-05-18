@@ -265,7 +265,10 @@ public sealed record SidecarExecutionPanel(
     int PassedSteps,
     int PendingSteps,
     SidecarExecutionPanelStep? CurrentStep,
-    IReadOnlyList<SidecarExecutionPanelStep> Timeline
+    IReadOnlyList<SidecarExecutionPanelStep> Timeline,
+    IReadOnlyList<SidecarExecutionTask> TaskBoard,
+    string NextStepEta,
+    string TimeSinkAdvice
 );
 
 public sealed record SidecarExecutionPanelStep(
@@ -274,6 +277,16 @@ public sealed record SidecarExecutionPanelStep(
     string Title,
     string Status,
     string? BlockedBy = null
+);
+
+public sealed record SidecarExecutionTask(
+    int Order,
+    string Code,
+    string Title,
+    string Status,
+    string NextAction,
+    string EstimatedDuration,
+    string Evidence
 );
 
 public sealed record SidecarExecutionRunbookStep(

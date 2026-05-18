@@ -1326,6 +1326,9 @@ export default function CdsAgentPage() {
       ?? executionTimeline.filter((item) => item.status === 'pass').length;
     const executionPendingSteps = backendExecutionPanel?.pendingSteps
       ?? Math.max(0, executionStepTotal - executionPassedSteps);
+    const executionTaskBoard = backendExecutionPanel?.taskBoard ?? [];
+    const executionNextStepEta = backendExecutionPanel?.nextStepEta ?? '';
+    const executionTimeSinkAdvice = backendExecutionPanel?.timeSinkAdvice ?? '';
     const executionRunway = resolveExecutionRunway({
       commercialComplete: backendExecutionPanel?.commercialComplete ?? executionCommercialState === 'commercial-ready',
       blockingCode: executionBlockingCode,
@@ -1424,6 +1427,9 @@ export default function CdsAgentPage() {
       executionCurrentStep,
       executionTimeline,
       executionRunbook,
+      executionTaskBoard,
+      executionNextStepEta,
+      executionTimeSinkAdvice,
       nextCyclePlan,
       debugCommands,
       readinessGates,
@@ -1804,6 +1810,20 @@ export default function CdsAgentPage() {
             <div className="mt-2 max-w-5xl rounded-md px-2 py-1.5 text-xs leading-relaxed text-white/62" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
               {runtimeDiagnostics.commercialDeploymentAdvice}
             </div>
+            {(runtimeDiagnostics.executionNextStepEta || runtimeDiagnostics.executionTimeSinkAdvice) && (
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {runtimeDiagnostics.executionNextStepEta && (
+                  <div className="rounded-md px-2 py-1.5 text-xs leading-relaxed text-white/62" style={{ background: 'rgba(14,165,233,0.08)', border: '1px solid rgba(56,189,248,0.16)' }}>
+                    <span className="font-semibold text-sky-100/72">下一步耗时：</span>{runtimeDiagnostics.executionNextStepEta}
+                  </div>
+                )}
+                {runtimeDiagnostics.executionTimeSinkAdvice && (
+                  <div className="rounded-md px-2 py-1.5 text-xs leading-relaxed text-white/62" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.16)' }}>
+                    <span className="font-semibold text-amber-100/72">耗时控制：</span>{runtimeDiagnostics.executionTimeSinkAdvice}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex min-w-[190px] flex-col items-stretch gap-2">
             {runtimeDiagnostics.executionStepTotal > 0 && (
@@ -3927,6 +3947,68 @@ export default function CdsAgentPage() {
                         </div>
                       )}
                     </div>
+                    {runtimeDiagnostics.executionTaskBoard.length > 0 && (
+                      <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(8,13,28,0.46)', border: '1px solid rgba(125,211,252,0.16)' }}>
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-normal text-sky-100/58">
+                              <ListChecks size={13} />
+                              任务纵览与 ETA
+                            </div>
+                            <div className="mt-1 text-xs leading-relaxed text-white/48">
+                              后端 runtime-status 汇总的当前周期看板；用于判断已完成、当前卡点和下一步耗时。
+                            </div>
+                          </div>
+                          <span className="inline-flex min-h-7 items-center rounded-md px-2 text-xs font-semibold text-sky-100/78" style={{ background: 'rgba(56,189,248,0.1)', border: '1px solid rgba(56,189,248,0.2)' }}>
+                            {runtimeDiagnostics.executionTaskBoard.filter((item) => item.status === 'done').length}/{runtimeDiagnostics.executionTaskBoard.length}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                          {runtimeDiagnostics.executionTaskBoard.map((item) => {
+                            const isDone = item.status === 'done';
+                            const isActive = item.status === 'active' || item.status === 'next';
+                            const isBlocked = item.status === 'blocked';
+                            const border = isDone
+                              ? '1px solid rgba(34,197,94,0.2)'
+                              : isActive
+                                ? '1px solid rgba(56,189,248,0.24)'
+                                : isBlocked
+                                  ? '1px solid rgba(245,158,11,0.22)'
+                                  : '1px solid rgba(148,163,184,0.14)';
+                            const background = isDone
+                              ? 'rgba(34,197,94,0.07)'
+                              : isActive
+                                ? 'rgba(14,165,233,0.09)'
+                                : isBlocked
+                                  ? 'rgba(245,158,11,0.08)'
+                                  : 'rgba(15,23,42,0.62)';
+                            return (
+                              <div key={item.code} className="min-h-[136px] rounded-md px-3 py-2" style={{ background, border }}>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="text-[11px] font-semibold text-white/40">
+                                      {item.order}. {item.code}
+                                    </div>
+                                    <div className="mt-0.5 text-xs font-semibold text-white/78">{item.title}</div>
+                                  </div>
+                                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold" style={{
+                                    background: isDone ? 'rgba(34,197,94,0.14)' : isActive ? 'rgba(56,189,248,0.14)' : isBlocked ? 'rgba(245,158,11,0.14)' : 'rgba(148,163,184,0.1)',
+                                    color: isDone ? 'rgba(134,239,172,0.92)' : isActive ? 'rgba(186,230,253,0.9)' : isBlocked ? 'rgba(253,230,138,0.9)' : 'rgba(203,213,225,0.76)',
+                                  }}>
+                                    {item.status.toUpperCase()}
+                                  </span>
+                                </div>
+                                <div className="mt-2 rounded px-2 py-1 text-[11px] font-semibold text-sky-50/74" style={{ background: 'rgba(56,189,248,0.08)', border: '1px solid rgba(56,189,248,0.12)' }}>
+                                  ETA · {item.estimatedDuration}
+                                </div>
+                                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/56">{item.nextAction}</div>
+                                <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/38">{item.evidence}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                     {runtimeDiagnostics.executionRunbook.length > 0 && (
                       <div className="mt-3 rounded-md px-3 py-3" style={{ background: 'rgba(2,6,23,0.34)', border: '1px solid rgba(148,163,184,0.16)' }}>
                         <div className="flex flex-wrap items-start justify-between gap-3">

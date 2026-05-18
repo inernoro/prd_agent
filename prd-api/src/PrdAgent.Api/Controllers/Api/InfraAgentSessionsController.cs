@@ -136,6 +136,7 @@ public class InfraAgentSessionsController : ControllerBase
         var passedSteps = timeline.Count(x =>
             string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
         var pendingSteps = Math.Max(0, stepTotal - passedSteps);
+        var taskBoard = BuildExecutionTaskBoard(readiness, blockingCode);
 
         return new SidecarExecutionPanel(
             readiness.Overall,
@@ -155,7 +156,131 @@ public class InfraAgentSessionsController : ControllerBase
             passedSteps,
             pendingSteps,
             currentStep,
-            timeline);
+            timeline,
+            taskBoard,
+            EstimateNextStepEta(blockingCode),
+            BuildTimeSinkAdvice(blockingCode));
+    }
+
+    private static IReadOnlyList<SidecarExecutionTask> BuildExecutionTaskBoard(
+        SidecarCommercialReadinessDiagnostics readiness,
+        string blockingCode)
+    {
+        static string GateStatus(SidecarCommercialReadinessDiagnostics readiness, string code)
+        {
+            return readiness.Gates.FirstOrDefault(x =>
+                    string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase))?.Status
+                ?? "pending";
+        }
+
+        var a0Done = string.Equals(GateStatus(readiness, "A0"), "pass", StringComparison.OrdinalIgnoreCase);
+        var r0Done = string.Equals(GateStatus(readiness, "R0"), "pass", StringComparison.OrdinalIgnoreCase);
+        var r1Done = string.Equals(GateStatus(readiness, "R1"), "pass", StringComparison.OrdinalIgnoreCase);
+        var providerDone = new[] { "S1", "S2", "S3" }.All(code =>
+            string.Equals(GateStatus(readiness, code), "pass", StringComparison.OrdinalIgnoreCase));
+        var r0Active = string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase);
+        var r1Active = string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase);
+        var providerActive = blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase);
+
+        return new[]
+        {
+            new SidecarExecutionTask(
+                1,
+                "A0",
+                "Official SDK adapter boundary",
+                a0Done ? "done" : "blocked",
+                a0Done ? "Keep legacy loop as explicit fallback only." : "Run official SDK boundary smoke and fix adapter contract gaps.",
+                a0Done ? "done" : "5-15 min",
+                "scripts/smoke-cds-agent-official-sdk-boundary.sh"),
+            new SidecarExecutionTask(
+                2,
+                "R0.1",
+                "Runtime pool evidence and branch isolation",
+                r0Done ? "done" : r0Active ? "active" : "waiting",
+                r0Done ? "Keep branch services restricted to api/admin." : "Collect runtime pool evidence before any deploy or provider smoke.",
+                r0Done ? "done" : "15-45 sec",
+                "scripts/collect-cds-agent-runtime-pool-evidence.sh"),
+            new SidecarExecutionTask(
+                3,
+                "R0.2",
+                "Remote host carrier",
+                r0Done ? "done" : r0Active ? "blocked" : "waiting",
+                r0Done ? "Remote host carrier is available." : "Provide/apply enabled remote host SSH config.",
+                r0Done ? "done" : "1-3 min after host params",
+                "scripts/run-cds-agent-remote-host-pool-with-evidence.sh prepare.preflightReady"),
+            new SidecarExecutionTask(
+                4,
+                "R0.3",
+                "Shared official SDK runtime",
+                r0Done ? "done" : r0Active ? "blocked" : "waiting",
+                r0Done ? "Shared official SDK runtime is discoverable." : "Deploy official SDK sidecar image onto enabled remote host.",
+                r0Done ? "done" : "2-5 min after image/host",
+                "scripts/smoke-cds-agent-shared-service-pool.sh"),
+            new SidecarExecutionTask(
+                5,
+                "R1",
+                "Default Claude/Anthropic profile",
+                r1Done ? "done" : r1Active ? "active" : r0Done ? "next" : "blocked",
+                r1Done ? "Default profile is compatible and has key." : "Configure official Anthropic/Claude-compatible runtime profile.",
+                r1Done ? "done" : "5-15 min",
+                "scripts/smoke-cds-agent-r1-profile-repair.sh"),
+            new SidecarExecutionTask(
+                6,
+                "S1-S3",
+                "Provider read/approval/stop cycle",
+                providerDone ? "done" : providerActive ? "active" : r0Done && r1Done ? "next" : "blocked",
+                providerDone ? "Provider cycle evidence is complete." : "Run read-only, approval, and stop smokes with explicit provider opt-in.",
+                providerDone ? "done" : "10-25 min",
+                "scripts/smoke-cds-agent-official-sdk-run.sh + scripts/smoke-cds-agent-official-sdk-controls.sh"),
+            new SidecarExecutionTask(
+                7,
+                "V1",
+                "Real runtime visual verification",
+                providerDone ? "next" : "blocked",
+                "Capture /cds-agent with real sessionId, traceId, adapter, workspace, events, and errors.",
+                "3-8 min after live runtime",
+                "remote screenshot from the real user entry")
+        };
+    }
+
+    private static string EstimateNextStepEta(string blockingCode)
+    {
+        if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
+        {
+            return "R0.2 1-3 min after remote host params; R0.3 2-5 min after sidecar image; R0V 15-30 sec.";
+        }
+
+        if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
+        {
+            return "5-15 min after a valid Anthropic/Claude-compatible API key is available.";
+        }
+
+        if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase))
+        {
+            return "10-25 min with explicit provider-call opt-in and live runtime available.";
+        }
+
+        if (string.Equals(blockingCode, "V1", StringComparison.OrdinalIgnoreCase))
+        {
+            return "3-8 min once a real live session exists.";
+        }
+
+        return "Run the current narrow command first; most local checks should finish in under 1 min.";
+    }
+
+    private static string BuildTimeSinkAdvice(string blockingCode)
+    {
+        if (string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Do not spend time on normal preview redeploys; the long path is remote CDS state. Use local preflight first, then run one remote apply/deploy with evidence.";
+        }
+
+        if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Do not redeploy for profile failures; validate the profile locally through runtime-status/smoke before any provider run.";
+        }
+
+        return "Prefer local static smokes and a single targeted remote verification over repeated build/deploy loops.";
     }
 
     private static IReadOnlyList<SidecarExecutionRunbookStep> BuildExecutionRunbook(
