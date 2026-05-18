@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:54 Asia/Shanghai：
+截至 2026-05-18 20:00 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -22,6 +22,7 @@
 - 已解决：registry candidate tag 可由 git remote/commit 自动推导；进度面板下一步不再要求手填占位符。
 - 已解决：候选 GHCR tag 已在本地 Docker 中创建；仍未 push。
 - 已解决：GHCR 发布增加手动 GitHub Actions 入口，不再只能由本机 Codex push。
+- 已解决：GHCR 手动发布入口有只读 handoff，进度面板默认指向 handoff 而不是本机 push；handoff 使用当前 commit tag，避免旧本地候选 tag 混淆。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -58,6 +59,8 @@
 | 19:46 | 下一步命令仍有 `<registry>` 占位符，且首次用 unquoted heredoc 拼动态 Markdown 时触发了 shell command substitution 风险 | `publish-cds-agent-sidecar-image.sh` 从 git remote/commit 推导 candidate tag；progress board 改用 `printf` 生成动态命令，保持只读 | `/tmp/cds-agent-sidecar-image-publish-current.json`、progress board output | <1s | candidate=`ghcr.io/inernoro/prd-agent/claude-sidecar:12a488c3f4fa`；面板生成不执行 publish |
 | 19:52 | GHCR push 需要明确批准，但本地 tag 还可以安全推进 | 执行 `CDS_AGENT_SIDECAR_IMAGE=ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84 CDS_AGENT_SIDECAR_IMAGE_TAG=1 scripts/publish-cds-agent-sidecar-image.sh` | `/tmp/cds-agent-sidecar-image-publish-current.json`、`docker image inspect` | <1s | `tagPassed=true`、`pushAttempted=false`；本地 tag 和 source image 指向同一 image id |
 | 19:54 | 外部 registry push 被安全策略拦截，仍需要一个可审计的发布路径 | 新增 `.github/workflows/cds-sidecar-image.yml`，仅 `workflow_dispatch` 手动发布 GHCR image | workflow file | local edit | GitHub UI 手动触发后输出 `CDS_AGENT_SIDECAR_IMAGE` 和 digest |
+| 19:58 | workflow 存在但执行入口仍分散，进度面板默认仍容易让人走本机 push | 新增 `scripts/print-cds-agent-sidecar-publish-handoff.sh`，并让进度面板默认指向它 | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | <1s | Handoff 输出 Actions URL、image tag、CLI 等价命令、本机 push 替代命令 |
+| 20:00 | handoff 同时展示 workflow tag 和旧 local candidate，容易让人以为有两个目标 image | local push alternative 改为先按当前 commit tag retag，再 push；旧 candidate 只作为 previousLocalCandidate | handoff script diff | <1s | 发布目标统一到当前 commit tag |
 
 ## 本轮暴露的问题
 
@@ -554,6 +557,23 @@
 - 输出 `CDS_AGENT_SIDECAR_IMAGE` 和 image digest 到 workflow summary。
 
 优化：sidecar image 发布可以由 GitHub Actions 手动触发并审计；本机仍保留 dry-run/local-tag/push 脚本作为本地验证路径。
+
+### 32. 发布入口需要一个只读 handoff
+
+问题：workflow 文件存在后，执行者仍要自己找到 Actions 页面、tag、CLI 等价命令和本机 push 替代路径。进度面板如果直接显示本机 push 命令，会继续把用户推向需要额外批准的本地外传路径。
+
+处理：
+
+- 新增 `scripts/print-cds-agent-sidecar-publish-handoff.sh`。
+- 输出 GitHub Actions URL、当前 commit image tag、workflow image、local push image 和 CLI 等价命令。
+- `scripts/print-cds-agent-current-progress.sh` 在 `push_ready` 时默认提示运行 handoff，不再默认提示本机 push。
+
+证据：
+
+- `/tmp/cds-agent-sidecar-publish-handoff-current.md` 已生成。
+- 当前进度面板的 `Exact Next Step` 指向 `scripts/print-cds-agent-sidecar-publish-handoff.sh`。
+
+优化：外部发布入口现在从“命令散落在聊天里”收敛成一个只读 handoff 文件。
 
 ## 最耗时项
 

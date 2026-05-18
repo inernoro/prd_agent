@@ -12,6 +12,7 @@ R0_READINESS_SUMMARY="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
 REMOTE_PULL_REPORT="${CDS_AGENT_REMOTE_PULL_REPORT:-/tmp/cds-agent-remote-sidecar-pull-current.json}"
+SIDECAR_PUBLISH_HANDOFF="${CDS_AGENT_SIDECAR_PUBLISH_HANDOFF:-/tmp/cds-agent-sidecar-publish-handoff-current.md}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -129,8 +130,8 @@ elif [[ "$image_publish" != "push_ready" && "$image_publish" != "push_pass" ]]; 
     "CDS_AGENT_SIDECAR_IMAGE=$image_publish_candidate scripts/publish-cds-agent-sidecar-image.sh")
 elif [[ "$image_publish" == "push_ready" ]]; then
   exact_next_step=$(printf '%s\n\n```bash\n%s\n```' \
-    'Push the sidecar image only after choosing the approved registry tag. This is an explicit write action.' \
-    "CDS_AGENT_SIDECAR_IMAGE=$image_publish_candidate CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh")
+    'Use the manual GitHub Actions publish handoff. This keeps the external registry write auditable and does not push from Codex.' \
+    'scripts/print-cds-agent-sidecar-publish-handoff.sh')
 elif [[ "$remote_pull" != "dry_run_ready" && "$remote_pull" != "pull_pass" ]]; then
   exact_next_step=$(cat <<'EOF'
 Validate remote host pull prerequisites. This does not SSH unless `CDS_AGENT_REMOTE_PULL_VERIFY=1` is set.
@@ -247,4 +248,5 @@ $exact_next_step
 - sidecar image build summary: $SIDECAR_IMAGE_BUILD_REPORT
 - sidecar image publish summary: $SIDECAR_IMAGE_PUBLISH_REPORT
 - remote sidecar pull summary: $REMOTE_PULL_REPORT
+- sidecar publish handoff: $SIDECAR_PUBLISH_HANDOFF
 EOF
