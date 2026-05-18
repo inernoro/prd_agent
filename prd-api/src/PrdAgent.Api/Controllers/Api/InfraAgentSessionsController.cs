@@ -242,6 +242,50 @@ public class InfraAgentSessionsController : ControllerBase
 
     private static SidecarCommandApplyManifest? BuildCommandApplyManifest(string? commandCode)
     {
+        if (string.Equals(commandCode, "remote-host-prepare", StringComparison.OrdinalIgnoreCase))
+        {
+            return new SidecarCommandApplyManifest(
+                "remote_host_create_then_shared_runtime_deploy",
+                "POST",
+                $"{DefaultRemoteSmokeHost}/api/cds-system/remote-hosts then /api/cds-system/remote-hosts/<hostId>/deploy-sidecar",
+                new[]
+                {
+                    "CDS_HOST",
+                    "AI_ACCESS_KEY or CDS_PROJECT_KEY",
+                    "CDS_REMOTE_HOST_NAME",
+                    "CDS_REMOTE_HOST_HOST",
+                    "CDS_REMOTE_HOST_SSH_USER",
+                    "CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE",
+                    "CDS_AGENT_REMOTE_HOST_APPLY=1",
+                    "CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1",
+                    "CDS_AGENT_SIDECAR_IMAGE"
+                },
+                new[]
+                {
+                    new SidecarCommandApplyPrecondition(
+                        "branch_isolation_clean",
+                        "true",
+                        null,
+                        false),
+                    new SidecarCommandApplyPrecondition(
+                        "enabled_remote_host",
+                        ">=1",
+                        "0",
+                        false),
+                    new SidecarCommandApplyPrecondition(
+                        "sidecar_image_provided",
+                        "true",
+                        null,
+                        false),
+                    new SidecarCommandApplyPrecondition(
+                        "apply_and_deploy_flags_enabled",
+                        "true",
+                        "false",
+                        false)
+                },
+                "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh");
+        }
+
         if (!string.Equals(commandCode, "branch-isolation-apply-confirmed", StringComparison.OrdinalIgnoreCase))
         {
             return null;

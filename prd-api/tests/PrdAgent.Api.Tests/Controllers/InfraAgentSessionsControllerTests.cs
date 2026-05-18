@@ -427,6 +427,12 @@ public class InfraAgentSessionsControllerTests
             applyRunbook.ApplyManifest.Endpoint.ShouldBe("https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
             applyRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "unique_candidate_profile").Passed.ShouldBeFalse();
             applyRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-branch-isolation.sh");
+            var remoteHostRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "remote-host-prepare");
+            remoteHostRunbook.ApplyManifest.ShouldNotBeNull().Safety.ShouldBe("remote_host_create_then_shared_runtime_deploy");
+            remoteHostRunbook.ApplyManifest.Method.ShouldBe("POST");
+            remoteHostRunbook.ApplyManifest.RequiredEnv.ShouldContain("CDS_AGENT_SIDECAR_IMAGE");
+            remoteHostRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "enabled_remote_host").Actual.ShouldBe("0");
+            remoteHostRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-shared-service-pool.sh");
             executionPanel.Runbook.Single(x => x.Code == "R0-branch-clean-apply").BlockedBy.ShouldBe("explicit profile deletion approval");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
