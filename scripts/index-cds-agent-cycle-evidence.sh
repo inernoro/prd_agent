@@ -51,6 +51,7 @@ if [[ -n "$r1_report" && -f "$r1_report" ]]; then
     defaultProfile: (.evidence.defaultProfile // null),
     repairPlan: (.evidence.repairPlan // null),
     targetTemplate: (.evidence.targetTemplate // null),
+    missingKeyGuard: (.evidence.missingKeyGuard // null),
     providerKeyReceived: (.evidence.providerKeyReceived // false)
   }' "$r1_report")
 fi
@@ -97,6 +98,16 @@ jq -n \
       targetTemplate: ($r1Details.targetTemplate // null),
       targetTemplateId: ($r1Details.targetTemplateId // "")
     }),
+    r1Repair: {
+      status: ($s.r1.status // $r1Details.status // "unknown"),
+      report: ($s.r1.report // null),
+      currentProfile: ($s.r1.details.defaultProfile // $r1Details.defaultProfile // null),
+      repairPlan: ($s.r1.details.repairPlan // $r1Details.repairPlan // null),
+      targetTemplate: ($s.r1.details.targetTemplate // $r1Details.targetTemplate // null),
+      missingKeyGuard: ($s.r1.details.missingKeyGuard // $r1Details.missingKeyGuard // null),
+      providerKeyReceived: ($s.r1.details.providerKeyReceived // $r1Details.providerKeyReceived // false),
+      suggestedCommand: ($s.r1.details.suggestedCommand // $s.r1.suggestedCommand // $s.nextCommand // "")
+    },
     executionPanel: ($s.executionPanel // null),
     gates: ($s.commercialGates // {}),
     gatesNotPass: ($s.commercialGatesNotPass // []),
@@ -154,12 +165,22 @@ jq -r \
   "- Blocking gate: `" + (.executionPanel.currentBlockingGate // "unknown") + "`\n" +
   "- Blocking reason: " + (.blockingReason // "") + "\n" +
   (if (.providerReadiness.compatibilityReasonCode // "") != "" then "- R1 reason: `" + (.providerReadiness.compatibilityReasonCode // "") + "` — " + (.providerReadiness.compatibilityReason // "") + "\n" else "" end) +
+  "- R1 current profile: `" + ((.r1Repair.currentProfile.name // "unknown") + " / " + (.r1Repair.currentProfile.protocol // "unknown") + " / " + (.r1Repair.currentProfile.model // "unknown")) + "` compatible=`" + (if (.r1Repair.currentProfile | has("compatibleWithDesiredRuntimeAdapter")) then (.r1Repair.currentProfile.compatibleWithDesiredRuntimeAdapter|tostring) else "unknown" end) + "` hasKey=`" + (if (.r1Repair.currentProfile | has("hasApiKey")) then (.r1Repair.currentProfile.hasApiKey|tostring) else "unknown" end) + "`\n" +
+  "- R1 target template: `" + ((.r1Repair.repairPlan.targetTemplateId // .r1Repair.targetTemplate.id // "unknown") + " / " + (.r1Repair.repairPlan.targetProtocol // .r1Repair.targetTemplate.protocol // "unknown") + " / " + (.r1Repair.repairPlan.targetModel // .r1Repair.targetTemplate.model // "unknown")) + "`\n" +
+  (if (.r1Repair.missingKeyGuard.errorCode // "") != "" then "- R1 missing-key guard: `" + (.r1Repair.missingKeyGuard.errorCode // "") + "`\n" else "" end) +
   (if (.failure.kind // "none") != "none" then "- Failure kind: `" + (.failure.kind // "unknown") + "`\n" else "" end) +
   (if (.failure.advice // "") != "" then "- Failure advice: " + (.failure.advice // "") + "\n" else "" end) +
   "- Deploy/build advice: " + (.deploymentAdvice // "") + "\n" +
   "- Next command: `" + (.nextCommand // "") + "`\n\n" +
   "## Gates\n\n" +
   (["R0","A0","R1","S1","S2S3","V1","N6"] | map(gate_line(.)) | join("\n")) + "\n\n" +
+  "## R1 Repair Path\n\n" +
+  "- Current profile: `" + ((.r1Repair.currentProfile.name // "unknown") + " / " + (.r1Repair.currentProfile.protocol // "unknown") + " / " + (.r1Repair.currentProfile.model // "unknown")) + "`\n" +
+  "- Target template: `" + ((.r1Repair.repairPlan.targetTemplateId // .r1Repair.targetTemplate.id // "unknown") + "` (`" + (.r1Repair.repairPlan.targetProtocol // .r1Repair.targetTemplate.protocol // "unknown") + "`, `" + (.r1Repair.repairPlan.targetModel // .r1Repair.targetTemplate.model // "unknown") + "`)") + "\n" +
+  "- Missing-key guard: `" + (.r1Repair.missingKeyGuard.errorCode // "unknown") + "`\n" +
+  "- Provider key received: `" + ((.r1Repair.providerKeyReceived // false)|tostring) + "`\n" +
+  "- Test-before-promote: backend creates a candidate Anthropic profile, tests upstream, then promotes only on success.\n" +
+  "- Rerun command: `" + (.r1Repair.suggestedCommand // .nextCommand // "") + "`\n\n" +
   "## Slowest Steps\n\n" +
   ((.timing.slowest // []) | map("- [" + (.phase // "") + "] " + (.name // "") + " — " + ((.durationSeconds // 0)|tostring) + "s — " + (.status // "")) | join("\n")) + "\n\n" +
   "## Key Artifacts\n\n" +
