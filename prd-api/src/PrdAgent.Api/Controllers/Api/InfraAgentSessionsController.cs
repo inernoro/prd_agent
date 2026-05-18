@@ -116,6 +116,7 @@ public class InfraAgentSessionsController : ControllerBase
         var blockingCode = blockingGate?.Code ?? blockedCycleItem?.BlockedBy ?? blockedCycleItem?.Code ?? string.Empty;
         var command = SelectExecutionCommand(blockingCode, debugCommands);
         var deploymentAdvice = BuildDeploymentAdvice(readiness.Overall, blockingCode, commercialComplete);
+        var runbook = BuildExecutionRunbook(blockingCode, debugCommands);
         var gateCounts = readiness.Gates
             .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
@@ -145,6 +146,9 @@ public class InfraAgentSessionsController : ControllerBase
                 ?? "商业级门禁已通过。",
             deploymentAdvice,
             command?.Command ?? string.Empty,
+            command?.Code ?? string.Empty,
+            BuildCommandSafety(command?.Code),
+            runbook,
             gateCounts,
             stepIndex,
             stepTotal,
@@ -152,6 +156,105 @@ public class InfraAgentSessionsController : ControllerBase
             pendingSteps,
             currentStep,
             timeline);
+    }
+
+    private static IReadOnlyList<SidecarExecutionRunbookStep> BuildExecutionRunbook(
+        string blockingCode,
+        IReadOnlyList<SidecarDebugCommand> debugCommands)
+    {
+        var r0Active = string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase);
+        var r1Active = string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase);
+        var providerActive = blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase);
+
+        return new[]
+        {
+            BuildRunbookStep(
+                1,
+                "R0-evidence",
+                "采集 runtime pool 证据",
+                "runtime-pool-evidence",
+                r0Active ? "active" : "pass",
+                null,
+                debugCommands),
+            BuildRunbookStep(
+                2,
+                "R0-branch-clean-dry-run",
+                "确认 branch-local sidecar 候选",
+                "branch-isolation-dry-run",
+                r0Active ? "next" : "pass",
+                r0Active ? "runtime pool evidence" : null,
+                debugCommands),
+            BuildRunbookStep(
+                3,
+                "R0-branch-clean-apply",
+                "精确确认后清理 branch sidecar residual",
+                "branch-isolation-apply-confirmed",
+                r0Active ? "blocked" : "pass",
+                r0Active ? "explicit profile deletion approval" : null,
+                debugCommands),
+            BuildRunbookStep(
+                4,
+                "R0-shared-runtime-pool",
+                "准备 remote host 并恢复 shared official SDK runtime",
+                "remote-host-prepare",
+                r0Active ? "blocked" : "pass",
+                r0Active ? "branch isolation clean" : null,
+                debugCommands),
+            BuildRunbookStep(
+                5,
+                "R1-profile",
+                "配置默认 Claude/Anthropic runtime profile",
+                "r1-dry-run",
+                r1Active ? "active" : r0Active ? "blocked" : "pass",
+                r0Active ? "R0" : null,
+                debugCommands),
+            BuildRunbookStep(
+                6,
+                "S1-S3-provider-cycle",
+                "执行一个周期 provider smoke 与视觉证据",
+                "provider-cycle",
+                providerActive ? "active" : (r0Active || r1Active) ? "blocked" : "ready",
+                r0Active ? "R0" : r1Active ? "R1" : null,
+                debugCommands)
+        };
+    }
+
+    private static SidecarExecutionRunbookStep BuildRunbookStep(
+        int order,
+        string code,
+        string title,
+        string commandCode,
+        string status,
+        string? blockedBy,
+        IReadOnlyList<SidecarDebugCommand> debugCommands)
+    {
+        var command = debugCommands.FirstOrDefault(x => string.Equals(x.Code, commandCode, StringComparison.OrdinalIgnoreCase));
+        return new SidecarExecutionRunbookStep(
+            order,
+            code,
+            title,
+            commandCode,
+            BuildCommandSafety(commandCode),
+            status,
+            blockedBy ?? command?.BlockedBy);
+    }
+
+    private static string BuildCommandSafety(string? commandCode)
+    {
+        return commandCode switch
+        {
+            "runtime-pool-evidence" => "read-only; no delete, deploy, restart, or provider call",
+            "branch-isolation-dry-run" => "read-only dry-run; no remote deletion",
+            "branch-isolation-apply-confirmed" => "destructive remote state change; deletes the confirmed BuildProfile and requires post-check",
+            "remote-host-prepare" => "dry-run by default; remote host apply/deploy requires explicit env flags",
+            "doctor" => "read-only local/remote diagnostics",
+            "official-sdk-boundary" => "read-only local contract smoke",
+            "r1-dry-run" => "read-only/default-safe profile repair preview",
+            "r1-apply" => "writes runtime profile only after explicit API key input",
+            "provider-cycle" => "real provider calls; requires explicit allow flag and API key",
+            "non-code-compat" => "read-only local compatibility smoke",
+            _ => "inspect command before running"
+        };
     }
 
     private static string BuildDeploymentAdvice(

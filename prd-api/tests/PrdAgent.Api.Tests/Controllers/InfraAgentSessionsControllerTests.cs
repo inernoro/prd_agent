@@ -409,6 +409,19 @@ public class InfraAgentSessionsControllerTests
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
             executionPanel.DeploymentAdvice.ShouldContain("runtime pool evidence");
             executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh");
+            executionPanel.NextCommandCode.ShouldBe("runtime-pool-evidence");
+            executionPanel.NextCommandSafety.ShouldContain("read-only");
+            executionPanel.Runbook.Select(x => x.Code).ShouldBe(new[]
+            {
+                "R0-evidence",
+                "R0-branch-clean-dry-run",
+                "R0-branch-clean-apply",
+                "R0-shared-runtime-pool",
+                "R1-profile",
+                "S1-S3-provider-cycle"
+            });
+            executionPanel.Runbook.Single(x => x.CommandCode == "branch-isolation-apply-confirmed").Safety.ShouldContain("destructive");
+            executionPanel.Runbook.Single(x => x.Code == "R0-branch-clean-apply").BlockedBy.ShouldBe("explicit profile deletion approval");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
             executionPanel.StepIndex.ShouldBe(1);
@@ -525,6 +538,10 @@ public class InfraAgentSessionsControllerTests
             executionPanel.BlockingReason.ShouldContain("Anthropic/Claude-compatible");
             executionPanel.DeploymentAdvice.ShouldContain("不要靠重新部署解决 R1");
             executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-r1-profile-repair.sh");
+            executionPanel.NextCommandCode.ShouldBe("r1-dry-run");
+            executionPanel.NextCommandSafety.ShouldContain("read-only");
+            executionPanel.Runbook.Single(x => x.Code == "R1-profile").Status.ShouldBe("active");
+            executionPanel.Runbook.Single(x => x.Code == "S1-S3-provider-cycle").BlockedBy.ShouldBe("R1");
             executionPanel.GateCounts["pass"].ShouldBe(3);
             executionPanel.GateCounts["pending"].ShouldBe(4);
             executionPanel.StepIndex.ShouldBe(1);

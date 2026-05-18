@@ -292,6 +292,17 @@ export interface InfraAgentRuntimeDiagnostics {
     blockingReason: string;
     deploymentAdvice?: string | null;
     nextCommand: string;
+    nextCommandCode?: string | null;
+    nextCommandSafety?: string | null;
+    runbook?: Array<{
+      order: number;
+      code: string;
+      title: string;
+      commandCode: string;
+      safety: string;
+      status: string;
+      blockedBy?: string | null;
+    }> | null;
     gateCounts: Record<string, number>;
     stepIndex?: number | null;
     stepTotal?: number | null;
