@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Interfaces;
@@ -518,13 +519,50 @@ public class InfraAgentSessionsControllerTests
         }
     }
 
+    [Fact]
+    public async Task RuntimeStatus_ShouldUseConfiguredRemoteSmokeHostInDebugCommands()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var router = new Mock<IClaudeSidecarRouter>();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CdsAgent:SmokeCdsHost"] = "https://cds.example.test/"
+            })
+            .Build();
+        router
+            .Setup(x => x.GetDiagnosticsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SidecarPoolDiagnostics(
+                false,
+                0,
+                0,
+                Array.Empty<SidecarInstanceDiagnostics>()));
+        var controller = BuildController(service.Object, "user-1", router.Object, configuration: configuration);
+
+        var result = await controller.RuntimeStatus(refreshDiscovery: false, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        var response = objectResult.Value.ShouldBeOfType<ApiResponse<object>>();
+        var data = response.Data.ShouldNotBeNull();
+        var diagnosticsProperty = data.GetType().GetProperty("diagnostics").ShouldNotBeNull();
+        var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
+        var debugCommands = diagnostics.DebugCommands.ShouldNotBeNull();
+        debugCommands.Single(x => x.Code == "doctor").Command
+            .ShouldBe("CDS_HOST=https://cds.example.test bash scripts/doctor-cds-agent-runtime.sh");
+        debugCommands.Single(x => x.Code == "r1-apply").Command
+            .ShouldStartWith("CDS_HOST=https://cds.example.test SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=");
+        diagnostics.ExecutionPanel.ShouldNotBeNull().NextCommand
+            .ShouldBe("CDS_HOST=https://cds.example.test bash scripts/doctor-cds-agent-runtime.sh");
+    }
+
     private static InfraAgentSessionsController BuildController(
         IInfraAgentSessionService service,
         string userId,
         IClaudeSidecarRouter? sidecarRouter = null,
         IDynamicSidecarRegistry? sidecarRegistry = null,
         IInfraAgentRuntimeAdapter? runtimeAdapter = null,
-        IInfraAgentRuntimeProfileService? runtimeProfiles = null)
+        IInfraAgentRuntimeProfileService? runtimeProfiles = null,
+        IConfiguration? configuration = null)
     {
         var claims = new List<Claim>
         {
@@ -533,7 +571,7 @@ public class InfraAgentSessionsControllerTests
         var identity = new ClaimsIdentity(claims, "test");
         var principal = new ClaimsPrincipal(identity);
 
-        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry, runtimeAdapter, runtimeProfiles)
+        return new InfraAgentSessionsController(service, sidecarRouter, sidecarRegistry, runtimeAdapter, runtimeProfiles, configuration)
         {
             ControllerContext = new ControllerContext
             {

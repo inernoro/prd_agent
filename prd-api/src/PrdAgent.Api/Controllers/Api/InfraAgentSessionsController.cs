@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -16,26 +17,29 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class InfraAgentSessionsController : ControllerBase
 {
-    private const string RemoteSmokePrefix = "CDS_HOST=https://cds.miduo.org ";
+    private const string DefaultRemoteSmokeHost = "https://cds.miduo.org";
 
     private readonly IInfraAgentSessionService _service;
     private readonly IClaudeSidecarRouter? _sidecarRouter;
     private readonly IDynamicSidecarRegistry? _sidecarRegistry;
     private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
     private readonly IInfraAgentRuntimeProfileService? _runtimeProfiles;
+    private readonly IConfiguration? _configuration;
 
     public InfraAgentSessionsController(
         IInfraAgentSessionService service,
         IClaudeSidecarRouter? sidecarRouter = null,
         IDynamicSidecarRegistry? sidecarRegistry = null,
         IInfraAgentRuntimeAdapter? runtimeAdapter = null,
-        IInfraAgentRuntimeProfileService? runtimeProfiles = null)
+        IInfraAgentRuntimeProfileService? runtimeProfiles = null,
+        IConfiguration? configuration = null)
     {
         _service = service;
         _sidecarRouter = sidecarRouter;
         _sidecarRegistry = sidecarRegistry;
         _runtimeAdapter = runtimeAdapter;
         _runtimeProfiles = runtimeProfiles;
+        _configuration = configuration;
     }
 
     [HttpGet("event-schema")]
@@ -75,7 +79,7 @@ public class InfraAgentSessionsController : ControllerBase
             profile);
         var runtimeProfileRepairPlan = BuildRuntimeProfileRepairPlan(profile);
         var nextCyclePlan = BuildNextCyclePlan(profile, runtimeProfileRepairPlan);
-        var debugCommands = BuildDebugCommands(profile);
+        var debugCommands = BuildDebugCommands(profile, BuildRemoteSmokePrefix(_configuration));
         var executionPanel = BuildExecutionPanel(commercialReadiness, nextCyclePlan, debugCommands);
         var diagnostics = baseDiagnostics with
         {
@@ -196,7 +200,8 @@ public class InfraAgentSessionsController : ControllerBase
     }
 
     private static IReadOnlyList<SidecarDebugCommand> BuildDebugCommands(
-        SidecarRuntimeProfileDiagnostics? profile)
+        SidecarRuntimeProfileDiagnostics? profile,
+        string remoteSmokePrefix)
     {
         var r1Ready = profile is
         {
@@ -211,7 +216,7 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "doctor",
                 "本地诊断",
-                RemoteSmokePrefix + "bash scripts/doctor-cds-agent-runtime.sh",
+                remoteSmokePrefix + "bash scripts/doctor-cds-agent-runtime.sh",
                 "只读检查 runtime pool、默认 profile、官方模板和下一步建议。",
                 "ready"),
             new SidecarDebugCommand(
@@ -223,21 +228,21 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "r1-dry-run",
                 "R1 修复预检",
-                RemoteSmokePrefix + "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
+                remoteSmokePrefix + "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
                 "不写入远程状态，验证后端 R1 修复计划、模板和缺 key 保护。",
                 r1Status,
                 r1Ready ? null : "Anthropic API key"),
             new SidecarDebugCommand(
                 "r1-apply",
                 "R1 test-before-promote",
-                RemoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
+                remoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
                 "创建候选 Anthropic 官方 profile，测试通过后才提升为默认。",
                 r1Status,
                 r1Ready ? null : "Anthropic API key"),
             new SidecarDebugCommand(
                 "provider-cycle",
                 "一个周期 provider smoke",
-                RemoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
+                remoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
                 "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用。",
                 providerStatus,
                 providerBlockedBy),
@@ -248,6 +253,21 @@ public class InfraAgentSessionsController : ControllerBase
                 "验证 PRD/defect/literary/visual 等非代码智能体不被 CDS runtime pool 污染，并确认其他官方 SDK 候选仍是 planned-not-routable。",
                 "ready")
         };
+    }
+
+    private static string BuildRemoteSmokePrefix(IConfiguration? configuration)
+    {
+        var host = configuration?["CdsAgent:SmokeCdsHost"]
+            ?? configuration?["CDS_AGENT_SMOKE_CDS_HOST"]
+            ?? Environment.GetEnvironmentVariable("CDS_AGENT_SMOKE_CDS_HOST")
+            ?? DefaultRemoteSmokeHost;
+        host = host.Trim();
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            host = DefaultRemoteSmokeHost;
+        }
+
+        return $"CDS_HOST={host.TrimEnd('/')} ";
     }
 
     private static SidecarRuntimeProfileRepairPlan BuildRuntimeProfileRepairPlan(
