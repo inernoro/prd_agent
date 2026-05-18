@@ -335,6 +335,7 @@ remote_subject=""
 remote_preview_slug=""
 remote_deploy_count=""
 remote_last_deploy_at=""
+remote_branch_source="none"
 remote_runtime_relation="not_observed"
 remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this audit."
 if [[ -f "$cycle_summary" ]]; then
@@ -387,12 +388,14 @@ if [[ -f "$cycle_summary" ]]; then
   r1_report=$(jq -r '.r1.report // ""' "$cycle_summary")
   s1_report=$(jq -r '.s1.report // ""' "$cycle_summary")
   controls_report=$(jq -r '.controls.report // ""' "$cycle_summary")
+  remote_branch_status_json=$(jq -c '.remoteCdsBranch // null' "$cycle_summary")
 fi
 
 if remote_status_raw=$(read_remote_branch_status); then
   remote_branch_status_json=$(printf '%s' "$remote_status_raw" | jq -c '.data // null' 2>/dev/null || printf 'null')
   if [[ "$remote_branch_status_json" != "null" ]]; then
     remote_branch_observed=true
+    remote_branch_source="live"
     remote_branch_status=$(jq -r '.status // "unknown"' <<< "$remote_branch_status_json")
     remote_branch_id=$(jq -r '.id // "'"$SMOKE_CDS_BRANCH_ID"'"' <<< "$remote_branch_status_json")
     remote_github_commit=$(jq -r '.githubCommitSha // ""' <<< "$remote_branch_status_json")
@@ -415,6 +418,19 @@ if remote_status_raw=$(read_remote_branch_status); then
       remote_deploy_advice="Remote runtime commit differs from current HEAD; inspect git drift before deciding whether to deploy."
     fi
   fi
+elif [[ "$remote_branch_status_json" != "null" && "$(jq -r '.observed // false' <<< "$remote_branch_status_json")" == "true" ]]; then
+  remote_branch_observed=true
+  remote_branch_source="cycle-summary"
+  remote_branch_status=$(jq -r '.status // "unknown"' <<< "$remote_branch_status_json")
+  remote_branch_id=$(jq -r '.branchId // "'"$SMOKE_CDS_BRANCH_ID"'"' <<< "$remote_branch_status_json")
+  remote_github_commit=$(jq -r '.githubCommitSha // ""' <<< "$remote_branch_status_json")
+  remote_runtime_commit=$(jq -r '.runtimeCommitSha // ""' <<< "$remote_branch_status_json")
+  remote_subject=$(jq -r '.subject // ""' <<< "$remote_branch_status_json")
+  remote_preview_slug=$(jq -r '.previewSlug // ""' <<< "$remote_branch_status_json")
+  remote_deploy_count=$(jq -r '.deployCount // ""' <<< "$remote_branch_status_json")
+  remote_last_deploy_at=$(jq -r '.lastDeployAt // ""' <<< "$remote_branch_status_json")
+  remote_runtime_relation=$(jq -r '.runtimeRelation // "snapshot"' <<< "$remote_branch_status_json")
+  remote_deploy_advice=$(jq -r '.deployAdvice // "Using remote branch snapshot saved in cycle-summary; set CDS_HOST for live refresh."' <<< "$remote_branch_status_json")
 else
   remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this audit."
 fi
@@ -583,6 +599,7 @@ audit_json=$(
     --arg remotePreviewSlug "$remote_preview_slug" \
     --arg remoteDeployCount "$remote_deploy_count" \
     --arg remoteLastDeployAt "$remote_last_deploy_at" \
+    --arg remoteBranchSource "$remote_branch_source" \
     --arg remoteRuntimeRelation "$remote_runtime_relation" \
     --arg remoteDeployAdvice "$remote_deploy_advice" \
     --arg gateR0 "$gate_r0" \
@@ -634,6 +651,7 @@ audit_json=$(
       },
       remoteCdsBranch: {
         observed: ($remoteBranchObserved == "true"),
+        source: $remoteBranchSource,
         branchId: $remoteBranchId,
         status: $remoteBranchStatus,
         githubCommitSha: (if $remoteGithubCommit == "" then null else $remoteGithubCommit end),
@@ -771,8 +789,9 @@ elif [[ "$cycle_git_status" == "runtime_mismatch" ]]; then
   printf '%s\n' "${CYCLE_GIT_RUNTIME_DIFF_PATHS[@]}" | sed 's/^/  - /'
 fi
 if [[ "$remote_branch_observed" == "true" ]]; then
-  printf 'Remote CDS branch: %s status=%s github=%s runtime=%s deployCount=%s lastDeployAt=%s\n' \
+  printf 'Remote CDS branch: %s source=%s status=%s github=%s runtime=%s deployCount=%s lastDeployAt=%s\n' \
     "$remote_branch_id" \
+    "$remote_branch_source" \
     "${remote_branch_status:-unknown}" \
     "${remote_github_commit:-unknown}" \
     "${remote_runtime_commit:-unknown}" \
