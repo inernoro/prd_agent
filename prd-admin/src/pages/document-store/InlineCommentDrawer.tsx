@@ -86,21 +86,19 @@ export function InlineCommentDrawer({
   }, [pendingSelection]);
 
   const handleSubmit = useCallback(async () => {
-    if (!pendingSelection) {
-      toast.warning('请先选中正文', '在文档内用鼠标选中一段文字，再填写评论');
-      return;
-    }
     if (!draft.trim()) {
       toast.warning('请填写评论内容');
       return;
     }
     setSubmitting(true);
+    // B4：无选区时提交"全文评论"——selectedText 传空、offsets 传 0，
+    // 后端按整篇文档的通用评论接受（不参与 rebind / 定位高亮）
     const res = await createInlineComment(entryId, {
-      selectedText: pendingSelection.selectedText,
-      contextBefore: pendingSelection.contextBefore,
-      contextAfter: pendingSelection.contextAfter,
-      startOffset: pendingSelection.startOffset,
-      endOffset: pendingSelection.endOffset,
+      selectedText: pendingSelection?.selectedText ?? '',
+      contextBefore: pendingSelection?.contextBefore ?? '',
+      contextAfter: pendingSelection?.contextAfter ?? '',
+      startOffset: pendingSelection?.startOffset ?? 0,
+      endOffset: pendingSelection?.endOffset ?? 0,
       content: draft.trim(),
     });
     setSubmitting(false);
@@ -203,7 +201,7 @@ export function InlineCommentDrawer({
                   border: '1px dashed rgba(255,255,255,0.08)',
                   color: 'var(--text-muted)',
                 }}>
-                在文档正文里选中一段文字，再在下方写评论
+                在正文里选中一段文字可对该处评论；也可直接在下方写对整篇文档的评论
               </div>
             )}
             <textarea
@@ -232,7 +230,7 @@ export function InlineCommentDrawer({
               </span>
               <button
                 onClick={handleSubmit}
-                disabled={submitting || !pendingSelection || !draft.trim()}
+                disabled={submitting || !draft.trim()}
                 className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
                   background: 'rgba(168,85,247,0.12)',
@@ -327,19 +325,30 @@ function CommentCard({
         background: orphaned ? 'rgba(245,158,11,0.04)' : 'rgba(255,255,255,0.03)',
         border: orphaned ? '1px solid rgba(245,158,11,0.15)' : '1px solid rgba(255,255,255,0.06)',
       }}>
-      {/* 引用块（被评论的原文） */}
-      <div className="mb-2 pl-2 py-1 text-[11px]"
-        style={{
-          borderLeft: orphaned ? '2px dashed rgba(245,158,11,0.5)' : '2px solid rgba(168,85,247,0.4)',
-          color: 'var(--text-muted)',
-          cursor: onLocate && !orphaned ? 'pointer' : 'default',
-        }}
-        onClick={() => { if (onLocate && !orphaned) onLocate(comment.selectedText); }}
-        title={onLocate && !orphaned ? '点击定位到正文位置' : undefined}>
-        {comment.selectedText.length > 140
-          ? comment.selectedText.slice(0, 140) + '…'
-          : comment.selectedText}
-      </div>
+      {/* 引用块（被评论的原文）；全文评论无锚点，显示标签而非空引用 */}
+      {comment.isWholeDocument || !comment.selectedText ? (
+        <div className="mb-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px]"
+          style={{
+            background: 'rgba(96,165,250,0.1)',
+            border: '1px solid rgba(96,165,250,0.22)',
+            color: 'rgba(147,197,253,0.95)',
+          }}>
+          全文评论
+        </div>
+      ) : (
+        <div className="mb-2 pl-2 py-1 text-[11px]"
+          style={{
+            borderLeft: orphaned ? '2px dashed rgba(245,158,11,0.5)' : '2px solid rgba(168,85,247,0.4)',
+            color: 'var(--text-muted)',
+            cursor: onLocate && !orphaned ? 'pointer' : 'default',
+          }}
+          onClick={() => { if (onLocate && !orphaned) onLocate(comment.selectedText); }}
+          title={onLocate && !orphaned ? '点击定位到正文位置' : undefined}>
+          {comment.selectedText.length > 140
+            ? comment.selectedText.slice(0, 140) + '…'
+            : comment.selectedText}
+        </div>
+      )}
       {/* 评论内容 */}
       <div className="flex items-start gap-2 mb-2">
         <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"

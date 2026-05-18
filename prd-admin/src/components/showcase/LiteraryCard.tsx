@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Eye, BookOpen } from 'lucide-react';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
+import { useInViewport } from '@/hooks/useInViewport';
+import { getAspectRatio } from './waterfall';
 import type { SubmissionItem } from '@/services/real/submissions';
 
 interface LiteraryCardProps {
@@ -14,14 +16,6 @@ interface LiteraryCardProps {
  * 文学创作卡片 — 瀑布流风格
  * 自然比例 + 封面图全覆盖 + 底部渐变遮罩 + 文字叠加
  */
-
-/** Get aspect ratio string for a submission item */
-function getAspectRatio(item: SubmissionItem): string {
-  if (item.coverWidth && item.coverHeight) {
-    return `${item.coverWidth}/${item.coverHeight}`;
-  }
-  return '16/10';
-}
 
 /* 无封面图时的默认渐变背景 */
 const FALLBACK_GRADIENTS = [
@@ -49,6 +43,7 @@ export function LiteraryCard({ item, onLikeToggle, onClick }: LiteraryCardProps)
   useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
   useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
+  const [boxRef, inView] = useInViewport<HTMLDivElement>();
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
   const hasCover = !!item.coverUrl && !imgError;
 
@@ -78,20 +73,22 @@ export function LiteraryCard({ item, onLikeToggle, onClick }: LiteraryCardProps)
     >
       {/* Card — natural aspect ratio for waterfall, image full-bleed, text at bottom */}
       <div
+        ref={boxRef}
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
         }}
       >
-        {/* Cover image */}
-        {item.coverUrl && !imgError && (
+        {/* Cover image — only requested once the card nears the viewport */}
+        {item.coverUrl && !imgError && inView && (
           <img
             src={item.coverUrl}
             alt={item.title}
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
             style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
             loading="lazy"
+            decoding="async"
             onLoad={() => setImgLoaded(true)}
             onError={() => setImgError(true)}
           />

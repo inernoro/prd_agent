@@ -83,7 +83,8 @@ public interface IHostedSiteService
         string? siteId, List<string>? siteIds, string shareType,
         string? title, string? description,
         string? password, int expiresInDays,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string purpose = "share");
 
     Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct = default);
 

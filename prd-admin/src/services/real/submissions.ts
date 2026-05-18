@@ -20,16 +20,37 @@ export interface SubmissionItem {
 
 export async function listPublicSubmissions(params?: {
   contentType?: string;
+  ownerUserId?: string;
   skip?: number;
   limit?: number;
 }) {
   const query = new URLSearchParams();
   if (params?.contentType) query.set('contentType', params.contentType);
+  if (params?.ownerUserId) query.set('ownerUserId', params.ownerUserId);
   if (params?.skip != null) query.set('skip', String(params.skip));
   if (params?.limit != null) query.set('limit', String(params.limit));
   const qs = query.toString();
   const url = api.submissions.public() + (qs ? `?${qs}` : '');
   return apiRequest<{ total: number; items: SubmissionItem[] }>(url);
+}
+
+export interface SubmissionCreator {
+  ownerUserId: string;
+  ownerUserName: string;
+  ownerAvatarFileName?: string;
+  submissionCount: number;
+}
+
+export async function listSubmissionCreators(params?: {
+  contentType?: string;
+  limit?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.contentType) query.set('contentType', params.contentType);
+  if (params?.limit != null) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  const url = api.submissions.creators() + (qs ? `?${qs}` : '');
+  return apiRequest<{ creators: SubmissionCreator[] }>(url);
 }
 
 export interface RelatedAsset {

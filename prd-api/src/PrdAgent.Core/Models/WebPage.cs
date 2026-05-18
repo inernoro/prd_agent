@@ -123,6 +123,13 @@ public class WebPageShareLink
     /// <summary>分享类型：single = 单站点, collection = 合集</summary>
     public string ShareType { get; set; } = "single";
 
+    /// <summary>
+    /// 用途：share = 用户主动分享（自选有效期/密码，出现在分享管理列表）；
+    /// visit = 站点「访问」便捷链（恒为公开永久，与用户分享互不复用、互不篡改，不进分享列表）。
+    /// 旧记录无此字段，反序列化为默认 "share"，按用户分享对待。
+    /// </summary>
+    public string Purpose { get; set; } = "share";
+
     /// <summary>分享标题</summary>
     public string? Title { get; set; }
 

@@ -1151,3 +1151,40 @@
     animation: none;
   }
 }
+
+/* ── 作品广场：增强极光渐变背景（柔和漂移 + 呼吸） ── */
+.showcase-aurora {
+  position: absolute;
+  inset: -25%;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 45% at 22% 32%, rgba(99, 102, 241, 0.30) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 55% at 78% 26%, rgba(168, 85, 247, 0.26) 0%, transparent 58%),
+    radial-gradient(ellipse 60% 45% at 60% 78%, rgba(236, 72, 153, 0.18) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 40% at 38% 68%, rgba(59, 130, 246, 0.22) 0%, transparent 55%);
+  filter: blur(44px);
+  animation: showcaseAuroraDrift 26s ease-in-out infinite alternate;
+}
+.showcase-aurora::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 45% 50% at 70% 40%, rgba(129, 140, 248, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 45% at 30% 60%, rgba(192, 132, 252, 0.18) 0%, transparent 58%);
+  animation: showcaseAuroraBreathe 18s ease-in-out infinite alternate;
+}
+@keyframes showcaseAuroraDrift {
+  0%   { transform: translate3d(-3%, -2%, 0) scale(1.05) rotate(0deg); }
+  100% { transform: translate3d(3%, 2%, 0) scale(1.15) rotate(4deg); }
+}
+@keyframes showcaseAuroraBreathe {
+  0%   { opacity: 0.55; transform: scale(1); }
+  100% { opacity: 1; transform: scale(1.12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .showcase-aurora,
+  .showcase-aurora::after {
+    animation: none;
+  }
+}

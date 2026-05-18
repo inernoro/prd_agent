@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import 'katex/dist/katex.min.css';
 import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -20,16 +22,14 @@ function childrenToText(children: unknown): string {
   }
   return '';
 }
-function normalizeHeadingText(raw: string): string {
-  return String(raw || '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim();
-}
 import {
-  FileText, FolderOpen, FolderClosed, Star, Rss, Github,
+  FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
-  FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
+  ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags,
+  Sparkles, Wand2, Tags, Replace, BookOpen,
 } from 'lucide-react';
+import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -41,6 +41,10 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import { DocToc } from './DocToc';
+// SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
+// 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
+import { headingTextToSlug } from '@/lib/markdownToc';
 
 // ── 类型 ──
 
@@ -103,6 +107,8 @@ export type DocBrowserProps = {
   onGenerateSubtitle?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 点击"替换文件"时触发（仅文件条目显示）。原地替换内容，保留 Id/标签/主文档。 */
+  onReplaceFile?: (entryId: string) => void;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
@@ -179,7 +185,7 @@ function formatMetaTime(iso?: string): string {
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
-  onGenerateSubtitle, onReprocess,
+  onGenerateSubtitle, onReprocess, onReplaceFile,
   onClose,
 }: {
   x: number;
@@ -194,6 +200,7 @@ function ContextMenu({
   onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
+  onReplaceFile?: (entryId: string) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -260,6 +267,17 @@ function ContextMenu({
           onClick={() => { onSetPrimary(entry.id); onClose(); }}>
           <Star size={12} />
           设为主文档
+        </button>
+      )}
+      {!entry.isFolder
+        && entry.sourceType !== 'subscription'
+        && entry.sourceType !== 'github_directory'
+        && onReplaceFile && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => { onReplaceFile(entry.id); onClose(); }}>
+          <Replace size={12} />
+          替换文件
         </button>
       )}
       {onDelete && (
@@ -526,6 +544,7 @@ function TreeNode({
   expandedFolders,
   useContentTitle,
   contentFirstLines,
+  contentMatchIds,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
@@ -542,6 +561,7 @@ function TreeNode({
   expandedFolders: Set<string>;
   useContentTitle: boolean;
   contentFirstLines: Map<string, string>;
+  contentMatchIds: Set<string>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
@@ -590,30 +610,56 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className="w-full flex items-center gap-1.5 py-[5px] text-left cursor-pointer transition-colors duration-100 group"
+        className={`relative w-full flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[6px] hover-bg-soft'}`}
         style={{
-          paddingLeft: `${8 + depth * 16}px`,
-          paddingRight: '8px',
-          background: dragOver ? 'rgba(59,130,246,0.12)' : (isSelected && !isFolder ? 'rgba(59,130,246,0.08)' : 'transparent'),
-          borderLeft: isSelected && !isFolder ? '2px solid rgba(59,130,246,0.6)' : '2px solid transparent',
-          outline: dragOver ? '1px dashed rgba(59,130,246,0.4)' : 'none',
+          // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边
+          paddingLeft: `${10 + depth * 14}px`,
+          paddingRight: '10px',
+          marginLeft: '6px',
+          marginRight: '6px',
+          borderRadius: '9px',
+          // 仅在拖拽/选中时显式给背景，未高亮时留空让 hover-bg-soft 类的 :hover 生效
+          background: dragOver
+            ? 'var(--accent-soft, rgba(99,102,241,0.14))'
+            : (isSelected && !isFolder
+                ? 'var(--accent-soft, rgba(99,102,241,0.10))'
+                : undefined),
+          outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
+          // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
+          ...(isFolder
+            ? {
+                marginTop: depth === 0 ? '8px' : '4px',
+                borderTop: '1px solid var(--border-faint)',
+                borderRadius: 0,
+              }
+            : {}),
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 展开/折叠箭头（仅文件夹显示，非文件夹不占位） */}
-        {isFolder && (
-          <span className="w-3.5 flex-shrink-0 flex items-center justify-center">
-            {isOpen ? <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />
-                    : <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />}
-          </span>
+        {/* 选中态：圆角块内侧细 accent 条（不贴边、不粗方） */}
+        {isSelected && !isFolder && (
+          <span
+            aria-hidden
+            className="absolute left-[3px] top-1/2 -translate-y-1/2 rounded-full"
+            style={{
+              width: '3px',
+              height: '60%',
+              background: 'var(--accent-primary, var(--accent-gold))',
+              opacity: 0.85,
+            }}
+          />
         )}
-
         <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-        <span className="flex-1 truncate text-[12px]"
+        <span className="flex-1 truncate"
           style={{
-            color: isSelected && !isFolder ? 'var(--text-primary)' : 'var(--text-secondary, rgba(255,255,255,0.7))',
-            fontWeight: isFolder ? 500 : 400,
+            color: isFolder
+              ? 'var(--text-muted)'
+              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
+            fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
+            fontSize: isFolder ? '10.5px' : '12px',
+            letterSpacing: isFolder ? '0.06em' : 'normal',
+            textTransform: isFolder ? 'uppercase' : 'none',
           }}>
           {displayTitle}
         </span>
@@ -630,6 +676,23 @@ function TreeNode({
           >
             #{entry.tags![0]}
             {(entry.tags?.length ?? 0) > 1 ? ` +${entry.tags!.length - 1}` : ''}
+          </span>
+        )}
+
+        {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
+        {!isFolder && contentMatchIds.has(entry.id) && (
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+            style={{
+              background: 'var(--bg-tertiary)',
+              color: 'var(--text-muted)',
+              border: '1px solid var(--border-faint)',
+              letterSpacing: '0.2px',
+              lineHeight: 1.4,
+            }}
+            title="该文件因正文内容命中而被搜出（标题未含关键词）"
+          >
+            内容包含
           </span>
         )}
 
@@ -685,10 +748,15 @@ function TreeNode({
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
 
+        {/* F3：文件夹章节——右侧文件计数 + 折叠箭头（文档站目录习惯：箭头在右） */}
         {isFolder && (
-          <span className="text-[10px] opacity-0 group-hover:opacity-50 flex-shrink-0"
-            style={{ color: 'var(--text-muted)' }}>
-            {children.length}
+          <span className="flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              {children.length}
+            </span>
+            {isOpen
+              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
           </span>
         )}
       </button>
@@ -707,6 +775,7 @@ function TreeNode({
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
           contentFirstLines={contentFirstLines}
+          contentMatchIds={contentMatchIds}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
@@ -763,37 +832,86 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 
 // ── Markdown 渲染器 ──
 
+// 允许文档正文里内嵌的 HTML（div/span/strong 等）携带 class/id，
+// 同时经过 rehype-sanitize 过滤掉 script / on* 事件，防止 XSS。
+// KaTeX 输出的 math 标签也一并放行。
+//
+// 安全取舍（Bugbot-3）：不再放行任意元素的内联 style。
+// 知识库可"发布到智识殿堂"被匿名公开访问，配合 rehypeRaw，
+// 通配放行 style 会让上传文档能用 position:fixed 做全页 UI 钓鱼、
+// background-image:url(...) 做数据外带，削弱 sanitize 的 XSS 防护。
+// 代价：内嵌 <div style="margin:..."> 之类只丢内联间距，标签本身仍渲染成元素
+//（"裸标签当文本显示"的诉求已由 rehypeRaw 解决，不依赖 inline style）。
+//
+// 安全取舍（Codex-J）：同理不再放行任意元素的 className。
+// 上传 markdown 内嵌 HTML 可携带本应用 Tailwind/工具类（如 fixed inset-0、
+// 高 z-index、背景类）穿过 sanitizer，在已发布文档里覆盖/伪装应用 UI，
+// 与内联 style 是同源的 UI 钓鱼面。仅保留 id（标题锚点等）。
+// KaTeX 输出的 class 不经此 schema：rehype 顺序为
+// [rehypeRaw, rehypeSanitize, rehypeKatex]，rehypeKatex 在 sanitize 之后运行，
+// 故移除 className 放行不影响数学公式渲染；正文 markdown 的 class 由
+// React 组件 renderer 赋予（不经 raw+sanitize 链），同样不受影响。
+const docSanitizeSchema = {
+  ...defaultSchema,
+  attributes: {
+    ...defaultSchema.attributes,
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'id'],
+    math: ['xmlns'],
+  },
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub',
+    'mfrac', 'msqrt', 'mover', 'munder', 'mtable', 'mtr', 'mtd', 'mtext', 'annotation',
+  ],
+};
+
 function MarkdownViewer({ content }: { content: string }) {
-  // 每次 content 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
+  // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
+  // 与左侧标题提取共用 parseFrontmatter（SSOT）。
+  const body = useMemo(() => parseFrontmatter(content).body, [content]);
+  // 每次 body 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const slugger = useMemo(() => new GithubSlugger(), [content]);
+  const slugger = useMemo(() => new GithubSlugger(), [body]);
+  // GithubSlugger 有状态（记录已用过的 slug 以去重）。MarkdownViewer 在 body 不变的
+  // 重渲染（开评论抽屉/划词选区/父级 state 变化）下会复用同一 memo 实例，若不重置，
+  // 第二次渲染的 heading id 会漂移成 name-1/name-2，而 TOC 侧每次用全新 slugger 解析，
+  // 导致重渲染后锚点失配。每次渲染前 reset，保证两侧字面始终一致（SSOT）。
+  slugger.reset();
   const mkHeading = useCallback(
     (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
-      const text = normalizeHeadingText(childrenToText(children));
-      const id = text ? slugger.slug(text) : undefined;
+      // childrenToText 拿到的是渲染后纯文本（HTML 标签已成元素、实体已解码），
+      // 走 rendered 路径（alreadyRendered=true）：跳过剥标签/解实体，
+      // 否则 `Use <T> generics` 里的 <T> 会被标签正则误删，与 TOC 不一致。
+      const { id: slugId } = headingTextToSlug(childrenToText(children), slugger, { alreadyRendered: true });
+      const id = slugId || undefined;
+      // F2：借鉴文档站的标题节奏——上间距明显大于下间距，层级清晰
       const classesByTag: Record<string, string> = {
-        h1: 'text-[22px] font-bold mt-6 mb-3 pb-2 scroll-mt-24',
-        h2: 'text-[18px] font-bold mt-5 mb-2.5 pb-1.5 scroll-mt-24',
-        h3: 'text-[15px] font-semibold mt-4 mb-2 scroll-mt-24',
-        h4: 'text-[14px] font-semibold mt-3 mb-1.5 scroll-mt-24',
-        h5: 'text-[13px] font-semibold mt-3 mb-1 scroll-mt-24',
-        h6: 'text-[12px] font-semibold mt-2 mb-1 scroll-mt-24',
+        h1: 'text-[24px] font-bold mt-8 mb-4 pb-2.5 leading-tight scroll-mt-24',
+        h2: 'text-[19px] font-bold mt-9 mb-3 pb-2 leading-snug scroll-mt-24',
+        h3: 'text-[16px] font-semibold mt-7 mb-2.5 leading-snug scroll-mt-24',
+        h4: 'text-[14px] font-semibold mt-5 mb-2 scroll-mt-24',
+        h5: 'text-[13px] font-semibold mt-4 mb-1.5 scroll-mt-24',
+        h6: 'text-[12px] font-semibold mt-4 mb-1.5 scroll-mt-24',
       };
       const style: React.CSSProperties =
         Tag === 'h1'
-          ? { borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }
+          ? { borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }
           : Tag === 'h2'
-            ? { borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-primary)' }
+            ? { borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }
             : { color: 'var(--text-primary)' };
       return <Tag id={id} className={classesByTag[Tag]} style={style}>{children}</Tag>;
     },
     [slugger],
   );
   return (
-    <div className="prose-invert max-w-none text-[13px] leading-relaxed">
+    // F2：文档站观感——更大行距、克制的最大宽度（长行不利阅读）、底部留白
+    <div
+      className="prose-invert text-[14px]"
+      style={{ lineHeight: 1.78, maxWidth: '860px', paddingBottom: '96px' }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, docSanitizeSchema], rehypeKatex]}
         components={{
           h1: mkHeading('h1'),
           h2: mkHeading('h2'),
@@ -801,7 +919,7 @@ function MarkdownViewer({ content }: { content: string }) {
           h4: mkHeading('h4'),
           h5: mkHeading('h5'),
           h6: mkHeading('h6'),
-          p: ({ children }) => <p className="my-2 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
+          p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
           a: ({ href, children }) => {
             // 锚点 → SPA 内 scroll，不新开标签页
             if (href && href.startsWith('#')) {
@@ -822,21 +940,30 @@ function MarkdownViewer({ content }: { content: string }) {
           ul: ({ children, className }) => {
             const isTaskList = className?.includes('contains-task-list');
             return (
-              <ul className={`${isTaskList ? 'list-none pl-2' : 'list-disc pl-5'} my-2 space-y-0.5`} style={{ color: 'var(--text-secondary)' }}>
+              <ul className={`${isTaskList ? 'list-none pl-2' : 'list-disc pl-6'} my-3.5 space-y-1.5`} style={{ color: 'var(--text-secondary)' }}>
                 {children}
               </ul>
             );
           },
-          ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>{children}</ol>,
+          ol: ({ children }) => <ol className="list-decimal pl-6 my-3.5 space-y-1.5" style={{ color: 'var(--text-secondary)' }}>{children}</ol>,
           li: ({ children, className }) => {
             const isTaskItem = className?.includes('task-list-item');
-            return <li className={`text-[13px] ${isTaskItem ? 'flex items-start gap-2' : ''}`}>{children}</li>;
+            return <li className={`text-[14px] leading-relaxed ${isTaskItem ? 'flex items-start gap-2' : ''}`}>{children}</li>;
           },
           blockquote: ({ children }) => (
-            <blockquote className="my-3 pl-3 py-1" style={{ borderLeft: '3px solid rgba(96,165,250,0.3)', color: 'var(--text-muted)' }}>{children}</blockquote>
+            <blockquote
+              className="my-4 pl-4 pr-3 py-2 rounded-r-[6px]"
+              style={{
+                borderLeft: '3px solid var(--accent-primary, var(--accent-gold))',
+                background: 'var(--bg-input-hover)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {children}
+            </blockquote>
           ),
           table: ({ children }) => (
-            <div className="my-3 overflow-x-auto rounded-lg" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="my-4 overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border-subtle)' }}>
               <table className="w-full text-[12px]">{children}</table>
             </div>
           ),
@@ -858,7 +985,7 @@ function MarkdownViewer({ content }: { content: string }) {
                   language={match[1]}
                   PreTag="div"
                   customStyle={{
-                    margin: '12px 0', borderRadius: '10px', fontSize: '12px',
+                    margin: '18px 0', borderRadius: '10px', fontSize: '12px',
                     background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
                   }}
                 >
@@ -870,8 +997,8 @@ function MarkdownViewer({ content }: { content: string }) {
             return (
               <pre
                 style={{
-                  margin: '12px 0',
-                  padding: '12px 14px',
+                  margin: '18px 0',
+                  padding: '14px 16px',
                   borderRadius: '10px',
                   fontSize: '12px',
                   lineHeight: 1.6,
@@ -888,13 +1015,13 @@ function MarkdownViewer({ content }: { content: string }) {
             );
           },
           pre: ({ children }) => <>{children}</>,
-          hr: () => <hr className="my-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />,
+          hr: () => <hr className="my-7" style={{ borderColor: 'var(--border-subtle)' }} />,
           img: ({ src, alt }) => (
             <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-3" style={{ maxHeight: '400px', border: '1px solid rgba(255,255,255,0.06)' }} />
           ),
         }}
       >
-        {content}
+        {body}
       </ReactMarkdown>
     </div>
   );
@@ -1065,16 +1192,17 @@ export function DocBrowser({
   onOpenSubscription,
   onGenerateSubtitle,
   onReprocess,
+  onReplaceFile,
   emptyState,
   loading,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
-  const [searchContent, setSearchContent] = useState(false);
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
-  const [loadedEntryId, setLoadedEntryId] = useState<string | null>(null);
+  // 内容加载缓存键：以 entryId + updatedAt 组合作内容版本，替换文件后 updatedAt 变化即触发重载
+  const [loadedContentKey, setLoadedContentKey] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -1094,6 +1222,8 @@ export function DocBrowser({
   });
   const [resizing, setResizing] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
+  const searchSeqRef = useRef(0);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
@@ -1109,9 +1239,22 @@ export function DocBrowser({
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
+  // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
+  // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
+  // 会先匹配到 frontmatter 块，导致 offset/上下文错位、评论锚点定位错误。
+  // 与 tocContent / MarkdownViewer 共用 parseFrontmatter（SSOT）。
+  const selectionRawContent = useMemo(() => {
+    const text = preview?.text;
+    if (!text) return text ?? undefined;
+    const e = entries.find(x => x.id === selectedEntryId);
+    if (!e || e.isFolder) return text;
+    const cfg = getFileTypeConfig(e.title, e.contentType);
+    return cfg.preview === 'text' ? parseFrontmatter(text).body : text;
+  }, [preview, entries, selectedEntryId]);
   const { selection: liveSelection, clear: clearLiveSelection } = useContentSelection(
     contentAreaRef,
-    preview?.text,
+    selectionRawContent,
     Boolean(selectedEntryId && !contentLoading && !editMode),
   );
   const trackedEntryForComments = useMemo(() => {
@@ -1119,6 +1262,18 @@ export function DocBrowser({
     const e = entries.find(x => x.id === selectedEntryId);
     return e && !e.isFolder ? e : null;
   }, [selectedEntryId, entries]);
+
+  // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
+  const tocContent = useMemo(() => {
+    if (!selectedEntryId) return null;
+    const e = entries.find(x => x.id === selectedEntryId);
+    if (!e || e.isFolder) return null;
+    const text = preview?.text;
+    if (!text) return null;
+    const cfg = getFileTypeConfig(e.title, e.contentType);
+    // 与 MarkdownViewer 一致：剥掉 frontmatter，TOC 不把 ---/title: 当标题
+    return cfg.preview === 'text' ? parseFrontmatter(text).body : null;
+  }, [selectedEntryId, entries, preview]);
 
   // 拖拽调整宽度
   useEffect(() => {
@@ -1188,15 +1343,20 @@ export function DocBrowser({
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
   }, [entries, primaryEntryId, pinnedSet]);
 
-  // 从 summary 中提取第一行作为标题（去掉 # 号）
+  // 从 summary 提取显示标题：优先 YAML frontmatter 的 title（去引号），
+  // 没有 frontmatter / 没有 title 时回退到 frontmatter 之后的首个正文标题，
+  // 再不行回退到首个非空行（去掉行首 # 号）。与正文渲染共用 parseFrontmatter。
   useEffect(() => {
     const lines = new Map<string, string>();
     for (const e of entries) {
       if (e.isFolder || !e.summary) continue;
-      const firstLine = e.summary.split('\n').find(l => l.trim());
-      if (firstLine) {
-        lines.set(e.id, firstLine.replace(/^#+\s*/, '').trim());
+      const { title, body } = parseFrontmatter(e.summary);
+      let display = (title ?? '').trim();
+      if (!display) {
+        const firstLine = body.split('\n').find(l => l.trim());
+        if (firstLine) display = firstLine.replace(/^#+\s*/, '').trim();
       }
+      if (display) lines.set(e.id, display);
     }
     setContentFirstLines(lines);
   }, [entries]);
@@ -1252,41 +1412,65 @@ export function DocBrowser({
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
   }, [search, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
 
-  // 搜索处理（防抖 + 内容搜索走后端）
+  // 内容命中标记：搜索时若条目在结果中但关键词不在标题里 → 标「（内容包含）」
+  const contentMatchIds = useMemo(() => {
+    const ids = new Set<string>();
+    const kw = search.trim().toLowerCase();
+    if (!kw) return ids;
+    // 后端搜索模式：searchResults 已是扁平的全部命中条目。
+    // 本地搜索模式（searchResults === null）：filteredRoots 只含根级条目，
+    // 文件夹内嵌套文件不在其中——必须并入 filteredChildrenMap 各 value 数组，
+    // 否则展开的子文件永远拿不到「内容包含」标记（Bugbot-L）。
+    let list: DocBrowserEntry[];
+    if (searchResults !== null) {
+      list = searchResults;
+    } else {
+      list = [...filteredRoots];
+      for (const children of filteredChildrenMap.values()) list.push(...children);
+    }
+    for (const e of list) {
+      if (e.isFolder) continue;
+      const titleHit = (e.title ?? '').toLowerCase().includes(kw);
+      const contentTitleHit = (contentFirstLines.get(e.id) ?? '').toLowerCase().includes(kw);
+      if (!titleHit && !contentTitleHit) ids.add(e.id);
+    }
+    return ids;
+  }, [search, searchResults, filteredRoots, filteredChildrenMap, contentFirstLines]);
+
+  // 搜索处理（防抖 + 永远同时搜标题+内容，走后端；onSearch 内部会先 rebuildContentIndex）
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
     setSearchResults(null);
 
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
-    if (value.trim() && searchContent && onSearch) {
+    const trimmed = value.trim();
+    // 每次输入变化都推进序号：在途响应回来时若序号已变即视为陈旧并丢弃
+    const reqId = ++searchSeqRef.current;
+
+    if (trimmed && onSearch) {
       setSearching(true);
       searchTimerRef.current = setTimeout(async () => {
-        const results = await onSearch(value.trim(), true);
-        setSearchResults(results);
-        setSearching(false);
+        try {
+          const results = await onSearch(trimmed, true);
+          // 仅当这仍是最新一次搜索才采纳，否则丢弃陈旧响应
+          if (reqId !== searchSeqRef.current) return;
+          setSearchResults(results);
+        } catch {
+          if (reqId !== searchSeqRef.current) return;
+          setSearchResults(null);
+        } finally {
+          // 仅最新请求负责收起 spinner：陈旧响应不动它（更新的在途请求会收），
+          // 但 onSearch 抛错时最新请求也必须解除 loading，避免 spinner 永久卡住。
+          if (reqId === searchSeqRef.current) setSearching(false);
+        }
       }, 400);
     } else {
-      setSearching(false);
-    }
-  }, [searchContent, onSearch]);
-
-  // 切换内容搜索时重新触发
-  const handleToggleContentSearch = useCallback(() => {
-    const newVal = !searchContent;
-    setSearchContent(newVal);
-    if (search.trim() && newVal && onSearch) {
-      setSearching(true);
-      setSearchResults(null);
-      onSearch(search.trim(), true).then(results => {
-        setSearchResults(results);
-        setSearching(false);
-      });
-    } else {
+      // 搜索框被清空：立即回到本地全量树，并让任何在途响应作废
       setSearchResults(null);
       setSearching(false);
     }
-  }, [searchContent, search, onSearch]);
+  }, [onSearch]);
 
   const toggleFolder = useCallback((folderId: string) => {
     setExpandedFolders(prev => {
@@ -1297,35 +1481,62 @@ export function DocBrowser({
     });
   }, []);
 
-  // 搜索时自动展开所有文件夹
+  // 搜索时自动展开所有文件夹（后端结果为扁平列表时无需展开，但展开无副作用）
   useEffect(() => {
-    if (search.trim() && !searchContent) {
+    if (search.trim()) {
       const allFolderIds = entries.filter(e => e.isFolder).map(e => e.id);
       setExpandedFolders(new Set(allFolderIds));
     }
-  }, [search, entries, searchContent]);
+  }, [search, entries]);
 
   // 加载内容
-  const loadEntryContent = useCallback(async (entryId: string) => {
-    if (entryId === loadedEntryId) return;
+  // contentKey = `${entryId}:${updatedAt}`：替换文件后后端会更新 updatedAt，
+  // 缓存键随之变化，命中失败 → 重新拉取新正文（修复"替换后预览不刷新"）
+  const loadEntryContent = useCallback(async (entryId: string, contentKey: string) => {
+    if (contentKey === loadedContentKey) return;
     setContentLoading(true);
     setPreview(null);
     try {
       const data = await loadContent(entryId);
       setPreview(data);
-      setLoadedEntryId(entryId);
+      setLoadedContentKey(contentKey);
     } catch {
       setPreview(null);
     }
     setContentLoading(false);
-  }, [loadContent, loadedEntryId]);
+  }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
     if (selectedEntryId) {
       const entry = entries.find(e => e.id === selectedEntryId);
-      if (entry && !entry.isFolder) loadEntryContent(selectedEntryId);
+      if (entry && !entry.isFolder) {
+        loadEntryContent(selectedEntryId, `${selectedEntryId}:${entry.updatedAt ?? ''}`);
+      }
     }
   }, [selectedEntryId, loadEntryContent, entries]);
+
+  // 内容版本键变化时强制退出编辑态：
+  // loadedContentKey = `${entryId}:${updatedAt}`。当"同一个 entry"的 updatedAt
+  // 变了（左侧右键"替换文件"覆盖当前选中文档 / 外部更新），loadEntryContent
+  // 已重新拉取新正文，但 editMode/editContent 仍持有替换前的旧文本，此时若用户
+  // 点保存会把旧文本写回覆盖刚解析的新文档 → 替换像丢数据。这里在"同 entry 内容
+  // 换了版本"时清掉编辑态，回到新内容预览。
+  // 只针对"同 entry 且 key 真的变了"生效：首次加载（prev=null）、切换到不同
+  // entry 都不处理（切文件本就保留既有行为，用户正常进入/中途编辑不受影响）。
+  const prevLoadedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevLoadedKeyRef.current;
+    const cur = loadedContentKey;
+    prevLoadedKeyRef.current = cur;
+    if (!prev || !cur || prev === cur) return;
+    const prevEntryId = prev.slice(0, prev.indexOf(':'));
+    const curEntryId = cur.slice(0, cur.indexOf(':'));
+    // 不同 entry = 切换文件，沿用既有行为，不在此处干预
+    if (prevEntryId !== curEntryId) return;
+    // 同一 entry 但版本键变了 = 内容被替换/外部更新，退出编辑态避免旧文本覆盖
+    setEditMode(false);
+    setEditContent('');
+  }, [loadedContentKey]);
 
   // 自动选中主文档 + 展开其父文件夹链
   useEffect(() => {
@@ -1378,37 +1589,33 @@ export function DocBrowser({
         }}>
 
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
-        <div className="surface-panel-header space-y-2 p-2.5">
-          {/* 标题模式切换 */}
+        <div className="surface-panel-header space-y-2.5 px-3 py-3">
+          {/* 标题模式切换（正文标题/文件名）— 保留 */}
           <div className="flex items-center justify-between">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
-              className="flex cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover:bg-white/4"
+              className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
               title={useContentTitle ? '当前：显示正文第一行为标题' : '当前：显示文件名为标题'}>
               {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
               {useContentTitle ? '正文标题' : '文件名'}
             </button>
-            {onSearch && (
-              <button
-                onClick={handleToggleContentSearch}
-                className={`flex cursor-pointer items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] transition-colors hover:bg-white/4 ${searchContent ? 'text-token-accent' : 'text-token-muted'}`}
-                title={searchContent ? '内容搜索已启用' : '点击启用内容搜索'}>
-                <FileSearch size={11} />
-                {searchContent ? '内容搜索' : '标题搜索'}
-              </button>
-            )}
           </div>
 
           <div className="flex gap-1.5">
             <div className="relative flex-1">
-              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 value={search} onChange={e => handleSearchChange(e.target.value)}
-                placeholder={searchContent ? '搜索文件内容...' : '搜索文件...'}
-                className="prd-field h-7 w-full rounded-[8px] pl-7 pr-2.5 text-[11px] outline-none"
+                placeholder="搜索标题或内容…"
+                className="h-8 w-full rounded-[9px] pl-8 pr-3 text-[11.5px] outline-none transition-colors"
+                style={{
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-faint)',
+                  color: 'var(--text-primary)',
+                }}
               />
               {searching && (
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                <span className="absolute right-3 top-1/2 -translate-y-1/2">
                   <MapSpinner size={12} />
                 </span>
               )}
@@ -1574,6 +1781,7 @@ export function DocBrowser({
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
               contentFirstLines={contentFirstLines}
+              contentMatchIds={contentMatchIds}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
@@ -1597,9 +1805,13 @@ export function DocBrowser({
         )}
 
         {/* 底部统计 */}
-        <div className="px-3 py-2 text-[10px]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
-          <FolderOpen size={10} className="inline mr-1" />
-          {fileCount} 个文件
+        <div
+          className="flex items-center gap-1.5 px-3.5 py-2.5 text-[10px]"
+          style={{ borderTop: '1px solid var(--border-faint)', color: 'var(--text-muted)' }}
+        >
+          <FolderOpen size={11} style={{ opacity: 0.7 }} />
+          <span className="tabular-nums">{fileCount}</span>
+          <span style={{ opacity: 0.8 }}>个文件</span>
         </div>
 
         {/* 拖拽调整宽度的把手 */}
@@ -1829,64 +2041,70 @@ export function DocBrowser({
                 );
               })()}
             </div>
-            {/* 内容区 */}
-            <div
-              ref={contentAreaRef}
-              className="flex-1 px-6 py-4 relative"
-              style={{ minHeight: 0, overflowY: 'auto' }}
-            >
-              {contentLoading ? (
-                <MapSectionLoader text="加载文档内容…" />
-              ) : editMode ? (
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  spellCheck={false}
-                  className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
-                  style={{
-                    background: 'rgba(0,0,0,0.2)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: '8px',
-                    padding: '12px 16px',
-                    color: 'var(--text-primary)',
-                  }}
-                  placeholder="在此编辑文档内容..."
-                />
-              ) : preview ? (
-                <FilePreview
-                  entry={entries.find(e => e.id === selectedEntryId)}
-                  preview={preview}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
-                  <FolderOpen size={48} className="opacity-20 mb-2" />
-                  <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
-                </div>
-              )}
-              {/* 划词选中时的浮层"添加评论"按钮 */}
-              {liveSelection && !editMode && (
-                <SelectionActionPopover
-                  selection={liveSelection}
-                  onAddComment={() => {
-                    setPendingSelection({
-                      selectedText: liveSelection.selectedText,
-                      contextBefore: liveSelection.contextBefore,
-                      contextAfter: liveSelection.contextAfter,
-                      startOffset: liveSelection.startOffset,
-                      endOffset: liveSelection.endOffset,
-                    });
-                    setInlineCommentsOpen(true);
-                    clearLiveSelection();
-                    window.getSelection()?.removeAllRanges();
-                  }}
-                />
+            {/* 内容区 + 右侧本页章节导航（F1） */}
+            <div className="flex-1 flex min-w-0" style={{ minHeight: 0 }}>
+              <div
+                ref={contentAreaRef}
+                className="flex-1 min-w-0 px-6 py-4 relative"
+                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              >
+                {contentLoading ? (
+                  <MapSectionLoader text="加载文档内容…" />
+                ) : editMode ? (
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    spellCheck={false}
+                    className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
+                    style={{
+                      background: 'rgba(0,0,0,0.2)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '8px',
+                      padding: '12px 16px',
+                      color: 'var(--text-primary)',
+                    }}
+                    placeholder="在此编辑文档内容..."
+                  />
+                ) : preview ? (
+                  <FilePreview
+                    entry={entries.find(e => e.id === selectedEntryId)}
+                    preview={preview}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
+                    <FolderOpen size={48} className="opacity-20 mb-2" />
+                    <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                  </div>
+                )}
+                {/* 划词选中时的浮层"添加评论"按钮 */}
+                {liveSelection && !editMode && (
+                  <SelectionActionPopover
+                    selection={liveSelection}
+                    onAddComment={() => {
+                      setPendingSelection({
+                        selectedText: liveSelection.selectedText,
+                        contextBefore: liveSelection.contextBefore,
+                        contextAfter: liveSelection.contextAfter,
+                        startOffset: liveSelection.startOffset,
+                        endOffset: liveSelection.endOffset,
+                      });
+                      setInlineCommentsOpen(true);
+                      clearLiveSelection();
+                      window.getSelection()?.removeAllRanges();
+                    }}
+                  />
+                )}
+              </div>
+              {/* F1：本页章节导航——仅文本类预览且非编辑态显示，无标题时组件自身返回 null */}
+              {!contentLoading && !editMode && tocContent && (
+                <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
               )}
             </div>
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <FileText size={32} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.08)' }} />
+              <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
               <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
                 选择左侧文件查看内容
               </p>
@@ -1933,6 +2151,7 @@ export function DocBrowser({
           onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
+          onReplaceFile={onReplaceFile}
           onClose={() => setContextMenu(null)}
         />
       )}
