@@ -155,9 +155,21 @@ mkdir -p "$(dirname "$OUTPUT")"
   printf -- '- progress board: `%s`\n\n' "$PROGRESS_OUTPUT"
 
   printf '## Next Command\n\n'
-  printf '```bash\n'
-  printf 'scripts/print-cds-agent-sidecar-publish-handoff.sh\n'
-  printf '```\n'
+  if [[ "$user_action_required" == "true" ]]; then
+    printf 'Provide the missing R0 external inputs, then refresh the status bundle:\n\n'
+    printf '```bash\n'
+    printf 'CDS_AGENT_SIDECAR_IMAGE=<pullable-registry-image> \\\n'
+    printf 'CDS_REMOTE_HOST_NAME=<name> \\\n'
+    printf 'CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol> \\\n'
+    printf 'CDS_REMOTE_HOST_SSH_USER=<ssh-user> \\\n'
+    printf 'CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file> \\\n'
+    printf 'scripts/refresh-cds-agent-r0-status.sh\n'
+    printf '```\n'
+  else
+    printf '```bash\n'
+    printf 'scripts/print-cds-agent-r0-operator-handoff.sh\n'
+    printf '```\n'
+  fi
 } > "$OUTPUT"
 
 printf 'CDS Agent R0 status refresh: %s\n' "$OUTPUT"
