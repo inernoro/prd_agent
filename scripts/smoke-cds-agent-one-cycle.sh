@@ -153,6 +153,7 @@ finish_cycle() {
   local doctor_diagnosis="missing"
   local doctor_next="missing"
   local doctor_alias_status="unknown"
+  local r1_details_json="null"
   local provider_calls_enabled=false
   local r1_repair_apply=false
   local cycle_status="pending"
@@ -192,6 +193,14 @@ finish_cycle() {
   if [[ -f "$SMOKE_CDS_AGENT_R1_REPORT" ]]; then
     r1_status=$(jq -r '.status // "unknown"' "$SMOKE_CDS_AGENT_R1_REPORT")
     next_command=$(jq -r '.suggestedCommand // ""' "$SMOKE_CDS_AGENT_R1_REPORT")
+    r1_details_json=$(jq -c '{
+      status: (.status // "unknown"),
+      targetTemplateId: (.targetTemplateId // ""),
+      defaultProfile: (.evidence.defaultProfile // null),
+      repairPlan: (.evidence.repairPlan // null),
+      targetTemplate: (.evidence.targetTemplate // null),
+      providerKeyReceived: (.evidence.providerKeyReceived // false)
+    }' "$SMOKE_CDS_AGENT_R1_REPORT")
   fi
 
   if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
@@ -442,6 +451,7 @@ finish_cycle() {
     --arg doctorReport "$SMOKE_CDS_AGENT_DOCTOR_REPORT" \
     --arg r1Status "$r1_status" \
     --arg r1Report "$SMOKE_CDS_AGENT_R1_REPORT" \
+    --argjson r1Details "$r1_details_json" \
     --arg s1Status "$s1_status" \
     --arg s1Report "$SMOKE_CDS_AGENT_S1_REPORT" \
     --arg controlsStatus "$controls_status" \
@@ -549,7 +559,18 @@ finish_cycle() {
       },
       r1: {
         status: $r1Status,
-        report: $r1Report
+        report: $r1Report,
+        details: $r1Details
+      },
+      providerReadiness: {
+        status: $gateR1,
+        reportStatus: $r1Status,
+        defaultProfile: ($r1Details.defaultProfile // null),
+        compatibilityReasonCode: ($r1Details.defaultProfile.compatibilityReasonCode // null),
+        compatibilityReason: ($r1Details.defaultProfile.compatibilityReason // $r1Details.defaultProfile.warning // null),
+        compatibilityNextActions: ($r1Details.defaultProfile.compatibilityNextActions // []),
+        targetTemplate: ($r1Details.targetTemplate // null),
+        targetTemplateId: ($r1Details.targetTemplateId // "")
       },
       s1: {
         status: $s1Status,

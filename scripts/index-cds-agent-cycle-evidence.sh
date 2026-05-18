@@ -86,7 +86,7 @@ jq -n \
     deploymentAdvice: ($s.deploymentAdvice // ""),
     failure: ($s.failure // null),
     nextCommand: ($s.nextCommand // ""),
-    providerReadiness: {
+    providerReadiness: ($s.providerReadiness // {
       status: ($s.commercialGates.R1.status // "unknown"),
       reportStatus: ($r1Details.status // "unknown"),
       defaultProfile: ($r1Details.defaultProfile // null),
@@ -95,7 +95,7 @@ jq -n \
       compatibilityNextActions: ($r1Details.defaultProfile.compatibilityNextActions // []),
       targetTemplate: ($r1Details.targetTemplate // null),
       targetTemplateId: ($r1Details.targetTemplateId // "")
-    },
+    }),
     executionPanel: ($s.executionPanel // null),
     gates: ($s.commercialGates // {}),
     gatesNotPass: ($s.commercialGatesNotPass // []),
