@@ -379,8 +379,10 @@ async function main() {
     const text = textResult.result?.value || '';
     const required = [
       'CDS Agent',
+      '当前执行面板',
       'Runtime 调试',
       '当前执行结论',
+      '重新部署',
       '商业级',
       'READINESS LEDGER',
       '下一周期最小闭环',
@@ -396,7 +398,7 @@ async function main() {
     await send('Runtime.evaluate', {
       expression: `(() => {
         const nodes = Array.from(document.querySelectorAll('section, div, article'))
-          .filter((node) => (node.innerText || '').includes('当前执行结论'))
+          .filter((node) => (node.innerText || '').includes('当前执行面板'))
           .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
         const el = nodes[0];
         if (el) {
@@ -445,9 +447,11 @@ async function waitForWorkbench(send) {
     const text = res?.result?.value || '';
     lastText = text;
     try { fs.writeFileSync(textDump, text); } catch {}
-    if (text.includes('Runtime 调试')
+    if (text.includes('当前执行面板')
+      && text.includes('Runtime 调试')
       && text.includes('商业级')
       && text.includes('当前执行结论')
+      && text.includes('重新部署')
       && text.includes('READINESS LEDGER')
       && text.includes('下一周期最小闭环')
       && text.includes('ADAPTER 兼容性')
