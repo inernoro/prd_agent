@@ -41,6 +41,9 @@ gate_provider_status="unknown"
 gate_v1_status="unknown"
 page_code="not_checked"
 execution_panel="null"
+profile_reason_code=""
+profile_reason=""
+commercial_reason_code=""
 
 mark_pending() {
   audit_pending+=("$1")
@@ -69,6 +72,9 @@ write_report() {
     --arg profileName "${profile_name:-unknown}" \
     --arg profileProtocol "${profile_protocol:-unknown}" \
     --arg profileModel "${profile_model:-unknown}" \
+    --arg profileReasonCode "${profile_reason_code:-}" \
+    --arg profileReason "${profile_reason:-}" \
+    --arg commercialReasonCode "${commercial_reason_code:-}" \
     --arg workbenchUrl "${SMOKE_CDS_AGENT_WORKBENCH_URL:-}" \
     --arg pageCode "$page_code" \
     --arg gateR0 "$gate_r0_status" \
@@ -103,7 +109,12 @@ write_report() {
         protocol: $profileProtocol,
         model: $profileModel,
         hasApiKey: $profileHasKey,
-        compatibleWithDesiredRuntimeAdapter: $profileCompatible
+        compatibleWithDesiredRuntimeAdapter: $profileCompatible,
+        compatibilityReasonCode: $profileReasonCode,
+        compatibilityReason: $profileReason
+      },
+      providerReadiness: {
+        reasonCode: $commercialReasonCode
       },
       workbench: {
         url: $workbenchUrl,
@@ -172,6 +183,14 @@ gate_a0_status="pass"
 smoke_ok "A0 ready: official SDK adapter boundary is backend-visible"
 
 smoke_step "R1 default runtime profile compatibility"
+r1_gate=$(printf '%s' "$commercial_readiness" | jq -c '.gates[]? | select(.code == "R1")')
+s1_gate=$(printf '%s' "$commercial_readiness" | jq -c '.gates[]? | select(.code == "S1")')
+s2_gate=$(printf '%s' "$commercial_readiness" | jq -c '.gates[]? | select(.code == "S2")')
+s3_gate=$(printf '%s' "$commercial_readiness" | jq -c '.gates[]? | select(.code == "S3")')
+smoke_assert_nonempty "$r1_gate" "commercialReadiness.R1"
+smoke_assert_nonempty "$s1_gate" "commercialReadiness.S1"
+smoke_assert_nonempty "$s2_gate" "commercialReadiness.S2"
+smoke_assert_nonempty "$s3_gate" "commercialReadiness.S3"
 default_profile=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.defaultRuntimeProfile // empty')
 smoke_assert_nonempty "$default_profile" "diagnostics.defaultRuntimeProfile"
 repair_plan=$(printf '%s' "$runtime_resp" | jq -c '.data.diagnostics.runtimeProfileRepairPlan // empty')
@@ -198,21 +217,28 @@ profile_has_key=$(printf '%s' "$default_profile" | jq -r '.hasApiKey // false')
 profile_compatible=$(printf '%s' "$default_profile" | jq -r 'if has("compatibleWithDesiredRuntimeAdapter") then .compatibleWithDesiredRuntimeAdapter else true end')
 profile_reason_code=$(printf '%s' "$default_profile" | jq -r '.compatibilityReasonCode // ""')
 profile_reason=$(printf '%s' "$default_profile" | jq -r '.compatibilityReason // ""')
+commercial_reason_code=$(printf '%s' "$r1_gate" | jq -r '.reasonCode // ""')
 printf 'Default profile: name=%s protocol=%s model=%s hasApiKey=%s compatible=%s reason=%s\n' \
   "$profile_name" "$profile_protocol" "$profile_model" "$profile_has_key" "$profile_compatible" "${profile_reason_code:-none}"
 if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   gate_r1_status="pending"
+  smoke_assert_eq "$(printf '%s' "$r1_gate" | jq -r '.status')" "pending" "commercialReadiness.R1.status"
   if [[ "$profile_compatible" != "true" ]]; then
     smoke_assert_nonempty "$profile_reason_code" "defaultProfile.compatibilityReasonCode"
     smoke_assert_nonempty "$profile_reason" "defaultProfile.compatibilityReason"
     smoke_assert_contains "$profile_reason" "claude-agent-sdk" "defaultProfile.compatibilityReason"
+    smoke_assert_eq "$commercial_reason_code" "$profile_reason_code" "commercialReadiness.R1.reasonCode"
+    smoke_assert_eq "$(printf '%s' "$s1_gate" | jq -r '.reasonCode // ""')" "$profile_reason_code" "commercialReadiness.S1.reasonCode"
+    smoke_assert_eq "$(printf '%s' "$s2_gate" | jq -r '.reasonCode // ""')" "$profile_reason_code" "commercialReadiness.S2.reasonCode"
+    smoke_assert_eq "$(printf '%s' "$s3_gate" | jq -r '.reasonCode // ""')" "$profile_reason_code" "commercialReadiness.S3.reasonCode"
+    smoke_assert_contains "$(printf '%s' "$s1_gate" | jq -r '.message')" "$profile_reason" "commercialReadiness.S1.message"
   fi
   smoke_assert_eq "$(printf '%s' "$repair_plan" | jq -r '.state')" "blocked" "runtimeProfileRepairPlan.state"
   smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.state')" "profile-blocked" "nextCyclePlan.state"
   smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.items[]? | select(.code == "N2") | .blockedBy')" "R1" "nextCyclePlan.N2.blockedBy"
   repair_actions=$(printf '%s' "$repair_plan" | jq -r '.nextActions[]?')
   smoke_assert_contains "$repair_actions" "准备默认 Claude 配置" "runtimeProfileRepairPlan.nextActions"
-  mark_pending "R1: create a default Anthropic/Claude-compatible runtime profile with API key"
+  mark_pending "R1: ${profile_reason_code:-profile-not-ready} · ${profile_reason:-create a default Anthropic/Claude-compatible runtime profile with API key}"
   smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.currentBlockingGate')" "R1" "executionPanel.currentBlockingGate"
   smoke_assert_contains "$(printf '%s' "$execution_panel" | jq -r '.nextCommand')" "smoke-cds-agent-r1-profile-repair.sh" "executionPanel.nextCommand"
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL" ]]; then
@@ -220,6 +246,7 @@ if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   fi
 else
   gate_r1_status="pass"
+  smoke_assert_eq "$(printf '%s' "$r1_gate" | jq -r '.status')" "pass" "commercialReadiness.R1.status"
   smoke_ok "R1 ready: default profile can be used by claude-agent-sdk"
 fi
 
@@ -268,7 +295,7 @@ if [[ "$profile_compatible" == "true" && "$profile_has_key" == "true" ]]; then
   smoke_ok "S1/S2/S3 provider smokes are unblocked"
 else
   gate_provider_status="pending"
-  mark_pending "S1/S2/S3: blocked until R1 profile is compatible and keyed"
+  mark_pending "S1/S2/S3: ${profile_reason_code:-blocked-until-r1} · blocked until R1 profile is compatible and keyed"
 fi
 
 smoke_step "V1 workbench page reachability"
