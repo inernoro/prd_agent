@@ -102,6 +102,8 @@ CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> \
 
 只有显式设置 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` 才会执行 `docker tag` 和 `docker push`。push 后仍需从目标 remote host 验证 `docker pull`。
 
+也可以在 GitHub Actions 手动触发 `CDS Sidecar Image` workflow 发布 GHCR image。该 workflow 只支持 `workflow_dispatch`，不会随普通 push 自动发布；完成后从 workflow summary 复制 `CDS_AGENT_SIDECAR_IMAGE`。
+
 目标 host pull 验证默认也只做 dry-run。只有显式设置 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才会 SSH 到目标 host 执行 `docker pull`，不会创建 CDS host，也不会运行 sidecar：
 
 ```bash

@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:52 Asia/Shanghai：
+截至 2026-05-18 19:54 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -21,6 +21,7 @@
 - 已解决：当前进度面板的 `Exact Next Step` 已改成按 gate 顺序动态输出。
 - 已解决：registry candidate tag 可由 git remote/commit 自动推导；进度面板下一步不再要求手填占位符。
 - 已解决：候选 GHCR tag 已在本地 Docker 中创建；仍未 push。
+- 已解决：GHCR 发布增加手动 GitHub Actions 入口，不再只能由本机 Codex push。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -56,6 +57,7 @@
 | 19:39 | 进度面板虽然显示多个 gate，但 `Exact Next Step` 固定指向 remote-host handoff，容易跳过 registry/pull 门禁 | `scripts/print-cds-agent-current-progress.sh` 改为按 gate 顺序选择下一步：context -> local build -> registry publish -> remote pull -> remote host apply/deploy | terminal output | <1s | 当前下一步明确是提供 registry-qualified `CDS_AGENT_SIDECAR_IMAGE` 并跑 publish dry-run |
 | 19:46 | 下一步命令仍有 `<registry>` 占位符，且首次用 unquoted heredoc 拼动态 Markdown 时触发了 shell command substitution 风险 | `publish-cds-agent-sidecar-image.sh` 从 git remote/commit 推导 candidate tag；progress board 改用 `printf` 生成动态命令，保持只读 | `/tmp/cds-agent-sidecar-image-publish-current.json`、progress board output | <1s | candidate=`ghcr.io/inernoro/prd-agent/claude-sidecar:12a488c3f4fa`；面板生成不执行 publish |
 | 19:52 | GHCR push 需要明确批准，但本地 tag 还可以安全推进 | 执行 `CDS_AGENT_SIDECAR_IMAGE=ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84 CDS_AGENT_SIDECAR_IMAGE_TAG=1 scripts/publish-cds-agent-sidecar-image.sh` | `/tmp/cds-agent-sidecar-image-publish-current.json`、`docker image inspect` | <1s | `tagPassed=true`、`pushAttempted=false`；本地 tag 和 source image 指向同一 image id |
+| 19:54 | 外部 registry push 被安全策略拦截，仍需要一个可审计的发布路径 | 新增 `.github/workflows/cds-sidecar-image.yml`，仅 `workflow_dispatch` 手动发布 GHCR image | workflow file | local edit | GitHub UI 手动触发后输出 `CDS_AGENT_SIDECAR_IMAGE` 和 digest |
 
 ## 本轮暴露的问题
 
@@ -539,6 +541,19 @@
 - `docker image inspect` 显示 `prd-agent/claude-sidecar:latest` 与 `ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84` 指向同一 image id。
 
 优化：registry 阶段现在拆成 local tag 和 external push；外部写入仍保持显式批准。
+
+### 31. 外部 registry 发布需要手动 CI 入口
+
+问题：本机 Codex 直接 push GHCR 属于外部写入/产物外传，需要明确批准；即使批准，也缺少 GitHub 侧可审计的发布入口。
+
+处理：
+
+- 新增 `.github/workflows/cds-sidecar-image.yml`。
+- 只支持 `workflow_dispatch`，普通 push 不会自动发布。
+- 默认 image tag 为当前 commit 短 SHA，也可手动输入 `image_tag`。
+- 输出 `CDS_AGENT_SIDECAR_IMAGE` 和 image digest 到 workflow summary。
+
+优化：sidecar image 发布可以由 GitHub Actions 手动触发并审计；本机仍保留 dry-run/local-tag/push 脚本作为本地验证路径。
 
 ## 最耗时项
 
