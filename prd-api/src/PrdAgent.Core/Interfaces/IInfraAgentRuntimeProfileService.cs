@@ -245,6 +245,44 @@ public static class InfraAgentRuntimeProfileTemplates
             }
         }
     }
+
+    public static void ValidateApiKeyForProfile(string? protocol, string? baseUrl, string? apiKey)
+    {
+        var normalized = apiKey?.Trim();
+        if (!IsOfficialAnthropicEndpoint(protocol, baseUrl))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
+                "Anthropic 官方 endpoint 需要填写 API key。");
+        }
+
+        if (!normalized.StartsWith("sk-ant-", StringComparison.Ordinal))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ApiKeyFormatInvalid,
+                "Anthropic 官方 endpoint 只接受 sk-ant- 开头的 API key；不要填 OpenRouter、OpenAI-compatible 或 MAP/CDS 管理 key。");
+        }
+    }
+
+    private static bool IsOfficialAnthropicEndpoint(string? protocol, string? baseUrl)
+    {
+        if (!string.Equals(protocol?.Trim(), InfraAgentRuntimeProtocols.Anthropic, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(baseUrl?.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return string.Equals(uri.Host, "api.anthropic.com", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public static class InfraAgentRuntimeAdapterCompatibility

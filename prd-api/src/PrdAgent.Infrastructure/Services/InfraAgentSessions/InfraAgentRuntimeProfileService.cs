@@ -83,13 +83,15 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
                 "API key 不能为空");
         }
+        var protocol = NormalizeProtocol(request.Protocol);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, apiKey);
 
         var now = DateTime.UtcNow;
         var item = new InfraAgentRuntimeProfile
         {
             Name = name,
             Runtime = NormalizeRuntime(request.Runtime),
-            Protocol = NormalizeProtocol(request.Protocol),
+            Protocol = protocol,
             BaseUrl = baseUrl,
             Model = model,
             ApiKeyEncrypted = _protector.Protect(apiKey),
@@ -240,10 +242,12 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
                 "更新配置时必须重新输入 API key");
         }
+        var protocol = NormalizeProtocol(request.Protocol);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, apiKey);
 
         item.Name = name;
         item.Runtime = NormalizeRuntime(request.Runtime);
-        item.Protocol = NormalizeProtocol(request.Protocol);
+        item.Protocol = protocol;
         item.BaseUrl = baseUrl;
         item.Model = model;
         item.ApiKeyEncrypted = _protector.Protect(apiKey);
@@ -299,12 +303,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
 
         var now = DateTime.UtcNow;
+        var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
+        var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
+
         var profile = new InfraAgentRuntimeProfile
         {
             Name = $"系统主模型 · {model.Name}",
             Runtime = InfraAgentRuntimes.ClaudeSdk,
-            Protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl),
-            BaseUrl = NormalizeModelBaseUrl(resolved.ApiUrl),
+            Protocol = protocol,
+            BaseUrl = baseUrl,
             Model = model.ModelName.Trim(),
             ApiKeyEncrypted = _protector.Protect(resolved.ApiKey),
             ResourceCpuCores = 2,

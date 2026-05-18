@@ -133,6 +133,35 @@ public class InfraAgentRuntimeProfilesControllerTests
             InfraAgentRuntimeProfileTemplates.ValidateApiKeyForTemplate(template, "sk-ant-test"));
     }
 
+    [Theory]
+    [InlineData("anthropic", "https://api.anthropic.com", "sk-or-v1-test")]
+    [InlineData("anthropic", "https://api.anthropic.com/v1", "sk-proj-test")]
+    [InlineData("anthropic", "https://api.anthropic.com", "inernoro Shenmemima..01")]
+    public void ValidateApiKeyForProfile_ShouldRejectNonAnthropicKeyForOfficialEndpoint(
+        string protocol,
+        string baseUrl,
+        string apiKey)
+    {
+        var ex = Should.Throw<InfraAgentRuntimeProfileException>(() =>
+            InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, apiKey));
+
+        ex.ErrorCode.ShouldBe(InfraAgentRuntimeProfileErrorCodes.ApiKeyFormatInvalid);
+        ex.Message.ShouldContain("sk-ant-");
+    }
+
+    [Theory]
+    [InlineData("anthropic", "https://api.anthropic.com", "sk-ant-test")]
+    [InlineData("anthropic", "https://anthropic-compatible.example/v1", "sk-or-v1-test")]
+    [InlineData("openai-compatible", "https://api.anthropic.com", "sk-or-v1-test")]
+    public void ValidateApiKeyForProfile_ShouldOnlyGuardOfficialAnthropicEndpoint(
+        string protocol,
+        string baseUrl,
+        string apiKey)
+    {
+        Should.NotThrow(() =>
+            InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, apiKey));
+    }
+
     [Fact]
     public async Task CreateFromTemplate_ShouldUseCurrentUserAndTemplateId()
     {

@@ -5,7 +5,8 @@
 #
 # 目标:
 #   1. 验证 runtime-status 暴露的 R1 修复计划与后端 Anthropic 官方模板一致。
-#   2. 未提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时只做 dry-run，确认不会创建缺 key profile。
+#   2. 未提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时只做 dry-run，确认不会创建缺 key
+#      profile，且非 Anthropic 官方 key 形态会被后端拒绝。
 #   3. 提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时，调用后端专用入口，由 MAP 后端
 #      创建非默认候选 profile、调用 test 验证上游可用、成功后提升为默认 Claude
 #      profile，最后验证 runtime-status 的 R1 gate 变为 pass。
@@ -23,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-SMOKE_STEP_TOTAL=7
+SMOKE_STEP_TOTAL=9
 smoke_init "CDS Agent R1 Runtime Profile Repair"
 
 target_template_id="anthropic-official-claude-sonnet-4"
@@ -190,6 +191,48 @@ smoke_assert_eq "$(printf '%s' "$missing_key_resp" | jq -r '.success')" "false" 
 smoke_assert_eq "$(printf '%s' "$missing_key_resp" | jq -r '.error.code // ""')" "api_key_required" "CreateFromTemplateWithoutKey.error.code"
 smoke_ok "missing API key is rejected before profile creation"
 
+smoke_step "非 Anthropic 官方 key 形态必须被后端拒绝"
+invalid_key_tmp=$(mktemp)
+invalid_key_code=$(
+  curl --max-time "$SMOKE_TIMEOUT" \
+    --show-error \
+    --silent \
+    -o "$invalid_key_tmp" \
+    -w '%{http_code}' \
+    -X POST \
+    "${SMOKE_AUTH[@]}" \
+    -d '{"name":"Smoke R1 repair invalid key","apiKey":"sk-or-v1-not-anthropic","isDefault":true}' \
+    "$SMOKE_HOST/api/infra-agent-runtime-profiles/templates/${target_template_id}/default-profile"
+)
+invalid_key_resp=$(cat "$invalid_key_tmp")
+rm -f "$invalid_key_tmp"
+smoke_assert_eq "$invalid_key_code" "400" "CreateFromTemplateInvalidKey.httpStatus"
+smoke_assert_eq "$(printf '%s' "$invalid_key_resp" | jq -r '.success')" "false" "CreateFromTemplateInvalidKey.success"
+smoke_assert_eq "$(printf '%s' "$invalid_key_resp" | jq -r '.error.code // ""')" "api_key_format_invalid" "CreateFromTemplateInvalidKey.error.code"
+smoke_assert_contains "$(printf '%s' "$invalid_key_resp" | jq -r '.error.message // ""')" "sk-ant-" "CreateFromTemplateInvalidKey.error.message"
+smoke_ok "non-Anthropic key shape is rejected before profile creation"
+
+smoke_step "直接创建官方 Anthropic profile 也必须拒绝非官方 key"
+direct_invalid_key_tmp=$(mktemp)
+direct_invalid_key_code=$(
+  curl --max-time "$SMOKE_TIMEOUT" \
+    --show-error \
+    --silent \
+    -o "$direct_invalid_key_tmp" \
+    -w '%{http_code}' \
+    -X POST \
+    "${SMOKE_AUTH[@]}" \
+    -d '{"name":"Smoke direct invalid Anthropic key","runtime":"claude-sdk","protocol":"anthropic","baseUrl":"https://api.anthropic.com","model":"claude-sonnet-4-20250514","apiKey":"sk-or-v1-not-anthropic","isDefault":true}' \
+    "$SMOKE_HOST/api/infra-agent-runtime-profiles"
+)
+direct_invalid_key_resp=$(cat "$direct_invalid_key_tmp")
+rm -f "$direct_invalid_key_tmp"
+smoke_assert_eq "$direct_invalid_key_code" "400" "CreateDirectInvalidAnthropicKey.httpStatus"
+smoke_assert_eq "$(printf '%s' "$direct_invalid_key_resp" | jq -r '.success')" "false" "CreateDirectInvalidAnthropicKey.success"
+smoke_assert_eq "$(printf '%s' "$direct_invalid_key_resp" | jq -r '.error.code // ""')" "api_key_format_invalid" "CreateDirectInvalidAnthropicKey.error.code"
+smoke_assert_contains "$(printf '%s' "$direct_invalid_key_resp" | jq -r '.error.message // ""')" "sk-ant-" "CreateDirectInvalidAnthropicKey.error.message"
+smoke_ok "direct official Anthropic profile creation rejects non-Anthropic key shape"
+
 smoke_step "按需调用后端 R1 test-before-promote 入口"
 if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
   dry_run_evidence=$(jq -n \
@@ -198,6 +241,8 @@ if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
     --argjson repairPlan "$repair_plan" \
     --argjson template "$template" \
     --argjson missingKeyResponse "$missing_key_resp" \
+    --argjson invalidKeyResponse "$invalid_key_resp" \
+    --argjson directInvalidKeyResponse "$direct_invalid_key_resp" \
     '{
       currentR1: $currentR1,
       defaultProfile: $defaultProfile,
@@ -213,6 +258,16 @@ if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
       missingKeyGuard: {
         success: ($missingKeyResponse.success // null),
         errorCode: ($missingKeyResponse.error.code // "")
+      },
+      invalidKeyGuard: {
+        success: ($invalidKeyResponse.success // null),
+        errorCode: ($invalidKeyResponse.error.code // ""),
+        message: ($invalidKeyResponse.error.message // "")
+      },
+      directInvalidKeyGuard: {
+        success: ($directInvalidKeyResponse.success // null),
+        errorCode: ($directInvalidKeyResponse.error.code // ""),
+        message: ($directInvalidKeyResponse.error.message // "")
       },
       providerKeyReceived: false
     }')
