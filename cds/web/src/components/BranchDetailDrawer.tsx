@@ -685,13 +685,17 @@ export function BranchDetailDrawer({
 
   const loadSystemLogs = useCallback(async () => {
     if (!branchId) return;
+    const requestForBranch = branchId;
     setSystemLogsState({ status: 'loading' });
     try {
       const raw = await apiRequest<{ logs?: BranchActivityLog[] }>(
         `/api/branches/${encodeURIComponent(branchId)}/activity-logs?limit=100`,
       );
+      // 切到别的分支后，慢响应不得覆盖新分支的时间线（Codex P1）。
+      if (branchIdRef.current !== requestForBranch) return;
       setSystemLogsState({ status: 'ok', logs: Array.isArray(raw?.logs) ? raw.logs : [] });
     } catch (err) {
+      if (branchIdRef.current !== requestForBranch) return;
       setSystemLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [branchId]);

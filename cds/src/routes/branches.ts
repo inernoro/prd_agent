@@ -4252,6 +4252,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const ok = await containerService.restartServiceInPlace(svc.containerName);
         if (ok) {
           svc.status = 'running';
+          svc.errorMessage = undefined;
         } else {
           svc.status = 'error';
           svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
@@ -4261,6 +4262,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (failed.length === 0) {
         entry.status = 'running';
+        // 全部成功必须清掉历史 errorMessage，否则下游 UI 仍按失败渲染
+        // （Codex P2）。
+        entry.errorMessage = undefined;
         entry.lastStoppedAt = undefined;
         entry.lastStopReason = undefined;
         entry.lastStopSource = undefined;
@@ -4290,6 +4294,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
     } catch (err) {
+      // 兜底：未预期异常时把分支从 restarting/starting 恢复到 error，否则
+      // UI 会卡在永久"重启中"转圈，只能手动重置（Cursor Bugbot）。
+      try {
+        for (const svc of Object.values(entry.services)) {
+          if (svc.status === 'starting') svc.status = 'error';
+        }
+        entry.status = 'error';
+        entry.errorMessage = `重新启动异常：${(err as Error).message}`;
+        stateService.save();
+      } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
       res.status(500).json({ error: (err as Error).message });
     }
   });

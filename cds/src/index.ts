@@ -978,6 +978,11 @@ janitorService.setRemoveFn(async (slug: string) => {
     const now = Date.now();
     const MAX_RETRIES = 3;
     const BASE_BACKOFF_MS = 30_000; // 30s, 60s, 120s
+    // 崩溃留痕按"分支"去重，本 tick 内一个分支只记一次 stopCount /
+    // lastStop* / 活动日志，与其它停止路径（手动 / scheduler / executor /
+    // auto-lifecycle 均为 once-per-branch）保持一致；docker start 重试仍
+    // 按 service 进行（Cursor Bugbot：多服务同时崩溃会重复计数）。
+    const crashRecordedThisTick = new Set<string>();
 
     // App 容器
     const appContainers = await containerService.discoverAppContainers();
@@ -995,7 +1000,9 @@ janitorService.setRemoveFn(async (slug: string) => {
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
         // 容器自行退出（崩溃 / OOM / docker kill）首次被巡检发现：留痕，
         // 否则用户只看到分支变灰、"停止次数 0"、零日志（莫名其妙停止）。
-        if (isNewCrash) {
+        // 同一分支同一 tick 只记一次，避免多服务同崩重复计数 / 覆盖原因。
+        if (isNewCrash && !crashRecordedThisTick.has(branch.id)) {
+          crashRecordedThisTick.add(branch.id);
           const reason = `容器异常退出（docker 显示未运行），auto-restart 介入尝试拉起：${found.containerName}`;
           branch.lastStoppedAt = new Date().toISOString();
           branch.lastStopReason = reason;
