@@ -316,16 +316,16 @@ check_docs_calibration() {
     fi
   done
 
-  require_doc_text "$quickstart" '当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`' \
-    "quickstart states current gate ledger"
+  require_doc_text "$quickstart" '当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
+    "quickstart states current runtime pool blockers"
   require_doc_text "$quickstart" '`claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层' \
     "quickstart separates official SDK from local adapter"
   require_doc_text "$next_testing" '旧 A10 复盘里的 legacy sidecar 证据不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
     "next testing rejects old A10 as SDK completion proof"
   require_doc_text "$migration_plan" '不要再把历史' \
     "migration plan flags historical diagnostics"
-  require_doc_text "$migration_plan" '`OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`' \
-    "migration plan names current R1 blocker"
+  require_doc_text "$migration_plan" '`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
+    "migration plan names current runtime pool blockers"
   require_doc_text "$report" '旧 A10 证明“工作台 MVP 能远程干活”，但不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
     "A10 report separates MVP from current SDK gates"
 
@@ -333,6 +333,8 @@ check_docs_calibration() {
     "next testing old legacy-loop current-state wording"
   forbid_doc_regex "$next_testing" '当前远程 preview 的真实阻塞.*(sidecar pool discovery|discovery 为 0)' \
     "next testing old discovery blocker wording"
+  forbid_doc_regex "$next_testing" 'R0 runtime pool 和 A0 official SDK[[:space:]]+boundary 已有通过证据，剩余 blocker 是 R1' \
+    "next testing stale R0-pass R1-only wording"
   forbid_doc_regex "$migration_plan" '当前 `claude-sdk` runtime 是官方 `anthropic` Python SDK \+ 自研 sidecar loop' \
     "migration plan old current-state wording"
   forbid_doc_regex "$report" '它不是完整官方 Claude Code SDK / Claude Agent SDK 接入' \

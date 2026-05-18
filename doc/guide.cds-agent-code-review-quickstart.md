@@ -1,6 +1,6 @@
 # CDS Agent 代码审查上手指南
 
-> 版本：v1.1 | 日期：2026-05-18 | 状态：面向使用者的 quickstart（R1/S1/S2/S3 仍需真实 provider 证据）
+> 版本：v1.2 | 日期：2026-05-18 | 状态：面向使用者的 quickstart（R0 runtime pool 正在恢复，R1/S1/S2/S3 仍需真实 provider 证据）
 
 ## 目标
 
@@ -49,7 +49,9 @@
 
 如果第 2 步没通过，先不要发审查 prompt；应该先看页面“当前执行结论”的 `currentBlockingGate`、`blockingReason`、`deploymentAdvice` 和 `nextCommand`，再运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
-当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`，`status=blocked_r1`、`commercialComplete=false`。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 现在会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，`compatibilityReason=claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。`，并附带 `compatibilityNextActions`。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
+当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:7`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，目标仍是 `commercialComplete=false`。也就是说，现在第一阻塞不是继续 redeploy preview，也不是先修默认 profile，而是先恢复 R0 runtime pool：清理 `prd-agent` 业务项目里的 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留，登记至少一个 enabled remote host，并让 `shared-sidecar-pool-mp4anabh` 跑出 healthy official SDK instance。证据入口是 `CDS_HOST=https://cds.miduo.org bash scripts/collect-cds-agent-runtime-pool-evidence.sh`，结构性原因见 `doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md`。
+
+R0 恢复后，下一层仍是 R1 provider profile。此前远程默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，并附带 `compatibilityNextActions`。不要把这个 profile 当作“上手就能审查代码”的完成态；R0 恢复后再用页面 R1 修复入口或 `CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板并收集 S1/S2/S3 证据。
 
 页面上如果出现历史会话的 approval、cancel 或 assistant 事件，也不能直接算作 S1/S2/S3 商业证据。前端现在要求 `defaultProfileReady && officialLoopReady` 后，才允许当前页面事件作为 provider gate 证据；R1 未过时，S1/S2/S3 必须保持 WAIT/pending。
 
@@ -74,7 +76,7 @@ R1 的修复路径以 `GET /api/infra-agent-sessions/runtime-status?refreshDisco
 
 `diagnostics.executionPanel` 是当前执行结论的机器事实源：它给出 `status`、`commercialComplete`、`currentBlockingGate`、`blockingReason`、`nextCommand` 和 gate 计数。页面的“当前执行结论”和 readiness smoke 都应优先消费这个字段；如果 `currentBlockingGate=R0`，下一步应先跑 doctor；如果是 `R1`，再跑 R1 dry-run/test-before-promote，避免跳过真实阻塞。页面还会把这个结论折成三格执行判定：`部署判定`、`命令性质`、`Provider 调用`。R1 dry-run 应显示“不需要重新部署 / R1 dry-run / 不会触发真实 provider 调用”；provider one-cycle 才应显示“显式 opt-in 后才调用 provider”。
 
-同一个 execution panel 还会给出 `deploymentAdvice`。它的用途是减少无意义构建/部署：`blocked_r1` 或 `profile-blocked` 不靠 redeploy 解决，应该保存 Anthropic/Claude-compatible profile；S1/S2/S3 pending 不靠 redeploy 解决，应该显式打开 provider smoke；只有代码改动、远程容器网络/鉴权变化、视觉证据或 promotion 需要重新部署。
+同一个 execution panel 还会给出 `deploymentAdvice`。它的用途是减少无意义构建/部署：runtime pool 缺 remote host、shared pool 没 running instance、branch-local sidecar contamination 都不靠普通 preview redeploy 解决；`blocked_r1` 或 `profile-blocked` 不靠 redeploy 解决，应该保存 Anthropic/Claude-compatible profile；S1/S2/S3 pending 不靠 redeploy 解决，应该显式打开 provider smoke；只有代码改动、远程容器网络/鉴权变化、视觉证据或 promotion 需要重新部署。
 
 需要给人类或 CI 留证据时，doctor 可以输出机器可读报告：
 
@@ -101,7 +103,15 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518131650` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 83s，最慢的是 V1 authenticated workbench visual 30s、R0 sidecar alias stability 15s、runtime doctor 10s；V1、R0 alias 和 N6 都会按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。目标审计 `/tmp/cds-agent-goal-audit-4a28fab1-after-cycle.json` 标成 `match`，远程 runtime 已匹配当前 HEAD `4a28fab1`，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。但在当前 runtime pool 恢复阶段，优先跑更窄的只读证据采集：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \
+  bash scripts/collect-cds-agent-runtime-pool-evidence.sh
+```
+
+最新 runtime pool evidence 示例是 `/tmp/cds-agent-runtime-pool-evidence-20260518150655`：总耗时约 13s，清楚显示 7 个 branch-local sidecar 污染、0 个 remote host、shared pool 没有 running instance。这个证据比反复 one-cycle 更适合当前阶段，因为它直接回答“为什么又侵犯 MAP”和“下一步是否需要部署”。
 
 A0/N6 的本地工具链已经做了自检：A0 会自动选择能 import `fastapi`、`pydantic`、`starlette` 的 Python，并在报告中记录 `pythonBin`；N6 会自动选择能看到 .NET 8 runtime 的 dotnet，并在终端打印 `dotnet:`。如果登录 shell 里的 `python3` 或 `dotnet` 指向错误版本，先看脚本打印的实际解释器路径，不要把依赖缺失当成 CDS Agent 功能失败。
 
