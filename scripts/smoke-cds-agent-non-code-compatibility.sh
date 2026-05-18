@@ -24,6 +24,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_PROJECT="$ROOT_DIR/prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj"
 FILTER="FullyQualifiedName~CdsAgentRuntimeCompatibilityTests|FullyQualifiedName~InfraAgentRuntimeProfilesControllerTests"
 DOTNET_BIN="${DOTNET_BIN:-}"
+REPORT="${SMOKE_CDS_AGENT_N6_REPORT:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
 
 dotnet_has_net8_runtime() {
   local candidate="$1"
@@ -63,10 +64,41 @@ printf '冒烟测试: CDS Agent Non-code Compatibility\n'
 printf '项目:     %s\n' "$TEST_PROJECT"
 printf '过滤器:   %s\n' "$FILTER"
 printf 'dotnet:   %s\n' "$DOTNET_BIN"
+printf '报告:     %s\n' "$REPORT"
 printf '==========================================\n\n'
 
+started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+start_seconds="$(date +%s)"
+mkdir -p "$(dirname "$REPORT")"
+
+set +e
 DOTNET_CLI_USE_MSBUILD_SERVER="${DOTNET_CLI_USE_MSBUILD_SERVER:-0}" \
 MSBUILDDISABLENODEREUSE="${MSBUILDDISABLENODEREUSE:-1}" \
   "$DOTNET_BIN" test "$TEST_PROJECT" --filter "$FILTER" -m:1 /nodeReuse:false
+exit_code=$?
+set -e
+
+finished_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+total_seconds="$(( $(date +%s) - start_seconds ))"
+
+jq -n \
+  --arg status "$(if [[ "$exit_code" -eq 0 ]]; then printf pass; else printf failed; fi)" \
+  --arg gate "N6" \
+  --arg startedAt "$started_at" \
+  --arg finishedAt "$finished_at" \
+  --arg testProject "$TEST_PROJECT" \
+  --arg filter "$FILTER" \
+  --arg dotnet "$DOTNET_BIN" \
+  --arg evidence "non-code Toolbox agents independent from CDS sidecar runtime pool; codex/openai-agents-sdk/google-adk remain planned-not-routable until contracts and provider smokes pass" \
+  --argjson exitCode "$exit_code" \
+  --argjson totalSeconds "$total_seconds" \
+  '{gate:$gate,status:$status,exitCode:$exitCode,totalSeconds:$totalSeconds,startedAt:$startedAt,finishedAt:$finishedAt,testProject:$testProject,filter:$filter,dotnet:$dotnet,evidence:$evidence}' \
+  > "$REPORT"
+
+if [[ "$exit_code" -ne 0 ]]; then
+  printf '\n❌ N6 failed: report=%s\n' "$REPORT" >&2
+  exit "$exit_code"
+fi
 
 printf '\n✅ N6 ready: non-code Toolbox agents remain independent from CDS sidecar runtime pool; candidate official SDK adapters remain planned-not-routable until contracts and provider smokes pass\n'
+printf 'N6 report: %s\n' "$REPORT"

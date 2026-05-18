@@ -7,6 +7,7 @@ set -euo pipefail
 GOAL_AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-/tmp/cds-agent-goal-audit-r0-current.json}"
 REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
 HANDOFF_SUMMARY="${CDS_AGENT_REMOTE_HOST_HANDOFF_SUMMARY:-$REMOTE_HOST_SUMMARY}"
+N6_SUMMARY="${CDS_AGENT_N6_SUMMARY:-/tmp/cds-agent-n6-non-code-compatibility-current.json}"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -35,6 +36,12 @@ r0=$(jq_read "$GOAL_AUDIT" "$gate_status_expr gate_status(\"R0\")")
 a0=$(jq_read "$GOAL_AUDIT" "$gate_status_expr gate_status(\"A0\")")
 v1=$(jq_read "$GOAL_AUDIT" "$gate_status_expr gate_status(\"V1\")")
 n6=$(jq_read "$GOAL_AUDIT" "$gate_status_expr gate_status(\"N6\")")
+if [[ -f "$N6_SUMMARY" ]]; then
+  n6_latest=$(jq_read "$N6_SUMMARY" '.status // empty')
+  if [[ "$n6_latest" == "pass" ]]; then
+    n6="pass"
+  fi
+fi
 
 verdict=$(jq_read "$REMOTE_HOST_SUMMARY" '.verdict // .status // "unknown"')
 enabled_hosts=$(jq_read "$REMOTE_HOST_SUMMARY" '(if has("prepare") and .prepare != null then .prepare.enabledHostCount else .beforeEnabledRemoteHostCount end) // "unknown"')
@@ -116,4 +123,5 @@ Then fill only placeholders locally. Do not paste private key contents into chat
 - goal audit: $GOAL_AUDIT
 - remote host summary: $REMOTE_HOST_SUMMARY
 - handoff summary: $HANDOFF_SUMMARY
+- N6 summary: $N6_SUMMARY
 EOF

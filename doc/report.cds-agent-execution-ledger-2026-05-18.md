@@ -272,6 +272,26 @@
 
 优化：用户以后看页面就能看到任务纵览和 ETA，不需要等待我在聊天里解释当前第几步。
 
+### 18. N6 不能被沙箱 socket 权限长期标成 infra_failed
+
+问题：目标审计里的 `N6=infra_failed` 来自沙箱内 dotnet/VSTest socket 权限失败，不代表 PRD/Defect/Literary/Visual 等非代码智能体兼容性失败。进度面板只读旧 goal audit，会继续误导当前状态。
+
+处理：
+
+- 沙箱外重跑 `bash scripts/smoke-cds-agent-non-code-compatibility.sh`。
+- `scripts/smoke-cds-agent-non-code-compatibility.sh` 新增机器可读 summary 输出，默认 `/tmp/cds-agent-n6-non-code-compatibility-current.json`。
+- `scripts/print-cds-agent-current-progress.sh` 优先读取最新 N6 summary；如果 summary 为 `pass`，进度面板显示 `N6=pass`。
+
+证据：
+
+- `/tmp/cds-agent-n6-non-code-compatibility-current.json`：`status=pass`、`exitCode=0`、`totalSeconds=3`。
+- N6 smoke：27/27 pass。
+- `scripts/print-cds-agent-current-progress.sh` 当前显示 `Gate status: A0=pass, R0=pending, V1=pass, N6=pass`。
+
+耗时：普通沙箱失败约 60s；沙箱外真实 N6 3s；进度面板刷新 <1s。
+
+优化：后续 N6 状态用 summary 校准，不再把本地执行环境权限问题当成智能体兼容性问题。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -282,6 +302,7 @@
 | controller tests | 18 tests，<1s 测试执行；构建有 warnings | 可本地化 | 只跑 `InfraAgentSessionsControllerTests` 覆盖 execution panel 内容 |
 | current progress board | <1s | 可本地化 | 固定入口展示任务纵览、当前 gate、blocker、下一步 ETA |
 | runtime-status task board | 后端测试 15s，前端 tsc 20s | 可本地化 | 页面事实源输出 taskBoard/nextStepEta/timeSinkAdvice，减少聊天解释和重复部署 |
+| N6 current smoke | 3s 沙箱外；沙箱内会因 VSTest socket 权限失败 | 可本地化但需要 dotnet/VSTest 权限 | smoke 写 summary 后，进度面板直接读最新 N6 证据 |
 
 ## 当前下一步
 
