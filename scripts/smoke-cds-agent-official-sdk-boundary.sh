@@ -33,6 +33,22 @@ ROUTING_TEST_LOG=""
 failures=()
 SUPPORT_FILES=("$SDK_TOOLING_FILE" "$UPSTREAM_FILE" "$SDK_EVENTS_FILE" "$WORKSPACE_FILE")
 BOUNDARY_FILES=("$OFFICIAL_FILE" "${SUPPORT_FILES[@]}")
+LOOP_REGRESSION_BANNED_PATTERNS=(
+  'from anthropic import'
+  'AsyncAnthropic'
+  'from openai import'
+  'import openai'
+  'AsyncOpenAI'
+  'OpenAI('
+  'client.messages.create'
+  'client.messages.stream'
+  'messages.create'
+  'messages.stream'
+  'chat.completions'
+  'chat/completions'
+  'from .agent_loop import'
+  'run_agent'
+)
 
 if ! [[ "$OFFICIAL_ADAPTER_MAX_LINES" =~ ^[0-9]+$ ]]; then
   printf 'Invalid SMOKE_CDS_AGENT_OFFICIAL_ADAPTER_MAX_LINES: %s\n' "$OFFICIAL_ADAPTER_MAX_LINES" >&2
@@ -81,6 +97,7 @@ support_lines_json=$(
 support_total_lines=$(jq -r '[.[].lines] | add // 0' <<< "$support_lines_json")
 bridge_total_lines=$((official_lines + support_total_lines))
 routing_test_status="pass"
+loop_regression_patterns_json=$(printf '%s\n' "${LOOP_REGRESSION_BANNED_PATTERNS[@]}" | jq -R . | jq -s .)
 
 require_contains "$MAIN_FILE" 'DEFAULT_AGENT_ADAPTER = os.environ.get("SIDECAR_AGENT_ADAPTER", "claude-agent-sdk").strip()' \
   "sidecar default adapter must remain claude-agent-sdk"
@@ -117,16 +134,10 @@ require_contains "$REQ_FILE" 'claude-agent-sdk' \
 
 for file in "${BOUNDARY_FILES[@]}"; do
   rel="${file#$ROOT_DIR/}"
-  require_not_contains "$file" 'from anthropic import' \
-    "$rel must not use raw anthropic client loop"
-  require_not_contains "$file" 'AsyncAnthropic' \
-    "$rel must not use AsyncAnthropic"
-  require_not_contains "$file" 'client.messages.stream' \
-    "$rel must not rebuild Anthropic message streaming"
-  require_not_contains "$file" 'chat/completions' \
-    "$rel must not rebuild OpenAI-compatible chat loop"
-  require_not_contains "$file" 'run_agent' \
-    "$rel must not call the legacy sidecar loop"
+  for pattern in "${LOOP_REGRESSION_BANNED_PATTERNS[@]}"; do
+    require_not_contains "$file" "$pattern" \
+      "$rel must not contain loop-regression pattern: $pattern"
+  done
 done
 
 if (( official_lines > OFFICIAL_ADAPTER_MAX_LINES )); then
@@ -172,6 +183,7 @@ if [[ -n "$REPORT" ]]; then
     --argjson supportLines "$support_lines_json" \
     --argjson supportTotalLines "$support_total_lines" \
     --argjson bridgeTotalLines "$bridge_total_lines" \
+    --argjson loopRegressionBannedPatterns "$loop_regression_patterns_json" \
     --argjson failures "$failures_json" \
     '{
       status: $status,
@@ -192,7 +204,8 @@ if [[ -n "$REPORT" ]]; then
         legacyLoopLines: $legacyLines,
         officialAdapterMaxLines: $officialMaxLines,
         officialAdapterWithinBudget: ($officialLines <= $officialMaxLines),
-        boundaryFilesScannedForLoopRegression: ([$officialFile] + ($supportLines | map(.file)))
+        boundaryFilesScannedForLoopRegression: ([$officialFile] + ($supportLines | map(.file))),
+        loopRegressionBannedPatterns: $loopRegressionBannedPatterns
       },
       executableEvidence: {
         routingTest: $routingTest,
