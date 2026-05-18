@@ -61,6 +61,11 @@ write_r1_report() {
           // { reportError: "invalid evidence json", rawEvidence: $evidenceRaw }
       )
     }' > "$SMOKE_CDS_AGENT_R1_REPORT"
+  smoke_assert_eq "$(jq -r '.nextCommands.dryRun // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.dryRun"
+  smoke_assert_contains "$(jq -r '.nextCommands.repairOnly // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "R1Report.nextCommands.repairOnly"
+  smoke_assert_contains "$(jq -r '.nextCommands.repairOnly // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.repairOnly"
+  smoke_assert_contains "$(jq -r '.nextCommands.repairAndProviderCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "R1Report.nextCommands.repairAndProviderCycle"
+  smoke_assert_contains "$(jq -r '.nextCommands.repairAndProviderCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "smoke-cds-agent-one-cycle.sh" "R1Report.nextCommands.repairAndProviderCycle"
   printf 'R1 report: %s\n' "$SMOKE_CDS_AGENT_R1_REPORT"
 }
 

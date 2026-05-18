@@ -104,6 +104,13 @@ assert_nonempty "$(jq -r '.r1Repair.targetTemplate.id // .r1Repair.repairPlan.ta
 assert_eq "$(jq -r '.r1Repair.missingKeyGuard.errorCode // ""' "$json_index")" "api_key_required" "r1Repair.missingKeyGuard.errorCode"
 assert_eq "$(jq -r '.r1Repair.providerKeyReceived // false' "$json_index")" "false" "r1Repair.providerKeyReceived"
 assert_nonempty "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "r1Repair.suggestedCommand"
+if [[ "$(jq -r '.r1Repair.nextCommands | type' "$json_index")" == "object" ]]; then
+  assert_eq "$(jq -r '.r1Repair.nextCommands.dryRun // ""' "$json_index")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.dryRun"
+  assert_contains "$(jq -r '.r1Repair.nextCommands.repairOnly // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.nextCommands.repairOnly"
+  assert_contains "$(jq -r '.r1Repair.nextCommands.repairOnly // ""' "$json_index")" "smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.repairOnly"
+  assert_contains "$(jq -r '.r1Repair.nextCommands.repairAndProviderCycle // ""' "$json_index")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "r1Repair.nextCommands.repairAndProviderCycle"
+  assert_contains "$(jq -r '.r1Repair.nextCommands.repairAndProviderCycle // ""' "$json_index")" "smoke-cds-agent-one-cycle.sh" "r1Repair.nextCommands.repairAndProviderCycle"
+fi
 if [[ "$status" == "blocked_r1" ]]; then
   assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.suggestedCommand"
 fi
@@ -114,6 +121,9 @@ assert_contains "$md_text" "Provider prerequisites" "evidence-index.md"
 assert_contains "$md_text" "R1 Repair Path" "evidence-index.md"
 assert_contains "$md_text" "Missing-key guard: \`api_key_required\`" "evidence-index.md"
 assert_contains "$md_text" "Test-before-promote" "evidence-index.md"
+if [[ "$(jq -r '.r1Repair.suggestedRepairCommand // ""' "$json_index")" != "" ]]; then
+  assert_contains "$md_text" "Repair-only command" "evidence-index.md"
+fi
 assert_contains "$md_text" "do not self update" "evidence-index.md"
 
 printf 'CDS Agent evidence index smoke: pass\n'
