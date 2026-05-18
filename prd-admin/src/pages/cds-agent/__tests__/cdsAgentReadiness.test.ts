@@ -65,7 +65,7 @@ describe('CDS Agent execution runway', () => {
       commercialComplete: false,
       blockingCode: 'R0',
       deploymentAdvice: '不要靠普通 preview redeploy 解决 R0；先采集 runtime pool evidence。',
-      nextCommand: 'CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh',
+      nextCommand: 'CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh',
     });
 
     expect(state.deployDecision).toBe('skip-deploy');

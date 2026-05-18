@@ -10,6 +10,8 @@
 #   - summary.json / evidence-index.md
 #
 # 不删除、不重启、不部署。远程检查只在 CDS_HOST 存在时执行。
+# 设置 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 时，会用同一份 summary
+# 刷新 doc/status.cds-agent-current-progress.md。
 
 set -uo pipefail
 
@@ -17,6 +19,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR:-/tmp/cds-agent-runtime-pool-evidence-$(date +%Y%m%d%H%M%S)}"
 RUN_GOAL_AUDIT="${CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT:-1}"
 GOAL_AUDIT_TIMEOUT="${CDS_AGENT_RUNTIME_POOL_GOAL_AUDIT_TIMEOUT:-25}"
+UPDATE_STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC:-0}"
+STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_STATUS_DOC:-$ROOT_DIR/doc/status.cds-agent-current-progress.md}"
 
 mkdir -p "$OUT_DIR"
 
@@ -198,6 +202,86 @@ index="$OUT_DIR/evidence-index.md"
     jq -r '.missingOrUnproved[] | "- `" + .requirement + "` · " + .status' "$summary"
   fi
 } > "$index"
+
+if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
+  branch_name="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf 'unknown')"
+  updated_at="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M Asia/Shanghai')"
+  status_line="R0 runtime pool blocked，目标未完成。"
+  if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
+    status_line="R0 runtime pool 暂无阻塞；继续执行 R1/S1/S2/S3 验证。"
+  fi
+  mkdir -p "$(dirname "$STATUS_DOC")"
+  {
+    printf '# CDS Agent 当前进度面板\n\n'
+    printf '> 更新时间：%s\n' "$updated_at"
+    printf '> 分支：`%s`\n' "$branch_name"
+    printf '> 状态：%s\n\n' "$status_line"
+    printf '## 当前结论\n\n'
+    if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
+      printf '当前只读证据没有发现 runtime pool blocker。下一步应重跑 MAP R0/S1/S2/S3/one-cycle，确认 provider 与页面证据。\n\n'
+    else
+      printf '现在不要做普通 preview redeploy。远程 R0 runtime pool 的结构性阻塞仍存在：\n\n'
+      jq -r '.runtimePoolBlockers[] | "- `" + .requirement + " = " + .status + "`"' "$summary"
+      printf '\n'
+    fi
+    printf '最新只读证据目录：\n\n'
+    printf -- '- `%s`\n' "$OUT_DIR"
+    printf -- '- `summary.json`: `%s`\n' "$summary"
+    printf -- '- `evidence-index.md`: `%s`\n\n' "$index"
+    printf '本次证据采集总耗时 `%ss`：\n\n' "$(jq -r '.totalSeconds' "$summary")"
+    printf '| 步骤 | 状态 | 耗时 |\n'
+    printf '| --- | --- | --- |\n'
+    jq -r '.steps[] | "| " + .name + " | " + .status + " | " + (.durationSeconds|tostring) + "s |"' "$summary"
+    printf '\n## 为什么不是部署问题\n\n'
+    printf '当前阻塞不在 `prd-api` 或 `prd-admin` 普通应用代码是否能构建，而在 CDS 远程控制面 state：\n\n'
+    printf -- '- `prd-agent` 业务项目仍有 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留。\n'
+    printf -- '- `shared-sidecar-pool-mp4anabh` 是 `shared-service`，但没有 running service。\n'
+    printf -- '- CDS 系统 remote host 列表为空，没有可承载 official SDK runtime 的主机。\n\n'
+    printf '普通 preview redeploy 不能创建 shared runtime pool，也不能清理历史 branch-local sidecar residual。继续 redeploy 反而可能让用户以为构建能解决 R0。\n\n'
+    printf '## 已完成\n\n'
+    printf -- '- MAP/CDS 控制面与官方 SDK adapter 边界已写入后端兼容矩阵。\n'
+    printf -- '- `claude-agent-sdk` 路径已作为目标 adapter；`legacy-sidecar` 只允许显式 fallback。\n'
+    printf -- '- 其他候选官方 SDK，例如 `codex`、`openai-agents-sdk`、`google-adk`，仍为 `planned-not-routable`，避免误路由。\n'
+    printf -- '- 非代码智能体兼容 smoke 已存在，防止 PRD/Defect/Literary/Visual 等智能体被 CDS sidecar runtime pool 污染。\n'
+    printf -- '- runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。\n'
+    printf -- '- 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。\n\n'
+    printf '## 下一步\n\n'
+    printf '必须按这个顺序处理：\n\n'
+    printf '1. 清理 `prd-agent` 的 branch-local sidecar BuildProfile/service residual。\n'
+    printf '   - dry-run 证据已确认候选 profile：`%s`\n' "$(jq -r '(.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",") // "unknown"' "$summary")"
+    printf '   - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。\n'
+    printf '2. 登记至少一个 enabled CDS remote host。\n'
+    jq -r '(.remoteHostPoolPreparation.missingConfig // [])[]? | "   - 当前缺失：`" + . + "`"' "$summary"
+    printf '3. 部署 shared official SDK runtime sidecar。\n'
+    printf '   - 需要 sidecar image，例如通过 `CDS_AGENT_SIDECAR_IMAGE` 提供。\n'
+    printf '4. 重跑 shared-service pool audit。\n'
+    printf '5. R0 通过后，再进入 R1 Anthropic/Claude-compatible profile 和 S1/S2/S3 provider smokes。\n\n'
+    printf '## 当前有效命令\n\n'
+    printf '只读总证据并刷新本文件：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf 'CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \\\n'
+    printf 'CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 \\\n'
+    printf '  bash scripts/collect-cds-agent-runtime-pool-evidence.sh\n'
+    printf '```\n\n'
+    printf 'branch 清理 dry-run：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf '  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh\n'
+    printf '```\n\n'
+    printf 'remote host 准备 dry-run：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf '  bash scripts/prepare-cds-agent-remote-host-pool.sh\n'
+    printf '```\n\n'
+    printf '目标审计：\n\n'
+    printf '```bash\n'
+    printf 'CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \\\n'
+    printf '  bash scripts/audit-cds-agent-goal.sh\n'
+    printf '```\n'
+  } > "$STATUS_DOC"
+  printf 'Status doc:   %s\n' "$STATUS_DOC"
+fi
 
 printf '\nEvidence dir: %s\n' "$OUT_DIR"
 printf 'Summary:      %s\n' "$summary"

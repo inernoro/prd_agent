@@ -1,8 +1,7 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 15:21 Asia/Shanghai
+> 更新时间：2026-05-18 15:25 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
-> HEAD：`a867b5fa8`
 > 状态：R0 runtime pool blocked，目标未完成。
 
 ## 当前结论
@@ -15,16 +14,16 @@
 
 最新只读证据目录：
 
-- `/tmp/cds-agent-runtime-pool-evidence-20260518152052`
-- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518152052/summary.json`
-- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518152052/evidence-index.md`
+- `/tmp/cds-agent-runtime-pool-evidence-20260518152545`
+- `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/summary.json`
+- `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/evidence-index.md`
 
-本次证据采集总耗时 `14s`：
+本次证据采集总耗时 `13s`：
 
 | 步骤 | 状态 | 耗时 |
 | --- | --- | --- |
 | runtime pool recovery plan | pass | 5s |
-| branch isolation repair dry-run | pass | 3s |
+| branch isolation repair dry-run | pass | 2s |
 | remote host pool preparation | pass | 1s |
 | shared-service pool audit | blocked | 5s |
 
@@ -44,8 +43,7 @@
 - `claude-agent-sdk` 路径已作为目标 adapter；`legacy-sidecar` 只允许显式 fallback。
 - 其他候选官方 SDK，例如 `codex`、`openai-agents-sdk`、`google-adk`，仍为 `planned-not-routable`，避免误路由。
 - 非代码智能体兼容 smoke 已存在，防止 PRD/Defect/Literary/Visual 等智能体被 CDS sidecar runtime pool 污染。
-- runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集：
-  `CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh`
+- runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
 
 ## 下一步
@@ -59,7 +57,7 @@
    - 当前缺失：`CDS_REMOTE_HOST_NAME`
    - 当前缺失：`CDS_REMOTE_HOST_HOST`
    - 当前缺失：`CDS_REMOTE_HOST_SSH_USER`
-   - 当前缺失：`CDS_REMOTE_HOST_SSH_PRIVATE_KEY` 或 `CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`
+   - 当前缺失：`CDS_REMOTE_HOST_SSH_PRIVATE_KEY or CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE`
 3. 部署 shared official SDK runtime sidecar。
    - 需要 sidecar image，例如通过 `CDS_AGENT_SIDECAR_IMAGE` 提供。
 4. 重跑 shared-service pool audit。
@@ -67,11 +65,12 @@
 
 ## 当前有效命令
 
-只读总证据：
+只读总证据并刷新本文件：
 
 ```bash
 CDS_HOST=https://cds.miduo.org \
 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \
+CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 \
   bash scripts/collect-cds-agent-runtime-pool-evidence.sh
 ```
 

@@ -247,7 +247,7 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "runtime-pool-evidence",
                 "R0 runtime pool 证据",
-                remoteSmokePrefix + "CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh",
+                remoteSmokePrefix + "CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh",
                 "只读采集 branch-local sidecar contamination、remote host、shared-service pool running 状态和恢复顺序；当前 R0 阻塞时优先跑它。",
                 r0Status,
                 r0Ready ? null : "R0"),
