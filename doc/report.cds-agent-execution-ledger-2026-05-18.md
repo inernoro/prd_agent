@@ -33,6 +33,7 @@
 - 已校准：`doc/status.cds-agent-current-progress.md` 第一屏现在直接回答预计结束时间、总步骤、当前位置、需要用户协助项和关键文档。
 - 已校准：进度面板 `Exact Next Step` 在缺 remote host 和 image 时不再默认指向 GHCR publish handoff，而是先要求补齐 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数。
 - 已校准：R0 status refresh 的 `Next Command` 与进度面板同口径，不再把 GHCR publish 伪装成唯一下一步。
+- 已补齐：新增本地 progress consistency check，防止 refresh、progress board、主文档再次出现不同步的下一步。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -80,6 +81,7 @@
 | 20:32 | 用户指出 GHCR 意义不清且项目级进度不清楚 | GHCR 从主路径降级为候选；进度文档第一屏增加 8 步、ETA、当前位置、需要用户协助项 | `doc/status.cds-agent-current-progress.md`、publish handoff | 本地编辑 | R0 主输入回到 `CDS_AGENT_SIDECAR_IMAGE=<任意可 pull image>` |
 | 20:38 | 进度面板虽然文案承认 GHCR 只是候选，但 `Exact Next Step` 仍把 publish handoff 放在缺 remote host/image 之前 | 调整 `scripts/print-cds-agent-current-progress.sh` 的下一步选择顺序：缺 R0 外部输入时先要求补 `CDS_AGENT_SIDECAR_IMAGE` 和 remote host 参数 | `/tmp/cds-agent-current-progress-current.md` | <1s | 面板下一步不再误导到 GHCR |
 | 20:39 | R0 status refresh 底部 `Next Command` 仍固定指向 publish handoff，和进度面板冲突 | 调整 `scripts/refresh-cds-agent-r0-status.sh`：`userActionRequired=true` 时直接输出缺失输入刷新命令 | `/tmp/cds-agent-r0-status-refresh-current.md` | <1s | refresh 报告与 progress board 同口径 |
+| 20:48 | 多个进度面之间靠人工目测保持一致，容易再次漂移 | 新增 `scripts/check-cds-agent-progress-consistency.sh`，自动刷新并断言 refresh、progress board、主文档同口径 | terminal output | <3s | `CDS Agent progress consistency: pass` |
 
 ## 本轮暴露的问题
 

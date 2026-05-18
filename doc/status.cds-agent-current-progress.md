@@ -103,9 +103,11 @@ CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file>
 scripts/refresh-cds-agent-r0-status.sh
 scripts/print-cds-agent-current-progress.sh
 scripts/print-cds-agent-lifecycle-overview.sh
+scripts/check-cds-agent-progress-consistency.sh
 ```
 
 这些命令只读，不部署、不写远程、不输出 secret。`refresh-cds-agent-r0-status.sh` 默认只做本地刷新；只有显式设置 `CDS_AGENT_WORKFLOW_CHECK=1` 才查询 GitHub Actions 状态。它会统一刷新 publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle 和 progress board，避免多个 `/tmp` 证据文件停留在不同 commit。
+`check-cds-agent-progress-consistency.sh` 会重新运行 refresh，并断言 refresh 报告、progress board 和本主文档都指向同一个 R0 blocker 与下一步。
 
 ## 3. 阶段总览
 
@@ -233,6 +235,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | sidecar publish handoff | `/tmp/cds-agent-sidecar-publish-handoff-current.md` | 输出 GitHub Actions 手动发布 URL、image tag、CLI 等价命令和本机 push 替代路径 | <1s |
 | sidecar registry manifest verify | `/tmp/cds-agent-sidecar-registry-image-current.json` | 默认 dry-run；显式 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 后只读查询 GHCR manifest | <1s dry-run |
 | R0 status refresh bundle | `/tmp/cds-agent-r0-status-refresh-current.md` | 一键刷新当前 HEAD image、publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle、progress board | <3s |
+| progress consistency check | `scripts/check-cds-agent-progress-consistency.sh` | 断言 refresh、progress board、主进度文档对 R0 blocker、GHCR scope、Exact Next Step 的口径一致 | <3s |
 
 ## 8. 时间和问题账本
 
