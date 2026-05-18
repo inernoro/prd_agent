@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> 更新时间：2026-05-18 16:27 Asia/Shanghai
+> 更新时间：2026-05-18 16:41 Asia/Shanghai
 > 分支：`codex/cds-agent-workbench-ui`
 > 状态：R0 runtime pool blocked，目标未完成。
 
@@ -46,6 +46,21 @@
 - runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。
 - 总证据 summary 已聚合 branch isolation 与 remote host/shared runtime verdict，避免跨多个 `/tmp` 目录人工判断。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
+- runtime-status 已下发机器可读 `runbook[]`、`nextCommandCode`、`nextCommandSafety`，页面已渲染执行 runbook，标明只读、远程删除、remote host apply/deploy 和 provider opt-in 边界。
+
+## 最新远程页面验证
+
+2026-05-18 16:40 Asia/Shanghai 只读验证：
+
+- CDS 分支：`prd-agent-codex-cds-agent-workbench-ui`
+- 远程 commit：`d80e65d0` / `feat: render cds agent execution runbook`
+- 分支状态：`running`
+- `/cds-agent` HTTP：`200`
+- 远程入口资源：`/assets/index-DAolpcjY-local.js`
+- 命中 runbook 页面 chunk：`assets/index-vu_T_VIY-local.js`
+- chunk 中已包含执行 runbook 渲染、`branch-isolation-apply-confirmed`、`requires approval`、`provider opt-in` 等发布后代码。
+
+限制：本地 headless 截图被登录页拦截，只能证明远程构建资源已发布，不能替代登录后的像素级视觉截图。
 
 ## 下一步
 
