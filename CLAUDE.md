@@ -357,6 +357,7 @@ echo "https://${SLUG}.miduo.org/"
 | `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 | `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
+| `blocked-state-circuit-breaker.md` | 长任务 / 多轮自动执行 Agent | 撞上自己无法提供的外部输入时必须熔断：≥8 提交或≥2h 无功能净进展即停止进度剧场、发一条合并升级、切纯代码或挂起；禁止 plan thrashing 和不眠 grinding |
 
 ---
 
