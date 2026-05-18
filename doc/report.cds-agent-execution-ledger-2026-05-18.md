@@ -234,6 +234,24 @@
 
 优化：真实写远程前先生成 handoff，再由人类填入私钥文件路径和 sidecar image。
 
+### 16. 进度入口不能只靠长文档
+
+问题：`doc/status.cds-agent-current-progress.md` 信息完整但太长；用户长时间看不到一个稳定的任务总览、当前 gate、下一步和耗时预估，导致无法判断任务是在开发还是兜圈。
+
+处理：新增 `scripts/print-cds-agent-current-progress.sh`，直接读取当前 goal audit 和 remote host summary，输出：
+
+- 当前总状态、blocking gate、A0/R0/V1/N6 gate 状态。
+- R0 remote host verdict、enabled host 数、shared runtime running 数。
+- 分阶段任务看板和每步 ETA。
+- 当前缺失配置、下一条 handoff 命令。
+- 现在不该做的事，避免重复 preview redeploy 和过早 provider one-cycle。
+
+证据：`scripts/print-cds-agent-current-progress.sh` 运行通过，当前输出 `blocked_r0`、`R0=pending`、`enabledHostCount=0`、`sharedRunning=0`。
+
+耗时：脚本输出 <1s；语法检查 <1s。
+
+优化：后续每轮先更新 evidence，再用该命令给用户汇报，不再让用户从长文档和 `/tmp` JSON 里拼进度。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -242,10 +260,17 @@
 | runbook publish verification | 约 35s/次 | 部分可本地化 | 本地 `tsc`/controller tests 先跑；远程 bundle 验证只在 UI 发布后跑 |
 | runtime pool evidence | 11-14s | 不可完全本地化 | 它查远程 CDS state，保留为 R0 权威证据，不用 one-cycle 替代 |
 | controller tests | 18 tests，<1s 测试执行；构建有 warnings | 可本地化 | 只跑 `InfraAgentSessionsControllerTests` 覆盖 execution panel 内容 |
+| current progress board | <1s | 可本地化 | 固定入口展示任务纵览、当前 gate、blocker、下一步 ETA |
 
 ## 当前下一步
 
 现在不应该继续普通 preview redeploy。下一步要么提供 remote host 参数，要么继续完善恢复前置检查。
+
+查看当前任务纵览：
+
+```bash
+scripts/print-cds-agent-current-progress.sh
+```
 
 真正恢复 R0 需要：
 
