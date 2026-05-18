@@ -2,7 +2,7 @@
 
 > 日期：2026-05-18  
 > 结论级别：结构性问题，不是单次部署失误  
-> 当前状态：仓库侧已移除 branch-local sidecar 并加防复发 guard；2026-05-18 最新只读复核确认远程 CDS state 仍有 6 个 `prd-agent` branch 保留 `claude-agent-sdk-runtime-v2-prd-agent`，需要单独清理旧 BuildProfile/branch services
+> 当前状态：仓库侧已移除 branch-local sidecar 并加防复发 guard；2026-05-18 最新只读复核确认远程 CDS state 仍有 7 个 `prd-agent` branch 保留 `claude-agent-sdk-runtime-v2-prd-agent`，需要单独清理旧 BuildProfile/branch services
 
 ## 一句话结论
 
@@ -48,7 +48,7 @@ SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 \
 
 - 本地 `cds-compose.yml` 已通过：未声明 branch-local sidecar service。
 - 本地 `api.environment` 已通过：未配置 `CLAUDE_SIDECAR_BASE_URL=http://claude-agent-sdk-runtime...` 或 `CLAUDE_SIDECAR_TOKEN=dev-skip`。
-- 远程 CDS state 未通过：`prd-agent-main`、`prd-agent-codex-cds-agent-workbench-ui`、`prd-agent-claude-redesign-ui-layout-awndl`、`prd-agent-claude-fix-gallery-stats-csu9h`、`prd-agent-claude-great-keller-htqwh`、`prd-agent-cursor-marking-line-agent-e307` 仍包含 `claude-agent-sdk-runtime-v2-prd-agent`。
+- 远程 CDS state 未通过：`prd-agent-main`、`prd-agent-codex-cds-agent-workbench-ui`、`prd-agent-claude-redesign-ui-layout-awndl`、`prd-agent-claude-fix-gallery-stats-csu9h`、`prd-agent-claude-great-keller-htqwh`、`prd-agent-cursor-marking-line-agent-e307`、`prd-agent-claude-sync-sidebar-user-names-fslel` 仍包含 `claude-agent-sdk-runtime-v2-prd-agent`。
 
 因此截图中的红框不是本地 compose 再次回退，而是远程 CDS state 中的历史 BuildProfile/branch service 残留仍在被页面展示和部署流程消费。
 
@@ -265,7 +265,17 @@ admin-prd-agent
 3. 再做 P1：恢复并验证 `shared-sidecar-pool-*` 真实部署。
 4. 最后重跑 one-cycle。若 R0 因共享 pool 未部署而 pending，这是正确失败；不要再把 sidecar 放回应用项目。
 
-当前远程只读审计结果仍有 6 个分支受影响，候选删除 BuildProfile 为：
+清理/恢复前后的只读控制面验收：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
+  bash scripts/smoke-cds-agent-shared-service-pool.sh
+```
+
+该脚本会同时验证 `prd-agent` 不再携带 branch-local sidecar、`shared-sidecar-pool-*` 仍是 `shared-service`，以及共享 runtime pool 是否有 running 实例。它不执行删除、重启或部署。
+
+当前远程只读审计结果仍有 7 个分支受影响，候选删除 BuildProfile 为：
 
 ```text
 claude-agent-sdk-runtime-v2-prd-agent

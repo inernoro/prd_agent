@@ -25,6 +25,23 @@
 
 详细 blocker 指向有效 CDS connection 的 `/api/projects/shared-sidecar-pool-mp4anabh/instances` 返回空实例。MAP 侧已能把 `invalid_long_token` 历史连接收敛为 revoked，当前剩余问题不是重新授权，而是共享 CDS 控制面的实例发现还没有暴露 running branch service。
 
+2026-05-18 追加结构性污染复核：`prd-agent` 远程 state 中仍有 branch-local `claude-agent-sdk-runtime-v2-prd-agent` service 残留；同时 `shared-sidecar-pool-mp4anabh` 是 `kind=shared-service`，但当前 `branchCount=0`、`runningBranchCount=0`、`runningServiceCount=0`。这表示恢复顺序必须先清理业务项目 sidecar profile，再恢复 shared-service runtime pool，最后才跑 MAP R0/S1/S2/S3。
+
+只读复核命令：
+
+```bash
+CDS_HOST=https://cds.miduo.org \
+SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
+  bash scripts/smoke-cds-agent-shared-service-pool.sh
+```
+
+这个脚本不删除、不重启、不部署。它从 CDS 控制面视角同时检查：
+
+- `prd-agent` 是否还被 branch-local agent runtime sidecar 污染。
+- `shared-sidecar-pool-*` 是否仍是 `shared-service` 项目。
+- shared-service pool 是否有 running runtime 实例。
+- 可选提供 `CDS_SHARED_POOL_LONG_TOKEN` 后，是否能直接访问 `/api/projects/:id/instances`。
+
 ## 发布前检查
 
 在考虑更新共享 CDS 控制面前，先在当前分支确认这些本地检查已经通过：
