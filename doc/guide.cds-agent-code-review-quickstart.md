@@ -93,7 +93,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
   bash scripts/audit-cds-agent-goal.sh
 ```
 
-它会本地验证 A0 official SDK adapter 边界和 N6 非代码/候选 SDK 兼容性，并读取最新 one-cycle `cycle-summary.json`。输出里的 `goalStatus=not_complete` 是正常的保护状态：只要 R1/S1/S2/S3/V1 仍缺少当前证据，就不能把系统宣称为商业级完成；`executionPanel.nextCommand` 和 `deploymentAdvice` 才是下一步动作来源。长步骤会输出 heartbeat，并受 `CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS` 约束，默认 90s，避免目标审计卡死。one-cycle 证据默认 24h 内有效；超过 `CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS` 会标成 `cycleFreshness=stale`，不能用于证明目标完成，需要重跑 `scripts/smoke-cds-agent-one-cycle.sh`。如果普通 sandbox 内的 N6 报 `MSB1025`、`NamedPipeServerStream`、`System.Net.Sockets.SocketException`、`Permission denied` 或命中审计超时，按 `infra_failed` 处理，使用有 dotnet 权限的本地环境重跑，不要把它解读成非代码 Agent 兼容性失败。
+它会本地验证 A0 official SDK adapter 边界和 N6 非代码/候选 SDK 兼容性，并读取最新 one-cycle `cycle-summary.json`。输出里的 `goalStatus=not_complete` 是正常的保护状态：只要 R1/S1/S2/S3/V1 仍缺少当前证据，就不能把系统宣称为商业级完成；`executionPanel.nextCommand` 和 `deploymentAdvice` 才是下一步动作来源。长步骤会输出 heartbeat，并受 `CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS` 约束，默认 90s，避免目标审计卡死。one-cycle 证据默认 24h 内有效；超过 `CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS` 会标成 `cycleFreshness=stale`，不能用于证明目标完成。即使证据新鲜，`cycle-summary.json` 里的 git commit 也必须等于当前 HEAD；不匹配时会出现 `CYCLE_GIT_MATCH=mismatch`，需要为当前 commit 重跑 `scripts/smoke-cds-agent-one-cycle.sh`。如果普通 sandbox 内的 N6 报 `MSB1025`、`NamedPipeServerStream`、`System.Net.Sockets.SocketException`、`Permission denied` 或命中审计超时，按 `infra_failed` 处理，使用有 dotnet 权限的本地环境重跑，不要把它解读成非代码 Agent 兼容性失败。
 
 完整一周期检查优先用：
 

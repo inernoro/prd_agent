@@ -31,6 +31,9 @@ AUDIT_DIR="${CDS_AGENT_GOAL_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/cds-agent-go
 BOUNDARY_REPORT="$AUDIT_DIR/a0-boundary.json"
 N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
 cycle_summary="${CDS_AGENT_GOAL_CYCLE_SUMMARY:-}"
+current_git_branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf '')"
+current_git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf '')"
+current_git_commit_short="$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || printf '')"
 
 failures=()
 timing_names=()
@@ -216,6 +219,7 @@ cycle_freshness_status="missing"
 cycle_git_branch=""
 cycle_git_commit=""
 cycle_git_commit_short=""
+cycle_git_status="missing"
 r1_report=""
 r1_status="missing"
 r1_details_json='null'
@@ -252,6 +256,13 @@ if [[ -f "$cycle_summary" ]]; then
   cycle_git_branch=$(jq -r '.git.branch // ""' "$cycle_summary")
   cycle_git_commit=$(jq -r '.git.commit // ""' "$cycle_summary")
   cycle_git_commit_short=$(jq -r '.git.commitShort // ""' "$cycle_summary")
+  if [[ -z "$cycle_git_commit" ]]; then
+    cycle_git_status="unknown"
+  elif [[ -n "$current_git_commit" && "$cycle_git_commit" == "$current_git_commit" ]]; then
+    cycle_git_status="match"
+  else
+    cycle_git_status="mismatch"
+  fi
   r1_report=$(jq -r '.r1.report // ""' "$cycle_summary")
   s1_report=$(jq -r '.s1.report // ""' "$cycle_summary")
   controls_report=$(jq -r '.controls.report // ""' "$cycle_summary")
@@ -312,10 +323,14 @@ fi
 if [[ "$cycle_freshness_status" == "stale" ]]; then
   failures+=("one-cycle summary is stale; rerun scripts/smoke-cds-agent-one-cycle.sh for current remote/provider evidence")
 fi
+if [[ "$cycle_git_status" == "mismatch" ]]; then
+  failures+=("one-cycle summary git commit does not match current HEAD; rerun scripts/smoke-cds-agent-one-cycle.sh for this commit")
+fi
 
 goal_status="not_complete"
 if [[ "$(json_bool "$commercial_complete")" == "true" \
   && "$cycle_freshness_status" == "fresh" \
+  && "$cycle_git_status" == "match" \
   && "$boundary_status" == "pass" \
   && "$n6_status" == "pass" \
   && "$gate_r0" == "pass" \
@@ -336,6 +351,7 @@ missing_json=$(
     --arg gateV1 "$gate_v1" \
     --arg gateN6 "$gate_n6" \
     --arg cycleFreshness "$cycle_freshness_status" \
+    --arg cycleGitStatus "$cycle_git_status" \
     '{
       gates: {
         R0: $gateR0,
@@ -346,13 +362,15 @@ missing_json=$(
         V1: $gateV1,
         N6: $gateN6
       },
-      cycleFreshness: $cycleFreshness
+      cycleFreshness: $cycleFreshness,
+      cycleGitStatus: $cycleGitStatus
     } as $root
     | ($root.gates | to_entries | map(select(.value != "pass") | {
       requirement: .key,
       status: .value
     }))
-    + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)'
+    + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
+    + (if $root.cycleGitStatus == "mismatch" then [{requirement:"CYCLE_GIT_MATCH", status:"mismatch"}] else [] end)'
 )
 failures_json='[]'
 if (( ${#failures[@]} > 0 )); then
@@ -392,6 +410,10 @@ audit_json=$(
     --arg cycleGitBranch "$cycle_git_branch" \
     --arg cycleGitCommit "$cycle_git_commit" \
     --arg cycleGitCommitShort "$cycle_git_commit_short" \
+    --arg cycleGitStatus "$cycle_git_status" \
+    --arg currentGitBranch "$current_git_branch" \
+    --arg currentGitCommit "$current_git_commit" \
+    --arg currentGitCommitShort "$current_git_commit_short" \
     --arg currentBlockingGate "$current_blocking_gate" \
     --arg blockingReason "$blocking_reason" \
     --arg deploymentAdvice "$deployment_advice" \
@@ -495,7 +517,11 @@ audit_json=$(
           git: {
             branch: $cycleGitBranch,
             commit: $cycleGitCommit,
-            commitShort: $cycleGitCommitShort
+            commitShort: $cycleGitCommitShort,
+            currentBranch: $currentGitBranch,
+            currentCommit: $currentGitCommit,
+            currentCommitShort: $currentGitCommitShort,
+            status: $cycleGitStatus
           },
           totalSeconds: $cycleTotalSeconds,
           slowest: $cycleSlowest
@@ -524,7 +550,10 @@ audit_json=$(
         ageSeconds: $cycleAgeSeconds,
         maxAgeSeconds: $cycleMaxAgeSeconds,
         gitBranch: $cycleGitBranch,
-        gitCommitShort: $cycleGitCommitShort
+        gitCommitShort: $cycleGitCommitShort,
+        currentGitBranch: $currentGitBranch,
+        currentGitCommitShort: $currentGitCommitShort,
+        gitStatus: $cycleGitStatus
       },
       failures: $failures
     }'
@@ -544,8 +573,10 @@ printf 'A0 boundary: %s adapter=%s/%s support=%s/%s total=%s/%s legacy=%s\n' \
   "$boundary_status" "$adapter_lines" "$adapter_max" "$support_lines" "$support_max" "$bridge_total_lines" "$bridge_total_max" "$legacy_lines"
 printf 'N6 compatibility: %s\n' "$n6_status"
 printf 'Cycle status: %s\n' "$cycle_status"
-printf 'Cycle freshness: %s age=%ss max=%ss git=%s@%s\n' \
-  "$cycle_freshness_status" "$cycle_age_seconds" "$CYCLE_MAX_AGE_SECONDS" "${cycle_git_branch:-unknown}" "${cycle_git_commit_short:-unknown}"
+printf 'Cycle freshness: %s age=%ss max=%ss git=%s@%s current=%s@%s match=%s\n' \
+  "$cycle_freshness_status" "$cycle_age_seconds" "$CYCLE_MAX_AGE_SECONDS" \
+  "${cycle_git_branch:-unknown}" "${cycle_git_commit_short:-unknown}" \
+  "${current_git_branch:-unknown}" "${current_git_commit_short:-unknown}" "$cycle_git_status"
 printf 'Current blocking gate: %s\n' "${current_blocking_gate:-unknown}"
 printf 'Blocking reason: %s\n' "$blocking_reason"
 if [[ "$r1_details_json" != "null" ]]; then
