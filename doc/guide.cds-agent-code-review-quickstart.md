@@ -101,7 +101,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518123129` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 79s，最慢的是 V1 authenticated workbench visual 30s、R0 sidecar alias stability 12s、Runtime doctor 10s；V1 会按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。目标审计 `/tmp/cds-agent-goal-audit-next-command-host-remote-drift.json` 标成 `match`，远程 runtime 是 compatible non-runtime drift，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518124425` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 90s，最慢的是 V1 authenticated workbench visual 29s、N6 non-code compatibility 18s、R0 sidecar alias stability 13s；V1 和 N6 都会按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。目标审计 `/tmp/cds-agent-goal-audit-backend-next-command-cec55199.json` 标成 `match`，远程 runtime 已匹配当前 HEAD，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
 
 A0/N6 的本地工具链已经做了自检：A0 会自动选择能 import `fastapi`、`pydantic`、`starlette` 的 Python，并在报告中记录 `pythonBin`；N6 会自动选择能看到 .NET 8 runtime 的 dotnet，并在终端打印 `dotnet:`。如果登录 shell 里的 `python3` 或 `dotnet` 指向错误版本，先看脚本打印的实际解释器路径，不要把依赖缺失当成 CDS Agent 功能失败。
 
