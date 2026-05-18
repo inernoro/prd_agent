@@ -35,13 +35,17 @@ write_r1_report() {
   [[ -z "$SMOKE_CDS_AGENT_R1_REPORT" ]] && return
   local status="$1"
   local evidence_json="${2:-{}}"
+  local remote_prefix=""
+  if [[ -n "${CDS_HOST:-}" ]]; then
+    remote_prefix="CDS_HOST=${CDS_HOST} "
+  fi
   jq -n \
     --arg status "$status" \
     --arg host "$SMOKE_HOST" \
     --arg targetTemplateId "$target_template_id" \
-    --arg dryRunCommand "bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
-    --arg repairOnlyCommand "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
-    --arg repairAndProviderCycleCommand "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh" \
+    --arg dryRunCommand "${remote_prefix}bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
+    --arg repairOnlyCommand "${remote_prefix}SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
+    --arg repairAndProviderCycleCommand "${remote_prefix}SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh" \
     --arg evidenceRaw "$evidence_json" \
     '{
       status: $status,
@@ -61,7 +65,7 @@ write_r1_report() {
           // { reportError: "invalid evidence json", rawEvidence: $evidenceRaw }
       )
     }' > "$SMOKE_CDS_AGENT_R1_REPORT"
-  smoke_assert_eq "$(jq -r '.nextCommands.dryRun // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.dryRun"
+  smoke_assert_contains "$(jq -r '.nextCommands.dryRun // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.dryRun"
   smoke_assert_contains "$(jq -r '.nextCommands.repairOnly // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "R1Report.nextCommands.repairOnly"
   smoke_assert_contains "$(jq -r '.nextCommands.repairOnly // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.repairOnly"
   smoke_assert_contains "$(jq -r '.nextCommands.repairAndProviderCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "R1Report.nextCommands.repairAndProviderCycle"

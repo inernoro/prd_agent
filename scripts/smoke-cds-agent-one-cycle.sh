@@ -471,10 +471,10 @@ finish_cycle() {
         next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
       blocked_r1)
-        next_command="SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+        next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
       ready_for_provider_smokes|blocked_provider_smokes|provider_smokes_incomplete)
-        next_command="SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+        next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
       *)
         next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and pending gates"

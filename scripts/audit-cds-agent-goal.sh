@@ -239,6 +239,33 @@ classify_cycle_git_drift() {
   return 3
 }
 
+classify_git_drift_quiet() {
+  local base_commit="$1"
+  local head_commit="$2"
+  local diff_output path has_paths=false has_runtime=false
+  if [[ -z "$base_commit" || -z "$head_commit" ]]; then
+    return 1
+  fi
+  if ! diff_output=$(git -C "$ROOT_DIR" diff --name-only "${base_commit}..${head_commit}" 2>/dev/null); then
+    return 1
+  fi
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    has_paths=true
+    if ! is_non_runtime_cycle_drift_file_diff "$base_commit" "$head_commit" "$path"; then
+      has_runtime=true
+      break
+    fi
+  done <<< "$diff_output"
+  if [[ "$has_runtime" == "true" ]]; then
+    return 2
+  fi
+  if [[ "$has_paths" == "true" ]]; then
+    return 0
+  fi
+  return 3
+}
+
 json_bool() {
   if [[ "$1" == "true" ]]; then
     printf 'true'
@@ -522,9 +549,22 @@ if remote_status_raw=$(read_remote_branch_status); then
     if [[ -n "$remote_runtime_commit" && -n "$current_git_commit_short" && "$current_git_commit_short" == "$remote_runtime_commit"* ]]; then
       remote_runtime_relation="runtime_matches_head"
       remote_deploy_advice="Remote runtime commit matches current HEAD; do not redeploy unless provider/profile or visual evidence requires it."
+    elif [[ -n "$remote_runtime_commit" ]] && classify_git_drift_quiet "$remote_runtime_commit" "$current_git_commit"; then
+      remote_runtime_relation="runtime_behind_non_runtime_drift"
+      remote_deploy_advice="Remote runtime is behind current HEAD only by compatible non-runtime drift; do not self update for this state."
     elif [[ "$cycle_git_status" == "compatible_non_runtime_drift" ]]; then
       remote_runtime_relation="runtime_behind_non_runtime_drift"
       remote_deploy_advice="Remote runtime is behind current HEAD only by compatible non-runtime drift; do not self update for this state."
+    elif [[ -n "$remote_runtime_commit" ]]; then
+      remote_drift_rc=0
+      classify_git_drift_quiet "$remote_runtime_commit" "$current_git_commit" || remote_drift_rc=$?
+      if [[ "${remote_drift_rc:-0}" == "2" ]]; then
+        remote_runtime_relation="runtime_mismatch"
+        remote_deploy_advice="Remote runtime evidence does not cover current runtime-affecting changes; rerun one-cycle after the required remote update."
+      else
+        remote_runtime_relation="runtime_not_matched"
+        remote_deploy_advice="Remote runtime commit differs from current HEAD; inspect git drift before deciding whether to deploy."
+      fi
     elif [[ "$cycle_git_status" == "runtime_mismatch" || "$cycle_git_status" == "mismatch" ]]; then
       remote_runtime_relation="runtime_mismatch"
       remote_deploy_advice="Remote runtime evidence does not cover current runtime-affecting changes; rerun one-cycle after the required remote update."

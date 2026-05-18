@@ -118,7 +118,7 @@ assert_eq "$(jq -r '.r1Repair.missingKeyGuard.errorCode // ""' "$json_index")" "
 assert_eq "$(jq -r '.r1Repair.providerKeyReceived // false' "$json_index")" "false" "r1Repair.providerKeyReceived"
 assert_nonempty "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "r1Repair.suggestedCommand"
 if [[ "$(jq -r '.r1Repair.nextCommands | type' "$json_index")" == "object" ]]; then
-  assert_eq "$(jq -r '.r1Repair.nextCommands.dryRun // ""' "$json_index")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.dryRun"
+  assert_contains "$(jq -r '.r1Repair.nextCommands.dryRun // ""' "$json_index")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.dryRun"
   assert_contains "$(jq -r '.r1Repair.nextCommands.repairOnly // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.nextCommands.repairOnly"
   assert_contains "$(jq -r '.r1Repair.nextCommands.repairOnly // ""' "$json_index")" "smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.repairOnly"
   assert_contains "$(jq -r '.r1Repair.nextCommands.repairAndProviderCycle // ""' "$json_index")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "r1Repair.nextCommands.repairAndProviderCycle"
@@ -126,6 +126,11 @@ if [[ "$(jq -r '.r1Repair.nextCommands | type' "$json_index")" == "object" ]]; t
 fi
 if [[ "$status" == "blocked_r1" ]]; then
   assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.suggestedCommand"
+  if [[ "$(jq -r '.host // ""' "$json_index")" == https://* ]]; then
+    assert_contains "$(jq -r '.nextCommand // ""' "$json_index")" "CDS_HOST=" "nextCommand"
+    assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "CDS_HOST=" "r1Repair.suggestedCommand"
+    assert_contains "$(jq -r '.r1Repair.nextCommands.dryRun // ""' "$json_index")" "CDS_HOST=" "r1Repair.nextCommands.dryRun"
+  fi
 fi
 if [[ "$(jq -r '.nextCyclePlan | type' "$json_index")" == "object" ]]; then
   assert_eq "$(jq -r '.nextCyclePlan.cycle // ""' "$json_index")" "official-sdk-provider-closure" "nextCyclePlan.cycle"

@@ -49,7 +49,7 @@
 
 如果第 2 步没通过，先不要发审查 prompt；应该先看页面“当前执行结论”的 `currentBlockingGate`、`blockingReason`、`deploymentAdvice` 和 `nextCommand`，再运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
-当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`，`status=blocked_r1`、`commercialComplete=false`。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 现在会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，`compatibilityReason=claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。`，并附带 `compatibilityNextActions`。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
+当前远程 preview 的最新 one-cycle 状态是：`R0/A0/V1/N6=pass`，`R1/S1/S2/S3=pending`，`status=blocked_r1`、`commercialComplete=false`。默认 profile 还是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 现在会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，`compatibilityReason=claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。`，并附带 `compatibilityNextActions`。用户现在不应该直接把它当作“上手就能审查代码”的完成态；先用页面 R1 修复入口或 `CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板。
 
 页面上如果出现历史会话的 approval、cancel 或 assistant 事件，也不能直接算作 S1/S2/S3 商业证据。前端现在要求 `defaultProfileReady && officialLoopReady` 后，才允许当前页面事件作为 provider gate 证据；R1 未过时，S1/S2/S3 必须保持 WAIT/pending。
 
@@ -101,7 +101,7 @@ CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \
 CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
-脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518122109` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 95s，最慢的是 V1 authenticated workbench visual 30s、N6 non-code compatibility 20s、R0 sidecar alias stability 12s；V1 和 N6 都按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。当前 HEAD `875be1132` 只比该 one-cycle 证据多 smoke 工具链脚本变更，目标审计 `/tmp/cds-agent-goal-audit-toolchain-875be1132.json` 标成 `compatible_non_runtime_drift`，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
+脚本会自动推断当前远程 preview host；不要为了远程 preview 手动填 `SMOKE_TEST_HOST`。最新一次证据目录 `/tmp/cds-agent-cycle-20260518123129` 的结果是 `blocked_r1`、`commercialComplete=false`，总耗时 79s，最慢的是 V1 authenticated workbench visual 30s、R0 sidecar alias stability 12s、Runtime doctor 10s；V1 会按 heartbeat 输出进度。这类时间线就是后续判断“时间花在哪里”的主记录。目标审计 `/tmp/cds-agent-goal-audit-next-command-host-remote-drift.json` 标成 `match`，远程 runtime 是 compatible non-runtime drift，仍明确给出 `Do not redeploy for this state` 和 `do not self update`。
 
 A0/N6 的本地工具链已经做了自检：A0 会自动选择能 import `fastapi`、`pydantic`、`starlette` 的 Python，并在报告中记录 `pythonBin`；N6 会自动选择能看到 .NET 8 runtime 的 dotnet，并在终端打印 `dotnet:`。如果登录 shell 里的 `python3` 或 `dotnet` 指向错误版本，先看脚本打印的实际解释器路径，不要把依赖缺失当成 CDS Agent 功能失败。
 
