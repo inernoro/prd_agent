@@ -187,7 +187,7 @@ if (( instance_count <= 0 || healthy_count <= 0 || official_instances <= 0 )); t
   next_actions=$(smoke_get_data "$runtime_resp" '.diagnostics.nextActions // [] | join(" | ")')
   if (( instance_count > 0 && official_instances > 0 )) && printf '%s' "$blockers" | grep -Eiq 'ANTHROPIC_API_KEY|anthropicKey'; then
     gate_r0_status="pass"
-    smoke_ok "R0 capacity/ownership present; /readyz is blocked by R1 Anthropic key/profile, not R0 runtime capacity"
+    smoke_ok "R0 capacity/ownership present; /readyz is blocked by R1 provider-switch profile, not R0 runtime capacity"
   else
     smoke_fail "R0 not ready: instanceCount=${instance_count} healthyCount=${healthy_count} officialInstances=${official_instances}; blockers=${blockers}; next=${next_actions}"
   fi
@@ -267,8 +267,8 @@ if [[ "$profile_compatible" != "true" || "$profile_has_key" != "true" ]]; then
   smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.state')" "profile-blocked" "nextCyclePlan.state"
   smoke_assert_eq "$(printf '%s' "$next_cycle_plan" | jq -r '.items[]? | select(.code == "N2") | .blockedBy')" "R1" "nextCyclePlan.N2.blockedBy"
   repair_actions=$(printf '%s' "$repair_plan" | jq -r '.nextActions[]?')
-  smoke_assert_contains "$repair_actions" "准备默认 Claude 配置" "runtimeProfileRepairPlan.nextActions"
-  mark_pending "R1: ${profile_reason_code:-profile-not-ready} · ${profile_reason:-create a default Anthropic/Claude-compatible CDS-managed runtime profile with provider secret}"
+  smoke_assert_contains "$repair_actions" "claude-sdk runtime + anthropic protocol" "runtimeProfileRepairPlan.nextActions"
+  mark_pending "R1: ${profile_reason_code:-profile-not-ready} · ${profile_reason:-create a default Claude Code provider-switch runtime profile with provider secret}"
   smoke_assert_eq "$(printf '%s' "$execution_panel" | jq -r '.currentBlockingGate')" "R1" "executionPanel.currentBlockingGate"
   smoke_assert_contains "$(printf '%s' "$execution_panel" | jq -r '.nextCommand')" "smoke-cds-agent-r1-profile-repair.sh" "executionPanel.nextCommand"
   if [[ -n "$SMOKE_CDS_AGENT_REQUIRE_COMMERCIAL" ]]; then
@@ -325,7 +325,7 @@ if [[ "$profile_compatible" == "true" && "$profile_has_key" == "true" ]]; then
   smoke_ok "S1/S2/S3 provider smokes are unblocked"
 else
   gate_provider_status="pending"
-  mark_pending "S1/S2/S3: ${profile_reason_code:-blocked-until-r1} · blocked until R1 profile is compatible and has a CDS-managed provider secret"
+  mark_pending "S1/S2/S3: ${profile_reason_code:-blocked-until-r1} · blocked until R1 Claude Code provider-switch profile is compatible and has a CDS-managed provider secret"
 fi
 
 smoke_step "V1 workbench page reachability"

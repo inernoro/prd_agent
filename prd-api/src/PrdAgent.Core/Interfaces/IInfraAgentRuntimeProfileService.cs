@@ -214,7 +214,7 @@ public static class InfraAgentRuntimeProfileCompatibility
         return new InfraAgentRuntimeProfileCompatibilityDecision(
             false,
             "openai-compatible-non-claude-model",
-            "claude-agent-sdk 只默认支持 Anthropic/Claude-compatible profile；当前 OpenAI-compatible profile 没有 Claude/Anthropic 模型特征。",
+            "claude-agent-sdk 需要 Anthropic-compatible Messages endpoint；当前 profile 是 raw OpenAI-compatible Chat Completions endpoint。",
             new[]
             {
                 "原生 Claude 可使用 Anthropic 官方模板创建默认 runtime profile。",

@@ -259,10 +259,10 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarExecutionTask(
                 10,
                 "R1",
-                "Default Claude/Anthropic profile",
+                "Claude Code provider-switch profile",
                 r1Done ? "done" : r1Active ? "active" : r0Done ? "next" : "blocked",
-                r1Done ? "Default profile is compatible and has key." : "Configure official Anthropic/Claude-compatible runtime profile.",
-                r1Done ? "done" : "5-15 min",
+                r1Done ? "Default profile is compatible and has provider secret." : "Configure claude-sdk runtime + anthropic protocol; cc-switch/DeepSeek can use a custom provider secret.",
+                r1Done ? "done" : "35-55 min",
                 "scripts/smoke-cds-agent-r1-profile-repair.sh"),
             new SidecarExecutionTask(
                 11,
@@ -292,7 +292,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
         {
-            return "5-15 min after a valid Anthropic/Claude-compatible CDS-managed profile/secret is available.";
+            return "35-55 min to validate a Claude Code provider-switch CDS-managed profile; native Anthropic sk-ant is required only for api.anthropic.com.";
         }
 
         if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase))
@@ -554,7 +554,7 @@ public class InfraAgentSessionsController : ControllerBase
             || (string.IsNullOrWhiteSpace(blockingCode)
                 && string.Equals(readinessOverall, "profile-blocked", StringComparison.OrdinalIgnoreCase)))
         {
-            return "不要靠重新部署解决 R1；当前阻塞是 CDS-managed runtime profile/secret，需要保存 Anthropic/Claude-compatible profile 后重跑 one-cycle。";
+            return "不要靠重新部署解决 R1；当前阻塞是 CDS-managed Claude Code provider-switch profile，需要保存 claude-sdk runtime + anthropic protocol 的兼容上游后重跑 one-cycle。";
         }
 
         if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase)

@@ -370,7 +370,7 @@ public class InfraAgentSessionsControllerTests
             var diagnostics = diagnosticsProperty.GetValue(data).ShouldBeOfType<SidecarPoolDiagnostics>();
             var defaultProfile = diagnostics.DefaultRuntimeProfile.ShouldNotBeNull();
             defaultProfile.CompatibleWithDesiredRuntimeAdapter.ShouldBeFalse();
-            defaultProfile.Warning.ShouldNotBeNull().ShouldContain("Claude/Anthropic");
+            defaultProfile.Warning.ShouldNotBeNull().ShouldContain("Anthropic-compatible Messages endpoint");
             defaultProfile.CompatibilityReasonCode.ShouldBe("openai-compatible-non-claude-model");
             defaultProfile.CompatibilityReason.ShouldNotBeNull().ShouldContain("OpenAI-compatible");
             defaultProfile.CompatibilityNextActions.ShouldNotBeNull()
@@ -563,7 +563,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.Status.ShouldBe("profile-blocked");
             executionPanel.CommercialComplete.ShouldBeFalse();
             executionPanel.CurrentBlockingGate.ShouldBe("R1");
-            executionPanel.BlockingReason.ShouldContain("Anthropic/Claude-compatible");
+            executionPanel.BlockingReason.ShouldContain("Anthropic-compatible Messages endpoint");
             executionPanel.DeploymentAdvice.ShouldContain("不要靠重新部署解决 R1");
             executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-r1-profile-repair.sh");
             executionPanel.NextCommandCode.ShouldBe("r1-dry-run");
