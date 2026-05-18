@@ -167,6 +167,43 @@ is_non_runtime_cycle_drift_path() {
   return 1
 }
 
+is_non_runtime_cycle_drift_file_diff() {
+  local base_commit="$1"
+  local head_commit="$2"
+  local path="$3"
+  local changed_lines line content content_no_space
+
+  if is_non_runtime_cycle_drift_path "$path"; then
+    return 0
+  fi
+
+  # InfraServicesPage links to CDS Agent docs from the settings/help surface. A
+  # doc-link-only edit there should not force a remote CDS Agent one-cycle, but
+  # any behavioral UI change in the same file must still be treated as runtime
+  # drift.
+  if [[ "$path" != "prd-admin/src/pages/infra-services/InfraServicesPage.tsx" ]]; then
+    return 1
+  fi
+  if ! changed_lines=$(git -C "$ROOT_DIR" diff --unified=0 "${base_commit}..${head_commit}" -- "$path" 2>/dev/null); then
+    return 1
+  fi
+  while IFS= read -r line; do
+    [[ "$line" == +++* || "$line" == ---* || "$line" == @@* ]] && continue
+    [[ "$line" != [-+]* ]] && continue
+    content="${line#?}"
+    content_no_space=$(printf '%s' "$content" | tr -d '[:space:]')
+    [[ "$content_no_space" == ">" ]] && continue
+    case "$line" in
+      *'<li>'*|*'</li>'*|*'<a'*|*'</a>'*|*'<span'*|*'</span>'*|*'className='*|*'<ExternalLink size={12} />'*|*'/doc/guide.cds-agent-'*|*'guide.cds-agent-'*|*'CDS Agent'*|*'代码审查上手流程'*|*'官方 SDK 边界'*|*'当前 R1 阻塞'*)
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done <<< "$changed_lines"
+  return 0
+}
+
 classify_cycle_git_drift() {
   local base_commit="$1"
   local head_commit="$2"
@@ -183,7 +220,7 @@ classify_cycle_git_drift() {
     [[ -z "$path" ]] && continue
     has_paths=true
     CYCLE_GIT_DIFF_PATHS+=("$path")
-    if ! is_non_runtime_cycle_drift_path "$path"; then
+    if ! is_non_runtime_cycle_drift_file_diff "$base_commit" "$head_commit" "$path"; then
       has_runtime=true
       CYCLE_GIT_RUNTIME_DIFF_PATHS+=("$path")
     fi
