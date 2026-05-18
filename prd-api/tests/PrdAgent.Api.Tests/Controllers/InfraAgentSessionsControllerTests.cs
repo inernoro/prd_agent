@@ -399,7 +399,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.CurrentBlockingGate.ShouldBe("R0");
             executionPanel.BlockingReason.ShouldContain("instanceCount=1 healthyCount=1 officialInstances=0");
             executionPanel.DeploymentAdvice.ShouldContain("doctor");
-            executionPanel.NextCommand.ShouldBe("bash scripts/doctor-cds-agent-runtime.sh");
+            executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/doctor-cds-agent-runtime.sh");
             executionPanel.GateCounts["pass"].ShouldBe(2);
             executionPanel.GateCounts["pending"].ShouldBe(5);
             var nextActions = diagnostics.NextActions.ShouldNotBeNull();
@@ -508,7 +508,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.CurrentBlockingGate.ShouldBe("R1");
             executionPanel.BlockingReason.ShouldContain("Anthropic/Claude-compatible");
             executionPanel.DeploymentAdvice.ShouldContain("不要靠重新部署解决 R1");
-            executionPanel.NextCommand.ShouldBe("bash scripts/smoke-cds-agent-r1-profile-repair.sh");
+            executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-r1-profile-repair.sh");
             executionPanel.GateCounts["pass"].ShouldBe(3);
             executionPanel.GateCounts["pending"].ShouldBe(4);
         }

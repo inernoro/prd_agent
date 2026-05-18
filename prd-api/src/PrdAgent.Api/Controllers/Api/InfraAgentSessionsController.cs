@@ -16,6 +16,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class InfraAgentSessionsController : ControllerBase
 {
+    private const string RemoteSmokePrefix = "CDS_HOST=https://cds.miduo.org ";
+
     private readonly IInfraAgentSessionService _service;
     private readonly IClaudeSidecarRouter? _sidecarRouter;
     private readonly IDynamicSidecarRegistry? _sidecarRegistry;
@@ -209,7 +211,7 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "doctor",
                 "本地诊断",
-                "bash scripts/doctor-cds-agent-runtime.sh",
+                RemoteSmokePrefix + "bash scripts/doctor-cds-agent-runtime.sh",
                 "只读检查 runtime pool、默认 profile、官方模板和下一步建议。",
                 "ready"),
             new SidecarDebugCommand(
@@ -221,21 +223,21 @@ public class InfraAgentSessionsController : ControllerBase
             new SidecarDebugCommand(
                 "r1-dry-run",
                 "R1 修复预检",
-                "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
+                RemoteSmokePrefix + "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
                 "不写入远程状态，验证后端 R1 修复计划、模板和缺 key 保护。",
                 r1Status,
                 r1Ready ? null : "Anthropic API key"),
             new SidecarDebugCommand(
                 "r1-apply",
                 "R1 test-before-promote",
-                "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
+                RemoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
                 "创建候选 Anthropic 官方 profile，测试通过后才提升为默认。",
                 r1Status,
                 r1Ready ? null : "Anthropic API key"),
             new SidecarDebugCommand(
                 "provider-cycle",
                 "一个周期 provider smoke",
-                "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
+                RemoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
                 "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用。",
                 providerStatus,
                 providerBlockedBy),
