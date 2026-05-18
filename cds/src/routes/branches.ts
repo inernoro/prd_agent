@@ -183,6 +183,10 @@ type BranchDeployRuntime = {
 // classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
 // auto-lifecycle.ts 共用同一份正则，避免两处漂移）。
 
+function isSyntheticCdsManagedRuntimeBranch(branch: Pick<BranchEntry, 'branch' | 'githubCommitSha'>): boolean {
+  return branch.branch === 'cds-managed-runtime' || branch.githubCommitSha === 'cds-managed-runtime';
+}
+
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,
   profiles: BuildProfile[],
@@ -3000,7 +3004,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      const result = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const result = isSyntheticCdsManagedRuntimeBranch(entry)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'pullCount');
       stateService.stampBranchTimestamp(id, 'lastPullAt');
@@ -3199,7 +3205,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
         force: true,
       });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -3857,7 +3865,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       // Clear pinned commit — deploy always restores to branch HEAD
