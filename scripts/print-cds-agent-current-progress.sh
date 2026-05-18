@@ -97,6 +97,84 @@ if [[ -z "$invalid_config" ]]; then
   invalid_config="none"
 fi
 
+exact_next_step=""
+if [[ "$image_build_context" != "pass" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Run the sidecar image context preflight:
+
+```bash
+scripts/preflight-cds-agent-sidecar-image.sh
+```
+EOF
+)
+elif [[ "$image_local_build" != "build_pass" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Run the local sidecar image build smoke. This builds only; it does not push or deploy.
+
+```bash
+scripts/smoke-cds-agent-sidecar-image-build.sh
+```
+EOF
+)
+elif [[ "$image_publish" != "push_ready" && "$image_publish" != "push_pass" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Choose a registry-qualified image tag and run publish dry-run. This does not push unless `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` is set.
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> scripts/publish-cds-agent-sidecar-image.sh
+```
+EOF
+)
+elif [[ "$image_publish" == "push_ready" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Push the sidecar image only after choosing the approved registry tag. This is an explicit write action.
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh
+```
+EOF
+)
+elif [[ "$remote_pull" != "dry_run_ready" && "$remote_pull" != "pull_pass" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Validate remote host pull prerequisites. This does not SSH unless `CDS_AGENT_REMOTE_PULL_VERIFY=1` is set.
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol> CDS_REMOTE_HOST_SSH_USER=<ssh-user> CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file> scripts/verify-cds-agent-remote-sidecar-pull.sh
+```
+EOF
+)
+elif [[ "$remote_pull" == "dry_run_ready" ]]; then
+  exact_next_step=$(cat <<'EOF'
+Verify the target remote host can pull the sidecar image. This SSHs to the host and runs only `docker pull`.
+
+```bash
+CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> CDS_REMOTE_HOST_HOST=<host-or-ip-no-protocol> CDS_REMOTE_HOST_SSH_USER=<ssh-user> CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file> CDS_AGENT_REMOTE_PULL_VERIFY=1 scripts/verify-cds-agent-remote-sidecar-pull.sh
+```
+EOF
+)
+elif [[ "$missing_config" != "none" || "$invalid_config" != "none" ]]; then
+  exact_next_step=$(cat <<EOF
+Generate the safe R0 remote-host handoff command:
+
+\`\`\`bash
+scripts/print-cds-agent-remote-host-handoff.sh \\
+  $HANDOFF_SUMMARY
+\`\`\`
+
+Then fill only placeholders locally. Do not paste private key contents into chat or logs.
+EOF
+)
+else
+  exact_next_step=$(cat <<'EOF'
+Run R0 remote host apply and shared runtime deploy with evidence, then run the shared-service pool post-check.
+
+```bash
+CDS_HOST=https://cds.miduo.org CDS_AGENT_REMOTE_HOST_APPLY=1 CDS_AGENT_REMOTE_HOST_DEPLOY_SIDECAR=1 CDS_AGENT_SIDECAR_IMAGE=<registry>/<namespace>/claude-sidecar:<tag> bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh
+```
+EOF
+)
+fi
+
 cat <<EOF
 # CDS Agent Progress Board
 
@@ -149,14 +227,7 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 
 ## Exact Next Step
 
-Generate the safe handoff command:
-
-\`\`\`bash
-scripts/print-cds-agent-remote-host-handoff.sh \\
-  $HANDOFF_SUMMARY
-\`\`\`
-
-Then fill only placeholders locally. Do not paste private key contents into chat or logs.
+$exact_next_step
 
 ## Do Not Spend Time On Now
 

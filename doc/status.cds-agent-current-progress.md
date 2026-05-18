@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 19:36 Asia/Shanghai
+> **更新时间**：2026-05-18 19:39 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -137,6 +137,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | sidecar image build smoke | `/tmp/cds-agent-sidecar-image-build-current.json` | 本地 Docker build 通过；未 push、未 deploy | 约 65s，含依赖安装 |
 | sidecar image publish dry-run | `/tmp/cds-agent-sidecar-image-publish-current.json` | 默认不 push；当前缺 registry-qualified target image | <1s |
 | remote sidecar pull dry-run | `/tmp/cds-agent-remote-sidecar-pull-current.json` | 默认不 SSH；当前缺 image、host、ssh user、ssh key | <1s |
+| progress board exact next step | `scripts/print-cds-agent-current-progress.sh` | 根据 image context/build/publish、remote pull、remote host gate 顺序动态选择下一步；当前指向 registry tag dry-run | <1s |
 
 ## 7. 时间和问题账本
 
@@ -168,6 +169,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | sidecar image build smoke | 约 65s 当前通过 | 把 Docker daemon / base image pull / Python dependency install 问题和 R0 远程 deploy 分开 |
 | sidecar image publish dry-run | <1s | 显式拆出 registry tag/push 阶段，避免把本地 build pass 误认为 remote host pullable |
 | remote sidecar pull dry-run | <1s | 独立验证目标 host 是否可 pull image；不创建 CDS host、不运行 sidecar |
+| dynamic exact next step | <1s | 不再固定跳到 remote-host handoff；先走当前最靠前的失败 gate |
 
 ## 8. 不要做的事
 

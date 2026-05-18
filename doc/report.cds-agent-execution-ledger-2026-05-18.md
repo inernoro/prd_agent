@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 19:36 Asia/Shanghai：
+截至 2026-05-18 19:39 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -18,6 +18,7 @@
 - 已解决：sidecar image build smoke 已通过，本地候选镜像可构建；Docker daemon/Colima 问题已从 R0 远程问题中剥离。
 - 已解决：sidecar image registry 发布阶段已纳入 dry-run/显式 push 门禁。
 - 已解决：remote host `docker pull` 已纳入独立 dry-run/显式 SSH 验证门禁。
+- 已解决：当前进度面板的 `Exact Next Step` 已改成按 gate 顺序动态输出。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -50,6 +51,7 @@
 | 19:26 | Colima LaunchAgent 与 Lima VM 状态不一致，`colima status` 误报 running，实际 Lima instance broken | 卸载 stale LaunchAgent，`LIMA_HOME=/Users/inernoro/.colima/_lima limactl stop -f colima` 清理 broken pid/socket，再 `colima start`；拉取 `python:3.12-slim` 后复跑 build smoke | `/tmp/cds-agent-sidecar-image-build-current.json` | 约 2m，build 约 65s | `status=build_pass`；本地候选镜像 `prd-agent/claude-sidecar:latest` 可构建 |
 | 19:30 | 本地 build pass 后仍缺 registry tag/push/pullability 证据 | 新增 `scripts/publish-cds-agent-sidecar-image.sh`，默认 dry-run；只有 `CDS_AGENT_SIDECAR_IMAGE_PUSH=1` 才 push | `/tmp/cds-agent-sidecar-image-publish-current.json`、`/tmp/cds-agent-sidecar-image-publish-dryrun-ghcr.json` | <1s dry-run | 当前默认 `missing_target_image`；示例 ghcr tag dry-run 为 `push_ready`，未 push |
 | 19:36 | 即使 image 已 push，也还需要证明目标 remote host 能 `docker pull` | 新增 `scripts/verify-cds-agent-remote-sidecar-pull.sh`，默认 dry-run；只有 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` | `/tmp/cds-agent-remote-sidecar-pull-current.json`、`/tmp/cds-agent-remote-pull-dryrun-ready.json` | <1s dry-run | 当前默认 `missing_config`；示例参数 dry-run 为 `dry_run_ready`，未 SSH、未 deploy |
+| 19:39 | 进度面板虽然显示多个 gate，但 `Exact Next Step` 固定指向 remote-host handoff，容易跳过 registry/pull 门禁 | `scripts/print-cds-agent-current-progress.sh` 改为按 gate 顺序选择下一步：context -> local build -> registry publish -> remote pull -> remote host apply/deploy | terminal output | <1s | 当前下一步明确是提供 registry-qualified `CDS_AGENT_SIDECAR_IMAGE` 并跑 publish dry-run |
 
 ## 本轮暴露的问题
 
@@ -482,6 +484,23 @@
 
 优化：R0.3 现在继续拆分为 remote pull 和 sidecar run/healthcheck。下一次远程失败可以定位到 pull、run、healthcheck 或 CDS state post-check，而不是笼统“部署失败”。
 
+### 28. 进度面板必须按 gate 顺序给下一步
+
+问题：面板已经显示 `Sidecar registry publish=missing_target_image` 和 `Remote host docker pull=missing_config`，但 `Exact Next Step` 仍固定让执行者生成 remote-host handoff。这会绕过当前最靠前的 registry/pull 门禁。
+
+处理：`scripts/print-cds-agent-current-progress.sh` 的 `Exact Next Step` 现在按顺序选择：
+
+- sidecar build context
+- local image build
+- registry publish dry-run/push
+- remote host pull dry-run/verify
+- remote host apply/deploy handoff
+- R0 post-check
+
+证据：当前面板下一步输出 registry-qualified `CDS_AGENT_SIDECAR_IMAGE` 的 publish dry-run 命令，而不是 remote-host handoff。
+
+优化：以后用户只看一个进度面板，也能知道当前最前面的失败 gate 和下一条命令。
+
 ## 最耗时项
 
 | 项 | 耗时 | 是否可本地化 | 后续优化 |
@@ -502,6 +521,7 @@
 | sidecar image build smoke | 约 65s 当前通过 | 完全可本地化 | Docker daemon、base image pull、Python dependency install 都在本地 build gate 暴露，不进入远程 deploy |
 | sidecar image publish dry-run | <1s | 完全可本地化 | registry target/tag/push 显式化；默认不 push、不 deploy |
 | remote sidecar pull dry-run | <1s | 部分本地化 | 先校验 SSH/image 输入；显式开启后才访问目标 host 执行 docker pull |
+| dynamic exact next step | <1s | 完全可本地化 | 按 gate 顺序给下一条命令，减少人工在多个 handoff 之间判断 |
 
 ## 当前下一步
 
