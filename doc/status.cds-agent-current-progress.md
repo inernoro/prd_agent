@@ -18,6 +18,7 @@
 - `summary.json`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/summary.json`
 - `evidence-index.md`: `/tmp/cds-agent-runtime-pool-evidence-20260518152545/evidence-index.md`
 - remote host wrapper dry-run: `/tmp/cds-agent-remote-host-pool-20260518152907`
+- goal audit: `/tmp/cds-agent-goal-audit-current.json`
 
 本次证据采集总耗时 `13s`：
 
@@ -45,6 +46,8 @@
 - 其他候选官方 SDK，例如 `codex`、`openai-agents-sdk`、`google-adk`，仍为 `planned-not-routable`，避免误路由。
 - 非代码智能体兼容 smoke 已存在，防止 PRD/Defect/Literary/Visual 等智能体被 CDS sidecar runtime pool 污染。
 - runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。
+- 目标审计已校准为 R0 runtime pool blocker 优先于 R1 profile；当 P0 未恢复时，`currentBlockingGate=R0`。
+- 最新目标审计仍是 `goalStatus=not_complete`，`A0/D0/N6/pass`，但 `R0=pending`，并明确 `P0 branch isolation/shared pool is not recovered`。
 - 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。
 
 ## 下一步

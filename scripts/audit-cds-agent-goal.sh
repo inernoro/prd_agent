@@ -718,6 +718,14 @@ if [[ -n "$controls_report" && -f "$controls_report" ]]; then
   }' "$controls_report")
 fi
 
+if [[ "$(jq -r 'length' <<< "$runtime_pool_blockers_json")" != "0" ]]; then
+  gate_r0="pending"
+  current_blocking_gate="R0"
+  blocking_reason="Runtime pool recovery is still blocked: $(jq -r 'map(.requirement + "=" + .status) | join(", ")' <<< "$runtime_pool_blockers_json")."
+  deployment_advice="Do not redeploy for this state. Collect runtime pool evidence, clean branch-local sidecar residuals, register an enabled remote host, and restore the shared official SDK runtime pool first."
+  next_command="CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh"
+fi
+
 if [[ "$boundary_status" != "pass" ]]; then
   failures+=("A0 boundary did not pass")
 fi
@@ -1008,7 +1016,7 @@ audit_json=$(
         documentationCalibration: {
           status: (if $docsCalibrationStatus == "pass" then "proved" else $docsCalibrationStatus end),
           gate: "D0",
-          evidence: "quickstart, next-agent testing guide, migration plan, and A10 report are calibrated to the current R1 blocker and official SDK adapter boundary"
+          evidence: "quickstart, next-agent testing guide, migration plan, and A10 report are calibrated to the current R0 runtime pool blockers, later R1 profile blocker, and official SDK adapter boundary"
         },
         otherAgentCompatibility: {
           status: (if $n6Status == "pass" then "proved" else $n6Status end),
