@@ -370,6 +370,10 @@ S1/S2/S3 误标成 pending 或 pass。
 `timing.steps` 记录每个阶段的耗时和 phase，`timing.slowest` 给出最慢 3 个阶段；
 终端汇总也会打印 `Total measured step time` 和 `Slowest steps`，用于判断时间花在
 本地静态检查、远程 API、远程容器 exec、视觉截图，还是真实 provider 调用。
+如果第一步 doctor 失败，summary 还会写出 `failure.kind`、`failure.advice` 和
+`failure.narrowRerunCommand`。例如默认目标 `localhost:5000` 未启动会被归类为
+`local_api_unreachable`，远程 preview DNS 不可达会被归类为 `remote_dns_unreachable`；
+这两类都不是“需要重新部署”的证据，按 `narrowRerunCommand` 修正目标或网络后重跑即可。
 
 常见状态含义：
 
@@ -381,7 +385,7 @@ S1/S2/S3 误标成 pending 或 pass。
 | `provider_smokes_incomplete` | 已打开 provider 调用，但 S1/S2/S3 没有全部通过 |
 | `provider_smokes_passed` | R1 和 S1/S2/S3 都有通过证据，可进入更高层业务验收 |
 | `preview_not_ready` | 远程 CDS preview 仍在 `starting`，等待 ready 后重跑 one-cycle，不需要先改代码或 self update |
-| `failed` | 某个脚本步骤失败，先看 `cycle-summary.json` 和对应 step log |
+| `failed` | 某个脚本步骤失败，先看 `cycle-summary.json.failure`、`nextCommand` 和对应 step log |
 
 部署策略按 `deploymentAdvice` 执行：`blocked_r1`、`ready_for_provider_smokes`、
 `blocked_provider_smokes`、`provider_smokes_incomplete` 通常不需要重新部署；这些状态的

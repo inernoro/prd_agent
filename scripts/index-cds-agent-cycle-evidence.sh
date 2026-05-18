@@ -66,10 +66,12 @@ jq -n \
     summary: $summary,
     git: ($s.git // null),
     host: ($s.host // ""),
+    target: ($s.target // null),
     status: ($s.status // "unknown"),
     commercialComplete: ($s.commercialComplete // false),
     blockingReason: ($s.blockingReason // ""),
     deploymentAdvice: ($s.deploymentAdvice // ""),
+    failure: ($s.failure // null),
     nextCommand: ($s.nextCommand // ""),
     executionPanel: ($s.executionPanel // null),
     gates: ($s.commercialGates // {}),
@@ -117,9 +119,11 @@ jq -r \
   "- Status: `" + .status + "`\n" +
   "- Commercial complete: `" + (.commercialComplete|tostring) + "`\n" +
   "- Git: `" + ((.git.branch // "unknown") + "@" + (.git.commitShort // "unknown")) + "`\n" +
-  "- Host: `" + .host + "`\n" +
+  "- Host: `" + .host + "`" + (if (.target.source // "") != "" then " (`" + (.target.source // "") + "`)" else "" end) + "\n" +
   "- Blocking gate: `" + (.executionPanel.currentBlockingGate // "unknown") + "`\n" +
   "- Blocking reason: " + (.blockingReason // "") + "\n" +
+  (if (.failure.kind // "none") != "none" then "- Failure kind: `" + (.failure.kind // "unknown") + "`\n" else "" end) +
+  (if (.failure.advice // "") != "" then "- Failure advice: " + (.failure.advice // "") + "\n" else "" end) +
   "- Deploy/build advice: " + (.deploymentAdvice // "") + "\n" +
   "- Next command: `" + (.nextCommand // "") + "`\n\n" +
   "## Gates\n\n" +

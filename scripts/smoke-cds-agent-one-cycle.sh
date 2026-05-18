@@ -22,7 +22,16 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=smoke-lib.sh
 source "$SCRIPT_DIR/smoke-lib.sh"
 smoke_require_tools
+SMOKE_TARGET_SOURCE="default-local"
+if [[ -n "${SMOKE_TEST_HOST:-}" ]]; then
+  SMOKE_TARGET_SOURCE="explicit-smoke-test-host"
+elif [[ -n "${CDS_HOST:-}" ]]; then
+  SMOKE_TARGET_SOURCE="cds-preview-inferred"
+fi
 smoke_infer_preview_host
+if [[ -z "${SMOKE_TEST_HOST:-}" && -n "${CDS_HOST:-}" && "$SMOKE_HOST" == "http://localhost:5000" ]]; then
+  SMOKE_TARGET_SOURCE="cds-preview-inference-failed"
+fi
 export SMOKE_TEST_HOST="$SMOKE_HOST"
 
 CYCLE_ID="$(date +%Y%m%d%H%M%S)"
@@ -160,6 +169,9 @@ finish_cycle() {
   local commercial_complete=false
   local blocking_reason=""
   local deployment_advice=""
+  local failure_kind="none"
+  local failure_advice=""
+  local narrow_rerun_command=""
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
   local passed_count skipped_count failed_count
   local doctor_log="$SMOKE_CDS_AGENT_CYCLE_DIR/doctor.log"
@@ -260,7 +272,22 @@ finish_cycle() {
     blocking_reason="At least one script step failed; inspect failed step logs."
     if [[ -f "$doctor_log" ]] && grep -Eq 'preview-not-ready|CDS preview is not ready|status=starting' "$doctor_log"; then
       cycle_status="preview_not_ready"
+      failure_kind="preview_not_ready"
       blocking_reason="CDS preview is still starting; retry one-cycle after the preview reports ready."
+    elif [[ -f "$doctor_log" ]] && grep -Fq 'Failed to connect to localhost port 5000' "$doctor_log"; then
+      failure_kind="local_api_unreachable"
+      blocking_reason="The smoke target is default localhost, but no local API is listening on port 5000."
+      failure_advice="This is a target selection issue, not evidence that CDS needs a deploy. Start the local API or set CDS_HOST=https://cds.miduo.org to validate the remote preview."
+      narrow_rerun_command="CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh"
+    elif [[ -f "$doctor_log" ]] && grep -Fq 'Could not resolve host' "$doctor_log"; then
+      failure_kind="remote_dns_unreachable"
+      blocking_reason="The smoke target host could not be resolved from this environment."
+      failure_advice="This is network/DNS reachability, not an application or deploy failure. Rerun with network access to the same CDS preview host."
+      narrow_rerun_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-one-cycle.sh"
+    elif [[ -f "$doctor_log" ]] && grep -Fq '401' "$doctor_log"; then
+      failure_kind="auth_failed"
+      blocking_reason="The smoke target rejected the request; check AI_ACCESS_KEY or the authenticated preview session."
+      failure_advice="Do not redeploy for auth failures. Fix credentials and rerun the same smoke."
     fi
   elif [[ "$readiness_overall" == "ready_for_provider_smokes" && "$provider_calls_enabled" == "true" && "$s1_status" == "pass" && "$controls_status" == "pass" ]]; then
     cycle_status="provider_smokes_passed"
@@ -294,7 +321,11 @@ finish_cycle() {
   if [[ -z "$next_command" ]]; then
     case "$cycle_status" in
       failed)
-        next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
+        if [[ -n "$narrow_rerun_command" ]]; then
+          next_command="$narrow_rerun_command"
+        else
+          next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
+        fi
         ;;
       preview_not_ready)
         next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-one-cycle.sh"
@@ -310,7 +341,11 @@ finish_cycle() {
         ;;
     esac
   elif [[ "$cycle_status" == "failed" ]]; then
-    next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
+    if [[ -n "$narrow_rerun_command" ]]; then
+      next_command="$narrow_rerun_command"
+    else
+      next_command="Inspect $SMOKE_CDS_AGENT_CYCLE_SUMMARY and failed step logs under $SMOKE_CDS_AGENT_CYCLE_DIR"
+    fi
   fi
 
   case "$cycle_status" in
@@ -327,7 +362,11 @@ finish_cycle() {
       deployment_advice="Provider gates passed. A deploy is only useful after a new code change or when promoting the validated branch."
       ;;
     failed)
-      deployment_advice="Do not deploy to fix an unknown failure. Inspect the failed step log first, reproduce locally when the failed phase is local or static, then rerun the narrow smoke."
+      if [[ -n "$failure_advice" ]]; then
+        deployment_advice="$failure_advice"
+      else
+        deployment_advice="Do not deploy to fix an unknown failure. Inspect the failed step log first, reproduce locally when the failed phase is local or static, then rerun the narrow smoke."
+      fi
       ;;
     *)
       deployment_advice="Prefer local/static smokes first. Deploy only when validating remote runtime behavior, auth, container networking, or visual evidence."
@@ -389,8 +428,12 @@ finish_cycle() {
     --arg nextCommand "$next_command" \
     --arg blockingReason "$blocking_reason" \
     --arg deploymentAdvice "$deployment_advice" \
+    --arg failureKind "$failure_kind" \
+    --arg failureAdvice "$failure_advice" \
+    --arg narrowRerunCommand "$narrow_rerun_command" \
     --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
     --arg host "$SMOKE_TEST_HOST" \
+    --arg targetSource "$SMOKE_TARGET_SOURCE" \
     --arg readinessOverall "$readiness_overall" \
     --arg readinessReport "$SMOKE_CDS_AGENT_READINESS_REPORT" \
     --arg doctorDiagnosis "$doctor_diagnosis" \
@@ -477,8 +520,17 @@ finish_cycle() {
       commercialComplete: $commercialComplete,
       blockingReason: $blockingReason,
       deploymentAdvice: $deploymentAdvice,
+      failure: {
+        kind: $failureKind,
+        advice: $failureAdvice,
+        narrowRerunCommand: $narrowRerunCommand
+      },
       nextCommand: $nextCommand,
       host: $host,
+      target: {
+        host: $host,
+        source: $targetSource
+      },
       evidenceDir: $evidenceDir,
       exitCode: $exitCode,
       providerCallsEnabled: $providerCallsEnabled,
@@ -523,6 +575,7 @@ finish_cycle() {
         blockingReason: $blockingReason,
         deploymentAdvice: $deploymentAdvice,
         nextCommand: $nextCommand,
+        failureKind: $failureKind,
         currentBlockingGate: (($gatesNotPass | map(select(.status == "pending")) | .[0].gate) // ($gatesNotPass[0].gate // "")),
         stepCounts: {
           passed: $passedCount,

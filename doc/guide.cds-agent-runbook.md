@@ -92,6 +92,7 @@ CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh
 ```
 
 不要手动填 `SMOKE_TEST_HOST`，除非你明确要覆盖目标环境。脚本会从 CDS branch status 推断当前 preview host，并把 doctor、R0 alias stability、A0 官方 SDK 边界、R1、S1/S2/S3、V1、N6 的证据写入 `/tmp/cds-agent-cycle-*`。如果结果是 `blocked_r1`，不要继续 self update 或 redeploy；这表示 MAP/CDS/sidecar pool 已经到位，下一步是修 runtime profile。
+如果忘记设置 `CDS_HOST`，脚本默认会打本地 `http://localhost:5000`；本地 API 没启动时 summary 会写出 `failure.kind=local_api_unreachable` 和远程 preview 的 `narrowRerunCommand`。如果远程域名在当前环境无法解析，会写出 `failure.kind=remote_dns_unreachable`。这两种都不是应用代码或部署失败，先修目标/网络再重跑同一条验证链路。
 
 one-cycle 终端输出就是执行面板：`[当前/总数] phase · step` 展示当前跑到第几个任务，
 phase 会标出 `local-static`、`remote-api`、`remote-container`、`provider-gated`、
