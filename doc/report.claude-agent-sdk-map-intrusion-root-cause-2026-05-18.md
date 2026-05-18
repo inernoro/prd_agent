@@ -20,7 +20,7 @@ claude-agent-sdk-runtime-v2-prd-agent
 
 这不是一个应该跟随 `prd-agent-main` 或业务 feature branch 启停的应用服务。它应该属于 `shared-sidecar-pool-*` 这类 shared-service runtime pool。
 
-最新只读证据显示：
+截图调查当时的只读证据显示：
 
 - `BRANCH_LOCAL_SIDECAR_CLEAN = contaminated:4`
 - `REMOTE_HOST_AVAILABLE = missing`
@@ -28,10 +28,19 @@ claude-agent-sdk-runtime-v2-prd-agent
 - 候选污染 profile：`claude-agent-sdk-runtime-v2-prd-agent`
 - `shared-sidecar-pool-mp4anabh` 存在，但没有 running service。
 
+2026-05-18 17:22 经用户精确批准后，已删除远程 `claude-agent-sdk-runtime-v2-prd-agent` BuildProfile 并同步清理受影响 branch services。最新有效状态变为：
+
+- `BRANCH_LOCAL_SIDECAR_CLEAN = pass`
+- `REMOTE_HOST_AVAILABLE = missing`
+- `SHARED_POOL_RUNNING = missing`
+- `contaminatedBranchCount = 0`
+- 下一步不是普通 preview redeploy，而是登记 enabled remote host 并部署 shared official SDK runtime。
+
 证据目录：
 
 ```text
-/tmp/cds-agent-runtime-pool-evidence-current
+/tmp/cds-agent-branch-isolation-repair-apply-current
+/tmp/cds-agent-runtime-pool-evidence-latest
 ```
 
 当前进度面板：

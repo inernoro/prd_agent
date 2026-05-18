@@ -20,6 +20,7 @@
 #   CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS=90
 #   CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS=15
 #   CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS=86400
+#   CDS_AGENT_GOAL_AUDIT_LIVE=1
 #   CDS_HOST=https://cds.miduo.org
 #   SMOKE_CDS_BRANCH_ID=prd-agent-codex-cds-agent-workbench-ui
 # ============================================
@@ -54,6 +55,7 @@ AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
 AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
 CYCLE_MAX_AGE_SECONDS="${CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS:-86400}"
 SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
+GOAL_AUDIT_LIVE="${CDS_AGENT_GOAL_AUDIT_LIVE:-0}"
 
 run_step() {
   local label="$1"
@@ -317,7 +319,7 @@ check_docs_calibration() {
     fi
   done
 
-  require_doc_text "$quickstart" '当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
+  require_doc_text "$quickstart" '当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
     "quickstart states current runtime pool blockers"
   require_doc_text "$quickstart" '`claude-agent-sdk` 不是本仓库自研。当前 adapter 代码是本仓库写的接入层' \
     "quickstart separates official SDK from local adapter"
@@ -325,8 +327,10 @@ check_docs_calibration() {
     "next testing rejects old A10 as SDK completion proof"
   require_doc_text "$migration_plan" '不要再把历史' \
     "migration plan flags historical diagnostics"
-  require_doc_text "$migration_plan" '`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
+  require_doc_text "$migration_plan" '`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`' \
     "migration plan names current runtime pool blockers"
+  require_doc_text "$ROOT_DIR/doc/status.cds-agent-current-progress.md" '`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入' \
+    "current progress panel states branch-local sidecar cleanup"
   require_doc_text "$report" '旧 A10 证明“工作台 MVP 能远程干活”，但不能替代当前官方 SDK adapter 的 R1/S1/S2/S3 商业级证据' \
     "A10 report separates MVP from current SDK gates"
 
@@ -360,10 +364,17 @@ check_docs_calibration() {
 check_runtime_pool_recovery_plan() {
   local log="$1"
   : > "$log"
+  if [[ "$GOAL_AUDIT_LIVE" != "1" ]]; then
+    {
+      printf 'SKIPPED: CDS_AGENT_GOAL_AUDIT_LIVE is not 1; live runtime pool / branch isolation state was not observed.\n'
+      printf 'Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST=https://cds.miduo.org to include live control-plane isolation in the goal audit.\n'
+    } >> "$log"
+    return 0
+  fi
   if [[ -z "${CDS_HOST:-}" ]]; then
     {
       printf 'SKIPPED: CDS_HOST is not set; live runtime pool / branch isolation state was not observed.\n'
-      printf 'Set CDS_HOST=https://cds.miduo.org to include live control-plane isolation in the goal audit.\n'
+      printf 'Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST=https://cds.miduo.org to include live control-plane isolation in the goal audit.\n'
     } >> "$log"
     return 0
   fi
@@ -372,9 +383,14 @@ check_runtime_pool_recovery_plan() {
 
 check_branch_isolation_apply_manifest() {
   local out_dir="$AUDIT_DIR/branch-isolation-repair"
+  if [[ "$GOAL_AUDIT_LIVE" != "1" ]]; then
+    printf 'SKIPPED: CDS_AGENT_GOAL_AUDIT_LIVE is not 1; branch isolation apply manifest was not observed.\n'
+    printf 'Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST=https://cds.miduo.org to include live dry-run manifest verification.\n'
+    return 0
+  fi
   if [[ -z "${CDS_HOST:-}" ]]; then
     printf 'SKIPPED: CDS_HOST is not set; branch isolation apply manifest was not observed.\n'
-    printf 'Set CDS_HOST=https://cds.miduo.org to include live dry-run manifest verification.\n'
+    printf 'Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST=https://cds.miduo.org to include live dry-run manifest verification.\n'
     return 0
   fi
 
@@ -385,6 +401,9 @@ check_branch_isolation_apply_manifest() {
 }
 
 read_remote_branch_status() {
+  if [[ "$GOAL_AUDIT_LIVE" != "1" ]]; then
+    return 1
+  fi
   if [[ -z "${CDS_HOST:-}" ]]; then
     return 1
   fi
@@ -395,6 +414,9 @@ read_remote_branch_status() {
 }
 
 read_control_plane_status() {
+  if [[ "$GOAL_AUDIT_LIVE" != "1" ]]; then
+    return 1
+  fi
   if [[ -z "${CDS_HOST:-}" ]]; then
     return 1
   fi
@@ -409,7 +431,7 @@ mkdir -p "$AUDIT_DIR"
 
 run_step "A0 official SDK adapter boundary" env SMOKE_CDS_AGENT_BOUNDARY_REPORT="$BOUNDARY_REPORT" bash "$SCRIPT_DIR/smoke-cds-agent-official-sdk-boundary.sh" || true
 run_step "D0 docs current-state calibration" check_docs_calibration "$DOCS_CALIBRATION_LOG" || true
-run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
+run_step_logged "N6 non-code and candidate SDK compatibility" "$N6_LOG" env DOTNET_CLI_USE_MSBUILD_SERVER=0 MSBUILDDISABLENODEREUSE=1 bash "$SCRIPT_DIR/smoke-cds-agent-non-code-compatibility.sh" || true
 run_step_logged "P0 branch isolation and shared pool recovery plan" "$RUNTIME_POOL_PLAN_LOG" check_runtime_pool_recovery_plan "$RUNTIME_POOL_PLAN_LOG" || true
 run_step_logged "P0 branch isolation apply manifest" "$BRANCH_ISOLATION_MANIFEST_LOG" check_branch_isolation_apply_manifest || true
 
@@ -479,7 +501,7 @@ runtime_pool_blockers_json='[]'
 branch_manifest_status="missing"
 branch_manifest_summary="$AUDIT_DIR/branch-isolation-repair/summary.json"
 branch_manifest_json='null'
-if [[ -s "$BRANCH_ISOLATION_MANIFEST_LOG" ]] && grep -q '^SKIPPED: CDS_HOST is not set' "$BRANCH_ISOLATION_MANIFEST_LOG"; then
+if [[ -s "$BRANCH_ISOLATION_MANIFEST_LOG" ]] && grep -Eq '^SKIPPED: (CDS_HOST is not set|CDS_AGENT_GOAL_AUDIT_LIVE is not 1)' "$BRANCH_ISOLATION_MANIFEST_LOG"; then
   branch_manifest_status="not_observed"
 elif [[ -s "$BRANCH_ISOLATION_MANIFEST_LOG" ]] && grep -q 'branch isolation dry-run manifest is explicit and fail-closed' "$BRANCH_ISOLATION_MANIFEST_LOG"; then
   branch_manifest_status="pass"
@@ -490,7 +512,7 @@ if [[ -s "$branch_manifest_summary" ]]; then
   branch_manifest_json=$(jq -c '{summary: input_filename, apply, verdict, beforeContaminatedBranchCount, applyManifest, repair: {status: .repair.status, candidateProfileIds: .repair.candidateProfileIds, deletedProfileIds: .repair.deletedProfileIds}}' "$branch_manifest_summary" 2>/dev/null || printf 'null')
 fi
 if [[ -s "$RUNTIME_POOL_PLAN_LOG" ]]; then
-  if grep -q '^SKIPPED: CDS_HOST is not set' "$RUNTIME_POOL_PLAN_LOG"; then
+  if grep -Eq '^SKIPPED: (CDS_HOST is not set|CDS_AGENT_GOAL_AUDIT_LIVE is not 1)' "$RUNTIME_POOL_PLAN_LOG"; then
     runtime_pool_plan_status="not_observed"
   else
     runtime_pool_plan_json=$(sed -n '/^{/,$p' "$RUNTIME_POOL_PLAN_LOG" | jq -c . 2>/dev/null || printf 'null')
@@ -682,7 +704,7 @@ elif [[ "$remote_branch_status_json" != "null" && "$(jq -r '.observed // false' 
   remote_runtime_relation=$(jq -r '.runtimeRelation // "snapshot"' <<< "$remote_branch_status_json")
   remote_deploy_advice=$(jq -r '.deployAdvice // "Using remote branch snapshot saved in cycle-summary; set CDS_HOST for live refresh."' <<< "$remote_branch_status_json")
 else
-  remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this audit."
+  remote_deploy_advice="Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST to include remote CDS branch status in this audit."
 fi
 
 if control_plane_raw=$(read_control_plane_status); then
@@ -758,7 +780,13 @@ if [[ -n "$controls_report" && -f "$controls_report" ]]; then
 fi
 
 runtime_pool_blocker_count="$(jq -r 'length' <<< "$runtime_pool_blockers_json")"
-if [[ "$runtime_pool_blocker_count" != "0" ]]; then
+if [[ "$runtime_pool_plan_status" != "pass" ]]; then
+  gate_r0="unknown"
+  current_blocking_gate="R0"
+  blocking_reason="Runtime pool recovery was not observed in this audit. Set CDS_AGENT_GOAL_AUDIT_LIVE=1 and CDS_HOST=https://cds.miduo.org, or use the latest runtime pool evidence summary, before treating any older one-cycle R1 blocker as current."
+  deployment_advice="Do not redeploy for this state. First collect current runtime pool evidence; only then decide whether the next blocker is R0 remote host/shared runtime or R1 provider profile."
+  next_command="CDS_AGENT_GOAL_AUDIT_LIVE=1 CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 bash scripts/collect-cds-agent-runtime-pool-evidence.sh"
+elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   gate_r0="pending"
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery is still blocked: $(jq -r 'map(.requirement + "=" + .status) | join(", ")' <<< "$runtime_pool_blockers_json")."

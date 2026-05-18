@@ -49,7 +49,7 @@
 
 如果第 2 步没通过，先不要发审查 prompt；应该先看页面“当前执行结论”的 `currentBlockingGate`、`blockingReason`、`deploymentAdvice` 和 `nextCommand`，再运行 `bash scripts/doctor-cds-agent-runtime.sh` 或页面的 R1 修复入口。
 
-当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，目标仍是 `commercialComplete=false`。也就是说，现在第一阻塞不是继续 redeploy preview，也不是先修默认 profile，而是先恢复 R0 runtime pool：清理 `prd-agent` 业务项目里的 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留，登记至少一个 enabled remote host，并让 `shared-sidecar-pool-mp4anabh` 跑出 healthy official SDK instance。证据入口是 `CDS_HOST=https://cds.miduo.org bash scripts/collect-cds-agent-runtime-pool-evidence.sh`，当前进度见 `doc/status.cds-agent-current-progress.md`，结构性原因见 `doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md`。
+当前远程 preview 的最新 runtime pool 证据是：`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，目标仍是 `commercialComplete=false`。也就是说，现在第一阻塞不是继续 redeploy preview，也不是先修默认 profile；`prd-agent` 业务项目里的 branch-local `claude-agent-sdk-runtime-v2-prd-agent` 残留已经清零，下一步是登记至少一个 enabled remote host，并让 `shared-sidecar-pool-mp4anabh` 跑出 healthy official SDK instance。证据入口是 `CDS_HOST=https://cds.miduo.org bash scripts/collect-cds-agent-runtime-pool-evidence.sh`，当前进度见 `doc/status.cds-agent-current-progress.md`，结构性原因见 `doc/report.cds-agent-runtime-pool-contamination-2026-05-18.md`。
 
 R0 恢复后，下一层仍是 R1 provider profile。此前远程默认 profile 是 `OpenRouter DeepSeek V4 Pro / openai-compatible / deepseek/deepseek-v4-pro`，它有 key，但不是 Anthropic/Claude-compatible profile，因此官方 `claude-agent-sdk` 路径会在运行前拦截。`runtime-status.defaultRuntimeProfile` 会给出结构化原因：`compatibilityReasonCode=openai-compatible-non-claude-model`，并附带 `compatibilityNextActions`。不要把这个 profile 当作“上手就能审查代码”的完成态；R0 恢复后再用页面 R1 修复入口或 `CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh` 把默认 profile 切到官方 Anthropic 模板并收集 S1/S2/S3 证据。
 
@@ -254,7 +254,7 @@ CDS Agent 迁移官方 SDK 时，不能把非代码智能体也绑到 sidecar ru
 
 ## 当前未完成的商业级验收
 
-截至 2026-05-18，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、profile preflight gate、doctor JSON 报告、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。当前远程权威证据不是 `aliasCheck.status=stable`，而是 R0 blocked：`BRANCH_LOCAL_SIDECAR_CLEAN=contaminated:4`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`。历史 branch-local alias 稳定性证据只能用于污染诊断，不能证明 shared-service runtime pool 已恢复。
+截至 2026-05-18，代码已具备官方 SDK adapter seam、结构化诊断、事件游标、异步 Toolbox 句柄、run bundle 导出、runtime pool smoke、profile preflight gate、doctor JSON 报告、S1 official SDK run 脚本入口和 S2/S3 control 脚本入口。当前远程权威证据不是 `aliasCheck.status=stable`，而是 R0 blocked：`BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`。历史 branch-local alias 稳定性证据只能用于污染诊断，不能证明 shared-service runtime pool 已恢复。
 
 但仍不能宣称完全完成，原因是远程 preview 的真实 official SDK run 还缺这些证据：
 

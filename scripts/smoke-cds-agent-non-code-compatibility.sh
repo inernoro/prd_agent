@@ -65,6 +65,8 @@ printf '过滤器:   %s\n' "$FILTER"
 printf 'dotnet:   %s\n' "$DOTNET_BIN"
 printf '==========================================\n\n'
 
-"$DOTNET_BIN" test "$TEST_PROJECT" --filter "$FILTER"
+DOTNET_CLI_USE_MSBUILD_SERVER="${DOTNET_CLI_USE_MSBUILD_SERVER:-0}" \
+MSBUILDDISABLENODEREUSE="${MSBUILDDISABLENODEREUSE:-1}" \
+  "$DOTNET_BIN" test "$TEST_PROJECT" --filter "$FILTER" -m:1 /nodeReuse:false
 
 printf '\n✅ N6 ready: non-code Toolbox agents remain independent from CDS sidecar runtime pool; candidate official SDK adapters remain planned-not-routable until contracts and provider smokes pass\n'

@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 17:38 Asia/Shanghai：
+截至 2026-05-18 17:58 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -29,6 +29,9 @@
 | 17:35 | 发布验证脚本误报 | 改为验证前端 bundle 的 `applyManifest/preconditions` 渲染能力，后端常量由控制器测试覆盖 | `/tmp/cds-agent-runbook-published/summary.json` | 约 35s | 发布验证通过，命中 `assets/index-D_MWXu97-local.js` |
 | 17:38 | remote host dry-run 只列创建 host 缺参，没有列 deploy sidecar 缺参 | 给 `prepare-cds-agent-remote-host-pool.sh` 增加 `recoveryManifest.phases[]` | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` | 14s | 机器可读列出 `remote_host_create` 和 `shared_runtime_deploy` 两阶段缺参 |
 | 17:43 | 进度面板可读性不足，且远程构建状态需要复核 | 将 status 改成看板式第一屏，并刷新 CDS branch status 与 R0 evidence | `/tmp/cds-branch-status-latest-progress.json`、`/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | 约 13s | 远程拾取 `ffef7117`，服务仍只有 api/admin；R0 仍只缺 remote host/shared runtime |
+| 17:46 | 用户反馈没有计划，文档仍可能让人误以为目标漂移 | 扫描 docs/audit，修正旧 `contaminated:4` 口径和“先清理 residual”的过期下一步 | quickstart、runbook、migration plan、adapter design、root-cause report、goal audit | 约 4m | 统一为 `BRANCH_LOCAL_SIDECAR_CLEAN=pass`，下一步只剩 remote host/shared runtime |
+| 17:50 | 目标审计在无显式 live 输入时仍被环境变量带去查 `https://miduo.org`，并把旧 one-cycle R1 当当前 blocker | 改为 `CDS_AGENT_GOAL_AUDIT_LIVE=1` 才查远程；未观测 R0 时禁止把旧 R1 当当前结论 | `/tmp/cds-agent-goal-audit-fast.json` | 约 11s 快速审计 | 当前 blocker 回到 `R0 evidence not observed`，不会误导去修 R1 |
+| 17:56 | N6 在目标审计中超时，需区分测试失败还是沙箱问题 | 先在沙箱内复现 `Permission denied`，再用已批准的 `dotnet test` 沙箱外跑 no-build 测试 | dotnet test 输出 | 64ms 测试执行；审计超时 62s | 27/27 pass；目标审计的 N6 是 infra/sandbox failure，不是业务回归 |
 
 ## 本轮暴露的问题
 
@@ -88,6 +91,35 @@
 - `shared_runtime_deploy`: `POST /api/cds-system/remote-hosts/<hostId>/deploy-sidecar`
 
 优化：以后每个远程写动作都必须有 manifest，包含 safety、method、endpoint、requiredEnv、missingEnv、expectedPostCheck。
+
+### 6. 文档校准没有跟上远程修复
+
+问题：branch-local sidecar 已经清理，但 quickstart、runbook、migration plan、adapter design 和 `scripts/audit-cds-agent-goal.sh` 仍保留 `contaminated:4` 或“先清理 residual”的旧下一步。用户看到这些文档时，会以为修复没有发生，或者计划仍停在旧目标。
+
+处理：把当前权威状态统一为 `BRANCH_LOCAL_SIDECAR_CLEAN=pass`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`，并让 goal audit 以后检查新的状态面板文案。
+
+优化：每次远程写动作完成后，必须同步更新三类文档：当前状态、用户使用入口、目标审计脚本。不能只更新事故报告。
+
+### 7. 目标审计把旧证据当当前事实
+
+问题：本机环境变量里有 `CDS_HOST=https://miduo.org`，目标审计在没有明确要求 live 远程审计时仍尝试查询 CDS，导致 P0 计划失败；同时当 runtime pool 没有当前证据时，脚本会继续读取旧 one-cycle summary 的 R1 blocker，让执行方向看起来像“应该先修 profile”。
+
+处理：新增 `CDS_AGENT_GOAL_AUDIT_LIVE=1` 显式开关。不开 live 时，P0 远程状态只标记 `not_observed`；如果 runtime pool 未观测，当前 blocker 固定为 R0 evidence，而不是继承旧 one-cycle R1。
+
+优化：以后审计分两层：
+
+- 本地 guardrail：A0、D0、N6、evidence index，可以无网络跑。
+- live control-plane：R0 runtime pool、branch isolation、remote branch status，必须显式 `CDS_AGENT_GOAL_AUDIT_LIVE=1`。
+
+### 8. N6 慢点不是业务失败
+
+问题：目标审计中的 N6 dotnet 测试在沙箱内被 VSTest 本地 socket 限制拦住，表现为 `System.Net.Sockets.SocketException (13): Permission denied` 或超时。
+
+处理：N6 脚本增加 `DOTNET_CLI_USE_MSBUILD_SERVER=0`、`MSBUILDDISABLENODEREUSE=1`、`-m:1 /nodeReuse:false`，减少 MSBuild server/node reuse 干扰；随后沙箱外复跑 no-build N6 测试通过。
+
+证据：`dotnet test ... --no-build --filter 'FullyQualifiedName~CdsAgentRuntimeCompatibilityTests|FullyQualifiedName~InfraAgentRuntimeProfilesControllerTests'` 结果为 `27/27 pass`，测试执行 `64ms`。
+
+优化：目标审计里 N6 `infra_failed` 不再等同于业务失败；需要用沙箱外 no-build 测试确认。
 
 ## 最耗时项
 
