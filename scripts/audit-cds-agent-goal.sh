@@ -10,7 +10,7 @@
 #   - preserve one-cycle observability and avoid unnecessary deploy/build loops
 #
 # This script does not deploy and does not call the model provider. It runs the
-# local A0 and N6 guardrails, then emits a machine-readable completion report.
+# local A0, N6, and evidence-index guardrails, then emits a machine-readable completion report.
 # Commercial completion remains false until R1 and provider-backed S1/S2/S3
 # evidence exists.
 #
@@ -32,6 +32,7 @@ REPORT="${CDS_AGENT_GOAL_AUDIT_REPORT:-}"
 AUDIT_DIR="${CDS_AGENT_GOAL_AUDIT_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/cds-agent-goal-audit.XXXXXX")}"
 BOUNDARY_REPORT="$AUDIT_DIR/a0-boundary.json"
 N6_LOG="$AUDIT_DIR/n6-non-code-compatibility.log"
+EVIDENCE_INDEX_LOG="$AUDIT_DIR/evidence-index-quality.log"
 cycle_summary="${CDS_AGENT_GOAL_CYCLE_SUMMARY:-}"
 current_git_branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf '')"
 current_git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf '')"
@@ -44,7 +45,7 @@ timing_seconds=()
 timing_indices=()
 CYCLE_GIT_DIFF_PATHS=()
 CYCLE_GIT_RUNTIME_DIFF_PATHS=()
-TIMING_STEP_TOTAL=2
+TIMING_STEP_TOTAL=3
 TIMING_STEP_CURRENT=0
 AUDIT_HEARTBEAT_SECONDS="${CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS:-15}"
 AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
@@ -265,6 +266,12 @@ if [[ -z "$cycle_summary" ]]; then
   cycle_summary=$(find_latest_cycle_summary)
 fi
 
+if [[ -n "$cycle_summary" ]]; then
+  run_step_logged "Evidence index quality" "$EVIDENCE_INDEX_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-evidence-index.sh" "$cycle_summary" || true
+else
+  run_step_logged "Evidence index quality" "$EVIDENCE_INDEX_LOG" bash "$SCRIPT_DIR/smoke-cds-agent-evidence-index.sh" || true
+fi
+
 boundary_status="missing"
 adapter_lines=0
 adapter_max=0
@@ -291,6 +298,15 @@ elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "N6 
   n6_status="failed"
 elif [[ ! -s "$N6_LOG" ]]; then
   n6_status="missing"
+fi
+
+evidence_index_status="pass"
+if [[ -s "$EVIDENCE_INDEX_LOG" ]] && grep -q 'Evidence index smoke failed:' "$EVIDENCE_INDEX_LOG"; then
+  evidence_index_status="failed"
+elif (( ${#failures[@]} > 0 )) && printf '%s\n' "${failures[@]}" | grep -qx "Evidence index quality"; then
+  evidence_index_status="failed"
+elif [[ ! -s "$EVIDENCE_INDEX_LOG" ]]; then
+  evidence_index_status="missing"
 fi
 
 cycle_status="missing"
@@ -487,6 +503,9 @@ if [[ "$n6_status" != "pass" ]]; then
     failures+=("N6 compatibility did not pass")
   fi
 fi
+if [[ "$evidence_index_status" != "pass" ]]; then
+  failures+=("Evidence index quality did not pass")
+fi
 if [[ "$cycle_freshness_status" == "stale" ]]; then
   failures+=("one-cycle summary is stale; rerun scripts/smoke-cds-agent-one-cycle.sh for current remote/provider evidence")
 fi
@@ -517,6 +536,7 @@ missing_json=$(
     --arg gateS2S3 "$gate_s2s3" \
     --arg gateV1 "$gate_v1" \
     --arg gateN6 "$gate_n6" \
+    --arg evidenceIndexStatus "$evidence_index_status" \
     --arg cycleFreshness "$cycle_freshness_status" \
     --arg cycleGitStatus "$cycle_git_status" \
     '{
@@ -529,6 +549,7 @@ missing_json=$(
         V1: $gateV1,
         N6: $gateN6
       },
+      evidenceIndexStatus: $evidenceIndexStatus,
       cycleFreshness: $cycleFreshness,
       cycleGitStatus: $cycleGitStatus
     } as $root
@@ -537,6 +558,7 @@ missing_json=$(
       status: .value
     }))
     + (if $root.cycleFreshness == "stale" then [{requirement:"CYCLE_FRESHNESS", status:"stale"}] else [] end)
+    + (if $root.evidenceIndexStatus != "pass" then [{requirement:"EVIDENCE_INDEX", status:$root.evidenceIndexStatus}] else [] end)
     + (if ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch") then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
 failures_json='[]'
@@ -568,6 +590,7 @@ audit_json=$(
     --arg auditDir "$AUDIT_DIR" \
     --arg boundaryReport "$BOUNDARY_REPORT" \
     --arg n6Log "$N6_LOG" \
+    --arg evidenceIndexLog "$EVIDENCE_INDEX_LOG" \
     --arg cycleSummary "$cycle_summary" \
     --arg r1Report "$r1_report" \
     --arg s1Report "$s1_report" \
@@ -587,6 +610,7 @@ audit_json=$(
     --arg nextCommand "$next_command" \
     --arg boundaryStatus "$boundary_status" \
     --arg n6Status "$n6_status" \
+    --arg evidenceIndexStatus "$evidence_index_status" \
     --arg r1Status "$r1_status" \
     --arg s1Status "$s1_status" \
     --arg controlsStatus "$controls_status" \
@@ -639,6 +663,7 @@ audit_json=$(
       artifacts: {
         boundaryReport: $boundaryReport,
         nonCodeCompatibilityLog: $n6Log,
+        evidenceIndexLog: $evidenceIndexLog,
         cycleSummary: (if $cycleSummary == "" then null else $cycleSummary end),
         r1Report: (if $r1Report == "" then null else $r1Report end),
         s1Report: (if $s1Report == "" then null else $s1Report end),
@@ -648,6 +673,10 @@ audit_json=$(
         totalSeconds: $localTotalSeconds,
         steps: $localTiming,
         slowest: $localSlowest
+      },
+      evidenceIndexQuality: {
+        status: $evidenceIndexStatus,
+        log: $evidenceIndexLog
       },
       remoteCdsBranch: {
         observed: ($remoteBranchObserved == "true"),
@@ -708,6 +737,7 @@ audit_json=$(
         },
       oneCycleObservability: {
           status: (if $cycleStatus == "missing" then "missing-cycle-summary" elif $cycleFreshnessStatus == "stale" then "stale-cycle-summary" else "available" end),
+          evidenceIndexStatus: $evidenceIndexStatus,
           cycleStatus: $cycleStatus,
           freshness: {
             status: $cycleFreshnessStatus,
@@ -776,6 +806,7 @@ printf 'Commercial complete: %s\n' "$commercial_complete"
 printf 'A0 boundary: %s adapter=%s/%s support=%s/%s total=%s/%s legacy=%s\n' \
   "$boundary_status" "$adapter_lines" "$adapter_max" "$support_lines" "$support_max" "$bridge_total_lines" "$bridge_total_max" "$legacy_lines"
 printf 'N6 compatibility: %s\n' "$n6_status"
+printf 'Evidence index quality: %s\n' "$evidence_index_status"
 printf 'Cycle status: %s\n' "$cycle_status"
 printf 'Cycle freshness: %s age=%ss max=%ss git=%s@%s current=%s@%s match=%s\n' \
   "$cycle_freshness_status" "$cycle_age_seconds" "$CYCLE_MAX_AGE_SECONDS" \
