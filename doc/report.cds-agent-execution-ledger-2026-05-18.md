@@ -943,6 +943,8 @@ scripts/audit-cds-agent-goal.sh
 
 剩余：还需要在真实 CDS shared-service runtime 上执行 live evidence，使远程 summary 中 `sharedRunning > 0`，R0 才能从 pending 变为 pass。
 
+补充校准：R0.7 初版 profile 使用 `prd-agent/claude-sidecar:latest`，这会把产品路径隐性绑回“某个预构建 image 是否存在”。已改为 `python:3.12-slim` + 仓库内 `claude-sdk-sidecar/requirements.txt` 源码启动，避免要求普通用户/操作者提供 `CDS_AGENT_SIDECAR_IMAGE`。
+
 ## 承诺的记录方式
 
 后续继续推进时，每轮必须更新：

@@ -1354,10 +1354,10 @@ function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
     id: CDS_MANAGED_RUNTIME_PROFILE_ID,
     projectId,
     name: 'Claude Agent SDK Runtime',
-    dockerImage: 'prd-agent/claude-sidecar:latest',
+    dockerImage: 'python:3.12-slim',
     workDir: 'claude-sdk-sidecar',
     containerWorkDir: '/app',
-    command: 'uvicorn app.main:app --host 0.0.0.0 --port 7400',
+    command: 'python -m pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 7400 --no-server-header',
     containerPort: 7400,
     env: {
       SIDECAR_AGENT_ADAPTER: 'claude-agent-sdk',

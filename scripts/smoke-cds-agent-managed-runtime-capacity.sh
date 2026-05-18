@@ -78,6 +78,7 @@ require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" '/projects/:id/runti
 require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" '/projects/:id/runtime-capacity/reconcile' 'CDS exposes runtime capacity reconciler'
 require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" 'liveApply' 'CDS reconciler exposes live apply path'
 require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" 'containerService.runService' 'CDS reconciler uses CDS container service'
+require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" "dockerImage: 'python:3.12-slim'" 'CDS reconciler does not require user-provided sidecar image'
 require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" 'productPathOnly: true' 'CDS reconciler stays on product runtime path'
 require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" "requirement: 'CDS_MANAGED_RUNTIME_CAPACITY'" 'CDS capacity contract names product gate'
 require_contains "$ROOT_DIR/cds/src/routes/remote-hosts.ts" "capacityRole: 'operator-fallback'" 'CDS separates operator fallback capacity'

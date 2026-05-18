@@ -42,7 +42,7 @@ R0V managed-runtime post-check/live evidence：done_blocked，远程证据显示
 R0.5 CDS-managed runtime capacity smoke：done_guarded
 R0.5 CDS-managed runtime capacity contract/API：done_minimal
 R0.6 CDS-managed runtime capacity reconciler：done_minimal，CDS 已有 `/runtime-capacity/reconcile` dry-run/apply API 与 route 测试
-R0.7 CDS-managed runtime live apply：in_progress，`liveApply=true` 已接入 CDS `ContainerService.runService` + readiness，本地 route test 已证明 capacity 可从 live apply 变为 available
+R0.7 CDS-managed runtime live apply：in_progress，`liveApply=true` 已接入 CDS `ContainerService.runService` + readiness，本地 route test 已证明 capacity 可从 live apply 变为 available；managed runtime profile 已改为 CDS 用 `python:3.12-slim` 从仓库源码启动，不要求用户提供 sidecar image
 下一步：在真实 CDS shared-service runtime 上执行 live evidence，让 shared-service official SDK runtime running > 0
 ```
 
@@ -105,7 +105,7 @@ ssh root@62.146.168.225
 
 ## 2. 一句话进度
 
-`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；MAP Toolbox adapter 也已收回到 CDS session transport，默认不再排 MAP direct runtime job。R0V 远程只读证据已完成，结论是 CDS-managed runtime capacity 缺失；R0.5 已补 CDS `/api/projects/:id/runtime-capacity` 产品事实源，把 product runtime capacity 和 operator fallback capacity 分开；R0.6 已补 `/api/projects/:id/runtime-capacity/reconcile` 最小 reconciler/API 和 route 测试；R0.7 已把 `liveApply=true` 接到 CDS container service。下一步不能要求普通用户补 SSH/env/image，而是在真实 CDS shared-service runtime 上跑 live evidence。
+`prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。D1 架构口径已纠正，R0 fact-source 设计已落地，runtime-status 执行面板已从 remote host/image 主路径改成 CDS-managed runtime 主路径。CDS `/agent-sessions` 非 fake 路径已加 ownership guard，并能通过 shared-service branch service transport 调用 official SDK sidecar 协议；MAP Toolbox adapter 也已收回到 CDS session transport，默认不再排 MAP direct runtime job。R0V 远程只读证据已完成，结论是 CDS-managed runtime capacity 缺失；R0.5 已补 CDS `/api/projects/:id/runtime-capacity` 产品事实源，把 product runtime capacity 和 operator fallback capacity 分开；R0.6 已补 `/api/projects/:id/runtime-capacity/reconcile` 最小 reconciler/API 和 route 测试；R0.7 已把 `liveApply=true` 接到 CDS container service，且 runtime profile 不再依赖用户提供 sidecar image。下一步不能要求普通用户补 SSH/env/image，而是在真实 CDS shared-service runtime 上跑 live evidence。
 
 当前有效 blocker：
 
