@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 17:58 Asia/Shanghai
+> **更新时间**：2026-05-18 17:56 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -97,7 +97,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote host recovery dry-run | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` | `dry-run-missing-config` | 14s |
 | runbook publish verification | `/tmp/cds-agent-runbook-published/summary.json` | bundle has `applyManifest/preconditions` rendering | ~35s |
 | CDS branch status | `/tmp/cds-branch-status-final.json` | preview running, services only api/admin | ~1s |
-| goal audit fast | `/tmp/cds-agent-goal-audit-fast.json` | A0/D0/pass；R0 live not observed without explicit live flag；N6 sandbox infra_failed | 11s |
+| goal audit summary fast | `/tmp/cds-agent-goal-audit-summary-fast.json` | `source=summary`，R0=pending: remote host/shared runtime missing | 11s |
 | N6 no-build test | terminal output | 27/27 pass outside sandbox socket restriction | 64ms |
 
 ## 7. 时间和问题账本
@@ -130,6 +130,15 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 CDS_HOST=https://cds.miduo.org \
 CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \
   bash scripts/collect-cds-agent-runtime-pool-evidence.sh
+```
+
+用既有 R0 evidence 进行本地目标审计：
+
+```bash
+CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY=/tmp/cds-agent-runtime-pool-evidence-latest/summary.json \
+CDS_AGENT_GOAL_AUDIT_LIVE=0 \
+CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit-summary-fast.json \
+  bash scripts/audit-cds-agent-goal.sh
 ```
 
 只读刷新 remote host recovery manifest：

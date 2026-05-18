@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 17:58 Asia/Shanghai：
+截至 2026-05-18 17:56 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -32,6 +32,7 @@
 | 17:46 | 用户反馈没有计划，文档仍可能让人误以为目标漂移 | 扫描 docs/audit，修正旧 `contaminated:4` 口径和“先清理 residual”的过期下一步 | quickstart、runbook、migration plan、adapter design、root-cause report、goal audit | 约 4m | 统一为 `BRANCH_LOCAL_SIDECAR_CLEAN=pass`，下一步只剩 remote host/shared runtime |
 | 17:50 | 目标审计在无显式 live 输入时仍被环境变量带去查 `https://miduo.org`，并把旧 one-cycle R1 当当前 blocker | 改为 `CDS_AGENT_GOAL_AUDIT_LIVE=1` 才查远程；未观测 R0 时禁止把旧 R1 当当前结论 | `/tmp/cds-agent-goal-audit-fast.json` | 约 11s 快速审计 | 当前 blocker 回到 `R0 evidence not observed`，不会误导去修 R1 |
 | 17:56 | N6 在目标审计中超时，需区分测试失败还是沙箱问题 | 先在沙箱内复现 `Permission denied`，再用已批准的 `dotnet test` 沙箱外跑 no-build 测试 | dotnet test 输出 | 64ms 测试执行；审计超时 62s | 27/27 pass；目标审计的 N6 是 infra/sandbox failure，不是业务回归 |
+| 17:56 | 无 live 时只显示 R0 unknown 仍不够好，因为已有 `/tmp` R0 evidence 可用 | 让 goal audit 支持 `CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY`，直接消费 `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json` | `/tmp/cds-agent-goal-audit-summary-fast.json` | 11s | `runtimePoolRecovery.source=summary`，当前 blocker 精确为 remote host/shared runtime |
 
 ## 本轮暴露的问题
 
@@ -120,6 +121,16 @@
 证据：`dotnet test ... --no-build --filter 'FullyQualifiedName~CdsAgentRuntimeCompatibilityTests|FullyQualifiedName~InfraAgentRuntimeProfilesControllerTests'` 结果为 `27/27 pass`，测试执行 `64ms`。
 
 优化：目标审计里 N6 `infra_failed` 不再等同于业务失败；需要用沙箱外 no-build 测试确认。
+
+### 9. 无 live 审计也要能读已有 R0 证据
+
+问题：即使禁止无意 live 查询，目标审计也不应该退化成 R0 unknown。当前目录里已有 `/tmp/cds-agent-runtime-pool-evidence-latest/summary.json`，它足以证明 branch cleanup 已干净、remote host 和 shared runtime 仍缺失。
+
+处理：`scripts/audit-cds-agent-goal.sh` 新增 `CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY`。当 live plan 未运行但 summary 存在时，审计把 runtime pool recovery 标为 `source=summary`，并继承其中的 blockers。
+
+证据：`/tmp/cds-agent-goal-audit-summary-fast.json` 显示 `runtimePoolRecovery.status=pass`、`source=summary`、`contaminatedBranchCount=0`、`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`。
+
+优化：以后日常进度面板优先走“本地 guardrail + 最近 R0 summary”，只有要刷新远程事实时才开 `CDS_AGENT_GOAL_AUDIT_LIVE=1`。
 
 ## 最耗时项
 

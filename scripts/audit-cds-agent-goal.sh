@@ -21,6 +21,7 @@
 #   CDS_AGENT_GOAL_AUDIT_HEARTBEAT_SECONDS=15
 #   CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS=86400
 #   CDS_AGENT_GOAL_AUDIT_LIVE=1
+#   CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY=/tmp/cds-agent-runtime-pool-evidence-latest/summary.json
 #   CDS_HOST=https://cds.miduo.org
 #   SMOKE_CDS_BRANCH_ID=prd-agent-codex-cds-agent-workbench-ui
 # ============================================
@@ -56,6 +57,7 @@ AUDIT_STEP_TIMEOUT_SECONDS="${CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS:-90}"
 CYCLE_MAX_AGE_SECONDS="${CDS_AGENT_GOAL_CYCLE_MAX_AGE_SECONDS:-86400}"
 SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
 GOAL_AUDIT_LIVE="${CDS_AGENT_GOAL_AUDIT_LIVE:-0}"
+RUNTIME_POOL_SUMMARY="${CDS_AGENT_GOAL_RUNTIME_POOL_SUMMARY:-/tmp/cds-agent-runtime-pool-evidence-latest/summary.json}"
 
 run_step() {
   local label="$1"
@@ -162,6 +164,35 @@ find_latest_cycle_summary() {
 
 file_mtime() {
   stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null || printf '0'
+}
+
+runtime_pool_summary_to_plan() {
+  local summary="$1"
+  jq -c '
+    .plan // {
+      sharedPoolId: (.plan.sharedPoolId // "shared-sidecar-pool-mp4anabh"),
+      sharedKind: (.plan.sharedKind // "unknown"),
+      sharedBranchCount: (.plan.sharedBranchCount // 0),
+      sharedRunning: (.remoteHost.sharedRunning // 0),
+      contaminatedBranchCount: (.branchIsolation.contaminatedBranchCount // 0),
+      contaminatedProfileIds: (.branchIsolation.candidateProfileIds // []),
+      remoteHostCount: (.remoteHost.existingHostCount // "unknown"),
+      enabledRemoteHostCount: (.remoteHost.enabledHostCount // "unknown"),
+      branchDeploySharedPoolAllowed: (.plan.branchDeploySharedPoolAllowed // false)
+    }
+  ' "$summary"
+}
+
+runtime_pool_plan_blockers() {
+  jq -c '
+    [
+      (if .sharedKind != "shared-service" then {requirement:"SHARED_POOL_KIND", status:.sharedKind} else empty end),
+      (if (.contaminatedBranchCount // 0) > 0 then {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + ((.contaminatedBranchCount // 0)|tostring))} else empty end),
+      (if ((.enabledRemoteHostCount | tostring | test("^[0-9]+$")) and ((.enabledRemoteHostCount | tonumber) <= 0)) then {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"} else empty end),
+      (if (.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end),
+      (if ((has("branchDeploySharedPoolAllowed") | not) or .branchDeploySharedPoolAllowed != false) then {requirement:"SHARED_POOL_BRANCH_DEPLOY_FORBIDDEN", status:"not-enforced"} else empty end)
+    ]
+  '
 }
 
 is_non_runtime_cycle_drift_path() {
@@ -491,6 +522,8 @@ fi
 
 runtime_pool_plan_status="missing"
 runtime_pool_plan_json='null'
+runtime_pool_plan_source="none"
+runtime_pool_summary_age_seconds=0
 runtime_pool_shared_kind="unknown"
 runtime_pool_shared_running=0
 runtime_pool_contaminated_count=0
@@ -511,6 +544,12 @@ fi
 if [[ -s "$branch_manifest_summary" ]]; then
   branch_manifest_json=$(jq -c '{summary: input_filename, apply, verdict, beforeContaminatedBranchCount, applyManifest, repair: {status: .repair.status, candidateProfileIds: .repair.candidateProfileIds, deletedProfileIds: .repair.deletedProfileIds}}' "$branch_manifest_summary" 2>/dev/null || printf 'null')
 fi
+if [[ "$branch_manifest_status" == "not_observed" && -s "$RUNTIME_POOL_SUMMARY" ]]; then
+  if jq -e '(.branchIsolation.evidenceCaptured // false) == true and (.branchIsolation.clean // false) == true' "$RUNTIME_POOL_SUMMARY" >/dev/null 2>&1; then
+    branch_manifest_status="clean_from_runtime_pool_summary"
+    branch_manifest_json=$(jq -c '{summary: input_filename, apply: false, verdict: (.branchIsolation.verdict // "dry-run-clean"), beforeContaminatedBranchCount: (.branchIsolation.contaminatedBranchCount // 0), applyManifest: (.branchIsolation.applyManifest // null), repair: {status: (.branchIsolation.repairStatus // null), candidateProfileIds: (.branchIsolation.candidateProfileIds // []), deletedProfileIds: []}}' "$RUNTIME_POOL_SUMMARY" 2>/dev/null || printf 'null')
+  fi
+fi
 if [[ -s "$RUNTIME_POOL_PLAN_LOG" ]]; then
   if grep -Eq '^SKIPPED: (CDS_HOST is not set|CDS_AGENT_GOAL_AUDIT_LIVE is not 1)' "$RUNTIME_POOL_PLAN_LOG"; then
     runtime_pool_plan_status="not_observed"
@@ -526,17 +565,26 @@ if [[ -s "$RUNTIME_POOL_PLAN_LOG" ]]; then
       runtime_pool_enabled_host_count=$(jq -r '.enabledRemoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
       runtime_pool_branch_deploy_allowed=$(jq -r 'if has("branchDeploySharedPoolAllowed") then (.branchDeploySharedPoolAllowed | tostring) else "unknown" end' <<< "$runtime_pool_plan_json")
       runtime_pool_plan_status="pass"
-      runtime_pool_blockers_json=$(
-        jq -c '
-          [
-            (if .sharedKind != "shared-service" then {requirement:"SHARED_POOL_KIND", status:.sharedKind} else empty end),
-            (if (.contaminatedBranchCount // 0) > 0 then {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + ((.contaminatedBranchCount // 0)|tostring))} else empty end),
-            (if ((.enabledRemoteHostCount | tostring | test("^[0-9]+$")) and ((.enabledRemoteHostCount | tonumber) <= 0)) then {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"} else empty end),
-            (if (.sharedRunning // 0) <= 0 then {requirement:"SHARED_POOL_RUNNING", status:"missing"} else empty end),
-            (if ((has("branchDeploySharedPoolAllowed") | not) or .branchDeploySharedPoolAllowed != false) then {requirement:"SHARED_POOL_BRANCH_DEPLOY_FORBIDDEN", status:"not-enforced"} else empty end)
-          ]
-        ' <<< "$runtime_pool_plan_json"
-      )
+      runtime_pool_plan_source="live-plan"
+      runtime_pool_blockers_json=$(runtime_pool_plan_blockers <<< "$runtime_pool_plan_json")
+    fi
+  fi
+fi
+if [[ "$runtime_pool_plan_status" != "pass" && -s "$RUNTIME_POOL_SUMMARY" ]]; then
+  runtime_pool_plan_json=$(runtime_pool_summary_to_plan "$RUNTIME_POOL_SUMMARY" 2>/dev/null || printf 'null')
+  if [[ "$runtime_pool_plan_json" != "null" ]]; then
+    runtime_pool_shared_kind=$(jq -r '.sharedKind // "unknown"' <<< "$runtime_pool_plan_json")
+    runtime_pool_shared_running=$(jq -r '.sharedRunning // 0' <<< "$runtime_pool_plan_json")
+    runtime_pool_contaminated_count=$(jq -r '.contaminatedBranchCount // 0' <<< "$runtime_pool_plan_json")
+    runtime_pool_remote_host_count=$(jq -r '.remoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
+    runtime_pool_enabled_host_count=$(jq -r '.enabledRemoteHostCount // "unknown"' <<< "$runtime_pool_plan_json")
+    runtime_pool_branch_deploy_allowed=$(jq -r 'if has("branchDeploySharedPoolAllowed") then (.branchDeploySharedPoolAllowed | tostring) else "unknown" end' <<< "$runtime_pool_plan_json")
+    runtime_pool_plan_status="pass"
+    runtime_pool_plan_source="summary"
+    runtime_pool_summary_age_seconds=$(( $(date +%s) - $(file_mtime "$RUNTIME_POOL_SUMMARY") ))
+    runtime_pool_blockers_json=$(jq -c '.runtimePoolBlockers // []' "$RUNTIME_POOL_SUMMARY" 2>/dev/null || printf '[]')
+    if [[ "$runtime_pool_blockers_json" == "[]" ]]; then
+      runtime_pool_blockers_json=$(runtime_pool_plan_blockers <<< "$runtime_pool_plan_json")
     fi
   fi
 fi
@@ -790,7 +838,11 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   gate_r0="pending"
   current_blocking_gate="R0"
   blocking_reason="Runtime pool recovery is still blocked: $(jq -r 'map(.requirement + "=" + .status) | join(", ")' <<< "$runtime_pool_blockers_json")."
-  deployment_advice="Do not redeploy for this state. Collect runtime pool evidence, clean branch-local sidecar residuals, register an enabled remote host, and restore the shared official SDK runtime pool first."
+  if jq -e 'any(.requirement == "BRANCH_LOCAL_SIDECAR_CLEAN")' <<< "$runtime_pool_blockers_json" >/dev/null; then
+    deployment_advice="Do not redeploy for this state. Clean branch-local sidecar residuals, then register an enabled remote host and restore the shared official SDK runtime pool."
+  else
+    deployment_advice="Do not redeploy for this state. Branch-local sidecar cleanup is already clean; register an enabled remote host and restore the shared official SDK runtime pool."
+  fi
   next_command="CDS_HOST=https://cds.miduo.org CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 bash scripts/collect-cds-agent-runtime-pool-evidence.sh"
 fi
 
@@ -815,7 +867,7 @@ if [[ "$runtime_pool_plan_status" != "pass" ]]; then
 elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
   failures+=("P0 branch isolation/shared pool is not recovered")
 fi
-if [[ "$branch_manifest_status" != "pass" ]]; then
+if [[ "$branch_manifest_status" != "pass" && "$branch_manifest_status" != "clean_from_runtime_pool_summary" ]]; then
   failures+=("P0 branch isolation apply manifest did not pass")
 fi
 if [[ "$runtime_pool_blocker_count" == "0" && "$cycle_freshness_status" == "stale" ]]; then
@@ -885,7 +937,7 @@ missing_json=$(
     + (if $root.docsCalibrationStatus != "pass" then [{requirement:"D0_DOCS_CALIBRATION", status:$root.docsCalibrationStatus}] else [] end)
     + (if $root.evidenceIndexStatus != "pass" then [{requirement:"EVIDENCE_INDEX", status:$root.evidenceIndexStatus}] else [] end)
     + (if $root.runtimePoolPlanStatus != "pass" then [{requirement:"P0_RUNTIME_POOL_PLAN", status:$root.runtimePoolPlanStatus}] else [] end)
-    + (if $root.branchManifestStatus != "pass" then [{requirement:"P0_BRANCH_ISOLATION_APPLY_MANIFEST", status:$root.branchManifestStatus}] else [] end)
+    + (if ($root.branchManifestStatus != "pass" and $root.branchManifestStatus != "clean_from_runtime_pool_summary") then [{requirement:"P0_BRANCH_ISOLATION_APPLY_MANIFEST", status:$root.branchManifestStatus}] else [] end)
     + $root.runtimePoolBlockers
     + (if (($root.runtimePoolBlockers | length) == 0 and ($root.cycleGitStatus == "mismatch" or $root.cycleGitStatus == "runtime_mismatch")) then [{requirement:"CYCLE_GIT_MATCH", status:$root.cycleGitStatus}] else [] end)'
 )
@@ -944,6 +996,8 @@ audit_json=$(
     --arg n6Status "$n6_status" \
     --arg evidenceIndexStatus "$evidence_index_status" \
     --arg runtimePoolPlanStatus "$runtime_pool_plan_status" \
+    --arg runtimePoolPlanSource "$runtime_pool_plan_source" \
+    --arg runtimePoolSummary "$RUNTIME_POOL_SUMMARY" \
     --arg branchManifestStatus "$branch_manifest_status" \
     --arg r1Status "$r1_status" \
     --arg s1Status "$s1_status" \
@@ -988,6 +1042,7 @@ audit_json=$(
     --argjson cycleMaxAgeSeconds "$CYCLE_MAX_AGE_SECONDS" \
     --argjson cycleGitDiffPaths "$cycle_git_diff_json" \
     --argjson cycleGitRuntimeDiffPaths "$cycle_git_runtime_diff_json" \
+    --argjson runtimePoolSummaryAgeSeconds "$runtime_pool_summary_age_seconds" \
     --argjson cycleSlowest "$cycle_slowest" \
     --argjson nextCyclePlan "$next_cycle_plan_json" \
     --argjson localTiming "$timing_json" \
@@ -1030,6 +1085,9 @@ audit_json=$(
       },
       runtimePoolRecovery: {
         status: $runtimePoolPlanStatus,
+        source: $runtimePoolPlanSource,
+        summary: (if $runtimePoolSummary == "" then null else $runtimePoolSummary end),
+        summaryAgeSeconds: $runtimePoolSummaryAgeSeconds,
         log: $runtimePoolPlanLog,
         plan: $runtimePoolPlan,
         blockers: $runtimePoolBlockers,
@@ -1207,8 +1265,9 @@ printf 'A0 boundary: %s adapter=%s/%s support=%s/%s total=%s/%s legacy=%s\n' \
 printf 'D0 docs calibration: %s\n' "$docs_calibration_status"
 printf 'N6 compatibility: %s\n' "$n6_status"
 printf 'Evidence index quality: %s\n' "$evidence_index_status"
-printf 'Runtime pool recovery: %s sharedKind=%s sharedRunning=%s contaminatedBranches=%s remoteHosts=%s enabledHosts=%s branchDeployAllowed=%s\n' \
+printf 'Runtime pool recovery: %s source=%s sharedKind=%s sharedRunning=%s contaminatedBranches=%s remoteHosts=%s enabledHosts=%s branchDeployAllowed=%s\n' \
   "$runtime_pool_plan_status" \
+  "$runtime_pool_plan_source" \
   "$runtime_pool_shared_kind" \
   "$runtime_pool_shared_running" \
   "$runtime_pool_contaminated_count" \
