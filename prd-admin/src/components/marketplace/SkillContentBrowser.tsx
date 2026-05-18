@@ -156,7 +156,10 @@ export function SkillContentBrowser({
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const filesRef = useRef<Map<string, JSZip.JSZipObject>>(new Map());
-  const objectUrlsRef = useRef<string[]>([]);
+  // 仅保留"当前预览"的 blob URL —— 切文件即回收上一个，避免内存堆积
+  const currentUrlRef = useRef<string | null>(null);
+  // 单调递增序号：解决"快速点 A 再点 B，A 的慢解压后覆盖 B"的竞态
+  const loadSeqRef = useRef(0);
 
   const sizeHint = useMemo(() => {
     if (!sizeBytes) return '';
@@ -165,35 +168,48 @@ export function SkillContentBrowser({
   }, [sizeBytes]);
 
   const revokeUrls = useCallback(() => {
-    objectUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
-    objectUrlsRef.current = [];
+    if (currentUrlRef.current) {
+      URL.revokeObjectURL(currentUrlRef.current);
+      currentUrlRef.current = null;
+    }
   }, []);
 
   const loadFile = useCallback(async (path: string) => {
     const obj = filesRef.current.get(path);
     if (!obj) return;
+    const seq = ++loadSeqRef.current;
     setSelectedPath(path);
     const name = basename(path);
     const cfg = getFileTypeConfig(name, '');
     try {
       if (cfg.preview === 'text') {
         const text = await obj.async('string');
+        if (loadSeqRef.current !== seq) return; // 已被更晚的选择取代，丢弃
+        revokeUrls(); // 切到文本视图：回收上一个 blob URL
         setPreview({ text, fileUrl: null, contentType: '' });
         return;
       }
       const blobRaw = await obj.async('blob');
+      if (loadSeqRef.current !== seq) return;
       const mime = MIME_BY_EXT[extOf(name)] || '';
       const blob = mime ? new Blob([blobRaw], { type: mime }) : blobRaw;
       const url = URL.createObjectURL(blob);
-      objectUrlsRef.current.push(url);
+      if (loadSeqRef.current !== seq) {
+        URL.revokeObjectURL(url); // 创建后才发现已过期，立即回收
+        return;
+      }
+      revokeUrls(); // 回收上一个文件的 blob URL，再挂当前
+      currentUrlRef.current = url;
       setPreview({ text: null, fileUrl: url, contentType: mime });
     } catch {
+      if (loadSeqRef.current !== seq) return;
       setPreview({ text: '> 该文件读取失败', fileUrl: null, contentType: '' });
     }
-  }, []);
+  }, [revokeUrls]);
 
   useEffect(() => {
     let cancelled = false;
+    loadSeqRef.current++; // 让上一个 zipUrl 仍在飞的 loadFile 立即作废
     setStatus('loading');
     setError(null);
     setPreview(null);
