@@ -1,11 +1,83 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 20:24 Asia/Shanghai
+> **更新时间**：2026-05-18 20:32 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
 
-## 1. 一句话进度
+## 1. 项目级答案
+
+### 1.1 预计什么时候结束
+
+从 R0 所需输入齐全开始计算：
+
+```text
+R0 打通：20-50 分钟
+R1/S1/S2/S3/V1 一轮真实验收：30-60 分钟
+最终整理验收：10-20 分钟
+总计：约 1-2 小时
+```
+
+当前不能按这个倒计时执行，因为 R0 仍缺外部输入：一个 remote host 可 `docker pull` 的 `CDS_AGENT_SIDECAR_IMAGE`，以及 remote host 承载参数。
+
+### 1.2 一共多少步骤
+
+| 顺序 | 阶段 | 状态 | 剩余时间 |
+| --- | --- | --- | --- |
+| 1 | A0 官方 SDK adapter 边界 | done | 0 |
+| 2 | N6 其他智能体兼容性 | done | 0 |
+| 3 | R0 shared runtime pool 恢复 | blocked | 输入齐全后 20-50 分钟 |
+| 4 | R1 Claude/Anthropic profile 修正 | pending | 5-15 分钟 |
+| 5 | S1 只读真实 run | pending | 5-10 分钟 |
+| 6 | S2/S3 审批、取消、错误路径 | pending | 10-15 分钟 |
+| 7 | V1 真实页面视觉/交互验证 | pending | 5-10 分钟 |
+| 8 | 最终商业级验收/文档归档 | pending | 10-20 分钟 |
+
+### 1.3 现在在哪一步
+
+```text
+第 3 步：R0 shared runtime pool 恢复
+```
+
+R0 的完成标准不是“页面能打开”，而是：
+
+```text
+sidecar image 可被 remote host pull
+-> CDS 有 enabled remote host
+-> shared official SDK runtime running
+-> MAP runtime-status 能发现 healthy runtime
+```
+
+当前未满足：
+
+```text
+SIDECAR_IMAGE_PULLABLE=missing
+REMOTE_HOST_AVAILABLE=missing
+SHARED_POOL_RUNNING=missing
+```
+
+### 1.4 我需要你协助什么
+
+最小输入是：
+
+```text
+CDS_AGENT_SIDECAR_IMAGE=<任意 registry image，只要目标 remote host 能 docker pull>
+CDS_REMOTE_HOST_NAME=<name>
+CDS_REMOTE_HOST_HOST=<host-or-ip>
+CDS_REMOTE_HOST_SSH_USER=<ssh-user>
+CDS_REMOTE_HOST_SSH_PRIVATE_KEY_FILE=<private-key-file>
+```
+
+如果你已有可拉取的镜像，直接给 `CDS_AGENT_SIDECAR_IMAGE`，不用 GHCR。GHCR 只是当前仓库场景下自动推导的候选发布路径，不是架构目标。
+
+### 1.5 最关键文档
+
+只看这两个：
+
+- `doc/status.cds-agent-current-progress.md`：当前项目级进度、剩余步骤、当前 blocker、下一步。
+- `doc/report.cds-agent-execution-ledger-2026-05-18.md`：执行账本，记录做过什么、耗时、哪里兜圈、如何避免再兜圈。
+
+## 2. 一句话进度
 
 `prd-agent` 主系统已经不再被 `claude-agent-sdk-runtime-v2` 侵入。现在卡住的不是页面、构建或普通 preview deploy，而是 CDS 系统侧没有 enabled remote host，也没有 running 的 shared official SDK runtime sidecar。
 
@@ -19,9 +91,9 @@
 | `SIDECAR_IMAGE_PULLABLE` | blocked | CDS deployer 是 `docker pull` 模式；本仓库有 Dockerfile，但不能证明远程 host 可拉取 |
 | `SIDECAR_BUILD_CONTEXT` | pass | `claude-sdk-sidecar` Dockerfile/requirements/app/healthz/readyz/official SDK dependency 本地预检通过 |
 | `SIDECAR_LOCAL_BUILD` | pass | Colima broken instance 已清理并重启；`prd-agent/claude-sidecar:latest` 本地 Docker build 通过 |
-| `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行 |
+| `SIDECAR_REGISTRY_PUBLISH` | ready | registry-qualified candidate 已确定；本地 tag 已创建，外部 push 尚未执行；也可直接提供其他可 pull registry image |
 | `SIDECAR_LOCAL_REGISTRY_TAG` | pass | 候选 tag `ghcr.io/inernoro/prd-agent/claude-sidecar:0f14b13f0c84` 已本地创建；`pushAttempted=false` |
-| `SIDECAR_MANUAL_CI_PUBLISH` | ready | `.github/workflows/cds-sidecar-image.yml` 只支持手动 `workflow_dispatch` 发布 GHCR image |
+| `SIDECAR_MANUAL_CI_PUBLISH` | optional | `.github/workflows/cds-sidecar-image.yml` 是 GHCR 候选路径；如果已有可 pull image 可跳过 |
 | `SIDECAR_REGISTRY_MANIFEST` | not checked | 发布完成后先用只读 registry manifest 检查确认 image tag 可见，再 SSH 到 remote host |
 | `REMOTE_HOST_PULL` | blocked | 默认报告 `missing_config`；需要 remote host SSH 参数和 registry image，显式 `CDS_AGENT_REMOTE_PULL_VERIFY=1` 才 SSH 执行 `docker pull` |
 
@@ -35,7 +107,7 @@ scripts/print-cds-agent-lifecycle-overview.sh
 
 这些命令只读，不部署、不写远程、不输出 secret。`refresh-cds-agent-r0-status.sh` 默认只做本地刷新；只有显式设置 `CDS_AGENT_WORKFLOW_CHECK=1` 才查询 GitHub Actions 状态。它会统一刷新 publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle 和 progress board，避免多个 `/tmp` 证据文件停留在不同 commit。
 
-## 2. 阶段总览
+## 3. 阶段总览
 
 完整生命周期不是“做页面”一个阶段，而是 8 个 gate：
 
@@ -57,7 +129,7 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | V1 视觉验证 | [x] 页面支持 | bundle publish check | partial | R0/R1/S1 后做登录态截图 |
 | N6 非代码智能体兼容 | [x] | `/tmp/cds-agent-n6-non-code-compatibility-current.json` | 已完成 | one-cycle 前后复跑 |
 
-## 3. 当前 R0 看板
+## 4. 当前 R0 看板
 
 | 项 | 当前值 | 证据 |
 | --- | --- | --- |
@@ -76,13 +148,13 @@ S2 approval -> S3 cancel/error -> V1 visual/live page -> Release hardening
 | sidecar registry manifest | `not checked` | `/tmp/cds-agent-sidecar-registry-image-current.json` |
 | remote host docker pull | `missing_config` | `/tmp/cds-agent-remote-sidecar-pull-current.json` |
 
-## 4. 下一步最小计划
+## 5. 下一步最小计划
 
 只做 R0 runtime pool 恢复，不做页面重画，不做普通 preview redeploy。
 
 | 顺序 | 动作 | 需要输入 | 成功证据 |
 | --- | --- | --- | --- |
-| 1 | 发布 sidecar image | 手动 GitHub Actions dispatch 或显式批准本机 GHCR push | workflow summary 输出 `CDS_AGENT_SIDECAR_IMAGE` |
+| 1 | 确定 sidecar image | 提供任意 remote host 可 pull 的 `CDS_AGENT_SIDECAR_IMAGE`；GHCR 只是候选发布路径 | registry manifest 可见或目标 host 可 pull |
 | 2 | 只读验证 registry manifest | `CDS_AGENT_SIDECAR_IMAGE` | `/tmp/cds-agent-sidecar-registry-image-current.json` 为 `manifest_visible` |
 | 3 | 创建/登记 enabled remote host | `CDS_REMOTE_HOST_NAME`、`CDS_REMOTE_HOST_HOST`、`CDS_REMOTE_HOST_SSH_USER`、SSH private key | `enabledHostCount > 0` |
 | 4 | 验证 remote host 可 pull image 并部署 shared runtime | `CDS_AGENT_SIDECAR_IMAGE`，可选 `CDS_AGENT_SIDECAR_PORT=7400` | `remote pull=pass`、`sharedRunning > 0` |
@@ -112,7 +184,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
   bash scripts/smoke-cds-agent-shared-service-pool.sh
 ```
 
-## 5. 已完成清单
+## 6. 已完成清单
 
 | 完成项 | 证据 |
 | --- | --- |
@@ -124,7 +196,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote host dry-run 输出两阶段 recovery manifest | `/tmp/cds-agent-remote-host-pool-manifest-current/summary.json` |
 | 过程账本落地 | `doc/report.cds-agent-execution-ledger-2026-05-18.md` |
 
-## 6. 最新证据
+## 7. 最新证据
 
 | 证据 | 路径 | 结论 | 耗时 |
 | --- | --- | --- | --- |
@@ -162,7 +234,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | sidecar registry manifest verify | `/tmp/cds-agent-sidecar-registry-image-current.json` | 默认 dry-run；显式 `CDS_AGENT_SIDECAR_REGISTRY_VERIFY=1` 后只读查询 GHCR manifest | <1s dry-run |
 | R0 status refresh bundle | `/tmp/cds-agent-r0-status-refresh-current.md` | 一键刷新当前 HEAD image、publish handoff、workflow dry-run/status、registry dry-run、readiness、operator handoff、lifecycle、progress board | <3s |
 
-## 7. 时间和问题账本
+## 8. 时间和问题账本
 
 详细过程、问题、处理、耗时和优化记录在：
 
@@ -195,7 +267,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 | remote sidecar pull dry-run | <1s | 独立验证目标 host 是否可 pull image；不创建 CDS host、不运行 sidecar |
 | dynamic exact next step | <1s | 不再固定跳到 remote-host handoff；先走当前最靠前的失败 gate |
 
-## 8. 不要做的事
+## 9. 不要做的事
 
 - 不要为了当前 blocker 重复普通 preview redeploy。
 - 不要把 `claude-agent-sdk-runtime*` 写回 `prd-agent` compose services。
@@ -203,7 +275,7 @@ SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 \
 - 不要在 `REMOTE_HOST_AVAILABLE` 和 `SHARED_POOL_RUNNING` 未通过时跑 provider one-cycle。
 - 不要把历史 preview alias 成功当作 shared-service runtime pool 恢复。
 
-## 9. 当前命令
+## 10. 当前命令
 
 查看当前任务纵览：
 

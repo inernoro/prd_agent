@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:24 Asia/Shanghai：
+截至 2026-05-18 20:32 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -29,6 +29,8 @@
 - 已解决：新增一键只读 R0 状态刷新入口，统一刷新 handoff/workflow/readiness/operator/lifecycle/progress，减少旧 `/tmp` 证据干扰。
 - 已解决：新增 GitHub Actions workflow 状态检查脚本，默认 dry-run；显式开启后把 workflow 404/API 失败写入结构化报告。
 - 已确认：workflow 文件已存在于 `codex/cds-agent-workbench-ui`，但 GitHub Actions workflow API 仍不可 dispatch/list，状态为 `workflow_file_on_branch_not_indexed`。
+- 已校准：GHCR 降级为候选路径；R0 主输入是任意 remote host 可 `docker pull` 的 `CDS_AGENT_SIDECAR_IMAGE`。
+- 已校准：`doc/status.cds-agent-current-progress.md` 第一屏现在直接回答预计结束时间、总步骤、当前位置、需要用户协助项和关键文档。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -73,6 +75,7 @@
 | 20:14 | 每次提交后需要分别运行多个脚本刷新 `/tmp` 证据，容易让 progress board、handoff、readiness 不在同一 commit | 新增 `scripts/refresh-cds-agent-r0-status.sh` | `/tmp/cds-agent-r0-status-refresh-current.md` | <3s | 一个命令刷新 publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress |
 | 20:18 | 手动发布 workflow 是否存在/是否运行只能靠打开 GitHub 页面；`gh api` 当前返回 404 时没有结构化沉淀 | 新增 `scripts/check-cds-agent-sidecar-workflow.sh`，并由 refresh 脚本默认 dry-run 调用 | `/tmp/cds-agent-sidecar-workflow-current.json` | <1s dry-run；显式检查约 1s | workflow 404/API 失败会进入报告，不再散落在终端 |
 | 20:22 | workflow runs API 返回 404，但无法区分文件未推送还是 Actions 未索引 | workflow 检查脚本追加 contents API fallback | `/tmp/cds-agent-sidecar-workflow-current.json` | 约 1s | `workflowFileVisible=true`、`workflowStatus=workflow_file_on_branch_not_indexed` |
+| 20:32 | 用户指出 GHCR 意义不清且项目级进度不清楚 | GHCR 从主路径降级为候选；进度文档第一屏增加 8 步、ETA、当前位置、需要用户协助项 | `doc/status.cds-agent-current-progress.md`、publish handoff | 本地编辑 | R0 主输入回到 `CDS_AGENT_SIDECAR_IMAGE=<任意可 pull image>` |
 
 ## 本轮暴露的问题
 
@@ -693,6 +696,43 @@
   - `status=workflow_file_on_branch_not_indexed`
 
 优化：发布阻塞现在从“workflow 404”细化为“文件在分支上，但 Actions 不可 dispatch/list”，下一步选择更明确。
+
+### 39. GHCR 不能成为架构目标
+
+问题：用户指出“做 ghcr.io 的意义在哪里”。这是合理质疑。R0 的真实要求不是 GHCR，而是给 CDS remote deployer 一个 remote host 可 `docker pull` 的 `CDS_AGENT_SIDECAR_IMAGE`。继续把 GHCR 写成主路径会制造不必要复杂度。
+
+处理：
+
+- `scripts/print-cds-agent-sidecar-publish-handoff.sh` 改为 registry-agnostic 口径。
+- `CDS_AGENT_SIDECAR_IMAGE` 被标为 required image input。
+- GHCR 只作为 GitHub repo 的默认 candidate image。
+- 支持 `CDS_AGENT_SIDECAR_IMAGE_REPOSITORY` 覆盖候选仓库。
+- `scripts/refresh-cds-agent-r0-status.sh` 区分 `imageSource=provided|candidate`。
+
+证据：
+
+- publish handoff 第一屏写明“Use any registry image that the target remote host can docker pull”。
+- R0 status refresh 写出 `requiredImageInput=CDS_AGENT_SIDECAR_IMAGE`、`candidateSidecarImage`、`registryCheckImage`。
+
+优化：R0 发布路径从“GHCR 优先”收敛为“任意可 pull registry image 优先，GHCR 只是候选”。
+
+### 40. 进度文档必须第一屏回答项目级问题
+
+问题：用户多次要求知道预计什么时候结束、规划多少步骤、当前在哪一步、关键文档在哪。此前这些信息分散在聊天、脚本输出和长账本中，第一屏没有稳定回答。
+
+处理：
+
+- `doc/status.cds-agent-current-progress.md` 第一节改为“项目级答案”。
+- 明确从输入齐全开始预计 1-2 小时完成真实一轮验收。
+- 明确总共 8 步，当前在第 3 步 R0。
+- 明确最小协助输入：`CDS_AGENT_SIDECAR_IMAGE` + remote host SSH 信息。
+- 明确只需看两个文档：当前进度面板和执行账本。
+
+证据：
+
+- `doc/status.cds-agent-current-progress.md` 的 `## 1. 项目级答案`。
+
+优化：后续同步进度时先更新项目级答案，再补技术细节。
 
 ## 最耗时项
 
