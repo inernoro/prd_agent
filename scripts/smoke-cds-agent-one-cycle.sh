@@ -40,6 +40,7 @@ git_branch="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf '')
 git_commit="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || printf '')"
 git_commit_short="$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || printf '')"
 SMOKE_CDS_AGENT_CYCLE_DIR="${SMOKE_CDS_AGENT_CYCLE_DIR:-/tmp/cds-agent-cycle-$CYCLE_ID}"
+SMOKE_CDS_BRANCH_ID="${SMOKE_CDS_BRANCH_ID:-prd-agent-codex-cds-agent-workbench-ui}"
 
 mkdir -p "$SMOKE_CDS_AGENT_CYCLE_DIR"
 
@@ -79,6 +80,55 @@ record_timing() {
   timing_phases+=("$phase")
   timing_indices+=("$SMOKE_STEP_CURRENT")
   timing_totals+=("$SMOKE_STEP_TOTAL")
+}
+
+read_remote_branch_status() {
+  if [[ -z "${CDS_HOST:-}" ]]; then
+    return 1
+  fi
+  if [[ ! -f "$ROOT_DIR/.claude/skills/cds/cli/cdscli.py" ]]; then
+    return 1
+  fi
+  CDS_HOST="$CDS_HOST" python3 "$ROOT_DIR/.claude/skills/cds/cli/cdscli.py" branch status "$SMOKE_CDS_BRANCH_ID" 2>/dev/null || return 1
+}
+
+is_non_runtime_cycle_drift_path() {
+  local path="$1"
+  case "$path" in
+    *.md|*.MD|*.txt|*.TXT) return 0 ;;
+    CHANGELOG*|changelogs/*|doc/*|.claude/*|.github/*|e2e/*) return 0 ;;
+    cds/tests/*|prd-admin/src/*/__tests__/*) return 0 ;;
+    scripts/smoke-*|scripts/audit-*|scripts/doctor-*|scripts/preflight-*|scripts/verify-*|scripts/index-*) return 0 ;;
+    LICENSE|license|.gitignore|.editorconfig) return 0 ;;
+  esac
+  return 1
+}
+
+classify_remote_runtime_git_drift() {
+  local base_commit="$1"
+  local head_commit="$2"
+  local diff_output path has_paths=false has_runtime=false
+  if [[ -z "$base_commit" || -z "$head_commit" ]]; then
+    return 1
+  fi
+  if ! diff_output=$(git -C "$ROOT_DIR" diff --name-only "${base_commit}..${head_commit}" 2>/dev/null); then
+    return 1
+  fi
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    has_paths=true
+    if ! is_non_runtime_cycle_drift_path "$path"; then
+      has_runtime=true
+      break
+    fi
+  done <<< "$diff_output"
+  if [[ "$has_runtime" == "true" ]]; then
+    return 2
+  fi
+  if [[ "$has_paths" == "true" ]]; then
+    return 0
+  fi
+  return 3
 }
 
 next_step() {
@@ -175,6 +225,18 @@ finish_cycle() {
   local failure_kind="none"
   local failure_advice=""
   local narrow_rerun_command=""
+  local remote_branch_status_json="null"
+  local remote_branch_observed=false
+  local remote_branch_status="skipped"
+  local remote_branch_id="$SMOKE_CDS_BRANCH_ID"
+  local remote_github_commit=""
+  local remote_runtime_commit=""
+  local remote_subject=""
+  local remote_preview_slug=""
+  local remote_deploy_count=""
+  local remote_last_deploy_at=""
+  local remote_runtime_relation="not_observed"
+  local remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this cycle summary."
   local passed_json skipped_json failed_json timing_json slowest_json total_seconds
   local passed_count skipped_count failed_count
   local doctor_log="$SMOKE_CDS_AGENT_CYCLE_DIR/doctor.log"
@@ -234,6 +296,39 @@ finish_cycle() {
   fi
   if [[ -n "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
     r1_repair_apply=true
+  fi
+
+  if remote_status_raw=$(read_remote_branch_status); then
+    remote_branch_status_json=$(printf '%s' "$remote_status_raw" | jq -c '.data // null' 2>/dev/null || printf 'null')
+    if [[ "$remote_branch_status_json" != "null" ]]; then
+      remote_branch_observed=true
+      remote_branch_status=$(jq -r '.status // "unknown"' <<< "$remote_branch_status_json")
+      remote_branch_id=$(jq -r '.id // "'"$SMOKE_CDS_BRANCH_ID"'"' <<< "$remote_branch_status_json")
+      remote_github_commit=$(jq -r '.githubCommitSha // ""' <<< "$remote_branch_status_json")
+      remote_runtime_commit=$(jq -r '.commitSha // ""' <<< "$remote_branch_status_json")
+      remote_subject=$(jq -r '.subject // ""' <<< "$remote_branch_status_json")
+      remote_preview_slug=$(jq -r '.previewSlug // ""' <<< "$remote_branch_status_json")
+      remote_deploy_count=$(jq -r '.deployCount // ""' <<< "$remote_branch_status_json")
+      remote_last_deploy_at=$(jq -r '.lastDeployAt // ""' <<< "$remote_branch_status_json")
+      if [[ -n "$remote_runtime_commit" && -n "$git_commit_short" && "$git_commit_short" == "$remote_runtime_commit"* ]]; then
+        remote_runtime_relation="runtime_matches_head"
+        remote_deploy_advice="Remote runtime commit matches cycle HEAD; do not redeploy unless provider/profile or visual evidence requires it."
+      elif classify_remote_runtime_git_drift "$remote_runtime_commit" "$git_commit"; then
+        remote_runtime_relation="runtime_behind_non_runtime_drift"
+        remote_deploy_advice="Remote runtime is behind cycle HEAD only by compatible non-runtime drift; do not self update for this state."
+      elif (( $? == 2 )); then
+        remote_runtime_relation="runtime_behind_runtime_drift"
+        remote_deploy_advice="Remote runtime evidence does not cover current runtime-affecting changes; update remote runtime before claiming this cycle for current HEAD."
+      elif [[ -n "$remote_runtime_commit" ]]; then
+        remote_runtime_relation="runtime_commit_differs_from_cycle_head"
+        remote_deploy_advice="Remote runtime commit differs from cycle HEAD and drift could not be classified; inspect git diff before deploying."
+      else
+        remote_runtime_relation="runtime_commit_missing"
+        remote_deploy_advice="Remote branch status did not include a runtime commit; inspect CDS branch status before deploying."
+      fi
+    fi
+  else
+    remote_deploy_advice="Set CDS_HOST to include remote CDS branch status in this cycle summary."
   fi
 
   if jq -e 'any(.[]?; test("R1|Default runtime profile|Anthropic/Claude-compatible"; "i"))' <<< "$readiness_pending_json" >/dev/null; then
@@ -459,6 +554,17 @@ finish_cycle() {
     --arg failureKind "$failure_kind" \
     --arg failureAdvice "$failure_advice" \
     --arg narrowRerunCommand "$narrow_rerun_command" \
+    --arg remoteBranchObserved "$remote_branch_observed" \
+    --arg remoteBranchId "$remote_branch_id" \
+    --arg remoteBranchStatus "$remote_branch_status" \
+    --arg remoteGithubCommit "$remote_github_commit" \
+    --arg remoteRuntimeCommit "$remote_runtime_commit" \
+    --arg remoteSubject "$remote_subject" \
+    --arg remotePreviewSlug "$remote_preview_slug" \
+    --arg remoteDeployCount "$remote_deploy_count" \
+    --arg remoteLastDeployAt "$remote_last_deploy_at" \
+    --arg remoteRuntimeRelation "$remote_runtime_relation" \
+    --arg remoteDeployAdvice "$remote_deploy_advice" \
     --arg evidenceDir "$SMOKE_CDS_AGENT_CYCLE_DIR" \
     --arg host "$SMOKE_TEST_HOST" \
     --arg targetSource "$SMOKE_TARGET_SOURCE" \
@@ -480,6 +586,7 @@ finish_cycle() {
     --arg boundaryStatus "$boundary_status" \
     --arg boundaryReport "$SMOKE_CDS_AGENT_BOUNDARY_REPORT" \
     --argjson boundaryMetrics "$boundary_metrics_json" \
+    --argjson remoteBranchStatusRaw "$remote_branch_status_json" \
     --arg screenshot "${SMOKE_CDS_AGENT_SCREENSHOT:-}" \
     --arg gateR0 "$gate_r0_status" \
     --arg gateA0 "$gate_a0_status" \
@@ -561,6 +668,20 @@ finish_cycle() {
       target: {
         host: $host,
         source: $targetSource
+      },
+      remoteCdsBranch: {
+        observed: ($remoteBranchObserved == "true"),
+        branchId: $remoteBranchId,
+        status: $remoteBranchStatus,
+        githubCommitSha: (if $remoteGithubCommit == "" then null else $remoteGithubCommit end),
+        runtimeCommitSha: (if $remoteRuntimeCommit == "" then null else $remoteRuntimeCommit end),
+        subject: (if $remoteSubject == "" then null else $remoteSubject end),
+        previewSlug: (if $remotePreviewSlug == "" then null else $remotePreviewSlug end),
+        deployCount: (if $remoteDeployCount == "" then null else ($remoteDeployCount | tonumber) end),
+        lastDeployAt: (if $remoteLastDeployAt == "" then null else $remoteLastDeployAt end),
+        runtimeRelation: $remoteRuntimeRelation,
+        deployAdvice: $remoteDeployAdvice,
+        raw: $remoteBranchStatusRaw
       },
       evidenceDir: $evidenceDir,
       exitCode: $exitCode,
@@ -665,6 +786,19 @@ finish_cycle() {
     printf 'Blocking reason: %s\n' "$blocking_reason"
   fi
   printf 'Deploy/build advice: %s\n' "$deployment_advice"
+  if [[ "$remote_branch_observed" == "true" ]]; then
+    printf 'Remote CDS branch: %s status=%s github=%s runtime=%s deployCount=%s lastDeployAt=%s\n' \
+      "$remote_branch_id" \
+      "${remote_branch_status:-unknown}" \
+      "${remote_github_commit:-unknown}" \
+      "${remote_runtime_commit:-unknown}" \
+      "${remote_deploy_count:-unknown}" \
+      "${remote_last_deploy_at:-unknown}"
+    printf 'Remote runtime relation: %s\n' "$remote_runtime_relation"
+    printf 'Remote deploy advice: %s\n' "$remote_deploy_advice"
+  else
+    printf 'Remote CDS branch: not observed (%s)\n' "$remote_deploy_advice"
+  fi
   printf 'Next command: %s\n' "$next_command"
   printf 'Readiness overall: %s\n' "$readiness_overall"
   printf 'Doctor diagnosis: %s\n' "$doctor_diagnosis"
