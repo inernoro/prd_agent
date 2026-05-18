@@ -32,7 +32,7 @@ SMOKE_CDS_AGENT_SIDECAR_ALIAS="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk
 SMOKE_CDS_AGENT_SIDECAR_PORT="${SMOKE_CDS_AGENT_SIDECAR_PORT:-7400}"
 SMOKE_CDS_AGENT_ALIAS_ATTEMPTS="${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS:-6}"
 SMOKE_CDS_AGENT_ALIAS_DIAGNOSE_IPS="${SMOKE_CDS_AGENT_ALIAS_DIAGNOSE_IPS:-1}"
-SMOKE_STEP_TOTAL=4
+SMOKE_STEP_TOTAL=5
 
 smoke_init "CDS Agent Sidecar Alias Stability"
 
@@ -97,6 +97,25 @@ smoke_assert_eq "$adapter_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "agentAdapter
 smoke_assert_eq "$loop_count" "$SMOKE_CDS_AGENT_ALIAS_ATTEMPTS" "loopOwner=claude-agent-sdk count"
 smoke_ok "all ${SMOKE_CDS_AGENT_ALIAS_ATTEMPTS} attempts returned ready=true and loopOwner=claude-agent-sdk"
 
+smoke_step "确认未知 runtimeAdapter 不会回退 legacy"
+unsupported_cmd="curl -sS -N --max-time 20 -H 'Authorization: Bearer dev-skip' -H 'Content-Type: application/json' -d '{\"runId\":\"unsupported-adapter-smoke\",\"runtimeAdapter\":\"codex\",\"prompt\":\"should not run\"}' http://${SMOKE_CDS_AGENT_SIDECAR_ALIAS}:${SMOKE_CDS_AGENT_SIDECAR_PORT}/v1/agent/run | head -20"
+unsupported_resp=$(CDS_HOST="$CDS_HOST" python3 .claude/skills/cds/cli/cdscli.py branch exec "$SMOKE_CDS_BRANCH_ID" --profile "$SMOKE_CDS_AGENT_API_PROFILE" "$unsupported_cmd")
+smoke_verbose "$unsupported_resp"
+smoke_assert_eq "$(printf '%s' "$unsupported_resp" | jq -r '.ok')" "true" "unsupportedAdapter.exec.ok"
+smoke_assert_eq "$(printf '%s' "$unsupported_resp" | jq -r '.data.exitCode')" "0" "unsupportedAdapter.exec.exitCode"
+unsupported_stdout=$(printf '%s' "$unsupported_resp" | jq -r '.data.stdout // ""')
+unsupported_stderr=$(printf '%s' "$unsupported_resp" | jq -r '.data.stderr // ""')
+smoke_assert_nonempty "$unsupported_stdout" "unsupportedAdapter.exec.stdout"
+printf '%s\n' "$unsupported_stdout"
+smoke_assert_contains "$unsupported_stdout" "unsupported_runtime_adapter" "unsupportedAdapter.errorCode"
+if printf '%s' "$unsupported_stdout" | grep -Eq 'sidecar-legacy-loop|legacy sidecar loop started'; then
+  smoke_fail "unsupported runtimeAdapter fell back to legacy loop"
+fi
+if [[ -n "$unsupported_stderr" ]]; then
+  smoke_fail "unsupported adapter probe wrote stderr: $unsupported_stderr"
+fi
+smoke_ok "runtimeAdapter=codex returns unsupported_runtime_adapter instead of legacy fallback"
+
 smoke_step "输出证据摘要"
 jq -n \
   --arg branch "$SMOKE_CDS_BRANCH_ID" \
@@ -114,6 +133,11 @@ jq -n \
       ready: true,
       agentAdapter: "claude-agent-sdk",
       loopOwner: "claude-agent-sdk"
+    },
+    unsupportedRuntimeAdapter: {
+      adapter: "codex",
+      expectedErrorCode: "unsupported_runtime_adapter",
+      forbiddenLoopOwner: "sidecar-legacy-loop"
     }
   }'
 
