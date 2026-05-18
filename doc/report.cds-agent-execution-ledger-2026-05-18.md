@@ -108,6 +108,9 @@
 | 00:08 | 远程后端事实源需要验证 | CDS 自动部署 `8ebe22e1` 后运行 commercial readiness | `/tmp/cds-agent-commercial-readiness-current.json` | 15s | R0 pass；R1 pending；S1/S2/S3 pending；V1 reachable |
 | 00:10 | one-cycle 仍在 R1 未通过时硬跑 provider-gated S1/S2/S3，并且视觉断言等旧文案 | 修正 one-cycle：provider calls 未显式开启时跳过 S1/S2/S3；修正视觉脚本验证当前页面的执行链路/CDS Runtime/模型需调整等信号 | `scripts/smoke-cds-agent-one-cycle.sh`、`scripts/smoke-cds-agent-workbench-visual.sh` | 视觉单跑 30s | V1 视觉通过，截图 `/tmp/cds-agent-workbench-visual-current.png` |
 | 00:15 | 需要当前 HEAD 的完整周期证据 | 重跑 one-cycle dry-run，不调用 provider，不部署 | `/tmp/cds-agent-cycle-20260519001522/cycle-summary.json` | 77s | `blocked_r1`，失败数 0；R0/A0/V1/N6 pass；R1/S1/S2/S3 pending/skipped |
+| 00:35 | 当前进度文档第一屏仍混着历史 R0/remote-host 证据，生命周期脚本还把 publish image/remote host 写进 critical path | 重写主进度文档顶部为“总进度、当前 gate、blocker、需要协助、下一步 ETA”；修正 lifecycle overview 默认读取当前 audit，并把 critical path 改为 R1/S1/S2/S3/V1 | `doc/status.cds-agent-current-progress.md`、`scripts/print-cds-agent-lifecycle-overview.sh`、`scripts/print-cds-agent-current-progress.sh` | 本地编辑 + consistency 验证 | 进度入口不再让人误以为当前还在 R0 或 remote-host/image fallback |
+| 00:32 | R1 仍容易被理解成“让用户配置 env/API key”，而不是 CDS-managed profile/secret | 修正 runtime-status、session error recovery、R1 smoke report：产品主路径写成 CDS-managed runtime profile/secret store；`SMOKE_CDS_AGENT_ANTHROPIC_API_KEY` 只标为 smoke-only test-before-promote 注入 | `InfraAgentSessionsControllerTests` 19/19、`/tmp/cds-agent-r1-dryrun-current.json`、`scripts/check-cds-agent-progress-consistency.sh` | R1 dry-run 7s；controller tests 19/19 | R1 blocker 更精确：不是部署、SSH、sidecar env，而是缺 Anthropic/Claude-compatible CDS-managed profile/secret |
+| 00:31 | 需要刷新当前 one-cycle 证据，确认 R1 文案修正后没有破坏 dry-run | 重跑 `CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-one-cycle.sh` | `/tmp/cds-agent-cycle-20260519003122/cycle-summary.json` | 78s，最慢视觉 30s | `blocked_r1`，失败数 0；R0/A0/V1/N6 pass；R1/S1/S2/S3 pending/skipped |
 
 ## 本轮暴露的问题
 

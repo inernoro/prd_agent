@@ -8,10 +8,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-/tmp/cds-agent-goal-audit-current-with-readiness.json}"
+DEFAULT_AUDIT="/tmp/cds-agent-goal-audit-current-with-readiness.json"
+if [[ -f "/tmp/cds-agent-goal-audit-current.json" ]]; then
+  DEFAULT_AUDIT="/tmp/cds-agent-goal-audit-current.json"
+fi
+AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-$DEFAULT_AUDIT}"
 READINESS="${CDS_AGENT_R0_READINESS_SUMMARY:-/tmp/cds-agent-r0-apply-readiness-current.json}"
 OUTPUT="${CDS_AGENT_LIFECYCLE_OVERVIEW:-}"
-REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json}"
+DEFAULT_RUNTIME_SUMMARY="/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json"
+if [[ -f "/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json" ]]; then
+  DEFAULT_RUNTIME_SUMMARY="/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json"
+fi
+REMOTE_HOST_SUMMARY="${CDS_AGENT_REMOTE_HOST_SUMMARY:-$DEFAULT_RUNTIME_SUMMARY}"
 SIDECAR_IMAGE_BUILD_REPORT="${CDS_AGENT_SIDECAR_IMAGE_BUILD_REPORT:-/tmp/cds-agent-sidecar-image-build-current.json}"
 SIDECAR_IMAGE_PUBLISH_REPORT="${CDS_AGENT_SIDECAR_IMAGE_PUBLISH_REPORT:-/tmp/cds-agent-sidecar-image-publish-current.json}"
 SIDECAR_REGISTRY_VERIFY_REPORT="${CDS_AGENT_SIDECAR_REGISTRY_VERIFY_REPORT:-/tmp/cds-agent-sidecar-registry-image-current.json}"
@@ -80,6 +88,15 @@ if [[ -f "$REMOTE_PULL_REPORT" ]]; then
 fi
 [[ -n "$missing_config" ]] || missing_config="none"
 
+if [[ "$r0" == "pass" && "$blocking_gate" == "R1" ]]; then
+  ready_for_r0="passed_by_runtime_capacity"
+  missing_config="operator-fallback-only"
+  image_readiness="operator-fallback-only"
+  image_next_action="not product path"
+  image_registry_visible="operator-fallback-only"
+  remote_pull="operator-fallback-only"
+fi
+
 stage_state() {
   local status="$1"
   case "$status" in
@@ -101,7 +118,7 @@ Current blocking gate: $blocking_gate
 
 ## Executive Summary
 
-The implementation is not complete. The code-side official SDK adapter boundary and non-code agent compatibility guardrails are proved, but the remote CDS shared runtime pool is not recovered.
+The implementation is not complete. The control-plane architecture is back on the CDS-managed runtime path, R0 live capacity is proved, and the current blocker is R1 provider/profile proof.
 
 Current blocker:
 
@@ -117,18 +134,18 @@ $deployment_advice
 | --- | --- | --- | --- | --- |
 | 1 | Design and boundary: MAP/CDS as control plane, official SDK owns loop | $(stage_state "$a0") | A0=$a0, adapter boundary smoke | Keep legacy loop explicit fallback only |
 | 2 | Other-agent compatibility | $(stage_state "$n6") | N6=$n6, non-code/candidate SDK smoke | Re-run after provider cycle |
-| 3 | R0 CDS-managed official SDK runtime pool | $(stage_state "$r0") | R0=$r0, readyForR0Apply=$ready_for_r0 | Run managed-runtime post-check/live evidence; SSH/image are fallback only |
+| 3 | R0 CDS-managed official SDK runtime pool | $(stage_state "$r0") | R0=$r0, readyForR0Apply=$ready_for_r0 | Keep SSH/image/remote host as operator fallback only |
 | 4 | R1 Anthropic/Claude profile | $(stage_state "$r1") | R1=$r1 | Configure compatible default profile after R0 |
 | 5 | S1 provider read-only run | $(stage_state "$s1") | S1=$s1 | Run after R0/R1 with explicit provider opt-in |
 | 6 | S2/S3 approval and interrupt controls | $(stage_state "$s2s3") | S2S3=$s2s3 | Run approval/stop smokes after S1 |
-| 7 | V1 visual/usability evidence | partial | V1=$v1 historical/page evidence | Re-capture true live runtime session after R0/R1/S1-S3 |
+| 7 | V1 visual/usability evidence | $(stage_state "$v1") | V1=$v1 current authenticated page evidence | Re-capture true provider-backed page after R1/S1-S3 |
 | 8 | Commercial closure | blocked | goalStatus=$goal_status | Audit must show all gates pass with fresh current evidence |
 
 ## Distance To Target
 
-- Done: A0 official SDK boundary; N6 compatibility; progress/audit/handoff observability.
-- Blocking now: R0 CDS-managed runtime pool.
-- Not yet started in current valid cycle: R1, S1, S2/S3, final live V1.
+- Done: A0 official SDK boundary; D1 architecture correction; R0 CDS-managed runtime live capacity; N6 compatibility; V1 dry-run visual evidence.
+- Blocking now: R1 Anthropic/Claude-compatible default provider profile.
+- Not yet started in current provider-backed cycle: S1, S2/S3, final live V1 recapture.
 - Legacy fallback missing inputs: $missing_config
 - Legacy fallback sidecar image readiness: $image_readiness; $image_next_action
 - Sidecar build context: $image_build_context
@@ -139,13 +156,11 @@ $deployment_advice
 
 ## Critical Path
 
-1. R0.0: publish sidecar image and verify registry manifest. ETA after GitHub Actions/manual push: 15-60 sec.
-2. R0.2: register/reuse enabled remote host. ETA after inputs: 1-3 min.
-3. R0.3: verify remote host pull and deploy shared official SDK sidecar image. ETA after image/host: 2-5 min.
-4. R0V: run shared pool post-check. ETA: 15-30 sec.
-5. R1: configure Anthropic/Claude-compatible default profile. ETA: 5-15 min.
-6. S1/S2/S3: run provider read-only, approval, and stop cycle. ETA: 10-25 min.
-7. V1: capture real live-runtime page evidence. ETA: 3-8 min.
+1. R1: configure or select an Anthropic/Claude-compatible default profile. ETA after key/profile is available: 5-15 min.
+2. S1: run provider-backed read-only official SDK cycle. ETA: 5-10 min.
+3. S2/S3: run approval and stop/cancel controls. ETA: 5-15 min.
+4. V1: capture provider-backed live-runtime page evidence. ETA: 3-8 min.
+5. Final audit and docs archive. ETA: 10-20 min.
 
 ## Fixed Inspection Commands
 

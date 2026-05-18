@@ -403,7 +403,7 @@ public class InfraAgentSessionsControllerTests
             debugCommands.Single(x => x.Code == "remote-host-prepare").BlockedBy.ShouldBe("R0");
             debugCommands.Single(x => x.Code == "remote-host-prepare").Command.ShouldContain("run-cds-agent-remote-host-pool-with-evidence.sh");
             debugCommands.Single(x => x.Code == "official-sdk-boundary").Command.ShouldBe("bash scripts/smoke-cds-agent-official-sdk-boundary.sh");
-            debugCommands.Single(x => x.Code == "r1-apply").BlockedBy.ShouldBe("Anthropic API key");
+            debugCommands.Single(x => x.Code == "r1-apply").BlockedBy.ShouldBe("CDS-managed Anthropic profile/secret");
             debugCommands.Single(x => x.Code == "provider-cycle").Status.ShouldBe("blocked");
             debugCommands.Single(x => x.Code == "provider-cycle").BlockedBy.ShouldBe("R1");
             var executionPanel = diagnostics.ExecutionPanel.ShouldNotBeNull();

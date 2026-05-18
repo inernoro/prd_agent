@@ -292,7 +292,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
         {
-            return "5-15 min after a valid Anthropic/Claude-compatible API key is available.";
+            return "5-15 min after a valid Anthropic/Claude-compatible CDS-managed profile/secret is available.";
         }
 
         if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase))
@@ -317,7 +317,7 @@ public class InfraAgentSessionsController : ControllerBase
 
         if (string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase))
         {
-            return "Do not redeploy for profile failures; validate the profile locally through runtime-status/smoke before any provider run.";
+            return "Do not redeploy for profile failures; validate the CDS-managed runtime profile/secret through runtime-status/smoke before any provider run.";
         }
 
         return "Prefer local static smokes and a single targeted remote verification over repeated build/deploy loops.";
@@ -528,8 +528,8 @@ public class InfraAgentSessionsController : ControllerBase
             "doctor" => "read-only local/remote diagnostics",
             "official-sdk-boundary" => "read-only local contract smoke",
             "r1-dry-run" => "read-only/default-safe profile repair preview",
-            "r1-apply" => "writes runtime profile only after explicit API key input",
-            "provider-cycle" => "real provider calls; requires explicit allow flag and API key",
+            "r1-apply" => "writes CDS-managed runtime profile only after explicit smoke key injection; not a product env path",
+            "provider-cycle" => "real provider calls; requires explicit allow flag and a CDS-managed Anthropic profile/secret",
             "non-code-compat" => "read-only local compatibility smoke",
             _ => "inspect command before running"
         };
@@ -554,7 +554,7 @@ public class InfraAgentSessionsController : ControllerBase
             || (string.IsNullOrWhiteSpace(blockingCode)
                 && string.Equals(readinessOverall, "profile-blocked", StringComparison.OrdinalIgnoreCase)))
         {
-            return "不要靠重新部署解决 R1；当前阻塞是默认 runtime profile/key，需要保存 Anthropic/Claude-compatible profile 后重跑 one-cycle。";
+            return "不要靠重新部署解决 R1；当前阻塞是 CDS-managed runtime profile/secret，需要保存 Anthropic/Claude-compatible profile 后重跑 one-cycle。";
         }
 
         if (blockingCode.StartsWith("S", StringComparison.OrdinalIgnoreCase)
@@ -687,19 +687,19 @@ public class InfraAgentSessionsController : ControllerBase
                 remoteSmokePrefix + "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
                 "不写入远程状态，验证后端 R1 修复计划、模板和缺 key 保护。",
                 r1Status,
-                r1Ready ? null : "Anthropic API key"),
+                r1Ready ? null : "CDS-managed Anthropic profile/secret"),
             new SidecarDebugCommand(
                 "r1-apply",
                 "R1 test-before-promote",
                 remoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
-                "创建候选 Anthropic 官方 profile，测试通过后才提升为默认。",
+                "通过 smoke env 注入 key 创建 CDS-managed 候选 Anthropic 官方 profile；后端测试通过后才提升为默认，普通产品路径不读取 operator env。",
                 r1Status,
-                r1Ready ? null : "Anthropic API key"),
+                r1Ready ? null : "CDS-managed Anthropic profile/secret"),
             new SidecarDebugCommand(
                 "provider-cycle",
                 "一个周期 provider smoke",
                 remoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
-                "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用。",
+                "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用，使用 CDS-managed profile/secret。",
                 providerStatus,
                 providerBlockedBy),
             new SidecarDebugCommand(
@@ -750,7 +750,7 @@ public class InfraAgentSessionsController : ControllerBase
             : new[]
             {
                 "在 CDS Agent 页面点击“准备默认 Claude 配置”，用后端 Anthropic 官方模板填充表单。",
-                "填入 Anthropic API key，并保存为默认 runtime profile。",
+                "通过 CDS Agent runtime profile 表单或 CDS secret 注入 Anthropic key，并保存为默认 runtime profile。",
                 "点击“测试模型”；成功后再运行 S1/S2/S3 provider smokes。"
             };
         return new SidecarRuntimeProfileRepairPlan(
@@ -791,7 +791,7 @@ public class InfraAgentSessionsController : ControllerBase
                 1,
                 "N1",
                 "配置真实 Claude/Anthropic runtime profile",
-                "用后端 Anthropic 官方模板创建默认 profile，API key 只存 MAP profile。",
+                "用后端 Anthropic 官方模板创建默认 CDS-managed runtime profile，provider secret 只存 profile/secret store。",
                 "runtime-status.defaultRuntimeProfile.compatibleWithDesiredRuntimeAdapter=true 且 hasApiKey=true。",
                 r1Ready ? "pass" : "blocked",
                 r1Ready ? null : "R1",
@@ -891,10 +891,10 @@ public class InfraAgentSessionsController : ControllerBase
                         : "runtime-profile-incompatible");
         var profileBlockReason = profile?.CompatibilityReason
             ?? profile?.Warning
-            ?? "create a default Anthropic/Claude-compatible runtime profile with API key";
+            ?? "create a default Anthropic/Claude-compatible CDS-managed runtime profile with provider secret";
         var profileBlockNextActions = profile?.CompatibilityNextActions is { Count: > 0 } actions
             ? actions
-            : new[] { "使用 Anthropic 官方模板创建默认 profile，并填入 API key" };
+            : new[] { "使用 Anthropic 官方模板创建默认 CDS-managed runtime profile，并通过 profile/secret store 保存 provider secret" };
         var providerStatus = r1Ready ? "unblocked" : "pending";
         var providerMessage = r1Ready
             ? "默认 profile 已兼容并带 key；可以显式开启 provider smoke 验证真实 run。"

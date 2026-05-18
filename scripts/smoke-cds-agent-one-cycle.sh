@@ -306,13 +306,13 @@ finish_cycle() {
   fi
   if [[ "$provider_calls_enabled" == "true" && "$r1_repair_apply" == "true" ]]; then
     provider_prerequisite_status="provider_and_r1_repair_requested"
-    provider_prerequisite_advice="This cycle may close R1 and collect S1/S2/S3 only if the supplied Anthropic key passes backend test-before-promote."
+    provider_prerequisite_advice="This cycle may close R1 and collect S1/S2/S3 only if the smoke-supplied Anthropic key is saved as a CDS-managed profile/secret after backend test-before-promote."
   elif [[ "$provider_calls_enabled" == "true" ]]; then
     provider_prerequisite_status="provider_requested_without_r1_repair_key"
-    provider_prerequisite_advice="Provider calls were requested, but no SMOKE_CDS_AGENT_ANTHROPIC_API_KEY was provided; R1 cannot be repaired by this cycle."
+    provider_prerequisite_advice="Provider calls were requested, but no CDS-managed Anthropic profile/secret is available to this smoke; R1 cannot be repaired by this cycle."
   elif [[ "$r1_repair_apply" == "true" ]]; then
     provider_prerequisite_status="r1_repair_key_without_provider_calls"
-    provider_prerequisite_advice="An Anthropic key was provided for R1 repair, but S1/S2/S3 provider smokes remain disabled until SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1."
+    provider_prerequisite_advice="A smoke-only Anthropic key was provided for R1 repair, but S1/S2/S3 provider smokes remain disabled until SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1."
   fi
 
   if remote_status_raw=$(read_remote_branch_status); then
@@ -441,7 +441,7 @@ finish_cycle() {
     blocking_reason="R1 passed, but provider-backed S1/S2/S3 were not run."
   elif [[ "$r1_status" == "dry_run_requires_api_key" || "$pending_has_r1" == "true" ]]; then
     cycle_status="blocked_r1"
-    blocking_reason="Default runtime profile is not yet proven Anthropic/Claude-compatible with a usable provider key."
+    blocking_reason="Default runtime profile is not yet proven Anthropic/Claude-compatible with a usable CDS-managed provider secret."
   elif [[ "$pending_has_provider" == "true" ]]; then
     cycle_status="blocked_provider_smokes"
     blocking_reason="Provider-backed S1/S2/S3 smokes are still pending."
@@ -492,7 +492,7 @@ finish_cycle() {
 
   case "$cycle_status" in
     blocked_r1)
-      deployment_advice="Do not redeploy for this state. The code/runtime plane is already reachable; provide an Anthropic/Claude-compatible provider key and rerun one-cycle with provider calls enabled."
+      deployment_advice="Do not redeploy for this state. The code/runtime plane is already reachable; create or select an Anthropic/Claude-compatible CDS-managed profile/secret and rerun one-cycle with provider calls enabled."
       ;;
     preview_not_ready)
       deployment_advice="Do not change code for this state. Wait for the CDS preview to become ready, then rerun one-cycle against the same branch."

@@ -1558,8 +1558,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 recoveryKind = "provider_config";
                 if (actions.Count == 0)
                 {
-                    actions.Add("在 CDS Agent 页面选择带有效 API key 的 runtime profile");
-                    actions.Add("或在 sidecar 环境设置 ANTHROPIC_API_KEY 后重启 sidecar");
+                    actions.Add("在 CDS Agent 页面选择带有效 provider secret 的 CDS-managed runtime profile");
+                    actions.Add("通过 runtime profile/secret store 保存 Anthropic key 后重试；不要把 sidecar env 当普通产品路径");
                 }
                 break;
             case "upstream_resolve_failed":

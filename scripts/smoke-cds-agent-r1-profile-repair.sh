@@ -7,12 +7,13 @@
 #   1. 验证 runtime-status 暴露的 R1 修复计划与后端 Anthropic 官方模板一致。
 #   2. 未提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时只做 dry-run，确认不会创建缺 key
 #      profile，且非 Anthropic 官方 key 形态会被后端拒绝。
-#   3. 提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时，调用后端专用入口，由 MAP 后端
-#      创建非默认候选 profile、调用 test 验证上游可用、成功后提升为默认 Claude
-#      profile，最后验证 runtime-status 的 R1 gate 变为 pass。
+#   3. 提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时，作为 smoke-only 注入方式调用后端专用入口，
+#      由 MAP 后端创建 CDS-managed 候选 profile、调用 test 验证上游可用、成功后提升为默认
+#      Claude profile，最后验证 runtime-status 的 R1 gate 变为 pass。
 #
-# 默认不消耗 provider token；只有显式提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 才会写入
-# 一个新的 runtime profile；后端上游 test 成功前不会提升为默认。
+# 默认不消耗 provider token；只有显式提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 才会写入一个新的
+# CDS-managed runtime profile；后端上游 test 成功前不会提升为默认。普通产品路径应通过
+# CDS Agent runtime profile/secret store 保存 provider secret，不能要求用户配置 sidecar env。
 #
 # 环境变量:
 #   SMOKE_CDS_AGENT_R1_REPORT=/tmp/r1.json  可选: 输出 R1 修复证据 JSON
@@ -52,6 +53,9 @@ write_r1_report() {
       status: $status,
       host: $host,
       targetTemplateId: $targetTemplateId,
+      productPath: "CDS-managed runtime profile/secret store",
+      smokeKeyInjection: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is test-only and must not become the product path",
+      operatorFallback: "sidecar env/remote host/image are operator-debug fallback only",
       suggestedCommand: $repairAndProviderCycleCommand,
       suggestedRepairCommand: $repairOnlyCommand,
       nextCommands: {
@@ -99,7 +103,7 @@ write_invalid_key_report() {
         checked: true,
         accepted: false,
         requiredPrefix: "sk-ant-",
-        message: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY must be an Anthropic API key beginning with sk-ant-. Do not use OpenRouter/OpenAI-compatible keys or MAP/CDS management credentials."
+        message: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is smoke-only and must be an Anthropic API key beginning with sk-ant-. Do not use OpenRouter/OpenAI-compatible keys or MAP/CDS management credentials."
       }
     }')
   write_r1_report "invalid_anthropic_key_format" "$evidence_json"
@@ -272,7 +276,7 @@ if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
       providerKeyReceived: false
     }')
   write_r1_report "dry_run_requires_api_key" "$dry_run_evidence"
-  smoke_ok "dry-run only: set SMOKE_CDS_AGENT_ANTHROPIC_API_KEY to execute R1 repair"
+  smoke_ok "dry-run only: create a CDS-managed Anthropic runtime profile/secret, or set SMOKE_CDS_AGENT_ANTHROPIC_API_KEY only for smoke repair"
   smoke_step "跳过后端上游测试和默认提升"
   smoke_ok "not applicable without SMOKE_CDS_AGENT_ANTHROPIC_API_KEY"
   smoke_step "跳过修复后验证"
@@ -353,6 +357,8 @@ pass_evidence=$(jq -n \
       protocol: ($profileTest.protocol // ""),
       model: ($profileTest.model // "")
     },
+    productPath: "CDS-managed runtime profile/secret store",
+    smokeKeyInjection: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY was used only to seed/test the CDS-managed profile",
     afterR1: $afterR1,
     afterDefaultProfile: $afterDefault
   }')

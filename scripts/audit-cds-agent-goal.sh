@@ -1043,6 +1043,12 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
     }')
 else
   gate_r0="pass"
+  r0_readiness_json=$(jq -cn '{
+    readyForR0Apply: true,
+    readinessOverrideReason: "R0 passed by live CDS-managed runtime capacity evidence",
+    nextAction: "continue R1 Anthropic/Claude-compatible profile repair and provider smokes",
+    operatorFallbackPath: "not product path"
+  }')
   if [[ -z "$current_blocking_gate" || "$current_blocking_gate" == "R0" ]]; then
     current_blocking_gate="R1"
   fi
@@ -1053,7 +1059,7 @@ else
     blocking_reason="R0 CDS-managed runtime capacity is available; next blocker is R1 Anthropic/Claude-compatible profile/provider proof."
   fi
   if [[ -z "$next_command" || "$next_command" == CDS_HOST=https://cds.miduo.org\ bash\ scripts/smoke-cds-agent-one-cycle.sh* ]]; then
-    next_command="CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+    next_command="CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh # SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is smoke-only; product path is CDS-managed profile/secret"
   fi
   deployment_advice="Do not run remote-host/image fallback for R0; continue with R1 profile repair/provider smokes on the CDS-managed runtime path."
 fi

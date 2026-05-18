@@ -4,7 +4,11 @@
 
 set -euo pipefail
 
-GOAL_AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-/tmp/cds-agent-goal-audit-r0-current.json}"
+DEFAULT_GOAL_AUDIT="/tmp/cds-agent-goal-audit-r0-current.json"
+if [[ -f "/tmp/cds-agent-goal-audit-current.json" ]]; then
+  DEFAULT_GOAL_AUDIT="/tmp/cds-agent-goal-audit-current.json"
+fi
+GOAL_AUDIT="${CDS_AGENT_GOAL_AUDIT_REPORT:-$DEFAULT_GOAL_AUDIT}"
 DEFAULT_REMOTE_HOST_SUMMARY="/tmp/cds-agent-remote-host-pool-current-readonly-live/summary.json"
 if [[ -f "/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json" ]]; then
   DEFAULT_REMOTE_HOST_SUMMARY="/tmp/cds-agent-runtime-pool-evidence-after-capacity-latest/summary.json"
@@ -121,6 +125,13 @@ if [[ -f "$SIDECAR_REGISTRY_VERIFY_REPORT" ]]; then
 fi
 if [[ -f "$REMOTE_PULL_REPORT" ]]; then
   remote_pull=$(jq_read "$REMOTE_PULL_REPORT" '.status // "unknown"')
+fi
+
+if [[ "$runtime_capacity_available" == "true" ]]; then
+  image_readiness="operator-fallback-only"
+  image_next_action="not product path"
+  image_registry_visible="operator-fallback-only"
+  remote_pull="operator-fallback-only"
 fi
 
 if [[ -z "$missing_config" ]]; then
@@ -273,8 +284,8 @@ Goal: keep MAP/CDS as control plane; shrink custom agent loop into official SDK 
 | R0.6 CDS-managed runtime capacity reconciler | done_minimal | CDS exposes dry-run/apply reconciler and route tests prove product runtime capacity path | done |
 | R0.7 CDS-managed runtime live apply | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done_live' || printf 'in_progress') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'Live evidence shows running official SDK runtime count >0' || printf 'Local liveApply path is wired; run live evidence so sharedRunning becomes >0') | $([[ "$runtime_capacity_available" == "true" ]] && printf 'done' || printf 'next') |
 | R1 Profile repair | $([[ "$runtime_capacity_available" == "true" ]] && printf 'current_blocker' || printf 'pending') | Configure official Anthropic/Claude-compatible profile after R0 | 5-15 min |
-| S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R0/R1 | 10-25 min |
-| V1 Visual verification | partial | Use runtime-status/execution panel screenshot after live runtime exists | 3-8 min |
+| S1/S2/S3 One-cycle smokes | pending | Run read-only/approval/cancel cycles after R1 provider profile is available | 10-25 min |
+| V1 Visual verification | $([[ "$runtime_capacity_available" == "true" ]] && printf 'pass_dry_run' || printf 'partial') | Re-capture provider-backed runtime page after S1/S2/S3 | 3-8 min |
 
 ## Legacy Fallback Blockers
 
@@ -298,7 +309,7 @@ $exact_next_step
 ## Do Not Spend Time On Now
 
 - Do not repeat normal preview redeploys for this blocker.
-- Do not run provider one-cycle before CDS-managed session execution and official SDK loop ownership pass.
+- Do not run provider one-cycle before R1 has a real Anthropic/Claude-compatible keyed profile.
 - Do not add claude-agent-sdk-runtime-v2 back into prd-agent branch services.
 - Do not treat UI preview running as proof that shared-service runtime pool recovered.
 
