@@ -1,6 +1,6 @@
 # CDS Agent 当前进度面板
 
-> **更新时间**：2026-05-18 20:14 Asia/Shanghai
+> **更新时间**：2026-05-18 20:24 Asia/Shanghai
 > **分支**：`codex/cds-agent-workbench-ui`
 > **当前阶段**：R0 shared-service runtime pool 恢复
 > **总状态**：目标未完成；branch-local sidecar 污染已清理，仍缺 remote host 和 running shared runtime。
@@ -327,6 +327,16 @@ CDS_AGENT_SIDECAR_IMAGE
 ```
 
 注意：`CDS_AGENT_SIDECAR_IMAGE` 不是“仓库里有 Dockerfile 就自动具备”。CDS remote sidecar deployer 当前只执行 `docker pull` 和 `docker run`，所以这里必须是目标 remote host 可以拉取的 registry image，例如先完成本地 build、push，再把可拉取 tag 填入该变量。
+
+当前 workflow 状态：
+
+```text
+workflowStatus=workflow_file_on_branch_not_indexed
+workflowFileVisible=true
+workflowRun=none
+```
+
+这表示 `.github/workflows/cds-sidecar-image.yml` 已存在于 `codex/cds-agent-workbench-ui` 分支，但 GitHub Actions workflow API 不能 dispatch/list 它。下一步要么把 workflow 暴露到 GitHub Actions 可索引分支后再发布，要么走 handoff 中的本机 GHCR push 替代路径；后者是外部 registry 写入，必须显式批准。
 
 生成安全 handoff 命令：
 

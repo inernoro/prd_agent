@@ -8,7 +8,7 @@
 
 这份账本补的是此前缺失的执行过程视角。已有 `doc/status.cds-agent-current-progress.md` 记录当前状态和证据目录，但它偏结果；本文件专门记录过程问题、处理动作、耗时和优化。
 
-截至 2026-05-18 20:14 Asia/Shanghai：
+截至 2026-05-18 20:24 Asia/Shanghai：
 
 - 已解决：`prd-agent` branch-local `claude-agent-sdk-runtime-v2-prd-agent` 污染。
 - 已解决：执行面板能展示 destructive cleanup 和 remote host/shared runtime recovery 的结构化 manifest。
@@ -28,6 +28,7 @@
 - 已解决：R0 operator handoff 优先显示当前 HEAD 对应 GHCR image，旧 publish report candidate 不再覆盖当前发布目标。
 - 已解决：新增一键只读 R0 状态刷新入口，统一刷新 handoff/workflow/readiness/operator/lifecycle/progress，减少旧 `/tmp` 证据干扰。
 - 已解决：新增 GitHub Actions workflow 状态检查脚本，默认 dry-run；显式开启后把 workflow 404/API 失败写入结构化报告。
+- 已确认：workflow 文件已存在于 `codex/cds-agent-workbench-ui`，但 GitHub Actions workflow API 仍不可 dispatch/list，状态为 `workflow_file_on_branch_not_indexed`。
 - 未解决：`REMOTE_HOST_AVAILABLE=missing`、`SHARED_POOL_RUNNING=missing`、`SIDECAR_IMAGE_PULLABLE=missing`。
 
 ## 执行时间线
@@ -71,6 +72,7 @@
 | 20:11 | operator handoff 仍可能显示旧 publish report candidate，和当前 commit 的 workflow image 不一致 | handoff 从 git remote + HEAD 推导 `currentSidecarImage`，并优先作为 `imagePublishCandidate` | `/tmp/cds-agent-r0-operator-handoff-current.md` | <1s | 当前候选统一为 `ghcr.io/inernoro/prd-agent/claude-sidecar:e25e3f64a433` |
 | 20:14 | 每次提交后需要分别运行多个脚本刷新 `/tmp` 证据，容易让 progress board、handoff、readiness 不在同一 commit | 新增 `scripts/refresh-cds-agent-r0-status.sh` | `/tmp/cds-agent-r0-status-refresh-current.md` | <3s | 一个命令刷新 publish handoff、registry dry-run、readiness、operator handoff、lifecycle、progress |
 | 20:18 | 手动发布 workflow 是否存在/是否运行只能靠打开 GitHub 页面；`gh api` 当前返回 404 时没有结构化沉淀 | 新增 `scripts/check-cds-agent-sidecar-workflow.sh`，并由 refresh 脚本默认 dry-run 调用 | `/tmp/cds-agent-sidecar-workflow-current.json` | <1s dry-run；显式检查约 1s | workflow 404/API 失败会进入报告，不再散落在终端 |
+| 20:22 | workflow runs API 返回 404，但无法区分文件未推送还是 Actions 未索引 | workflow 检查脚本追加 contents API fallback | `/tmp/cds-agent-sidecar-workflow-current.json` | 约 1s | `workflowFileVisible=true`、`workflowStatus=workflow_file_on_branch_not_indexed` |
 
 ## 本轮暴露的问题
 
@@ -672,6 +674,25 @@
 - `/tmp/cds-agent-r0-status-refresh-current.md` 展示 workflowStatus/workflowRun。
 
 优化：R0.0 发布链路从“打开网页看”推进到“可选只读 API 检查 + 结构化报告”。
+
+### 38. workflow 文件存在不等于 Actions 可 dispatch
+
+问题：`cds-sidecar-image.yml` 已推送到 `codex/cds-agent-workbench-ui` 分支，但 GitHub Actions workflow API 对 `repos/inernoro/prd_agent/actions/workflows/cds-sidecar-image.yml/runs` 返回 404。单看 404 会误判为文件未推送或仓库不可见。
+
+处理：
+
+- `scripts/check-cds-agent-sidecar-workflow.sh` 在 workflow API 404 时追加 contents API fallback。
+- 如果 `.github/workflows/cds-sidecar-image.yml?ref=<branch>` 可见，则状态写为 `workflow_file_on_branch_not_indexed`。
+- publish handoff 的本机 push 替代路径增加说明：当 Actions 不能 dispatch 非索引分支 workflow 时才使用，且仍需要显式批准外部 registry 写入。
+
+证据：
+
+- `/tmp/cds-agent-sidecar-workflow-current.json` 当前：
+  - `workflowFileVisible=true`
+  - `workflowFileHtmlUrl=https://github.com/inernoro/prd_agent/blob/codex/cds-agent-workbench-ui/.github/workflows/cds-sidecar-image.yml`
+  - `status=workflow_file_on_branch_not_indexed`
+
+优化：发布阻塞现在从“workflow 404”细化为“文件在分支上，但 Actions 不可 dispatch/list”，下一步选择更明确。
 
 ## 最耗时项
 

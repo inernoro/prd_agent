@@ -74,6 +74,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 
   printf '## Local Push Alternative\n\n'
   printf 'This also writes to an external registry and still requires explicit approval. Retag first so the local image matches the current commit tag.\n\n'
+  printf 'Use this path when GitHub Actions cannot dispatch the workflow because the workflow file is only present on a non-indexed branch.\n\n'
   printf '```bash\n'
   printf 'CDS_AGENT_SIDECAR_IMAGE=%s CDS_AGENT_SIDECAR_IMAGE_TAG=1 scripts/publish-cds-agent-sidecar-image.sh\n' "$workflow_image"
   printf 'CDS_AGENT_SIDECAR_IMAGE=%s CDS_AGENT_SIDECAR_IMAGE_PUSH=1 scripts/publish-cds-agent-sidecar-image.sh\n' "$workflow_image"
