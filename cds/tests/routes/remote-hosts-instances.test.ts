@@ -458,7 +458,7 @@ describe('Remote hosts project instances route', () => {
       containerService: {
         async runService(branch, profile, service, onOutput, customEnv) {
           containerCalls.push({ kind: 'runService', branch, profile, service: { ...service }, customEnv });
-          expect(branch.worktreePath).toBe(process.cwd());
+          expect(branch.worktreePath).toBe(path.dirname(process.cwd()));
           expect(profile.id).toBe('claude-agent-sdk-runtime');
           expect(profile.dockerImage).toBe('python:3.12-slim');
           expect(profile.command).toContain('pip install');

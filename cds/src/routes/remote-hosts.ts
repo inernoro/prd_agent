@@ -24,6 +24,7 @@
  */
 import { Router } from 'express';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
@@ -1094,6 +1095,7 @@ async function reconcileCdsManagedRuntimeCapacity(
   }
 
   const profile = buildCdsManagedRuntimeProfile(project.id);
+  const worktreePath = resolveCdsManagedRuntimeWorktreePath();
   const existingProfile = stateService.getBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID);
   let profileChange: 'created' | 'updated' | 'unchanged' = 'created';
   if (existingProfile) {
@@ -1125,7 +1127,7 @@ async function reconcileCdsManagedRuntimeCapacity(
     serviceChange = branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] ? 'updated' : 'created';
     branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] = serviceState;
     branch.status = hostPort && !options.liveApply ? 'running' : 'idle';
-    branch.worktreePath = process.cwd();
+    branch.worktreePath = worktreePath;
     branch.lastAccessedAt = options.now;
     branch.lastDeployAt = options.now;
     branchChange = 'updated';
@@ -1135,7 +1137,7 @@ async function reconcileCdsManagedRuntimeCapacity(
       id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
       projectId: project.id,
       branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
-      worktreePath: process.cwd(),
+      worktreePath,
       status: hostPort && !options.liveApply ? 'running' : 'idle',
       services: {
         [CDS_MANAGED_RUNTIME_PROFILE_ID]: serviceState,
@@ -1375,6 +1377,11 @@ function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
       intervalSeconds: 1,
     },
   };
+}
+
+function resolveCdsManagedRuntimeWorktreePath(): string {
+  const cwd = process.cwd();
+  return path.basename(cwd) === 'cds' ? path.dirname(cwd) : cwd;
 }
 
 function parseOptionalHostPort(value: unknown): number | undefined | null {
