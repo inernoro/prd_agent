@@ -16,7 +16,6 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X, Info, Wand2, StopCircle } from 'lucide-react';
 import { useSseStream, connectSse, type SsePhase } from '@/lib/useSseStream';
-import { EmergenceStreamingBar } from './EmergenceStreamingBar';
 import { toast } from '@/lib/toast';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -37,59 +36,49 @@ import { EmergenceEmergePopover } from './EmergenceEmergePopover';
 import './emergence.css';
 
 const INTRO_SEEN_KEY = 'emergence.intro.seen';
-const PLACEHOLDER_COUNT = 4;
+// 一次探索/涌现预期的子节点数（仅用于预留 band 居中，多/少都不影响已落位节点）
+const EXPECTED_CHILDREN = 4;
+// 生成"播放"结束、临时面板消失后，等这么久再出第一个节点
+const REVEAL_DELAY_MS = 1000;
+// 之后每个节点渐显的间隔（一个一个长出来）
+const REVEAL_INTERVAL_MS = 1000;
 
 // ── 自定义节点注册 ──
 const nodeTypes = { emergence: EmergenceFlowNode };
 
-// ── 维度颜色（MiniMap 复用）──
+// ── 维度颜色（MiniMap / 边复用）──
 const dimColor: Record<number, string> = {
   1: 'rgba(59,130,246,0.7)',
   2: 'rgba(147,51,234,0.7)',
   3: 'rgba(234,179,8,0.7)',
 };
 
-// ── 数据转换：后端节点 → React Flow 节点 ──
-// 布局：基于子树宽度的递归树布局，父节点居中于子节点群之上
+// 布局常量
 // LEAF_WIDTH: 节点中心间距,大于卡片最大宽度(300)+ 充分 gap,避免横向贴边
 // DEPTH_STEP: 父子节点的垂直间距,真实卡片含描述/标签/按钮可达 260-280px,需留呼吸空间
 const LEAF_WIDTH = 360;
 const DEPTH_STEP = 340;
 
-interface PlaceholderNodeSpec {
-  /** 占位节点在画布上的虚拟父节点 id */
-  parentId: string;
-  /** 占位节点本身的 id（保证唯一，便于替换） */
-  id: string;
-  /** 在父节点下第几个占位（用于错开动画 & 定位） */
-  index: number;
-  /** 推理维度：1=探索, 2=涌现, 3=幻想 */
-  dimension: 1 | 2 | 3;
+type XY = { x: number; y: number };
+
+/** 锚点父：parentId 优先，没有则取第一个存在的 parentIds（涌现多父节点） */
+function anchorParentId(n: EmergenceNodeType, has: (id: string) => boolean): string | undefined {
+  if (n.parentId && has(n.parentId)) return n.parentId;
+  return n.parentIds.find(pid => has(pid));
 }
 
-function toFlowNodes(
-  nodes: EmergenceNodeType[],
-  onExplore: (nodeId: string) => void,
-  onInspire: (nodeId: string) => void,
-  onStatusChange: (nodeId: string, newStatus: string) => void,
-  placeholders: PlaceholderNodeSpec[],
-  arrivedIds: Set<string>,
-  activeExploreIds: Set<string>,
-  liveText?: string,
-): Node<EmergenceNodeData>[] {
+/**
+ * 全量布局（纯函数）—— 基于子树宽度的递归树布局，父节点居中于子节点群之上。
+ * 仅在「初始加载」与「点击整理」时调用，绝不在流式过程中调用。
+ */
+function computeFullLayout(nodes: EmergenceNodeType[]): Map<string, XY> {
   const byId = new Map(nodes.map(n => [n.id, n]));
-
-  // 以 parentId 为主,没有则取 parentIds[0] 作为锚点(涌现节点)
-  const anchorParent = (n: EmergenceNodeType): string | undefined => {
-    if (n.parentId && byId.has(n.parentId)) return n.parentId;
-    const firstMulti = n.parentIds.find(pid => byId.has(pid));
-    return firstMulti;
-  };
+  const has = (id: string) => byId.has(id);
 
   const childrenMap = new Map<string, string[]>();
   const roots: string[] = [];
   nodes.forEach(n => {
-    const p = anchorParent(n);
+    const p = anchorParentId(n, has);
     if (p) {
       if (!childrenMap.has(p)) childrenMap.set(p, []);
       childrenMap.get(p)!.push(n.id);
@@ -98,20 +87,10 @@ function toFlowNodes(
     }
   });
 
-  // 占位节点参与布局：按其 parentId 附加为该父的虚拟子节点
-  const placeholderById = new Map(placeholders.map(p => [p.id, p]));
-  placeholders.forEach(p => {
-    if (byId.has(p.parentId) || placeholderById.has(p.parentId)) {
-      if (!childrenMap.has(p.parentId)) childrenMap.set(p.parentId, []);
-      childrenMap.get(p.parentId)!.push(p.id);
-    }
-  });
-
-  // 递归计算子树宽度(叶子节点 = LEAF_WIDTH)
   const subtreeWidth = new Map<string, number>();
   const measure = (id: string, seen: Set<string>): number => {
     if (subtreeWidth.has(id)) return subtreeWidth.get(id)!;
-    if (seen.has(id)) return LEAF_WIDTH; // 防环
+    if (seen.has(id)) return LEAF_WIDTH;
     seen.add(id);
     const kids = childrenMap.get(id) ?? [];
     if (kids.length === 0) {
@@ -123,11 +102,9 @@ function toFlowNodes(
     return total;
   };
   roots.forEach(r => measure(r, new Set()));
-  // 孤立节点兜底
   nodes.forEach(n => measure(n.id, new Set()));
 
-  // 递归布置
-  const positions = new Map<string, { x: number; y: number }>();
+  const positions = new Map<string, XY>();
   const place = (id: string, centerX: number, depth: number, seen: Set<string>) => {
     if (seen.has(id)) return;
     seen.add(id);
@@ -149,119 +126,35 @@ function toFlowNodes(
     place(r, rCursor + w / 2, 0, placed);
     rCursor += w;
   });
-  // 兜底:任何未定位的节点(如锚点不在当前子集中的涌现节点)
+  // 兜底:任何未定位的节点(锚点不在当前子集的涌现节点)
   nodes.forEach(n => {
     if (!positions.has(n.id)) {
-      const anchor = anchorParent(n);
+      const anchor = anchorParentId(n, has);
       const anchorPos = anchor ? positions.get(anchor) : undefined;
-      if (anchorPos) {
-        positions.set(n.id, { x: anchorPos.x, y: anchorPos.y + DEPTH_STEP });
-      } else {
-        positions.set(n.id, { x: 0, y: 0 });
-      }
+      positions.set(n.id, anchorPos ? { x: anchorPos.x, y: anchorPos.y + DEPTH_STEP } : { x: 0, y: 0 });
     }
   });
-
-  const realFlowNodes: Node<EmergenceNodeData>[] = nodes.map(n => {
-    const pos = positions.get(n.id) ?? { x: 0, y: 0 };
-    return {
-      id: n.id,
-      type: 'emergence',
-      position: n.positionX || n.positionY
-        ? { x: n.positionX, y: n.positionY }
-        : pos,
-      data: {
-        label: n.title,
-        description: n.description,
-        dimension: n.dimension,
-        nodeType: n.nodeType,
-        valueScore: n.valueScore,
-        difficultyScore: n.difficultyScore,
-        status: n.status,
-        groundingContent: n.groundingContent,
-        bridgeAssumptions: n.bridgeAssumptions ?? [],
-        missingCapabilities: n.missingCapabilities ?? [],
-        tags: n.tags ?? [],
-        onExplore: () => onExplore(n.id),
-        onInspire: () => onInspire(n.id),
-        onStatusChange: (s: string) => onStatusChange(n.id, s),
-        isJustArrived: arrivedIds.has(n.id),
-        isExploring: activeExploreIds.has(n.id),
-      } satisfies EmergenceNodeData,
-    };
-  });
-
-  const placeholderFlowNodes: Node<EmergenceNodeData>[] = placeholders.map((p, i) => {
-    const pos = positions.get(p.id) ?? { x: 0, y: 0 };
-    // 只把 liveText 喂给占位数组中的第一个元素(视觉上的"正在打字"卡片)
-    const showLive = i === 0 && !!liveText;
-    return {
-      id: p.id,
-      type: 'emergence',
-      position: pos,
-      draggable: false,
-      selectable: false,
-      data: {
-        label: '',
-        description: '',
-        dimension: p.dimension,
-        nodeType: 'capability',
-        valueScore: 0,
-        difficultyScore: 0,
-        status: 'idea',
-        groundingContent: '',
-        bridgeAssumptions: [],
-        missingCapabilities: [],
-        tags: [],
-        isPlaceholder: true,
-        placeholderIndex: p.index,
-        liveText: showLive ? liveText : undefined,
-      } satisfies EmergenceNodeData,
-    };
-  });
-
-  return [...realFlowNodes, ...placeholderFlowNodes];
+  return positions;
 }
 
-function toFlowEdges(nodes: EmergenceNodeType[], placeholders: PlaceholderNodeSpec[]): Edge[] {
-  const edges: Edge[] = [];
-  for (const n of nodes) {
-    if (n.parentId) {
-      edges.push({
-        id: `${n.parentId}->${n.id}`,
-        source: n.parentId,
-        target: n.id,
-        animated: n.dimension >= 2,
-        style: { stroke: dimColor[n.dimension] ?? dimColor[1], strokeWidth: 1.5 },
-      });
-    }
-    for (const pid of n.parentIds) {
-      if (pid === n.parentId) continue;
-      edges.push({
-        id: `${pid}->>${n.id}`,
-        source: pid,
-        target: n.id,
-        animated: true,
-        style: { stroke: dimColor[n.dimension] ?? dimColor[2], strokeWidth: 1, opacity: 0.5 },
-      });
-    }
-  }
-  // 占位边：虚线 + animated,暗示"正在涌现"
-  for (const p of placeholders) {
-    edges.push({
-      id: `ph:${p.parentId}->${p.id}`,
-      source: p.parentId,
-      target: p.id,
-      animated: true,
-      style: {
-        stroke: dimColor[p.dimension] ?? dimColor[1],
-        strokeWidth: 1,
-        strokeDasharray: '4 4',
-        opacity: 0.5,
-      },
-    });
-  }
-  return edges;
+// ── 临时生成面板 + 子节点 band 预留 ──
+interface GenSlot {
+  /** 触发该面板的父节点 id（涌现场景为锚点节点） */
+  parentId: string;
+  /** 临时面板节点 id */
+  slotId: string;
+  /** 临时面板位置（父节点正下方居中，单一固定，绝不影响布局） */
+  panelX: number;
+  /** 该批子节点的水平起点（居中于父节点之下，逐个右移落位） */
+  baseX: number;
+  /** 子节点行的 y（父 y + DEPTH_STEP） */
+  y: number;
+  /** 已落位子节点数 */
+  filled: number;
+  /** 维度（决定颜色） */
+  dim: 1 | 2 | 3;
+  /** 是否仍在"生成播放"中：true 显示临时面板；false 面板消失，准备逐个出节点 */
+  generating: boolean;
 }
 
 // ── 涌现画布 ──
@@ -272,29 +165,39 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [treeTitle, setTreeTitle] = useState('');
   const [nodeCount, setNodeCount] = useState(0);
-  // 保存原始后端节点用于增量到达时整体重新布局(修复堆积在同一位置的 bug)
+
+  // 后端节点（只增不删，除非显式删除）
   const backendNodesRef = useRef<EmergenceNodeType[]>([]);
-  // 占位骨架节点(点击探索/涌现瞬间先显示,SSE 到达后逐个替换)
-  const placeholdersRef = useRef<PlaceholderNodeSpec[]>([]);
-  // 刚到达节点的入场动画标记,0.6s 后清除
+  // 位置权威：所有节点位置的唯一来源。流式期间只为「新到达节点」写入，绝不动既有节点
+  const positionsRef = useRef<Map<string, XY>>(new Map());
+  // 活跃临时面板（按 parentId 索引，并行探索可有多个）
+  const slotsRef = useRef<Map<string, GenSlot>>(new Map());
+  // 每个 parentId 的临时面板实时 LLM 文本（固定尺寸，绝不影响布局）
+  const liveTextRef = useRef<Map<string, string>>(new Map());
+  // 生成期间，每个父节点的到达子节点先缓冲，等"播放"结束再逐个渐显
+  const pendingByParentRef = useRef<Map<string, EmergenceNodeType[]>>(new Map());
+  // 每个父节点的逐个渐显定时器
+  const revealTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // SSE 已结束但缓冲节点尚未逐个渐显完毕的父节点：此期间该父仍视为"流式中"，
+  // 阻止对同父的重复探索 / 涌现 / 整理交错，避免乱序落位
+  const revealingRef = useRef<Set<string>>(new Set());
+  // 刚到达节点的入场动画标记
   const arrivedIdsRef = useRef<Set<string>>(new Set());
-  // 灵感对话框状态
+  // 灵感对话框
   const [inspireTargetId, setInspireTargetId] = useState<string | null>(null);
-  // 提前声明 callback 引用,供 relayout 使用(真实 handler 稍后再 wire 进来,避免 TDZ / use-before-define)
+  // 提前声明 handler 引用，供 buildFlow 使用
   const handleExploreRef = useRef<(nodeId: string) => void>(() => {});
   const handleInspireRef = useRef<(nodeId: string) => void>(() => {});
   const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
-  // LLM 流式累积的原始文本,由 useSseStream.typing 持续更新(通过 effect 同步到 ref)
-  const liveTypingRef = useRef<string>('');
-  // 涌现(tree 级别)思考流
-  const [emergeThinking, setEmergeThinking] = useState('');
+  // 涌现锚点（涌现无单一父节点，落位挂到这个可见节点下）
+  const emergeAnchorRef = useRef<string | null>(null);
+  const [, setEmergeThinking] = useState('');
+  // 「整理」过渡：给画布加 .emergence-tidying，节点平滑滑行 600ms
+  const [tidying, setTidying] = useState(false);
 
-  // ── 并行探索流管理 ─────────────────────────────────────
-  // 每个被点击「探索」的节点都有一条独立 SSE 流,互不阻塞。
-  // ref 存连接状态,useState tick 强制重渲染(避免每条消息都 setState 大对象)
+  // ── 并行探索流管理 ──
   interface ActiveExplore {
     controller: AbortController;
-    thinking: string;
     typing: string;
     phase: SsePhase;
     message: string;
@@ -304,71 +207,301 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const [exploreTick, setExploreTick] = useState(0);
   const bumpExplore = useCallback(() => setExploreTick(t => t + 1), []);
 
-  const relayout = useCallback(() => {
+  const reactFlow = useReactFlow();
+
+  // 平滑把镜头对准某节点
+  const centerOnNode = useCallback((nodeId: string) => {
+    requestAnimationFrame(() => {
+      try {
+        const n = reactFlow.getNode(nodeId);
+        if (!n) return;
+        reactFlow.setCenter(n.position.x + 130, n.position.y + 80, { zoom: 0.85, duration: 600 });
+      } catch { /* 早期可能抛错，忽略 */ }
+    });
+  }, [reactFlow]);
+
+  // ── 从 positionsRef + 生成槽 构建 React Flow 节点/边（不重算布局）──
+  const buildFlow = useCallback(() => {
     const all = backendNodesRef.current;
-    const activeSet = new Set(activeExploresRef.current.keys());
-    setNodes(toFlowNodes(
-      all,
-      (id) => handleExploreRef.current(id),
-      (id) => handleInspireRef.current(id),
-      (id, s) => handleStatusChangeRef.current(id, s),
-      placeholdersRef.current,
-      arrivedIdsRef.current,
-      activeSet,
-      liveTypingRef.current,
-    ));
-    setEdges(toFlowEdges(all, placeholdersRef.current));
+    const byId = new Map(all.map(n => [n.id, n]));
+    const has = (id: string) => byId.has(id);
+    const positions = positionsRef.current;
+    const arrivedIds = arrivedIdsRef.current;
+    // 探索进行中 + 缓冲渐显中 的父节点都保持"探索态"脉冲，直到子节点全部出完
+    const activeSet = new Set([...activeExploresRef.current.keys(), ...revealingRef.current]);
+
+    const flowNodes: Node<EmergenceNodeData>[] = all.map(n => {
+      // 后端持久化坐标优先；否则用位置权威；都没有则锚点下方兜底（不污染权威）
+      let pos = positions.get(n.id);
+      if (!pos) {
+        if (n.positionX || n.positionY) pos = { x: n.positionX, y: n.positionY };
+        else {
+          const anchor = anchorParentId(n, has);
+          const ap = anchor ? positions.get(anchor) : undefined;
+          pos = ap ? { x: ap.x, y: ap.y + DEPTH_STEP } : { x: 0, y: 0 };
+        }
+        positions.set(n.id, pos);
+      }
+      return {
+        id: n.id,
+        type: 'emergence',
+        position: pos,
+        data: {
+          label: n.title,
+          description: n.description,
+          dimension: n.dimension,
+          nodeType: n.nodeType,
+          valueScore: n.valueScore,
+          difficultyScore: n.difficultyScore,
+          status: n.status,
+          groundingContent: n.groundingContent,
+          bridgeAssumptions: n.bridgeAssumptions ?? [],
+          missingCapabilities: n.missingCapabilities ?? [],
+          tags: n.tags ?? [],
+          onExplore: () => handleExploreRef.current(n.id),
+          onInspire: () => handleInspireRef.current(n.id),
+          onStatusChange: (s: string) => handleStatusChangeRef.current(n.id, s),
+          isJustArrived: arrivedIds.has(n.id),
+          isExploring: activeSet.has(n.id),
+        } satisfies EmergenceNodeData,
+      };
+    });
+
+    // 临时生成面板：仅在"播放中"显示，父节点正下方居中，单一固定
+    for (const slot of slotsRef.current.values()) {
+      if (!slot.generating) continue;
+      flowNodes.push({
+        id: slot.slotId,
+        type: 'emergence',
+        position: { x: slot.panelX, y: slot.y },
+        draggable: false,
+        selectable: false,
+        data: {
+          label: '',
+          description: '',
+          dimension: slot.dim,
+          nodeType: 'capability',
+          valueScore: 0,
+          difficultyScore: 0,
+          status: 'idea',
+          groundingContent: '',
+          bridgeAssumptions: [],
+          missingCapabilities: [],
+          tags: [],
+          isPlaceholder: true,
+          placeholderIndex: 0,
+          liveText: liveTextRef.current.get(slot.parentId) || undefined,
+        } satisfies EmergenceNodeData,
+      });
+    }
+
+    const flowEdges: Edge[] = [];
+    for (const n of all) {
+      if (n.parentId && byId.has(n.parentId)) {
+        flowEdges.push({
+          id: `${n.parentId}->${n.id}`,
+          source: n.parentId,
+          target: n.id,
+          animated: n.dimension >= 2,
+          style: { stroke: dimColor[n.dimension] ?? dimColor[1], strokeWidth: 1.5 },
+        });
+      }
+      for (const pid of n.parentIds) {
+        if (pid === n.parentId || !byId.has(pid)) continue;
+        flowEdges.push({
+          id: `${pid}->>${n.id}`,
+          source: pid,
+          target: n.id,
+          animated: true,
+          style: { stroke: dimColor[n.dimension] ?? dimColor[2], strokeWidth: 1, opacity: 0.5 },
+        });
+      }
+    }
+    for (const slot of slotsRef.current.values()) {
+      if (!slot.generating || !byId.has(slot.parentId)) continue;
+      flowEdges.push({
+        id: `slot:${slot.parentId}->${slot.slotId}`,
+        source: slot.parentId,
+        target: slot.slotId,
+        animated: true,
+        style: { stroke: dimColor[slot.dim] ?? dimColor[1], strokeWidth: 1, strokeDasharray: '4 4', opacity: 0.5 },
+      });
+    }
+
+    setNodes(flowNodes);
+    setEdges(flowEdges);
   }, [setNodes, setEdges]);
 
-  // 工具:消费一个占位槽位(每当一个真实节点到达)
-  const consumePlaceholder = useCallback((parentId: string | null) => {
-    if (!parentId) {
-      // 涌现场景无固定父节点,从任意占位弹一个
-      if (placeholdersRef.current.length > 0) {
-        placeholdersRef.current = placeholdersRef.current.slice(1);
-      }
-      return;
-    }
-    const idx = placeholdersRef.current.findIndex(p => p.parentId === parentId);
-    if (idx >= 0) {
-      placeholdersRef.current = [
-        ...placeholdersRef.current.slice(0, idx),
-        ...placeholdersRef.current.slice(idx + 1),
-      ];
-    }
-  }, []);
+  // 只更新某个生成槽的实时文本（绝不触发布局，槽尺寸固定）
+  const pokeSlotText = useCallback((parentId: string) => {
+    const slot = slotsRef.current.get(parentId);
+    if (!slot) return;
+    const text = liveTextRef.current.get(parentId) || undefined;
+    setNodes(prev => prev.map(n =>
+      n.id === slot.slotId ? { ...n, data: { ...n.data, liveText: text } } : n,
+    ));
+  }, [setNodes]);
 
-  // 工具:标记新到达节点,0.6s 后清除入场动画
+  // 标记新到达节点，0.65s 后清除入场动画（只刷该节点，不重排）
   const markArrived = useCallback((nodeId: string) => {
     arrivedIdsRef.current = new Set([...arrivedIdsRef.current, nodeId]);
     setTimeout(() => {
       const next = new Set(arrivedIdsRef.current);
       next.delete(nodeId);
       arrivedIdsRef.current = next;
-      relayout();
+      setNodes(prev => prev.map(n =>
+        n.id === nodeId ? { ...n, data: { ...n.data, isJustArrived: false } } : n,
+      ));
     }, 650);
-  }, [relayout]);
+  }, [setNodes]);
 
-  // ── 画布实例（用于整理 fitView / 自动聚焦新节点） ──
-  const reactFlow = useReactFlow();
-
-  // 工具：平滑把镜头对准某节点，避免新节点超出视口
-  const centerOnNode = useCallback((nodeId: string) => {
-    // 延迟一帧，确保节点已渲染进 React Flow 内部状态
-    requestAnimationFrame(() => {
-      try {
-        const n = reactFlow.getNode(nodeId);
-        if (!n) return;
-        reactFlow.setCenter(n.position.x + 130, n.position.y + 80, { zoom: 0.85, duration: 600 });
-      } catch {
-        // setCenter 在非常早期可能抛错，忽略
-      }
+  // 为某父节点预留一条子节点 band（不读写其它节点位置）
+  const reserveBand = useCallback((parentId: string, dim: 1 | 2 | 3) => {
+    const positions = positionsRef.current;
+    let parentPos = positions.get(parentId);
+    if (!parentPos) {
+      // 极端兜底：父未定位时先做一次全量布局补齐
+      positionsRef.current = computeFullLayout(backendNodesRef.current);
+      parentPos = positionsRef.current.get(parentId) ?? { x: 0, y: 0 };
+    }
+    const y = parentPos.y + DEPTH_STEP;
+    // 找该父已落位的子节点（同一 y 行），新 band 接在它们右侧，避免与历史子节点重叠
+    const has = (id: string) => backendNodesRef.current.some(n => n.id === id);
+    let maxChildX = -Infinity;
+    for (const n of backendNodesRef.current) {
+      if (anchorParentId(n, has) !== parentId) continue;
+      const p = positions.get(n.id);
+      if (p && Math.abs(p.y - y) < DEPTH_STEP / 2) maxChildX = Math.max(maxChildX, p.x);
+    }
+    const baseX = maxChildX > -Infinity
+      ? maxChildX + LEAF_WIDTH
+      : parentPos.x - ((EXPECTED_CHILDREN - 1) / 2) * LEAF_WIDTH;
+    slotsRef.current.set(parentId, {
+      parentId,
+      slotId: `__gen_${parentId}_${Date.now()}`,
+      panelX: parentPos.x,
+      baseX,
+      y,
+      filled: 0,
+      dim,
+      generating: true,
     });
-  }, [reactFlow]);
+  }, []);
+
+  // 解析一个到达节点应归属哪个临时面板（父 id / 锚点）
+  const resolveSlotKey = useCallback((node: EmergenceNodeType): string | null => {
+    if (node.parentId && slotsRef.current.has(node.parentId)) return node.parentId;
+    const has = (id: string) => backendNodesRef.current.some(n => n.id === id);
+    const a = anchorParentId(node, has);
+    if (a && slotsRef.current.has(a)) return a;
+    return emergeAnchorRef.current && slotsRef.current.has(emergeAnchorRef.current)
+      ? emergeAnchorRef.current
+      : null;
+  }, []);
+
+  // 生成期间：到达节点先缓冲，不落位（临时面板继续播放）
+  const enqueueArrival = useCallback((node: EmergenceNodeType) => {
+    const key = resolveSlotKey(node) ?? emergeAnchorRef.current ?? '__detached__';
+    const buf = pendingByParentRef.current.get(key) ?? [];
+    buf.push(node);
+    pendingByParentRef.current.set(key, buf);
+  }, [resolveSlotKey]);
+
+  // 收尾某父：清掉面板/缓冲/定时器
+  const cleanupParent = useCallback((parentId: string) => {
+    const t = revealTimersRef.current.get(parentId);
+    if (t) { clearTimeout(t); revealTimersRef.current.delete(parentId); }
+    slotsRef.current.delete(parentId);
+    liveTextRef.current.delete(parentId);
+    pendingByParentRef.current.delete(parentId);
+    revealingRef.current.delete(parentId);
+    bumpExplore(); // 解锁后刷新 stop 按钮 / 探索态 / 整理·涌现可用性
+  }, [bumpExplore]);
+
+  // 中止/出错兜底：把已到达（后端已持久化）但尚未渐显的缓冲节点一次性落位，
+  // 而不是丢弃——否则这些节点要等整树重载才出现（Bugbot medium）
+  const flushPending = useCallback((parentId: string) => {
+    const buf = pendingByParentRef.current.get(parentId);
+    if (!buf || buf.length === 0) { pendingByParentRef.current.delete(parentId); return; }
+    const existing = new Set(backendNodesRef.current.map(n => n.id));
+    const positions = positionsRef.current;
+    const slot = slotsRef.current.get(parentId);
+    let baseX: number, y: number, startFilled: number;
+    if (slot) {
+      baseX = slot.baseX; y = slot.y; startFilled = slot.filled;
+    } else {
+      const has = (id: string) => backendNodesRef.current.some(n => n.id === id);
+      const anchorId = buf[0] ? anchorParentId(buf[0], has) : null;
+      const ap = (anchorId ? positions.get(anchorId) : undefined)
+        ?? positions.get(parentId) ?? { x: 0, y: 0 };
+      baseX = ap.x - ((Math.max(buf.length, 1) - 1) / 2) * LEAF_WIDTH;
+      y = ap.y + DEPTH_STEP;
+      startFilled = 0;
+    }
+    const added: EmergenceNodeType[] = [];
+    for (const node of buf) {
+      if (existing.has(node.id)) continue;
+      existing.add(node.id); // 同一 flush 批内的重复 node 事件也要去重
+      positions.set(node.id, { x: baseX + (startFilled + added.length) * LEAF_WIDTH, y });
+      added.push(node);
+    }
+    if (added.length > 0) {
+      backendNodesRef.current = [...backendNodesRef.current, ...added];
+      if (slot) slot.filled = startFilled + added.length;
+      setNodeCount(c => c + added.length);
+    }
+    pendingByParentRef.current.delete(parentId);
+  }, []);
+
+  // 逐个渐显：从缓冲弹一个 → 落到预留 band → 1s 后再下一个
+  const revealNext = useCallback((parentId: string) => {
+    revealTimersRef.current.delete(parentId);
+    const slot = slotsRef.current.get(parentId);
+    const buf = pendingByParentRef.current.get(parentId) ?? [];
+    // 与 flushPending 去重逻辑保持一致：跳过已落位的重复节点（SSE 偶发重发 /
+    // 与 flushPending 抢同一缓冲），避免重复 React Flow 节点 + nodeCount 多计
+    const existing = new Set(backendNodesRef.current.map(n => n.id));
+    let node = buf.shift();
+    while (node && existing.has(node.id)) node = buf.shift();
+    if (!node || !slot) {
+      cleanupParent(parentId);
+      buildFlow();
+      return;
+    }
+    backendNodesRef.current = [...backendNodesRef.current, node];
+    positionsRef.current.set(node.id, { x: slot.baseX + slot.filled * LEAF_WIDTH, y: slot.y });
+    slot.filled += 1;
+    markArrived(node.id);
+    setNodeCount(c => c + 1);
+    buildFlow();
+    if (slot.filled === 1) centerOnNode(node.id);
+
+    if (buf.length > 0) {
+      const t = setTimeout(() => revealNext(parentId), REVEAL_INTERVAL_MS);
+      revealTimersRef.current.set(parentId, t);
+    } else {
+      cleanupParent(parentId);
+      buildFlow(); // 解锁后立即重建：清掉该父残留的 isExploring 脉冲/锁定态
+    }
+  }, [markArrived, buildFlow, centerOnNode, cleanupParent]);
+
+  // 生成"播放"结束：临时面板消失 → 等 1s → 开始逐个出节点
+  const finishGeneration = useCallback((parentId: string) => {
+    const slot = slotsRef.current.get(parentId);
+    if (!slot) return;
+    slot.generating = false;            // 临时面板立即消失
+    liveTextRef.current.delete(parentId);
+    // 渐显未完成前父节点保持锁定（阻止同父重复探索 / 涌现 / 整理交错）
+    revealingRef.current.add(parentId);
+    bumpExplore();
+    buildFlow();
+    const t = setTimeout(() => revealNext(parentId), REVEAL_DELAY_MS);
+    revealTimersRef.current.set(parentId, t);
+  }, [buildFlow, revealNext, bumpExplore]);
 
   // ── 涌现 SSE ──
   const {
-    phase: emergePhase, phaseMessage: emergeMsg, isStreaming: isEmerging,
+    isStreaming: isEmerging,
     typing: emergeTyping, start: startEmerge, abort: abortEmerge,
   } =
     useSseStream<EmergenceNodeType>({
@@ -383,31 +516,37 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         },
       },
       onItem: (newNode) => {
-        backendNodesRef.current = [...backendNodesRef.current, newNode];
-        consumePlaceholder(newNode.parentId ?? null);
-        relayout();
-        markArrived(newNode.id);
-        centerOnNode(newNode.id);
-        setNodeCount(c => c + 1);
+        // abort 后 SSE 可能仍递送已缓冲的 node 事件：无活跃锚点则丢弃，
+        // 否则会被塞进无槽无定时器的 key 而孤立（Codex P1）
+        if (!emergeAnchorRef.current) return;
+        enqueueArrival(newNode);
       },
       onDone: (data) => {
-        placeholdersRef.current = [];
-        relayout();
+        const pid = emergeAnchorRef.current;
+        emergeAnchorRef.current = null; // 防止陈旧锚点把后续探索的节点误导到无槽 key
+        if (pid) finishGeneration(pid);
         const d = data as { totalNew?: number; error?: string };
-        if (d.error) {
-          toast.error('涌现失败', d.error);
-        } else if (!d.totalNew || d.totalNew === 0) {
-          toast.warning('涌现未生成节点', '已有节点可能不足以组合，请先探索更多节点。');
-        } else {
-          toast.success('涌现完成', `新增 ${d.totalNew} 个组合节点`);
-        }
+        if (d.error) toast.error('涌现失败', d.error);
+        else if (!d.totalNew) toast.warning('涌现未生成节点', '已有节点可能不足以组合，请先探索更多节点。');
+        else toast.success('涌现完成', `新增 ${d.totalNew} 个组合节点`);
       },
       onError: (msg) => {
-        placeholdersRef.current = [];
-        relayout();
+        const pid = emergeAnchorRef.current;
+        emergeAnchorRef.current = null; // 防止陈旧锚点把后续探索的节点误导到无槽 key
+        // 已到达的持久化节点先落位再收尾，避免丢节点（Bugbot medium）
+        if (pid) { flushPending(pid); cleanupParent(pid); buildFlow(); }
         toast.error('涌现失败', msg);
       },
     });
+
+  // 涌现实时文本 → 喂锚点生成槽（不重排）
+  useEffect(() => {
+    const pid = emergeAnchorRef.current;
+    if (pid && isEmerging) {
+      liveTextRef.current.set(pid, emergeTyping ?? '');
+      pokeSlotText(pid);
+    }
+  }, [emergeTyping, isEmerging, pokeSlotText]);
 
   // ── 加载树 ──
   const loadTree = useCallback(async () => {
@@ -417,32 +556,27 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     setTreeTitle(tree.title);
     setNodeCount(tree.nodeCount);
     backendNodesRef.current = backendNodes;
-    relayout();
-  }, [treeId, relayout]);
+    positionsRef.current = computeFullLayout(backendNodes);
+    buildFlow();
+  }, [treeId, buildFlow]);
 
   useEffect(() => { loadTree(); }, [loadTree]);
 
-  // ── 操作 ──
-  const injectPlaceholders = useCallback((parentId: string, count: number, dimension: 1 | 2 | 3) => {
-    const now = Date.now();
-    const specs: PlaceholderNodeSpec[] = Array.from({ length: count }, (_, i) => ({
-      parentId,
-      id: `__ph_${parentId}_${now}_${i}`,
-      index: i,
-      dimension,
-    }));
-    placeholdersRef.current = [...placeholdersRef.current, ...specs];
-    relayout();
-  }, [relayout]);
+  // 卸载清理所有逐个渐显定时器
+  useEffect(() => {
+    const timers = revealTimersRef.current;
+    return () => { for (const t of timers.values()) clearTimeout(t); };
+  }, []);
 
+  // ── 探索 ──
   const fireExplore = useCallback(async (nodeId: string, userPrompt?: string) => {
-    if (isEmerging) return; // 涌现期间暂停新探索(tree 级别操作需要独占)
-    if (activeExploresRef.current.has(nodeId)) return; // 同一节点不可重复探索
+    if (isEmerging) return;
+    if (activeExploresRef.current.has(nodeId)) return;
+    if (revealingRef.current.has(nodeId)) return; // 该父渐显未完成，禁止重复探索导致交错
 
     const controller = new AbortController();
     const state: ActiveExplore = {
       controller,
-      thinking: '',
       typing: '',
       phase: 'connecting',
       message: '连接中…',
@@ -451,7 +585,10 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     activeExploresRef.current.set(nodeId, state);
     bumpExplore();
 
-    injectPlaceholders(nodeId, PLACEHOLDER_COUNT, 1);
+    reserveBand(nodeId, 1);
+    buildFlow();
+    const gen = slotsRef.current.get(nodeId);
+    if (gen) centerOnNode(gen.slotId);
 
     const body = userPrompt?.trim() ? { userPrompt: userPrompt.trim() } : undefined;
 
@@ -472,28 +609,19 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
             } else if (evt.event === 'typing') {
               const t = (data as { text?: string; content?: string }).text || (data as { content?: string }).content || '';
               state.typing += t;
-              bumpExplore();
-            } else if (evt.event === 'thinking') {
-              const t = (data as { text?: string }).text || '';
-              if (t) { state.thinking += t; bumpExplore(); }
+              liveTextRef.current.set(nodeId, state.typing);
+              pokeSlotText(nodeId);
             } else if (evt.event === 'node') {
-              const newNode = data as EmergenceNodeType;
-              backendNodesRef.current = [...backendNodesRef.current, newNode];
-              consumePlaceholder(newNode.parentId ?? null);
-              relayout();
-              markArrived(newNode.id);
-              centerOnNode(newNode.id);
-              setNodeCount(c => c + 1);
+              // abort 后 SSE 可能仍递送已缓冲的 node 事件：本流已非该父的活跃流
+              // （stopAll 清空 / 已重启新流）则丢弃，避免塞进无槽 key 孤立（Codex P1）
+              if (activeExploresRef.current.get(nodeId) !== state) return;
+              enqueueArrival(data as EmergenceNodeType);
             } else if (evt.event === 'done') {
               state.phase = 'done';
               const d = data as { totalNew?: number; error?: string };
-              if (d.error) {
-                toast.error('探索失败', d.error);
-              } else if (!d.totalNew || d.totalNew === 0) {
-                toast.warning('探索未生成节点', '可能是种子内容过短，请尝试提供更详细的描述。');
-              } else {
-                toast.success('探索完成', `新增 ${d.totalNew} 个节点`);
-              }
+              if (d.error) toast.error('探索失败', d.error);
+              else if (!d.totalNew) toast.warning('探索未生成节点', '可能是种子内容过短，请尝试提供更详细的描述。');
+              else toast.success('探索完成', `新增 ${d.totalNew} 个节点`);
             } else if (evt.event === 'error') {
               state.phase = 'error';
               toast.error('探索失败', (data as { message?: string }).message || '出错');
@@ -502,30 +630,38 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         },
       });
     } finally {
-      // 清理该节点名下的占位卡片 + 从活跃表中移除
-      placeholdersRef.current = placeholdersRef.current.filter(p => p.parentId !== nodeId);
       activeExploresRef.current.delete(nodeId);
       bumpExplore();
-      relayout();
+      // 生成"播放"结束：临时面板消失 → 等 1s → 逐个出节点
+      // （若用户手动停止，slot 已被 stopAll 清掉，这里安全 no-op）
+      finishGeneration(nodeId);
     }
-  }, [isEmerging, bumpExplore, injectPlaceholders, consumePlaceholder, relayout, markArrived, centerOnNode]);
+  }, [isEmerging, bumpExplore, reserveBand, buildFlow, pokeSlotText, enqueueArrival, finishGeneration, centerOnNode]);
 
-  // 中止所有活跃探索(顶部停止按钮)
-  const abortAllExplores = useCallback(() => {
+  // 中止所有活跃流
+  const stopAll = useCallback(() => {
     for (const s of activeExploresRef.current.values()) s.controller.abort();
     activeExploresRef.current.clear();
-    placeholdersRef.current = placeholdersRef.current.filter(p => !p.parentId); // 保留无父占位(涌现用)
+    abortEmerge();
+    for (const t of revealTimersRef.current.values()) clearTimeout(t);
+    revealTimersRef.current.clear();
+    // 丢弃前先把已到达的持久化节点落位（Bugbot medium）：停止 ≠ 删除已生成的节点
+    for (const key of [...pendingByParentRef.current.keys()]) flushPending(key);
+    pendingByParentRef.current.clear();
+    revealingRef.current.clear();
+    slotsRef.current.clear();
+    liveTextRef.current.clear();
+    emergeAnchorRef.current = null;
     bumpExplore();
-    relayout();
-  }, [bumpExplore, relayout]);
+    buildFlow();
+  }, [abortEmerge, bumpExplore, buildFlow, flushPending]);
 
-  const handleExplore = useCallback((nodeId: string) => {
-    fireExplore(nodeId);
-  }, [fireExplore]);
+  const handleExplore = useCallback((nodeId: string) => { fireExplore(nodeId); }, [fireExplore]);
 
   const handleInspire = useCallback((nodeId: string) => {
     if (isEmerging) return;
     if (activeExploresRef.current.has(nodeId)) return;
+    if (revealingRef.current.has(nodeId)) return;
     setInspireTargetId(nodeId);
   }, [isEmerging]);
 
@@ -539,7 +675,6 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const handleStatusChange = useCallback(async (nodeId: string, newStatus: string) => {
     const { updateEmergenceNode } = await import('@/services');
     await updateEmergenceNode(nodeId, { status: newStatus });
-    // 同步本地后端节点 + UI
     backendNodesRef.current = backendNodesRef.current.map(n =>
       n.id === nodeId ? { ...n, status: newStatus as EmergenceNodeType['status'] } : n,
     );
@@ -548,19 +683,39 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     ));
   }, [setNodes]);
 
-  // Wire up 真实 handler 到前面声明的 ref
   useEffect(() => { handleExploreRef.current = handleExplore; }, [handleExplore]);
   useEffect(() => { handleInspireRef.current = handleInspire; }, [handleInspire]);
   useEffect(() => { handleStatusChangeRef.current = handleStatusChange; }, [handleStatusChange]);
 
   const handleEmerge = useCallback((fantasy: boolean) => {
-    if (activeExploresRef.current.size > 0 || isEmerging) return;
+    if (activeExploresRef.current.size > 0 || isEmerging || revealingRef.current.size > 0) return;
     setEmergeThinking('');
-    // 涌现没有单一父节点:选树上已有的一个可见节点作为占位锚点,用户视觉上知道"正在涌现"
-    const anchorId = backendNodesRef.current[0]?.id;
-    if (anchorId) injectPlaceholders(anchorId, PLACEHOLDER_COUNT, fantasy ? 3 : 2);
+    const anchorId = backendNodesRef.current[0]?.id ?? null;
+    emergeAnchorRef.current = anchorId;
+    if (anchorId) {
+      reserveBand(anchorId, fantasy ? 3 : 2);
+      buildFlow();
+      const gen = slotsRef.current.get(anchorId);
+      if (gen) centerOnNode(gen.slotId);
+    }
     startEmerge({ url: `${api.emergence.trees.emerge(treeId)}${fantasy ? '?fantasy=true' : ''}` });
-  }, [treeId, isEmerging, startEmerge, injectPlaceholders]);
+  }, [treeId, isEmerging, startEmerge, reserveBand, buildFlow, centerOnNode]);
+
+  // 手动整理：唯一会移动既有节点的入口，平滑滑行
+  const handleTidy = useCallback(() => {
+    // 流式 / 渐显进行中禁止整理：整理会全量重排，与渐显落位冲突
+    if (activeExploresRef.current.size > 0 || isEmerging || revealingRef.current.size > 0) return;
+    positionsRef.current = computeFullLayout(backendNodesRef.current);
+    setTidying(true);
+    buildFlow();
+    setTimeout(() => reactFlow.fitView({ padding: 0.25, duration: 500 }), 30);
+    setTimeout(() => setTidying(false), 700);
+  }, [buildFlow, reactFlow, isEmerging]);
+
+  // 拖动后把位置写回权威，避免下次 buildFlow 弹回
+  const handleNodeDragStop = useCallback((_e: unknown, node: Node) => {
+    positionsRef.current.set(node.id, { x: node.position.x, y: node.position.y });
+  }, []);
 
   const handleExport = useCallback(async () => {
     const res = await exportEmergenceTree(treeId);
@@ -575,10 +730,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   }, [treeId, treeTitle]);
 
   // ── 引导状态 ──
-  const [guideStep, setGuideStep] = useState<'seed' | 'explored' | 'emerged' | 'dismissed'>('seed');
+  const [guideStep, setGuideStep] = useState<'seed' | 'explored' | 'emerged'>('seed');
   const [guideDismissed, setGuideDismissed] = useState(false);
 
-  // 根据节点数量自动推进引导
   useEffect(() => {
     if (guideDismissed) return;
     if (nodeCount <= 1) setGuideStep('seed');
@@ -586,39 +740,12 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     else setGuideStep('emerged');
   }, [nodeCount, guideDismissed]);
 
-  // 最新启动的探索流(给 StreamingBar 提供代表性的 typing/thinking)
-  // 依赖 exploreTick 确保每次 bumpExplore 都会重新取最新值
-  const latestExplore = (() => {
-    void exploreTick;
-    const entries = Array.from(activeExploresRef.current.entries());
-    if (entries.length === 0) return null;
-    entries.sort((a, b) => b[1].startedAt - a[1].startedAt);
-    return entries[0][1];
-  })();
-  const exploreCount = (() => {
-    void exploreTick;
-    return activeExploresRef.current.size;
-  })();
+  void exploreTick; // 订阅 tick，stop 按钮 / 探索态随之刷新
+  const exploreCount = activeExploresRef.current.size;
   const isExploring = exploreCount > 0;
-  const isStreaming = isExploring || isEmerging;
-  const currentPhase: SsePhase = isExploring
-    ? (latestExplore?.phase ?? 'streaming')
-    : emergePhase;
-  const currentMsg = isExploring
-    ? (exploreCount > 1 ? `${exploreCount} 个节点并行探索中` : (latestExplore?.message || 'AI 生长中'))
-    : emergeMsg;
-  const currentTyping = isExploring ? (latestExplore?.typing ?? '') : emergeTyping;
-  const currentThinking = isExploring ? (latestExplore?.thinking ?? '') : emergeThinking;
+  // 渐显未完成也算"流式中"：停止按钮保持、涌现/整理保持禁用，直到子节点全部出完
+  const isStreaming = isExploring || isEmerging || revealingRef.current.size > 0;
 
-  // 流式文字变化时,把最新值同步进 ref 并重布局,让首个占位卡片实时看到 LLM 原文
-  useEffect(() => {
-    liveTypingRef.current = currentTyping ?? '';
-    if (isStreaming && placeholdersRef.current.length > 0) {
-      relayout();
-    }
-  }, [currentTyping, isStreaming, relayout]);
-
-  // 引导文案
   const guideContent: Record<string, { title: string; desc: string; icon: typeof Zap }> = {
     seed: { title: '点击种子节点的「探索」按钮', desc: 'AI 会基于种子内容，在系统内寻找可实现的子功能', icon: MousePointerClick },
     explored: { title: '继续探索，或尝试涌现', desc: '节点达到 3 个后，顶部会出现「二维涌现」按钮——AI 将组合多个节点发现新可能', icon: Sparkle },
@@ -647,10 +774,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
                 variant="ghost"
                 size="xs"
                 onClick={() => {
-                  abortAllExplores();
-                  abortEmerge();
-                  placeholdersRef.current = [];
-                  relayout();
+                  stopAll();
                   toast.info('已停止', '可以继续探索或涌现');
                 }}
                 title={isExploring && exploreCount > 1 ? `停止全部 ${exploreCount} 条探索` : '停止当前 AI 流式生成'}
@@ -662,9 +786,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
             <Button
               variant="ghost"
               size="xs"
-              onClick={() => { relayout(); setTimeout(() => reactFlow.fitView({ padding: 0.25, duration: 500 }), 30); }}
+              onClick={handleTidy}
               disabled={isStreaming || nodeCount === 0}
-              title="自动整理节点位置并重新居中画布"
+              title="重新排布整棵树并居中（生成期间不会自动重排，需要时手动整理）"
             >
               <Wand2 size={13} /> 整理
             </Button>
@@ -678,29 +802,14 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
       />
 
-      {/* SSE 状态栏(流式显示 LLM 原文,消除空白等待) */}
-      {isStreaming && (
-        <div className="px-3 pt-2">
-          <EmergenceStreamingBar
-            phase={currentPhase}
-            message={currentMsg}
-            typing={currentTyping}
-            thinking={currentThinking}
-            dimension={isExploring ? 1 : 2}
-            extra={isExploring && exploreCount > 1
-              ? `${exploreCount} 条并行`
-              : `占位 ${placeholdersRef.current.length} / ${PLACEHOLDER_COUNT}`}
-          />
-        </div>
-      )}
-
-      {/* React Flow 画布 */}
-      <div className="flex-1 min-h-0">
+      {/* React Flow 画布（流式反馈下沉到父节点下的生成槽，不再有顶部横幅） */}
+      <div className={`flex-1 min-h-0 ${tidying ? 'emergence-tidying' : ''}`}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeDragStop={handleNodeDragStop}
           nodeTypes={nodeTypes}
           fitView
           minZoom={0.15}
@@ -727,11 +836,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
             pannable
             zoomable={false}
           />
-          {/* ReactFlow 自带 Controls(+/-/fitView)在暗色主题下样式覆盖反复失败,
-             且画布手势已支持双指捏合 + ⌘/Ctrl+滚轮缩放 + Space+拖动平移,
-             顶栏也有「整理」按钮 = fitView,Controls 完全是冗余 → 直接删除 */}
 
-          {/* 图例：与画布主题一致的深色玻璃面板,文字 + 圆点同色,确保对比度 ≥ 4.5:1 */}
+          {/* 图例 */}
           <Panel position="bottom-left">
             <div
               className="flex items-center gap-3.5 px-3.5 py-2 rounded-[10px]"
@@ -803,7 +909,6 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
                         </p>
                       </div>
                     </div>
-                    {/* 进度指示 */}
                     <div className="flex gap-1.5 mt-3 justify-center">
                       {['seed', 'explored', 'emerged'].map((s) => (
                         <div key={s} className="h-1 rounded-full transition-all duration-300"
@@ -850,12 +955,10 @@ export function EmergenceExplorerPage() {
     setShowIntro(false);
   }, []);
 
-  // 从文档空间跳转来的参数
   const seedTitle = searchParams.get('seedTitle');
   const seedSourceType = searchParams.get('seedSourceType');
   const seedSourceId = searchParams.get('seedSourceId');
 
-  // 自动打开创建对话框（如果有 URL 参数）
   useEffect(() => {
     if (seedSourceId) {
       dismissIntro();
@@ -881,7 +984,7 @@ export function EmergenceExplorerPage() {
     );
   }
 
-  // 介绍页(首次进入或用户主动再次查看)
+  // 介绍页
   if (showIntro) {
     return (
       <>
@@ -916,7 +1019,6 @@ export function EmergenceExplorerPage() {
   // 树列表模式
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
-      {/* 标题栏 */}
       <TabBar
         title="涌现探索器"
         icon={<TreePine size={14} />}
@@ -932,7 +1034,6 @@ export function EmergenceExplorerPage() {
         }
       />
 
-      {/* 内容区域 */}
       <div className="px-5 pb-6 w-full">
         {loading ? (
           <MapSectionLoader text="加载中..." />
@@ -946,7 +1047,6 @@ export function EmergenceExplorerPage() {
               从一颗种子开始，AI 帮你发现下一步做什么
             </p>
 
-            {/* 三步引导 */}
             <div className="grid grid-cols-3 gap-4 mb-8 max-w-[560px] w-full">
               {[
                 { step: '1', icon: TreePine, title: '种下种子', desc: '上传一段文档或方案作为起点' },
@@ -981,7 +1081,6 @@ export function EmergenceExplorerPage() {
         )}
       </div>
 
-      {/* 创建对话框 */}
       {showCreate && (
         <EmergenceCreateDialog
           onClose={() => {
