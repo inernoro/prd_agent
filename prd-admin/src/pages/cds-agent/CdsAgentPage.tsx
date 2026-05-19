@@ -19,6 +19,7 @@ import {
   getInfraAgentLogs,
   getInfraAgentRuntimeAdapterMatrix,
   getInfraAgentRuntimeStatus,
+  getInfraAgentSlaDashboard,
   getInfraAgentTraceBundle,
   importDefaultInfraAgentRuntimeProfile,
   listInfraAgentRuntimeAdapterCompatibility,
@@ -45,6 +46,7 @@ import {
   type InfraAgentRuntimeProfileTemplateView,
   type InfraAgentRuntimeProfileView,
   type InfraAgentSessionView,
+  type InfraAgentSlaDashboardView,
 } from '@/services/real/infraAgentSessions';
 import { resolveExecutionRunway, resolveProviderEvidenceState } from './cdsAgentReadiness';
 
@@ -81,6 +83,41 @@ function formatDuration(totalSeconds: number): string {
   const remainMinutes = minutes % 60;
   if (hours <= 0) return `${minutes}m ${seconds}s`;
   return `${hours}h ${remainMinutes}m`;
+}
+
+function formatPercent(value?: number | null): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '0%';
+  return `${(value * 100).toFixed(value > 0 && value < 0.01 ? 2 : 1)}%`;
+}
+
+function formatTokenCount(value?: number | null): string {
+  const safe = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(1)}M`;
+  if (safe >= 1_000) return `${(safe / 1_000).toFixed(1)}K`;
+  return String(safe);
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
+}
+
+function normalizeAdapterCompatibilityItem(item: InfraAgentRuntimeAdapterCompatibilityView): InfraAgentRuntimeAdapterCompatibilityView {
+  const raw = item as InfraAgentRuntimeAdapterCompatibilityView & Record<string, unknown>;
+  return {
+    ...item,
+    loopOwner: item.loopOwner ?? '',
+    mapRole: item.mapRole ?? '',
+    cdsRole: item.cdsRole ?? '',
+    supportedTaskKinds: normalizeStringList(raw.supportedTaskKinds),
+    supportedProfileProtocols: normalizeStringList(raw.supportedProfileProtocols),
+    modelHints: normalizeStringList(raw.modelHints),
+    compatibleRuntimeProfileTemplateIds: normalizeStringList(raw.compatibleRuntimeProfileTemplateIds),
+    requiredEvidenceGates: normalizeStringList(raw.requiredEvidenceGates),
+    missingAdapterContracts: normalizeStringList(raw.missingAdapterContracts),
+    knownIncompatibleProfilePatterns: normalizeStringList(raw.knownIncompatibleProfilePatterns),
+    notes: normalizeStringList(raw.notes),
+    nextActions: normalizeStringList(raw.nextActions),
+  };
 }
 
 function primaryActionLabel(status: string): string {
@@ -648,6 +685,7 @@ export default function CdsAgentPage() {
   const [profileTemplates, setProfileTemplates] = useState<InfraAgentRuntimeProfileTemplateView[]>([]);
   const [adapterCompatibility, setAdapterCompatibility] = useState<InfraAgentRuntimeAdapterCompatibilityView[]>([]);
   const [adapterMatrix, setAdapterMatrix] = useState<InfraAgentRuntimeAdapterMatrixView | null>(null);
+  const [slaDashboard, setSlaDashboard] = useState<InfraAgentSlaDashboardView | null>(null);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
@@ -881,6 +919,8 @@ export default function CdsAgentPage() {
       artifactCount: artifacts.length,
     };
   }, [artifacts.length, events, sessions]);
+  const slaSummary = slaDashboard?.summary ?? null;
+  const slaRuntimeFocus = slaDashboard?.runtimeBreakdown?.[0] ?? null;
   const gitContext = useMemo(() => {
     let branch = '';
     let commit = '';
@@ -2130,12 +2170,13 @@ export default function CdsAgentPage() {
 
   async function loadAll() {
     const requestedSessionId = readRequestedSessionId();
-    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, sessionRes, runtimeRes] = await Promise.all([
+    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, slaDashboardRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentRuntimeProfileTemplates(),
       listInfraAgentRuntimeAdapterCompatibility(),
       getInfraAgentRuntimeAdapterMatrix(),
+      getInfraAgentSlaDashboard(7),
       listInfraAgentSessions(100),
       getInfraAgentRuntimeStatus(true),
     ]);
@@ -2155,10 +2196,13 @@ export default function CdsAgentPage() {
       setProfileTemplates(profileTemplateRes.data?.items ?? []);
     }
     if (adapterCompatibilityRes.success) {
-      setAdapterCompatibility(adapterCompatibilityRes.data?.items ?? []);
+      setAdapterCompatibility((adapterCompatibilityRes.data?.items ?? []).map(normalizeAdapterCompatibilityItem));
     }
     if (adapterMatrixRes.success) {
       setAdapterMatrix(adapterMatrixRes.data?.matrix ?? null);
+    }
+    if (slaDashboardRes.success) {
+      setSlaDashboard(slaDashboardRes.data?.dashboard ?? null);
     }
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
@@ -3538,6 +3582,48 @@ export default function CdsAgentPage() {
               <div className="mt-2 truncate text-xs text-white/42">{item.hint}</div>
             </div>
           ))}
+        </section>
+
+        <section
+          className="rounded-xl px-4 py-3"
+          style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-white/78">SLA / 成本</div>
+              <div className="mt-1 text-xs text-white/42">
+                {slaDashboard ? `${slaDashboard.windowDays} 天窗口 · ${formatTime(slaDashboard.generatedAt)}` : '等待后端 SLA 指标'}
+              </div>
+            </div>
+            <div className="text-xs text-white/42">
+              {slaRuntimeFocus ? `${slaRuntimeFocus.runtime} · ${slaRuntimeFocus.runtimeAdapter}` : 'runtime 未聚合'}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              { label: '运行数', value: slaSummary?.sessionCount ?? 0, hint: `${slaSummary?.runningCount ?? 0} running / ${slaSummary?.completedCount ?? 0} complete` },
+              { label: '失败率', value: formatPercent(slaSummary?.failureRate), hint: `${slaSummary?.failedCount ?? 0} failed / ${slaSummary?.errorEventCount ?? 0} error events` },
+              { label: '超时率', value: formatPercent(slaSummary?.timeoutRate), hint: `${slaSummary?.timeoutCount ?? 0} timeout sessions` },
+              { label: '平均耗时', value: slaSummary?.averageDurationSeconds != null ? formatDuration(slaSummary.averageDurationSeconds) : '未记录', hint: `${slaSummary?.eventCount ?? 0} events / ${slaSummary?.toolEventCount ?? 0} tools` },
+              {
+                label: 'Token',
+                value: slaSummary?.tokenUsageObserved ? formatTokenCount(slaSummary.totalTokens) : '未上报',
+                hint: slaSummary?.tokenUsageObserved
+                  ? `in ${formatTokenCount(slaSummary.inputTokens)} / out ${formatTokenCount(slaSummary.outputTokens)}`
+                  : 'adapter 暂未返回 usage',
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="min-h-[72px] rounded-lg px-3 py-2"
+                style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <div className="text-xs text-white/42">{item.label}</div>
+                <div className="mt-1 truncate text-xl font-semibold leading-tight text-white/84">{item.value}</div>
+                <div className="mt-1 truncate text-xs text-white/38">{item.hint}</div>
+              </div>
+            ))}
+          </div>
         </section>
 
         {executionRunway}

@@ -6,6 +6,8 @@ public interface IInfraAgentSessionService
 {
     Task<List<InfraAgentSessionView>> ListAsync(string userId, int limit, CancellationToken ct);
 
+    Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct);
+
     Task<InfraAgentSessionView> CreateAsync(string userId, CreateInfraAgentSessionRequest request, CancellationToken ct);
 
     Task<InfraAgentSessionView?> StartAsync(string userId, string id, StartInfraAgentSessionRequest request, CancellationToken ct);
@@ -169,6 +171,63 @@ public record InfraAgentMessageView(
     string Content,
     string Status,
     DateTime CreatedAt
+);
+
+public record InfraAgentSlaDashboardView(
+    string SchemaVersion,
+    DateTime GeneratedAt,
+    int WindowDays,
+    DateTime WindowStart,
+    DateTime WindowEnd,
+    InfraAgentSlaSummaryView Summary,
+    IReadOnlyList<InfraAgentSlaStatusCountView> StatusCounts,
+    IReadOnlyList<InfraAgentSlaRuntimeBreakdownView> RuntimeBreakdown,
+    IReadOnlyList<InfraAgentSlaDailyPointView> Daily
+);
+
+public record InfraAgentSlaSummaryView(
+    int SessionCount,
+    int RunningCount,
+    int CompletedCount,
+    int FailedCount,
+    int TimeoutCount,
+    double FailureRate,
+    double TimeoutRate,
+    double? AverageDurationSeconds,
+    int EventCount,
+    int ToolEventCount,
+    int ErrorEventCount,
+    long InputTokens,
+    long OutputTokens,
+    long TotalTokens,
+    bool TokenUsageObserved,
+    decimal? EstimatedCostUsd
+);
+
+public record InfraAgentSlaStatusCountView(
+    string Status,
+    int Count
+);
+
+public record InfraAgentSlaRuntimeBreakdownView(
+    string Runtime,
+    string RuntimeAdapter,
+    int SessionCount,
+    int FailedCount,
+    int TimeoutCount,
+    double FailureRate,
+    double TimeoutRate,
+    double? AverageDurationSeconds,
+    long TotalTokens,
+    bool TokenUsageObserved
+);
+
+public record InfraAgentSlaDailyPointView(
+    DateTime Date,
+    int SessionCount,
+    int FailedCount,
+    int TimeoutCount,
+    long TotalTokens
 );
 
 public record InfraAgentTraceBundleView(

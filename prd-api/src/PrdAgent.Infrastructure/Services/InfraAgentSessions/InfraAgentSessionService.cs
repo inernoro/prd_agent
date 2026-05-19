@@ -57,6 +57,34 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return items.Select(ToView).ToList();
     }
 
+    public async Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct)
+    {
+        var windowDays = NormalizeSlaWindowDays(days);
+        var windowEnd = DateTime.UtcNow;
+        var windowStart = windowEnd.AddDays(-windowDays);
+        var sessions = await _db.InfraAgentSessions
+            .Find(x => x.UserId == userId && !x.IsArchived && x.CreatedAt >= windowStart && x.CreatedAt <= windowEnd)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(1000)
+            .ToListAsync(ct);
+
+        var sessionIds = sessions.Select(x => x.Id).ToList();
+        var events = sessionIds.Count == 0
+            ? new List<InfraAgentEvent>()
+            : await _db.InfraAgentEvents
+                .Find(x => sessionIds.Contains(x.SessionId) && x.CreatedAt >= windowStart && x.CreatedAt <= windowEnd)
+                .SortBy(x => x.CreatedAt)
+                .Limit(20000)
+                .ToListAsync(ct);
+
+        return BuildSlaDashboard(
+            sessions.Select(ToView).ToList(),
+            events.Select(ToEventView).ToList(),
+            windowDays,
+            windowStart,
+            windowEnd);
+    }
+
     public async Task<InfraAgentSessionView> CreateAsync(
         string userId,
         CreateInfraAgentSessionRequest request,
@@ -2303,6 +2331,123 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         msg.Status,
         msg.CreatedAt);
 
+    public static InfraAgentSlaDashboardView BuildSlaDashboard(
+        IReadOnlyList<InfraAgentSessionView> sessions,
+        IReadOnlyList<InfraAgentEventView> events,
+        int windowDays,
+        DateTime? windowStart = null,
+        DateTime? windowEnd = null)
+    {
+        var safeWindowDays = NormalizeSlaWindowDays(windowDays);
+        var generatedAt = windowEnd ?? DateTime.UtcNow;
+        var start = windowStart ?? generatedAt.AddDays(-safeWindowDays);
+        var eventsBySession = events
+            .GroupBy(x => x.SessionId)
+            .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
+        var sessionMetrics = sessions
+            .Select(session =>
+            {
+                eventsBySession.TryGetValue(session.Id, out var sessionEvents);
+                sessionEvents ??= new List<InfraAgentEventView>();
+                var usage = ExtractTokenUsage(sessionEvents);
+                return new
+                {
+                    Session = session,
+                    Events = sessionEvents,
+                    DurationSeconds = CalculateDurationSeconds(session, generatedAt),
+                    TimedOut = IsSlaTimedOut(session, sessionEvents, generatedAt),
+                    Usage = usage
+                };
+            })
+            .ToList();
+        var failedCount = sessions.Count(x => x.Status == InfraAgentSessionStatuses.Failed);
+        var runningCount = sessions.Count(x => x.Status == InfraAgentSessionStatuses.Running || x.Status == InfraAgentSessionStatuses.Creating);
+        var timeoutCount = sessionMetrics.Count(x => x.TimedOut);
+        var durations = sessionMetrics
+            .Select(x => x.DurationSeconds)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .ToList();
+        var inputTokens = sessionMetrics.Sum(x => x.Usage.InputTokens);
+        var outputTokens = sessionMetrics.Sum(x => x.Usage.OutputTokens);
+        var totalTokens = sessionMetrics.Sum(x => x.Usage.TotalTokens);
+        var tokenUsageObserved = sessionMetrics.Any(x => x.Usage.Observed);
+        var statusCounts = sessions
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Status) ? "unknown" : x.Status)
+            .OrderByDescending(x => x.Count())
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
+            .Select(x => new InfraAgentSlaStatusCountView(x.Key, x.Count()))
+            .ToList();
+        var runtimeBreakdown = sessionMetrics
+            .GroupBy(x => new
+            {
+                Runtime = string.IsNullOrWhiteSpace(x.Session.Runtime) ? "unknown" : x.Session.Runtime,
+                RuntimeAdapter = string.IsNullOrWhiteSpace(x.Session.RuntimeAdapter) ? "unknown" : x.Session.RuntimeAdapter!
+            })
+            .OrderByDescending(x => x.Count())
+            .ThenBy(x => x.Key.Runtime, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var groupDurations = group
+                    .Select(x => x.DurationSeconds)
+                    .Where(x => x.HasValue)
+                    .Select(x => x!.Value)
+                    .ToList();
+                var groupCount = group.Count();
+                var groupFailed = group.Count(x => x.Session.Status == InfraAgentSessionStatuses.Failed);
+                var groupTimedOut = group.Count(x => x.TimedOut);
+                return new InfraAgentSlaRuntimeBreakdownView(
+                    group.Key.Runtime,
+                    group.Key.RuntimeAdapter,
+                    groupCount,
+                    groupFailed,
+                    groupTimedOut,
+                    Rate(groupFailed, groupCount),
+                    Rate(groupTimedOut, groupCount),
+                    AverageOrNull(groupDurations),
+                    group.Sum(x => x.Usage.TotalTokens),
+                    group.Any(x => x.Usage.Observed));
+            })
+            .ToList();
+        var daily = sessionMetrics
+            .GroupBy(x => x.Session.CreatedAt.Date)
+            .OrderBy(x => x.Key)
+            .Select(group => new InfraAgentSlaDailyPointView(
+                group.Key,
+                group.Count(),
+                group.Count(x => x.Session.Status == InfraAgentSessionStatuses.Failed),
+                group.Count(x => x.TimedOut),
+                group.Sum(x => x.Usage.TotalTokens)))
+            .ToList();
+
+        return new InfraAgentSlaDashboardView(
+            "cds-agent-sla-dashboard/v1",
+            generatedAt,
+            safeWindowDays,
+            start,
+            generatedAt,
+            new InfraAgentSlaSummaryView(
+                sessions.Count,
+                runningCount,
+                Math.Max(0, sessions.Count - runningCount - failedCount),
+                failedCount,
+                timeoutCount,
+                Rate(failedCount, sessions.Count),
+                Rate(timeoutCount, sessions.Count),
+                AverageOrNull(durations),
+                events.Count,
+                events.Count(x => x.Type == InfraAgentEventTypes.ToolCall || x.Type == InfraAgentEventTypes.ToolResult),
+                events.Count(x => x.Type == InfraAgentEventTypes.Error),
+                inputTokens,
+                outputTokens,
+                totalTokens,
+                tokenUsageObserved,
+                null),
+            statusCounts,
+            runtimeBreakdown,
+            daily);
+    }
+
     public static InfraAgentTraceBundleView BuildTraceBundle(
         InfraAgentSessionView session,
         IReadOnlyList<InfraAgentMessageView> messages,
@@ -2468,6 +2613,170 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ?? ReadString(payload, "output");
         if (string.IsNullOrWhiteSpace(raw)) return null;
         return TryParseJsonElement(raw);
+    }
+
+    private static int NormalizeSlaWindowDays(int days) => Math.Clamp(days <= 0 ? 7 : days, 1, 90);
+
+    private static double Rate(int part, int total) => total <= 0 ? 0 : (double)part / total;
+
+    private static double? AverageOrNull(IReadOnlyList<double> values) =>
+        values.Count == 0 ? null : values.Average();
+
+    private static double? CalculateDurationSeconds(InfraAgentSessionView session, DateTime now)
+    {
+        if (!session.StartedAt.HasValue)
+        {
+            return null;
+        }
+
+        var end = session.StoppedAt
+            ?? (session.Status == InfraAgentSessionStatuses.Running || session.Status == InfraAgentSessionStatuses.Creating
+                ? now
+                : session.UpdatedAt);
+        return Math.Max(0, (end - session.StartedAt.Value).TotalSeconds);
+    }
+
+    private static bool IsSlaTimedOut(
+        InfraAgentSessionView session,
+        IReadOnlyList<InfraAgentEventView> events,
+        DateTime now)
+    {
+        if (ContainsTimeoutSignal(session.LastError))
+        {
+            return true;
+        }
+
+        if (events.Any(evt => ContainsTimeoutSignal(evt.Type) || ContainsTimeoutSignal(evt.PayloadJson)))
+        {
+            return true;
+        }
+
+        if (!session.StartedAt.HasValue || session.TimeoutSeconds <= 0)
+        {
+            return false;
+        }
+
+        var timeoutAt = session.StartedAt.Value.AddSeconds(session.TimeoutSeconds);
+        return (session.Status == InfraAgentSessionStatuses.Running || session.Status == InfraAgentSessionStatuses.Creating)
+            && now >= timeoutAt;
+    }
+
+    private static bool ContainsTimeoutSignal(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Contains("timeout", StringComparison.OrdinalIgnoreCase);
+
+    private static SlaTokenUsage ExtractTokenUsage(IReadOnlyList<InfraAgentEventView> events)
+    {
+        var result = new SlaTokenUsage(0, 0, 0, false);
+        foreach (var evt in events)
+        {
+            var payload = TryParseJsonElement(evt.PayloadJson);
+            if (!payload.HasValue)
+            {
+                continue;
+            }
+
+            result = result.Add(ExtractTokenUsage(payload.Value));
+        }
+
+        return result;
+    }
+
+    private static SlaTokenUsage ExtractTokenUsage(JsonElement payload)
+    {
+        var usage = ReadUsageObject(payload);
+        if (!usage.HasValue)
+        {
+            return new SlaTokenUsage(0, 0, 0, false);
+        }
+
+        var element = usage.Value;
+        var input = ReadLong(element, "input_tokens")
+            ?? ReadLong(element, "inputTokens")
+            ?? ReadLong(element, "prompt_tokens")
+            ?? ReadLong(element, "promptTokens")
+            ?? 0;
+        var output = ReadLong(element, "output_tokens")
+            ?? ReadLong(element, "outputTokens")
+            ?? ReadLong(element, "completion_tokens")
+            ?? ReadLong(element, "completionTokens")
+            ?? 0;
+        var total = ReadLong(element, "total_tokens")
+            ?? ReadLong(element, "totalTokens")
+            ?? (input + output);
+        return new SlaTokenUsage(input, output, total, true);
+    }
+
+    private static JsonElement? ReadUsageObject(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetObject(payload, "usage", out var usage))
+        {
+            return usage;
+        }
+
+        if (TryGetObject(payload, "sdkResult", out var sdkResult) && TryGetObject(sdkResult, "usage", out usage))
+        {
+            return usage;
+        }
+
+        if (TryGetObject(payload, "content", out var content) && TryGetObject(content, "sdkResult", out sdkResult) && TryGetObject(sdkResult, "usage", out usage))
+        {
+            return usage;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetObject(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object
+            && element.TryGetProperty(propertyName, out value)
+            && value.ValueKind == JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static long? ReadLong(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+        {
+            return number;
+        }
+
+        if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), out number))
+        {
+            return number;
+        }
+
+        return null;
+    }
+
+    private readonly record struct SlaTokenUsage(
+        long InputTokens,
+        long OutputTokens,
+        long TotalTokens,
+        bool Observed)
+    {
+        public SlaTokenUsage Add(SlaTokenUsage other) =>
+            new(
+                InputTokens + other.InputTokens,
+                OutputTokens + other.OutputTokens,
+                TotalTokens + other.TotalTokens,
+                Observed || other.Observed);
     }
 
     private static JsonElement ParsePayloadElement(string? payloadJson) =>

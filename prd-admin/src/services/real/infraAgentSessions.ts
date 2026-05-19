@@ -83,6 +83,52 @@ export interface InfraAgentMessageView {
   createdAt: string;
 }
 
+export interface InfraAgentSlaDashboardView {
+  schemaVersion: string;
+  generatedAt: string;
+  windowDays: number;
+  windowStart: string;
+  windowEnd: string;
+  summary: {
+    sessionCount: number;
+    runningCount: number;
+    completedCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    failureRate: number;
+    timeoutRate: number;
+    averageDurationSeconds?: number | null;
+    eventCount: number;
+    toolEventCount: number;
+    errorEventCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    tokenUsageObserved: boolean;
+    estimatedCostUsd?: number | null;
+  };
+  statusCounts: Array<{ status: string; count: number }>;
+  runtimeBreakdown: Array<{
+    runtime: string;
+    runtimeAdapter: string;
+    sessionCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    failureRate: number;
+    timeoutRate: number;
+    averageDurationSeconds?: number | null;
+    totalTokens: number;
+    tokenUsageObserved: boolean;
+  }>;
+  daily: Array<{
+    date: string;
+    sessionCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    totalTokens: number;
+  }>;
+}
+
 export interface InfraAgentTraceBundleView {
   schemaVersion: string;
   exportedAt: string;
@@ -499,6 +545,10 @@ interface TraceBundleResp {
   bundle: InfraAgentTraceBundleView;
 }
 
+interface SlaDashboardResp {
+  dashboard: InfraAgentSlaDashboardView;
+}
+
 interface HookProfilesResp {
   items: InfraAgentHookProfileView[];
 }
@@ -551,6 +601,10 @@ export async function getInfraAgentEventSchema(): Promise<ApiResponse<EventSchem
 export async function getInfraAgentRuntimeStatus(refreshDiscovery = false): Promise<ApiResponse<RuntimeStatusResp>> {
   const suffix = refreshDiscovery ? '?refreshDiscovery=true' : '';
   return await apiRequest<RuntimeStatusResp>(`${api.infraAgentSessions.runtimeStatus()}${suffix}`, { method: 'GET' });
+}
+
+export async function getInfraAgentSlaDashboard(days = 7): Promise<ApiResponse<SlaDashboardResp>> {
+  return await apiRequest<SlaDashboardResp>(`${api.infraAgentSessions.slaDashboard()}?days=${days}`, { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {

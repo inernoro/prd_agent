@@ -207,6 +207,50 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task SlaDashboard_ShouldUseCurrentUser()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var now = DateTime.UtcNow;
+        var expected = new InfraAgentSlaDashboardView(
+            "cds-agent-sla-dashboard/v1",
+            now,
+            7,
+            now.AddDays(-7),
+            now,
+            new InfraAgentSlaSummaryView(
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                30,
+                2,
+                1,
+                0,
+                10,
+                5,
+                15,
+                true,
+                null),
+            Array.Empty<InfraAgentSlaStatusCountView>(),
+            Array.Empty<InfraAgentSlaRuntimeBreakdownView>(),
+            Array.Empty<InfraAgentSlaDailyPointView>());
+        service
+            .Setup(x => x.GetSlaDashboardAsync("user-1", 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.SlaDashboard(7, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.GetSlaDashboardAsync("user-1", 7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task RunReadonlyChecks_ShouldReturnSession()
     {
         var service = new Mock<IInfraAgentSessionService>();
