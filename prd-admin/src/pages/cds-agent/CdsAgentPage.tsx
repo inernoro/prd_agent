@@ -91,6 +91,49 @@ function formatDuration(totalSeconds: number): string {
   return `${hours}h ${remainMinutes}m`;
 }
 
+function formatHumanDuration(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  if (safe < 60) return `${safe} 秒`;
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  if (minutes < 60) return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainMinutes = minutes % 60;
+  return remainMinutes > 0 ? `${hours} 小时 ${remainMinutes} 分钟` : `${hours} 小时`;
+}
+
+function formatRelativePast(value?: string | Date | null, now = Date.now()): string {
+  if (!value) return '未记录';
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (!Number.isFinite(time)) return '未记录';
+  const seconds = Math.max(0, Math.round((now - time) / 1000));
+  if (seconds < 30) return '刚刚';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+  return `${Math.floor(seconds / 86400)} 天前`;
+}
+
+function humanTargetName(value?: string | null): string {
+  const raw = (value ?? '').trim();
+  if (!raw) return '默认 workspace';
+  if (/^shared-sidecar-pool-[a-z0-9]+$/i.test(raw)) return 'CDS 部署沙箱';
+  if (/^cds-agent-runtime/i.test(raw)) return 'CDS Agent Runtime';
+  try {
+    const url = new URL(raw);
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts.length >= 2) return `${parts[parts.length - 2]}/${parts[parts.length - 1].replace(/\.git$/, '')}`;
+  } catch {
+    // not a URL
+  }
+  return raw.replace(/\.git$/, '');
+}
+
+function humanTargetWithRef(target?: string | null, ref?: string | null): string {
+  const name = humanTargetName(target);
+  const branch = (ref ?? '').trim();
+  return branch ? `${name} · ${branch}` : name;
+}
+
 function formatPercent(value?: number | null): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '0%';
   return `${(value * 100).toFixed(value > 0 && value < 0.01 ? 2 : 1)}%`;
@@ -438,6 +481,23 @@ function toolActionLabel(toolName: string, payload: Record<string, unknown>): st
       if (toolName.startsWith('cds_bridge')) return '操作远程页面';
       return toolName;
   }
+}
+
+function processEventLabel(event: InfraAgentEventView): string {
+  const payload = parsePayload(event);
+  const toolName = String(payload.toolName ?? '');
+  if (event.type === 'tool_call') return toolActionLabel(toolName, payload);
+  if (event.type === 'tool_result') return `完成：${toolActionLabel(toolName, payload)}`;
+  if (event.type === 'error') return `出错：${String(payload.message ?? '未知错误')}`;
+  const message = String(payload.message ?? payload.summary ?? payload.status ?? '').trim();
+  if (event.type === 'status') return message || '状态更新';
+  if (event.type === 'log') return message || '后台运行日志';
+  if (event.type === 'file') return String(payload.path ?? payload.file ?? '记录文件变更');
+  if (event.type === 'diff') return String(payload.path ?? payload.summary ?? '记录代码差异');
+  if (event.type === 'browser') return message || '浏览器操作';
+  if (event.type === 'manual') return message || '人工输入';
+  if (event.type === 'hook') return message || 'Hook 执行';
+  return statusLabel(event.type);
 }
 
 const SIMPLE_VIEW_STORAGE_KEY = 'cds-agent:view-mode';
@@ -3362,7 +3422,7 @@ export default function CdsAgentPage() {
     const elapsedSeconds = activeSessionRuntimeState.elapsedSeconds;
     const timeoutSeconds = activeSession?.timeoutSeconds ?? activeRuntimeProfile?.timeoutSeconds ?? 900;
     const timeoutAt = activeSessionRuntimeState.timeoutAt ?? (sessionStartedAt ? new Date(sessionStartedAt.getTime() + timeoutSeconds * 1000) : null);
-    const timeoutReached = activeSessionTimedOut;
+    const timeoutReached = activeSessionTimedOut || activeSessionEffectiveStatus === 'timed_out';
     const lastSeq = latestEventSeq(events);
     const stopState = activeSessionTimedOut
       ? '已超时'
@@ -3374,13 +3434,12 @@ export default function CdsAgentPage() {
           ? runtimeDiagnostics.cancelEvidence.latestMessage || '已有取消事件'
           : '未触发';
     const timeoutState = timeoutReached
-      ? '已到达 timeout'
+      ? '已超时'
       : timeoutAt
-        ? `${formatDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
-        : `启动后 ${formatDuration(timeoutSeconds)}`;
+        ? `约 ${formatHumanDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
+        : `启动后 ${formatHumanDuration(timeoutSeconds)} 超时`;
     const usefulEventTypes = new Set(['tool_call', 'tool_result', 'text_delta', 'done', 'file', 'diff', 'error', 'browser', 'manual']);
     const usefulEvents = events.filter((event) => usefulEventTypes.has(event.type));
-    const latestEventAt = events.length > 0 ? new Date(events[events.length - 1].createdAt) : null;
     const latestUsefulEventAt = usefulEvents.length > 0 ? new Date(usefulEvents[usefulEvents.length - 1].createdAt) : null;
     const usefulBaseAt = latestUsefulEventAt?.getTime() ?? sessionStartedAt?.getTime() ?? (activeSession?.createdAt ? new Date(activeSession.createdAt).getTime() : null);
     const quietSeconds = activeSessionRuntimeState.isLive && usefulBaseAt
@@ -3406,43 +3465,38 @@ export default function CdsAgentPage() {
     const executionDetail = emptyExecution
       ? '已有 run 但没有有效输出事件'
       : staleExecution
-        ? `超过 ${formatDuration(quietSeconds ?? 0)} 没有有效输出`
+        ? `超过 ${formatHumanDuration(quietSeconds ?? 0)} 没有有效输出`
         : latestUsefulEventAt
-          ? `${usefulEvents.length} 个有效事件 · ${formatClockTime(latestUsefulEventAt)}`
+          ? `${usefulEvents.length} 个有效事件 · ${formatRelativePast(latestUsefulEventAt, nowTick)}`
           : '未开始或尚无有效事件';
-	    const simpleTelemetry = [
-	      { label: '任务状态', value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未创建', detail: activeSessionTimedOut ? '旧 run 已超时；再次运行会创建新会话' : activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
-        { label: '执行判定', value: executionKind, detail: executionDetail },
-	      { label: 'traceId', value: activeSession ? shortId(activeSession.traceId, 14) : '待生成', detail: activeSession?.cdsSessionId ? `CDS ${shortId(activeSession.cdsSessionId, 10)}` : 'MAP/CDS 全链路定位' },
-      { label: '耗时', value: sessionStartedAt ? formatDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `session ${formatClockTime(sessionStartedAt)}` : '启动后开始计时' },
-      { label: 'timeoutAt', value: timeoutAt ? formatClockTime(timeoutAt) : '待计算', detail: timeoutState },
-      { label: 'lastEventSeq', value: String(lastSeq), detail: eventStreamHealthy ? 'SSE live' : events.length > 0 ? '分页回放' : '暂无事件' },
-        { label: '最后有效输出', value: latestUsefulEventAt ? formatClockTime(latestUsefulEventAt) : '无', detail: latestEventAt ? `最后事件 ${formatClockTime(latestEventAt)}` : '暂无事件' },
-        { label: '计时口径', value: 'Session', detail: '不是容器 uptime；容器长时间存活不等于任务仍执行' },
-	      { label: 'Stop', value: stopState, detail: runtimeDiagnostics.cancelEvidence.eventCount > 0 ? runtimeDiagnostics.cancelEvidence.latestMessage || runtimeDiagnostics.cancelState : runtimeDiagnostics.cancelState },
-	      { label: '产物入口', value: `${artifacts.length}`, detail: artifacts.length > 0 ? '右侧可查看和复制' : '等待 diff / 日志 / 快照' },
-	    ];
 	    const activeTargetLabel = activeSession
-	      ? `${activeSession.gitRepository || activeSession.cdsProjectId || '默认 workspace'} · ${activeSession.gitRef || 'main'}`
+	      ? humanTargetWithRef(activeSession.gitRepository || activeSession.cdsProjectId || '默认 workspace', activeSession.gitRef || 'main')
 	      : simpleTaskMode === 'code'
-	        ? `${draft.gitRepository.trim() || '默认 workspace'} · ${draft.gitRef.trim() || 'main'}`
+	        ? humanTargetWithRef(draft.gitRepository.trim() || '默认 workspace', draft.gitRef.trim() || 'main')
 	        : '对话模式 · 不要求仓库';
-	    const progressChecklist = [
+    const fullTargetLabel = activeSession
+      ? `${activeSession.gitRepository || activeSession.cdsProjectId || '默认 workspace'} · ${activeSession.gitRef || 'main'}`
+      : simpleTaskMode === 'code'
+        ? `${draft.gitRepository.trim() || '默认 workspace'} · ${draft.gitRef.trim() || 'main'}`
+        : '对话模式 · 不要求仓库';
+	    const readinessChecklist = [
 	      { label: simpleTaskMode === 'code' || activeSession ? '目标仓库' : '交互模式', detail: activeTargetLabel, state: 'pass' },
 	      {
 	        label: canCreateSession ? '运行环境就绪' : '等待模型配置',
-	        detail: canCreateSession ? formatResourcePolicy(activeRuntimeProfile) : (activeProfileBlockReason || activeRuntimePoolBlockReason || '需要可用模型后才能创建任务'),
+	        detail: canCreateSession ? '模型与远程运行环境可用' : (activeProfileBlockReason || activeRuntimePoolBlockReason || '需要可用模型后才能创建任务'),
 	        state: canCreateSession ? 'pass' : 'warn',
 	      },
 	      {
 	        label: activeSession ? '任务已创建' : '等待发起巡检',
-	        detail: activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · trace ${shortId(activeSession.traceId, 12)}` : '输入任务后点击运行',
+	        detail: activeSession ? statusLabel(activeSessionEffectiveStatus) : '输入任务后点击运行',
 	        state: activeSession ? 'pass' : 'pending',
 	      },
+	    ] as const;
+	    const runProgressChecklist = [
         {
           label: '执行有效性',
           detail: activeSession ? executionDetail : '发起后判断是否有真实输出',
-          state: emptyExecution || staleExecution || activeSessionTimedOut ? 'warn' : activeSession ? 'pass' : 'idle',
+          state: emptyExecution || staleExecution || activeSessionTimedOut ? 'warn' : hasRuntimeRun || hasAssistantOutput ? 'pass' : activeSession ? 'pending' : 'idle',
         },
 	      {
 	        label: lastAssistant || artifacts.length > 0 ? '结果可复盘' : '等待 Agent 输出',
@@ -3450,6 +3504,24 @@ export default function CdsAgentPage() {
 	        state: lastAssistant || artifacts.length > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
 	      },
 	    ] as const;
+    const readinessDone = readinessChecklist.filter((item) => item.state === 'pass').length;
+    const runProgressDone = runProgressChecklist.filter((item) => item.state === 'pass').length;
+    const showRunProgress = Boolean(activeSession && (hasRuntimeRun || hasConversation || activeSessionTimedOut));
+    const simpleDebugTelemetry = [
+      { label: 'traceId', value: activeSession ? activeSession.traceId : '待生成' },
+      { label: 'runtimeRunId', value: activeSession?.currentRuntimeRunId ?? '未启动' },
+      { label: 'lastEventSeq', value: String(lastSeq) },
+      { label: 'timeoutAt', value: timeoutAt ? `${timeoutAt.toLocaleString()} (${formatClockTime(timeoutAt)})` : '待计算' },
+      { label: 'CDS session', value: activeSession?.cdsSessionId ?? '未绑定' },
+      { label: '事件流', value: eventStreamHealthy ? 'SSE live' : events.length > 0 ? '分页回放' : '暂无事件' },
+    ];
+    const simpleRunSummary = [
+      { label: '当前状态', value: activeSession ? executionKind : '未创建', detail: activeSessionTimedOut ? '旧任务已超时；再次运行会创建新会话' : executionDetail },
+      { label: '已经用时', value: sessionStartedAt ? formatHumanDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `从 ${formatRelativePast(sessionStartedAt, nowTick)} 开始` : '启动后开始计时' },
+      { label: '超时', value: timeoutState, detail: '这是任务超时，不是容器存活时间' },
+      { label: '停止', value: stopState, detail: activeSessionRuntimeState.isLive ? '可以随时停止当前运行' : '当前没有活动运行' },
+      { label: '产物', value: artifacts.length > 0 ? `${artifacts.length} 个产物` : '暂无产物', detail: artifacts.length > 0 ? '可在证据区查看' : '等待文件、diff、日志或快照' },
+    ];
 	    const evidenceEvents = displayedEvents
 	      .filter((event) => event.type === 'tool_result' || event.type === 'error' || event.type === 'file' || event.type === 'diff')
 	      .slice(-6)
@@ -3486,7 +3558,7 @@ export default function CdsAgentPage() {
                     onClick={() => setSimpleTaskMode(mode.value)}
                     className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold"
                     style={active
-                      ? { background: 'rgba(34,197,94,0.16)', color: 'rgba(187,247,208,0.96)' }
+                      ? { background: 'rgba(96,165,250,0.18)', color: 'rgba(191,219,254,0.96)' }
                       : { color: 'rgba(255,255,255,0.48)' }}
                   >
                     <Icon size={13} />
@@ -3531,12 +3603,24 @@ export default function CdsAgentPage() {
                 对话模式不要求仓库；需要代码上下文时切到 Code 巡检
               </div>
             )}
+            {activeSessionRuntimeState.isLive && (
+              <button
+                type="button"
+                onClick={() => void stopSession()}
+                disabled={busy}
+                className="inline-flex h-9 min-w-[82px] items-center justify-center gap-2 rounded-lg text-sm font-semibold disabled:opacity-45"
+                style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.34)', color: 'rgba(252,165,165,0.98)' }}
+              >
+                <Square size={14} />
+                停止
+              </button>
+            )}
 	          <button
 	            type="button"
 	            onClick={() => void runSimpleReadonlyReview()}
 	            disabled={sendDisabled}
 	            className="inline-flex h-9 min-w-[94px] items-center justify-center gap-2 rounded-lg text-sm font-semibold disabled:opacity-45"
-	            style={{ background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.38)', color: 'rgba(187,247,208,0.98)' }}
+	            style={{ background: 'rgba(96,165,250,0.16)', border: '1px solid rgba(96,165,250,0.36)', color: 'rgba(191,219,254,0.98)' }}
 	          >
 	            {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
 	            {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
@@ -3627,15 +3711,15 @@ export default function CdsAgentPage() {
 	                          onClick={() => setActiveSessionId(session.id)}
 	                          className="block w-full rounded-xl px-3 py-2.5 text-left"
 	                          style={{
-	                            background: selected ? 'rgba(34,197,94,0.10)' : 'rgba(0,0,0,0.14)',
-	                            border: selected ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(255,255,255,0.06)',
+	                            background: selected ? 'rgba(96,165,250,0.10)' : 'rgba(0,0,0,0.14)',
+	                            border: selected ? '1px solid rgba(96,165,250,0.28)' : '1px solid rgba(255,255,255,0.06)',
 	                          }}
 	                        >
 	                          <div className="flex items-center gap-2">
-	                            <span className={`h-2 w-2 shrink-0 rounded-full ${live ? 'animate-pulse bg-emerald-400' : selected ? 'bg-emerald-500/80' : 'bg-white/18'}`} />
+	                            <span className={`h-2 w-2 shrink-0 rounded-full ${live ? 'animate-pulse bg-sky-400' : selected ? 'bg-sky-400/80' : 'bg-white/18'}`} />
 	                            <span className="truncate text-sm font-medium text-white/76">{session.title}</span>
 	                          </div>
-	                          <div className="mt-1 truncate pl-4 text-xs text-white/38">{statusLabel(sessionState.effectiveStatus)} · {new Date(session.updatedAt).toLocaleString()}</div>
+	                          <div className="mt-1 truncate pl-4 text-xs text-white/38">{statusLabel(sessionState.effectiveStatus)} · {formatRelativePast(session.updatedAt, nowTick)}</div>
 	                        </button>
 	                      );
 	                    })}
@@ -3649,7 +3733,7 @@ export default function CdsAgentPage() {
 	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 	              <div className="min-w-0">
 	                <div className="flex items-center gap-2">
-	                  <span className={`h-2.5 w-2.5 rounded-full ${isLiveStatus ? 'animate-pulse bg-emerald-400' : activeSession ? 'bg-white/28' : 'bg-amber-300/80'}`} />
+	                  <span className={`h-2.5 w-2.5 rounded-full ${isLiveStatus ? 'animate-pulse bg-sky-400' : activeSession ? 'bg-white/28' : 'bg-amber-300/80'}`} />
 	                  <h1 className="truncate text-base font-semibold text-white/86">{activeSession ? activeSession.title : 'CDS Agent 只读巡检'}</h1>
 	                </div>
 	                <div className="mt-1 truncate text-xs text-white/42">
@@ -3673,7 +3757,7 @@ export default function CdsAgentPage() {
 	                    onClick={() => void startSession()}
 	                    disabled={busy}
 	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
-	                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}
+	                    style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }}
 	                  >
 	                    <Play size={14} /> {primaryActionLabel(activeSessionEffectiveStatus)}
                   </button>
@@ -3715,8 +3799,8 @@ export default function CdsAgentPage() {
 	                        <div
 	                          className="max-w-[86%] rounded-2xl px-3.5 py-2.5"
 	                          style={{
-	                            background: isUser ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.045)',
-	                            border: isUser ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(255,255,255,0.08)',
+	                            background: isUser ? 'rgba(96,165,250,0.12)' : 'rgba(255,255,255,0.045)',
+	                            border: isUser ? '1px solid rgba(96,165,250,0.28)' : '1px solid rgba(255,255,255,0.08)',
 	                          }}
 	                        >
 	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
@@ -3752,10 +3836,7 @@ export default function CdsAgentPage() {
                   const firstAt = new Date(events[0].createdAt).getTime();
                   const lastAt = new Date(events[events.length - 1].createdAt).getTime();
                   const durationSec = Math.max(0, Math.round((lastAt - firstAt) / 1000));
-                  const lastPayload = parsePayload(events[events.length - 1]);
-                  const lastLabel = events[events.length - 1].type === 'error'
-                    ? `出错：${String(lastPayload.message ?? '未知错误')}`
-                    : toolActionLabel(String(lastPayload.toolName ?? ''), lastPayload);
+                  const lastLabel = processEventLabel(events[events.length - 1]);
                   const hasError = events.some((e) => e.type === 'error');
                   const processTitle = pendingApproval
                     ? '等待审批'
@@ -3796,7 +3877,7 @@ export default function CdsAgentPage() {
 	                          <span className="shrink-0 font-semibold">
                             {processTitle}
                           </span>
-                          <span className="shrink-0 text-white/40">{processMeta || `${events.length} 条`} · 用时 {durationSec}s</span>
+                          <span className="shrink-0 text-white/40">{processMeta || `${events.length} 条`} · 用时 {formatHumanDuration(durationSec)}</span>
                           <span className="min-w-0 flex-1 truncate text-white/40">{open ? '' : processHint}</span>
                           {!forcedOpen && <span className="shrink-0 text-white/35">{open ? '收起' : '展开'}</span>}
                         </button>
@@ -3806,13 +3887,8 @@ export default function CdsAgentPage() {
                               const payload = parsePayload(event);
                               const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
                               const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
-                              const toolName = String(payload.toolName ?? '');
                               const stepOpen = simpleExpandedEventId === event.id;
-                              let label: string;
-                              if (event.type === 'tool_call') label = toolActionLabel(toolName, payload);
-                              else if (event.type === 'tool_result') label = `完成：${toolActionLabel(toolName, payload)}`;
-                              else if (event.type === 'error') label = `出错：${String(payload.message ?? '未知错误')}`;
-                              else label = statusLabel(String(payload.status ?? event.type));
+                              const label = processEventLabel(event);
                               const canExpand = event.type === 'tool_call' || event.type === 'tool_result';
                               return (
                                 <div key={event.id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(0,0,0,0.2)' }}>
@@ -3851,9 +3927,9 @@ export default function CdsAgentPage() {
 	              )}
 	              {awaitingAgent && (
 	                <div className="flex justify-start">
-	                  <div className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)' }}>
+	                  <div className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
 	                    <MapSpinner size={13} />
-	                    <span>Agent 正在执行… 已等待 {waitedSec}s</span>
+	                    <span>Agent 正在执行… 已等待 {formatHumanDuration(waitedSec)}</span>
 	                  </div>
                 </div>
               )}
@@ -3881,17 +3957,17 @@ export default function CdsAgentPage() {
 	            <div className="border-b border-white/10 px-4 py-4">
 	              <div className="flex items-center justify-between gap-3">
 	                <div>
-	                  <div className="text-sm font-semibold text-white/82">进度</div>
+	                  <div className="text-sm font-semibold text-white/82">{showRunProgress ? '运行进展' : '准备情况'}</div>
 	                  <div className="mt-1 text-xs text-white/42">
-	                    {progressChecklist.filter((item) => item.state === 'pass').length}/{progressChecklist.length} 已完成
+	                    准备项 {readinessDone}/{readinessChecklist.length} 就绪{showRunProgress ? ` · 运行项 ${runProgressDone}/${runProgressChecklist.length}` : ''}
 	                  </div>
 	                </div>
-	                <span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: isLiveStatus ? 'rgba(34,197,94,0.14)' : 'rgba(255,255,255,0.06)', color: isLiveStatus ? 'rgba(134,239,172,0.95)' : 'rgba(203,213,225,0.72)' }}>
+	                <span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: isLiveStatus ? 'rgba(96,165,250,0.14)' : 'rgba(255,255,255,0.06)', color: isLiveStatus ? 'rgba(191,219,254,0.95)' : 'rgba(203,213,225,0.72)' }}>
 	                  {activeSession ? statusLabel(activeSessionEffectiveStatus) : '待运行'}
 	                </span>
 	              </div>
 	              <div className="mt-4 space-y-3">
-	                {progressChecklist.map((item) => {
+	                {readinessChecklist.map((item) => {
 	                  const done = item.state === 'pass';
 	                  const warn = item.state === 'warn';
 	                  return (
@@ -3906,6 +3982,28 @@ export default function CdsAgentPage() {
 	                    </div>
 	                  );
 	                })}
+                  {showRunProgress && (
+                    <div className="border-t border-white/10 pt-3">
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-normal text-white/34">任务运行</div>
+                      <div className="space-y-3">
+                        {runProgressChecklist.map((item) => {
+                          const done = item.state === 'pass';
+                          const warn = item.state === 'warn';
+                          return (
+                            <div key={item.label} className="flex gap-2.5">
+                              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full" style={{ background: done ? 'rgba(34,197,94,0.18)' : warn ? 'rgba(245,158,11,0.18)' : 'rgba(255,255,255,0.08)', color: done ? 'rgba(134,239,172,0.95)' : warn ? 'rgba(253,230,138,0.92)' : 'rgba(148,163,184,0.74)' }}>
+                                {done ? <ShieldCheck size={12} /> : warn ? <KeyRound size={11} /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-white/76">{item.label}</div>
+                                <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/40">{item.detail}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 	              </div>
 	            </div>
 
@@ -3917,7 +4015,7 @@ export default function CdsAgentPage() {
 	                </span>
 	              </div>
 	              <div className="space-y-2 text-xs">
-	                <div className="flex justify-between gap-3"><span className="text-white/38">目标</span><span className="min-w-0 truncate text-white/70">{activeTargetLabel}</span></div>
+	                <div className="flex justify-between gap-3"><span className="text-white/38">目标</span><span className="min-w-0 truncate text-white/70" title={fullTargetLabel}>{activeTargetLabel}</span></div>
 	                <div className="flex justify-between gap-3"><span className="text-white/38">分支</span><span className="min-w-0 truncate text-white/70">{gitContext.branch || '等待 Agent 创建'}</span></div>
 	                <div className="flex justify-between gap-3"><span className="text-white/38">提交</span><span className="font-mono text-white/70">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
 	              </div>
@@ -3972,27 +4070,35 @@ export default function CdsAgentPage() {
 	            </div>
 
 	            <div className="px-4 py-4">
-	              <div className="mb-3 text-sm font-semibold text-white/76">可观测性</div>
-	              <div className="grid grid-cols-2 gap-2">
-	                {simpleTelemetry.map((item) => (
-	                  <div key={item.label} className="min-h-[64px] rounded-xl p-2.5" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.055)' }}>
-	                    <div className="truncate text-[11px] text-white/34">{item.label}</div>
-	                    <div className="mt-1 truncate text-xs font-semibold text-white/76">{item.value}</div>
+	              <div className="mb-3 text-sm font-semibold text-white/76">运行摘要</div>
+	              <div className="space-y-2">
+	                {simpleRunSummary.map((item) => (
+	                  <div key={item.label} className="rounded-xl px-3 py-2.5" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.055)' }}>
+	                    <div className="flex items-center justify-between gap-3">
+	                      <span className="text-xs text-white/38">{item.label}</span>
+	                      <span className="min-w-0 truncate text-xs font-semibold text-white/76">{item.value}</span>
+	                    </div>
 	                    <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-white/34">{item.detail}</div>
 	                  </div>
 	                ))}
 	              </div>
-	              {(runtimeDiagnostics.commercialNextAction || runtimeDiagnostics.commercialNextCommand) && (
-	                <details className="mt-3 rounded-xl px-3 py-2 text-xs text-white/46" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.055)' }}>
-	                  <summary className="cursor-pointer select-none font-semibold text-white/58">诊断信息</summary>
-	                  {runtimeDiagnostics.commercialNextAction && <div className="mt-2 leading-relaxed">{runtimeDiagnostics.commercialNextAction}</div>}
-	                  {runtimeDiagnostics.commercialNextCommand && (
-	                    <code className="mt-2 block break-all rounded-lg px-2 py-1.5 text-[11px] text-white/55" style={{ background: 'rgba(0,0,0,0.22)' }}>
-	                      {runtimeDiagnostics.commercialNextCommand}
-	                    </code>
-	                  )}
-	                </details>
-	              )}
+	              <details className="mt-3 rounded-xl px-3 py-2 text-xs text-white/46" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.055)' }}>
+	                <summary className="cursor-pointer select-none font-semibold text-white/58">调试信息</summary>
+	                <div className="mt-2 space-y-1.5">
+	                  {simpleDebugTelemetry.map((item) => (
+	                    <div key={item.label} className="flex gap-2">
+	                      <span className="w-20 shrink-0 text-white/32">{item.label}</span>
+	                      <span className="min-w-0 break-all font-mono text-white/48">{item.value}</span>
+	                    </div>
+	                  ))}
+	                </div>
+	                {runtimeDiagnostics.commercialNextAction && <div className="mt-2 leading-relaxed">{runtimeDiagnostics.commercialNextAction}</div>}
+	                {runtimeDiagnostics.commercialNextCommand && (
+	                  <code className="mt-2 block break-all rounded-lg px-2 py-1.5 text-[11px] text-white/55" style={{ background: 'rgba(0,0,0,0.22)' }}>
+	                    {runtimeDiagnostics.commercialNextCommand}
+	                  </code>
+	                )}
+	              </details>
 	            </div>
 	          </aside>
 	        </div>

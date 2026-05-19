@@ -432,8 +432,14 @@ Phase 2 smoke 清单：
 | 把 DeepSeek/cc-switch 误判为必须 Anthropic 原生认证 | Claude SDK 可以走 Anthropic-compatible upstream，原生 Anthropic 不是唯一主路径 |
 | 页面只显示很多技术标签，用户看不懂进度 | 简洁模式只显示用户任务、状态、耗时、结果；诊断信息进抽屉 |
 | 用户以为 Agent 只是输入框 + 远端任务执行，结果页面暴露太多运行细节 | 产品层必须把复杂度藏进执行层；主屏只强调用户消息、AI 回复、停止/重试、结果和产物，工具/log/status 默认弱化折叠 |
+| “4/5 已完成”与“待启动”同时出现 | 就绪检查和任务执行是两套语义：未启动时只显示“准备情况”，有 run 后才显示“运行进展” |
+| 简洁模式展示 `traceId/lastEventSeq/timeoutAt` 等排障字段 | 简洁模式主界面禁止直接展示机器字段；排障字段只进入“调试信息”折叠区 |
+| 直接暴露 `shared-sidecar-pool-*` 这类机器标识 | 主界面显示人能理解的业务名，完整 ID/hash 只放在 tooltip 或调试信息 |
+| `6424s/02:50:28/session 02:35:28` 多种时间格式混用 | 面向用户统一用相对时间与人话时长，例如“1 小时 47 分钟”“约 15 分钟后超时” |
+| 运行中缺少同等显眼的停止入口 | 运行态必须在顶部和输入区附近都能停止；停止是 Agent 信任机制的一部分 |
 | 发送后长时间没有可见反馈 | 点击发送后 1 秒内必须出现用户消息和提交状态；create/start/message 的等待过程不能让用户误以为没发出去 |
 | 工具调用和日志刷屏，用户看不懂 100+ 步在做什么 | 原始事件只能作为可展开审计；默认展示聚合摘要：工具调用数、结果数、日志数、错误数、耗时和最近动作 |
+| 展开执行过程后只看到多行 `log` | 每条事件必须翻译成可读动作或状态；若没有结构化信息，至少显示日志摘要而不是事件类型名 |
 | AI 回复按原始 Markdown 文本显示 | 主回复必须渲染 Markdown；代码块、列表、表格、标题按阅读视图呈现 |
 | Agent 流式输出和工具过程混在一起 | 主回答优先显示；工具过程作为次级 timeline 折叠，用户展开后再看每个工具的输入/输出详情 |
 | 用户上滑查看历史时被新事件强制拉回底部 | 只在用户贴近底部时自动滚动；用户上滑后暂停 auto-scroll，并显示“回到底部”入口 |
@@ -620,6 +626,7 @@ Phase 0/1/2/3/P4 已完成文档化验收与远端只读试用收口；`origin/m
 | [x] | P4-20 历史 CDS runtime transport 失败自愈 | 真实复验发现：旧 MAP session 即使映射到 active connection，也可能保留已不可靠的 CDS runtime session，导致 `/messages` 返回 `cds_request_failed HTTP 400`；新建干净 session 的 create/start/message 已验证 200 | 简洁模式把旧 session 的 `cds_request_failed HTTP 400` 视为可恢复 transport 失效，自动新建 session 并重试一次发送；避免用户看到输入已出现但请求失败的矛盾状态 | 修复文件：`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`；本地 `pnpm --prefix prd-admin exec tsc --noEmit` pass；`pnpm --prefix prd-admin exec vitest run src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：9/9 pass；直接 API 干净链路 create/start/message 200 |
 | [x] | P4-21 网关 502 形态自愈复验 | 真实页面发送发现：旧 runtime transport 失败在浏览器侧可能不是 `cds_request_failed HTTP 400`，而是网关/后端统一成 `SERVER_ERROR/SERVER_UNAVAILABLE HTTP 502`；同时 `/start` 502 代表 runtime 暂不可用，不能用新建 session 掩盖 | 简洁模式遇到 `/messages` 的 502 形态时，移除旧 session、创建干净 session并重试一次；遇到 `/start` 502/HTTP400 时只对同一 session 延迟重试一次，失败后保留原 session 并提示 runtime 暂不可用，不再制造重复任务；复验看到消息 POST 2xx、无“系统级授权已撤销/删除后重新授权/CDS 连接不存在”文案 | 修复文件：`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`；本地 `pnpm --prefix prd-admin exec tsc --noEmit` pass；`pnpm --prefix prd-admin exec vitest run src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：9/9 pass；`git diff --check` pass；远端视觉 `artifacts/cds-agent/2026-05-20/remote-auth-boundary-final-fetch-7ef01eaaf.png/json`；最终部署 `5b730ac53` 后 API 合约 create/start/message 2xx |
 | [x] | P4-22 首次真实请求 UX 收尾 | 用户首次完整跑通后反馈成立：Agent 产品心智应是“一个输入接口 + 远端执行任务”，页面不能把内部 log/status/tool 原样倒给用户；发送、流式、Markdown、工具折叠、滚动都属于商业级基本体验 | 简洁模式新增乐观用户消息与提交状态，失败时不再假装提交中；`text_delta/done` 聚合为主回答并优先渲染；assistant 消息使用 Markdown renderer；工具/status/log 聚合为折叠过程摘要，展开后才看细节；用户上滑后暂停自动滚动并提供“回到底部”；文档第 10 节新增 UX 反模式规则；本地 `tsc --noEmit` pass；`cdsAgentReadiness.test.ts` 9/9 pass；`pnpm --prefix prd-admin build` pass；视觉 smoke：`artifacts/cds-agent/2026-05-20/local-ux-smoke-cds-agent-mocked.png`，mock 113 条事件验证为聚合摘要而非刷屏；远端 CDS Deploy pass，Chrome 登录态复验 `https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent` 已是 `a7cbd70d1`，简洁模式空态一屏可用 |
+| [x] | P4-23 简洁模式二次 UX 降噪 | 外部 UX 评价指出：简洁模式仍像把后端日志贴到前端，尤其是“准备项已完成”与“待启动”语义冲突、调试字段裸露、时间不成人话、机器 ID 直出、停止入口不够近、展开后仍有 log 噪音 | 右侧拆成“准备情况”和“运行进展”，未启动不再显示“任务完成进度”；`traceId/lastEventSeq/timeoutAt/runtimeRunId` 移入折叠调试信息；运行摘要改成人话时长与相对时间；`shared-sidecar-pool-*` 主界面翻译为“CDS 部署沙箱”；运行时输入区旁新增停止按钮；工具/log/status 展开项统一经 `processEventLabel` 翻译；默认操作色从绿色收敛为蓝/灰，绿色只保留成功态 | 修复文件：`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`；本地 `pnpm --prefix prd-admin exec tsc --noEmit` pass；`pnpm --prefix prd-admin exec vitest run src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：9/9 pass；`pnpm --prefix prd-admin build` pass（仅既有 chunk/circular warnings）；`git diff --check` pass；视觉 smoke 截图 `/Users/inernoro/project/prd_agent/artifacts/cds-agent/2026-05-20/local-ux-review-regression-final.png`，覆盖：人话仓库名、机器 ID 不直出、人话时长、无 `6424s`、运行摘要、调试信息默认折叠、无 `log/log/log`、准备/运行语义拆分、超时显示 `已超时` |
 
 ### 14.9 目标级审计
 
