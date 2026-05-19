@@ -712,6 +712,7 @@ export default function CdsAgentPage() {
   const [runtimeDiscoveryRefreshed, setRuntimeDiscoveryRefreshed] = useState<boolean | null>(null);
   const [runtimeStatusLoadedAt, setRuntimeStatusLoadedAt] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
+  const [simpleTaskMode, setSimpleTaskMode] = useState<'chat' | 'code'>('chat');
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -2411,8 +2412,13 @@ export default function CdsAgentPage() {
 
     setBusy(true);
     try {
+      const normalizedPrompt = prompt.trim();
+      const simplePrompt = simpleTaskMode === 'code'
+        ? `【Code 巡检模式】请优先围绕代码仓库、文件、测试、构建和提交建议处理：\n${normalizedPrompt}`
+        : `【对话模式】请直接回答用户问题；只有用户明确要求检查代码时才进入代码巡检：\n${normalizedPrompt}`;
+
       if (!session) {
-        const title = prompt.trim().slice(0, 28) || '只读代码巡检';
+        const title = normalizedPrompt.slice(0, 28) || (simpleTaskMode === 'code' ? '只读代码巡检' : 'Agent 对话');
         const createRes = await createInfraAgentSession({
           connectionId: activeConnection!.id,
           runtime: activeProfile?.runtime ?? 'claude-sdk',
@@ -2420,8 +2426,8 @@ export default function CdsAgentPage() {
           runtimeProfileId: activeProfile?.id,
           title,
           toolPolicy: draft.toolPolicy,
-          gitRepository: draft.gitRepository.trim() || undefined,
-          gitRef: draft.gitRef.trim() || undefined,
+          gitRepository: simpleTaskMode === 'code' ? draft.gitRepository.trim() || undefined : undefined,
+          gitRef: simpleTaskMode === 'code' ? draft.gitRef.trim() || undefined : undefined,
           workspaceRoot: draft.workspaceRoot.trim() || undefined,
         });
         if (!createRes.success || !createRes.data?.item) {
@@ -2443,7 +2449,7 @@ export default function CdsAgentPage() {
         upsertSession(session);
       }
 
-      const messageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(prompt, contextDraft));
+      const messageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
       if (!messageRes.success || !messageRes.data?.item) {
         toast.error('发送失败', messageRes.error?.message ?? '请稍后重试');
         await refreshDetail(session.id);
@@ -3088,16 +3094,27 @@ export default function CdsAgentPage() {
       const state = resolveSessionRuntimeState(s, nowTick).effectiveStatus;
       return state === 'stopped' || state === 'failed' || state === 'stopping' || state === 'timed_out';
     });
-    const promptPresets = [
-      '巡检当前仓库，找一个小问题并给出修复计划',
-      '读取 README 和最近 changelog，总结这个功能怎么验收',
-      '运行只读检查，整理失败原因和下一步动作',
-    ];
+    const promptPresets = simpleTaskMode === 'code'
+      ? [
+        '巡检当前仓库，找一个小问题并给出修复计划',
+        '读取 README 和最近 changelog，总结这个功能怎么验收',
+        '运行只读检查，整理失败原因和下一步动作',
+      ]
+      : [
+        '总结这个 Agent 当前能做什么，以及下一步怎么用',
+        '解释最近一次运行状态，告诉我是否需要停止或重试',
+        '帮我把这个需求拆成可执行的检查清单',
+      ];
 
     // 运行中且最后一块不是 Agent 回复 = 还在干活，给"已等待 Xs"反馈（规则 #6）。
     const lastBlock = timelineBlocks[timelineBlocks.length - 1];
     const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant') ?? null;
+    const hasUserMessage = messages.some((message) => message.role === 'user');
+    const hasAssistantOutput = Boolean(lastAssistant?.content.trim());
+    const hasRuntimeRun = Boolean(activeSession?.currentRuntimeRunId);
     const awaitingAgent = isLiveStatus
+      && (hasUserMessage || hasRuntimeRun)
+      && !hasAssistantOutput
       && (!lastBlock || lastBlock.type !== 'msg' || lastBlock.msg.role !== 'assistant');
     let waitedSec = 0;
     if (awaitingAgent) {
@@ -3125,9 +3142,6 @@ export default function CdsAgentPage() {
       : timeoutAt
         ? `${formatDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
         : `启动后 ${formatDuration(timeoutSeconds)}`;
-    const hasUserMessage = messages.some((message) => message.role === 'user');
-    const hasAssistantOutput = Boolean(lastAssistant?.content.trim());
-    const hasRuntimeRun = Boolean(activeSession?.currentRuntimeRunId);
     const usefulEventTypes = new Set(['tool_call', 'tool_result', 'text_delta', 'done', 'file', 'diff', 'error', 'browser', 'manual']);
     const usefulEvents = events.filter((event) => usefulEventTypes.has(event.type));
     const latestEventAt = events.length > 0 ? new Date(events[events.length - 1].createdAt) : null;
@@ -3174,9 +3188,11 @@ export default function CdsAgentPage() {
 	    ];
 	    const activeTargetLabel = activeSession
 	      ? `${activeSession.gitRepository || activeSession.cdsProjectId || '默认 workspace'} · ${activeSession.gitRef || 'main'}`
-	      : `${draft.gitRepository.trim() || '默认 workspace'} · ${draft.gitRef.trim() || 'main'}`;
+	      : simpleTaskMode === 'code'
+	        ? `${draft.gitRepository.trim() || '默认 workspace'} · ${draft.gitRef.trim() || 'main'}`
+	        : '对话模式 · 不要求仓库';
 	    const progressChecklist = [
-	      { label: '目标仓库', detail: activeTargetLabel, state: 'pass' },
+	      { label: simpleTaskMode === 'code' || activeSession ? '目标仓库' : '交互模式', detail: activeTargetLabel, state: 'pass' },
 	      {
 	        label: canCreateSession ? '运行环境就绪' : '等待模型配置',
 	        detail: canCreateSession ? formatResourcePolicy(activeRuntimeProfile) : (activeProfileBlockReason || activeRuntimePoolBlockReason || '需要可用模型后才能创建任务'),
@@ -3219,28 +3235,66 @@ export default function CdsAgentPage() {
 	    );
 	    const simpleComposer = (
 	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {([
+                { value: 'chat', label: '对话', icon: MessageSquare },
+                { value: 'code', label: 'Code 巡检', icon: Terminal },
+              ] as const).map((mode) => {
+                const Icon = mode.icon;
+                const active = simpleTaskMode === mode.value;
+                return (
+                  <button
+                    key={mode.value}
+                    type="button"
+                    onClick={() => setSimpleTaskMode(mode.value)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold"
+                    style={active
+                      ? { background: 'rgba(34,197,94,0.16)', color: 'rgba(187,247,208,0.96)' }
+                      : { color: 'rgba(255,255,255,0.48)' }}
+                  >
+                    <Icon size={13} />
+                    {mode.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="text-xs text-white/36">
+              {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
+            </span>
+          </div>
 	        <textarea
 	          value={prompt}
 	          onChange={(e) => setPrompt(e.target.value)}
 	          rows={2}
-	          placeholder="告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR"
+	          placeholder={simpleTaskMode === 'code'
+	            ? '告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR'
+	            : '直接告诉 Agent 你想问什么，不需要先填写仓库'}
 	          className="min-h-[72px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-base leading-relaxed text-white outline-none placeholder:text-white/34"
 	        />
 	        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
-	          <input
-	            value={draft.gitRepository}
-	            onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
-	            placeholder="仓库 URL，可留空使用默认 workspace"
-	            className="h-9 min-w-[220px] flex-1 rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
-	            style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
-	          />
-	          <input
-	            value={draft.gitRef}
-	            onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
-	            placeholder="main"
-	            className="h-9 w-[104px] rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
-	            style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
-	          />
+            {simpleTaskMode === 'code' ? (
+              <>
+                <input
+                  value={draft.gitRepository}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+                  placeholder="仓库 URL，可留空使用默认 workspace"
+                  className="h-9 min-w-[220px] flex-1 rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
+                />
+                <input
+                  value={draft.gitRef}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
+                  placeholder="main"
+                  className="h-9 w-[104px] rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
+                  style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
+                />
+              </>
+            ) : (
+              <div className="min-w-[220px] flex-1 truncate rounded-lg px-3 py-2 text-xs text-white/42" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                对话模式不要求仓库；需要代码上下文时切到 Code 巡检
+              </div>
+            )}
 	          <button
 	            type="button"
 	            onClick={() => void runSimpleReadonlyReview()}
@@ -3394,8 +3448,12 @@ export default function CdsAgentPage() {
 	              {!hasConversation ? (
 	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
-	                    <h2 className="text-2xl font-semibold text-white/88">要在这个仓库里检查什么？</h2>
-	                    <div className="mt-2 text-sm text-white/42">输入任务后，CDS 会创建只读 Agent 会话并把过程、结果和产物沉淀下来。</div>
+	                    <h2 className="text-2xl font-semibold text-white/88">{simpleTaskMode === 'code' ? '要在这个仓库里检查什么？' : '想让 Agent 做什么？'}</h2>
+	                    <div className="mt-2 text-sm text-white/42">
+                        {simpleTaskMode === 'code'
+                          ? '输入代码巡检任务后，CDS 会创建只读 Agent 会话并沉淀过程、结果和产物。'
+                          : '可以先直接对话；需要仓库、测试或 PR 建议时再切到 Code 巡检。'}
+                      </div>
 	                  </div>
 	                  {simpleComposer}
 	                  {simplePromptPresetRow}
