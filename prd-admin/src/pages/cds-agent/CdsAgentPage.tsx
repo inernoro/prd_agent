@@ -3175,35 +3175,35 @@ export default function CdsAgentPage() {
 	      </div>
 	    );
 	    const simpleComposer = (
-	      <div className="w-full max-w-[780px] rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 18px 50px rgba(0,0,0,0.26)' }}>
+	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
 	        <textarea
 	          value={prompt}
 	          onChange={(e) => setPrompt(e.target.value)}
-	          rows={3}
+	          rows={2}
 	          placeholder="告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR"
-	          className="min-h-[86px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-white/30"
+	          className="min-h-[72px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-base leading-relaxed text-white outline-none placeholder:text-white/34"
 	        />
 	        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
 	          <input
 	            value={draft.gitRepository}
 	            onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
 	            placeholder="仓库 URL，可留空使用默认 workspace"
-	            className="h-9 min-w-[220px] flex-1 rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/28"
-	            style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+	            className="h-9 min-w-[220px] flex-1 rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
+	            style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
 	          />
 	          <input
 	            value={draft.gitRef}
 	            onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
 	            placeholder="main"
-	            className="h-9 w-[104px] rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/28"
-	            style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+	            className="h-9 w-[104px] rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/30"
+	            style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
 	          />
 	          <button
 	            type="button"
 	            onClick={() => void runSimpleReadonlyReview()}
 	            disabled={sendDisabled}
 	            className="inline-flex h-9 min-w-[94px] items-center justify-center gap-2 rounded-lg text-sm font-semibold disabled:opacity-45"
-	            style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
+	            style={{ background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.38)', color: 'rgba(187,247,208,0.98)' }}
 	          >
 	            {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
 	            {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
@@ -3212,7 +3212,7 @@ export default function CdsAgentPage() {
 	      </div>
 	    );
 	    return (
-	      <div className="h-full min-h-0 overflow-y-auto px-3 py-4 text-white sm:px-5" style={{ background: '#0B0F14' }}>
+	      <div className="h-full min-h-0 overflow-hidden px-3 py-4 text-white sm:px-5" style={{ background: '#0F0F10' }}>
 	        <div className="mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
 	          <aside className="min-h-0 overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
 	            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
@@ -3300,7 +3300,7 @@ export default function CdsAgentPage() {
 	            </div>
 	          </aside>
 
-	          <main className="flex min-h-0 flex-col overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.075)' }}>
+	          <main className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl" style={{ background: 'rgba(18,18,18,0.94)', border: '1px solid rgba(255,255,255,0.075)' }}>
 	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 	              <div className="min-w-0">
 	                <div className="flex items-center gap-2">
@@ -3347,14 +3347,13 @@ export default function CdsAgentPage() {
 	              </div>
 	            </div>
 
-	            <div ref={timelineRef} className="mx-5 mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl p-4" style={{ background: hasTimeline ? 'rgba(0,0,0,0.16)' : 'transparent', border: hasTimeline ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent', overscrollBehavior: 'contain' }}>
+	            <div ref={timelineRef} className="mx-auto mt-4 min-h-0 w-full max-w-[980px] flex-1 space-y-3 overflow-y-auto px-4 pb-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
 	              {!hasTimeline ? (
-	                <div className="flex h-full min-h-[520px] flex-col items-center justify-center gap-6 text-center">
+	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
 	                    <h2 className="text-2xl font-semibold text-white/88">要在这个仓库里检查什么？</h2>
-	                    <div className="mt-2 text-sm text-white/42">输入任务后，CDS 会创建只读 Agent 会话并把过程、结果和产物沉淀在右侧。</div>
+	                    <div className="mt-2 text-sm text-white/42">输入任务后，CDS 会创建只读 Agent 会话并把过程、结果和产物沉淀下来。</div>
 	                  </div>
-	                  {simpleComposer}
 	                  {simplePromptPresetRow}
 	                </div>
 	              ) : (
@@ -3483,12 +3482,10 @@ export default function CdsAgentPage() {
               )}
 	            </div>
 
-	            {hasTimeline && (
-	              <div className="space-y-3 px-5 pb-5 pt-3">
-	                {simplePromptPresetRow}
-	                {simpleComposer}
-	              </div>
-	            )}
+	            <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
+	              {hasTimeline && <div className="mb-3">{simplePromptPresetRow}</div>}
+	              {simpleComposer}
+	            </div>
 	          </main>
 
 	          <aside className="min-h-0 overflow-y-auto rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}>
