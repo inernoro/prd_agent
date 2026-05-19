@@ -4270,10 +4270,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.lastStopSource = undefined;
         // 分支重新跑起来后必须回到 warm pool：调度器降温会把 heatState
         // 置 cold，若不复位，getHotBranches 不计入它（cold 不算 hot），
-        // maxHotBranches 容量上限被绕过。markHot 内部 isEnabled 守卫 +
-        // 刷新 lastAccessedAt（手动重启视为一次访问，避免立刻又被降温）。
+        // maxHotBranches 容量上限被绕过。
+        // lastAccessedAt 必须在这里显式刷新：手动重启就是一次访问，而
+        // markHot() 只在 lastAccessedAt 缺失时才补（不更新陈旧值）——被
+        // 空闲 TTL 降温过的分支其 lastAccessedAt 必然很旧，若不刷新，下一
+        // 个 scheduler tick 立刻又按"空闲超时"把它降温，手动重启等于无效
+        // （Codex P1 @ f80d33a）。先刷新再 markHot。
         // stop 重构后 /restart 真能唤醒已降温分支，此前因容器被 rm 必失败
         // 而掩盖了这个陈旧状态问题（Cursor Bugbot #640）。
+        entry.lastAccessedAt = new Date().toISOString();
         schedulerService?.markHot(id);
         stateService.appendActivityLog(entry.projectId, {
           type: 'restart',
