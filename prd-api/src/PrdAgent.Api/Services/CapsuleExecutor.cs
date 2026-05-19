@@ -4665,20 +4665,7 @@ function safeChart(canvasId, config) {
         else
         {
             var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
-            var now = DateTime.UtcNow;
-            connection = string.IsNullOrWhiteSpace(connectionId)
-                ? await db.InfraConnections
-                    .Find(x => x.Partner == "cds"
-                        && (x.Status == "active"
-                            || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
-                    .SortByDescending(x => x.UpdatedAt)
-                    .FirstOrDefaultAsync(CancellationToken.None)
-                : await db.InfraConnections
-                    .Find(x => x.Id == connectionId
-                        && x.Partner == "cds"
-                        && (x.Status == "active"
-                            || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
-                    .FirstOrDefaultAsync(CancellationToken.None);
+            connection = await ResolveCdsConnectionForWorkflowAsync(db, connectionId, CancellationToken.None);
             if (connection == null)
                 throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
 
@@ -8531,6 +8518,49 @@ function safeChart(canvasId, config) {
             cur = next;
         }
         return cur;
+    }
+
+    private static async Task<InfraConnection?> ResolveCdsConnectionForWorkflowAsync(
+        MongoDbContext db,
+        string connectionId,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(connectionId))
+        {
+            return await db.InfraConnections
+                .Find(x => x.Partner == "cds"
+                    && x.LongTokenEncrypted != string.Empty
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var original = await db.InfraConnections
+            .Find(x => x.Id == connectionId && x.Partner == "cds")
+            .FirstOrDefaultAsync(ct);
+        if (original == null)
+            return null;
+
+        if (string.Equals(original.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(original.LongTokenEncrypted)
+            && original.LongTokenExpiresAt > now)
+        {
+            return original;
+        }
+
+        return await db.InfraConnections
+            .Find(x => x.Id != original.Id
+                && x.Partner == original.Partner
+                && x.PartnerBaseUrl == original.PartnerBaseUrl
+                && x.ProjectId == original.ProjectId
+                && x.Status == "active"
+                && x.LongTokenEncrypted != string.Empty
+                && x.LongTokenExpiresAt > now)
+            .SortByDescending(x => x.LastProbeOk)
+            .ThenByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
     private static string SanitizeAgentText(string? text)

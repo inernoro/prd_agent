@@ -75,12 +75,10 @@ public class AgentToolsController : ControllerBase
             return BadRequest(new { error = "toolName required" });
 
         var session = await FindSessionByRunIdAsync(req.RunId, ct);
-        var cdsToken = session == null
+        var connection = await ResolveSessionConnectionAsync(session, ct);
+        var cdsToken = connection == null
             ? null
-            : await _infraConnections.TryUnprotectLongTokenAsync(session.ConnectionId, ct, revokeOnFailure: false);
-        var connection = session == null
-            ? null
-            : await _db.InfraConnections.Find(x => x.Id == session.ConnectionId).FirstOrDefaultAsync(ct);
+            : await _infraConnections.TryUnprotectLongTokenAsync(connection.Id, ct, revokeOnFailure: false);
 
         var inputElement = req.Input ?? JsonDocument.Parse("{}").RootElement;
         var ctx = new AgentToolInvocationContext
@@ -284,6 +282,42 @@ public class AgentToolsController : ControllerBase
         var sessionId = dash > 0 ? rest[..dash] : rest;
         if (string.IsNullOrWhiteSpace(sessionId)) return null;
         return await _db.InfraAgentSessions.Find(x => x.Id == sessionId).FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<InfraConnection?> ResolveSessionConnectionAsync(InfraAgentSession? session, CancellationToken ct)
+    {
+        if (session == null || string.IsNullOrWhiteSpace(session.ConnectionId))
+            return null;
+
+        var original = await _db.InfraConnections
+            .Find(x => x.Id == session.ConnectionId)
+            .FirstOrDefaultAsync(ct);
+        if (original == null)
+            return null;
+
+        if (!IsRetiredConnection(original))
+            return original;
+
+        var now = DateTime.UtcNow;
+        var replacement = await _db.InfraConnections
+            .Find(x => x.Id != original.Id
+                && x.Partner == original.Partner
+                && x.PartnerBaseUrl == original.PartnerBaseUrl
+                && x.ProjectId == original.ProjectId
+                && x.Status == "active"
+                && x.LongTokenEncrypted != string.Empty
+                && x.LongTokenExpiresAt > now)
+            .SortByDescending(x => x.LastProbeOk)
+            .ThenByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        return replacement ?? original;
+    }
+
+    private static bool IsRetiredConnection(InfraConnection connection)
+    {
+        return string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(connection.LongTokenEncrypted);
     }
 
     private async Task<string?> FindApprovalDecisionAsync(string sessionId, string approvalId, CancellationToken ct)
