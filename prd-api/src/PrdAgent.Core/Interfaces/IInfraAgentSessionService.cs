@@ -22,6 +22,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> CollectArtifactsAsync(string userId, string id, CancellationToken ct);
 
+    Task<InfraAgentTraceBundleView?> GetTraceBundleAsync(string userId, string id, CancellationToken ct);
+
     Task<InfraAgentSessionView?> RunReadonlyChecksAsync(string userId, string id, CancellationToken ct);
 
     Task<InfraAgentSessionView?> CaptureBrowserSnapshotAsync(string userId, string id, BrowserSnapshotRequest request, CancellationToken ct);
@@ -167,6 +169,55 @@ public record InfraAgentMessageView(
     string Content,
     string Status,
     DateTime CreatedAt
+);
+
+public record InfraAgentTraceBundleView(
+    string SchemaVersion,
+    DateTime ExportedAt,
+    InfraAgentSessionView Session,
+    InfraAgentTraceMetricsView Metrics,
+    IReadOnlyDictionary<string, int> EventTypeCounts,
+    IReadOnlyList<InfraAgentMessageView> Messages,
+    IReadOnlyList<InfraAgentTraceEventView> Events,
+    IReadOnlyList<InfraAgentTraceArtifactView> Artifacts,
+    string Logs,
+    InfraAgentTraceReplayView Replay
+);
+
+public record InfraAgentTraceMetricsView(
+    int MessageCount,
+    int EventCount,
+    long LastEventSeq,
+    int ArtifactCount,
+    int LogLineCount,
+    double? ElapsedSeconds,
+    DateTime? TimeoutAt,
+    bool TimedOut
+);
+
+public record InfraAgentTraceEventView(
+    string Id,
+    long Seq,
+    string TraceId,
+    string Type,
+    System.Text.Json.JsonElement Payload,
+    DateTime CreatedAt
+);
+
+public record InfraAgentTraceArtifactView(
+    string Id,
+    string Title,
+    string Kind,
+    string Summary,
+    string Body,
+    long? EventSeq
+);
+
+public record InfraAgentTraceReplayView(
+    string WorkbenchPath,
+    string EventsApiPath,
+    long EventsCursor,
+    bool EventsTruncated
 );
 
 public static class InfraAgentSessionErrorCodes

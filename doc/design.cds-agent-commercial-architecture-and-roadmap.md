@@ -399,10 +399,10 @@ Phase 2 smoke 清单：
 
 | 编号 | 任务 | 验收 |
 | --- | --- | --- |
-| P3-1 | 多运行时 adapter matrix | OpenAI/Google/其他 Agent 通过同一套 gate 后可路由 |
-| P3-2 | 成本、token、SLA 面板 | 团队能看花费、失败率、超时率 |
-| P3-3 | 定时巡检和批量知识治理 | Cron 工作流能稳定跑并产出报告 |
-| P3-4 | 回放和复现 | 任意运行可从 trace bundle 复盘 |
+| P3-1 | trace/artifact bundle 导出与回放边界 | 任意运行可导出事件、消息、产物、日志和 replay cursor |
+| P3-2 | 多运行时 adapter matrix | OpenAI/Google/其他 Agent 通过同一套 gate 后可路由 |
+| P3-3 | 成本、token、SLA 面板 | 团队能看花费、失败率、超时率 |
+| P3-4 | 定时巡检和批量知识治理 | Cron 工作流能稳定跑并产出报告 |
 | P3-5 | 权限和组织治理 | 仓库、知识库、profile、审批策略按团队隔离 |
 
 ---
@@ -439,16 +439,15 @@ Phase 2 smoke 清单：
 
 ## 11. 下一轮最小开发计划
 
-当前不需要再调整总架构。下一轮只进入 Phase 1，按以下顺序执行：
+当前不再回到 Phase 1/Phase 2。`P3-1 trace/artifact bundle` 已完成本地验收；下一轮只进入 Phase 3 的第二个最小入口：`P3-2 多运行时 adapter matrix`。这个任务只校准不同 runtime 的 profile、readiness gate、trace bundle 和审批边界，不扩大到定时巡检或成本面板。
 
 | 顺序 | 任务 | 预计 | 是否需要用户 |
 | --- | --- | --- | --- |
-| 1 | 盘点现有 Agent 页面组件和事件 API | 0.5h | 不需要 |
-| 2 | 做简洁模式页面信息架构和状态字段 | 1.5-2h | 不需要 |
-| 3 | 接入 timeline、timeout、stop 统一展示 | 2-3h | 不需要 |
-| 4 | 做本地视觉测试和 smoke | 1-1.5h | 不需要 |
-| 5 | 设计并实现 `CdsAgentRun` 最小 workflow node | 0.5-1.5d | 不需要，除非现有 workflow API 缺关键扩展点 |
-| 6 | 接入 KnowledgeBase 只读工具 | 1d | 不需要，除非知识库权限数据缺失 |
+| 1 | P3-2 多运行时 adapter matrix 设计校准 | 0.5-1h | 不需要 |
+| 2 | 盘点 Claude SDK / OpenAI-compatible / Codex adapter 共同能力和缺口 | 0.5-1h | 不需要 |
+| 3 | 给不同 runtime 接入同一套 readiness gate 和 profile 兼容性报告 | 1-2d | 不需要，除非远端 CDS profile 数据缺失 |
+| 4 | 补 smoke、单测和必要视觉证据 | 0.5d | 不需要 |
+| 5 | 回写 P3-2 checklist、证据路径和下一步入口 | 0.2h | 不需要 |
 
 如果某个任务同一问题反复修正超过 3 次，必须暂停写代码，先在本文件追加“根因复盘”，再决定是否换实现路径。
 
@@ -496,7 +495,7 @@ Phase 2 smoke 清单：
 | [x] Phase 0 基线闭环 | 完成 | 证明 CDS-managed Claude Agent SDK 只读任务能跑、能停、默认安全 | one-cycle pass；S1/S2/S3/V1 pass；危险工具默认不暴露 |
 | [x] Phase 1 商业级最小可用 | 本地验收完成 | 用户能用简洁面板跑只读代码巡检、知识库只读搜索，并能从工作流调度一次 Agent | 3 步内启动；可观测字段齐全；stop/timeout 可见；`CdsAgentRun` 最小工作流通过；KB search/read 通过；Phase 1 验收包已生成 |
 | [x] Phase 2 可写协作 | 本地验收完成，6/6 | Agent 能生成代码/知识库 draft/diff，并通过人工审批 apply | 写操作不直落库；diff 可审查；workflow 可暂停/恢复；writable profile 有显式审批边界；Phase 2 验收包已生成 |
-| [ ] Phase 3 规模化商业能力 | 未开始 | 团队级巡检、知识治理、多运行时和成本治理 | 多 adapter gate；定时巡检；SLA/成本面板；trace bundle 可回放 |
+| [ ] Phase 3 规模化商业能力 | 进行中，P3-2 入口 | 团队级巡检、知识治理、多运行时和成本治理 | trace bundle 可导出；后续进入多 adapter gate、定时巡检、SLA/成本面板 |
 
 ### 14.2 Phase 0 测试对勾
 
@@ -557,4 +556,10 @@ Phase 2 smoke 清单：
 
 ### 14.6 下一次开发入口
 
-Phase 2 已完成 P2-1/P2-2/P2-3/P2-4/P2-5/P2-6。下一次开发入口进入 Phase 3：规模化商业能力。建议先做 `P3-1 trace/artifact bundle 导出与回放边界设计`，把一次 Agent 运行的事件、结果、diff、审批、截图和日志整理成可下载、可回放的验收包；预计 0.5-1 个工作日先出设计和最小导出接口，再决定是否接定时巡检和团队级看板。
+Phase 2 已完成 P2-1/P2-2/P2-3/P2-4/P2-5/P2-6。当前进入 Phase 3：规模化商业能力。`P3-1 trace/artifact bundle 导出与回放边界` 已完成本地验收；下一次开发入口是 `P3-2 多运行时 adapter matrix`，目标是把 Claude SDK、OpenAI-compatible、Codex/其他 adapter 放到同一套 profile、readiness gate、trace bundle 和审批边界下。
+
+### 14.7 Phase 3 当前进度
+
+| 对勾 | 小节点 | 最终目标 | 验收标准 | 证据 |
+| --- | --- | --- | --- | --- |
+| [x] | P3-1 trace/artifact bundle | 单次 Agent 运行能被导出、复盘和作为验收证据 | 服务端返回 session、metrics、eventTypeCounts、messages、events、artifacts、logs、replay cursor；前端导出按钮优先下载服务端 bundle，失败再导出页面缓存；本地 smoke/单测/tsc/build 通过 | `GET /api/infra-agent-sessions/{id}/trace-bundle`；`scripts/smoke-cds-agent-trace-bundle.sh` pass；`dotnet test ... --filter "FullyQualifiedName~InfraAgentSessionServiceTraceBundleTests\|FullyQualifiedName~InfraAgentSessionsControllerTests" --no-restore`：21/21 pass；`pnpm --prefix prd-admin tsc` pass；`pnpm --prefix prd-admin test -- src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：281/281 pass；`pnpm --prefix prd-admin build` pass；`git diff --check` pass；远端视觉 `/tmp/cds-agent-p3-1-remote-workbench.png`、coverage `/tmp/cds-agent-p3-1-remote-workbench.coverage.json`；本地视觉尝试 `/tmp/cds-agent-p3-1-trace-bundle-panel.failure.png` 因本机 API 500 未计为通过 |

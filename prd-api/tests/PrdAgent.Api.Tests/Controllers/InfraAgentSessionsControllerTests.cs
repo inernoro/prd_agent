@@ -184,6 +184,29 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task TraceBundle_ShouldReturnBundle()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var session = BuildSessionView("session-1", "user-1");
+        var expected = InfraAgentSessionService.BuildTraceBundle(
+            session,
+            Array.Empty<InfraAgentMessageView>(),
+            Array.Empty<InfraAgentEventView>(),
+            string.Empty);
+        service
+            .Setup(x => x.GetTraceBundleAsync("user-1", "session-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.TraceBundle("session-1", CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.GetTraceBundleAsync("user-1", "session-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task RunReadonlyChecks_ShouldReturnSession()
     {
         var service = new Mock<IInfraAgentSessionService>();

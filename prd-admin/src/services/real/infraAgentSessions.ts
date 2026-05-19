@@ -83,6 +83,47 @@ export interface InfraAgentMessageView {
   createdAt: string;
 }
 
+export interface InfraAgentTraceBundleView {
+  schemaVersion: string;
+  exportedAt: string;
+  session: InfraAgentSessionView;
+  metrics: {
+    messageCount: number;
+    eventCount: number;
+    lastEventSeq: number;
+    artifactCount: number;
+    logLineCount: number;
+    elapsedSeconds?: number | null;
+    timeoutAt?: string | null;
+    timedOut: boolean;
+  };
+  eventTypeCounts: Record<string, number>;
+  messages: InfraAgentMessageView[];
+  events: Array<{
+    id: string;
+    seq: number;
+    traceId: string;
+    type: string;
+    payload: unknown;
+    createdAt: string;
+  }>;
+  artifacts: Array<{
+    id: string;
+    title: string;
+    kind: string;
+    summary: string;
+    body: string;
+    eventSeq?: number | null;
+  }>;
+  logs: string;
+  replay: {
+    workbenchPath: string;
+    eventsApiPath: string;
+    eventsCursor: number;
+    eventsTruncated: boolean;
+  };
+}
+
 export interface InfraAgentHookProfileView {
   id: string;
   userId: string;
@@ -400,6 +441,10 @@ interface LogsResp {
   logs: string;
 }
 
+interface TraceBundleResp {
+  bundle: InfraAgentTraceBundleView;
+}
+
 interface HookProfilesResp {
   items: InfraAgentHookProfileView[];
 }
@@ -500,6 +545,12 @@ export async function collectInfraAgentArtifacts(id: string): Promise<ApiRespons
   return await apiRequest<ItemResp>(api.infraAgentSessions.collectArtifacts(encodeURIComponent(id)), {
     method: 'POST',
     body: {},
+  });
+}
+
+export async function getInfraAgentTraceBundle(id: string): Promise<ApiResponse<TraceBundleResp>> {
+  return await apiRequest<TraceBundleResp>(api.infraAgentSessions.traceBundle(encodeURIComponent(id)), {
+    method: 'GET',
   });
 }
 

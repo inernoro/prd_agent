@@ -783,6 +783,7 @@ export const api = {
     stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
     archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
+    traceBundle: (id: string) => `/api/infra-agent-sessions/${id}/trace-bundle`,
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
     captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
     runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,

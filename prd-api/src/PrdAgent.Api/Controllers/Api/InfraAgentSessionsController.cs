@@ -1264,6 +1264,28 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    [HttpGet("{id}/trace-bundle")]
+    public async Task<IActionResult> TraceBundle(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var bundle = await _service.GetTraceBundleAsync(userId, id, ct);
+            if (bundle == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(
+                    InfraAgentSessionErrorCodes.SessionNotFound,
+                    "会话不存在"));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new { bundle }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/run-readonly-checks")]
     public async Task<IActionResult> RunReadonlyChecks(string id, CancellationToken ct)
     {

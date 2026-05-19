@@ -684,6 +684,40 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return ToView(session);
     }
 
+    public async Task<InfraAgentTraceBundleView?> GetTraceBundleAsync(string userId, string id, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null) return null;
+
+        await TryImportCdsStreamEventsAsync(session, ct);
+
+        const int maxEvents = 5000;
+        const int maxMessages = 500;
+        var events = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == id)
+            .SortBy(x => x.Seq)
+            .Limit(maxEvents + 1)
+            .ToListAsync(ct);
+        var messages = await _db.InfraAgentMessages
+            .Find(x => x.SessionId == id)
+            .SortBy(x => x.CreatedAt)
+            .Limit(maxMessages)
+            .ToListAsync(ct);
+        var logs = await GetLogsAsync(userId, id, ct) ?? string.Empty;
+        var truncated = events.Count > maxEvents;
+        if (truncated)
+        {
+            events = events.Take(maxEvents).ToList();
+        }
+
+        return BuildTraceBundle(
+            ToView(session),
+            messages.Select(ToMessageView).ToList(),
+            events.Select(ToEventView).ToList(),
+            logs,
+            truncated);
+    }
+
     public async Task<InfraAgentSessionView?> RunReadonlyChecksAsync(string userId, string id, CancellationToken ct)
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
@@ -2268,6 +2302,205 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         msg.Content,
         msg.Status,
         msg.CreatedAt);
+
+    public static InfraAgentTraceBundleView BuildTraceBundle(
+        InfraAgentSessionView session,
+        IReadOnlyList<InfraAgentMessageView> messages,
+        IReadOnlyList<InfraAgentEventView> events,
+        string? logs,
+        bool eventsTruncated = false)
+    {
+        var safeLogs = logs ?? string.Empty;
+        var eventTypeCounts = events
+            .GroupBy(x => x.Type)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal);
+        var traceEvents = events
+            .Select(x => new InfraAgentTraceEventView(
+                x.Id,
+                x.Seq,
+                x.TraceId,
+                x.Type,
+                ParsePayloadElement(x.PayloadJson),
+                x.CreatedAt))
+            .ToList();
+        var lastSeq = events.Count == 0 ? 0 : events.Max(x => x.Seq);
+        var timeoutAt = session.StartedAt?.AddSeconds(session.TimeoutSeconds);
+        var stopOrNow = session.StoppedAt ?? DateTime.UtcNow;
+        var elapsedSeconds = session.StartedAt.HasValue
+            ? Math.Max(0, (stopOrNow - session.StartedAt.Value).TotalSeconds)
+            : (double?)null;
+        var artifacts = BuildTraceArtifacts(traceEvents, safeLogs);
+
+        return new InfraAgentTraceBundleView(
+            "cds-agent-trace-bundle/v1",
+            DateTime.UtcNow,
+            session,
+            new InfraAgentTraceMetricsView(
+                messages.Count,
+                events.Count,
+                lastSeq,
+                artifacts.Count,
+                CountLogLines(safeLogs),
+                elapsedSeconds,
+                timeoutAt,
+                timeoutAt.HasValue && stopOrNow >= timeoutAt.Value),
+            eventTypeCounts,
+            messages,
+            traceEvents,
+            artifacts,
+            safeLogs,
+            new InfraAgentTraceReplayView(
+                $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}",
+                $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/events?afterSeq=0&limit=500",
+                lastSeq,
+                eventsTruncated));
+    }
+
+    private static List<InfraAgentTraceArtifactView> BuildTraceArtifacts(
+        IReadOnlyList<InfraAgentTraceEventView> events,
+        string logs)
+    {
+        var artifacts = new List<InfraAgentTraceArtifactView>();
+        foreach (var evt in events)
+        {
+            if (evt.Type == InfraAgentEventTypes.File)
+            {
+                var path = ReadString(evt.Payload, "path") ?? "file";
+                artifacts.Add(new InfraAgentTraceArtifactView(
+                    $"{evt.Id}-file",
+                    "文件产物",
+                    "file",
+                    path,
+                    ReadString(evt.Payload, "content") ?? evt.Payload.GetRawText(),
+                    evt.Seq));
+                continue;
+            }
+
+            if (evt.Type == InfraAgentEventTypes.Diff)
+            {
+                artifacts.Add(new InfraAgentTraceArtifactView(
+                    $"{evt.Id}-diff",
+                    "代码 diff",
+                    "diff",
+                    ReadString(evt.Payload, "path") ?? "workspace",
+                    ReadString(evt.Payload, "diff") ?? evt.Payload.GetRawText(),
+                    evt.Seq));
+                continue;
+            }
+
+            if (evt.Type == InfraAgentEventTypes.Browser)
+            {
+                artifacts.Add(new InfraAgentTraceArtifactView(
+                    $"{evt.Id}-browser",
+                    "浏览器快照",
+                    "browser",
+                    ReadString(evt.Payload, "url") ?? ReadString(evt.Payload, "title") ?? "browser snapshot",
+                    evt.Payload.GetRawText(),
+                    evt.Seq));
+                continue;
+            }
+
+            if (evt.Type != InfraAgentEventTypes.ToolResult)
+            {
+                continue;
+            }
+
+            var detail = ParseNestedToolResult(evt.Payload);
+            if (!detail.HasValue)
+            {
+                continue;
+            }
+
+            if (detail.Value.TryGetProperty("files", out var files) && files.ValueKind == JsonValueKind.Array)
+            {
+                var body = string.Join('\n', files.EnumerateArray().Select(x => x.ToString()));
+                artifacts.Add(new InfraAgentTraceArtifactView(
+                    $"{evt.Id}-files",
+                    "文件树",
+                    "files",
+                    $"{files.GetArrayLength()} 个文件",
+                    body,
+                    evt.Seq));
+            }
+
+            var diff = ReadString(detail.Value, "diff") ?? ReadString(detail.Value, "unifiedDiff");
+            if (!string.IsNullOrWhiteSpace(diff))
+            {
+                artifacts.Add(new InfraAgentTraceArtifactView(
+                    $"{evt.Id}-diff",
+                    ReadString(detail.Value, "unifiedDiff") == null ? "代码 diff" : "知识库 diff",
+                    "diff",
+                    ReadString(detail.Value, "path") ?? "workspace",
+                    diff,
+                    evt.Seq));
+            }
+
+            if (!string.IsNullOrWhiteSpace(ReadString(detail.Value, "command")))
+            {
+                artifacts.Add(new InfraAgentTraceArtifactView(
+                    $"{evt.Id}-command",
+                    "命令结果",
+                    "command",
+                    $"{ReadString(detail.Value, "command")} · exit {ReadString(detail.Value, "exitCode") ?? "unknown"}",
+                    detail.Value.GetRawText(),
+                    evt.Seq));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(logs))
+        {
+            artifacts.Add(new InfraAgentTraceArtifactView(
+                "runtime-logs",
+                "Runtime 日志",
+                "log",
+                $"{CountLogLines(logs)} 行日志",
+                logs,
+                null));
+        }
+
+        return artifacts;
+    }
+
+    private static JsonElement? ParseNestedToolResult(JsonElement payload)
+    {
+        var raw = ReadString(payload, "resultSummary")
+            ?? ReadString(payload, "content")
+            ?? ReadString(payload, "output");
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        return TryParseJsonElement(raw);
+    }
+
+    private static JsonElement ParsePayloadElement(string? payloadJson) =>
+        TryParseJsonElement(payloadJson) ?? JsonSerializer.SerializeToElement(new { raw = payloadJson ?? string.Empty });
+
+    private static JsonElement? TryParseJsonElement(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadString(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+    }
+
+    private static int CountLogLines(string logs) =>
+        string.IsNullOrWhiteSpace(logs)
+            ? 0
+            : logs.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
 
     private static string BuildEventTraceId(string sessionId) => $"infra-agent-session-{sessionId}";
 

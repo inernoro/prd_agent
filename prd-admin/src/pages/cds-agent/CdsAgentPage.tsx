@@ -18,6 +18,7 @@ import {
   deleteInfraAgentRuntimeProfile,
   getInfraAgentLogs,
   getInfraAgentRuntimeStatus,
+  getInfraAgentTraceBundle,
   importDefaultInfraAgentRuntimeProfile,
   listInfraAgentRuntimeAdapterCompatibility,
   listInfraAgentRuntimeProfileTemplates,
@@ -2930,8 +2931,22 @@ export default function CdsAgentPage() {
     URL.revokeObjectURL(url);
   }
 
-  function downloadRunBundle() {
-    const filename = `cds-agent-run-bundle-${safeFilenamePart(activeSession?.id ?? activeSession?.traceId)}.json`;
+  async function downloadRunBundle() {
+    const filename = `cds-agent-trace-bundle-${safeFilenamePart(activeSession?.id ?? activeSession?.traceId)}.json`;
+    if (activeSession) {
+      try {
+        const res = await getInfraAgentTraceBundle(activeSession.id);
+        if (res.success && res.data?.bundle) {
+          downloadText(filename, JSON.stringify(res.data.bundle, null, 2), 'application/json;charset=utf-8');
+          toast.success('Trace bundle 已导出', filename);
+          return;
+        }
+        toast.warning('服务端 trace bundle 不可用', res.error?.message ?? '已导出当前页面缓存');
+      } catch (err) {
+        toast.warning('服务端 trace bundle 不可用', err instanceof Error ? err.message : '已导出当前页面缓存');
+      }
+    }
+
     downloadText(filename, JSON.stringify(runBundle, null, 2), 'application/json;charset=utf-8');
     toast.success('Run bundle 已导出', filename);
   }
@@ -4018,7 +4033,7 @@ export default function CdsAgentPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={downloadRunBundle}
+                          onClick={() => void downloadRunBundle()}
                           className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-white/58 hover:text-white/86"
                           style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
                         >
