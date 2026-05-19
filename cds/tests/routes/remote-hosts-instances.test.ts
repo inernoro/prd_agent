@@ -49,10 +49,10 @@ async function request(
   });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1_000): Promise<void> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`waitFor timeout after ${timeoutMs}ms`);
@@ -127,7 +127,7 @@ describe('Remote hosts project instances route', () => {
     return { projectId: accepted.projectId, longToken: accepted.cdsLongToken };
   }
 
-  async function startMockOfficialSdkRuntime(): Promise<{ port: number; requests: any[] }> {
+  async function startMockOfficialSdkRuntime(options: { omitTerminal?: boolean } = {}): Promise<{ port: number; requests: any[] }> {
     const requests: any[] = [];
     runtimeServer = http.createServer((req, res) => {
       if (req.method === 'GET' && req.url === '/readyz') {
@@ -166,8 +166,10 @@ describe('Remote hosts project instances route', () => {
           })}\n\n`);
           res.write('event: text_delta\n');
           res.write(`data: ${JSON.stringify({ type: 'text_delta', text: 'official runtime ok' })}\n\n`);
-          res.write('event: done\n');
-          res.write(`data: ${JSON.stringify({ type: 'done', final_text: 'official runtime ok' })}\n\n`);
+          if (!options.omitTerminal) {
+            res.write('event: done\n');
+            res.write(`data: ${JSON.stringify({ type: 'done', final_text: 'official runtime ok' })}\n\n`);
+          }
           res.end();
         });
         return;
@@ -396,9 +398,9 @@ describe('Remote hosts project instances route', () => {
       loopOwner: 'claude-agent-sdk',
       productPathOnly: true,
       fallbackScope: 'operator-debug-only',
-      profileId: 'claude-agent-sdk-runtime',
+      profileId: 'claude-agent-sdk-runtime-shared-sidecar-pool',
       branch: 'cds-managed-runtime',
-      containerName: 'cds-claude-agent-sdk-runtime',
+      containerName: 'cds-claude-agent-sdk-runtime-shared-sidecar-pool',
       capacity: {
         status: 'available',
         productPath: {
@@ -451,7 +453,7 @@ describe('Remote hosts project instances route', () => {
     expect(sent.body.transport).toMatchObject({
       source: 'cds-branch-service',
       runtimeOwnedBy: 'cds-managed-runtime',
-      profileId: 'claude-agent-sdk-runtime',
+      profileId: 'claude-agent-sdk-runtime-shared-sidecar-pool',
       runtimeAdapter: 'claude-agent-sdk',
       loopOwner: 'claude-agent-sdk',
     });
@@ -469,7 +471,7 @@ describe('Remote hosts project instances route', () => {
         async runService(branch, profile, service, onOutput, customEnv) {
           containerCalls.push({ kind: 'runService', branch, profile, service: { ...service }, customEnv });
           expect(branch.worktreePath).toBe(path.dirname(process.cwd()));
-          expect(profile.id).toBe('claude-agent-sdk-runtime');
+          expect(profile.id).toBe('claude-agent-sdk-runtime-shared-sidecar-pool');
           expect(profile.dockerImage).toBe('python:3.12-slim');
           expect(profile.command).toContain('apt-get install');
           expect(profile.command).toContain('git');
@@ -777,6 +779,47 @@ describe('Remote hosts project instances route', () => {
     expect(logs.body.logs).toContain('owner=cds-managed-runtime');
     expect(logs.body.logs).toContain('loopOwner=claude-agent-sdk');
     expect(logs.body.logs).not.toContain('MAP sidecar bridge');
+  });
+
+  it('fails CDS-managed runtime streams that end without a terminal frame', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const runtime = await startMockOfficialSdkRuntime({ omitTerminal: true });
+    addSharedOfficialSdkRuntime(projectId, runtime.port);
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'claude-sdk', model: 'deepseek/deepseek-v4-pro' },
+    );
+    expect(created.status).toBe(201);
+    const sessionId = created.body.item.id;
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'runtime stream truncates before done' },
+    );
+
+    expect(sent.status).toBe(202);
+    expect(sent.body.accepted).toBe(true);
+    await waitFor(async () => {
+      const current = await request(server, 'GET', `/api/projects/${projectId}/agent-sessions/${sessionId}`, longToken);
+      return current.body.item.status === 'failed';
+    });
+
+    const stream = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`,
+      longToken,
+    );
+    expect(stream.status).toBe(200);
+    expect(stream.body).toContain('cds_managed_runtime_missing_terminal_event');
   });
 
   it('prefers the explicit CDS-managed runtime branch over stale main sidecars', async () => {

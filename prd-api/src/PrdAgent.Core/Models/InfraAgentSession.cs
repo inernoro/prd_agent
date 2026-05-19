@@ -152,7 +152,7 @@ public static class InfraAgentToolPolicies
         return normalized is ConfirmDangerous or ManualAll;
     }
 
-    public static bool IsReadonlyTool(string toolName) => toolName switch
+    public static bool IsReadonlyTool(string toolName) => toolName.Trim().ToLowerInvariant() switch
     {
         "echo" or
         "current_time" or
@@ -169,14 +169,14 @@ public static class InfraAgentToolPolicies
         _ => false
     };
 
-    public static bool IsCodeWritableTool(string toolName) => toolName switch
+    public static bool IsCodeWritableTool(string toolName) => toolName.Trim().ToLowerInvariant() switch
     {
         "repo_write_file" or
         "repo_run_command" or
         "repo_create_pull_request" or
-        "Bash" or
-        "Edit" or
-        "Write" => true,
+        "bash" or
+        "edit" or
+        "write" => true,
         _ => false
     };
 }

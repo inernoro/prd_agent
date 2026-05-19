@@ -739,6 +739,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(409).json({ error: { code: 'session_stopped', message: 'agent session already stopped' } });
       return;
     }
+    if (session.activeRunId) {
+      res.status(409).json({ error: { code: 'session_busy', message: 'agent session already has a running task' } });
+      return;
+    }
     const project = deps.stateService.getProject(req.params.projectId);
     if (!project) {
       res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
@@ -760,9 +764,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
 
-    if (session.runtime !== 'fake') {
+    if (session.runtime === 'claude-sdk') {
       const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session);
       if (transport) {
+        session.status = 'running';
         startCdsManagedOfficialSdkTransport(session, content, transport);
         session.updatedAt = new Date().toISOString();
         res.status(202).json({
@@ -788,6 +793,30 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         item: toCdsAgentSessionView(session),
         accepted: false,
         runtimeOwnedBy: 'cds-managed-runtime',
+        error: unavailable,
+      });
+      return;
+    }
+    if (session.runtime !== 'fake') {
+      const unavailable = {
+        code: 'runtime_not_implemented',
+        message: `${session.runtime} runtime is not wired to a CDS-managed transport yet`,
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        retryable: false,
+      };
+      session.status = 'failed';
+      session.updatedAt = new Date().toISOString();
+      pushCdsAgentEvent(session, 'error', unavailable);
+      pushCdsAgentEvent(session, 'log', {
+        level: 'warn',
+        message: unavailable.message,
+        source: `${session.runtime}-runtime`,
+      });
+      res.status(202).json({
+        item: toCdsAgentSessionView(session),
+        accepted: false,
+        runtimeOwnedBy: 'unavailable',
         error: unavailable,
       });
       return;
@@ -969,9 +998,9 @@ interface ProjectRuntimeInstancesResponse {
   capacity: Record<string, unknown>;
 }
 
-const CDS_MANAGED_RUNTIME_PROFILE_ID = 'claude-agent-sdk-runtime';
+const CDS_MANAGED_RUNTIME_PROFILE_ID_PREFIX = 'claude-agent-sdk-runtime';
 const CDS_MANAGED_RUNTIME_BRANCH_NAME = 'cds-managed-runtime';
-const CDS_MANAGED_RUNTIME_CONTAINER_NAME = 'cds-claude-agent-sdk-runtime';
+const CDS_MANAGED_RUNTIME_CONTAINER_NAME_PREFIX = 'cds-claude-agent-sdk-runtime';
 
 interface CdsManagedRuntimeReconcileOptions {
   apply: boolean;
@@ -1111,39 +1140,44 @@ async function reconcileCdsManagedRuntimeCapacity(
     };
   }
 
+  const profileId = buildCdsManagedRuntimeProfileId(project.id);
+  const containerName = buildCdsManagedRuntimeContainerName(project.id);
   const profile = buildCdsManagedRuntimeProfile(project.id);
   const worktreePath = resolveCdsManagedRuntimeWorktreePath();
-  const existingProfile = stateService.getBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID);
+  const existingProfile = stateService.getBuildProfile(profileId);
   let profileChange: 'created' | 'updated' | 'unchanged' = 'created';
   if (existingProfile) {
     if (existingProfile.projectId !== project.id) {
-      throw new Error(`runtime profile ${CDS_MANAGED_RUNTIME_PROFILE_ID} belongs to project ${existingProfile.projectId}`);
+      throw new Error(`runtime profile ${profileId} belongs to project ${existingProfile.projectId}`);
     }
-    stateService.updateBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID, profile);
+    stateService.updateBuildProfile(profileId, profile);
     profileChange = 'updated';
   } else {
     stateService.addBuildProfile(profile);
   }
 
   const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
-  const existingService = branch?.services?.[CDS_MANAGED_RUNTIME_PROFILE_ID];
+  const existingService = branch?.services?.[profileId];
   const hostPort = options.hostPort
     || existingService?.hostPort
     || (options.liveApply && options.portStart ? stateService.allocatePort(options.portStart) : 0);
+  const hostPortReady = !options.liveApply && hostPort ? await probeCdsManagedRuntimeHostPort(hostPort) : false;
+  const initialServiceStatus = hostPortReady ? 'running' : 'starting';
+  const initialBranchStatus = hostPortReady ? 'running' : 'idle';
   const serviceState: ServiceState = {
-    profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
-    containerName: CDS_MANAGED_RUNTIME_CONTAINER_NAME,
+    profileId,
+    containerName,
     hostPort,
-    status: hostPort && !options.liveApply ? 'running' : 'starting',
+    status: initialServiceStatus,
   };
   let branchChange: 'created' | 'updated' = 'created';
   let serviceChange: 'created' | 'updated' = 'created';
   let managedBranch: BranchEntry;
   if (branch) {
     branch.services = branch.services || {};
-    serviceChange = branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] ? 'updated' : 'created';
-    branch.services[CDS_MANAGED_RUNTIME_PROFILE_ID] = serviceState;
-    branch.status = hostPort && !options.liveApply ? 'running' : 'idle';
+    serviceChange = branch.services[profileId] ? 'updated' : 'created';
+    branch.services[profileId] = serviceState;
+    branch.status = initialBranchStatus;
     branch.worktreePath = worktreePath;
     branch.lastAccessedAt = options.now;
     branch.lastDeployAt = options.now;
@@ -1155,9 +1189,9 @@ async function reconcileCdsManagedRuntimeCapacity(
       projectId: project.id,
       branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
       worktreePath,
-      status: hostPort && !options.liveApply ? 'running' : 'idle',
+      status: initialBranchStatus,
       services: {
-        [CDS_MANAGED_RUNTIME_PROFILE_ID]: serviceState,
+        [profileId]: serviceState,
       },
       createdAt: options.now,
       lastAccessedAt: options.now,
@@ -1198,9 +1232,9 @@ async function reconcileCdsManagedRuntimeCapacity(
       branch: branchChange,
       service: serviceChange,
     },
-    profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
+    profileId,
     branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
-    containerName: CDS_MANAGED_RUNTIME_CONTAINER_NAME,
+    containerName,
     liveApply,
     capacity: after.capacity,
     nextAction: after.capacity.status === 'available'
@@ -1217,13 +1251,14 @@ function planCdsManagedRuntimeCapacity(
   if (options.alreadyAvailable) {
     return [{ step: 'verify-capacity', state: 'already_available' }];
   }
-  const profile = stateService.getBuildProfile(CDS_MANAGED_RUNTIME_PROFILE_ID);
+  const profileId = buildCdsManagedRuntimeProfileId(project.id);
+  const profile = stateService.getBuildProfile(profileId);
   const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
   const liveApplyState = options.liveApply ? 'start_container' : 'not_requested';
   return [
     {
       step: 'ensure-build-profile',
-      profileId: CDS_MANAGED_RUNTIME_PROFILE_ID,
+      profileId,
       state: profile ? 'update_existing' : 'create',
       runtimeOwnedBy: 'cds-managed-runtime',
       loopOwner: 'claude-agent-sdk',
@@ -1371,9 +1406,30 @@ async function startCdsManagedRuntimeContainer(
   }
 }
 
+function buildCdsManagedRuntimeProfileId(projectId: string): string {
+  return `${CDS_MANAGED_RUNTIME_PROFILE_ID_PREFIX}-${slugifyRuntimeSegment(projectId)}`;
+}
+
+function buildCdsManagedRuntimeContainerName(projectId: string): string {
+  return `${CDS_MANAGED_RUNTIME_CONTAINER_NAME_PREFIX}-${slugifyRuntimeSegment(projectId)}`;
+}
+
+async function probeCdsManagedRuntimeHostPort(hostPort: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_500);
+  try {
+    const response = await fetch(`http://127.0.0.1:${hostPort}/readyz`, { signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
   return {
-    id: CDS_MANAGED_RUNTIME_PROFILE_ID,
+    id: buildCdsManagedRuntimeProfileId(projectId),
     projectId,
     name: 'Claude Agent SDK Runtime',
     dockerImage: 'python:3.12-slim',
@@ -1496,6 +1552,7 @@ interface CdsAgentSession {
   createdAt: string;
   updatedAt: string;
   stoppedAt?: string;
+  activeRunId?: string;
   events: CdsAgentEvent[];
   messages: Array<{ role: string; content: string; createdAt: string }>;
   logs: string[];
@@ -1636,9 +1693,11 @@ function resolveCdsManagedRuntimeTransport(
 
 function scoreCdsManagedRuntimeTransport(transport: CdsManagedRuntimeTransport): number {
   let score = 0;
-  if (transport.profileId === CDS_MANAGED_RUNTIME_PROFILE_ID) score += 100;
+  if (transport.profileId === buildCdsManagedRuntimeProfileId(transport.projectId)) score += 100;
+  if (transport.profileId === CDS_MANAGED_RUNTIME_PROFILE_ID_PREFIX) score += 75;
   if (transport.branch === CDS_MANAGED_RUNTIME_BRANCH_NAME) score += 50;
-  if (transport.containerName === CDS_MANAGED_RUNTIME_CONTAINER_NAME) score += 20;
+  if (transport.containerName === buildCdsManagedRuntimeContainerName(transport.projectId)) score += 20;
+  if (transport.containerName === CDS_MANAGED_RUNTIME_CONTAINER_NAME_PREFIX) score += 10;
   if (transport.authToken) score += 1;
   return score;
 }
@@ -1726,6 +1785,7 @@ async function runCdsManagedOfficialSdkTransport(
   transport: CdsManagedRuntimeTransport,
 ): Promise<CdsManagedRuntimeResult> {
   const runId = `${session.id}-${session.events.length + 1}`;
+  session.activeRunId = runId;
   const timeoutMs = Math.max(1_000, session.resourcePolicy.timeoutSeconds * 1_000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1807,6 +1867,7 @@ async function runCdsManagedOfficialSdkTransport(
     session.logs.push(`[${new Date().toISOString()}] runtime transport failed owner=cds-managed-runtime reason=${error.code}`);
     return { accepted: false, error };
   } finally {
+    if (session.activeRunId === runId) session.activeRunId = undefined;
     clearTimeout(timer);
   }
 }
@@ -1816,7 +1877,7 @@ function ingestOfficialSdkSse(
   body: string,
   transport: CdsManagedRuntimeTransport,
 ): CdsManagedRuntimeResult {
-  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false };
+  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false, terminalSeen: false };
   for (const frame of parseSseFrames(body)) {
     const terminal = ingestOfficialSdkSseFrame(session, frame, transport, state);
     if (terminal) return terminal;
@@ -1831,7 +1892,7 @@ async function ingestOfficialSdkSseStream(
 ): Promise<CdsManagedRuntimeResult> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false };
+  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false, terminalSeen: false };
   let buffer = '';
 
   while (true) {
@@ -1867,6 +1928,7 @@ async function ingestOfficialSdkSseStream(
 interface OfficialSdkSseIngestState {
   finalText: string;
   accepted: boolean;
+  terminalSeen: boolean;
 }
 
 function ingestOfficialSdkSseFrame(
@@ -1940,6 +2002,7 @@ function ingestOfficialSdkSseFrame(
     return null;
   }
   if (sidecarType === 'done') {
+    state.terminalSeen = true;
     const doneText = normalizeOptionalString(payload.final_text) || state.finalText;
     pushCdsAgentEvent(session, 'done', {
       finalText: doneText,
@@ -1953,6 +2016,7 @@ function ingestOfficialSdkSseFrame(
     return null;
   }
   if (sidecarType === 'error') {
+    state.terminalSeen = true;
     const code = normalizeOptionalString(payload.error_code) || 'cds_managed_runtime_error';
     const error = {
       code,
@@ -1986,6 +2050,20 @@ function finishOfficialSdkSseIngest(
     const error = {
       code: 'cds_managed_runtime_empty_stream',
       message: 'CDS-managed official SDK runtime returned no SSE events',
+      runtime: session.runtime,
+      runtimeProfileId: session.runtimeProfileId,
+      transport: toCdsManagedRuntimeTransportView(transport),
+      retryable: true,
+    };
+    session.status = 'failed';
+    pushCdsAgentEvent(session, 'error', error);
+    return { accepted: false, error };
+  }
+
+  if (!state.terminalSeen) {
+    const error = {
+      code: 'cds_managed_runtime_missing_terminal_event',
+      message: 'CDS-managed official SDK runtime stream ended without a terminal done/error event',
       runtime: session.runtime,
       runtimeProfileId: session.runtimeProfileId,
       transport: toCdsManagedRuntimeTransportView(transport),

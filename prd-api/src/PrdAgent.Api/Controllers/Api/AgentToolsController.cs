@@ -451,11 +451,12 @@ public class AgentToolsController : ControllerBase
 
     private static string ClassifyToolRisk(string toolName)
     {
-        return toolName switch
+        var normalized = toolName.Trim().ToLowerInvariant();
+        return normalized switch
         {
             "kb_apply" => "write",
             "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action"
-                or "Bash" or "Edit" or "Write" => "dangerous",
+                or "bash" or "edit" or "write" => "dangerous",
             _ => "readonly"
         };
     }
