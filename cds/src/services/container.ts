@@ -550,9 +550,16 @@ export class ContainerService {
     mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
     mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    // Inject git branch name so frontend build tools (e.g. Vite __GIT_BRANCH__) can pick it up.
+    // Inject git metadata so frontend build tools can stamp bundle URLs.
+    // Branch containers often mount only a subdirectory (e.g. prd-admin -> /app),
+    // so `git rev-parse` inside Vite may fall back to "local". That makes CDN
+    // and browser caches keep stale `*-local.js` assets even after CDS shows a
+    // newer GitHub commit in the widget.
     if (entry.branch) {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (entry.githubCommitSha) {
+      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
     }
 
     // Detect Node.js containers by image name (node:*, *node:*, etc.)

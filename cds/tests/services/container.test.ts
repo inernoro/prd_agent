@@ -70,7 +70,10 @@ describe('ContainerService', () => {
       // Spy on writeFileSync to capture the env file content
       const writeSpy = vi.spyOn(fs, 'writeFileSync');
 
-      await service.runService(makeEntry(), makeProfile(), makeService());
+      await service.runService({
+        ...makeEntry(),
+        githubCommitSha: '47c74c1f5aabbccddeeff0011223344556677889',
+      }, makeProfile(), makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
       expect(runCmd).toBeDefined();
@@ -91,6 +94,8 @@ describe('ContainerService', () => {
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('Jwt__Secret=test-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
+      expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
+      expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
 
       writeSpy.mockRestore();
     });

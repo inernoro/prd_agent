@@ -201,7 +201,7 @@ function formatSessionResourcePolicy(session?: InfraAgentSessionView | null): st
 }
 
 function profileBlockReason(profile: InfraAgentRuntimeProfileView | null): string {
-  if (!profile) return '请先保存一个模型配置。';
+  if (!profile) return '请先同步系统主模型，或保存一个兼容模型配置。';
   if (!profile.hasApiKey) return '当前模型配置的 provider secret 无法读取，请在系统配置中重新保存后再启动远程会话。';
   if (!profile.baseUrl || !profile.model) return '当前模型配置缺少 baseUrl 或 model，请补全后再启动远程会话。';
   return '';
@@ -787,8 +787,11 @@ export default function CdsAgentPage() {
     ].some((value) => value.toLowerCase().includes(query)));
   }, [sessionQuery, sortedSessions]);
   const resumableCount = useMemo(
-    () => sessions.filter((item) => item.status === 'running' || item.status === 'creating' || item.status === 'idle').length,
-    [sessions],
+    () => sessions.filter((item) => {
+      const state = resolveSessionRuntimeState(item, nowTick).effectiveStatus;
+      return state === 'running' || state === 'creating' || state === 'idle';
+    }).length,
+    [nowTick, sessions],
   );
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sortedSessions[0] ?? null;
   const activeSessionRuntimeState = useMemo(
@@ -922,9 +925,10 @@ export default function CdsAgentPage() {
   );
   const artifacts = useMemo(() => buildArtifacts(events, logs), [events, logs]);
   const metrics = useMemo(() => {
-    const running = sessions.filter((item) => item.status === 'running' || item.status === 'creating').length;
-    const failed = sessions.filter((item) => item.status === 'failed').length;
-    const stopped = sessions.filter((item) => item.status === 'stopped').length;
+    const runtimeStates = sessions.map((item) => resolveSessionRuntimeState(item, nowTick).effectiveStatus);
+    const running = runtimeStates.filter((status) => status === 'running' || status === 'creating').length;
+    const failed = runtimeStates.filter((status) => status === 'failed').length;
+    const stopped = runtimeStates.filter((status) => status === 'stopped' || status === 'timed_out').length;
     const toolEvents = events.filter((item) => item.type === 'tool_call' || item.type === 'tool_result').length;
     return {
       totalSessions: sessions.length,
@@ -935,7 +939,7 @@ export default function CdsAgentPage() {
       toolEvents,
       artifactCount: artifacts.length,
     };
-  }, [artifacts.length, events, sessions]);
+  }, [artifacts.length, events, nowTick, sessions]);
   const slaSummary = slaDashboard?.summary ?? null;
   const slaRuntimeFocus = slaDashboard?.runtimeBreakdown?.[0] ?? null;
   const scheduleSummary = scheduleDashboard?.summary ?? null;
@@ -1495,7 +1499,7 @@ export default function CdsAgentPage() {
         detail: runId
           ? 'Stop 会调用 sidecar cancel，并在官方路径触发 ClaudeSDKClient.interrupt()。'
           : '需要启动真实 run 后验证 Stop 能取消底层 SDK 调用。',
-        state: runId ? 'pass' : activeSession?.status === 'running' ? 'warn' : 'pending',
+        state: runId ? 'pass' : activeSessionEffectiveStatus === 'running' ? 'warn' : 'pending',
       },
       {
         label: '事件恢复',
@@ -1636,7 +1640,7 @@ export default function CdsAgentPage() {
           : '',
       } : null,
     };
-  }, [activeAdapterCompatibility, activeProfile, activeSession, activeSessionProfile, anthropicOfficialProfileTemplate, eventStreamHealthy, events, messages, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
+  }, [activeAdapterCompatibility, activeProfile, activeSession, activeSessionEffectiveStatus, activeSessionProfile, anthropicOfficialProfileTemplate, eventStreamHealthy, events, messages, runtimeDiscoveryRefreshed, runtimeStatus, runtimeStatusLoadedAt]);
   const sidecarInstanceSummaries = useMemo(() => (
     (runtimeStatus?.instances ?? []).map((item) => ({
       name: item.name,
@@ -1760,7 +1764,7 @@ export default function CdsAgentPage() {
       summary: {
         sessionId: activeSession?.id ?? null,
         title: activeSession?.title ?? null,
-        status: activeSession?.status ?? null,
+        status: activeSession ? activeSessionEffectiveStatus : null,
         traceId: activeSession?.traceId ?? null,
         runtimeAdapter: runtimeDiagnostics.adapter,
         loopOwner: runtimeDiagnostics.loopOwner,
@@ -1800,7 +1804,7 @@ export default function CdsAgentPage() {
       logs,
     };
     return redactForBundle(payload);
-  }, [activeSession, artifacts, events, logs, messages, runtimeDiagnosticBundle, runtimeDiagnostics, runtimeStatus, viewMode]);
+  }, [activeSession, activeSessionEffectiveStatus, artifacts, events, logs, messages, runtimeDiagnosticBundle, runtimeDiagnostics, runtimeStatus, viewMode]);
   const activeRuntimeProfile = activeSessionProfile ?? activeProfile;
   const runtimeReady = Boolean(activeRuntimeProfile && activeRuntimeProfile.hasApiKey && activeRuntimeProfile.baseUrl && activeRuntimeProfile.model);
   const activeRuntimeProfileWarning = profileCompatibilityBlockReason(activeRuntimeProfile, runtimeStatus?.desiredRuntimeAdapter)
@@ -1827,7 +1831,7 @@ export default function CdsAgentPage() {
       value: activeSession ? formatSessionResourcePolicy(activeSession) : formatResourcePolicy(activeRuntimeProfile),
       detail: activeConnection?.partnerName || activeConnection?.partnerId || '等待 CDS 授权连接',
       icon: Cpu,
-      state: activeSession && ['creating', 'running'].includes(activeSession.status) ? 'pass' : 'pending',
+      state: activeSession && ['creating', 'running'].includes(activeSessionEffectiveStatus) ? 'pass' : 'pending',
     },
     {
       label: 'PR / 证据',
@@ -2669,31 +2673,6 @@ export default function CdsAgentPage() {
     }
   }
 
-  function applyAnthropicOfficialTemplate() {
-    const template = anthropicOfficialProfileTemplate;
-    if (!template) {
-      toast.warning('官方模板未加载', '请刷新运行状态后重试');
-      return;
-    }
-    setProfileDraft((prev) => ({
-      ...prev,
-      name: template.name,
-      runtime: template.runtime,
-      protocol: template.protocol,
-      baseUrl: template.baseUrl,
-      model: template.model,
-      resourceCpuCores: template.resourceCpuCores,
-      resourceMemoryMb: template.resourceMemoryMb,
-      timeoutSeconds: template.timeoutSeconds,
-      networkPolicy: template.networkPolicy,
-      autoCleanupMinutes: template.autoCleanupMinutes,
-      isDefault: template.isDefaultRecommended,
-      apiKey: prev.apiKey,
-    }));
-    setProfileTest('');
-    toast.success('已套用 Anthropic 官方模板', '保存 provider secret 后设为默认配置');
-  }
-
   function matchingRuntimeProfileTemplate() {
     return profileTemplates.find((template) => (
       profileDraft.runtime === template.runtime
@@ -3330,7 +3309,7 @@ export default function CdsAgentPage() {
                     className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-45"
                     style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}
                   >
-                    <Play size={14} /> {primaryActionLabel(activeSession.status)}
+                    <Play size={14} /> {primaryActionLabel(activeSessionEffectiveStatus)}
                   </button>
                 )}
                 {activeSession && activeSessionRuntimeState.isLive && (
@@ -3903,11 +3882,12 @@ export default function CdsAgentPage() {
                     {activeProfileBlockReason}
                     <button
                       type="button"
-                      onClick={() => void applyAnthropicOfficialTemplate()}
+                      onClick={() => void importDefaultProfile()}
+                      disabled={busy}
                       className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs"
                       style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
                     >
-                      <Server size={12} /> 套用 Anthropic 官方模板
+                      {busy ? <MapSpinner size={12} /> : <Server size={12} />} 同步系统主模型
                     </button>
                   </div>
                 )}
@@ -3936,12 +3916,12 @@ export default function CdsAgentPage() {
                     )}
                     <button
                       type="button"
-                      onClick={() => void applyAnthropicOfficialTemplate()}
-                      disabled={!anthropicOfficialProfileTemplate}
+                      onClick={() => void importDefaultProfile()}
+                      disabled={busy}
                       className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs disabled:opacity-45"
                       style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
                     >
-                      <KeyRound size={12} /> 准备默认 Claude 配置
+                      {busy ? <MapSpinner size={12} /> : <KeyRound size={12} />} 同步系统主模型
                     </button>
                   </div>
                 )}
@@ -4017,11 +3997,12 @@ export default function CdsAgentPage() {
                 <div className="mt-3 grid gap-2">
                   <button
                     type="button"
-                    onClick={() => void applyAnthropicOfficialTemplate()}
+                    onClick={() => void importDefaultProfile()}
+                    disabled={busy}
                     className="inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs"
                     style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.28)', color: 'rgba(186,230,253,0.92)' }}
                   >
-                    <Server size={13} /> Anthropic 官方模板
+                    {busy ? <MapSpinner size={13} /> : <Server size={13} />} 同步系统主模型
                   </button>
                   <input
                     value={profileDraft.name}
@@ -4225,7 +4206,7 @@ export default function CdsAgentPage() {
                     }}
                   >
                     <div className="truncate text-sm font-medium text-white/85">{session.title}</div>
-                    <div className="mt-1 text-xs text-white/45">{statusLabel(session.status)} · {session.model ?? '未配置模型'}</div>
+                    <div className="mt-1 text-xs text-white/45">{statusLabel(resolveSessionRuntimeState(session, nowTick).effectiveStatus)} · {session.model ?? '未配置模型'}</div>
                     {(session.gitRepository || session.gitRef || session.workspaceRoot) && (
                       <div className="mt-1 truncate text-[11px] text-white/35">
                         {session.gitRepository || session.cdsProjectId} · {session.gitRef || 'ref 未指定'} · {session.workspaceRoot || '默认 workspace'}
@@ -4248,10 +4229,10 @@ export default function CdsAgentPage() {
               <div>
                 <div className="text-sm font-semibold text-white/90">{activeSession?.title ?? '未选择会话'}</div>
                 <div className="mt-1 text-xs text-white/45">
-                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeSession.runtime} · ${runtimeDiagnostics.adapter} · ${activeSession.modelBaseUrl ?? activeProfile?.baseUrl ?? '未配置 baseUrl'} · trace ${activeSession.traceId}` : '选择或新建一个远程会话'}
+                  {activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · ${activeSession.runtime} · ${runtimeDiagnostics.adapter} · ${activeSession.modelBaseUrl ?? activeProfile?.baseUrl ?? '未配置 baseUrl'} · trace ${activeSession.traceId}` : '选择或新建一个远程会话'}
                 </div>
-                {activeSession && primaryActionHint(activeSession.status) && (
-                  <div className="mt-1 text-xs text-white/40">{primaryActionHint(activeSession.status)}</div>
+                {activeSession && primaryActionHint(activeSessionEffectiveStatus) && (
+                  <div className="mt-1 text-xs text-white/40">{primaryActionHint(activeSessionEffectiveStatus)}</div>
                 )}
                 {activeRuntimePoolBlockReason && (
                   <div className="mt-1 max-w-[760px] text-xs leading-relaxed text-amber-100/75">
@@ -4261,7 +4242,7 @@ export default function CdsAgentPage() {
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => void startSession()} disabled={!activeSession || busy || !canStartActiveSession} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm disabled:opacity-45" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}>
-                  <Play size={13} /> {activeSession ? primaryActionLabel(activeSession.status) : '启动'}
+                  <Play size={13} /> {activeSession ? primaryActionLabel(activeSessionEffectiveStatus) : '启动'}
                 </button>
                 <button
                   type="button"
