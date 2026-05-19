@@ -85,6 +85,30 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             windowEnd);
     }
 
+    public async Task<InfraAgentScheduleDashboardView> GetScheduleDashboardAsync(string userId, int days, CancellationToken ct)
+    {
+        var windowDays = NormalizeSlaWindowDays(days);
+        var now = DateTime.UtcNow;
+        var windowStart = now.AddDays(-windowDays);
+        var workflows = await _db.Workflows
+            .Find(x => x.CreatedBy == userId || x.OwnerUserId == userId)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(500)
+            .ToListAsync(ct);
+        var schedules = await _db.WorkflowSchedules
+            .Find(x => x.CreatedBy == userId)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(500)
+            .ToListAsync(ct);
+        var executions = await _db.WorkflowExecutions
+            .Find(x => x.TriggeredBy == userId && x.CreatedAt >= windowStart)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(200)
+            .ToListAsync(ct);
+
+        return BuildScheduleDashboard(workflows, schedules, executions, windowDays, now);
+    }
+
     public async Task<InfraAgentSessionView> CreateAsync(
         string userId,
         CreateInfraAgentSessionRequest request,
@@ -2448,6 +2472,103 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             daily);
     }
 
+    public static InfraAgentScheduleDashboardView BuildScheduleDashboard(
+        IReadOnlyList<Workflow> workflows,
+        IReadOnlyList<WorkflowSchedule> schedules,
+        IReadOnlyList<WorkflowExecution> executions,
+        int windowDays,
+        DateTime? generatedAt = null)
+    {
+        var safeWindowDays = NormalizeSlaWindowDays(windowDays);
+        var now = generatedAt ?? DateTime.UtcNow;
+        var cdsWorkflows = workflows
+            .Where(IsCdsAgentWorkflow)
+            .OrderByDescending(x => x.UpdatedAt)
+            .ToList();
+        var workflowIds = cdsWorkflows.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
+        var scheduleRows = schedules
+            .Where(x => workflowIds.Contains(x.WorkflowId) || ContainsCdsAgentSignal(x.Name) || ContainsCdsAgentSignal(x.WorkflowName))
+            .OrderBy(x => x.NextRunAt ?? DateTime.MaxValue)
+            .ThenByDescending(x => x.CreatedAt)
+            .Select(x => new InfraAgentScheduleView(
+                x.Id,
+                x.WorkflowId,
+                x.WorkflowName,
+                x.Name,
+                x.Mode,
+                x.CronExpression,
+                x.Timezone,
+                x.IsEnabled,
+                x.NextRunAt,
+                x.LastTriggeredAt,
+                x.TriggerCount,
+                ResolveScheduleState(x, workflowIds, now),
+                WorkflowPath(x.WorkflowId)))
+            .ToList();
+        var executionRows = executions
+            .Where(x => workflowIds.Contains(x.WorkflowId) || x.NodeSnapshot.Any(n => IsCdsAgentNode(n)) || TryExtractCdsAgentRunHandle(x) != null)
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(50)
+            .Select(x =>
+            {
+                var run = TryExtractCdsAgentRunHandle(x);
+                return new InfraAgentScheduledExecutionView(
+                    x.Id,
+                    x.WorkflowId,
+                    x.WorkflowName,
+                    x.TraceId,
+                    x.Status,
+                    x.TriggerType,
+                    x.CreatedAt,
+                    x.DurationMs,
+                    x.NodeSnapshot.Count(IsCdsAgentNode),
+                    run?.SessionId,
+                    run?.TraceId,
+                    run?.WorkbenchPath,
+                    WorkflowPath(x.WorkflowId));
+            })
+            .ToList();
+        var workflowRows = cdsWorkflows
+            .Select(x => new InfraAgentWorkflowTemplateView(
+                x.Id,
+                x.Name,
+                x.Description,
+                x.Tags,
+                x.Nodes.Count(IsCdsAgentNode),
+                HasKnowledgeReadonlySignal(x),
+                x.Nodes.Any(n => n.NodeType == CapsuleTypes.NotificationSender),
+                WorkflowPath(x.Id)))
+            .ToList();
+        var knowledgeWorkflowCount = workflowRows.Count(x => x.HasKnowledgeReadonlyTools);
+        var knowledgeWorkflowIds = workflowRows
+            .Where(x => x.HasKnowledgeReadonlyTools)
+            .Select(x => x.WorkflowId)
+            .ToHashSet(StringComparer.Ordinal);
+        var knowledgeScheduleCount = scheduleRows.Count(x => knowledgeWorkflowIds.Contains(x.WorkflowId));
+
+        return new InfraAgentScheduleDashboardView(
+            "cds-agent-schedule-dashboard/v1",
+            now,
+            safeWindowDays,
+            new InfraAgentScheduleSummaryView(
+                workflowRows.Count(),
+                workflowRows.Sum(x => x.CdsAgentNodeCount),
+                scheduleRows.Count(x => x.Mode == "cron"),
+                scheduleRows.Count(x => x.Mode == "cron" && x.IsEnabled),
+                scheduleRows.Count(x => x.State is "due-soon" or "overdue"),
+                executionRows.Count,
+                executionRows.Count(x => x.Status == WorkflowExecutionStatus.Failed || x.Status == WorkflowExecutionStatus.TimedOut),
+                knowledgeWorkflowCount),
+            workflowRows,
+            scheduleRows,
+            executionRows,
+            new InfraAgentKnowledgeGovernanceView(
+                new[] { "kb_list", "kb_search", "kb_read" },
+                knowledgeWorkflowCount,
+                knowledgeScheduleCount,
+                "readonly-only: Agent may list/search/read knowledge base content; write/draft/apply/commit are out of P3-4 scope"));
+    }
+
     public static InfraAgentTraceBundleView BuildTraceBundle(
         InfraAgentSessionView session,
         IReadOnlyList<InfraAgentMessageView> messages,
@@ -2681,6 +2802,126 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         return result;
     }
+
+    private static bool IsCdsAgentWorkflow(Workflow workflow) =>
+        workflow.Tags.Any(x => x.Equals("cds-agent", StringComparison.OrdinalIgnoreCase))
+        || workflow.Nodes.Any(IsCdsAgentNode);
+
+    private static bool IsCdsAgentNode(WorkflowNode node) =>
+        node.NodeType.Equals(CapsuleTypes.CdsAgent, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasKnowledgeReadonlySignal(Workflow workflow) =>
+        workflow.Tags.Any(x => x.Contains("knowledge", StringComparison.OrdinalIgnoreCase) || x.Contains("知识", StringComparison.OrdinalIgnoreCase))
+        || workflow.Nodes.Any(node =>
+            node.Config.Values.Any(value =>
+            {
+                var text = value?.ToString() ?? string.Empty;
+                return text.Contains("kb_list", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("kb_search", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("kb_read", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("知识库", StringComparison.OrdinalIgnoreCase)
+                    || text.Contains("KnowledgeBase", StringComparison.OrdinalIgnoreCase);
+            }));
+
+    private static bool ContainsCdsAgentSignal(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && (value.Contains("cds", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("agent", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("巡检", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("治理", StringComparison.OrdinalIgnoreCase));
+
+    private static string ResolveScheduleState(WorkflowSchedule schedule, ISet<string> knownWorkflowIds, DateTime now)
+    {
+        if (!knownWorkflowIds.Contains(schedule.WorkflowId))
+        {
+            return "missing-workflow";
+        }
+
+        if (!schedule.IsEnabled)
+        {
+            return "disabled";
+        }
+
+        if (!schedule.NextRunAt.HasValue)
+        {
+            return "not-scheduled";
+        }
+
+        if (schedule.NextRunAt.Value <= now)
+        {
+            return "overdue";
+        }
+
+        return schedule.NextRunAt.Value <= now.AddHours(24) ? "due-soon" : "ready";
+    }
+
+    private static string WorkflowPath(string workflowId) =>
+        string.IsNullOrWhiteSpace(workflowId)
+            ? "/workflow-agent"
+            : $"/workflow-agent/{Uri.EscapeDataString(workflowId)}";
+
+    private static CdsAgentRunHandle? TryExtractCdsAgentRunHandle(WorkflowExecution execution)
+    {
+        foreach (var artifact in EnumerateExecutionArtifacts(execution))
+        {
+            var handle = TryExtractCdsAgentRunHandle(artifact);
+            if (handle != null) return handle;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<ExecutionArtifact> EnumerateExecutionArtifacts(WorkflowExecution execution)
+    {
+        foreach (var artifact in execution.FinalArtifacts)
+        {
+            yield return artifact;
+        }
+
+        foreach (var node in execution.NodeExecutions)
+        {
+            foreach (var artifact in node.OutputArtifacts)
+            {
+                yield return artifact;
+            }
+        }
+    }
+
+    private static CdsAgentRunHandle? TryExtractCdsAgentRunHandle(ExecutionArtifact artifact)
+    {
+        if (artifact.SlotId != "cds-agent-run" || string.IsNullOrWhiteSpace(artifact.InlineContent))
+        {
+            return null;
+        }
+
+        var payload = TryParseJsonElement(artifact.InlineContent);
+        if (!payload.HasValue || payload.Value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var root = payload.Value;
+        if (ReadString(root, "kind") != "cds-agent-workflow-run")
+        {
+            return null;
+        }
+
+        var sessionId = ReadString(root, "sessionId");
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return null;
+        }
+
+        return new CdsAgentRunHandle(
+            sessionId,
+            ReadString(root, "traceId"),
+            ReadString(root, "workbenchPath") ?? $"/cds-agent?sessionId={Uri.EscapeDataString(sessionId)}");
+    }
+
+    private sealed record CdsAgentRunHandle(
+        string SessionId,
+        string? TraceId,
+        string WorkbenchPath);
 
     private static SlaTokenUsage ExtractTokenUsage(JsonElement payload)
     {

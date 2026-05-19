@@ -773,6 +773,7 @@ export const api = {
     eventSchema: () => '/api/infra-agent-sessions/event-schema',
     runtimeStatus: () => '/api/infra-agent-sessions/runtime-status',
     slaDashboard: () => '/api/infra-agent-sessions/sla-dashboard',
+    scheduleDashboard: () => '/api/infra-agent-sessions/schedule-dashboard',
     list: () => '/api/infra-agent-sessions',
     create: () => '/api/infra-agent-sessions',
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,

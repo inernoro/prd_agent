@@ -129,6 +129,68 @@ export interface InfraAgentSlaDashboardView {
   }>;
 }
 
+export interface InfraAgentScheduleDashboardView {
+  schemaVersion: string;
+  generatedAt: string;
+  windowDays: number;
+  summary: {
+    workflowCount: number;
+    cdsAgentNodeCount: number;
+    cronScheduleCount: number;
+    enabledCronScheduleCount: number;
+    dueSoonScheduleCount: number;
+    recentExecutionCount: number;
+    failedRecentExecutionCount: number;
+    knowledgeReadonlyWorkflowCount: number;
+  };
+  workflows: Array<{
+    workflowId: string;
+    name: string;
+    description?: string | null;
+    tags: string[];
+    cdsAgentNodeCount: number;
+    hasKnowledgeReadonlyTools: boolean;
+    hasNotifyNode: boolean;
+    workflowPath: string;
+  }>;
+  schedules: Array<{
+    id: string;
+    workflowId: string;
+    workflowName: string;
+    name: string;
+    mode: string;
+    cronExpression?: string | null;
+    timezone: string;
+    isEnabled: boolean;
+    nextRunAt?: string | null;
+    lastTriggeredAt?: string | null;
+    triggerCount: number;
+    state: string;
+    workflowPath: string;
+  }>;
+  recentExecutions: Array<{
+    id: string;
+    workflowId: string;
+    workflowName: string;
+    traceId: string;
+    status: string;
+    triggerType: string;
+    createdAt: string;
+    durationMs?: number | null;
+    cdsAgentNodeCount: number;
+    cdsAgentSessionId?: string | null;
+    cdsAgentTraceId?: string | null;
+    workbenchPath?: string | null;
+    workflowPath: string;
+  }>;
+  knowledgeGovernance: {
+    readonlyTools: string[];
+    workflowCount: number;
+    scheduleCount: number;
+    boundary: string;
+  };
+}
+
 export interface InfraAgentTraceBundleView {
   schemaVersion: string;
   exportedAt: string;
@@ -549,6 +611,10 @@ interface SlaDashboardResp {
   dashboard: InfraAgentSlaDashboardView;
 }
 
+interface ScheduleDashboardResp {
+  dashboard: InfraAgentScheduleDashboardView;
+}
+
 interface HookProfilesResp {
   items: InfraAgentHookProfileView[];
 }
@@ -605,6 +671,10 @@ export async function getInfraAgentRuntimeStatus(refreshDiscovery = false): Prom
 
 export async function getInfraAgentSlaDashboard(days = 7): Promise<ApiResponse<SlaDashboardResp>> {
   return await apiRequest<SlaDashboardResp>(`${api.infraAgentSessions.slaDashboard()}?days=${days}`, { method: 'GET' });
+}
+
+export async function getInfraAgentScheduleDashboard(days = 14): Promise<ApiResponse<ScheduleDashboardResp>> {
+  return await apiRequest<ScheduleDashboardResp>(`${api.infraAgentSessions.scheduleDashboard()}?days=${days}`, { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {

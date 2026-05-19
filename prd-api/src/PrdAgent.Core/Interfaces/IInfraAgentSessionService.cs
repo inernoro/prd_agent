@@ -8,6 +8,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct);
 
+    Task<InfraAgentScheduleDashboardView> GetScheduleDashboardAsync(string userId, int days, CancellationToken ct);
+
     Task<InfraAgentSessionView> CreateAsync(string userId, CreateInfraAgentSessionRequest request, CancellationToken ct);
 
     Task<InfraAgentSessionView?> StartAsync(string userId, string id, StartInfraAgentSessionRequest request, CancellationToken ct);
@@ -228,6 +230,78 @@ public record InfraAgentSlaDailyPointView(
     int FailedCount,
     int TimeoutCount,
     long TotalTokens
+);
+
+public record InfraAgentScheduleDashboardView(
+    string SchemaVersion,
+    DateTime GeneratedAt,
+    int WindowDays,
+    InfraAgentScheduleSummaryView Summary,
+    IReadOnlyList<InfraAgentWorkflowTemplateView> Workflows,
+    IReadOnlyList<InfraAgentScheduleView> Schedules,
+    IReadOnlyList<InfraAgentScheduledExecutionView> RecentExecutions,
+    InfraAgentKnowledgeGovernanceView KnowledgeGovernance
+);
+
+public record InfraAgentScheduleSummaryView(
+    int WorkflowCount,
+    int CdsAgentNodeCount,
+    int CronScheduleCount,
+    int EnabledCronScheduleCount,
+    int DueSoonScheduleCount,
+    int RecentExecutionCount,
+    int FailedRecentExecutionCount,
+    int KnowledgeReadonlyWorkflowCount
+);
+
+public record InfraAgentWorkflowTemplateView(
+    string WorkflowId,
+    string Name,
+    string? Description,
+    IReadOnlyList<string> Tags,
+    int CdsAgentNodeCount,
+    bool HasKnowledgeReadonlyTools,
+    bool HasNotifyNode,
+    string WorkflowPath
+);
+
+public record InfraAgentScheduleView(
+    string Id,
+    string WorkflowId,
+    string WorkflowName,
+    string Name,
+    string Mode,
+    string? CronExpression,
+    string Timezone,
+    bool IsEnabled,
+    DateTime? NextRunAt,
+    DateTime? LastTriggeredAt,
+    long TriggerCount,
+    string State,
+    string WorkflowPath
+);
+
+public record InfraAgentScheduledExecutionView(
+    string Id,
+    string WorkflowId,
+    string WorkflowName,
+    string TraceId,
+    string Status,
+    string TriggerType,
+    DateTime CreatedAt,
+    long? DurationMs,
+    int CdsAgentNodeCount,
+    string? CdsAgentSessionId,
+    string? CdsAgentTraceId,
+    string? WorkbenchPath,
+    string WorkflowPath
+);
+
+public record InfraAgentKnowledgeGovernanceView(
+    IReadOnlyList<string> ReadonlyTools,
+    int WorkflowCount,
+    int ScheduleCount,
+    string Boundary
 );
 
 public record InfraAgentTraceBundleView(

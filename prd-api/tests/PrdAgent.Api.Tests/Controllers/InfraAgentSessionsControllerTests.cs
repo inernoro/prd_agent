@@ -251,6 +251,37 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task ScheduleDashboard_ShouldUseCurrentUser()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var now = DateTime.UtcNow;
+        var expected = new InfraAgentScheduleDashboardView(
+            "cds-agent-schedule-dashboard/v1",
+            now,
+            14,
+            new InfraAgentScheduleSummaryView(1, 1, 1, 1, 0, 0, 0, 1),
+            Array.Empty<InfraAgentWorkflowTemplateView>(),
+            Array.Empty<InfraAgentScheduleView>(),
+            Array.Empty<InfraAgentScheduledExecutionView>(),
+            new InfraAgentKnowledgeGovernanceView(
+                new[] { "kb_list", "kb_search", "kb_read" },
+                1,
+                0,
+                "readonly-only"));
+        service
+            .Setup(x => x.GetScheduleDashboardAsync("user-1", 14, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.ScheduleDashboard(14, CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.GetScheduleDashboardAsync("user-1", 14, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task RunReadonlyChecks_ShouldReturnSession()
     {
         var service = new Mock<IInfraAgentSessionService>();

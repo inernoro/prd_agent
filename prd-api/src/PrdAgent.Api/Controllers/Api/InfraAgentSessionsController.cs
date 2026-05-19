@@ -1118,6 +1118,14 @@ public class InfraAgentSessionsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { dashboard }));
     }
 
+    [HttpGet("schedule-dashboard")]
+    public async Task<IActionResult> ScheduleDashboard([FromQuery] int days = 14, CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        var dashboard = await _service.GetScheduleDashboardAsync(userId, days, ct);
+        return Ok(ApiResponse<object>.Ok(new { dashboard }));
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateInfraAgentSessionRequest req, CancellationToken ct)
     {

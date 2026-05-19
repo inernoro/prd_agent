@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, ListChecks, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
+import { Archive, CalendarClock, Copy, Cpu, Download, FileSearch, FileText, GitCompare, GitPullRequest, Globe2, KeyRound, ListChecks, MessageSquare, MousePointerClick, Network, PauseCircle, Play, Plus, RefreshCw, Route, Search, Send, Server, ShieldCheck, Square, Terminal, UserCheck } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
@@ -19,6 +19,7 @@ import {
   getInfraAgentLogs,
   getInfraAgentRuntimeAdapterMatrix,
   getInfraAgentRuntimeStatus,
+  getInfraAgentScheduleDashboard,
   getInfraAgentSlaDashboard,
   getInfraAgentTraceBundle,
   importDefaultInfraAgentRuntimeProfile,
@@ -45,6 +46,7 @@ import {
   type InfraAgentRuntimeDiagnostics,
   type InfraAgentRuntimeProfileTemplateView,
   type InfraAgentRuntimeProfileView,
+  type InfraAgentScheduleDashboardView,
   type InfraAgentSessionView,
   type InfraAgentSlaDashboardView,
 } from '@/services/real/infraAgentSessions';
@@ -686,6 +688,7 @@ export default function CdsAgentPage() {
   const [adapterCompatibility, setAdapterCompatibility] = useState<InfraAgentRuntimeAdapterCompatibilityView[]>([]);
   const [adapterMatrix, setAdapterMatrix] = useState<InfraAgentRuntimeAdapterMatrixView | null>(null);
   const [slaDashboard, setSlaDashboard] = useState<InfraAgentSlaDashboardView | null>(null);
+  const [scheduleDashboard, setScheduleDashboard] = useState<InfraAgentScheduleDashboardView | null>(null);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
@@ -921,6 +924,9 @@ export default function CdsAgentPage() {
   }, [artifacts.length, events, sessions]);
   const slaSummary = slaDashboard?.summary ?? null;
   const slaRuntimeFocus = slaDashboard?.runtimeBreakdown?.[0] ?? null;
+  const scheduleSummary = scheduleDashboard?.summary ?? null;
+  const nextCdsAgentSchedule = scheduleDashboard?.schedules?.[0] ?? null;
+  const latestScheduledExecution = scheduleDashboard?.recentExecutions?.[0] ?? null;
   const gitContext = useMemo(() => {
     let branch = '';
     let commit = '';
@@ -2170,13 +2176,14 @@ export default function CdsAgentPage() {
 
   async function loadAll() {
     const requestedSessionId = readRequestedSessionId();
-    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, slaDashboardRes, sessionRes, runtimeRes] = await Promise.all([
+    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, slaDashboardRes, scheduleDashboardRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentRuntimeProfileTemplates(),
       listInfraAgentRuntimeAdapterCompatibility(),
       getInfraAgentRuntimeAdapterMatrix(),
       getInfraAgentSlaDashboard(7),
+      getInfraAgentScheduleDashboard(14),
       listInfraAgentSessions(100),
       getInfraAgentRuntimeStatus(true),
     ]);
@@ -2203,6 +2210,9 @@ export default function CdsAgentPage() {
     }
     if (slaDashboardRes.success) {
       setSlaDashboard(slaDashboardRes.data?.dashboard ?? null);
+    }
+    if (scheduleDashboardRes.success) {
+      setScheduleDashboard(scheduleDashboardRes.data?.dashboard ?? null);
     }
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
@@ -3624,6 +3634,86 @@ export default function CdsAgentPage() {
               </div>
             ))}
           </div>
+        </section>
+
+        <section
+          className="rounded-xl px-4 py-3"
+          style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-white/78">
+                <CalendarClock size={15} /> 定时巡检 / 知识治理
+              </div>
+              <div className="mt-1 text-xs text-white/42">
+                {scheduleDashboard ? `${scheduleDashboard.windowDays} 天窗口 · 只读调度视图` : '等待 workflow schedule 指标'}
+              </div>
+            </div>
+            <div className="text-xs text-white/42">
+              {nextCdsAgentSchedule?.nextRunAt ? `next ${formatTime(nextCdsAgentSchedule.nextRunAt)}` : '暂无下一次 cron'}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              { label: '工作流', value: scheduleSummary?.workflowCount ?? 0, hint: `${scheduleSummary?.cdsAgentNodeCount ?? 0} CdsAgentRun nodes` },
+              { label: 'Cron', value: scheduleSummary?.enabledCronScheduleCount ?? 0, hint: `${scheduleSummary?.cronScheduleCount ?? 0} total / ${scheduleSummary?.dueSoonScheduleCount ?? 0} due soon` },
+              { label: '近期开跑', value: scheduleSummary?.recentExecutionCount ?? 0, hint: `${scheduleSummary?.failedRecentExecutionCount ?? 0} failed or timed out` },
+              { label: 'KB 只读治理', value: scheduleDashboard?.knowledgeGovernance.workflowCount ?? 0, hint: scheduleDashboard?.knowledgeGovernance.readonlyTools.join(' / ') || 'kb_list / kb_search / kb_read' },
+              {
+                label: '最近执行',
+                value: latestScheduledExecution?.status ?? '无',
+                hint: latestScheduledExecution?.durationMs != null
+                  ? formatDuration(Math.round(latestScheduledExecution.durationMs / 1000))
+                  : latestScheduledExecution?.triggerType ?? '等待 cron/manual',
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="min-h-[72px] rounded-lg px-3 py-2"
+                style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <div className="text-xs text-white/42">{item.label}</div>
+                <div className="mt-1 truncate text-xl font-semibold leading-tight text-white/84">{item.value}</div>
+                <div className="mt-1 truncate text-xs text-white/38">{item.hint}</div>
+              </div>
+            ))}
+          </div>
+          {(nextCdsAgentSchedule || latestScheduledExecution) && (
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              {nextCdsAgentSchedule && (
+                <a
+                  href={nextCdsAgentSchedule.workflowPath}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-w-0 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.04]"
+                  style={{ background: 'rgba(15,23,42,0.36)', border: '1px solid rgba(148,163,184,0.12)' }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-semibold text-white/70">{nextCdsAgentSchedule.name || nextCdsAgentSchedule.workflowName}</span>
+                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-cyan-100/70" style={{ background: 'rgba(56,189,248,0.1)' }}>{nextCdsAgentSchedule.state}</span>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-white/42">{nextCdsAgentSchedule.cronExpression || nextCdsAgentSchedule.mode} · {nextCdsAgentSchedule.timezone}</div>
+                </a>
+              )}
+              {latestScheduledExecution && (
+                <a
+                  href={latestScheduledExecution.workbenchPath || latestScheduledExecution.workflowPath}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-w-0 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.04]"
+                  style={{ background: 'rgba(15,23,42,0.36)', border: '1px solid rgba(148,163,184,0.12)' }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-xs font-semibold text-white/70">{latestScheduledExecution.workflowName}</span>
+                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-emerald-100/70" style={{ background: 'rgba(34,197,94,0.1)' }}>{latestScheduledExecution.status}</span>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-white/42">
+                    {latestScheduledExecution.cdsAgentSessionId ? `CDS session ${latestScheduledExecution.cdsAgentSessionId.slice(0, 10)}` : latestScheduledExecution.traceId}
+                  </div>
+                </a>
+              )}
+            </div>
+          )}
         </section>
 
         {executionRunway}
