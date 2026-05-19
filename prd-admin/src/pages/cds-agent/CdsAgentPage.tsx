@@ -652,7 +652,7 @@ export default function CdsAgentPage() {
     title: '远程巡检任务',
     connectionId: '',
     runtimeProfileId: '',
-    toolPolicy: 'confirm-dangerous',
+    toolPolicy: 'readonly-auto',
     gitRepository: '',
     gitRef: 'main',
     workspaceRoot: '',

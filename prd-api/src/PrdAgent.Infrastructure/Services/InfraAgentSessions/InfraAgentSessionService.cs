@@ -1403,7 +1403,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 new() { Role = "user", Content = content }
             },
-            Tools = BuildSidecarToolDefs(),
+            Tools = BuildSidecarToolDefs(session),
             MaxTokens = 4096,
             MaxTurns = ResolveMaxTurns(content),
             TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
@@ -1949,11 +1949,14 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         session.UpdatedAt = now;
     }
 
-    private List<InfraAgentRuntimeToolDef> BuildSidecarToolDefs()
+    private List<InfraAgentRuntimeToolDef> BuildSidecarToolDefs(InfraAgentSession session)
     {
         var tools = new List<InfraAgentRuntimeToolDef>();
         foreach (var descriptor in _toolRegistry.ListAll())
         {
+            if (!ShouldExposeToolToRuntime(session.ToolPolicy, descriptor.Name))
+                continue;
+
             try
             {
                 using var schema = JsonDocument.Parse(descriptor.InputSchemaJson);
@@ -1973,6 +1976,30 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             }
         }
         return tools;
+    }
+
+    private static bool ShouldExposeToolToRuntime(string? toolPolicy, string toolName)
+    {
+        var policy = NormalizeToolPolicy(toolPolicy);
+        if (policy == "deny-all") return false;
+
+        if (policy is "readonly-auto" or "auto-allow-readonly")
+        {
+            return toolName is
+                "echo" or
+                "current_time" or
+                "repo_list_files" or
+                "repo_read_file" or
+                "repo_search" or
+                "repo_git_status" or
+                "repo_git_diff" or
+                "kb_list" or
+                "kb_search" or
+                "kb_read" or
+                "cds_bridge_snapshot";
+        }
+
+        return true;
     }
 
     private static IReadOnlyList<ReadonlyArtifactToolRequest> BuildReadonlyArtifactRequests() => new[]
@@ -2115,7 +2142,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private static string NormalizeToolPolicy(string? policy)
     {
         var normalized = NormalizeOptional(policy);
-        return normalized is "auto-allow-readonly" or "confirm-dangerous" or "deny-all"
+        return normalized is "readonly-auto" or "auto-allow-readonly" or "confirm-dangerous" or "deny-all"
             ? normalized
             : "confirm-dangerous";
     }

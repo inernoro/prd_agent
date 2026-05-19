@@ -216,6 +216,47 @@ public class AgentToolsTests : IDisposable
         snippet.Length.ShouldBeLessThanOrEqualTo(263);
     }
 
+    [Fact]
+    public void KnowledgeBaseDraftToolsExposeOnlyDraftWorkspaceActions()
+    {
+        var tools = new IAgentTool[]
+        {
+            new KbDraftCreateTool(null!),
+            new KbDraftReadTool(null!),
+            new KbDraftListTool(null!),
+            new KbDraftDiscardTool(null!)
+        };
+
+        tools.Select(x => x.Descriptor.Name).ShouldBe(new[]
+        {
+            "kb_draft_create",
+            "kb_draft_read",
+            "kb_draft_list",
+            "kb_draft_discard"
+        });
+        tools.Select(x => x.Descriptor.Name).ShouldNotContain("kb_apply");
+        tools.Select(x => x.Descriptor.Name).ShouldNotContain("kb_diff");
+        tools.Select(x => x.Descriptor.Name).ShouldNotContain("kb_reject");
+
+        foreach (var tool in tools)
+        {
+            using var schema = JsonDocument.Parse(tool.Descriptor.InputSchemaJson);
+            schema.RootElement.GetProperty("type").GetString().ShouldBe("object");
+        }
+    }
+
+    [Fact]
+    public void KnowledgeBaseDraftHashIsStableAndSensitiveToContent()
+    {
+        var hashA = KnowledgeBaseDraftToolSupport.ComputeContentHash("原始正文\n第二行");
+        var hashB = KnowledgeBaseDraftToolSupport.ComputeContentHash("原始正文\n第二行");
+        var hashC = KnowledgeBaseDraftToolSupport.ComputeContentHash("改写正文\n第二行");
+
+        hashA.ShouldBe(hashB);
+        hashA.ShouldNotBe(hashC);
+        hashA.Length.ShouldBe(64);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

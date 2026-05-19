@@ -30,5 +30,6 @@ require_text 'lastEventSeq' 'last event seq field'
 require_text 'Stop' 'stop state field'
 require_text '产物入口' 'artifact entry field'
 require_text 'formatDuration' 'elapsed duration formatter'
+require_text "toolPolicy: 'readonly-auto'" 'simple mode readonly tool policy'
 
 printf '\nCDS Agent 简洁面板冒烟通过。\n'
