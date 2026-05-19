@@ -24,24 +24,14 @@ done
 grep -q 'knowledge_base_drafts' "$DB_FILE"
 grep -q 'KnowledgeBaseDraftStatuses.Draft' "$MODEL_FILE"
 
-if grep -Eq 'Name = "kb_(diff|apply|reject)"' "$TOOL_FILE" "$REGISTRY_FILE"; then
-  echo "unexpected P2-3 knowledge-base diff/apply/reject tool registered in P2-2" >&2
-  exit 1
-fi
-
 grep -q 'ShouldExposeToolToRuntime' "$SESSION_SERVICE_FILE"
 grep -q '"readonly-auto" or "auto-allow-readonly"' "$SESSION_SERVICE_FILE"
-if awk '/policy is "readonly-auto" or "auto-allow-readonly"/,/return true/' "$SESSION_SERVICE_FILE" | grep -Eq 'kb_draft_create|kb_draft_discard|repo_write_file|repo_create_pull_request'; then
+if awk '/policy is "readonly-auto" or "auto-allow-readonly"/,/return true/' "$SESSION_SERVICE_FILE" | grep -Eq 'kb_draft_create|kb_draft_discard|kb_apply|kb_reject|repo_write_file|repo_create_pull_request'; then
   echo "readonly-auto runtime must not expose draft write or repo write tools" >&2
-  exit 1
-fi
-
-if grep -Eq '_db\.Document(Stores|Entries|s)\.(Insert|Update|Replace|Delete)(One|Many)?Async' "$TOOL_FILE"; then
-  echo "P2-2 draft tools must not write formal knowledge-base collections" >&2
   exit 1
 fi
 
 grep -q 'P2-2 KnowledgeBase draft workspace' "$DOC_FILE"
 grep -q 'kb_draft_create/read/list/discard' "$DOC_FILE"
 
-echo "ok: CDS Agent KnowledgeBase draft workspace tools are registered without formal KB apply paths"
+echo "ok: CDS Agent KnowledgeBase draft workspace tools are registered and hidden from readonly-auto runtime"

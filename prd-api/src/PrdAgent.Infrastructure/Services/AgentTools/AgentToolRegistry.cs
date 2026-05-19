@@ -37,6 +37,9 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new KbDraftReadTool(db));
         Register(new KbDraftListTool(db));
         Register(new KbDraftDiscardTool(db));
+        Register(new KbDiffTool(db));
+        Register(new KbApplyTool(db));
+        Register(new KbRejectTool(db));
         Register(new CdsBridgeSnapshotTool());
         Register(new CdsBridgeActionTool());
     }

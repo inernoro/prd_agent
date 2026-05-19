@@ -1996,6 +1996,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "kb_list" or
                 "kb_search" or
                 "kb_read" or
+                "kb_diff" or
                 "cds_bridge_snapshot";
         }
 

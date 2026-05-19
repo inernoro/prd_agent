@@ -257,6 +257,57 @@ public class AgentToolsTests : IDisposable
         hashA.Length.ShouldBe(64);
     }
 
+    [Fact]
+    public void KnowledgeBaseDiffApplyRejectToolsExposeP2ThreeActions()
+    {
+        var tools = new IAgentTool[]
+        {
+            new KbDiffTool(null!),
+            new KbApplyTool(null!),
+            new KbRejectTool(null!)
+        };
+
+        tools.Select(x => x.Descriptor.Name).ShouldBe(new[]
+        {
+            "kb_diff",
+            "kb_apply",
+            "kb_reject"
+        });
+        new KbApplyTool(null!).Descriptor.Description.ShouldContain("MAP approval");
+    }
+
+    [Fact]
+    public void KnowledgeBaseDiffSummarizesAddedAndRemovedLines()
+    {
+        var diff = KnowledgeBaseDraftToolSupport.BuildUnifiedDiff(
+            "标题\n旧内容\n保留",
+            "标题\n新内容\n保留\n新增",
+            "before",
+            "after",
+            100);
+
+        var statJson = JsonSerializer.Serialize(diff.diffStat);
+        statJson.ShouldContain("\"added\":2");
+        statJson.ShouldContain("\"removed\":1");
+        diff.unifiedDiff.ShouldContain("--- before");
+        diff.unifiedDiff.ShouldContain("+++ after");
+        diff.unifiedDiff.ShouldContain("-旧内容");
+        diff.unifiedDiff.ShouldContain("+新内容");
+        diff.truncated.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task KnowledgeBaseApplyRequiresMapApprovalBeforeDatabaseAccess()
+    {
+        var result = await new KbApplyTool(null!).InvokeAsync(
+            JsonDocument.Parse("""{"draftId":"draft-1"}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorCode.ShouldBe("kb_apply_approval_required");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))

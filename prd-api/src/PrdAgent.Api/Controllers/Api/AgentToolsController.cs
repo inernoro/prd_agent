@@ -89,6 +89,7 @@ public class AgentToolsController : ControllerBase
             AppCallerCode = req.AppCallerCode,
             SidecarName = Request.Headers["X-Sidecar-Name"].FirstOrDefault(),
             InfraAgentSessionId = session?.Id,
+            ApprovalId = req.ApprovalId,
             CdsBaseUrl = connection?.PartnerBaseUrl,
             CdsProjectId = connection?.ProjectId,
             CdsLongToken = cdsToken,
@@ -415,6 +416,7 @@ public class AgentToolsController : ControllerBase
     {
         return toolName switch
         {
+            "kb_apply" => "write",
             "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action"
                 or "Bash" or "Edit" or "Write" => "dangerous",
             _ => "readonly"

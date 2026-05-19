@@ -284,6 +284,20 @@ function readStringArray(payload: Record<string, unknown> | null, key: string): 
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0) : [];
 }
 
+function readDiffStatSummary(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const record = value as Record<string, unknown>;
+  const added = typeof record.added === 'number' ? record.added : null;
+  const removed = typeof record.removed === 'number' ? record.removed : null;
+  const changed = typeof record.changed === 'number' ? record.changed : null;
+  const parts: string[] = [];
+  if (added !== null) parts.push(`+${added}`);
+  if (removed !== null) parts.push(`-${removed}`);
+  if (changed !== null) parts.push(`${changed} changed`);
+  return parts.join(' · ');
+}
+
 function redactSensitiveText(value: string): string {
   return value
     .replace(/sk-ant-[A-Za-z0-9._-]+/g, 'sk-ant-***')
@@ -353,6 +367,16 @@ function toolActionLabel(toolName: string, payload: Record<string, unknown>): st
     case 'repo_git_diff': return '查看代码改动';
     case 'repo_run_command': return command ? `运行命令 ${command}` : '运行命令';
     case 'repo_create_pull_request': return '创建 Pull Request';
+    case 'kb_list': return '浏览知识库';
+    case 'kb_search': return '搜索知识库';
+    case 'kb_read': return '读取知识库文档';
+    case 'kb_draft_create': return '创建知识库草稿';
+    case 'kb_draft_read': return '读取知识库草稿';
+    case 'kb_draft_list': return '列出知识库草稿';
+    case 'kb_draft_discard': return '丢弃知识库草稿';
+    case 'kb_diff': return '查看知识库差异';
+    case 'kb_apply': return '应用知识库草稿';
+    case 'kb_reject': return '拒绝知识库草稿';
     case 'current_time': return '获取当前时间';
     case 'echo': return '回显测试';
     default:
@@ -463,12 +487,13 @@ function buildArtifacts(events: InfraAgentEventView[], logs: string): AgentArtif
       });
     }
 
-    if (typeof detail.diff === 'string' || (typeof detail.diffStat === 'string' && typeof detail.branch !== 'string')) {
-      const diffStat = typeof detail.diffStat === 'string' ? detail.diffStat : '';
-      const diff = typeof detail.diff === 'string' ? detail.diff : '';
+    if (typeof detail.diff === 'string' || typeof detail.unifiedDiff === 'string' || (readDiffStatSummary(detail.diffStat) && typeof detail.branch !== 'string')) {
+      const diffStat = readDiffStatSummary(detail.diffStat);
+      const unifiedDiff = typeof detail.unifiedDiff === 'string' ? detail.unifiedDiff : '';
+      const diff = typeof detail.diff === 'string' ? detail.diff : unifiedDiff;
       artifacts.push({
         id: `${event.id}-diff`,
-        title: '代码 diff',
+        title: unifiedDiff ? '知识库 diff' : '代码 diff',
         kind: 'diff',
         summary: [String(detail.path ?? 'workspace'), detail.truncated ? '已截断' : '完整'].join(' · '),
         body: [diffStat, diff].filter(Boolean).join('\n\n'),
@@ -550,7 +575,10 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
         </div>
       );
     }
-    if (detail && ('status' in detail || 'diffStat' in detail || 'diff' in detail)) {
+    if (detail && ('status' in detail || 'diffStat' in detail || 'diff' in detail || 'unifiedDiff' in detail)) {
+      const diffStatSummary = readDiffStatSummary(detail.diffStat);
+      const unifiedDiff = typeof detail.unifiedDiff === 'string' ? detail.unifiedDiff : '';
+      const diffText = typeof detail.diff === 'string' ? detail.diff : unifiedDiff;
       return (
         <div className="mt-2 space-y-2 text-xs">
           {'branch' in detail && (
@@ -562,11 +590,11 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
           {typeof detail.status === 'string' && detail.status && (
             <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.status}</pre>
           )}
-          {typeof detail.diffStat === 'string' && detail.diffStat && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.diffStat}</pre>
+          {diffStatSummary && (
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{diffStatSummary}</pre>
           )}
-          {typeof detail.diff === 'string' && detail.diff && (
-            <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.diff}</pre>
+          {diffText && (
+            <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{diffText}</pre>
           )}
         </div>
       );
