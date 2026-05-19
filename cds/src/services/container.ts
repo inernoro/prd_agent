@@ -908,15 +908,21 @@ export class ContainerService {
     // escape 更安全)。
     const validName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
     if (!validName.test(containerName)) return;
-    // reason 仅供人读,硬过滤掉所有非 [中文/字母数字/空格/-_.:] 字符,
-    // 杜绝拼进 shell 的注入面(过滤后即便为空也无所谓)。
+    // reason 仅供人读。白名单保留:ASCII 字母数字/空格/_.:- + CJK 汉字
+    // (U+4E00–U+9FA5) + CJK 标点 (U+3000–U+303F:、。「」【】) + 全角符号
+    // (U+FF00–U+FFEF:（），：等)。这些区段都不含任何 shell 元字符,**单引号
+    // (')、双引号(")、$、反引号、\、; 等一律落在白名单外被剔除** —— 即便
+    // 未来调用方乱传也进不了 shell。下面用单引号包裹 line,单引号串里唯一
+    // 能破坏引用的字符就是单引号本身,而它已被白名单排除:不再依赖"过滤
+    // 引号"来做 shell 转义(Cursor Bugbot #640 加固)。
     const safeReason =
-      (reason || 'cds-stop').replace(/[^一-龥a-zA-Z0-9 _.:-]/g, '').slice(0, 120) ||
-      'cds-stop';
+      (reason || 'cds-stop')
+        .replace(/[^一-龥　-〿＀-￯a-zA-Z0-9 _.:-]/g, '')
+        .slice(0, 120) || 'cds-stop';
     const line = `[CDS-STOP] reason=${safeReason} ts=${new Date().toISOString()}`;
     try {
       await this.shell.exec(
-        `docker exec ${containerName} sh -c 'echo "${line}" > /proc/1/fd/1 2>/dev/null'`,
+        `docker exec ${containerName} sh -c "echo '${line}' > /proc/1/fd/1 2>/dev/null"`,
         { timeout: 3000 },
       );
     } catch {
