@@ -1551,6 +1551,15 @@ export function createServer(deps: ServerDeps): express.Express {
         return next();
       }
       if (
+        (
+          (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/runtime-capacity$/.test(reqPath)) ||
+          (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/runtime-capacity\/reconcile$/.test(reqPath))
+        ) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+      if (
         /^\/api\/projects\/[^/]+\/agent-sessions(?:\/.*)?$/.test(reqPath) &&
         /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
       ) {
