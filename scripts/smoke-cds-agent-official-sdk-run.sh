@@ -194,7 +194,7 @@ smoke_assert_eq "$(printf '%s' "$start_resp" | jq -r '.success')" "true" "StartS
 smoke_ok "session started"
 
 smoke_step "发送 S1 只读审查 prompt"
-prompt='只读审查当前仓库。不要修改文件，不要创建 PR。请读取 README、最近提交或项目结构后，用 5 条以内说明：1) 你确认的仓库/ref；2) 你检查了哪些文件；3) 一个最高风险问题或没有发现高风险问题；4) 下一步建议。'
+prompt='只读审查当前仓库。不要修改文件，不要创建 PR。最多调用一次只读文件读取工具：优先读取 README.md；如果不存在，再读取 package.json 或项目根目录中最明显的说明文件。读到一个文件后必须立即最终回答，不要继续调用工具。用 5 条以内说明：1) 仓库/ref；2) 读取的文件；3) 是否发现高风险问题；4) 下一步建议。'
 send_body=$(jq -n --arg content "$prompt" '{content:$content}')
 send_resp=$(smoke_post "/api/infra-agent-sessions/${created_session_id}/messages" "$send_body")
 smoke_verbose "$send_resp"
