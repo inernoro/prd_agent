@@ -11,6 +11,7 @@ import type {
   ListExecutionsContract,
   GetExecutionContract,
   CancelExecutionContract,
+  RejectApprovalContract,
   ResumeFromNodeContract,
   ContinueExecutionContract,
   GetNodeLogsContract,
@@ -127,6 +128,13 @@ export const resumeFromNodeReal: ResumeFromNodeContract = async (input) => {
 export const continueExecutionReal: ContinueExecutionContract = async (executionId) => {
   return await apiRequest<{ execution: WorkflowExecution }>(
     api.workflowAgent.executions.continue(executionId),
+    { method: 'POST' }
+  );
+};
+
+export const rejectApprovalReal: RejectApprovalContract = async (executionId) => {
+  return await apiRequest<{ execution: WorkflowExecution }>(
+    api.workflowAgent.executions.rejectApproval(executionId),
     { method: 'POST' }
   );
 };

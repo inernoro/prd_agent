@@ -88,7 +88,12 @@ public sealed class WorkflowRunWorker : BackgroundService
             return;
         }
 
-        if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled or WorkflowExecutionStatus.Paused)
+        if (execution.Status is WorkflowExecutionStatus.Completed
+            or WorkflowExecutionStatus.Failed
+            or WorkflowExecutionStatus.Cancelled
+            or WorkflowExecutionStatus.Paused
+            or WorkflowExecutionStatus.WaitingApproval
+            or WorkflowExecutionStatus.TimedOut)
         {
             _logger.LogInformation("Execution already terminal: {ExecutionId} status={Status}", executionId, execution.Status);
             return;
@@ -273,18 +278,21 @@ public sealed class WorkflowRunWorker : BackgroundService
                 catch (CapsuleExecutor.CapsulePauseException pause)
                 {
                     nodeSw.Stop();
-                    nodeExec.Status = NodeExecutionStatus.Paused;
+                    nodeExec.Status = pause.NodeStatus;
                     nodeExec.CompletedAt = DateTime.UtcNow;
                     nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
                     nodeExec.OutputArtifacts = pause.Artifacts;
                     nodeExec.Logs = CapsuleExecutor.TruncateLogs(pause.Logs);
                     nodeExec.ErrorMessage = pause.Message;
 
-                    await EmitEventAsync(executionId, "node-paused", new
+                    var waitApproval = string.Equals(pause.WorkflowStatus, WorkflowExecutionStatus.WaitingApproval, StringComparison.OrdinalIgnoreCase);
+                    await EmitEventAsync(executionId, waitApproval ? "node-waiting-approval" : "node-paused", new
                     {
                         nodeId,
                         nodeName = nodeExec.NodeName,
                         nodeType = nodeExec.NodeType,
+                        pauseKind = pause.PauseKind,
+                        status = nodeExec.Status,
                         reason = pause.Message,
                         durationMs = nodeExec.DurationMs,
                         artifacts = pause.Artifacts.Select(a => new
@@ -360,7 +368,7 @@ public sealed class WorkflowRunWorker : BackgroundService
 
                 await UpdateNodeExecutionAsync(db, executionId, nodeExec);
 
-                if (nodeExec.Status == NodeExecutionStatus.Paused)
+                if (nodeExec.Status is NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval)
                 {
                     pauseRequested = true;
                     continue;
@@ -437,25 +445,32 @@ public sealed class WorkflowRunWorker : BackgroundService
             if (pauseRequested)
             {
                 sw.Stop();
+                var waitingApproval = batch.Any(nid =>
+                    batchResults.TryGetValue(nid, out var r)
+                    && r.nodeExec.Status == NodeExecutionStatus.WaitingApproval);
+                var workflowStatus = waitingApproval ? WorkflowExecutionStatus.WaitingApproval : WorkflowExecutionStatus.Paused;
                 await db.WorkflowExecutions.UpdateOneAsync(
                     e => e.Id == executionId,
                     Builders<WorkflowExecution>.Update
-                        .Set(e => e.Status, WorkflowExecutionStatus.Paused)
+                        .Set(e => e.Status, workflowStatus)
                         .Set(e => e.DurationMs, sw.ElapsedMilliseconds),
                     cancellationToken: CancellationToken.None);
 
                 var pausedNode = batch
-                    .Where(nid => batchResults.TryGetValue(nid, out var r) && r.nodeExec.Status == NodeExecutionStatus.Paused)
+                    .Where(nid => batchResults.TryGetValue(nid, out var r)
+                        && r.nodeExec.Status is NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval)
                     .FirstOrDefault();
                 var pausedExec = pausedNode != null ? batchResults[pausedNode].nodeExec : null;
 
-                await EmitEventAsync(executionId, "execution-paused", new
+                await EmitEventAsync(executionId, waitingApproval ? "execution-waiting-approval" : "execution-paused", new
                 {
                     executionId,
+                    status = workflowStatus,
                     pausedAtNodeId = pausedNode,
                     pausedAtNodeName = pausedExec?.NodeName,
+                    pauseKind = waitingApproval ? "waiting_approval" : "paused",
                     durationMs = sw.ElapsedMilliseconds,
-                    completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused),
+                    completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval),
                 });
 
                 return;

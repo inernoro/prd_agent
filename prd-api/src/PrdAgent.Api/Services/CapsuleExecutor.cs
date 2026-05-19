@@ -32,15 +32,27 @@ public static class CapsuleExecutor
 
     public sealed class CapsulePauseException : Exception
     {
-        public CapsulePauseException(string message, List<ExecutionArtifact> artifacts, string logs)
+        public CapsulePauseException(
+            string message,
+            List<ExecutionArtifact> artifacts,
+            string logs,
+            string workflowStatus = WorkflowExecutionStatus.Paused,
+            string nodeStatus = NodeExecutionStatus.Paused,
+            string pauseKind = "paused")
             : base(message)
         {
             Artifacts = artifacts;
             Logs = logs;
+            WorkflowStatus = workflowStatus;
+            NodeStatus = nodeStatus;
+            PauseKind = pauseKind;
         }
 
         public List<ExecutionArtifact> Artifacts { get; }
         public string Logs { get; }
+        public string WorkflowStatus { get; }
+        public string NodeStatus { get; }
+        public string PauseKind { get; }
     }
 
     /// <summary>共享序列化选项：不转义中文、美化输出</summary>
@@ -4356,6 +4368,11 @@ function safeChart(canvasId, config) {
         return null;
     }
 
+    private static int ClampInt(string? value, int fallback, int min, int max)
+    {
+        if (!int.TryParse(value, out var parsed)) return fallback;
+        return Math.Clamp(parsed, min, max);
+    }
 
     public static string ReplaceVariables(string template, Dictionary<string, string> variables)
     {
@@ -4692,6 +4709,7 @@ function safeChart(canvasId, config) {
         var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "readonly-auto", variables).Trim();
         var hookProfileId = ReplaceVariables(GetConfigString(node, "hookProfileId") ?? "", variables).Trim();
         var workflowApprovalMode = ReplaceVariables(GetConfigString(node, "workflowApprovalMode") ?? "none", variables).Trim();
+        var approvalTimeoutSeconds = ClampInt(GetConfigString(node, "approvalTimeoutSeconds"), 3600, 60, 86400);
         var traceId = variables.GetValueOrDefault("__traceId");
 
         var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables).Trim();
@@ -4736,13 +4754,17 @@ function safeChart(canvasId, config) {
 
         if (string.Equals(workflowApprovalMode, "request-dangerous", StringComparison.OrdinalIgnoreCase))
         {
+            var approvalToolName = ReplaceVariables(GetConfigString(node, "approvalToolName") ?? "kb_apply", variables).Trim();
+            if (string.IsNullOrWhiteSpace(approvalToolName)) approvalToolName = "kb_apply";
+            var approvalArgsSummary = ReplaceVariables(GetConfigString(node, "approvalArgsSummary") ?? "{\"draftId\":\"workflow-demo-draft\"}", variables).Trim();
+            if (string.IsNullOrWhiteSpace(approvalArgsSummary)) approvalArgsSummary = "{\"draftId\":\"workflow-demo-draft\"}";
             await sessions.RequestToolApprovalAsync(
                 userId,
                 session.Id,
                 new CreateToolApprovalRequest(
-                    "repo_run_command",
-                    "{\"command\":\"git status --short\",\"cwd\":\".\"}",
-                    "dangerous"),
+                    approvalToolName,
+                    approvalArgsSummary,
+                    approvalToolName == "kb_apply" ? "write" : "dangerous"),
                 CancellationToken.None);
 
             var approvalCursor = await ListCdsAgentEventsByCursorAsync(
@@ -4750,7 +4772,10 @@ function safeChart(canvasId, config) {
                 CancellationToken.None);
             var approvalEvents = approvalCursor.Events;
             var pendingApproval = FindFirstPendingApproval(approvalEvents);
-            var approvalLogs = $"[CDS Agent] 工作流等待危险工具审批\n会话: {session.Id}\n审批: {pendingApproval?.ApprovalId ?? "(unknown)"}\n工具: {pendingApproval?.ToolName ?? "repo_run_command"}\n事件读取: {FormatCdsAgentEventCursorSummary(approvalCursor)}";
+            var requestedAt = DateTime.UtcNow;
+            var timeoutAt = requestedAt.AddSeconds(approvalTimeoutSeconds);
+            var approvalWorkbenchPath = $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}";
+            var approvalLogs = $"[CDS Agent] 工作流等待工具审批\n会话: {session.Id}\n审批: {pendingApproval?.ApprovalId ?? "(unknown)"}\n工具: {pendingApproval?.ToolName ?? approvalToolName}\n超时: {timeoutAt:O}\n事件读取: {FormatCdsAgentEventCursorSummary(approvalCursor)}";
             var approvalRendered = RenderCdsAgentEvents(approvalEvents);
             var approvalEventsJson = JsonSerializer.Serialize(approvalEvents, JsonPretty);
             throw new CapsulePauseException(
@@ -4765,12 +4790,22 @@ function safeChart(canvasId, config) {
                         sessionId = session.Id,
                         traceId = session.TraceId,
                         approvalId = pendingApproval?.ApprovalId,
-                        toolName = pendingApproval?.ToolName ?? "repo_run_command",
-                        risk = pendingApproval?.Risk ?? "dangerous",
-                        status = "waiting"
+                        toolName = pendingApproval?.ToolName ?? approvalToolName,
+                        argsSummary = approvalArgsSummary,
+                        risk = pendingApproval?.Risk ?? (approvalToolName == "kb_apply" ? "write" : "dangerous"),
+                        status = WorkflowExecutionStatus.WaitingApproval,
+                        requestedAt,
+                        timeoutAt,
+                        timeoutSeconds = approvalTimeoutSeconds,
+                        workbenchPath = approvalWorkbenchPath,
+                        continuePath = $"POST /api/workflow-agent/executions/{variables.GetValueOrDefault("__executionId")}/continue",
+                        rejectPath = $"POST /api/workflow-agent/executions/{variables.GetValueOrDefault("__executionId")}/reject-approval"
                     }, JsonPretty), "application/json"),
                 },
-                approvalLogs);
+                approvalLogs,
+                WorkflowExecutionStatus.WaitingApproval,
+                NodeExecutionStatus.WaitingApproval,
+                "waiting_approval");
         }
 
         session = await sessions.SendMessageAsync(userId, session.Id, new SendInfraAgentMessageRequest(prompt), CancellationToken.None) ?? session;

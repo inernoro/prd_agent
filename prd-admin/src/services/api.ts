@@ -965,6 +965,7 @@ export const api = {
       byId: (id: string) => `/api/workflow-agent/executions/${id}`,
       cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
       continue: (id: string) => `/api/workflow-agent/executions/${id}/continue`,
+      rejectApproval: (id: string) => `/api/workflow-agent/executions/${id}/reject-approval`,
       resumeFrom: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>

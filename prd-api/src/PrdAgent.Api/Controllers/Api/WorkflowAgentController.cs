@@ -812,7 +812,7 @@ public class WorkflowAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { execution = newExecution }));
     }
 
-    /// <summary>继续执行（断点暂停后恢复）</summary>
+    /// <summary>继续执行（断点暂停或 CDS Agent 审批等待后恢复）</summary>
     [HttpPost("executions/{executionId}/continue")]
     public async Task<IActionResult> ContinueExecution(string executionId, CancellationToken ct = default)
     {
@@ -823,15 +823,41 @@ public class WorkflowAgentController : ControllerBase
         if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作此执行记录"));
 
-        if (execution.Status != WorkflowExecutionStatus.Paused)
-            return BadRequest(ApiResponse<object>.Fail("NOT_PAUSED", "仅暂停状态的执行可以继续"));
+        if (execution.Status is not (WorkflowExecutionStatus.Paused or WorkflowExecutionStatus.WaitingApproval))
+            return BadRequest(ApiResponse<object>.Fail("NOT_PAUSED", "仅暂停或等待审批状态的执行可以继续"));
+
+        var waitingApproval = execution.Status == WorkflowExecutionStatus.WaitingApproval;
+        if (waitingApproval && TryFindCdsAgentApproval(execution, out var approval, out var approvalNode)
+            && approval != null
+            && approval.TimeoutAt.HasValue
+            && approval.TimeoutAt.Value <= DateTime.UtcNow)
+        {
+            if (approvalNode != null)
+            {
+                approvalNode.Status = NodeExecutionStatus.Failed;
+                approvalNode.CompletedAt = DateTime.UtcNow;
+                approvalNode.ErrorMessage = "CDS Agent 工作流审批已超时";
+            }
+
+            await _db.WorkflowExecutions.UpdateOneAsync(
+                e => e.Id == executionId,
+                Builders<WorkflowExecution>.Update
+                    .Set(e => e.Status, WorkflowExecutionStatus.TimedOut)
+                    .Set(e => e.CompletedAt, DateTime.UtcNow)
+                    .Set(e => e.ErrorMessage, "CDS Agent 工作流审批已超时")
+                    .Set(e => e.NodeExecutions, execution.NodeExecutions),
+                cancellationToken: ct);
+
+            execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
+            return BadRequest(ApiResponse<object>.Fail("APPROVAL_TIMEOUT", "CDS Agent 工作流审批已超时"));
+        }
 
         // 将暂停的节点改回 completed，将 execution 改回 queued 重新入队
         var infraAgentSessions = HttpContext.RequestServices.GetRequiredService<IInfraAgentSessionService>();
         var userId = GetUserId();
         foreach (var ne in execution.NodeExecutions)
         {
-            if (ne.Status == NodeExecutionStatus.Paused)
+            if (ne.Status is NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval)
             {
                 await ApprovePausedCdsAgentToolIfNeededAsync(infraAgentSessions, userId, ne, ct);
                 ne.Status = NodeExecutionStatus.Completed;
@@ -854,31 +880,121 @@ public class WorkflowAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { execution }));
     }
 
+    /// <summary>拒绝 CDS Agent 工作流等待中的工具审批，并结束本次执行</summary>
+    [HttpPost("executions/{executionId}/reject-approval")]
+    public async Task<IActionResult> RejectApproval(string executionId, CancellationToken ct = default)
+    {
+        var execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
+        if (execution == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "执行记录不存在"));
+
+        if (execution.TriggeredBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作此执行记录"));
+
+        if (execution.Status != WorkflowExecutionStatus.WaitingApproval)
+            return BadRequest(ApiResponse<object>.Fail("NOT_WAITING_APPROVAL", "仅等待审批状态的执行可以拒绝审批"));
+
+        if (!TryFindCdsAgentApproval(execution, out var approval, out var nodeExecution) || approval == null || nodeExecution == null)
+            return BadRequest(ApiResponse<object>.Fail("APPROVAL_NOT_FOUND", "未找到待审批的 CDS Agent 工具请求"));
+
+        var infraAgentSessions = HttpContext.RequestServices.GetRequiredService<IInfraAgentSessionService>();
+        await infraAgentSessions.ApproveToolAsync(
+            GetUserId(),
+            approval.SessionId,
+            approval.ApprovalId,
+            new ToolApprovalRequest("deny"),
+            ct);
+
+        nodeExecution.Status = NodeExecutionStatus.Failed;
+        nodeExecution.CompletedAt = DateTime.UtcNow;
+        nodeExecution.ErrorMessage = $"CDS Agent 工具审批已拒绝: {approval.ToolName}";
+
+        await _db.WorkflowExecutions.UpdateOneAsync(
+            e => e.Id == executionId,
+            Builders<WorkflowExecution>.Update
+                .Set(e => e.Status, WorkflowExecutionStatus.Failed)
+                .Set(e => e.CompletedAt, DateTime.UtcNow)
+                .Set(e => e.ErrorMessage, nodeExecution.ErrorMessage)
+                .Set(e => e.NodeExecutions, execution.NodeExecutions),
+            cancellationToken: ct);
+
+        execution = await _db.WorkflowExecutions.Find(e => e.Id == executionId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { execution }));
+    }
+
     private static async Task ApprovePausedCdsAgentToolIfNeededAsync(
         IInfraAgentSessionService infraAgentSessions,
         string userId,
         NodeExecution nodeExecution,
         CancellationToken ct)
     {
+        if (!TryReadCdsAgentApproval(nodeExecution, out var approval) || approval == null) return;
+
+        await infraAgentSessions.ApproveToolAsync(
+            userId,
+            approval.SessionId,
+            approval.ApprovalId,
+            new ToolApprovalRequest("allow"),
+            ct);
+    }
+
+    private sealed record CdsAgentWorkflowApproval(
+        string SessionId,
+        string ApprovalId,
+        string ToolName,
+        string? Risk,
+        DateTime? TimeoutAt);
+
+    private static bool TryFindCdsAgentApproval(
+        WorkflowExecution execution,
+        out CdsAgentWorkflowApproval? approval,
+        out NodeExecution? nodeExecution)
+    {
+        foreach (var ne in execution.NodeExecutions)
+        {
+            if (TryReadCdsAgentApproval(ne, out approval) && approval != null)
+            {
+                nodeExecution = ne;
+                return true;
+            }
+        }
+
+        approval = null;
+        nodeExecution = null;
+        return false;
+    }
+
+    private static bool TryReadCdsAgentApproval(NodeExecution nodeExecution, out CdsAgentWorkflowApproval? approval)
+    {
+        approval = null;
         var approvalArtifact = nodeExecution.OutputArtifacts.FirstOrDefault(x => x.SlotId == "cds-agent-approval");
-        if (approvalArtifact == null || string.IsNullOrWhiteSpace(approvalArtifact.InlineContent)) return;
+        if (approvalArtifact == null || string.IsNullOrWhiteSpace(approvalArtifact.InlineContent)) return false;
 
         using var doc = JsonDocument.Parse(approvalArtifact.InlineContent);
         var root = doc.RootElement;
         if (!root.TryGetProperty("sessionId", out var sessionIdElement)
             || !root.TryGetProperty("approvalId", out var approvalIdElement))
-            return;
+            return false;
 
         var sessionId = sessionIdElement.GetString();
         var approvalId = approvalIdElement.GetString();
-        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(approvalId)) return;
+        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(approvalId)) return false;
 
-        await infraAgentSessions.ApproveToolAsync(
-            userId,
+        DateTime? timeoutAt = null;
+        if (root.TryGetProperty("timeoutAt", out var timeoutElement)
+            && timeoutElement.ValueKind == JsonValueKind.String
+            && DateTime.TryParse(timeoutElement.GetString(), null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsedTimeout))
+        {
+            timeoutAt = parsedTimeout.ToUniversalTime();
+        }
+
+        approval = new CdsAgentWorkflowApproval(
             sessionId,
             approvalId,
-            new ToolApprovalRequest("allow"),
-            ct);
+            root.TryGetProperty("toolName", out var toolName) ? toolName.GetString() ?? "unknown" : "unknown",
+            root.TryGetProperty("risk", out var risk) ? risk.GetString() : null,
+            timeoutAt);
+        return true;
     }
 
     /// <summary>取消执行</summary>

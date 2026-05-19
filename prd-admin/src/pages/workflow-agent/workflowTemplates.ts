@@ -2332,6 +2332,7 @@ const cdsAgentReadonlyReviewTemplate: WorkflowTemplate = {
         outputSlots: [
           { slotId: 'cds-agent-out', name: 'agentResult', dataType: 'text', required: true },
           { slotId: 'cds-agent-run', name: 'runHandle', dataType: 'json', required: false },
+          { slotId: 'cds-agent-approval', name: 'approvalRequest', dataType: 'json', required: false },
           { slotId: 'cds-agent-events', name: 'eventTimeline', dataType: 'json', required: false },
           { slotId: 'cds-agent-log', name: 'runtimeLog', dataType: 'text', required: false },
         ],
@@ -2361,12 +2362,97 @@ const cdsAgentReadonlyReviewTemplate: WorkflowTemplate = {
   },
 };
 
+const cdsAgentApprovalWorkflowTemplate: WorkflowTemplate = {
+  id: 'cds-agent-approval-review',
+  name: 'CDS Agent 审批暂停',
+  description: 'Start -> CdsAgentRun -> Notify：CdsAgentRun 先生成 MAP 工具审批，工作流进入 waiting_approval，人工通过后继续 Notify',
+  icon: 'CDS',
+  tags: ['cds-agent', 'approval', 'waiting_approval'],
+  requiredInputs: [
+    {
+      key: 'task',
+      label: '审批任务',
+      type: 'textarea',
+      required: true,
+      defaultValue: '请准备一次需要人工审批的工具调用演示。不要实际修改业务数据，等待 MAP 审批后再继续。',
+    },
+    {
+      key: 'sessionId',
+      label: '复用 Session（可选）',
+      type: 'text',
+      required: false,
+      placeholder: '留空则创建新的 CDS Agent session',
+    },
+  ],
+  build: (inputs) => {
+    _edgeIdx = 0;
+    const nodes: WorkflowNode[] = [
+      {
+        nodeId: 'n-start',
+        name: 'Start',
+        nodeType: 'manual-trigger',
+        config: { inputPrompt: '点击运行，开始 CDS Agent 审批暂停演示' },
+        inputSlots: [],
+        outputSlots: [{ slotId: 'manual-out', name: 'input', dataType: 'json', required: true }],
+        position: { x: 120, y: 220 },
+      },
+      {
+        nodeId: 'n-cds-agent',
+        name: 'CdsAgentRun',
+        nodeType: 'cds-agent',
+        config: {
+          prompt: inputs.task || '',
+          sessionId: inputs.sessionId || '',
+          toolPolicy: 'confirm-dangerous',
+          stopAfterRun: 'false',
+          workflowApprovalMode: 'request-dangerous',
+          approvalTimeoutSeconds: '3600',
+          approvalToolName: 'kb_apply',
+          approvalArgsSummary: '{"draftId":"workflow-demo-draft"}',
+        },
+        inputSlots: [{ slotId: 'cds-agent-in', name: 'taskContext', dataType: 'text', required: false }],
+        outputSlots: [
+          { slotId: 'cds-agent-out', name: 'agentResult', dataType: 'text', required: true },
+          { slotId: 'cds-agent-run', name: 'runHandle', dataType: 'json', required: false },
+          { slotId: 'cds-agent-approval', name: 'approvalRequest', dataType: 'json', required: false },
+          { slotId: 'cds-agent-events', name: 'eventTimeline', dataType: 'json', required: false },
+          { slotId: 'cds-agent-log', name: 'runtimeLog', dataType: 'text', required: false },
+        ],
+        position: { x: 440, y: 220 },
+      },
+      {
+        nodeId: 'n-notify',
+        name: 'Notify',
+        nodeType: 'notification-sender',
+        config: {
+          title: 'CDS Agent 审批工作流已继续',
+          content: 'MAP 工具审批已处理，工作流已恢复到 Notify。请在执行详情里查看 approvalRequest 和 CDS 面板。',
+          level: 'success',
+        },
+        inputSlots: [{ slotId: 'notify-in', name: 'data', dataType: 'json', required: false }],
+        outputSlots: [{ slotId: 'notify-out', name: 'result', dataType: 'json', required: true }],
+        position: { x: 760, y: 220 },
+      },
+    ];
+
+    return {
+      nodes,
+      edges: [
+        edge('n-start', 'manual-out', 'n-cds-agent', 'cds-agent-in'),
+        edge('n-cds-agent', 'cds-agent-approval', 'n-notify', 'notify-in'),
+      ],
+      variables: [],
+    };
+  },
+};
+
 // ═══════════════════════════════════════════════════════════════
 // 注册表
 // ═══════════════════════════════════════════════════════════════
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   cdsAgentReadonlyReviewTemplate,
+  cdsAgentApprovalWorkflowTemplate,
   committeeMonthlyTemplate,
   fullTestSuiteTemplate,
   tapdBugCollectionTemplate,

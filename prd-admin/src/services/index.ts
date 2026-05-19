@@ -1538,6 +1538,7 @@ import type {
   ListExecutionsContract,
   GetExecutionContract,
   CancelExecutionContract,
+  RejectApprovalContract,
   ResumeFromNodeContract,
   ContinueExecutionContract,
   GetNodeLogsContract,
@@ -1562,6 +1563,7 @@ import {
   listExecutionsReal,
   getExecutionReal,
   cancelExecutionReal,
+  rejectApprovalReal,
   resumeFromNodeReal,
   continueExecutionReal,
   getNodeLogsReal,
@@ -1585,6 +1587,7 @@ export const executeWorkflow: ExecuteWorkflowContract = withAuth(executeWorkflow
 export const listExecutions: ListExecutionsContract = withAuth(listExecutionsReal);
 export const getExecution: GetExecutionContract = withAuth(getExecutionReal);
 export const cancelExecution: CancelExecutionContract = withAuth(cancelExecutionReal);
+export const rejectApproval: RejectApprovalContract = withAuth(rejectApprovalReal);
 export const resumeFromNode: ResumeFromNodeContract = withAuth(resumeFromNodeReal);
 export const continueExecution: ContinueExecutionContract = withAuth(continueExecutionReal);
 export const getNodeLogs: GetNodeLogsContract = withAuth(getNodeLogsReal);
