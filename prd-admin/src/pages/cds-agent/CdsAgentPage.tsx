@@ -2266,6 +2266,19 @@ export default function CdsAgentPage() {
     setActiveSessionId(session.id);
   }
 
+  function removeMissingSession(sessionId: string) {
+    setSessions((prev) => sortSessions(prev.filter((item) => item.id !== sessionId)));
+    setActiveSessionId((prev) => (prev === sessionId ? null : prev));
+  }
+
+  function isSessionNotFoundFailure(res: { success: boolean; error?: { code?: string; message?: string } | null }) {
+    return !res.success
+      && (res.error?.code === 'SESSION_NOT_FOUND'
+        || res.error?.code === 'session_not_found'
+        || res.error?.message?.includes('会话不存在')
+        || res.error?.message?.includes('session_not_found'));
+  }
+
   async function createSession() {
     if (!activeConnection) {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
@@ -2320,6 +2333,11 @@ export default function CdsAgentPage() {
     try {
       const res = await startInfraAgentSession(sessionId);
       if (!res.success || !res.data?.item) {
+        if (isSessionNotFoundFailure(res)) {
+          removeMissingSession(sessionId);
+          toast.warning('旧会话已失效', '已从列表移除，请直接输入任务重新运行');
+          return;
+        }
         toast.error('启动失败', res.error?.message ?? '请检查 CDS runtime');
         await refreshDetail(sessionId);
         return;
@@ -2417,7 +2435,7 @@ export default function CdsAgentPage() {
         ? `【Code 巡检模式】请优先围绕代码仓库、文件、测试、构建和提交建议处理：\n${normalizedPrompt}`
         : `【对话模式】请直接回答用户问题；只有用户明确要求检查代码时才进入代码巡检：\n${normalizedPrompt}`;
 
-      if (!session) {
+      const createSimpleSession = async () => {
         const title = normalizedPrompt.slice(0, 28) || (simpleTaskMode === 'code' ? '只读代码巡检' : 'Agent 对话');
         const createRes = await createInfraAgentSession({
           connectionId: activeConnection!.id,
@@ -2432,25 +2450,72 @@ export default function CdsAgentPage() {
         });
         if (!createRes.success || !createRes.data?.item) {
           toast.error('新建会话失败', createRes.error?.message ?? '请检查 CDS 连接和模型配置');
-          return;
+          return null;
         }
-        session = createRes.data.item;
-        upsertSession(session);
+        upsertSession(createRes.data.item);
+        return createRes.data.item;
+      };
+
+      if (!session) {
+        session = await createSimpleSession();
+        if (!session) return;
       }
 
       if (canStartFromStatus(session.status)) {
         const startRes = await startInfraAgentSession(session.id);
         if (!startRes.success || !startRes.data?.item) {
+          if (isSessionNotFoundFailure(startRes)) {
+            removeMissingSession(session.id);
+            session = await createSimpleSession();
+            if (!session) return;
+            const retryStartRes = await startInfraAgentSession(session.id);
+            if (!retryStartRes.success || !retryStartRes.data?.item) {
+              toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
+              await refreshDetail(session.id);
+              return;
+            }
+            session = retryStartRes.data.item;
+            upsertSession(session);
+          } else {
           toast.error('启动失败', startRes.error?.message ?? '请检查 CDS runtime');
           await refreshDetail(session.id);
           return;
+          }
+        } else {
+          session = startRes.data.item;
+          upsertSession(session);
         }
-        session = startRes.data.item;
-        upsertSession(session);
       }
 
       const messageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
       if (!messageRes.success || !messageRes.data?.item) {
+        if (isSessionNotFoundFailure(messageRes)) {
+          removeMissingSession(session.id);
+          session = await createSimpleSession();
+          if (!session) return;
+          const retryStartRes = canStartFromStatus(session.status)
+            ? await startInfraAgentSession(session.id)
+            : null;
+          if (retryStartRes && (!retryStartRes.success || !retryStartRes.data?.item)) {
+            toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
+            await refreshDetail(session.id);
+            return;
+          }
+          if (retryStartRes?.success && retryStartRes.data?.item) {
+            session = retryStartRes.data.item;
+            upsertSession(session);
+          }
+          const retryMessageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
+          if (!retryMessageRes.success || !retryMessageRes.data?.item) {
+            toast.error('发送失败', retryMessageRes.error?.message ?? '请稍后重试');
+            await refreshDetail(session.id);
+            return;
+          }
+          setPrompt('');
+          upsertSession(retryMessageRes.data.item);
+          await refreshDetail(retryMessageRes.data.item.id);
+          return;
+        }
         toast.error('发送失败', messageRes.error?.message ?? '请稍后重试');
         await refreshDetail(session.id);
         return;
