@@ -44,6 +44,7 @@ printf 'Preview branch: %s\n' "$SMOKE_CDS_BRANCH_ID"
 printf '==========================================\n'
 
 local_head=$(git rev-parse --short=8 HEAD)
+local_head_full=$(git rev-parse HEAD)
 local_branch=$(git branch --show-current 2>/dev/null || printf 'unknown')
 
 printf '\n>>> [1/5] Read CDS self branches\n'
@@ -68,7 +69,7 @@ printf 'Target CDS: branch=%s commit=%s cdsTouched=%s subject=%s\n' \
   "$CDS_SELF_UPDATE_BRANCH" "$target_commit" "$target_cds_touched" "$target_subject"
 printf 'Local worktree: branch=%s HEAD=%s\n' "$local_branch" "$local_head"
 target_matches_local=false
-if [[ "$target_commit" == "$local_head" ]]; then
+if [[ "$local_head_full" == "$target_commit"* || "$target_commit" == "$local_head_full"* ]]; then
   target_matches_local=true
   printf 'Target commit check: matches local HEAD\n'
 else
@@ -97,15 +98,26 @@ preview_commit=$(printf '%s' "$branch_status_resp" | jq -r '.data.commitSha // "
 printf '\n>>> [4/5] Optional R0 alias probe\n'
 alias_probe_status="skipped"
 alias_probe_log=""
+alias_probe_message="skipped"
 if [[ "$SMOKE_CDS_AGENT_RUN_ALIAS_PROBE" == "1" ]]; then
-  alias_probe_log="${SMOKE_CDS_AGENT_PREFLIGHT_REPORT:-/tmp/cds-agent-self-update-preflight.json}.alias.log"
-  if CDS_HOST="$CDS_HOST" bash "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" >"$alias_probe_log" 2>&1; then
-    alias_probe_status="pass"
+  alias_probe_alias="${SMOKE_CDS_AGENT_SIDECAR_ALIAS:-claude-agent-sdk-runtime-v2-prd-agent}"
+  if [[ "$alias_probe_alias" =~ (^|[-_])claude-agent-sdk-runtime ]] \
+    && [[ "${SMOKE_CDS_AGENT_ALLOW_BRANCH_LOCAL_ALIAS_PROBE:-0}" != "1" ]]; then
+    alias_probe_status="skipped_branch_local_alias_guarded"
+    alias_probe_message="branch-local sidecar alias probe is intentionally blocked by the governance guard"
+    printf 'alias probe: %s (%s)\n' "$alias_probe_status" "$alias_probe_message"
   else
-    alias_probe_status="failed"
+    alias_probe_log="${SMOKE_CDS_AGENT_PREFLIGHT_REPORT:-/tmp/cds-agent-self-update-preflight.json}.alias.log"
+    if CDS_HOST="$CDS_HOST" bash "$SCRIPT_DIR/smoke-cds-agent-sidecar-alias-stability.sh" >"$alias_probe_log" 2>&1; then
+      alias_probe_status="pass"
+      alias_probe_message="passed"
+    else
+      alias_probe_status="failed"
+      alias_probe_message="failed"
+    fi
+    printf 'alias probe: %s log=%s\n' "$alias_probe_status" "$alias_probe_log"
+    tail -n 30 "$alias_probe_log"
   fi
-  printf 'alias probe: %s log=%s\n' "$alias_probe_status" "$alias_probe_log"
-  tail -n 30 "$alias_probe_log"
 else
   printf 'alias probe: skipped\n'
 fi
@@ -133,6 +145,7 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
     --arg currentCommit "$current_commit" \
     --arg localBranch "$local_branch" \
     --arg localHead "$local_head" \
+    --arg localHeadFull "$local_head_full" \
     --arg targetBranch "$CDS_SELF_UPDATE_BRANCH" \
     --arg targetCommit "$target_commit" \
     --arg targetSubject "$target_subject" \
@@ -141,6 +154,7 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
     --arg previewCommit "$preview_commit" \
     --arg aliasProbeStatus "$alias_probe_status" \
     --arg aliasProbeLog "$alias_probe_log" \
+    --arg aliasProbeMessage "$alias_probe_message" \
     --arg recommendationStatus "$recommendation_status" \
     --arg recommendationMessage "$recommendation_message" \
     --arg recommendedCommand "$recommended_command" \
@@ -155,7 +169,8 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
       },
       localWorktree: {
         branch: $localBranch,
-        head: $localHead
+        head: $localHead,
+        headFull: $localHeadFull
       },
       targetControlPlane: {
         branch: $targetBranch,
@@ -171,7 +186,8 @@ if [[ -n "$SMOKE_CDS_AGENT_PREFLIGHT_REPORT" ]]; then
       },
       r0AliasProbe: {
         status: $aliasProbeStatus,
-        log: $aliasProbeLog
+        log: $aliasProbeLog,
+        message: $aliasProbeMessage
       },
       localCleanupPresent: $localCleanupPresent,
       nextActionRequiresHumanApproval: true,

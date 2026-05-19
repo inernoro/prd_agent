@@ -417,25 +417,9 @@ async function main() {
       returnByValue: true
     });
     const text = textResult.result?.value || '';
-    const required = [
-      'CDS Agent',
-      '执行链路',
-      'CDS Runtime',
-      '模型需调整',
-      'Claude Agent SDK',
-      'Claude/Anthropic',
-      'Worker Sandbox',
-      'MAP 会话',
-      '连接已授权',
-      '受限网络',
-      '刷新',
-      '专业模式',
-      '当前事件',
-      '工具事件',
-      '可见产物',
-      'trace'
-    ];
-    const missing = required.filter((item) => !text.includes(item));
+    const requiredGroups = workbenchSignalGroups();
+    const required = requiredGroups.map((group) => group.label);
+    const missing = missingWorkbenchSignals(text);
     if (textDump) {
       fs.writeFileSync(textDump, text);
     }
@@ -504,22 +488,7 @@ async function waitForWorkbench(send, cdp) {
     const text = res?.result?.value || '';
     lastText = text;
     try { fs.writeFileSync(textDump, text); } catch {}
-    if (text.includes('CDS Agent')
-      && text.includes('执行链路')
-      && text.includes('CDS Runtime')
-      && text.includes('模型需调整')
-      && text.includes('Claude Agent SDK')
-      && text.includes('Claude/Anthropic')
-      && text.includes('Worker Sandbox')
-      && text.includes('MAP 会话')
-      && text.includes('连接已授权')
-      && text.includes('受限网络')
-      && text.includes('刷新')
-      && text.includes('专业模式')
-      && text.includes('当前事件')
-      && text.includes('工具事件')
-      && text.includes('可见产物')
-      && text.includes('trace')) return;
+    if (missingWorkbenchSignals(text).length === 0) return;
     if (text.includes('无权限访问')) throw new Error('Authenticated user lacks permission for /cds-agent');
     if (text.includes('登录') && text.includes('密码') && !text.includes('CDS Agent')) {
       throw new Error('Auth store injection failed; still on login page');
@@ -533,6 +502,36 @@ async function waitForWorkbench(send, cdp) {
   const eventSummary = cdp.eventSummary();
   const suffix = eventSummary.length ? `; events=${eventSummary.join(' | ')}` : '';
   throw new Error(`Workbench execution runway did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}${suffix}`);
+}
+
+function workbenchSignalGroups() {
+  return [
+    { label: 'CDS Agent', alternatives: ['CDS Agent'] },
+    { label: 'simple mode', alternatives: ['简洁模式'] },
+    { label: 'pro mode', alternatives: ['专业模式'] },
+    { label: 'refresh action', alternatives: ['刷新'] },
+    { label: 'session status', alternatives: ['会话总数', '当前执行面板'] },
+    { label: 'trace observability', alternatives: ['trace', 'traceId'] },
+    { label: 'event observability', alternatives: ['当前事件'] },
+    { label: 'tool observability', alternatives: ['工具事件'] },
+    { label: 'artifact entry', alternatives: ['可见产物', '产物入口'] },
+    { label: 'SLA dashboard', alternatives: ['SLA / 成本'] },
+    { label: 'workflow and KB readonly', alternatives: ['定时巡检 / 知识治理', 'KB 只读治理'] },
+    { label: 'governance dashboard', alternatives: ['权限 / 组织治理'] },
+    { label: 'execution chain', alternatives: ['执行链路'] },
+    { label: 'MAP session', alternatives: ['MAP 会话'] },
+    { label: 'runtime status', alternatives: ['CDS Runtime'] },
+    { label: 'worker sandbox', alternatives: ['Worker Sandbox'] },
+    { label: 'network boundary', alternatives: ['受限网络'] },
+    { label: 'provider/profile guidance', alternatives: ['选择模型', '配置默认 Claude/Anthropic runtime profile', '模型需调整'] },
+    { label: 'official SDK adapter', alternatives: ['Claude Agent SDK', 'Official Claude Agent SDK adapter', 'claude-sdk'] }
+  ];
+}
+
+function missingWorkbenchSignals(text) {
+  return workbenchSignalGroups()
+    .filter((group) => !group.alternatives.some((item) => text.includes(item)))
+    .map((group) => `${group.label} (${group.alternatives.join(' / ')})`);
 }
 
 main().catch((err) => {
