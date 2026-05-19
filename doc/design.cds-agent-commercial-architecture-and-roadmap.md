@@ -285,7 +285,7 @@ flowchart LR
 | P2-3 | 知识库 diff/apply/reject | 页面可看差异并应用或拒绝 |
 | P2-4 | 工作流 waiting_approval/pause/resume | 工作流能等人工审批后继续 |
 | P2-5 | writable profile 策略 | 写工具只在明确 profile 和审批下开放 |
-| P2-6 | artifact bundle 导出 | 一次运行可导出报告、事件、diff、截图 |
+| P2-6 | Phase 2 验收包 | Markdown/PDF 报告、视觉截图、smoke、单测、构建证据可复盘 |
 
 #### Phase 2 有限计划
 
@@ -495,7 +495,7 @@ Phase 2 smoke 清单：
 | --- | --- | --- | --- |
 | [x] Phase 0 基线闭环 | 完成 | 证明 CDS-managed Claude Agent SDK 只读任务能跑、能停、默认安全 | one-cycle pass；S1/S2/S3/V1 pass；危险工具默认不暴露 |
 | [x] Phase 1 商业级最小可用 | 本地验收完成 | 用户能用简洁面板跑只读代码巡检、知识库只读搜索，并能从工作流调度一次 Agent | 3 步内启动；可观测字段齐全；stop/timeout 可见；`CdsAgentRun` 最小工作流通过；KB search/read 通过；Phase 1 验收包已生成 |
-| [ ] Phase 2 可写协作 | 进行中，5/6 | Agent 能生成代码/知识库 draft/diff，并通过人工审批 apply | 写操作不直落库；diff 可审查；workflow 可暂停/恢复；artifact bundle 可导出 |
+| [x] Phase 2 可写协作 | 本地验收完成，6/6 | Agent 能生成代码/知识库 draft/diff，并通过人工审批 apply | 写操作不直落库；diff 可审查；workflow 可暂停/恢复；writable profile 有显式审批边界；Phase 2 验收包已生成 |
 | [ ] Phase 3 规模化商业能力 | 未开始 | 团队级巡检、知识治理、多运行时和成本治理 | 多 adapter gate；定时巡检；SLA/成本面板；trace bundle 可回放 |
 
 ### 14.2 Phase 0 测试对勾
@@ -533,7 +533,7 @@ Phase 2 smoke 清单：
 | [x] | P2-3 KnowledgeBase diff/apply/reject | 用户可审查差异后应用或拒绝 | 页面可看 diff；`kb_apply` 必须有 MAP approval；reject 不改原文 | `kb_diff/apply/reject` 已注册；`kb_apply` 风险为 `write` 且必须带 MAP approval；apply 前校验 `baseContentHash/baseUpdatedAt`；`kb_reject` 只改草稿状态；只读 runtime 只暴露 `kb_diff` 不暴露 `kb_apply/kb_reject`；简洁面板可展示 `unifiedDiff` 为 `知识库 diff` 产物；`scripts/smoke-cds-agent-kb-diff-apply.sh` pass；`scripts/smoke-cds-agent-kb-draft-workspace.sh` pass；`scripts/smoke-cds-agent-simple-panel.sh` pass；后端相关测试 25/25 pass；`pnpm --prefix prd-admin tsc` pass；前端单测 281/281 pass；`pnpm --prefix prd-admin build` pass；`git diff --check` pass |
 | [x] | P2-4 工作流审批暂停/恢复 | 工作流遇到写入审批能暂停并继续 | `waiting_approval`、pause/resume、审批事件和运行详情可见 | 新增 `waiting_approval` / `timed_out` 状态；`CdsAgentRun` 可生成 `cds-agent-approval` 产物，默认用 `kb_apply` 写入审批演示；工作流 worker 持久化 `execution-waiting-approval` / `node-waiting-approval`；执行详情可审批通过继续、拒绝审批失败、超时进入 `timed_out`；新增 `CDS Agent 审批暂停` 模板；`scripts/smoke-cds-agent-workflow-approval.sh` pass；`scripts/smoke-cds-agent-workflow-node.sh` pass；后端工作流相关测试 58/58 pass；`pnpm --prefix prd-admin tsc` pass；前端单测 281/281 pass；`pnpm --prefix prd-admin build` pass；`git diff --check` pass |
 | [x] | P2-5 代码 writable profile | 代码写入只在明确 profile 和审批下开放 | 默认只读 profile 不暴露写工具；writable profile 可暴露 `repo_write_file/repo_run_command/repo_create_pull_request`，且调用入口仍必须走 MAP approval | 新增 `code-writable-confirm` 显式工具策略；`readonly-auto` 和 `confirm-dangerous/manual-all` 均不暴露代码写工具；`AgentToolsController` 对未启用 writable profile 的代码写入返回 `tool_denied_by_writable_profile`；工作流 `CdsAgentRun` schema 和基础设施新建会话表单均可选择 `代码可写需 MAP 审批`；`scripts/smoke-cds-agent-writable-profile.sh` pass；`scripts/smoke-cds-agent-kb-draft-workspace.sh` pass；`scripts/smoke-cds-agent-kb-diff-apply.sh` pass；`scripts/smoke-cds-agent-simple-panel.sh` pass；`scripts/smoke-cds-agent-workflow-approval.sh` pass；后端相关测试 83/83 pass；`pnpm --prefix prd-admin tsc` pass；前端单测 281/281 pass；`pnpm --prefix prd-admin build` pass；视觉截图 `/tmp/cds-agent-p2-5-writable-profile.png` |
-| [ ] | P2-6 Phase 2 验收包 | Phase 2 本地先验收，再决定是否部署 | smoke、单测、构建、视觉截图、Markdown/PDF 报告齐全 | 等待 P2-5 |
+| [x] | P2-6 Phase 2 验收包 | Phase 2 本地先验收，再决定是否部署 | smoke、单测、构建、视觉截图、Markdown/PDF 报告齐全 | `doc/report.cds-agent-phase2-acceptance-2026-05-19.md`；`doc/report.cds-agent-phase2-acceptance-2026-05-19.pdf`；P2 smoke 五件套 pass；后端相关测试 83/83 pass；前端单测 281/281 pass；`pnpm --prefix prd-admin tsc` pass；`pnpm --prefix prd-admin build` pass；`git diff --check` pass；视觉截图 `/tmp/cds-agent-p2-5-writable-profile.png` |
 
 ### 14.5 当前对话完成项
 
@@ -553,7 +553,8 @@ Phase 2 smoke 清单：
 | [x] | 完成 P2-3 KnowledgeBase diff/apply/reject | 新增 `kb_diff`、`kb_apply`、`kb_reject`；diff 为只读工具并可在简洁面板形成 `知识库 diff` 产物；`kb_apply` 被 MAP 分类为 `write`，无 `approvalId` 或原文 hash/更新时间冲突时拒绝写正式知识库；`kb_reject` 只拒绝草稿，不改原文 |
 | [x] | 完成 P2-4 工作流审批暂停/恢复 | 工作流新增 `waiting_approval` 状态、`cds-agent-approval` 产物和 `CDS Agent 审批暂停` 模板；执行详情支持“审批通过”继续和“拒绝”失败；审批超时保护进入 `timed_out`，避免无限等待 |
 | [x] | 完成 P2-5 代码 writable profile | 新增显式 `code-writable-confirm`，代码写工具只在该 profile 暴露；默认只读和通用非代码危险策略不暴露代码写入；审批入口增加策略兜底拒绝，未启用 writable profile 时返回 `tool_denied_by_writable_profile`；已补 smoke、后端单测、前端测试/构建和视觉截图 |
+| [x] | 完成 P2-6 Phase 2 验收包 | 已生成 Phase 2 Markdown/HTML/PDF 验收报告；报告覆盖 KB draft/diff/apply、工作流审批暂停、代码 writable profile、安全红线、smoke、单测、构建和视觉证据；Phase 2 总进度更新为 6/6 |
 
 ### 14.6 下一次开发入口
 
-Phase 2 已完成 P2-1/P2-2/P2-3/P2-4/P2-5。下一次开发入口是 `P2-6 Phase 2 验收包`：整理 Phase 2 的 smoke、单测、构建、视觉截图和 Markdown/PDF 验收报告，确认 KB draft/diff/apply、工作流审批暂停、代码 writable profile 三条链路都可复盘；预计 0.5-1 个工作日，先本地出包，不需要远端部署，除非要补真实 provider 写入链路证据。
+Phase 2 已完成 P2-1/P2-2/P2-3/P2-4/P2-5/P2-6。下一次开发入口进入 Phase 3：规模化商业能力。建议先做 `P3-1 trace/artifact bundle 导出与回放边界设计`，把一次 Agent 运行的事件、结果、diff、审批、截图和日志整理成可下载、可回放的验收包；预计 0.5-1 个工作日先出设计和最小导出接口，再决定是否接定时巡检和团队级看板。
