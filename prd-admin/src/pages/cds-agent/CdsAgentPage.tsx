@@ -2276,7 +2276,7 @@ export default function CdsAgentPage() {
     const message = res.error?.message ?? '';
     const isGatewayTransportFailure =
       (code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE')
-      && (message.includes('HTTP 502') || message.includes('/messages') || message.includes('/start'));
+      && (message.includes('HTTP 502') || message.includes('/messages'));
     return !res.success
       && (code === 'SESSION_NOT_FOUND'
         || code === 'session_not_found'
@@ -2286,6 +2286,14 @@ export default function CdsAgentPage() {
         || message.includes('会话不存在')
         || message.includes('CDS 连接不存在')
         || message.includes('session_not_found'));
+  }
+
+  function isTransientStartFailure(res: { success: boolean; error?: { code?: string; message?: string } | null }) {
+    const code = res.error?.code ?? '';
+    const message = res.error?.message ?? '';
+    return !res.success
+      && ((code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE') && (message.includes('HTTP 502') || message.includes('/start')))
+        || (code === 'cds_request_failed' && message.includes('HTTP 400'));
   }
 
   async function createSession() {
@@ -2480,6 +2488,16 @@ export default function CdsAgentPage() {
             const retryStartRes = await startInfraAgentSession(session.id);
             if (!retryStartRes.success || !retryStartRes.data?.item) {
               toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
+              await refreshDetail(session.id);
+              return;
+            }
+            session = retryStartRes.data.item;
+            upsertSession(session);
+          } else if (isTransientStartFailure(startRes)) {
+            await new Promise((resolve) => window.setTimeout(resolve, 2500));
+            const retryStartRes = await startInfraAgentSession(session.id);
+            if (!retryStartRes.success || !retryStartRes.data?.item) {
+              toast.error('启动失败', retryStartRes.error?.message ?? 'CDS runtime 暂不可用，请稍后重试');
               await refreshDetail(session.id);
               return;
             }
