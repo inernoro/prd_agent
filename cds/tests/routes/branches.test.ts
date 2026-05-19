@@ -527,6 +527,58 @@ describe('Branch Routes', () => {
       expect(stateService.getProject('default')?.lastPullAt).toBeDefined();
     });
 
+    it('pulls a real git project branch named cds-managed-runtime', async () => {
+      stateService.addBranch({
+        id: 'regular-runtime',
+        projectId: 'default',
+        branch: 'cds-managed-runtime',
+        worktreePath: path.join(tmpDir, 'worktrees', 'regular-runtime'),
+        status: 'running',
+        services: {},
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+        githubCommitSha: 'abc1234',
+      });
+      mock.commands.length = 0;
+
+      const res = await request(server, 'POST', '/api/branches/regular-runtime/pull');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).skipped).toBeUndefined();
+      expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
+    });
+
+    it('skips pull only for the shared-service synthetic cds-managed-runtime branch', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'shared-sidecar-pool',
+        slug: 'shared-sidecar-pool',
+        name: 'Shared Sidecar Pool',
+        kind: 'shared-service',
+        createdAt: now,
+        updatedAt: now,
+      });
+      stateService.addBranch({
+        id: 'shared-runtime',
+        projectId: 'shared-sidecar-pool',
+        branch: 'cds-managed-runtime',
+        worktreePath: path.join(tmpDir, 'worktrees', 'shared-runtime'),
+        status: 'running',
+        services: {},
+        createdAt: now,
+        lastAccessedAt: now,
+        githubCommitSha: 'cds-managed-runtime',
+      });
+      mock.commands.length = 0;
+
+      const res = await request(server, 'POST', '/api/branches/shared-runtime/pull');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).skipped).toBe(true);
+      expect((res.body as any).reason).toBe('synthetic-cds-managed-runtime');
+      expect(mock.commands.some(command => command.includes('git fetch'))).toBe(false);
+    });
+
     it('should return 404 for unknown branch', async () => {
       const res = await request(server, 'POST', '/api/branches/nope/pull');
       expect(res.status).toBe(404);

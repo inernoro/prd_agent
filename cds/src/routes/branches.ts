@@ -15,7 +15,7 @@ import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -183,7 +183,11 @@ type BranchDeployRuntime = {
 // classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
 // auto-lifecycle.ts 共用同一份正则，避免两处漂移）。
 
-function isSyntheticCdsManagedRuntimeBranch(branch: Pick<BranchEntry, 'branch' | 'githubCommitSha'>): boolean {
+function isSyntheticCdsManagedRuntimeBranch(
+  branch: Pick<BranchEntry, 'branch' | 'githubCommitSha'>,
+  project?: Pick<Project, 'kind'> | null,
+): boolean {
+  if (project?.kind !== 'shared-service') return false;
   return branch.branch === 'cds-managed-runtime' || branch.githubCommitSha === 'cds-managed-runtime';
 }
 
@@ -3004,7 +3008,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      const result = isSyntheticCdsManagedRuntimeBranch(entry)
+      const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const result = isSyntheticCdsManagedRuntimeBranch(entry, project)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
@@ -3205,7 +3210,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
         force: true,
       });
-      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry)
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
@@ -3865,7 +3870,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
-      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry)
+      const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
