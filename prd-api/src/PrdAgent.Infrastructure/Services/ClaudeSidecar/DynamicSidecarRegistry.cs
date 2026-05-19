@@ -239,7 +239,9 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var emptyEndpointDetails = new List<string>();
         foreach (var conn in activeCds)
         {
-            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: true);
+            // Discovery refresh is a background read path. It must never revoke the
+            // platform-level CDS pairing; explicit probe/auth flows own that state.
+            var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: false);
             if (string.IsNullOrWhiteSpace(longToken))
             {
                 encryptedTokenFailures += 1;
