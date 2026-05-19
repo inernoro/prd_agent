@@ -3159,6 +3159,58 @@ export default function CdsAgentPage() {
 	      .filter((event) => event.type === 'tool_result' || event.type === 'error' || event.type === 'file' || event.type === 'diff')
 	      .slice(-6)
 	      .reverse();
+	    const simplePromptPresetRow = (
+	      <div className="flex flex-wrap justify-center gap-2">
+	        {promptPresets.map((item) => (
+	          <button
+	            key={item}
+	            type="button"
+	            onClick={() => setPrompt(item)}
+	            className="rounded-lg px-2.5 py-1.5 text-xs text-white/46 hover:text-white/76"
+	            style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}
+	          >
+	            {item}
+	          </button>
+	        ))}
+	      </div>
+	    );
+	    const simpleComposer = (
+	      <div className="w-full max-w-[780px] rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 18px 50px rgba(0,0,0,0.26)' }}>
+	        <textarea
+	          value={prompt}
+	          onChange={(e) => setPrompt(e.target.value)}
+	          rows={3}
+	          placeholder="告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR"
+	          className="min-h-[86px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-sm text-white outline-none placeholder:text-white/30"
+	        />
+	        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
+	          <input
+	            value={draft.gitRepository}
+	            onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+	            placeholder="仓库 URL，可留空使用默认 workspace"
+	            className="h-9 min-w-[220px] flex-1 rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/28"
+	            style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+	          />
+	          <input
+	            value={draft.gitRef}
+	            onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
+	            placeholder="main"
+	            className="h-9 w-[104px] rounded-lg px-3 text-xs text-white outline-none placeholder:text-white/28"
+	            style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+	          />
+	          <button
+	            type="button"
+	            onClick={() => void runSimpleReadonlyReview()}
+	            disabled={sendDisabled}
+	            className="inline-flex h-9 min-w-[94px] items-center justify-center gap-2 rounded-lg text-sm font-semibold disabled:opacity-45"
+	            style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
+	          >
+	            {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
+	            {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
+	          </button>
+	        </div>
+	      </div>
+	    );
 	    return (
 	      <div className="h-full min-h-0 overflow-y-auto px-3 py-4 text-white sm:px-5" style={{ background: '#0B0F14' }}>
 	        <div className="mx-auto grid min-h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
@@ -3248,7 +3300,7 @@ export default function CdsAgentPage() {
 	            </div>
 	          </aside>
 
-	          <main className="min-h-[640px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.075)' }}>
+	          <main className="flex min-h-[640px] flex-col overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.075)' }}>
 	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 	              <div className="min-w-0">
 	                <div className="flex items-center gap-2">
@@ -3295,40 +3347,15 @@ export default function CdsAgentPage() {
 	              </div>
 	            </div>
 
-	            <div className="grid gap-2 px-5 py-4 md:grid-cols-[minmax(0,1fr)_116px]">
-	              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_104px]">
-	                <input
-	                  value={draft.gitRepository}
-	                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
-	                  placeholder="仓库 URL，可留空使用默认 workspace"
-	                  className="h-10 rounded-xl px-3 text-sm text-white outline-none placeholder:text-white/28"
-	                  style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}
-	                />
-	                <input
-	                  value={draft.gitRef}
-	                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
-	                  placeholder="main"
-	                  className="h-10 rounded-xl px-3 text-sm text-white outline-none placeholder:text-white/28"
-	                  style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}
-	                />
-	              </div>
-	              <button
-	                type="button"
-	                onClick={() => void runSimpleReadonlyReview()}
-	                disabled={sendDisabled}
-	                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold disabled:opacity-45"
-	                style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
-	              >
-	                {busy ? <MapSpinner size={15} /> : <Play size={15} />}
-	                运行
-	              </button>
-	            </div>
-
-	            <div ref={timelineRef} className="mx-5 min-h-[420px] max-h-[calc(100vh-370px)] space-y-3 overflow-y-auto rounded-2xl p-4" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)', overscrollBehavior: 'contain' }}>
+	            <div ref={timelineRef} className="mx-5 mt-4 flex-1 space-y-3 overflow-y-auto rounded-2xl p-4" style={{ background: hasTimeline ? 'rgba(0,0,0,0.16)' : 'transparent', border: hasTimeline ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent', overscrollBehavior: 'contain' }}>
 	              {!hasTimeline ? (
-	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 text-center text-sm text-white/40">
-	                  <MessageSquare size={24} className="text-white/28" />
-	                  <div className="max-w-sm leading-relaxed">输入巡检目标后运行。Agent 的回复会出现在这里，过程事件默认折叠，避免日志淹没结果。</div>
+	                <div className="flex h-full min-h-[520px] flex-col items-center justify-center gap-6 text-center">
+	                  <div>
+	                    <h2 className="text-2xl font-semibold text-white/88">要在这个仓库里检查什么？</h2>
+	                    <div className="mt-2 text-sm text-white/42">输入任务后，CDS 会创建只读 Agent 会话并把过程、结果和产物沉淀在右侧。</div>
+	                  </div>
+	                  {simpleComposer}
+	                  {simplePromptPresetRow}
 	                </div>
 	              ) : (
 	                timelineBlocks.map((block) => {
@@ -3456,40 +3483,12 @@ export default function CdsAgentPage() {
               )}
 	            </div>
 
-	            <div className="flex flex-wrap gap-2 px-5 pb-2 pt-3">
-	              {promptPresets.map((item) => (
-	                <button
-	                  key={item}
-                  type="button"
-	                  onClick={() => setPrompt(item)}
-	                  className="rounded-lg px-2.5 py-1.5 text-xs text-white/46 hover:text-white/76"
-	                  style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}
-	                >
-	                  {item}
-	                </button>
-	              ))}
-	            </div>
-
-	            <div className="flex gap-2 px-5 pb-5">
-	              <textarea
-	                value={prompt}
-	                onChange={(e) => setPrompt(e.target.value)}
-	                rows={3}
-	                placeholder="告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR"
-	                className="min-h-[78px] flex-1 resize-none rounded-2xl px-4 py-3 text-sm text-white outline-none placeholder:text-white/30"
-	                style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
-	              />
-	              <button
-	                type="button"
-	                onClick={() => void runSimpleReadonlyReview()}
-	                disabled={sendDisabled}
-	                className="inline-flex w-[92px] items-center justify-center gap-2 rounded-2xl text-sm font-semibold disabled:opacity-45"
-	                style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
-	              >
-	                {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
-	                {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
-	              </button>
-	            </div>
+	            {hasTimeline && (
+	              <div className="space-y-3 px-5 pb-5 pt-3">
+	                {simplePromptPresetRow}
+	                {simpleComposer}
+	              </div>
+	            )}
 	          </main>
 
 	          <aside className="min-h-[520px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -4346,9 +4345,9 @@ export default function CdsAgentPage() {
             </div>
 
             <div className="grid flex-1 gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-              <section className="flex min-h-0 flex-col gap-3">
-                {activeSession && (
-                  <div className="rounded-lg p-3" style={{ background: activeSession.manualTakeoverEnabled ? 'rgba(99,179,237,0.1)' : 'rgba(0,0,0,0.14)', border: activeSession.manualTakeoverEnabled ? '1px solid rgba(99,179,237,0.28)' : '1px solid rgba(255,255,255,0.06)' }}>
+	              <section className="flex min-h-0 flex-col gap-3">
+	                {activeSession && (
+	                  <div className="order-1 rounded-lg p-3" style={{ background: activeSession.manualTakeoverEnabled ? 'rgba(99,179,237,0.1)' : 'rgba(0,0,0,0.14)', border: activeSession.manualTakeoverEnabled ? '1px solid rgba(99,179,237,0.28)' : '1px solid rgba(255,255,255,0.06)' }}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="min-w-0">
                         <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76">
@@ -4372,7 +4371,7 @@ export default function CdsAgentPage() {
                     </div>
                   </div>
                 )}
-                <details id="pro-runtime-diagnostics" className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}>
+	                <details id="pro-runtime-diagnostics" className="order-5 rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}>
                   <summary className="cursor-pointer select-none text-sm font-semibold text-white/70">
                     Runtime / 门禁 / 调试诊断
                   </summary>
@@ -5173,7 +5172,7 @@ export default function CdsAgentPage() {
                     )}
                   </div>
                 </details>
-                <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+	                <div className="order-2 min-h-[360px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
                     <span className="text-xs text-white/35">{messages.length} 条</span>
@@ -5214,7 +5213,7 @@ export default function CdsAgentPage() {
                   )}
                 </div>
 
-                <details className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+	                <details className="order-6 rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <summary className="cursor-pointer select-none text-xs font-semibold text-white/60">
                     事件时间线 · {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
                   </summary>
@@ -5315,7 +5314,7 @@ export default function CdsAgentPage() {
                   )}
                   </div>
                 </details>
-                <details className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.06)' }}>
+	                <details className="order-4 rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <summary className="cursor-pointer select-none text-xs font-semibold text-white/62">
                     上下文
                   </summary>
@@ -5360,13 +5359,14 @@ export default function CdsAgentPage() {
                     </div>
                   </div>
                 </details>
-                <div className="flex gap-2">
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    rows={3}
-                    className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
-                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.1)' }}
+	                <div className="order-3 flex gap-2 rounded-xl p-2" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+	                  <textarea
+	                    value={prompt}
+	                    onChange={(e) => setPrompt(e.target.value)}
+	                    rows={3}
+	                    placeholder="继续要求 Agent，例如：只读巡检当前仓库，找一个最值得修复的小问题"
+	                    className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+	                    style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}
                   />
                   <button type="button" onClick={() => void sendPrompt()} disabled={!activeSession || busy || !prompt.trim() || (!canSendActiveSession && !canRecordManualInput)} className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45" style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}>
                     {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />} {activeSession?.manualTakeoverEnabled ? '记录' : '发送'}
