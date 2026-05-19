@@ -20,7 +20,7 @@
 | --- | --- |
 | 主架构 | MAP 只连 CDS；CDS 管理 runtime/container/sandbox；Claude Agent SDK 是 CDS-managed runtime |
 | 当前已验收 | 官方 SDK 只读代码巡检闭环通过；默认 hardened-readonly profile 不暴露 Bash/Edit/Write |
-| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s |
+| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；正式报告 `doc/report.cds-agent-p4-2-provider-closure-2026-05-19.md` |
 | 当前分支 | `codex/cds-agent-workbench-ui` 已部署到远端 preview commit `6b2f1552e` |
 | 当前最高优先级 | 进入 Phase 4 后续发布/试用收口：保持 MAP/CDS 控制面，继续减少自研 loop，按真实用户路径打磨入口 |
 | 当前不是主线 | SSH、remote host env、sidecar image registry 都只能作为 operator/debug fallback，不能作为普通用户路径 |
@@ -558,6 +558,7 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | [x] | 完成 P3-6 Phase 3 验收包 | 已生成 Phase 3 Markdown/HTML/PDF 验收报告；报告覆盖 trace bundle、adapter matrix、SLA/成本、定时巡检、知识治理、权限治理、runtime profile scoped/team-shared policy、owner UI、治理红线、smoke、单测、构建和视觉证据 |
 | [x] | 完成 P4-1 远端发布前验收与试用入口 | 已修正预检/视觉脚本假阻塞；确认远端 preview app 运行时代码无需重复部署；远端 API、runtime-status 和 `/cds-agent` 视觉验收通过；当前真实阻塞收敛为 R1 provider-switch profile |
 | [x] | 完成 P4-2 远端 R1 provider-switch profile 闭环 | 已导入远端系统主模型 DeepSeek V3.2 provider-switch profile；修复 CDS official SDK runtime 事件流式 ingest、MAP 远程错误终态归并和 `error_max_turns` 分类；provider-backed one-cycle 通过，证明远端只读代码巡检、危险工具阻断、stop、视觉和非代码边界均可复跑 |
+| [x] | 沉淀 P4-2 正式验收报告 | 已生成 Markdown/HTML/PDF 报告，归档远端 provider-backed one-cycle 结论、gate 清单、修复点、耗时、视觉截图和残留风险 |
 
 ### 14.6 下一次开发入口
 
@@ -582,4 +583,5 @@ Phase 0/1/2/3 已完成本地验收，P4-1/P4-2 已完成远端 provider-backed 
 | 对勾 | 小节点 | 最终目标 | 验收标准 | 证据 |
 | --- | --- | --- | --- | --- |
 | [x] | P4-1 远端发布前验收与试用入口 | 远端先验收真实入口，再决定是否需要关键部署 | 本地关键 smoke 通过；self-update 预检不误报；远端 preview API 可达；runtime-status 可读；远端 `/cds-agent` 视觉信号完整；无运行时代码差异时不重复部署 | `doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.md`；`doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.html`；`doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.pdf`；`scripts/preflight-cds-agent-cds-self-update.sh` pass；`scripts/smoke-cds-agent-phase3-acceptance.sh` pass；`scripts/smoke-cds-agent-simple-panel.sh` pass；`scripts/smoke-cds-agent-workflow-node.sh` pass；`scripts/smoke-cds-agent-kb-readonly-tools.sh` pass；远端 root HTTP 200；远端 session API success；远端 runtime-status `/tmp/cds-agent-p4-1/runtime-status.json`；视觉截图 `/tmp/cds-agent-p4-1-remote-workbench.png`；视觉 coverage `/tmp/cds-agent-p4-1-remote-workbench.coverage.json` pass |
-| [x] | P4-2 远端 R1 provider-switch profile 闭环 | 用户可以真实发起一次 provider-backed 只读代码巡检 | 远端 `runtime-status` 不再卡在 `R1/N1`；默认 profile 使用可用 provider-switch 配置；provider-backed one-cycle pass；简洁面板显示真实 session/result/artifacts | commit `6b2f1552e` 已部署；`/tmp/cds-agent-p4-2-one-cycle-accepted/cycle-summary.json`：`commercialComplete=true`、R0/A0/R1/S1/S2/S3/V1/N6 pass、10 passed / 1 legacy skip / 0 failed；S1 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/s1-report.json`；S2/S3 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json`；视觉截图 `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png`；视觉 coverage `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.coverage.json`；R1 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/r1-report.json`；远端 preview `https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent` |
+| [x] | P4-2 远端 R1 provider-switch profile 闭环 | 用户可以真实发起一次 provider-backed 只读代码巡检 | 远端 `runtime-status` 不再卡在 `R1/N1`；默认 profile 使用可用 provider-switch 配置；provider-backed one-cycle pass；简洁面板显示真实 session/result/artifacts | `doc/report.cds-agent-p4-2-provider-closure-2026-05-19.md`；`doc/report.cds-agent-p4-2-provider-closure-2026-05-19.html`；`doc/report.cds-agent-p4-2-provider-closure-2026-05-19.pdf`；commit `6b2f1552e` 已部署；`/tmp/cds-agent-p4-2-one-cycle-accepted/cycle-summary.json`：`commercialComplete=true`、R0/A0/R1/S1/S2/S3/V1/N6 pass、10 passed / 1 legacy skip / 0 failed；S1 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/s1-report.json`；S2/S3 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json`；视觉截图 `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png`；视觉 coverage `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.coverage.json`；R1 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/r1-report.json`；远端 preview `https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent` |
+| [ ] | P4-3 远端试用入口说明与验收包 | 用户和研发能按同一个入口试用、复跑、看结果、看失败原因 | 不新增架构、不新增 agent loop；补齐试用步骤、复跑命令、失败排查入口和发布验收包 | 下一步 |
