@@ -366,4 +366,114 @@ describe('SchedulerService', () => {
       expect(snap.enabled).toBe(false);
     });
   });
+
+  // ── runtime config setters (UI override of idleTTL / maxHot) ──
+
+  describe('runtime config setters', () => {
+    it('setIdleTTLSeconds mutates config so the next tick uses the new threshold', async () => {
+      // idle TTL starts at 900s (15min). A branch idle for 600s should NOT
+      // cool yet, but after lowering the threshold to 300s it should.
+      stateService.addBranch(makeBranch('feature-a', 'running', { heatState: 'hot' }));
+      scheduler.touch('feature-a');
+      clock.advance(600_000); // 10 min idle
+
+      await scheduler.tick();
+      expect(cooled).toEqual([]); // still under the 15min default
+
+      scheduler.setIdleTTLSeconds(300); // lower to 5 min at runtime
+      await scheduler.tick();
+      expect(cooled).toEqual(['feature-a']); // now over the 5min threshold
+    });
+
+    it('setMaxHotBranches mutates the capacity cap reflected in getSnapshot', () => {
+      scheduler.setMaxHotBranches(7);
+      expect(scheduler.getSnapshot().capacityUsage.max).toBe(7);
+    });
+
+    it('setIdleTTLSeconds / setMaxHotBranches are idempotent no-ops on same value', () => {
+      scheduler.setIdleTTLSeconds(900); // same as default
+      scheduler.setMaxHotBranches(3); // same as default
+      const snap = scheduler.getSnapshot();
+      expect(snap.config.idleTTLSeconds).toBe(900);
+      expect(snap.config.maxHotBranches).toBe(3);
+    });
+  });
+
+  // ── state persistence of the UI overrides ──
+
+  describe('scheduler override persistence (StateService)', () => {
+    it('idleTTL override round-trips and clears with undefined', () => {
+      expect(stateService.getSchedulerIdleTTLOverride()).toBeUndefined();
+      stateService.setSchedulerIdleTTLOverride(1800);
+      expect(stateService.getSchedulerIdleTTLOverride()).toBe(1800);
+      stateService.setSchedulerIdleTTLOverride(undefined);
+      expect(stateService.getSchedulerIdleTTLOverride()).toBeUndefined();
+    });
+
+    it('maxHot override round-trips and clears with undefined', () => {
+      expect(stateService.getSchedulerMaxHotOverride()).toBeUndefined();
+      stateService.setSchedulerMaxHotOverride(0);
+      expect(stateService.getSchedulerMaxHotOverride()).toBe(0);
+      stateService.setSchedulerMaxHotOverride(undefined);
+      expect(stateService.getSchedulerMaxHotOverride()).toBeUndefined();
+    });
+
+    it('overrides survive a save + reload cycle', () => {
+      stateService.setSchedulerIdleTTLOverride(120);
+      stateService.setSchedulerMaxHotOverride(5);
+      stateService.save();
+      const reloaded = new StateService(stateFile);
+      reloaded.load();
+      expect(reloaded.getSchedulerIdleTTLOverride()).toBe(120);
+      expect(reloaded.getSchedulerMaxHotOverride()).toBe(5);
+    });
+  });
+
+  // ── /restart re-warm: Bugbot #640 (heatState) + Codex P1 @f80d33a (lastAccessedAt) ──
+  //
+  // 这组用例锁死 stop/remove 重构后 /restart 成功路径的两个修复:
+  //  - a893003: 复位 heatState=hot，否则 getHotBranches 不计入它，maxHot 容量被绕过
+  //  - 88fd870: 显式刷新 lastAccessedAt，否则被空闲 TTL 降温过的分支(lastAccessedAt
+  //    很旧) markHot 后下一个 tick 立刻又按"空闲超时"重降温，手动重启等于无效
+  // 复刻 branches.ts:/restart 全成功分支的状态变更，不依赖 Express harness。
+  describe('restart re-warm (Bugbot #640 / Codex P1 @ f80d33a)', () => {
+    it('markHot alone keeps stale lastAccessedAt → re-cooled next tick (documents why the refresh is required)', async () => {
+      const stale = new Date(clock.now() - 3_600_000).toISOString(); // 1h ago >> 900s TTL
+      stateService.addBranch(makeBranch('a', 'running', { heatState: 'cold', lastAccessedAt: stale }));
+      // 旧 /restart 行为：只 markHot（markHot 不更新已存在的 lastAccessedAt）
+      scheduler.markHot('a');
+      expect(stateService.getBranch('a')!.heatState).toBe('hot');
+      expect(stateService.getBranch('a')!.lastAccessedAt).toBe(stale); // 未刷新
+      clock.advance(60_000); // 一个 tick 间隔
+      await scheduler.tick();
+      expect(cooled).toContain('a'); // bug：刚"重启成功"就被立刻重降温
+    });
+
+    it('restart success (refresh lastAccessedAt + markHot) survives the next tick but still cools when truly idle', async () => {
+      const stale = new Date(clock.now() - 3_600_000).toISOString();
+      stateService.addBranch(makeBranch('a', 'running', { heatState: 'cold', lastAccessedAt: stale }));
+
+      // 复刻 branches.ts /restart 全成功分支的状态变更
+      const entry = stateService.getBranch('a')!;
+      entry.status = 'running';
+      entry.lastAccessedAt = new Date(clock.now()).toISOString(); // 88fd870 修复
+      scheduler.markHot('a');                                     // a893003 修复
+
+      // heatState 复位：重新计入 hot pool（容量上限不再被绕过）
+      expect(scheduler.getSnapshot().hot.map((h) => h.slug)).toContain('a');
+      expect(scheduler.getSnapshot().cold.map((c) => c.slug)).not.toContain('a');
+      // lastAccessedAt 已刷新到 now
+      expect(stateService.getBranch('a')!.lastAccessedAt).toBe(new Date(clock.now()).toISOString());
+
+      // 一个 tick 间隔后(< idle TTL)：不得被重降温
+      clock.advance(60_000);
+      await scheduler.tick();
+      expect(cooled).not.toContain('a');
+
+      // 但真正空闲超过 TTL 且无再访问 → 仍正常降温(不回退降温能力)
+      clock.advance(900_000 + 1_000);
+      await scheduler.tick();
+      expect(cooled).toContain('a');
+    });
+  });
 });

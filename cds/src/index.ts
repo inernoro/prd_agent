@@ -477,22 +477,37 @@ const gracefulShutdownController = createGracefulShutdownController();
 // over the config-file setting so operators can flip the scheduler without
 // shelling into the box. `undefined` means "no override, use config".
 {
+  // cds.config.json 省略 scheduler 块时也要让持久化的 UI override 生效:
+  // 先把默认 scheduler config 实体化,否则下面三个 override 因 `&&
+  // config.scheduler` 守卫被跳过,用户在 Dashboard 存的 enabled/idleTTL/
+  // maxHot 重启后丢回默认,违反"survives restart"(Codex P2)。实体化后
+  // SchedulerService 也从同一个对象构造,保持一致。
+  if (!config.scheduler) {
+    config.scheduler = {
+      enabled: false,
+      maxHotBranches: 3,
+      idleTTLSeconds: 900,
+      tickIntervalSeconds: 60,
+      pinnedBranches: [],
+    };
+  }
   const uiOverride = stateService.getSchedulerEnabledOverride();
-  if (uiOverride !== undefined && config.scheduler) {
+  if (uiOverride !== undefined) {
     config.scheduler.enabled = uiOverride;
     console.log(`  [scheduler] applying UI override: enabled=${uiOverride}`);
   }
+  const idleTTLOverride = stateService.getSchedulerIdleTTLOverride();
+  if (idleTTLOverride !== undefined) {
+    config.scheduler.idleTTLSeconds = idleTTLOverride;
+    console.log(`  [scheduler] applying UI override: idleTTLSeconds=${idleTTLOverride}`);
+  }
+  const maxHotOverride = stateService.getSchedulerMaxHotOverride();
+  if (maxHotOverride !== undefined) {
+    config.scheduler.maxHotBranches = maxHotOverride;
+    console.log(`  [scheduler] applying UI override: maxHotBranches=${maxHotOverride}`);
+  }
 }
-const schedulerService = new SchedulerService(
-  stateService,
-  config.scheduler || {
-    enabled: false,
-    maxHotBranches: 3,
-    idleTTLSeconds: 900,
-    tickIntervalSeconds: 60,
-    pinnedBranches: [],
-  },
-);
+const schedulerService = new SchedulerService(stateService, config.scheduler);
 // coolFn: stop all containers of a branch but keep the branch entry in state.
 // The next request to this branch will trigger the existing auto-build path,
 // which re-runs docker run and brings the services back to HOT.
@@ -503,8 +518,13 @@ schedulerService.setCoolFn(async (slug: string) => {
   stateService.save();
   for (const svc of Object.values(branch.services)) {
     if (svc.status === 'running' || svc.status === 'starting') {
+      // 先把 svc.status 翻成 stopping 再 await stop()。stop() 重构后容器
+      // 停止仍保留(exited)，若此处仍是 running，30s auto-restart tick 命中
+      // 这段 await 窗口会把"正在主动降温"的容器误判为 crash、bump stopCount、
+      // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
+      svc.status = 'stopping';
       try {
-        await containerService.stop(svc.containerName);
+        await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）');
       } catch (err) {
         console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
       }
@@ -647,8 +667,12 @@ const autoLifecycleService = new AutoLifecycleService(
 
       for (const svc of Object.values(branch.services)) {
         if (svc.status === 'running' || svc.status === 'starting') {
+          // 同 coolFn：先翻 stopping 再 await stop()，否则 auto-restart tick
+          // 在 await 窗口会把主动停止误判为 crash 并 docker start 抢跑
+          // （Cursor Bugbot High）。
+          svc.status = 'stopping';
           try {
-            await containerService.stop(svc.containerName);
+            await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）');
           } catch (err) {
             console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
           }
@@ -793,8 +817,18 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
+  try {
+    stateService.appendActivityLog(branch.projectId, {
+      type: 'branch-deleted',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: 'janitor',
+      note: 'Janitor 自动回收：停止容器并移除 worktree（超过保留期 / 磁盘清理）',
+    });
+  } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
   for (const svc of Object.values(branch.services)) {
-    try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
+    try { await containerService.remove(svc.containerName); } catch { /* best effort */ }
   }
   try {
     const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
@@ -861,7 +895,24 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (found) {
           // Container exists in Docker — sync status
           const wasStatus = svc.status;
-          svc.status = found.running ? 'running' : 'error';
+          if (found.running) {
+            svc.status = 'running';
+          } else if (wasStatus === 'running' || wasStatus === 'starting') {
+            // 持久态认为在跑但容器已退出 → 真·异常退出，标 error
+            svc.status = 'error';
+            svc.errorMessage = '容器异常退出，疑似崩溃，需重新部署';
+          } else if (wasStatus === 'error') {
+            // 已知失败态(auto-restart 耗尽 / 部署失败)不得在重启后被降级为
+            // stopped，否则失败看起来像正常停止，没人去 redeploy。保持 error
+            // 且保留原 errorMessage（Cursor Bugbot Medium）。
+            svc.status = 'error';
+          } else {
+            // stop() 重构后主动停止保留容器(exited)：CDS 进程重启后 boot
+            // reconcile 不得把"被用户/调度器/auto-lifecycle 主动停掉"的分支
+            // 误标 error。退出且持久态为 stopped/idle/stopping 等 → 归一为
+            // stopped（Cursor Bugbot Medium）。
+            svc.status = 'stopped';
+          }
           if (wasStatus !== svc.status) appReconciled++;
           appContainers.delete(key);
         } else if (svc.status === 'running') {
@@ -958,6 +1009,11 @@ janitorService.setRemoveFn(async (slug: string) => {
     const now = Date.now();
     const MAX_RETRIES = 3;
     const BASE_BACKOFF_MS = 30_000; // 30s, 60s, 120s
+    // 崩溃留痕按"分支"去重，本 tick 内一个分支只记一次 stopCount /
+    // lastStop* / 活动日志，与其它停止路径（手动 / scheduler / executor /
+    // auto-lifecycle 均为 once-per-branch）保持一致；docker start 重试仍
+    // 按 service 进行（Cursor Bugbot：多服务同时崩溃会重复计数）。
+    const crashRecordedThisTick = new Set<string>();
 
     // App 容器
     const appContainers = await containerService.discoverAppContainers();
@@ -971,11 +1027,42 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)
 
         const attemptKey = `app:${key}`;
+        const isNewCrash = !restartAttempts.has(attemptKey);
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
+        // 容器自行退出（崩溃 / OOM / docker kill）首次被巡检发现：留痕，
+        // 否则用户只看到分支变灰、"停止次数 0"、零日志（莫名其妙停止）。
+        // 同一分支同一 tick 只记一次，避免多服务同崩重复计数 / 覆盖原因。
+        if (isNewCrash && !crashRecordedThisTick.has(branch.id)) {
+          crashRecordedThisTick.add(branch.id);
+          const reason = `容器异常退出（docker 显示未运行），auto-restart 介入尝试拉起：${found.containerName}`;
+          branch.lastStoppedAt = new Date().toISOString();
+          branch.lastStopReason = reason;
+          branch.lastStopSource = 'crash';
+          stateService.incrementBranchStat(branch.id, 'stopCount');
+          try {
+            stateService.appendActivityLog(branch.projectId, {
+              type: 'crash',
+              branchId: branch.id,
+              branchName: branch.branch,
+              actor: 'auto-restart',
+              note: reason,
+            });
+          } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+          stateService.save();
+        }
         if (now < att.nextAtMs) continue;
         if (att.count >= MAX_RETRIES) {
           svc.status = 'error';
           svc.errorMessage = `auto-restart 已尝试 ${MAX_RETRIES} 次仍失败,请手动 redeploy 或查看容器日志(${found.containerName})`;
+          try {
+            stateService.appendActivityLog(branch.projectId, {
+              type: 'deploy-failed',
+              branchId: branch.id,
+              branchName: branch.branch,
+              actor: 'auto-restart',
+              note: `auto-restart 重试 ${MAX_RETRIES} 次仍失败，已标记 error，请手动重新部署`,
+            });
+          } catch { /* 辅助 */ }
           stateService.save();
           continue;
         }
@@ -983,6 +1070,16 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (startRes.exitCode === 0) {
           console.log(`[auto-restart] app ${found.containerName} 已重启(attempt ${att.count + 1})`);
           restartAttempts.delete(attemptKey);
+          try {
+            stateService.appendActivityLog(branch.projectId, {
+              type: 'restart',
+              branchId: branch.id,
+              branchName: branch.branch,
+              actor: 'auto-restart',
+              note: `容器异常退出后由 auto-restart 自动拉起成功（第 ${att.count + 1} 次尝试）：${found.containerName}`,
+            });
+          } catch { /* 辅助 */ }
+          stateService.save();
         } else {
           att.count += 1;
           att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);

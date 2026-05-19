@@ -50,7 +50,7 @@ interface BranchDetailData {
   /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
   lastStoppedAt?: string;
   lastStopReason?: string;
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
@@ -139,6 +139,23 @@ interface DrawerActivityEvent {
   errorSummary?: string;
 }
 
+// 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
+// 后端 GET /api/branches/:id/activity-logs 返回，已按最新在前排序。
+interface BranchActivityLog {
+  id: string;
+  at: string;
+  type: string;
+  branchId?: string;
+  branchName?: string;
+  actor?: string;
+  note?: string;
+}
+type SystemLogsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; logs: BranchActivityLog[] }
+  | { status: 'error'; message: string };
+
 interface BuildLogSelection {
   title: string;
   status: string;
@@ -187,16 +204,17 @@ export interface BranchDeploymentItem {
   suggestion?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'events' | 'logs' | 'httpLogs' | 'variables' | 'metrics' | 'settings';
-type LogsMode = 'build' | 'container';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
+// 2026-05-18: 日志页签合一。原本 Webhook 日志 / 日志 / HTTP 三个并列页签
+// 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
+// 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
+type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
 
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '服务' },
-  { key: 'events', label: 'Webhook 日志' },
   { key: 'logs', label: '日志' },
-  { key: 'httpLogs', label: 'HTTP' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
   { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
   { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
@@ -506,7 +524,7 @@ export function BranchDetailDrawer({
   onToast?: (message: string) => void;
   /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
       delete 完成时本组件会自动 onClose,父页面无需特别处理。 */
-  onActionComplete?: (action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete') => void;
+  onActionComplete?: (action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete') => void;
   /**
    * Production preview URL precomputed at the caller (so the Drawer
    * doesn't have to load /api/config independently). Empty string =
@@ -534,6 +552,7 @@ export function BranchDetailDrawer({
   const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
+  const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
@@ -568,9 +587,9 @@ export function BranchDetailDrawer({
   const branchIdRef = useRef<string>(branchId || '');
   useEffect(() => { branchIdRef.current = branchId || ''; }, [branchId]);
   // Phase C — Settings tab(2026-05-04)
-  const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
+  const [actionBusy, setActionBusy] = useState<'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [logsMode, setLogsMode] = useState<LogsMode>('build');
+  const [logsMode, setLogsMode] = useState<LogsMode>('system');
   const [selectedBuildLog, setSelectedBuildLog] = useState<BuildLogSelection | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [serviceLogs, setServiceLogs] = useState<ServiceLogsState>({ status: 'idle' });
@@ -664,6 +683,23 @@ export function BranchDetailDrawer({
     }
   }, [branch?.branch, branch?.githubRepoFullName, branchId]);
 
+  const loadSystemLogs = useCallback(async () => {
+    if (!branchId) return;
+    const requestForBranch = branchId;
+    setSystemLogsState({ status: 'loading' });
+    try {
+      const raw = await apiRequest<{ logs?: BranchActivityLog[] }>(
+        `/api/branches/${encodeURIComponent(branchId)}/activity-logs?limit=100`,
+      );
+      // 切到别的分支后，慢响应不得覆盖新分支的时间线（Codex P1）。
+      if (branchIdRef.current !== requestForBranch) return;
+      setSystemLogsState({ status: 'ok', logs: Array.isArray(raw?.logs) ? raw.logs : [] });
+    } catch (err) {
+      if (branchIdRef.current !== requestForBranch) return;
+      setSystemLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [branchId]);
+
   /**
    * 2026-05-14: 加载下一页 webhook 日志。state 必须已经是 ok，把后端返回的下一段
    * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
@@ -742,7 +778,7 @@ export function BranchDetailDrawer({
     if (!open || !branchId) return;
     failureAutoSwitchedRef.current = false;
     setActiveTab('deployments');
-    setLogsMode('build');
+    setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
     // 2026-05-14 Codex review P2：切到另一分支时必须清空内联容器日志的
@@ -761,6 +797,9 @@ export function BranchDetailDrawer({
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
     setTriggerLogsState({ status: 'idle' });
+    // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
+    // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
+    setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
@@ -852,10 +891,14 @@ export function BranchDetailDrawer({
   }, [activeTab, envState.status, loadEnv]);
 
   useEffect(() => {
-    if (activeTab === 'events' && branch && triggerLogsState.status === 'idle') {
+    if (activeTab !== 'logs' || !branch) return;
+    if (logsMode === 'webhook' && triggerLogsState.status === 'idle') {
       void loadTriggerLogs();
     }
-  }, [activeTab, branch, loadTriggerLogs, triggerLogsState.status]);
+    if (logsMode === 'system' && systemLogsState.status === 'idle') {
+      void loadSystemLogs();
+    }
+  }, [activeTab, logsMode, branch, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -942,7 +985,7 @@ export function BranchDetailDrawer({
   // 直接 reuse 现有 endpoints,不引入新 backend 路径。delete 成功后自动关抽屉,
   // 其它操作完成后重新拉一次 branch 详情(让"运行中"状态及时更新)。
   const runBranchAction = useCallback(async (
-    action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
+    action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
   ): Promise<void> => {
     if (!branchId) return;
@@ -1375,6 +1418,7 @@ export function BranchDetailDrawer({
                                 {branch.lastStopSource === 'user' ? '用户'
                                   : branch.lastStopSource === 'scheduler' ? '调度器'
                                   : branch.lastStopSource === 'executor' ? '执行器'
+                                  : branch.lastStopSource === 'crash' ? '崩溃'
                                   : '系统'}
                               </span>
                             ) : null}
@@ -1536,24 +1580,27 @@ export function BranchDetailDrawer({
                   <section className="cds-surface-raised cds-hairline">
                     <header className="border-b border-[hsl(var(--hairline))] px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
-                          <button
-                            type="button"
-                            className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === 'build' ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                            onClick={() => {
-                              setLogsMode('build');
-                              setSelectedBuildLog(null);
-                            }}
-                          >
-                            构建日志
-                          </button>
-                          <button
-                            type="button"
-                            className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === 'container' ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                            onClick={() => openContainerLogs()}
-                          >
-                            容器日志
-                          </button>
+                        <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
+                          {([
+                            ['system', '系统日志'],
+                            ['build', '构建日志'],
+                            ['container', '容器日志'],
+                            ['webhook', 'Webhook'],
+                            ['http', 'HTTP'],
+                          ] as Array<[LogsMode, string]>).map(([mode, label]) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === mode ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                              onClick={() => {
+                                if (mode === 'container') { openContainerLogs(); return; }
+                                if (mode === 'build') setSelectedBuildLog(null);
+                                setLogsMode(mode);
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
                         </div>
                         <div className="flex min-w-0 items-center gap-2">
                           <input
@@ -1566,7 +1613,12 @@ export function BranchDetailDrawer({
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => logsMode === 'build' ? void load() : selectedService ? void loadServiceLogs(selectedService.profileId) : undefined}
+                            onClick={() => {
+                              if (logsMode === 'system') return void loadSystemLogs();
+                              if (logsMode === 'webhook') return void loadTriggerLogs();
+                              if (logsMode === 'build' || logsMode === 'http') return void load();
+                              if (selectedService) void loadServiceLogs(selectedService.profileId);
+                            }}
                           >
                             <RefreshCw />
                             刷新
@@ -1574,7 +1626,18 @@ export function BranchDetailDrawer({
                         </div>
                       </div>
                     </header>
-                    {logsMode === 'build' ? (
+                    {logsMode === 'system' ? (
+                      <SystemLogsPanel state={systemLogsState} query={logQuery} />
+                    ) : logsMode === 'webhook' ? (
+                      <TriggerLogsPanel
+                        state={triggerLogsState}
+                        query={logQuery}
+                        branch={branch}
+                        onLoadMore={() => void loadMoreTriggerLogs()}
+                      />
+                    ) : logsMode === 'http' ? (
+                      <HttpLogsPanel events={visibleActivityEvents} query={logQuery} />
+                    ) : logsMode === 'build' ? (
                       <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
@@ -1601,35 +1664,6 @@ export function BranchDetailDrawer({
                         <ServiceLogsPanel service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
                       </>
                     )}
-                  </section>
-                ) : null}
-
-                {activeTab === 'events' ? (
-                  <section className="cds-surface-raised cds-hairline">
-                    <LogsHeader
-                      title="Webhook 日志"
-                      query={logQuery}
-                      onQueryChange={setLogQuery}
-                      onRefresh={() => void loadTriggerLogs()}
-                    />
-                    <TriggerLogsPanel
-                      state={triggerLogsState}
-                      query={logQuery}
-                      branch={branch}
-                      onLoadMore={() => void loadMoreTriggerLogs()}
-                    />
-                  </section>
-                ) : null}
-
-                {activeTab === 'httpLogs' ? (
-                  <section className="cds-surface-raised cds-hairline">
-                    <LogsHeader
-                      title="HTTP Logs"
-                      query={logQuery}
-                      onQueryChange={setLogQuery}
-                      onRefresh={() => void load()}
-                    />
-                    <HttpLogsPanel events={visibleActivityEvents} query={logQuery} />
                   </section>
                 ) : null}
 
@@ -1829,6 +1863,16 @@ export function BranchDetailDrawer({
                 <Button
                   className="flex-1"
                   disabled={!!actionBusy}
+                  title="只把已构建好的容器拉起来（docker restart），不重新拉代码 / 不重建镜像。没有代码变更时用这个，秒级。"
+                  onClick={() => void runBranchAction('restart', '重新启动')}
+                >
+                  {actionBusy === 'restart' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  {actionBusy === 'restart' ? '正在重启…' : '重新启动'}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!!actionBusy}
+                  title="拉取最新代码 + 重新构建镜像 + 重启（有代码变更 / 重启失败时用这个，较慢）。"
                   onClick={() => void runBranchAction('deploy', '部署')}
                 >
                   {actionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
@@ -1933,33 +1977,59 @@ function filterServiceLogs(state: ServiceLogsState, query: string): ServiceLogsS
   return { ...state, logs: lines.join('\n') };
 }
 
-function LogsHeader({
-  title,
-  query,
-  onQueryChange,
-  onRefresh,
-}: {
-  title: string;
-  query: string;
-  onQueryChange: (value: string) => void;
-  onRefresh: () => void;
-}): JSX.Element {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
-      <h3 className="text-sm font-semibold">{title}</h3>
-      <div className="flex min-w-0 items-center gap-2">
-        <input
-          className="h-8 w-52 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-xs outline-none placeholder:text-muted-foreground focus:border-primary"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Filter logs"
-        />
-        <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
-          <RefreshCw />
-          刷新
-        </Button>
+// 2026-05-18: 分支系统日志（生命周期时间线）。每条带时间戳 + 事件类型徽标
+// + 触发者 + 原因，最新在前。这是用户排查"分支莫名其妙停止"的主入口：
+// 崩溃 / 调度器降温 / janitor 回收 / 用户手动停止 / auto-restart 都会留痕。
+function systemLogTypeMeta(type: string): { label: string; cls: string } {
+  switch (type) {
+    case 'deploy': return { label: '部署', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
+    case 'deploy-failed': return { label: '部署失败', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
+    case 'pull': return { label: '拉取', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
+    case 'stop': return { label: '停止', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
+    case 'restart': return { label: '重启', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
+    case 'crash': return { label: '崩溃', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
+    case 'branch-created': return { label: '新建', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
+    case 'branch-deleted': return { label: '回收', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
+    default: return { label: type, cls: 'border-border bg-muted text-muted-foreground' };
+  }
+}
+
+function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
+  if (state.status === 'loading') return <div className="px-4 py-6 text-sm text-muted-foreground">加载系统日志…</div>;
+  if (state.status === 'error') {
+    return <div className="px-4 py-6 text-sm text-destructive">加载失败：{state.message}</div>;
+  }
+  if (state.status === 'idle') return <div className="px-4 py-6 text-sm text-muted-foreground">切换到此页签后加载。</div>;
+  const q = query.trim().toLowerCase();
+  const rows = (q
+    ? state.logs.filter((e) =>
+        (e.note || '').toLowerCase().includes(q) ||
+        (e.actor || '').toLowerCase().includes(q) ||
+        e.type.toLowerCase().includes(q))
+    : state.logs);
+  if (rows.length === 0) {
+    return (
+      <div className="px-4 py-6 text-sm text-muted-foreground">
+        {q ? '没有匹配的系统日志。' : '本分支还没有生命周期事件记录。部署 / 停止 / 崩溃 / 回收发生后会在这里显示。'}
       </div>
-    </header>
+    );
+  }
+  return (
+    <div className="divide-y divide-[hsl(var(--hairline))]">
+      {rows.map((e) => {
+        const meta = systemLogTypeMeta(e.type);
+        return (
+          <div key={e.id} className="px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded border px-2 py-0.5 ${meta.cls}`}>{meta.label}</span>
+              <span className="text-muted-foreground">{formatDeployTimestamp(e.at)}</span>
+              {e.actor ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-muted-foreground">{e.actor}</span> : null}
+            </div>
+            {e.note ? <div className="mt-1.5 leading-5 text-foreground">{e.note}</div> : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2041,12 +2111,12 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
 
 function idleBranchExplanation(branch: BranchDetailData): string {
   if ((branch.stopCount || 0) > 0) {
-    return '当前没有运行中的容器，也没有失败日志。该分支存在停止记录，可能是页面手动停止、/cds stop、PR 关闭或分支删除 webhook 触发的停止；Webhook 日志和活动记录里会显示具体来源。点击下方「重新部署」会拉取当前代码并重新启动服务。';
+    return '当前没有运行中的容器。该分支存在停止记录（手动停止 / 调度器降温 / 容器崩溃 / janitor 回收 / webhook 触发）——具体"谁停的、何时、为什么"见「日志」页签的「系统日志」。没有代码变更点「重新启动」秒级拉起；要拉新代码重建点「重新部署」。';
   }
   if ((branch.deployCount || 0) === 0) {
-    return '当前没有运行中的容器，也没有成功部署记录。若上方 Webhook 日志显示派发失败，会直接标出原因；点击下方「重新部署」会拉取当前代码并启动首次部署。';
+    return '当前没有运行中的容器，也没有成功部署记录。派发失败原因见「日志」页签的「Webhook」/「系统日志」；点击下方「重新部署」会拉取当前代码并启动首次部署。';
   }
-  return '当前没有运行中的容器，也没有失败日志。最近成功部署时间以上方「最近部署」为准；点击下方「重新部署」会拉取当前代码并重新启动服务。';
+  return '当前没有运行中的容器。最近成功部署时间以上方「最近部署」为准；停止 / 崩溃 / 回收的来源见「日志」页签的「系统日志」。没有代码变更点「重新启动」，要重建点「重新部署」。';
 }
 
 function TriggerLogsPanel({
@@ -2746,13 +2816,13 @@ function SettingsPanel({
 }: {
   branch: BranchDetailData | null;
   projectId: string;
-  busy: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null;
+  busy: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null;
   profileState: ProfileOverridesState;
   modeSavingProfileId: string | null;
   confirmDelete: boolean;
   onConfirmDelete: (next: boolean) => void;
   onRunAction: (
-    action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
+    action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
   ) => void;
   onSetProfileDeployMode: (profile: ProfileRow, mode: string) => void;

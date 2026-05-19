@@ -894,6 +894,33 @@ export class StateService {
     }
   }
 
+  // Idle-timeout override (seconds). Mirrors the enabled override above so
+  // the Dashboard can tune idleTTLSeconds without editing cds.config.json.
+  getSchedulerIdleTTLOverride(): number | undefined {
+    return this.state.schedulerIdleTTLOverride;
+  }
+
+  setSchedulerIdleTTLOverride(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.schedulerIdleTTLOverride;
+    } else {
+      this.state.schedulerIdleTTLOverride = value;
+    }
+  }
+
+  // Hot-pool cap override. Same persistence semantics as the two above.
+  getSchedulerMaxHotOverride(): number | undefined {
+    return this.state.schedulerMaxHotOverride;
+  }
+
+  setSchedulerMaxHotOverride(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.schedulerMaxHotOverride;
+    } else {
+      this.state.schedulerMaxHotOverride = value;
+    }
+  }
+
   // ── Projects (P4 Part 1: read-only list, Part 2 adds mutation) ──
 
   /**
