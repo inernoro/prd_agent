@@ -234,7 +234,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return ToView(session);
         }
 
-        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var connection = await GetActiveConnectionAsync(session, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         var now = DateTime.UtcNow;
         var hookProfile = await GetHookProfileAsync(session, ct);
@@ -397,7 +397,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             CreatedAt = now
         }, cancellationToken: ct);
 
-        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var connection = await GetActiveConnectionAsync(session, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         var cdsItem = await PostMessageToCdsAsync(connection, token, session, request.Content.Trim(), ct);
         var cdsStatus = MapCdsStatus(GetString(cdsItem, "status"));
@@ -487,7 +487,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     throw;
                 }
                 currentSession = FromView(restarted);
-                currentConnection = await GetActiveConnectionAsync(currentSession.ConnectionId, cancellationToken);
+                currentConnection = await GetActiveConnectionAsync(currentSession, cancellationToken);
                 currentToken = await GetLongTokenAsync(currentConnection.Id, cancellationToken);
                 using var retryResponse = await SendCdsJsonAsync(
                     HttpMethod.Post,
@@ -706,7 +706,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 var hookProfile = await GetHookProfileAsync(session, ct);
                 await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
-                var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+                var connection = await GetActiveConnectionAsync(session, ct);
                 var token = await GetLongTokenAsync(connection.Id, ct);
                 try
                 {
@@ -964,7 +964,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return null;
 
-        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var connection = await GetActiveConnectionAsync(session, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         var branchId = string.IsNullOrWhiteSpace(request.BranchId)
             ? "prd-agent-main"
@@ -1060,7 +1060,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 StatusCodes.Status400BadRequest);
         }
 
-        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var connection = await GetActiveConnectionAsync(session, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         var branchId = string.IsNullOrWhiteSpace(request.BranchId)
             ? "prd-agent-main"
@@ -1246,7 +1246,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         try
         {
-            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+            var connection = await GetActiveConnectionAsync(session, ct);
             var token = await GetLongTokenAsync(connection.Id, ct);
             using var response = await SendCdsJsonAsync(
                 HttpMethod.Get,
@@ -1298,7 +1298,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return ToView(session);
         }
 
-        var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+        var connection = await GetActiveConnectionAsync(session, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
         using var response = await SendCdsJsonAsync(
             HttpMethod.Post,
@@ -1394,6 +1394,49 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return connection;
     }
 
+    private async Task<InfraConnection> GetActiveConnectionAsync(InfraAgentSession session, CancellationToken ct)
+    {
+        var connection = await _connections.GetRawAsync(session.ConnectionId, ct);
+        if (connection == null)
+        {
+            var replacement = await FindActiveReplacementConnectionAsync(session, ct);
+            if (replacement != null)
+            {
+                _logger.LogWarning(
+                    "Infra agent session remapped missing CDS connection {OldConnectionId} to active system connection {NewConnectionId} project={ProjectId} session={SessionId}",
+                    session.ConnectionId,
+                    replacement.Id,
+                    replacement.ProjectId,
+                    session.Id);
+                return replacement;
+            }
+
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.ConnectionNotFound,
+                "CDS 连接不存在",
+                StatusCodes.Status404NotFound);
+        }
+        if (IsConnectionUsable(connection))
+        {
+            return connection;
+        }
+
+        var revokedReplacement = await FindActiveReplacementConnectionAsync(connection, ct);
+        if (revokedReplacement != null)
+        {
+            _logger.LogWarning(
+                "Infra agent session remapped revoked CDS connection {OldConnectionId} to active system connection {NewConnectionId} project={ProjectId} session={SessionId}",
+                connection.Id,
+                revokedReplacement.Id,
+                revokedReplacement.ProjectId,
+                session.Id);
+            return revokedReplacement;
+        }
+
+        EnsureConnectionNotRevoked(connection);
+        return connection;
+    }
+
     private async Task<InfraConnection?> FindActiveReplacementConnectionAsync(InfraConnection revokedConnection, CancellationToken ct)
     {
         return await _db.InfraConnections
@@ -1401,6 +1444,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 && c.Partner == revokedConnection.Partner
                 && c.PartnerBaseUrl == revokedConnection.PartnerBaseUrl
                 && c.ProjectId == revokedConnection.ProjectId
+                && c.Status == "active"
+                && c.LongTokenEncrypted != string.Empty
+                && c.LongTokenExpiresAt > DateTime.UtcNow)
+            .SortByDescending(c => c.LastProbeOk)
+            .ThenByDescending(c => c.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<InfraConnection?> FindActiveReplacementConnectionAsync(InfraAgentSession session, CancellationToken ct)
+    {
+        return await _db.InfraConnections
+            .Find(c => c.Partner == session.Partner
+                && c.ProjectId == session.CdsProjectId
                 && c.Status == "active"
                 && c.LongTokenEncrypted != string.Empty
                 && c.LongTokenExpiresAt > DateTime.UtcNow)
@@ -1491,7 +1547,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         try
         {
-            var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
+            var connection = await GetActiveConnectionAsync(session, ct);
             var token = await GetLongTokenAsync(connection.Id, ct);
             await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
         }
