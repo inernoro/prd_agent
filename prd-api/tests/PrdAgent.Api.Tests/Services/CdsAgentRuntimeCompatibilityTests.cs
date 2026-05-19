@@ -1,10 +1,13 @@
 using Shouldly;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Api.Services.Toolbox;
 using PrdAgent.Api.Services.Toolbox.Adapters;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using PrdAgent.Core.Interfaces;
 using Xunit;
 
@@ -19,6 +22,18 @@ public class CdsAgentRuntimeCompatibilityTests
         "LiteraryAgentAdapter.cs",
         "VisualAgentAdapter.cs",
     };
+
+    [Fact]
+    public void OpenAiCompatibleRuntime_ShouldStartAsClaudeSdkCdsRuntime()
+    {
+        var method = typeof(InfraAgentSessionService).GetMethod(
+            "NormalizeRuntime",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        method.ShouldNotBeNull();
+        method!.Invoke(null, new object?[] { InfraAgentRuntimes.OpenAiCompatible })
+            .ShouldBe(InfraAgentRuntimes.ClaudeSdk);
+    }
 
     [Theory]
     [MemberData(nameof(NonCodeAdapterSources))]

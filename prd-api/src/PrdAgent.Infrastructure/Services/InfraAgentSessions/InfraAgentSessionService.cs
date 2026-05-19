@@ -2484,7 +2484,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         return normalized switch
         {
             InfraAgentRuntimes.ClaudeSdk => InfraAgentRuntimes.ClaudeSdk,
-            InfraAgentRuntimes.OpenAiCompatible => InfraAgentRuntimes.OpenAiCompatible,
+            InfraAgentRuntimes.OpenAiCompatible => InfraAgentRuntimes.ClaudeSdk,
             InfraAgentRuntimes.Codex => InfraAgentRuntimes.Codex,
             InfraAgentRuntimes.Custom => InfraAgentRuntimes.Custom,
             _ => InfraAgentRuntimes.ClaudeSdk
