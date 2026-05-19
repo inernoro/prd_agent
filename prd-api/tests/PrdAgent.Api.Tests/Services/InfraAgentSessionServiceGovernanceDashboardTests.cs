@@ -102,6 +102,11 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
         var runtimeProfileScope = dashboard.Scopes.Single(x => x.Area == "runtime-profile");
         runtimeProfileScope.State.ShouldBe("enforced-team-aware");
         runtimeProfileScope.Evidence.ShouldContain("1 team-shared profile");
+        dashboard.OwnerPolicies.ShouldNotBeNull();
+        dashboard.OwnerPolicies!.Count.ShouldBe(3);
+        dashboard.OwnerPolicies.Single(x => x.Area == "repository").State.ShouldBe("user-owned");
+        dashboard.OwnerPolicies.Single(x => x.Area == "runtime-profile").State.ShouldBe("owner-or-team-visible");
+        dashboard.OwnerPolicies.Single(x => x.Area == "approval").State.ShouldBe("waiting-approval");
         dashboard.NextActions.ShouldContain("Continue with explicit team policy data model for repository/profile/approval ownership.");
     }
 }

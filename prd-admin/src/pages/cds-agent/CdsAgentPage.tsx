@@ -934,6 +934,7 @@ export default function CdsAgentPage() {
   const latestScheduledExecution = scheduleDashboard?.recentExecutions?.[0] ?? null;
   const governanceSummary = governanceDashboard?.summary ?? null;
   const governanceProfileGate = governanceDashboard?.gates?.find((item) => item.code === 'GOV-PROFILE-SCOPE') ?? null;
+  const governanceOwnerPolicies = governanceDashboard?.ownerPolicies ?? [];
   const gitContext = useMemo(() => {
     let branch = '';
     let commit = '';
@@ -3778,6 +3779,36 @@ export default function CdsAgentPage() {
                 </div>
                 <div className="mt-1 truncate text-xs text-white/42">{scope.evidence}</div>
               </div>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-3">
+            {governanceOwnerPolicies.map((policy) => (
+              <a
+                key={policy.area}
+                href={policy.path}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.04]"
+                style={{ background: 'rgba(2,6,23,0.28)', border: '1px solid rgba(148,163,184,0.12)' }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-semibold text-white/72">{policy.label}</span>
+                  <span
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-sky-100/72"
+                    style={{ background: 'rgba(56,189,248,0.1)' }}
+                  >
+                    {policy.state}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-[54px_1fr] gap-x-2 gap-y-1 text-xs">
+                  <span className="text-white/34">Owner</span>
+                  <span className="truncate text-white/64">{policy.owner}</span>
+                  <span className="text-white/34">Scope</span>
+                  <span className="truncate text-white/54">{policy.subject}</span>
+                </div>
+                <div className="mt-2 line-clamp-2 text-xs leading-relaxed text-white/42">{policy.evidence}</div>
+                <div className="mt-2 truncate text-[11px] text-amber-100/60">{policy.nextAction}</div>
+              </a>
             ))}
           </div>
           {governanceDashboard?.nextActions?.[0] && (

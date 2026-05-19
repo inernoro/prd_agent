@@ -2737,6 +2737,43 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         {
             nextActions.Add("Continue with explicit team policy data model for repository/profile/approval ownership.");
         }
+        var ownerPolicies = new List<InfraAgentGovernanceOwnerPolicyView>
+        {
+            new(
+                "repository",
+                "Repository owner",
+                workflows.Count == 0 ? "not-configured" : "user-owned",
+                userId,
+                teamIds.Count == 0 ? "个人上下文" : $"{teamIds.Count} team context(s)",
+                $"{workflows.Count} workflow(s) and {sessions.Count} CDS Agent session(s) are visible through current subject filters.",
+                "Repository allow-list is not yet a first-class team policy, so scheduled writable remediation stays blocked.",
+                "Add repository/team owner policy UI before enabling cross-team writable runs.",
+                "/workflow-agent"),
+            new(
+                "runtime-profile",
+                "Runtime profile owner",
+                allProfilesScopedToSubject && defaultProfileVisible ? "owner-or-team-visible" : "needs-enforcement",
+                defaultProfileOwned ? userId : "team-shared profile owner",
+                teamSharedProfileCount == 0 ? "owner-only" : $"{teamSharedProfileCount} team-shared profile(s)",
+                $"{ownedProfileCount} owned profile(s), {teamSharedProfileCount} team-shared profile(s), {profiles.Count} visible profile(s).",
+                "Team-shared profile usage is allowed, but update/delete must remain owner-only.",
+                "Expose profile owner and shared-team controls before scheduled writable remediation.",
+                "/cds-agent"),
+            new(
+                "approval",
+                "Approval owner",
+                writablePolicySessionCount == 0
+                    ? "readonly"
+                    : waitingApprovalExecutions.Count > 0
+                        ? "waiting-approval"
+                        : "needs-approval-owner",
+                userId,
+                "MAP approval",
+                $"{writablePolicySessionCount} writable session(s), {waitingApprovalExecutions.Count} waiting approval execution(s).",
+                "Writable code/KB runs can stall or bypass accountability if approval owner is not explicit.",
+                "Add team-level approval owner and stale-approval SLA before enabling batch writes.",
+                "/workflow-agent")
+        };
 
         return new InfraAgentGovernanceDashboardView(
             "cds-agent-governance-dashboard/v1",
@@ -2756,7 +2793,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 teamSharedProfileCount),
             scopes,
             gates,
-            nextActions);
+            nextActions,
+            ownerPolicies);
     }
 
     private static bool SharesAnyTeam(InfraAgentRuntimeProfile profile, IReadOnlyCollection<string> teamIds)

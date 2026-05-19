@@ -313,7 +313,8 @@ public record InfraAgentGovernanceDashboardView(
     InfraAgentGovernanceSummaryView Summary,
     IReadOnlyList<InfraAgentGovernanceScopeView> Scopes,
     IReadOnlyList<InfraAgentGovernanceGateView> Gates,
-    IReadOnlyList<string> NextActions
+    IReadOnlyList<string> NextActions,
+    IReadOnlyList<InfraAgentGovernanceOwnerPolicyView>? OwnerPolicies = null
 );
 
 public record InfraAgentGovernanceSubjectView(
@@ -351,6 +352,18 @@ public record InfraAgentGovernanceGateView(
     string Status,
     string Evidence,
     string NextAction
+);
+
+public record InfraAgentGovernanceOwnerPolicyView(
+    string Area,
+    string Label,
+    string State,
+    string Owner,
+    string Subject,
+    string Evidence,
+    string Risk,
+    string NextAction,
+    string Path
 );
 
 public record InfraAgentTraceBundleView(

@@ -228,6 +228,17 @@ export interface InfraAgentGovernanceDashboardView {
     nextAction: string;
   }>;
   nextActions: string[];
+  ownerPolicies?: Array<{
+    area: string;
+    label: string;
+    state: string;
+    owner: string;
+    subject: string;
+    evidence: string;
+    risk: string;
+    nextAction: string;
+    path: string;
+  }> | null;
 }
 
 export interface InfraAgentTraceBundleView {
