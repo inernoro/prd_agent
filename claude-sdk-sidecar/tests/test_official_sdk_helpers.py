@@ -278,6 +278,10 @@ class WorkspaceHelperTests(unittest.TestCase):
             "inernoro/prd_agent",
             "https://github.com/inernoro/prd_agent.git",
         ))
+        self.assertEqual(parse_github_repository("inernoro/prd_agent.git"), (
+            "inernoro/prd_agent",
+            "https://github.com/inernoro/prd_agent.git",
+        ))
         self.assertEqual(parse_github_repository("https://github.com/inernoro/prd_agent.git"), (
             "inernoro/prd_agent",
             "https://github.com/inernoro/prd_agent.git",

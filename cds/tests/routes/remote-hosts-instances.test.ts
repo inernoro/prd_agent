@@ -127,8 +127,9 @@ describe('Remote hosts project instances route', () => {
     return { projectId: accepted.projectId, longToken: accepted.cdsLongToken };
   }
 
-  async function startMockOfficialSdkRuntime(options: { omitTerminal?: boolean } = {}): Promise<{ port: number; requests: any[] }> {
+  async function startMockOfficialSdkRuntime(options: { omitTerminal?: boolean; holdOpen?: boolean } = {}): Promise<{ port: number; requests: any[]; closedRequests: any[] }> {
     const requests: any[] = [];
+    const closedRequests: any[] = [];
     runtimeServer = http.createServer((req, res) => {
       if (req.method === 'GET' && req.url === '/readyz') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -151,6 +152,7 @@ describe('Remote hosts project instances route', () => {
             authorization: req.headers.authorization,
             body: JSON.parse(raw),
           });
+          res.on('close', () => closedRequests.push({ runId: JSON.parse(raw).runId }));
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
           res.write('event: runtime_init\n');
           res.write(`data: ${JSON.stringify({
@@ -166,6 +168,7 @@ describe('Remote hosts project instances route', () => {
           })}\n\n`);
           res.write('event: text_delta\n');
           res.write(`data: ${JSON.stringify({ type: 'text_delta', text: 'official runtime ok' })}\n\n`);
+          if (options.holdOpen) return;
           if (!options.omitTerminal) {
             res.write('event: done\n');
             res.write(`data: ${JSON.stringify({ type: 'done', final_text: 'official runtime ok' })}\n\n`);
@@ -180,7 +183,7 @@ describe('Remote hosts project instances route', () => {
       runtimeServer!.listen(0, '127.0.0.1', () => resolve());
     });
     const addr = runtimeServer.address() as { port: number };
-    return { port: addr.port, requests };
+    return { port: addr.port, requests, closedRequests };
   }
 
   function addSharedOfficialSdkRuntime(projectId: string, port: number): void {
@@ -821,6 +824,57 @@ describe('Remote hosts project instances route', () => {
     );
     expect(stream.status).toBe(200);
     expect(stream.body).toContain('cds_managed_runtime_missing_terminal_event');
+  });
+
+  it('aborts the in-flight CDS-managed runtime transport when an agent session is stopped', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const runtime = await startMockOfficialSdkRuntime({ holdOpen: true });
+    addSharedOfficialSdkRuntime(projectId, runtime.port);
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'claude-sdk', model: 'deepseek/deepseek-v4-pro', resourcePolicy: { timeoutSeconds: 30 } },
+    );
+    expect(created.status).toBe(201);
+    const sessionId = created.body.item.id;
+
+    const sent = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'keep running until user stops' },
+    );
+
+    expect(sent.status).toBe(202);
+    expect(sent.body.accepted).toBe(true);
+    await waitFor(() => runtime.requests.length === 1);
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stop`,
+      longToken,
+    );
+
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.item.status).toBe('stopped');
+    await waitFor(() => runtime.closedRequests.length === 1);
+
+    const stream = await request(
+      server,
+      'GET',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stream`,
+      longToken,
+    );
+    expect(stream.status).toBe(200);
+    expect(stream.body).toContain('session_stopped');
+    expect(stream.body).toContain('cds_managed_runtime_transport_aborted');
+    expect(stream.body).not.toContain('cds_managed_runtime_transport_timeout');
   });
 
   it('prefers the explicit CDS-managed runtime branch over stale main sidecars', async () => {

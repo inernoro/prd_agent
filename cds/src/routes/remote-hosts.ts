@@ -915,6 +915,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
     session.status = 'stopping';
     session.updatedAt = new Date().toISOString();
+    session.activeRunAbortController?.abort();
+    session.activeRunAbortController = undefined;
+    session.activeRunId = undefined;
     pushCdsAgentEvent(session, 'status', { status: 'stopping', reason: 'session_stop_requested' });
     session.logs.push(`[${session.updatedAt}] session stopping`);
     session.status = 'stopped';
@@ -1557,6 +1560,7 @@ interface CdsAgentSession {
   updatedAt: string;
   stoppedAt?: string;
   activeRunId?: string;
+  activeRunAbortController?: AbortController;
   events: CdsAgentEvent[];
   messages: Array<{ role: string; content: string; createdAt: string }>;
   logs: string[];
@@ -1793,6 +1797,7 @@ async function runCdsManagedOfficialSdkTransport(
   session.activeRunId = runId;
   const timeoutMs = Math.max(1_000, session.resourcePolicy.timeoutSeconds * 1_000);
   const controller = new AbortController();
+  session.activeRunAbortController = controller;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const url = `${transport.baseUrl.replace(/\/+$/, '')}/v1/agent/run`;
   const requestBody = {
@@ -1857,6 +1862,24 @@ async function runCdsManagedOfficialSdkTransport(
     return result;
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
+    if (aborted && session.status === 'stopped') {
+      const error = {
+        code: 'cds_managed_runtime_transport_aborted',
+        message: 'CDS-managed runtime transport aborted because session was stopped',
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        retryable: false,
+      };
+      pushCdsAgentEvent(session, 'log', {
+        level: 'info',
+        code: error.code,
+        message: error.message,
+        source: 'cds-managed-runtime-transport',
+      });
+      session.logs.push(`[${new Date().toISOString()}] runtime transport aborted owner=cds-managed-runtime reason=session_stopped`);
+      return { accepted: false, error };
+    }
     const error = {
       code: aborted ? 'cds_managed_runtime_transport_timeout' : 'cds_managed_runtime_transport_failed',
       message: aborted
@@ -1872,7 +1895,10 @@ async function runCdsManagedOfficialSdkTransport(
     session.logs.push(`[${new Date().toISOString()}] runtime transport failed owner=cds-managed-runtime reason=${error.code}`);
     return { accepted: false, error };
   } finally {
-    if (session.activeRunId === runId) session.activeRunId = undefined;
+    if (session.activeRunId === runId) {
+      session.activeRunId = undefined;
+      session.activeRunAbortController = undefined;
+    }
     clearTimeout(timer);
   }
 }

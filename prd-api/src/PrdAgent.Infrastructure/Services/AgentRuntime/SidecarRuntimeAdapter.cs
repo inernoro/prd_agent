@@ -102,7 +102,7 @@ public sealed class SidecarRuntimeAdapter : IInfraAgentRuntimeAdapter
                 Message = ev.Message,
                 Turn = ev.Turn,
                 RuntimeInstanceName = ev.SidecarName,
-                Source = SourceName
+                Source = ev.Type == SidecarEventType.ToolUse ? "claude-sdk-sidecar" : SourceName
             };
         }
     }

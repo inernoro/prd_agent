@@ -151,6 +151,36 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
     }
 
     [Fact]
+    public async Task SidecarRuntimeAdapter_ShouldPreserveLocalApprovalSourceForToolUse()
+    {
+        var router = new CapturingSidecarRouter(new SidecarEvent
+        {
+            Type = SidecarEventType.ToolUse,
+            RawType = "tool_use",
+            ToolName = "Edit",
+            ToolUseId = "toolu-1",
+            SidecarName = "official-sidecar-1"
+        });
+        var adapter = new SidecarRuntimeAdapter(router);
+
+        var events = new List<InfraAgentRuntimeEvent>();
+        await foreach (var ev in adapter.RunStreamAsync(
+            new InfraAgentRuntimeRunRequest
+            {
+                RunId = "run-tool-use",
+                RuntimeAdapter = "claude-agent-sdk"
+            },
+            CancellationToken.None))
+        {
+            events.Add(ev);
+        }
+
+        var toolUse = events.Single();
+        toolUse.Type.ShouldBe(InfraAgentRuntimeEventType.ToolUse);
+        toolUse.Source.ShouldBe("claude-sdk-sidecar");
+    }
+
+    [Fact]
     public void BuildRuntimeErrorStatus_ShouldClassifyProviderKeyMissingAsConfigIssue()
     {
         var status = InfraAgentSessionService.BuildRuntimeErrorStatus(

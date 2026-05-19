@@ -429,14 +429,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 dispatchedAt = DateTime.UtcNow
             }),
             ct);
-        if (IsMapDirectRuntimeFallbackEnabled())
-        {
-            await _runtimeJobs.EnqueueAsync(new InfraAgentRuntimeJob(
-                userId,
-                id,
-                request.Content.Trim(),
-                DateTime.UtcNow), ct);
-        }
         return ToView(session);
 
         async Task<JsonElement> PostMessageToCdsAsync(

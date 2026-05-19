@@ -666,10 +666,6 @@ def _resolve_deploy_branch_id(branch: str) -> str:
     body = _call("GET", "/api/branches", timeout=30)
     branches = body.get("branches", []) if isinstance(body, dict) else []
 
-    for candidate in branches:
-        if isinstance(candidate, dict) and candidate.get("id") == guessed:
-            return guessed
-
     matches = [
         b for b in branches
         if isinstance(b, dict)
@@ -678,12 +674,39 @@ def _resolve_deploy_branch_id(branch: str) -> str:
     ]
     project_id = os.environ.get("CDS_PROJECT_ID", "").strip()
     if project_id:
+        for candidate in branches:
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("id") == guessed
+                and (candidate.get("projectId") == project_id or candidate.get("project") == project_id)
+            ):
+                return guessed
+
         project_matches = [
             b for b in matches
             if b.get("projectId") == project_id or b.get("project") == project_id
         ]
         if len(project_matches) == 1:
             return str(project_matches[0]["id"])
+        if len(project_matches) > 1:
+            die(
+                f"CDS_PROJECT_ID={project_id} 下分支名不唯一: {branch}",
+                code=2,
+                extra={
+                    "data": {
+                        "branch": branch,
+                        "projectId": project_id,
+                        "guessedBranchId": guessed,
+                        "matches": [
+                            {
+                                "id": b.get("id"),
+                                "projectId": b.get("projectId") or b.get("project"),
+                            }
+                            for b in project_matches
+                        ],
+                    }
+                })
+            return guessed
         if len(project_matches) == 0:
             die(
                 f"CDS_PROJECT_ID={project_id} 下不存在分支: {branch}",
@@ -702,6 +725,10 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                         ],
                     }
                 })
+            return guessed
+
+    for candidate in branches:
+        if isinstance(candidate, dict) and candidate.get("id") == guessed:
             return guessed
 
     if len(matches) == 1:
