@@ -3213,8 +3213,8 @@ export default function CdsAgentPage() {
 	    );
 	    return (
 	      <div className="h-full min-h-0 overflow-y-auto px-3 py-4 text-white sm:px-5" style={{ background: '#0B0F14' }}>
-	        <div className="mx-auto grid min-h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
-	          <aside className="min-h-[360px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+	        <div className="mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
+	          <aside className="min-h-0 overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
 	            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
 	              <div className="min-w-0">
 	                <div className="text-sm font-semibold text-white/82">任务</div>
@@ -3300,7 +3300,7 @@ export default function CdsAgentPage() {
 	            </div>
 	          </aside>
 
-	          <main className="flex min-h-[640px] flex-col overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.075)' }}>
+	          <main className="flex min-h-0 flex-col overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.075)' }}>
 	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 	              <div className="min-w-0">
 	                <div className="flex items-center gap-2">
@@ -3347,7 +3347,7 @@ export default function CdsAgentPage() {
 	              </div>
 	            </div>
 
-	            <div ref={timelineRef} className="mx-5 mt-4 flex-1 space-y-3 overflow-y-auto rounded-2xl p-4" style={{ background: hasTimeline ? 'rgba(0,0,0,0.16)' : 'transparent', border: hasTimeline ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent', overscrollBehavior: 'contain' }}>
+	            <div ref={timelineRef} className="mx-5 mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl p-4" style={{ background: hasTimeline ? 'rgba(0,0,0,0.16)' : 'transparent', border: hasTimeline ? '1px solid rgba(255,255,255,0.06)' : '1px solid transparent', overscrollBehavior: 'contain' }}>
 	              {!hasTimeline ? (
 	                <div className="flex h-full min-h-[520px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
@@ -3491,7 +3491,7 @@ export default function CdsAgentPage() {
 	            )}
 	          </main>
 
-	          <aside className="min-h-[520px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)' }}>
+	          <aside className="min-h-0 overflow-y-auto rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}>
 	            <div className="border-b border-white/10 px-4 py-4">
 	              <div className="flex items-center justify-between gap-3">
 	                <div>
