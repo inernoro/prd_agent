@@ -4685,14 +4685,14 @@ function safeChart(canvasId, config) {
             var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
             runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
                 ? await db.InfraAgentRuntimeProfiles
-                    .Find(x => x.IsDefault)
+                    .Find(x => x.CreatedByUserId == userId && x.IsDefault)
                     .FirstOrDefaultAsync(CancellationToken.None)
                     ?? await db.InfraAgentRuntimeProfiles
-                        .Find(_ => true)
+                        .Find(x => x.CreatedByUserId == userId)
                         .SortByDescending(x => x.UpdatedAt)
                         .FirstOrDefaultAsync(CancellationToken.None)
                 : await db.InfraAgentRuntimeProfiles
-                    .Find(x => x.Id == runtimeProfileId)
+                    .Find(x => x.Id == runtimeProfileId && x.CreatedByUserId == userId)
                     .FirstOrDefaultAsync(CancellationToken.None);
             if (runtimeProfile == null)
                 throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");

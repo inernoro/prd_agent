@@ -69,9 +69,10 @@ public class InfraAgentSessionsController : ControllerBase
         }
 
         var desiredRuntimeAdapter = InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter();
+        var userId = this.GetRequiredUserId();
         var profile = _runtimeProfiles == null
             ? null
-            : await ResolveDefaultRuntimeProfileDiagnosticsAsync(desiredRuntimeAdapter, ct);
+            : await ResolveDefaultRuntimeProfileDiagnosticsAsync(userId, desiredRuntimeAdapter, ct);
         var baseDiagnostics = await _sidecarRouter.GetDiagnosticsAsync(ct);
         var commercialReadiness = BuildCommercialReadiness(
             baseDiagnostics,
@@ -1057,10 +1058,11 @@ public class InfraAgentSessionsController : ControllerBase
     }
 
     private async Task<SidecarRuntimeProfileDiagnostics?> ResolveDefaultRuntimeProfileDiagnosticsAsync(
+        string userId,
         string desiredRuntimeAdapter,
         CancellationToken ct)
     {
-        var profiles = await _runtimeProfiles!.ListAsync(ct);
+        var profiles = await _runtimeProfiles!.ListAsync(userId, ct);
         var selected = profiles.FirstOrDefault(x => x.IsDefault) ?? profiles.FirstOrDefault();
         if (selected == null) return null;
 

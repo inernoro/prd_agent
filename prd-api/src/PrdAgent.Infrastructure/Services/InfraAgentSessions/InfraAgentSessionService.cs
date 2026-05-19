@@ -140,7 +140,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .Limit(500)
             .ToListAsync(ct);
         var profiles = await _db.InfraAgentRuntimeProfiles
-            .Find(_ => true)
+            .Find(x => x.CreatedByUserId == userId)
             .Limit(500)
             .ToListAsync(ct);
         var sessions = await _db.InfraAgentSessions
@@ -249,7 +249,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         try
         {
-            var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
+            var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(userId, session.RuntimeProfileId, ct);
             var runtime = NormalizeRuntime(request.Runtime ?? runtimeProfile?.Runtime ?? session.Runtime);
             var model = NormalizeOptional(request.Model) ?? runtimeProfile?.Model ?? session.Model;
             var modelBaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl;
@@ -375,7 +375,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 StatusCodes.Status409Conflict);
         }
 
-        var messageRuntimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
+        var messageRuntimeProfile = await ResolveRuntimeProfileForSessionAsync(userId, session.RuntimeProfileId, ct);
         EnsureRuntimeProfileCompatibleWithAdapter(
             session.Runtime,
             messageRuntimeProfile,
@@ -1463,7 +1463,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return false;
         }
 
-        var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.RuntimeProfileId, ct);
+        var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.UserId, session.RuntimeProfileId, ct);
         var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
         var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
         var selectedRuntimeAdapter = ResolveSidecarRuntimeAdapter();
@@ -2301,12 +2301,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     }
 
     private async Task<InfraAgentRuntimeProfileSecretView?> ResolveRuntimeProfileForSessionAsync(
+        string userId,
         string? runtimeProfileId,
         CancellationToken ct)
     {
         try
         {
-            return await _runtimeProfiles.ResolveAsync(runtimeProfileId, ct);
+            return await _runtimeProfiles.ResolveAsync(runtimeProfileId, userId, ct);
         }
         catch (InfraAgentRuntimeProfileException ex)
         {
@@ -2638,6 +2639,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var ownedProfileCount = profiles.Count(x => string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal));
         var defaultProfile = profiles.FirstOrDefault(x => x.IsDefault);
         var defaultProfileOwned = defaultProfile != null && string.Equals(defaultProfile.CreatedByUserId, userId, StringComparison.Ordinal);
+        var allProfilesScopedToSubject = profiles.All(x => string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal));
         var writablePolicySessionCount = sessions.Count(x => string.Equals(x.ToolPolicy, InfraAgentToolPolicies.CodeWritableConfirm, StringComparison.OrdinalIgnoreCase));
         var gates = new List<InfraAgentGovernanceGateView>
         {
@@ -2656,13 +2658,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             new(
                 "GOV-PROFILE-SCOPE",
                 "Runtime profile scope",
-                defaultProfile == null || defaultProfileOwned ? "pass" : "warn",
-                defaultProfile == null
-                    ? "No default runtime profile is configured."
-                    : defaultProfileOwned
-                        ? "Default runtime profile is owned by the current subject."
-                        : "Default runtime profile records an owner, but current runtime profile APIs still expose global default semantics.",
-                "Introduce team/user-scoped profile resolve before allowing organization-wide default routing."),
+                allProfilesScopedToSubject && (defaultProfile == null || defaultProfileOwned) ? "pass" : "warn",
+                allProfilesScopedToSubject
+                    ? defaultProfile == null
+                        ? "No scoped default runtime profile is configured for this subject."
+                        : "Runtime profile list/resolve is subject-scoped; default profile is owned by the current subject."
+                    : "Runtime profile snapshot includes records outside the current subject scope.",
+                "Keep runtime profile list/resolve/update/delete subject-scoped before adding team-shared profiles."),
             new(
                 "GOV-APPROVAL-WRITES",
                 "Approval policy for writes",
@@ -2690,13 +2692,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "Bind stores to teams before enabling batch apply."),
             new(
                 "runtime-profile",
-                defaultProfile == null || defaultProfileOwned ? "recorded" : "needs-enforcement",
-                "Profiles record CreatedByUserId; current default profile selection is still global.",
+                allProfilesScopedToSubject && (defaultProfile == null || defaultProfileOwned) ? "enforced" : "needs-enforcement",
+                "Runtime profile list/resolve/update/delete are scoped to the current subject before session/workflow routing.",
                 $"{ownedProfileCount}/{profiles.Count} runtime profile(s) owned by current subject.",
-                defaultProfile == null || defaultProfileOwned
-                    ? "No cross-owner default observed in this snapshot."
-                    : "A global default profile can route runs for another subject unless scoped resolve is added.",
-                "Make profile list/resolve team-aware before declaring P3-5 complete."),
+                allProfilesScopedToSubject
+                    ? "No cross-owner profile is visible in the subject snapshot."
+                    : "A non-owned profile is present in the runtime profile snapshot.",
+                "Add explicit team-shared profile policy before organization-wide defaults."),
             new(
                 "approval-policy",
                 "enforced",

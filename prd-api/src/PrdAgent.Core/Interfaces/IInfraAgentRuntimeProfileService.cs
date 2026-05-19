@@ -4,13 +4,13 @@ namespace PrdAgent.Core.Interfaces;
 
 public interface IInfraAgentRuntimeProfileService
 {
-    Task<List<InfraAgentRuntimeProfileView>> ListAsync(CancellationToken ct);
+    Task<List<InfraAgentRuntimeProfileView>> ListAsync(string userId, CancellationToken ct);
 
     Task<List<InfraAgentRuntimeProfileTemplateView>> ListTemplatesAsync(CancellationToken ct);
 
     Task<List<InfraAgentRuntimeAdapterCompatibilityView>> ListAdapterCompatibilityAsync(CancellationToken ct);
 
-    Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(CancellationToken ct);
+    Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(string userId, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileView> CreateAsync(string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
@@ -22,11 +22,11 @@ public interface IInfraAgentRuntimeProfileService
 
     Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct);
 
-    Task<bool> DeleteAsync(string id, CancellationToken ct);
+    Task<bool> DeleteAsync(string id, string userId, CancellationToken ct);
 
-    Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, CancellationToken ct);
+    Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, string userId, CancellationToken ct);
 
-    Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, CancellationToken ct);
+    Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, string userId, CancellationToken ct);
 }
 
 public record UpsertInfraAgentRuntimeProfileRequest(

@@ -52,13 +52,6 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
             Id = "profile-1",
             Name = "User Profile",
             CreatedByUserId = userId,
-            IsDefault = false
-        };
-        var globalDefaultProfile = new InfraAgentRuntimeProfile
-        {
-            Id = "profile-2",
-            Name = "Global Default",
-            CreatedByUserId = "other-user",
             IsDefault = true
         };
         var writableSession = new InfraAgentSession
@@ -79,7 +72,7 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
             new[] { team },
             new[] { workflow },
             new[] { ownedStore, publicStore },
-            new[] { ownedProfile, globalDefaultProfile },
+            new[] { ownedProfile },
             new[] { writableSession },
             new[] { waitingApproval },
             now);
@@ -90,14 +83,14 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
         dashboard.Summary.OwnedWorkflowCount.ShouldBe(1);
         dashboard.Summary.OwnedKnowledgeBaseCount.ShouldBe(1);
         dashboard.Summary.PublicKnowledgeBaseCount.ShouldBe(1);
-        dashboard.Summary.RuntimeProfileCount.ShouldBe(2);
+        dashboard.Summary.RuntimeProfileCount.ShouldBe(1);
         dashboard.Summary.OwnedRuntimeProfileCount.ShouldBe(1);
-        dashboard.Summary.DefaultRuntimeProfileOwned.ShouldBeFalse();
+        dashboard.Summary.DefaultRuntimeProfileOwned.ShouldBeTrue();
         dashboard.Summary.WritablePolicySessionCount.ShouldBe(1);
         dashboard.Summary.WaitingApprovalExecutionCount.ShouldBe(1);
         dashboard.Gates.Single(x => x.Code == "GOV-KB-READONLY").Status.ShouldBe("pass");
-        dashboard.Gates.Single(x => x.Code == "GOV-PROFILE-SCOPE").Status.ShouldBe("warn");
-        dashboard.Scopes.Single(x => x.Area == "runtime-profile").State.ShouldBe("needs-enforcement");
-        dashboard.NextActions.ShouldContain("Introduce team/user-scoped profile resolve before allowing organization-wide default routing.");
+        dashboard.Gates.Single(x => x.Code == "GOV-PROFILE-SCOPE").Status.ShouldBe("pass");
+        dashboard.Scopes.Single(x => x.Area == "runtime-profile").State.ShouldBe("enforced");
+        dashboard.NextActions.ShouldContain("Continue with explicit team policy data model for repository/profile/approval ownership.");
     }
 }

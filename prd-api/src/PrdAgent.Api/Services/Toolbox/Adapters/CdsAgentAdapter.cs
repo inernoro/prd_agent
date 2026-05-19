@@ -94,7 +94,7 @@ public class CdsAgentAdapter : IAgentAdapter
                 .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct);
 
-            runtimeProfile = await LoadRuntimeProfileChoiceAsync(ct);
+            runtimeProfile = await LoadRuntimeProfileChoiceAsync(context.UserId, ct);
         }
         catch (Exception ex)
         {
@@ -287,11 +287,11 @@ public class CdsAgentAdapter : IAgentAdapter
         return $"{cursor.Events.Count} events, lastSeq={cursor.LastSeq}, cursor={status}";
     }
 
-    private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(CancellationToken ct)
+    private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(string userId, CancellationToken ct)
     {
         try
         {
-            return (await _runtimeProfiles.ListAsync(ct))
+            return (await _runtimeProfiles.ListAsync(userId, ct))
                 .OrderByDescending(x => x.IsDefault)
                 .ThenByDescending(x => x.UpdatedAt)
                 .Select(x => new RuntimeProfileChoice(x.Id, x.Runtime, x.Model, x.IsDefault, x.UpdatedAt))
@@ -303,10 +303,11 @@ public class CdsAgentAdapter : IAgentAdapter
         }
 
         var collection = _db.Database.GetCollection<BsonDocument>("infra_agent_runtime_profiles");
+        var filter = Builders<BsonDocument>.Filter.Eq("CreatedByUserId", userId);
         var sort = Builders<BsonDocument>.Sort
             .Descending("IsDefault")
             .Descending("UpdatedAt");
-        var doc = await collection.Find(Builders<BsonDocument>.Filter.Empty)
+        var doc = await collection.Find(filter)
             .Sort(sort)
             .FirstOrDefaultAsync(ct);
         if (doc == null) return null;

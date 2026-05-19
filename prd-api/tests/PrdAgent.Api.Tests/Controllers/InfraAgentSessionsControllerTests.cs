@@ -459,7 +459,7 @@ public class InfraAgentSessionsControllerTests
                 Array.Empty<SidecarInstanceDiagnostics>(),
                 NextActions: Array.Empty<string>()));
         profiles
-            .Setup(x => x.ListAsync(It.IsAny<CancellationToken>()))
+            .Setup(x => x.ListAsync("user-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<InfraAgentRuntimeProfileView>
             {
                 new(
@@ -626,7 +626,7 @@ public class InfraAgentSessionsControllerTests
                 },
                 NextActions: Array.Empty<string>()));
         profiles
-            .Setup(x => x.ListAsync(It.IsAny<CancellationToken>()))
+            .Setup(x => x.ListAsync("user-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<InfraAgentRuntimeProfileView>
             {
                 new(
@@ -743,7 +743,7 @@ public class InfraAgentSessionsControllerTests
                 },
                 NextActions: new[] { "使用 Anthropic 官方模板创建默认 runtime profile，并填入有效 API key。" }));
         profiles
-            .Setup(x => x.ListAsync(It.IsAny<CancellationToken>()))
+            .Setup(x => x.ListAsync("user-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<InfraAgentRuntimeProfileView>
             {
                 new(

@@ -35,10 +35,10 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         _configuration = configuration;
     }
 
-    public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(CancellationToken ct)
+    public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(string userId, CancellationToken ct)
     {
         var items = await _db.InfraAgentRuntimeProfiles
-            .Find(_ => true)
+            .Find(ProfileOwnerFilter(userId))
             .SortByDescending(x => x.IsDefault)
             .ThenByDescending(x => x.UpdatedAt)
             .ToListAsync(ct);
@@ -55,9 +55,9 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return Task.FromResult(InfraAgentRuntimeAdapterCompatibility.All.ToList());
     }
 
-    public async Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(CancellationToken ct)
+    public async Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(string userId, CancellationToken ct)
     {
-        var profiles = await ListAsync(ct);
+        var profiles = await ListAsync(userId, ct);
         var templates = InfraAgentRuntimeProfileTemplates.All;
         return InfraAgentRuntimeAdapterCompatibility.BuildMatrix(
             InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter(),
@@ -120,7 +120,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         if (item.IsDefault)
         {
             await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
-                _ => true,
+                ProfileOwnerFilter(userId),
                 Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
                 cancellationToken: ct);
         }
@@ -177,7 +177,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         var promoted = false;
         try
         {
-            var test = await TestAsync(candidate.Id, ct);
+            var test = await TestAsync(candidate.Id, userId, ct);
             if (!test.Success)
             {
                 throw new InfraAgentRuntimeProfileException(
@@ -210,7 +210,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         {
             if (!promoted)
             {
-                await DeleteAsync(candidate.Id, ct);
+                await DeleteAsync(candidate.Id, userId, ct);
             }
         }
     }
@@ -221,7 +221,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         UpsertInfraAgentRuntimeProfileRequest request,
         CancellationToken ct)
     {
-        var item = await _db.InfraAgentRuntimeProfiles.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var item = await _db.InfraAgentRuntimeProfiles.Find(ProfileIdOwnerFilter(id, userId)).FirstOrDefaultAsync(ct);
         if (item == null)
         {
             throw new InfraAgentRuntimeProfileException(
@@ -293,12 +293,12 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         if (item.IsDefault)
         {
             await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
-                x => x.Id != item.Id,
+                ProfileOwnerFilter(userId) & Builders<InfraAgentRuntimeProfile>.Filter.Ne(x => x.Id, item.Id),
                 Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
                 cancellationToken: ct);
         }
 
-        await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == item.Id, item, cancellationToken: ct);
+        await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(item.Id, userId), item, cancellationToken: ct);
         return ToView(item);
     }
 
@@ -358,12 +358,13 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         };
 
         await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
-            _ => true,
+            ProfileOwnerFilter(userId),
             Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
             cancellationToken: ct);
 
         var existing = await _db.InfraAgentRuntimeProfiles
             .Find(x => x.Name == profile.Name
+                && x.CreatedByUserId == userId
                 && x.Model == profile.Model
                 && x.BaseUrl == profile.BaseUrl)
             .FirstOrDefaultAsync(ct);
@@ -379,7 +380,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             existing.AutoCleanupMinutes = profile.AutoCleanupMinutes;
             existing.IsDefault = true;
             existing.UpdatedAt = now;
-            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == existing.Id, existing, cancellationToken: ct);
+            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(existing.Id, userId), existing, cancellationToken: ct);
             return ToView(existing);
         }
 
@@ -387,20 +388,26 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return ToView(profile);
     }
 
-    public async Task<bool> DeleteAsync(string id, CancellationToken ct)
+    public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct)
     {
-        var result = await _db.InfraAgentRuntimeProfiles.DeleteOneAsync(x => x.Id == id, ct);
+        var result = await _db.InfraAgentRuntimeProfiles.DeleteOneAsync(ProfileIdOwnerFilter(id, userId), ct);
         return result.DeletedCount > 0;
     }
 
-    public async Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, CancellationToken ct)
+    public async Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, string userId, CancellationToken ct)
     {
         InfraAgentRuntimeProfile? profile = null;
         if (!string.IsNullOrWhiteSpace(id))
         {
-            profile = await _db.InfraAgentRuntimeProfiles.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+            profile = await _db.InfraAgentRuntimeProfiles.Find(ProfileIdOwnerFilter(id, userId)).FirstOrDefaultAsync(ct);
         }
-        profile ??= await _db.InfraAgentRuntimeProfiles.Find(x => x.IsDefault).FirstOrDefaultAsync(ct);
+        profile ??= await _db.InfraAgentRuntimeProfiles
+            .Find(ProfileOwnerFilter(userId) & Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.IsDefault, true))
+            .FirstOrDefaultAsync(ct);
+        profile ??= await _db.InfraAgentRuntimeProfiles
+            .Find(ProfileOwnerFilter(userId))
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
         if (profile == null) return null;
         string apiKey;
         try
@@ -429,9 +436,9 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             apiKey);
     }
 
-    public async Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, CancellationToken ct)
+    public async Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, string userId, CancellationToken ct)
     {
-        var secret = await ResolveAsync(id, ct);
+        var secret = await ResolveAsync(id, userId, ct);
         if (secret == null)
         {
             throw new InfraAgentRuntimeProfileException(
@@ -511,6 +518,12 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         item.IsDefault,
         item.CreatedAt,
         item.UpdatedAt);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileOwnerFilter(string userId) =>
+        Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.CreatedByUserId, userId);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileIdOwnerFilter(string id, string userId) =>
+        Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.Id, id) & ProfileOwnerFilter(userId);
 
     private bool HasReadableApiKey(InfraAgentRuntimeProfile item)
     {

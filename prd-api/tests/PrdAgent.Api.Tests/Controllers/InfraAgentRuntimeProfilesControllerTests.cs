@@ -119,9 +119,9 @@ public class InfraAgentRuntimeProfilesControllerTests
             new[] { profile },
             InfraAgentRuntimeProfileTemplates.All);
         service
-            .Setup(x => x.GetAdapterMatrixAsync(It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetAdapterMatrixAsync("user-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(matrix);
-        var controller = new InfraAgentRuntimeProfilesController(service.Object);
+        var controller = BuildController(service.Object, "user-1");
 
         var result = await controller.AdapterMatrix(CancellationToken.None);
 
@@ -139,7 +139,7 @@ public class InfraAgentRuntimeProfilesControllerTests
         var openAiAgents = item.Rows.Single(x => x.AdapterId == InfraAgentRuntimeAdapterCompatibility.OpenAiAgentsSdkPlanned);
         openAiAgents.RouteState.ShouldBe("planned-blocked");
         openAiAgents.MissingAdapterContracts.ShouldContain("map-approval-bridge");
-        service.Verify(x => x.GetAdapterMatrixAsync(It.IsAny<CancellationToken>()), Times.Once);
+        service.Verify(x => x.GetAdapterMatrixAsync("user-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]

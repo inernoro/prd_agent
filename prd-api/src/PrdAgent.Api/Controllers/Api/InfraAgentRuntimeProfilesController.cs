@@ -22,7 +22,8 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var items = await _service.ListAsync(ct);
+        var userId = this.GetRequiredUserId();
+        var items = await _service.ListAsync(userId, ct);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -43,7 +44,8 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpGet("adapter-matrix")]
     public async Task<IActionResult> AdapterMatrix(CancellationToken ct)
     {
-        var matrix = await _service.GetAdapterMatrixAsync(ct);
+        var userId = this.GetRequiredUserId();
+        var matrix = await _service.GetAdapterMatrixAsync(userId, ct);
         return Ok(ApiResponse<object>.Ok(new { matrix }));
     }
 
@@ -125,7 +127,8 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
-        var deleted = await _service.DeleteAsync(id, ct);
+        var userId = this.GetRequiredUserId();
+        var deleted = await _service.DeleteAsync(id, userId, ct);
         if (!deleted)
         {
             return NotFound(ApiResponse<object>.Fail(
@@ -138,9 +141,10 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpPost("{id}/test")]
     public async Task<IActionResult> Test(string id, CancellationToken ct)
     {
+        var userId = this.GetRequiredUserId();
         try
         {
-            var result = await _service.TestAsync(id, ct);
+            var result = await _service.TestAsync(id, userId, ct);
             return Ok(ApiResponse<object>.Ok(new { result }));
         }
         catch (InfraAgentRuntimeProfileException ex)
