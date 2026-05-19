@@ -37,6 +37,8 @@ public class InfraAgentRuntimeProfile
 
     public string CreatedByUserId { get; set; } = string.Empty;
 
+    public List<string> SharedTeamIds { get; set; } = new();
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

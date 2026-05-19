@@ -37,12 +37,13 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
 
     public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(string userId, CancellationToken ct)
     {
+        var teamIds = await GetVisibleTeamIdsAsync(userId, ct);
         var items = await _db.InfraAgentRuntimeProfiles
-            .Find(ProfileOwnerFilter(userId))
+            .Find(ProfileAccessibleFilter(userId, teamIds))
             .SortByDescending(x => x.IsDefault)
             .ThenByDescending(x => x.UpdatedAt)
             .ToListAsync(ct);
-        return items.Select(ToView).ToList();
+        return items.Select(x => ToView(x, userId)).ToList();
     }
 
     public Task<List<InfraAgentRuntimeProfileTemplateView>> ListTemplatesAsync(CancellationToken ct)
@@ -98,6 +99,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolvedApiKey);
 
         var now = DateTime.UtcNow;
+        var sharedTeamIds = await NormalizeSharedTeamIdsAsync(userId, request.SharedTeamIds, ct);
         var item = new InfraAgentRuntimeProfile
         {
             Name = name,
@@ -113,6 +115,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes),
             IsDefault = request.IsDefault == true,
             CreatedByUserId = userId,
+            SharedTeamIds = sharedTeamIds,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -126,7 +129,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
 
         await _db.InfraAgentRuntimeProfiles.InsertOneAsync(item, cancellationToken: ct);
-        return ToView(item);
+        return ToView(item, userId);
     }
 
     public Task<InfraAgentRuntimeProfileView> CreateFromTemplateAsync(
@@ -158,7 +161,8 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             template.TimeoutSeconds,
             template.NetworkPolicy,
             template.AutoCleanupMinutes,
-            request.IsDefault ?? template.IsDefaultRecommended);
+            request.IsDefault ?? template.IsDefaultRecommended,
+            request.SharedTeamIds);
         return CreateAsync(userId, upsert, ct);
     }
 
@@ -201,7 +205,8 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                     candidate.TimeoutSeconds,
                     candidate.NetworkPolicy,
                     candidate.AutoCleanupMinutes,
-                    true),
+                    true,
+                    candidate.SharedTeamIds),
                 ct);
             promoted = true;
             return new InfraAgentRuntimeProfilePromotionResult(promotedItem, test);
@@ -271,6 +276,9 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         var resolvedApiKey = apiKey ?? string.Empty;
         var protocol = NormalizeProtocol(request.Protocol);
         InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolvedApiKey);
+        var sharedTeamIds = request.SharedTeamIds == null
+            ? item.SharedTeamIds ?? new List<string>()
+            : await NormalizeSharedTeamIdsAsync(userId, request.SharedTeamIds, ct);
 
         item.Name = name;
         item.Runtime = NormalizeRuntime(request.Runtime);
@@ -288,6 +296,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         item.AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes);
         item.IsDefault = request.IsDefault ?? item.IsDefault;
         item.CreatedByUserId = string.IsNullOrWhiteSpace(item.CreatedByUserId) ? userId : item.CreatedByUserId;
+        item.SharedTeamIds = sharedTeamIds;
         item.UpdatedAt = DateTime.UtcNow;
 
         if (item.IsDefault)
@@ -299,7 +308,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
 
         await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(item.Id, userId), item, cancellationToken: ct);
-        return ToView(item);
+        return ToView(item, userId);
     }
 
     public async Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct)
@@ -353,6 +362,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             AutoCleanupMinutes = 30,
             IsDefault = true,
             CreatedByUserId = userId,
+            SharedTeamIds = new List<string>(),
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -379,13 +389,14 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             existing.NetworkPolicy = profile.NetworkPolicy;
             existing.AutoCleanupMinutes = profile.AutoCleanupMinutes;
             existing.IsDefault = true;
+            existing.SharedTeamIds = profile.SharedTeamIds;
             existing.UpdatedAt = now;
             await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(existing.Id, userId), existing, cancellationToken: ct);
-            return ToView(existing);
+            return ToView(existing, userId);
         }
 
         await _db.InfraAgentRuntimeProfiles.InsertOneAsync(profile, cancellationToken: ct);
-        return ToView(profile);
+        return ToView(profile, userId);
     }
 
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct)
@@ -396,18 +407,35 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
 
     public async Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, string userId, CancellationToken ct)
     {
+        var teamIds = await GetVisibleTeamIdsAsync(userId, ct);
         InfraAgentRuntimeProfile? profile = null;
         if (!string.IsNullOrWhiteSpace(id))
         {
-            profile = await _db.InfraAgentRuntimeProfiles.Find(ProfileIdOwnerFilter(id, userId)).FirstOrDefaultAsync(ct);
+            profile = await _db.InfraAgentRuntimeProfiles
+                .Find(ProfileIdAccessibleFilter(id, userId, teamIds))
+                .FirstOrDefaultAsync(ct);
         }
         profile ??= await _db.InfraAgentRuntimeProfiles
             .Find(ProfileOwnerFilter(userId) & Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.IsDefault, true))
             .FirstOrDefaultAsync(ct);
+        if (profile == null && teamIds.Count > 0)
+        {
+            profile = await _db.InfraAgentRuntimeProfiles
+                .Find(ProfileSharedWithTeamsFilter(teamIds) & Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.IsDefault, true))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
         profile ??= await _db.InfraAgentRuntimeProfiles
             .Find(ProfileOwnerFilter(userId))
             .SortByDescending(x => x.UpdatedAt)
             .FirstOrDefaultAsync(ct);
+        if (profile == null && teamIds.Count > 0)
+        {
+            profile = await _db.InfraAgentRuntimeProfiles
+                .Find(ProfileSharedWithTeamsFilter(teamIds))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
         if (profile == null) return null;
         string apiKey;
         try
@@ -502,7 +530,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
     }
 
-    private InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item) => new(
+    private InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item, string? userId = null) => new(
         item.Id,
         item.Name,
         item.Runtime,
@@ -517,13 +545,79 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         HasReadableApiKey(item),
         item.IsDefault,
         item.CreatedAt,
-        item.UpdatedAt);
+        item.UpdatedAt,
+        item.SharedTeamIds ?? new List<string>(),
+        string.Equals(item.CreatedByUserId, userId, StringComparison.Ordinal) ? "user-owned" : "team-shared",
+        item.CreatedByUserId);
 
     private static FilterDefinition<InfraAgentRuntimeProfile> ProfileOwnerFilter(string userId) =>
         Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.CreatedByUserId, userId);
 
     private static FilterDefinition<InfraAgentRuntimeProfile> ProfileIdOwnerFilter(string id, string userId) =>
         Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.Id, id) & ProfileOwnerFilter(userId);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileSharedWithTeamsFilter(IReadOnlyList<string> teamIds) =>
+        teamIds.Count == 0
+            ? Builders<InfraAgentRuntimeProfile>.Filter.Where(_ => false)
+            : Builders<InfraAgentRuntimeProfile>.Filter.AnyIn(x => x.SharedTeamIds, teamIds);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileAccessibleFilter(string userId, IReadOnlyList<string> teamIds) =>
+        ProfileOwnerFilter(userId) | ProfileSharedWithTeamsFilter(teamIds);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileIdAccessibleFilter(string id, string userId, IReadOnlyList<string> teamIds) =>
+        Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.Id, id) & ProfileAccessibleFilter(userId, teamIds);
+
+    private async Task<List<string>> GetVisibleTeamIdsAsync(string userId, CancellationToken ct)
+    {
+        var memberships = await _db.ReportTeamMembers
+            .Find(x => x.UserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var memberTeamIds = memberships
+            .Select(x => x.TeamId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+
+        var leaderTeams = await _db.ReportTeams
+            .Find(x => x.LeaderUserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+
+        return memberTeamIds
+            .Concat(leaderTeams.Select(x => x.Id))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private async Task<List<string>> NormalizeSharedTeamIdsAsync(
+        string userId,
+        IReadOnlyList<string>? requestedTeamIds,
+        CancellationToken ct)
+    {
+        var requested = (requestedTeamIds ?? Array.Empty<string>())
+            .Select(x => NormalizeOptional(x))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+        if (requested.Count == 0) return new List<string>();
+
+        var visibleTeams = await GetVisibleTeamIdsAsync(userId, ct);
+        var visibleSet = visibleTeams.ToHashSet(StringComparer.Ordinal);
+        var invalid = requested.Where(x => !visibleSet.Contains(x)).ToList();
+        if (invalid.Count > 0)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.SharedTeamNotAccessible,
+                $"无权将运行配置共享给团队：{string.Join(", ", invalid)}",
+                StatusCodes.Status403Forbidden);
+        }
+        return requested;
+    }
 
     private bool HasReadableApiKey(InfraAgentRuntimeProfile item)
     {

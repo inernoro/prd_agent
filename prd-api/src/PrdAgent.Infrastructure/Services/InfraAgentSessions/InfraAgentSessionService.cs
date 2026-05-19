@@ -131,6 +131,16 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .Find(teamFilter)
             .Limit(200)
             .ToListAsync(ct);
+        var visibleTeamIds = memberTeamIds
+            .Concat(teams.Select(x => x.Id))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var profileFilter = Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.CreatedByUserId, userId);
+        if (visibleTeamIds.Count > 0)
+        {
+            profileFilter |= Builders<InfraAgentRuntimeProfile>.Filter.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
+        }
         var workflows = await _db.Workflows
             .Find(x => x.CreatedBy == userId || x.OwnerUserId == userId)
             .Limit(500)
@@ -140,7 +150,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .Limit(500)
             .ToListAsync(ct);
         var profiles = await _db.InfraAgentRuntimeProfiles
-            .Find(x => x.CreatedByUserId == userId)
+            .Find(profileFilter)
             .Limit(500)
             .ToListAsync(ct);
         var sessions = await _db.InfraAgentSessions
@@ -2637,9 +2647,17 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var ownedKnowledgeBaseCount = knowledgeStores.Count(x => string.Equals(x.OwnerId, userId, StringComparison.Ordinal));
         var publicKnowledgeBaseCount = knowledgeStores.Count(x => x.IsPublic && !string.Equals(x.OwnerId, userId, StringComparison.Ordinal));
         var ownedProfileCount = profiles.Count(x => string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal));
+        var teamSharedProfileCount = profiles.Count(x =>
+            !string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal)
+            && SharesAnyTeam(x, teamIds));
         var defaultProfile = profiles.FirstOrDefault(x => x.IsDefault);
+        var defaultProfileVisible = defaultProfile == null
+            || string.Equals(defaultProfile.CreatedByUserId, userId, StringComparison.Ordinal)
+            || SharesAnyTeam(defaultProfile, teamIds);
         var defaultProfileOwned = defaultProfile != null && string.Equals(defaultProfile.CreatedByUserId, userId, StringComparison.Ordinal);
-        var allProfilesScopedToSubject = profiles.All(x => string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal));
+        var allProfilesScopedToSubject = profiles.All(x =>
+            string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal)
+            || SharesAnyTeam(x, teamIds));
         var writablePolicySessionCount = sessions.Count(x => string.Equals(x.ToolPolicy, InfraAgentToolPolicies.CodeWritableConfirm, StringComparison.OrdinalIgnoreCase));
         var gates = new List<InfraAgentGovernanceGateView>
         {
@@ -2658,13 +2676,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             new(
                 "GOV-PROFILE-SCOPE",
                 "Runtime profile scope",
-                allProfilesScopedToSubject && (defaultProfile == null || defaultProfileOwned) ? "pass" : "warn",
+                allProfilesScopedToSubject && defaultProfileVisible ? "pass" : "warn",
                 allProfilesScopedToSubject
                     ? defaultProfile == null
                         ? "No scoped default runtime profile is configured for this subject."
-                        : "Runtime profile list/resolve is subject-scoped; default profile is owned by the current subject."
+                        : defaultProfileOwned
+                            ? "Runtime profile list/resolve is subject-scoped; default profile is owned by the current subject."
+                            : "Runtime profile list/resolve is subject-scoped; default profile is shared through a team membership."
                     : "Runtime profile snapshot includes records outside the current subject scope.",
-                "Keep runtime profile list/resolve/update/delete subject-scoped before adding team-shared profiles."),
+                "Keep runtime profile list/resolve/update/delete owner-or-team-scoped; define owner-only update/delete for shared profiles."),
             new(
                 "GOV-APPROVAL-WRITES",
                 "Approval policy for writes",
@@ -2692,13 +2712,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "Bind stores to teams before enabling batch apply."),
             new(
                 "runtime-profile",
-                allProfilesScopedToSubject && (defaultProfile == null || defaultProfileOwned) ? "enforced" : "needs-enforcement",
-                "Runtime profile list/resolve/update/delete are scoped to the current subject before session/workflow routing.",
-                $"{ownedProfileCount}/{profiles.Count} runtime profile(s) owned by current subject.",
+                allProfilesScopedToSubject && defaultProfileVisible ? "enforced-team-aware" : "needs-enforcement",
+                "Runtime profile list/resolve are owner-or-team-scoped; update/delete remain owner-only.",
+                $"{ownedProfileCount} owned profile(s); {teamSharedProfileCount} team-shared profile(s); {profiles.Count} visible.",
                 allProfilesScopedToSubject
-                    ? "No cross-owner profile is visible in the subject snapshot."
-                    : "A non-owned profile is present in the runtime profile snapshot.",
-                "Add explicit team-shared profile policy before organization-wide defaults."),
+                    ? "No profile outside owned/team membership scope is visible in the subject snapshot."
+                    : "A non-owned profile without team membership is present in the runtime profile snapshot.",
+                "Add repository/profile/approval owner UI before scheduled writable remediation."),
             new(
                 "approval-policy",
                 "enforced",
@@ -2732,10 +2752,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 writablePolicySessionCount,
                 waitingApprovalExecutions.Count,
                 passed,
-                gates.Count),
+                gates.Count,
+                teamSharedProfileCount),
             scopes,
             gates,
             nextActions);
+    }
+
+    private static bool SharesAnyTeam(InfraAgentRuntimeProfile profile, IReadOnlyCollection<string> teamIds)
+    {
+        return profile.SharedTeamIds != null
+            && teamIds.Count > 0
+            && profile.SharedTeamIds.Any(teamIds.Contains);
     }
 
     public static InfraAgentTraceBundleView BuildTraceBundle(

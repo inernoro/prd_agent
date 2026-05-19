@@ -159,13 +159,15 @@ function protocolLabel(protocol: string): string {
 
 function profileLabel(profile: InfraAgentRuntimeProfileView): string {
   const keyState = profile.hasApiKey ? '' : ' · 需重新保存 provider secret';
-  return `${profile.name} · ${protocolLabel(profile.protocol)} · ${profile.model}${keyState}`;
+  const scope = profile.scope === 'team-shared' ? ' · 团队共享' : '';
+  return `${profile.name}${scope} · ${protocolLabel(profile.protocol)} · ${profile.model}${keyState}`;
 }
 
 function profileSummary(profile: InfraAgentRuntimeProfileView | null): string {
   if (!profile) return '未选择';
   const keyState = profile.hasApiKey ? '' : ' · provider secret 需重新保存';
-  return `${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
+  const scope = profile.scope === 'team-shared' ? '团队共享 · ' : '';
+  return `${scope}${protocolLabel(profile.protocol)} · ${profile.model} @ ${profile.baseUrl}${keyState}`;
 }
 
 function networkPolicyLabel(policy?: string | null): string {
@@ -3749,7 +3751,7 @@ export default function CdsAgentPage() {
               { label: '团队', value: governanceDashboard?.subject.teamCount ?? 0, hint: governanceDashboard?.subject.teamIds.slice(0, 2).join(' / ') || '当前用户上下文' },
               { label: '工作流', value: governanceSummary?.ownedWorkflowCount ?? 0, hint: 'owner scoped' },
               { label: '知识库', value: governanceSummary?.ownedKnowledgeBaseCount ?? 0, hint: `${governanceSummary?.publicKnowledgeBaseCount ?? 0} public readable` },
-              { label: 'Profile', value: `${governanceSummary?.ownedRuntimeProfileCount ?? 0}/${governanceSummary?.runtimeProfileCount ?? 0}`, hint: governanceSummary?.defaultRuntimeProfileOwned ? 'default owned' : 'global default visible' },
+              { label: 'Profile', value: `${governanceSummary?.ownedRuntimeProfileCount ?? 0}/${governanceSummary?.runtimeProfileCount ?? 0}`, hint: `${governanceSummary?.teamSharedRuntimeProfileCount ?? 0} team shared` },
               { label: '审批', value: governanceSummary?.waitingApprovalExecutionCount ?? 0, hint: `${governanceSummary?.writablePolicySessionCount ?? 0} writable sessions` },
             ].map((item) => (
               <div

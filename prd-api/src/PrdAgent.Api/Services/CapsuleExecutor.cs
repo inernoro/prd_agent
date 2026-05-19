@@ -4683,16 +4683,44 @@ function safeChart(canvasId, config) {
                 throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
 
             var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
+            var memberTeamIds = await db.ReportTeamMembers
+                .Find(x => x.UserId == userId)
+                .Limit(500)
+                .ToListAsync(CancellationToken.None);
+            var leaderTeams = await db.ReportTeams
+                .Find(x => x.LeaderUserId == userId)
+                .Limit(500)
+                .ToListAsync(CancellationToken.None);
+            var visibleTeamIds = memberTeamIds
+                .Select(x => x.TeamId)
+                .Concat(leaderTeams.Select(x => x.Id))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var profileBuilder = Builders<InfraAgentRuntimeProfile>.Filter;
+            var ownedProfileFilter = profileBuilder.Eq(x => x.CreatedByUserId, userId);
+            var sharedProfileFilter = visibleTeamIds.Count == 0
+                ? profileBuilder.Where(_ => false)
+                : profileBuilder.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
+            var visibleProfileFilter = ownedProfileFilter | sharedProfileFilter;
             runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
                 ? await db.InfraAgentRuntimeProfiles
-                    .Find(x => x.CreatedByUserId == userId && x.IsDefault)
+                    .Find(ownedProfileFilter & profileBuilder.Eq(x => x.IsDefault, true))
                     .FirstOrDefaultAsync(CancellationToken.None)
                     ?? await db.InfraAgentRuntimeProfiles
-                        .Find(x => x.CreatedByUserId == userId)
+                        .Find(sharedProfileFilter & profileBuilder.Eq(x => x.IsDefault, true))
+                        .SortByDescending(x => x.UpdatedAt)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? await db.InfraAgentRuntimeProfiles
+                        .Find(ownedProfileFilter)
+                        .SortByDescending(x => x.UpdatedAt)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? await db.InfraAgentRuntimeProfiles
+                        .Find(sharedProfileFilter)
                         .SortByDescending(x => x.UpdatedAt)
                         .FirstOrDefaultAsync(CancellationToken.None)
                 : await db.InfraAgentRuntimeProfiles
-                    .Find(x => x.Id == runtimeProfileId && x.CreatedByUserId == userId)
+                    .Find(profileBuilder.Eq(x => x.Id, runtimeProfileId) & visibleProfileFilter)
                     .FirstOrDefaultAsync(CancellationToken.None);
             if (runtimeProfile == null)
                 throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");

@@ -332,7 +332,8 @@ public record InfraAgentGovernanceSummaryView(
     int WritablePolicySessionCount,
     int WaitingApprovalExecutionCount,
     int PassedGateCount,
-    int TotalGateCount
+    int TotalGateCount,
+    int TeamSharedRuntimeProfileCount = 0
 );
 
 public record InfraAgentGovernanceScopeView(

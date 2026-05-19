@@ -54,6 +54,14 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
             CreatedByUserId = userId,
             IsDefault = true
         };
+        var teamSharedProfile = new InfraAgentRuntimeProfile
+        {
+            Id = "profile-2",
+            Name = "Team Shared Profile",
+            CreatedByUserId = "team-admin",
+            SharedTeamIds = new List<string> { "team-1" },
+            IsDefault = false
+        };
         var writableSession = new InfraAgentSession
         {
             Id = "session-1",
@@ -72,7 +80,7 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
             new[] { team },
             new[] { workflow },
             new[] { ownedStore, publicStore },
-            new[] { ownedProfile },
+            new[] { ownedProfile, teamSharedProfile },
             new[] { writableSession },
             new[] { waitingApproval },
             now);
@@ -83,14 +91,17 @@ public class InfraAgentSessionServiceGovernanceDashboardTests
         dashboard.Summary.OwnedWorkflowCount.ShouldBe(1);
         dashboard.Summary.OwnedKnowledgeBaseCount.ShouldBe(1);
         dashboard.Summary.PublicKnowledgeBaseCount.ShouldBe(1);
-        dashboard.Summary.RuntimeProfileCount.ShouldBe(1);
+        dashboard.Summary.RuntimeProfileCount.ShouldBe(2);
         dashboard.Summary.OwnedRuntimeProfileCount.ShouldBe(1);
+        dashboard.Summary.TeamSharedRuntimeProfileCount.ShouldBe(1);
         dashboard.Summary.DefaultRuntimeProfileOwned.ShouldBeTrue();
         dashboard.Summary.WritablePolicySessionCount.ShouldBe(1);
         dashboard.Summary.WaitingApprovalExecutionCount.ShouldBe(1);
         dashboard.Gates.Single(x => x.Code == "GOV-KB-READONLY").Status.ShouldBe("pass");
         dashboard.Gates.Single(x => x.Code == "GOV-PROFILE-SCOPE").Status.ShouldBe("pass");
-        dashboard.Scopes.Single(x => x.Area == "runtime-profile").State.ShouldBe("enforced");
+        var runtimeProfileScope = dashboard.Scopes.Single(x => x.Area == "runtime-profile");
+        runtimeProfileScope.State.ShouldBe("enforced-team-aware");
+        runtimeProfileScope.Evidence.ShouldContain("1 team-shared profile");
         dashboard.NextActions.ShouldContain("Continue with explicit team policy data model for repository/profile/approval ownership.");
     }
 }

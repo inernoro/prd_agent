@@ -303,7 +303,13 @@ public class CdsAgentAdapter : IAgentAdapter
         }
 
         var collection = _db.Database.GetCollection<BsonDocument>("infra_agent_runtime_profiles");
-        var filter = Builders<BsonDocument>.Filter.Eq("CreatedByUserId", userId);
+        var visibleTeamIds = await LoadVisibleTeamIdsAsync(userId, ct);
+        var builder = Builders<BsonDocument>.Filter;
+        var ownerFilter = builder.Eq("CreatedByUserId", userId);
+        var sharedFilter = visibleTeamIds.Count == 0
+            ? builder.Where(_ => false)
+            : builder.AnyIn("SharedTeamIds", visibleTeamIds);
+        var filter = ownerFilter | sharedFilter;
         var sort = Builders<BsonDocument>.Sort
             .Descending("IsDefault")
             .Descending("UpdatedAt");
@@ -326,6 +332,26 @@ public class CdsAgentAdapter : IAgentAdapter
             model,
             ReadBool(doc, "IsDefault", "isDefault"),
             ReadDateTime(doc, "UpdatedAt", "updatedAt"));
+    }
+
+    private async Task<List<string>> LoadVisibleTeamIdsAsync(string userId, CancellationToken ct)
+    {
+        var memberships = await _db.ReportTeamMembers
+            .Find(x => x.UserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var leaderTeams = await _db.ReportTeams
+            .Find(x => x.LeaderUserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        return memberships
+            .Select(x => x.TeamId)
+            .Concat(leaderTeams.Select(x => x.Id))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string ReadString(BsonDocument doc, params string[] names)

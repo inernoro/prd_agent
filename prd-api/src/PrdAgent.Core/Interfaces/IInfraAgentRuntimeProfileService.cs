@@ -41,13 +41,15 @@ public record UpsertInfraAgentRuntimeProfileRequest(
     int? TimeoutSeconds = null,
     string? NetworkPolicy = null,
     int? AutoCleanupMinutes = null,
-    bool? IsDefault = null
+    bool? IsDefault = null,
+    IReadOnlyList<string>? SharedTeamIds = null
 );
 
 public record CreateInfraAgentRuntimeProfileFromTemplateRequest(
     string? Name,
     string? ApiKey,
-    bool? IsDefault = null
+    bool? IsDefault = null,
+    IReadOnlyList<string>? SharedTeamIds = null
 );
 
 public record InfraAgentRuntimeProfilePromotionResult(
@@ -70,7 +72,10 @@ public record InfraAgentRuntimeProfileView(
     bool HasApiKey,
     bool IsDefault,
     DateTime CreatedAt,
-    DateTime UpdatedAt
+    DateTime UpdatedAt,
+    IReadOnlyList<string>? SharedTeamIds = null,
+    string Scope = "user-owned",
+    string? OwnerUserId = null
 );
 
 public record InfraAgentRuntimeProfileTemplateView(
@@ -667,6 +672,7 @@ public static class InfraAgentRuntimeProfileErrorCodes
     public const string ModelConfigIncomplete = "model_config_incomplete";
     public const string TemplateNotFound = "template_not_found";
     public const string ProfileTestFailed = "profile_test_failed";
+    public const string SharedTeamNotAccessible = "shared_team_not_accessible";
 }
 
 public class InfraAgentRuntimeProfileException : Exception

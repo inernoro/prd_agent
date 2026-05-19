@@ -210,6 +210,7 @@ export interface InfraAgentGovernanceDashboardView {
     waitingApprovalExecutionCount: number;
     passedGateCount: number;
     totalGateCount: number;
+    teamSharedRuntimeProfileCount?: number;
   };
   scopes: Array<{
     area: string;
@@ -300,6 +301,9 @@ export interface InfraAgentRuntimeProfileView {
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
+  sharedTeamIds?: string[] | null;
+  scope?: string | null;
+  ownerUserId?: string | null;
 }
 
 export interface InfraAgentRuntimeProfileTemplateView {
