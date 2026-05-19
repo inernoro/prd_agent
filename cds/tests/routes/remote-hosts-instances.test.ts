@@ -746,6 +746,7 @@ describe('Remote hosts project instances route', () => {
       runtimeAdapter: 'claude-agent-sdk',
       model: 'deepseek/deepseek-v4-pro',
       mapSessionId: sessionId,
+      maxTurns: 40,
       baseUrl: 'https://openrouter.ai/api',
       apiKey: 'provider-secret',
       protocol: 'anthropic',

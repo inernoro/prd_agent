@@ -529,8 +529,8 @@ public class InfraAgentSessionsController : ControllerBase
             "doctor" => "read-only local/remote diagnostics",
             "official-sdk-boundary" => "read-only local contract smoke",
             "r1-dry-run" => "read-only/default-safe profile repair preview",
-            "r1-apply" => "writes CDS-managed runtime profile only after explicit smoke key injection; not a product env path",
-            "provider-cycle" => "real provider calls; requires explicit allow flag and a CDS-managed Anthropic profile/secret",
+            "r1-apply" => "writes a CDS-managed runtime profile only for native Anthropic template repair; custom provider-switch profiles should use the product profile form/import path",
+            "provider-cycle" => "real provider calls; requires explicit allow flag and a CDS-managed provider-switch profile/secret",
             "non-code-compat" => "read-only local compatibility smoke",
             _ => "inspect command before running"
         };
@@ -688,19 +688,19 @@ public class InfraAgentSessionsController : ControllerBase
                 remoteSmokePrefix + "bash scripts/smoke-cds-agent-r1-profile-repair.sh",
                 "不写入远程状态，验证后端 R1 修复计划、模板和缺 key 保护。",
                 r1Status,
-                r1Ready ? null : "CDS-managed Anthropic profile/secret"),
+                r1Ready ? null : "CDS-managed provider-switch profile/secret"),
             new SidecarDebugCommand(
                 "r1-apply",
-                "R1 test-before-promote",
+                "R1 native Anthropic test-before-promote",
                 remoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh",
-                "通过 smoke env 注入 key 创建 CDS-managed 候选 Anthropic 官方 profile；后端测试通过后才提升为默认，普通产品路径不读取 operator env。",
+                "仅用于原生 api.anthropic.com 官方模板；DeepSeek/cc-switch/OpenRouter 走 CDS-managed provider-switch profile，不需要 smoke env key。",
                 r1Status,
-                r1Ready ? null : "CDS-managed Anthropic profile/secret"),
+                r1Ready ? null : "CDS-managed provider-switch profile/secret"),
             new SidecarDebugCommand(
                 "provider-cycle",
                 "一个周期 provider smoke",
-                remoteSmokePrefix + "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
-                "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用，使用 CDS-managed profile/secret。",
+                remoteSmokePrefix + "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh",
+                "R1 通过后跑 S1/S2/S3 和视觉证据；会触发真实 provider 调用，复用 CDS-managed provider-switch profile/secret。",
                 providerStatus,
                 providerBlockedBy),
             new SidecarDebugCommand(

@@ -128,11 +128,12 @@ if [[ "$(jq -r '.r1Repair.nextCommands | type' "$json_index")" == "object" ]]; t
   assert_contains "$(jq -r '.r1Repair.nextCommands.dryRun // ""' "$json_index")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.dryRun"
   assert_contains "$(jq -r '.r1Repair.nextCommands.repairOnly // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.nextCommands.repairOnly"
   assert_contains "$(jq -r '.r1Repair.nextCommands.repairOnly // ""' "$json_index")" "smoke-cds-agent-r1-profile-repair.sh" "r1Repair.nextCommands.repairOnly"
-  assert_contains "$(jq -r '.r1Repair.nextCommands.repairAndProviderCycle // ""' "$json_index")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "r1Repair.nextCommands.repairAndProviderCycle"
-  assert_contains "$(jq -r '.r1Repair.nextCommands.repairAndProviderCycle // ""' "$json_index")" "smoke-cds-agent-one-cycle.sh" "r1Repair.nextCommands.repairAndProviderCycle"
+  provider_cycle_command="$(jq -r '.r1Repair.nextCommands.providerCycle // .r1Repair.nextCommands.repairAndProviderCycle // ""' "$json_index")"
+  assert_contains "$provider_cycle_command" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "r1Repair.nextCommands.providerCycle"
+  assert_contains "$provider_cycle_command" "smoke-cds-agent-one-cycle.sh" "r1Repair.nextCommands.providerCycle"
 fi
 if [[ "$status" == "blocked_r1" ]]; then
-  assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "r1Repair.suggestedCommand"
+  assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "smoke-cds-agent-r1-profile-repair.sh" "r1Repair.suggestedCommand"
   if [[ "$(jq -r '.host // ""' "$json_index")" == https://* ]]; then
     assert_contains "$(jq -r '.nextCommand // ""' "$json_index")" "CDS_HOST=" "nextCommand"
     assert_contains "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "CDS_HOST=" "r1Repair.suggestedCommand"

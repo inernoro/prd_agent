@@ -8,8 +8,9 @@
 #   -> readiness ledger -> S1 official SDK run -> S2/S3 controls -> V1 visual -> N6 non-code boundary
 #
 # This script does not make provider calls unless the caller explicitly sets
-# SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1. R1 only writes a real default profile
-# when SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is provided.
+# SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1. R1 normally uses an existing
+# CDS-managed provider-switch profile/secret. SMOKE_CDS_AGENT_ANTHROPIC_API_KEY
+# is only for native api.anthropic.com template repair, not the product path.
 #
 # Evidence is written under:
 #   SMOKE_CDS_AGENT_CYCLE_DIR=/tmp/cds-agent-cycle-<timestamp>
@@ -312,7 +313,7 @@ finish_cycle() {
     provider_prerequisite_advice="This cycle may close R1 and collect S1/S2/S3 only if the smoke-supplied Anthropic key is saved as a CDS-managed profile/secret after backend test-before-promote."
   elif [[ "$provider_calls_enabled" == "true" ]]; then
     provider_prerequisite_status="provider_requested_without_r1_repair_key"
-    provider_prerequisite_advice="Provider calls were requested, but no CDS-managed Anthropic profile/secret is available to this smoke; R1 cannot be repaired by this cycle."
+    provider_prerequisite_advice="Provider calls were requested, but no CDS-managed provider-switch profile/secret is available to this smoke; run import-default-model or create a compatible runtime profile first."
   elif [[ "$r1_repair_apply" == "true" ]]; then
     provider_prerequisite_status="r1_repair_key_without_provider_calls"
     provider_prerequisite_advice="A smoke-only Anthropic key was provided for R1 repair, but S1/S2/S3 provider smokes remain disabled until SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1."
@@ -476,7 +477,7 @@ finish_cycle() {
         next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-one-cycle.sh"
         ;;
       blocked_r1)
-        next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+        next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} bash scripts/smoke-cds-agent-r1-profile-repair.sh"
         ;;
       ready_for_provider_smokes|blocked_provider_smokes|provider_smokes_incomplete)
         next_command="CDS_HOST=${CDS_HOST:-https://cds.miduo.org} SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"

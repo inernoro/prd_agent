@@ -419,7 +419,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ct);
         var cdsItem = await ReadCdsItemAsync(response, ct);
         var cdsStatus = MapCdsStatus(GetString(cdsItem, "status"));
-        await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
+        var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
+        if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
+        {
+            cdsStatus = importResult.SessionStatus;
+        }
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -1394,7 +1398,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
     }
 
-    private async Task ImportCdsStreamEventsAsync(
+    private async Task<CdsStreamImportResult> ImportCdsStreamEventsAsync(
         InfraConnection connection,
         string token,
         InfraAgentSession session,
@@ -1409,6 +1413,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             null,
             ct);
         var stream = await response.Content.ReadAsStringAsync(ct);
+        string? sessionStatus = null;
+        string? sessionError = null;
         foreach (var block in stream.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
         {
             var dataLine = block.Split('\n').FirstOrDefault(line => line.StartsWith("data: ", StringComparison.Ordinal));
@@ -1441,7 +1447,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     }, cancellationToken: ct);
                 }
             }
+            else if (type == InfraAgentEventTypes.Error && root.TryGetProperty("payload", out var errorPayload))
+            {
+                var errorMessage = GetString(errorPayload, "message") ?? "CDS-managed runtime returned an error";
+                var errorStatus = BuildRuntimeErrorStatus(
+                    GetString(errorPayload, "code"),
+                    errorMessage,
+                    ExtractRuntimeErrorContentJson(errorPayload));
+                await MarkRuntimeFailedAsync(session, errorStatus.SessionError, ct);
+                sessionStatus = InfraAgentSessionStatuses.Failed;
+                sessionError = errorStatus.SessionError;
+            }
         }
+
+        return new CdsStreamImportResult(sessionStatus, sessionError);
     }
 
     private async Task<bool> RunSidecarRuntimeIfAvailableAsync(
@@ -1766,11 +1785,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 }
                 break;
             case "claude_agent_sdk_result_error":
-                retryable = true;
-                recoveryKind = "sdk_result_error";
+                var sdkSubtype = ExtractSdkResultSubtype(contentJson);
+                retryable = !string.Equals(sdkSubtype, "error_max_turns", StringComparison.OrdinalIgnoreCase);
+                recoveryKind = retryable ? "sdk_result_error" : "sdk_turn_limit";
                 if (actions.Count == 0)
                 {
-                    actions.Add("查看 usage/done content.sdkResult 中的官方 SDK subtype/session 信息");
+                    if (retryable)
+                    {
+                        actions.Add("查看 usage/done content.sdkResult 中的官方 SDK subtype/session 信息");
+                    }
+                    else
+                    {
+                        actions.Add("缩短单次任务提示或提高 CDS-managed official SDK runtime 的 maxTurns 后重试");
+                        actions.Add("检查远程事件中的 tool_use 循环，确认只读巡检是否需要更小的读取范围");
+                    }
                 }
                 break;
         }
@@ -1811,6 +1839,43 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         catch (JsonException)
         {
             return new List<string>();
+        }
+    }
+
+    private static string? ExtractRuntimeErrorContentJson(JsonElement errorPayload)
+    {
+        if (!errorPayload.TryGetProperty("content", out var content))
+        {
+            return null;
+        }
+
+        return content.ValueKind == JsonValueKind.String
+            ? content.GetString()
+            : content.GetRawText();
+    }
+
+    private static string? ExtractSdkResultSubtype(string? contentJson)
+    {
+        if (string.IsNullOrWhiteSpace(contentJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(contentJson);
+            if (!doc.RootElement.TryGetProperty("sdkResult", out var sdkResult)
+                || !sdkResult.TryGetProperty("subtype", out var subtype)
+                || subtype.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            return subtype.GetString();
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
@@ -3360,6 +3425,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         };
     }
 }
+
+internal sealed record CdsStreamImportResult(string? SessionStatus, string? SessionError);
 
 public sealed record InfraAgentRuntimeErrorStatus(
     string SessionError,

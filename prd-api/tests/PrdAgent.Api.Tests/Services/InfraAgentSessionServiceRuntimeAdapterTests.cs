@@ -194,6 +194,20 @@ public class InfraAgentSessionServiceRuntimeAdapterTests
         status.NextActions.ShouldContain("查看 usage/done content.sdkResult 中的官方 SDK subtype/session 信息");
     }
 
+    [Fact]
+    public void BuildRuntimeErrorStatus_ShouldClassifyMaxTurnsAsTerminalSdkTurnLimit()
+    {
+        var status = InfraAgentSessionService.BuildRuntimeErrorStatus(
+            "claude_agent_sdk_result_error",
+            "error_max_turns",
+            """{"sdkResult":{"subtype":"error_max_turns"}}""");
+
+        status.Retryable.ShouldBeFalse();
+        status.RecoveryKind.ShouldBe("sdk_turn_limit");
+        status.SessionError.ShouldBe("Claude SDK sidecar 执行失败(claude_agent_sdk_result_error)：error_max_turns");
+        status.NextActions.ShouldContain("缩短单次任务提示或提高 CDS-managed official SDK runtime 的 maxTurns 后重试");
+    }
+
     private sealed class CapturingSidecarRouter : IClaudeSidecarRouter
     {
         private readonly SidecarEvent? _event;

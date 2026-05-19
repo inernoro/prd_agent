@@ -1736,7 +1736,7 @@ async function runCdsManagedOfficialSdkTransport(
     runtimeAdapter: 'claude-agent-sdk',
     mapSessionId: session.id,
     traceId: session.id,
-    maxTurns: 10,
+    maxTurns: resolveAgentMaxTurns(content),
     timeoutSeconds: session.resourcePolicy.timeoutSeconds,
     baseUrl: session.modelBaseUrl || undefined,
     apiKey: session.modelApiKey || undefined,
@@ -1892,14 +1892,15 @@ function ingestOfficialSdkSse(
       continue;
     }
     if (sidecarType === 'error') {
+      const code = normalizeOptionalString(payload.error_code) || 'cds_managed_runtime_error';
       const error = {
-        code: normalizeOptionalString(payload.error_code) || 'cds_managed_runtime_error',
+        code,
         message: normalizeOptionalString(payload.message) || 'CDS-managed official SDK runtime returned an error',
         content: payload.content,
         runtime: session.runtime,
         runtimeProfileId: session.runtimeProfileId,
         transport: toCdsManagedRuntimeTransportView(transport),
-        retryable: true,
+        retryable: code !== 'claude_agent_sdk_result_error',
       };
       session.status = 'failed';
       pushCdsAgentEvent(session, 'error', error);
@@ -1986,6 +1987,19 @@ function normalizeAgentResourcePolicy(value: unknown): CdsAgentResourcePolicy {
 
 function normalizeAgentNetworkPolicy(value: unknown): CdsAgentResourcePolicy['networkPolicy'] {
   return value === 'egress-only' || value === 'open' || value === 'restricted' ? value : 'restricted';
+}
+
+function resolveAgentMaxTurns(content: string): number {
+  const text = content || '';
+  return (
+    text.includes('创建 PR')
+    || text.includes('提交 PR')
+    || /create pr/i.test(text)
+    || /pull request/i.test(text)
+    || text.includes('巡检')
+    || text.includes('修复')
+    || /review/i.test(text)
+  ) ? 40 : 18;
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {

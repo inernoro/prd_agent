@@ -7,13 +7,14 @@
 #   1. 验证 runtime-status 暴露的 R1 修复计划与后端 Anthropic 官方模板一致。
 #   2. 未提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时只做 dry-run，确认不会创建缺 key
 #      profile，且非 Anthropic 官方 key 形态会被后端拒绝。
-#   3. 提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 时，作为 smoke-only 注入方式调用后端专用入口，
-#      由 MAP 后端创建 CDS-managed 候选 profile、调用 test 验证上游可用、成功后提升为默认
-#      Claude profile，最后验证 runtime-status 的 R1 gate 变为 pass。
+#   3. 若远端已经有 CDS-managed provider-switch profile，本脚本直接通过，不要求 smoke key。
+#   4. 只有原生 api.anthropic.com 官方模板 repair 才使用 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY
+#      作为 smoke-only 注入方式；DeepSeek/cc-switch/OpenRouter 应走自定义 profile 或
+#      import-default-model 产品路径。
 #
 # 默认不消耗 provider token；只有显式提供 SMOKE_CDS_AGENT_ANTHROPIC_API_KEY 才会写入一个新的
-# CDS-managed runtime profile；后端上游 test 成功前不会提升为默认。普通产品路径应通过
-# CDS Agent runtime profile/secret store 保存 provider secret，不能要求用户配置 sidecar env。
+# 原生 Anthropic 官方模板 profile；后端上游 test 成功前不会提升为默认。普通产品路径应通过
+# CDS Agent runtime profile/secret store 或 import-default-model 保存 provider secret，不能要求用户配置 sidecar env。
 #
 # 环境变量:
 #   SMOKE_CDS_AGENT_R1_REPORT=/tmp/r1.json  可选: 输出 R1 修复证据 JSON
@@ -41,27 +42,32 @@ write_r1_report() {
   if [[ -n "${CDS_HOST:-}" ]]; then
     remote_prefix="CDS_HOST=${CDS_HOST} "
   fi
+  local repair_only_command="${remote_prefix}SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh"
+  local provider_cycle_command="${remote_prefix}SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+  local import_command="${remote_prefix}curl -X POST <preview>/api/infra-agent-runtime-profiles/import-default-model"
   jq -n \
     --arg status "$status" \
     --arg host "$SMOKE_HOST" \
     --arg targetTemplateId "$target_template_id" \
     --arg dryRunCommand "${remote_prefix}bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
-    --arg repairOnlyCommand "${remote_prefix}SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> bash scripts/smoke-cds-agent-r1-profile-repair.sh" \
-    --arg repairAndProviderCycleCommand "${remote_prefix}SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh" \
+    --arg repairOnlyCommand "$repair_only_command" \
+    --arg providerCycleCommand "$provider_cycle_command" \
+    --arg importDefaultModelCommand "$import_command" \
     --arg evidenceRaw "$evidence_json" \
     '{
       status: $status,
       host: $host,
       targetTemplateId: $targetTemplateId,
       productPath: "CDS-managed runtime profile/secret store",
-      smokeKeyInjection: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is test-only and must not become the product path",
+      smokeKeyInjection: "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is native Anthropic template test-only and must not become the product path",
       operatorFallback: "sidecar env/remote host/image are operator-debug fallback only",
-      suggestedCommand: $repairAndProviderCycleCommand,
+      suggestedCommand: (if $status == "already_pass" or $status == "pass" then $providerCycleCommand else $dryRunCommand end),
       suggestedRepairCommand: $repairOnlyCommand,
       nextCommands: {
         dryRun: $dryRunCommand,
+        importDefaultModel: $importDefaultModelCommand,
         repairOnly: $repairOnlyCommand,
-        repairAndProviderCycle: $repairAndProviderCycleCommand
+        providerCycle: $providerCycleCommand
       },
       evidence: (
         $evidenceRaw
@@ -73,8 +79,8 @@ write_r1_report() {
   smoke_assert_contains "$(jq -r '.nextCommands.dryRun // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "bash scripts/smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.dryRun"
   smoke_assert_contains "$(jq -r '.nextCommands.repairOnly // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ANTHROPIC_API_KEY" "R1Report.nextCommands.repairOnly"
   smoke_assert_contains "$(jq -r '.nextCommands.repairOnly // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "smoke-cds-agent-r1-profile-repair.sh" "R1Report.nextCommands.repairOnly"
-  smoke_assert_contains "$(jq -r '.nextCommands.repairAndProviderCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "R1Report.nextCommands.repairAndProviderCycle"
-  smoke_assert_contains "$(jq -r '.nextCommands.repairAndProviderCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "smoke-cds-agent-one-cycle.sh" "R1Report.nextCommands.repairAndProviderCycle"
+  smoke_assert_contains "$(jq -r '.nextCommands.providerCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1" "R1Report.nextCommands.providerCycle"
+  smoke_assert_contains "$(jq -r '.nextCommands.providerCycle // ""' "$SMOKE_CDS_AGENT_R1_REPORT")" "smoke-cds-agent-one-cycle.sh" "R1Report.nextCommands.providerCycle"
   printf 'R1 report: %s\n' "$SMOKE_CDS_AGENT_R1_REPORT"
 }
 
@@ -276,7 +282,7 @@ if [[ -z "${SMOKE_CDS_AGENT_ANTHROPIC_API_KEY:-}" ]]; then
       providerKeyReceived: false
     }')
   write_r1_report "dry_run_requires_api_key" "$dry_run_evidence"
-  smoke_ok "dry-run only: create a CDS-managed Anthropic runtime profile/secret, or set SMOKE_CDS_AGENT_ANTHROPIC_API_KEY only for smoke repair"
+  smoke_ok "dry-run only: create/import a CDS-managed provider-switch runtime profile/secret; use SMOKE_CDS_AGENT_ANTHROPIC_API_KEY only for native Anthropic template repair"
   smoke_step "跳过后端上游测试和默认提升"
   smoke_ok "not applicable without SMOKE_CDS_AGENT_ANTHROPIC_API_KEY"
   smoke_step "跳过修复后验证"
