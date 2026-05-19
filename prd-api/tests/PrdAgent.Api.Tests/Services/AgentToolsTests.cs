@@ -181,6 +181,41 @@ public class AgentToolsTests : IDisposable
         result.ErrorCode.ShouldBe("github_token_missing");
     }
 
+    [Fact]
+    public void KnowledgeBaseReadonlyToolsExposeOnlyListSearchRead()
+    {
+        var tools = new IAgentTool[]
+        {
+            new KbListTool(null!),
+            new KbSearchTool(null!),
+            new KbReadTool(null!)
+        };
+
+        tools.Select(x => x.Descriptor.Name).ShouldBe(new[] { "kb_list", "kb_search", "kb_read" });
+        foreach (var tool in tools)
+        {
+            tool.Descriptor.Description.ShouldContain("只读");
+            using var schema = JsonDocument.Parse(tool.Descriptor.InputSchemaJson);
+            schema.RootElement.GetProperty("type").GetString().ShouldBe("object");
+        }
+    }
+
+    [Fact]
+    public void KnowledgeBaseSnippetKeepsCitationSearchContext()
+    {
+        var entry = new PrdAgent.Core.Models.DocumentEntry
+        {
+            Title = "Agent Roadmap",
+            Summary = "fallback",
+            ContentIndex = "前置内容，商业级可观察性和 timeout 机制需要在 Agent 面板里稳定展示，后续还有知识库检索。"
+        };
+
+        var snippet = KnowledgeBaseReadonlyToolSupport.BuildSnippet(entry, "timeout");
+
+        snippet.ShouldContain("timeout");
+        snippet.Length.ShouldBeLessThanOrEqualTo(263);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))
