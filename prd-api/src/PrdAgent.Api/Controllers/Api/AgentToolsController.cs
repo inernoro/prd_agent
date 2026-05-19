@@ -176,14 +176,14 @@ public class AgentToolsController : ControllerBase
         }
 
         var risk = ClassifyToolRisk(req.ToolName);
-        if (string.Equals(session.ToolPolicy, "deny-all", StringComparison.OrdinalIgnoreCase))
+        if (!InfraAgentToolPolicies.AllowsToolInvocation(session.ToolPolicy, req.ToolName))
         {
-            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool policy deny-all", ct);
+            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool denied by tool policy", ct);
             return Ok(new
             {
                 success = false,
-                errorCode = "tool_denied_by_policy",
-                message = "tool policy deny-all",
+                errorCode = "tool_denied_by_writable_profile",
+                message = "tool is not allowed by the current CDS Agent tool policy",
                 risk
             });
         }
@@ -226,10 +226,13 @@ public class AgentToolsController : ControllerBase
                 : ToolApprovalDecision.Deny("approval_context_missing", "dangerous tool requires an infra agent session approval context", risk);
         }
 
-        if (string.Equals(session.ToolPolicy, "deny-all", StringComparison.OrdinalIgnoreCase))
+        if (!InfraAgentToolPolicies.AllowsToolInvocation(session.ToolPolicy, toolName))
         {
-            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool policy deny-all", ct);
-            return ToolApprovalDecision.Deny("tool_denied_by_policy", "tool policy deny-all", risk);
+            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool denied by tool policy", ct);
+            return ToolApprovalDecision.Deny(
+                "tool_denied_by_writable_profile",
+                "tool is not allowed by the current CDS Agent tool policy",
+                risk);
         }
 
         if (risk == "readonly")

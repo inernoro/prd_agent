@@ -1439,7 +1439,8 @@ export default function InfraServicesPage() {
                   className="w-full rounded-md px-3 py-2 text-white outline-none"
                   style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
                 >
-                  <option value="confirm-dangerous">危险工具确认</option>
+                  <option value="confirm-dangerous">非代码危险工具确认</option>
+                  <option value="code-writable-confirm">代码可写需 MAP 审批</option>
                   <option value="auto-allow-readonly">只读自动允许</option>
                   <option value="deny-all">禁用工具</option>
                 </select>

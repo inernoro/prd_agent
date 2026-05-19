@@ -1980,27 +1980,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private static bool ShouldExposeToolToRuntime(string? toolPolicy, string toolName)
     {
-        var policy = NormalizeToolPolicy(toolPolicy);
-        if (policy == "deny-all") return false;
-
-        if (policy is "readonly-auto" or "auto-allow-readonly")
-        {
-            return toolName is
-                "echo" or
-                "current_time" or
-                "repo_list_files" or
-                "repo_read_file" or
-                "repo_search" or
-                "repo_git_status" or
-                "repo_git_diff" or
-                "kb_list" or
-                "kb_search" or
-                "kb_read" or
-                "kb_diff" or
-                "cds_bridge_snapshot";
-        }
-
-        return true;
+        return InfraAgentToolPolicies.ShouldExposeToolToRuntime(toolPolicy, toolName);
     }
 
     private static IReadOnlyList<ReadonlyArtifactToolRequest> BuildReadonlyArtifactRequests() => new[]
@@ -2142,10 +2122,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private static string NormalizeToolPolicy(string? policy)
     {
-        var normalized = NormalizeOptional(policy);
-        return normalized is "readonly-auto" or "auto-allow-readonly" or "confirm-dangerous" or "deny-all"
-            ? normalized
-            : "confirm-dangerous";
+        return InfraAgentToolPolicies.Normalize(policy);
     }
 
     private static object BuildResourcePolicy(InfraAgentSession session) => new

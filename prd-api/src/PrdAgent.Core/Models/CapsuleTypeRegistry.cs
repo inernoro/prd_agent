@@ -1184,8 +1184,9 @@ public static class CapsuleTypeRegistry
             new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "readonly-auto", Options = new()
             {
                 new() { Value = "readonly-auto", Label = "只读自动允许" },
-                new() { Value = "confirm-dangerous", Label = "危险工具需确认" },
-                new() { Value = "manual-all", Label = "全部人工确认" },
+                new() { Value = "code-writable-confirm", Label = "代码可写需 MAP 审批" },
+                new() { Value = "confirm-dangerous", Label = "非代码危险工具需确认" },
+                new() { Value = "manual-all", Label = "非代码工具全部人工确认" },
             }},
             new() { Key = "workflowApprovalMode", Label = "工作流审批模式", FieldType = "select", Required = false, DefaultValue = "none", Options = new()
             {

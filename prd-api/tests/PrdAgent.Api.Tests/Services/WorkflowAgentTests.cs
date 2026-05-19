@@ -118,6 +118,9 @@ public class WorkflowAgentTests
         Assert.Contains(meta.ConfigSchema, f => f.Key == "runtime");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "runtimeProfileId");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "toolPolicy" && f.DefaultValue == "readonly-auto");
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "toolPolicy"
+            && f.Options != null
+            && f.Options.Any(o => o.Value == "code-writable-confirm"));
         Assert.Contains(meta.ConfigSchema, f => f.Key == "workflowApprovalMode");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "approvalTimeoutSeconds" && f.DefaultValue == "3600");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "approvalToolName" && f.DefaultValue == "kb_apply");

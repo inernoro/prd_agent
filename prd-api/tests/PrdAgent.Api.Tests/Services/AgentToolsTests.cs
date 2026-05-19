@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AgentTools;
 using PrdAgent.Infrastructure.Services.AgentTools.Tools;
 using Shouldly;
@@ -59,6 +60,28 @@ public class AgentToolsTests : IDisposable
         command.Success.ShouldBeTrue();
         command.Content.ShouldNotBeNull();
         command.Content.ShouldContain("notes/result.txt");
+    }
+
+    [Fact]
+    public void InfraAgentToolPoliciesExposeCodeWriteOnlyForExplicitWritableProfile()
+    {
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("readonly-auto", "repo_read_file").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("readonly-auto", "repo_write_file").ShouldBeFalse();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("confirm-dangerous", "kb_apply").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("confirm-dangerous", "repo_write_file").ShouldBeFalse();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("code-writable-confirm", "repo_write_file").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("code-writable-confirm", "repo_run_command").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("code-writable-confirm", "repo_create_pull_request").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void InfraAgentToolPoliciesDenyCodeWriteInvocationWithoutWritableProfile()
+    {
+        InfraAgentToolPolicies.AllowsToolInvocation("readonly-auto", "repo_write_file").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation("confirm-dangerous", "repo_run_command").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation("code-writable-confirm", "repo_run_command").ShouldBeTrue();
+        InfraAgentToolPolicies.AllowsToolInvocation("code-writable-confirm", "kb_apply").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation("deny-all", "repo_read_file").ShouldBeFalse();
     }
 
     [Fact]
