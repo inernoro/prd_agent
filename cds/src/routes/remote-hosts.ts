@@ -664,7 +664,6 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       model: typeof req.body?.model === 'string' ? req.body.model : null,
       modelBaseUrl,
       modelProtocol,
-      modelApiKey,
       workspaceRoot,
       gitRepository,
       gitRef,
@@ -681,6 +680,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       messages: [],
       logs: [],
     };
+    if (modelApiKey) {
+      cdsAgentSessionSecrets.set(session.id, { modelApiKey });
+    }
     pushCdsAgentEvent(session, 'status', {
       status: 'running',
       reason: 'session_created',
@@ -918,6 +920,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     session.status = 'stopped';
     session.updatedAt = new Date().toISOString();
     session.stoppedAt = session.updatedAt;
+    cdsAgentSessionSecrets.delete(session.id);
     pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'session_stopped' });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
@@ -1442,7 +1445,9 @@ function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
       SIDECAR_RUNTIME_OWNER: 'cds-managed-runtime',
       SIDECAR_LOOP_OWNER: 'claude-agent-sdk',
       SIDECAR_PROVIDER_KEY_MODE: 'runtime-profile-or-env',
-      SIDECAR_TOKEN: 'cds-managed',
+      SIDECAR_TOKEN: process.env.CDS_MANAGED_RUNTIME_SIDECAR_TOKEN
+        || process.env.CLAUDE_SIDECAR_TOKEN
+        || 'dev-skip',
     },
     readinessProbe: {
       path: '/readyz',
@@ -1538,7 +1543,6 @@ interface CdsAgentSession {
   model: string | null;
   modelBaseUrl: string | null;
   modelProtocol: string | null;
-  modelApiKey: string | null;
   workspaceRoot: string | null;
   gitRepository: string | null;
   gitRef: string | null;
@@ -1559,6 +1563,7 @@ interface CdsAgentSession {
 }
 
 const cdsAgentSessions = new Map<string, CdsAgentSession>();
+const cdsAgentSessionSecrets = new Map<string, { modelApiKey: string }>();
 
 interface CdsManagedRuntimeTransport {
   source: 'cds-branch-service';
@@ -1800,7 +1805,7 @@ async function runCdsManagedOfficialSdkTransport(
     maxTurns: resolveAgentMaxTurns(content),
     timeoutSeconds: session.resourcePolicy.timeoutSeconds,
     baseUrl: session.modelBaseUrl || undefined,
-    apiKey: session.modelApiKey || undefined,
+    apiKey: cdsAgentSessionSecrets.get(session.id)?.modelApiKey || undefined,
     protocol: session.modelProtocol || undefined,
     workspaceRoot: session.workspaceRoot || undefined,
     gitRepository: session.gitRepository || undefined,

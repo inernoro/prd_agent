@@ -478,6 +478,7 @@ describe('Remote hosts project instances route', () => {
           expect(profile.command).toContain('pip install');
           expect(profile.env?.SIDECAR_AGENT_ADAPTER).toBe('claude-agent-sdk');
           expect(profile.env?.SIDECAR_PROVIDER_KEY_MODE).toBe('runtime-profile-or-env');
+          expect(profile.env?.SIDECAR_TOKEN).toBe('dev-skip');
           expect(service.hostPort).toBeGreaterThanOrEqual(19000);
           onOutput?.('managed runtime container started');
         },
