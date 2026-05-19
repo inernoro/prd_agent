@@ -431,6 +431,12 @@ Phase 2 smoke 清单：
 | 把 remote host/env/image 变成用户路径 | 只能作为 operator/debug fallback |
 | 把 DeepSeek/cc-switch 误判为必须 Anthropic 原生认证 | Claude SDK 可以走 Anthropic-compatible upstream，原生 Anthropic 不是唯一主路径 |
 | 页面只显示很多技术标签，用户看不懂进度 | 简洁模式只显示用户任务、状态、耗时、结果；诊断信息进抽屉 |
+| 用户以为 Agent 只是输入框 + 远端任务执行，结果页面暴露太多运行细节 | 产品层必须把复杂度藏进执行层；主屏只强调用户消息、AI 回复、停止/重试、结果和产物，工具/log/status 默认弱化折叠 |
+| 发送后长时间没有可见反馈 | 点击发送后 1 秒内必须出现用户消息和提交状态；create/start/message 的等待过程不能让用户误以为没发出去 |
+| 工具调用和日志刷屏，用户看不懂 100+ 步在做什么 | 原始事件只能作为可展开审计；默认展示聚合摘要：工具调用数、结果数、日志数、错误数、耗时和最近动作 |
+| AI 回复按原始 Markdown 文本显示 | 主回复必须渲染 Markdown；代码块、列表、表格、标题按阅读视图呈现 |
+| Agent 流式输出和工具过程混在一起 | 主回答优先显示；工具过程作为次级 timeline 折叠，用户展开后再看每个工具的输入/输出详情 |
+| 用户上滑查看历史时被新事件强制拉回底部 | 只在用户贴近底部时自动滚动；用户上滑后暂停 auto-scroll，并显示“回到底部”入口 |
 | 长任务卡住 HTTP request | MAP 请求只负责 accepted，长任务必须异步事件化 |
 | 写操作直接落库 | 写操作必须 draft/diff/apply |
 | 每次都靠部署验证 | 本地 smoke、单测、视觉测试先过，只有关键门才部署 |
@@ -613,6 +619,7 @@ Phase 0/1/2/3/P4 已完成文档化验收与远端只读试用收口；`origin/m
 | [x] | P4-19 缺失 connection 运行期恢复 | 真实视觉复验发现：旧会话不只是 revoked connection，还可能绑定已删除 connection，后端返回 `connection_not_found`；这仍然不能等价为平台授权失效 | 后端会话运行期新增 missing-connection fallback：当历史 `ConnectionId` 记录不存在时，按 session 的 `Partner/CdsProjectId` 查找当前 active 系统连接；前端把 `connection_not_found` 也视为旧会话失效，可删除旧会话并重新创建；平台授权仍以 active connection 为准 | 修复文件：`prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs`、`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`；本地 `dotnet build prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj --no-restore -p:UseAppHost=false` pass；`pnpm --prefix prd-admin exec tsc --noEmit` pass；`pnpm --prefix prd-admin exec vitest run src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：9/9 pass |
 | [x] | P4-20 历史 CDS runtime transport 失败自愈 | 真实复验发现：旧 MAP session 即使映射到 active connection，也可能保留已不可靠的 CDS runtime session，导致 `/messages` 返回 `cds_request_failed HTTP 400`；新建干净 session 的 create/start/message 已验证 200 | 简洁模式把旧 session 的 `cds_request_failed HTTP 400` 视为可恢复 transport 失效，自动新建 session 并重试一次发送；避免用户看到输入已出现但请求失败的矛盾状态 | 修复文件：`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`；本地 `pnpm --prefix prd-admin exec tsc --noEmit` pass；`pnpm --prefix prd-admin exec vitest run src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：9/9 pass；直接 API 干净链路 create/start/message 200 |
 | [x] | P4-21 网关 502 形态自愈复验 | 真实页面发送发现：旧 runtime transport 失败在浏览器侧可能不是 `cds_request_failed HTTP 400`，而是网关/后端统一成 `SERVER_ERROR/SERVER_UNAVAILABLE HTTP 502`；同时 `/start` 502 代表 runtime 暂不可用，不能用新建 session 掩盖 | 简洁模式遇到 `/messages` 的 502 形态时，移除旧 session、创建干净 session并重试一次；遇到 `/start` 502/HTTP400 时只对同一 session 延迟重试一次，失败后保留原 session 并提示 runtime 暂不可用，不再制造重复任务；复验看到消息 POST 2xx、无“系统级授权已撤销/删除后重新授权/CDS 连接不存在”文案 | 修复文件：`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`；本地 `pnpm --prefix prd-admin exec tsc --noEmit` pass；`pnpm --prefix prd-admin exec vitest run src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：9/9 pass；`git diff --check` pass；远端视觉 `artifacts/cds-agent/2026-05-20/remote-auth-boundary-final-fetch-7ef01eaaf.png/json`；最终部署 `5b730ac53` 后 API 合约 create/start/message 2xx |
+| [x] | P4-22 首次真实请求 UX 收尾 | 用户首次完整跑通后反馈成立：Agent 产品心智应是“一个输入接口 + 远端执行任务”，页面不能把内部 log/status/tool 原样倒给用户；发送、流式、Markdown、工具折叠、滚动都属于商业级基本体验 | 简洁模式新增乐观用户消息与提交状态，失败时不再假装提交中；`text_delta/done` 聚合为主回答并优先渲染；assistant 消息使用 Markdown renderer；工具/status/log 聚合为折叠过程摘要，展开后才看细节；用户上滑后暂停自动滚动并提供“回到底部”；文档第 10 节新增 UX 反模式规则；本地 `tsc --noEmit` pass；`cdsAgentReadiness.test.ts` 9/9 pass；`pnpm --prefix prd-admin build` pass；视觉 smoke：`artifacts/cds-agent/2026-05-20/local-ux-smoke-cds-agent-mocked.png`，mock 113 条事件验证为聚合摘要而非刷屏；远端 CDS Deploy pass，Chrome 登录态复验 `https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent` 已是 `a7cbd70d1`，简洁模式空态一屏可用 |
 
 ### 14.9 目标级审计
 

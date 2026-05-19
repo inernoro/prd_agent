@@ -3,6 +3,7 @@ import { Archive, CalendarClock, Copy, Cpu, Download, FileSearch, FileText, GitC
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { toast } from '@/lib/toast';
 import { listInfraConnections, type InfraConnectionPublicView } from '@/services/real/infraConnections';
 import {
@@ -402,6 +403,11 @@ function messageRoleLabel(role: string): string {
   return role;
 }
 
+function displayMessageContent(message: { role: string; content: string }): string {
+  if (message.role !== 'user') return message.content;
+  return message.content.replace(/^【(?:Code 巡检模式|对话模式)】[^\n]*\n/, '').trim();
+}
+
 // 简洁模式：把工具名翻译成用户能懂的中文动作短语，不暴露原始 tool_use JSON。
 function toolActionLabel(toolName: string, payload: Record<string, unknown>): string {
   const args = parseJsonString(payload.argsSummary) ?? {};
@@ -482,6 +488,15 @@ type AgentArtifact = {
   summary: string;
   body: string;
   count?: number;
+};
+
+type LocalTimelineMessage = {
+  id: string;
+  role: string;
+  content: string;
+  status: string;
+  createdAt: string;
+  sessionId?: string | null;
 };
 
 type RuntimeReadinessGate = {
@@ -694,6 +709,55 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
   return <pre className="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-white/62">{renderPayload(event)}</pre>;
 }
 
+function assistantTextFromEvents(items: InfraAgentEventView[]): string {
+  const deltas: string[] = [];
+  let finalText = '';
+  items.forEach((event) => {
+    const payload = parsePayload(event);
+    if (event.type === 'text_delta' && typeof payload.text === 'string') deltas.push(payload.text);
+    if (event.type === 'done' && typeof payload.finalText === 'string') finalText = payload.finalText;
+  });
+  return finalText || deltas.join('');
+}
+
+function summarizeProcessEvents(items: InfraAgentEventView[]): {
+  rawCount: number;
+  toolCallCount: number;
+  toolResultCount: number;
+  logCount: number;
+  statusCount: number;
+  errorCount: number;
+  usefulCount: number;
+  toolNames: string[];
+} {
+  const toolNames = new Set<string>();
+  let toolCallCount = 0;
+  let toolResultCount = 0;
+  let logCount = 0;
+  let statusCount = 0;
+  let errorCount = 0;
+  items.forEach((event) => {
+    const payload = parsePayload(event);
+    const toolName = readString(payload, 'toolName');
+    if (toolName) toolNames.add(toolName);
+    if (event.type === 'tool_call') toolCallCount += 1;
+    else if (event.type === 'tool_result') toolResultCount += 1;
+    else if (event.type === 'log') logCount += 1;
+    else if (event.type === 'status') statusCount += 1;
+    else if (event.type === 'error') errorCount += 1;
+  });
+  return {
+    rawCount: items.length,
+    toolCallCount,
+    toolResultCount,
+    logCount,
+    statusCount,
+    errorCount,
+    usefulCount: toolCallCount + toolResultCount + errorCount,
+    toolNames: Array.from(toolNames).slice(0, 5),
+  };
+}
+
 export default function CdsAgentPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [profiles, setProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
@@ -706,6 +770,7 @@ export default function CdsAgentPage() {
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
+  const [localMessages, setLocalMessages] = useState<LocalTimelineMessage[]>([]);
   const [events, setEvents] = useState<InfraAgentEventView[]>([]);
   const [logs, setLogs] = useState('');
   const [runtimeStatus, setRuntimeStatus] = useState<InfraAgentRuntimeDiagnostics | null>(null);
@@ -715,6 +780,8 @@ export default function CdsAgentPage() {
   const [simpleTaskMode, setSimpleTaskMode] = useState<'chat' | 'code'>('chat');
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [simpleSubmitStatus, setSimpleSubmitStatus] = useState('');
+  const [autoScrollPaused, setAutoScrollPaused] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef<InfraAgentEventView[]>([]);
@@ -2056,12 +2123,13 @@ export default function CdsAgentPage() {
     eventsRef.current = events;
   }, [events]);
 
-  // 简洁模式时间线：新内容在底部，自动滚到底，符合 IM 习惯。
+  // 简洁模式时间线：只在用户仍贴近底部时自动滚动；用户上滑查看历史后暂停。
   useEffect(() => {
     if (viewMode !== 'simple') return;
+    if (autoScrollPaused) return;
     const el = timelineRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [viewMode, activeSessionId, messages.length, events.length]);
+  }, [viewMode, activeSessionId, messages.length, localMessages.length, events.length, autoScrollPaused]);
 
   // 运行中自动刷新会话元数据；事件优先走 SSE afterSeq 续读，异常时由 refreshDetail 兜底。
   const activeSessionForPoll = sessions.find((item) => item.id === activeSessionId) ?? null;
@@ -2142,6 +2210,7 @@ export default function CdsAgentPage() {
   useEffect(() => {
     if (!activeSession?.id) {
       setMessages([]);
+      setLocalMessages((prev) => prev.filter((item) => !item.sessionId));
       setEvents([]);
       setLogs('');
       setEventReplayMode(false);
@@ -2150,6 +2219,7 @@ export default function CdsAgentPage() {
     }
     setEventReplayMode(false);
     setEventReplayIndex(1);
+    setAutoScrollPaused(false);
     eventsRef.current = [];
     setEvents([]);
     void refreshDetail(activeSession.id, { resetEvents: true });
@@ -2264,6 +2334,9 @@ export default function CdsAgentPage() {
   function upsertSession(session: InfraAgentSessionView) {
     setSessions((prev) => sortSessions([session, ...prev.filter((item) => item.id !== session.id)]));
     setActiveSessionId(session.id);
+    setLocalMessages((prev) => prev.map((item) => (
+      item.sessionId ? item : { ...item, sessionId: session.id }
+    )));
   }
 
   function removeMissingSession(sessionId: string) {
@@ -2295,6 +2368,37 @@ export default function CdsAgentPage() {
     return !res.success
       && ((code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE') && (message.includes('HTTP 502') || message.includes('/start')))
         || (code === 'cds_request_failed' && message.includes('HTTP 400'));
+  }
+
+  function pushLocalUserMessage(content: string, sessionId?: string | null): string {
+    const id = `local-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const item: LocalTimelineMessage = {
+      id,
+      role: 'user',
+      content,
+      status: 'sending',
+      createdAt: new Date().toISOString(),
+      sessionId: sessionId ?? activeSession?.id ?? null,
+    };
+    setLocalMessages((prev) => [...prev, item]);
+    setAutoScrollPaused(false);
+    return id;
+  }
+
+  function updateLocalMessageStatus(id: string | null, status: string) {
+    if (!id) return;
+    setLocalMessages((prev) => prev.map((item) => (
+      item.id === id ? { ...item, status } : item
+    )));
+  }
+
+  function clearLocalUserMessages(content: string, sessionId?: string | null) {
+    const normalized = content.trim();
+    setLocalMessages((prev) => prev.filter((item) => {
+      if (item.role !== 'user') return true;
+      if (sessionId && item.sessionId && item.sessionId !== sessionId) return true;
+      return item.content.trim() !== normalized;
+    }));
   }
 
   async function createSession() {
@@ -2446,9 +2550,13 @@ export default function CdsAgentPage() {
       return;
     }
 
+    const normalizedPrompt = prompt.trim();
+    let optimisticMessageId: string | null = null;
     setBusy(true);
     try {
-      const normalizedPrompt = prompt.trim();
+      optimisticMessageId = pushLocalUserMessage(normalizedPrompt, session?.id ?? null);
+      setPrompt('');
+      setSimpleSubmitStatus(session ? '正在发送给 Agent…' : '正在创建 CDS Agent 会话…');
       const simplePrompt = simpleTaskMode === 'code'
         ? `【Code 巡检模式】请优先围绕代码仓库、文件、测试、构建和提交建议处理：\n${normalizedPrompt}`
         : `【对话模式】请直接回答用户问题；只有用户明确要求检查代码时才进入代码巡检：\n${normalizedPrompt}`;
@@ -2468,6 +2576,7 @@ export default function CdsAgentPage() {
         });
         if (!createRes.success || !createRes.data?.item) {
           toast.error('新建会话失败', createRes.error?.message ?? '请检查 CDS 连接和模型配置');
+          updateLocalMessageStatus(optimisticMessageId, 'failed');
           return null;
         }
         upsertSession(createRes.data.item);
@@ -2480,6 +2589,7 @@ export default function CdsAgentPage() {
       }
 
       if (canStartFromStatus(session.status)) {
+        setSimpleSubmitStatus('正在启动远程 runtime…');
         const startRes = await startInfraAgentSession(session.id);
         if (!startRes.success || !startRes.data?.item) {
           if (isSessionNotFoundFailure(startRes)) {
@@ -2489,6 +2599,7 @@ export default function CdsAgentPage() {
             const retryStartRes = await startInfraAgentSession(session.id);
             if (!retryStartRes.success || !retryStartRes.data?.item) {
               toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
+              updateLocalMessageStatus(optimisticMessageId, 'failed');
               await refreshDetail(session.id);
               return;
             }
@@ -2499,6 +2610,7 @@ export default function CdsAgentPage() {
             const retryStartRes = await startInfraAgentSession(session.id);
             if (!retryStartRes.success || !retryStartRes.data?.item) {
               toast.error('启动失败', retryStartRes.error?.message ?? 'CDS runtime 暂不可用，请稍后重试');
+              updateLocalMessageStatus(optimisticMessageId, 'failed');
               await refreshDetail(session.id);
               return;
             }
@@ -2506,6 +2618,7 @@ export default function CdsAgentPage() {
             upsertSession(session);
           } else {
           toast.error('启动失败', startRes.error?.message ?? '请检查 CDS runtime');
+          updateLocalMessageStatus(optimisticMessageId, 'failed');
           await refreshDetail(session.id);
           return;
           }
@@ -2515,6 +2628,7 @@ export default function CdsAgentPage() {
         }
       }
 
+      setSimpleSubmitStatus('请求已提交，等待 Agent 首个事件…');
       const messageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
       if (!messageRes.success || !messageRes.data?.item) {
         if (isSessionNotFoundFailure(messageRes)) {
@@ -2526,6 +2640,7 @@ export default function CdsAgentPage() {
             : null;
           if (retryStartRes && (!retryStartRes.success || !retryStartRes.data?.item)) {
             toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
+            updateLocalMessageStatus(optimisticMessageId, 'failed');
             await refreshDetail(session.id);
             return;
           }
@@ -2536,25 +2651,29 @@ export default function CdsAgentPage() {
           const retryMessageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
           if (!retryMessageRes.success || !retryMessageRes.data?.item) {
             toast.error('发送失败', retryMessageRes.error?.message ?? '请稍后重试');
+            updateLocalMessageStatus(optimisticMessageId, 'failed');
             await refreshDetail(session.id);
             return;
           }
-          setPrompt('');
+          clearLocalUserMessages(normalizedPrompt, retryMessageRes.data.item.id);
           upsertSession(retryMessageRes.data.item);
           await refreshDetail(retryMessageRes.data.item.id);
           return;
         }
         toast.error('发送失败', messageRes.error?.message ?? '请稍后重试');
+        updateLocalMessageStatus(optimisticMessageId, 'failed');
         await refreshDetail(session.id);
         return;
       }
-      setPrompt('');
+      clearLocalUserMessages(normalizedPrompt, messageRes.data.item.id);
       upsertSession(messageRes.data.item);
       await refreshDetail(messageRes.data.item.id);
     } catch (err) {
       toast.error('启动巡检失败', err instanceof Error ? err.message : '请稍后重试');
+      updateLocalMessageStatus(optimisticMessageId, 'failed');
       if (session?.id) await refreshDetail(session.id);
     } finally {
+      setSimpleSubmitStatus('');
       setBusy(false);
     }
   }
@@ -3142,24 +3261,48 @@ export default function CdsAgentPage() {
     const PROCESS_TYPES = new Set(['tool_call', 'tool_result', 'error', 'status', 'file', 'diff', 'browser', 'manual', 'hook', 'log']);
     type TimelineItem =
       | { kind: 'msg'; at: number; key: string; msg: InfraAgentMessageView }
+      | { kind: 'local-msg'; at: number; key: string; msg: LocalTimelineMessage }
       | { kind: 'evt'; at: number; seq: number; key: string; ev: InfraAgentEventView };
+    const visibleLocalMessages = localMessages.filter((item) => (
+      !item.sessionId || !activeSession?.id || item.sessionId === activeSession.id
+    ));
+    const assistantStreamText = assistantTextFromEvents(displayedEvents);
+    const shouldShowAssistantStream = Boolean(
+      assistantStreamText.trim()
+      && !messages.some((message) => message.role === 'assistant' && message.content.trim() === assistantStreamText.trim()),
+    );
+    const latestAssistantEvent = [...displayedEvents].reverse().find((event) => event.type === 'done' || event.type === 'text_delta') ?? null;
     const timelineItems: TimelineItem[] = [
       ...messages.map((m): TimelineItem => ({ kind: 'msg', at: new Date(m.createdAt).getTime(), key: `m-${m.id}`, msg: m })),
+      ...visibleLocalMessages.map((m): TimelineItem => ({ kind: 'local-msg', at: new Date(m.createdAt).getTime(), key: `lm-${m.id}`, msg: m })),
+      ...(shouldShowAssistantStream ? [{
+        kind: 'local-msg' as const,
+        at: latestAssistantEvent ? new Date(latestAssistantEvent.createdAt).getTime() : Date.now(),
+        key: 'assistant-stream',
+        msg: {
+          id: 'assistant-stream',
+          role: 'assistant',
+          content: assistantStreamText,
+          status: isLiveStatus ? 'streaming' : 'completed',
+          createdAt: latestAssistantEvent?.createdAt ?? new Date().toISOString(),
+          sessionId: activeSession?.id ?? null,
+        },
+      }] : []),
       ...displayedEvents
         .filter((e) => PROCESS_TYPES.has(e.type))
         .map((e): TimelineItem => ({ kind: 'evt', at: new Date(e.createdAt).getTime(), seq: e.seq, key: `e-${e.id}`, ev: e })),
     ].sort((a, b) => {
       if (a.at !== b.at) return a.at - b.at; // 旧 → 新
-      if (a.kind !== b.kind) return a.kind === 'msg' ? -1 : 1;
+      if (a.kind !== b.kind) return a.kind === 'msg' || a.kind === 'local-msg' ? -1 : 1;
       if (a.kind === 'evt' && b.kind === 'evt') return a.seq - b.seq;
       return 0;
     });
     type TimelineBlock =
-      | { type: 'msg'; key: string; msg: InfraAgentMessageView }
+      | { type: 'msg'; key: string; msg: InfraAgentMessageView | LocalTimelineMessage }
       | { type: 'group'; key: string; events: InfraAgentEventView[] };
 	    const timelineBlocks: TimelineBlock[] = [];
 	    for (const item of timelineItems) {
-      if (item.kind === 'msg') {
+      if (item.kind === 'msg' || item.kind === 'local-msg') {
         timelineBlocks.push({ type: 'msg', key: item.key, msg: item.msg });
         continue;
       }
@@ -3167,7 +3310,7 @@ export default function CdsAgentPage() {
       if (last && last.type === 'group') last.events.push(item.ev);
       else timelineBlocks.push({ type: 'group', key: item.key, events: [item.ev] });
 	    }
-	    const hasConversation = messages.length > 0;
+	    const hasConversation = messages.length > 0 || visibleLocalMessages.length > 0 || shouldShowAssistantStream;
     const canRunSimplePrompt = Boolean(
       prompt.trim()
       && !busy
@@ -3203,7 +3346,7 @@ export default function CdsAgentPage() {
     const lastBlock = timelineBlocks[timelineBlocks.length - 1];
     const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant') ?? null;
     const hasUserMessage = messages.some((message) => message.role === 'user');
-    const hasAssistantOutput = Boolean(lastAssistant?.content.trim());
+    const hasAssistantOutput = Boolean(lastAssistant?.content.trim() || assistantStreamText.trim());
     const hasRuntimeRun = Boolean(activeSession?.currentRuntimeRunId);
     const awaitingAgent = isLiveStatus
       && (hasUserMessage || hasRuntimeRun)
@@ -3401,6 +3544,18 @@ export default function CdsAgentPage() {
 	        </div>
 	      </div>
 	    );
+    const handleTimelineScroll = () => {
+      const el = timelineRef.current;
+      if (!el) return;
+      const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setAutoScrollPaused(distanceToBottom > 96);
+    };
+    const jumpToTimelineBottom = () => {
+      const el = timelineRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+      setAutoScrollPaused(false);
+    };
 	    return (
 	      <div className="h-full min-h-0 overflow-hidden px-3 py-4 text-white sm:px-5" style={{ background: '#0F0F10' }}>
 	        <div className="mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
@@ -3537,7 +3692,7 @@ export default function CdsAgentPage() {
 	              </div>
 	            </div>
 
-	            <div ref={timelineRef} className="mx-auto mt-4 min-h-0 w-full max-w-[980px] flex-1 space-y-3 overflow-y-auto px-4 pb-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
+	            <div ref={timelineRef} onScroll={handleTimelineScroll} className="mx-auto mt-4 min-h-0 w-full max-w-[980px] flex-1 space-y-3 overflow-y-auto px-4 pb-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
 	              {!hasConversation ? (
 	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
@@ -3565,18 +3720,28 @@ export default function CdsAgentPage() {
 	                          }}
 	                        >
 	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
-                          {block.msg.role === 'assistant' && lastAssistant && block.msg.id === lastAssistant.id ? (
-                            <div className="text-sm leading-relaxed text-white/78">
-                              <StreamingText text={block.msg.content} streaming={isLiveStatus} mode="blur" />
-                            </div>
+                          {block.msg.role === 'assistant' ? (
+                            block.msg.id === 'assistant-stream' && isLiveStatus ? (
+                              <div className="text-sm leading-relaxed text-white/78">
+                                <StreamingText text={block.msg.content} streaming mode="blur" />
+                              </div>
+                            ) : (
+                              <MarkdownContent content={displayMessageContent(block.msg)} className="text-sm leading-relaxed text-white/78" />
+                            )
                           ) : (
-                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{block.msg.content}</div>
+                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/78">{displayMessageContent(block.msg)}</div>
+                          )}
+                          {(block.msg.status === 'sending' || block.msg.status === 'failed') && (
+                            <div className="mt-1 text-[11px] text-white/35">
+                              {block.msg.status === 'failed' ? '发送失败，请检查上方错误后重试。' : simpleSubmitStatus || '正在提交…'}
+                            </div>
                           )}
                         </div>
                       </article>
                     );
                   }
                   const events = block.events;
+                  const summary = summarizeProcessEvents(events);
                   const pendingApproval = events.find((e) => {
                     if (e.type !== 'tool_call') return false;
                     const p = parsePayload(e);
@@ -3592,6 +3757,23 @@ export default function CdsAgentPage() {
                     ? `出错：${String(lastPayload.message ?? '未知错误')}`
                     : toolActionLabel(String(lastPayload.toolName ?? ''), lastPayload);
                   const hasError = events.some((e) => e.type === 'error');
+                  const processTitle = pendingApproval
+                    ? '等待审批'
+                    : hasError
+                      ? '执行过程（含错误）'
+                      : summary.usefulCount > 0
+                        ? '工具执行'
+                        : '后台状态';
+                  const processMeta = [
+                    summary.toolCallCount > 0 ? `${summary.toolCallCount} 次工具调用` : '',
+                    summary.toolResultCount > 0 ? `${summary.toolResultCount} 个结果` : '',
+                    summary.logCount > 0 ? `${summary.logCount} 条日志` : '',
+                    summary.statusCount > 0 ? `${summary.statusCount} 个状态` : '',
+                    summary.rawCount > summary.usefulCount ? `原始 ${summary.rawCount} 条` : '',
+                  ].filter(Boolean).join(' · ');
+                  const processHint = summary.toolNames.length > 0
+                    ? summary.toolNames.map((name) => toolActionLabel(name, {})).join(' / ')
+                    : lastLabel;
                   const headerTone = hasError
                     ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.24)' }
                     : pendingApproval
@@ -3612,10 +3794,10 @@ export default function CdsAgentPage() {
 	                        >
 	                          <Terminal size={12} className="shrink-0" />
 	                          <span className="shrink-0 font-semibold">
-                            {pendingApproval ? '等待审批' : hasError ? '执行过程（含错误）' : '执行过程'}
+                            {processTitle}
                           </span>
-                          <span className="shrink-0 text-white/40">{events.length} 步 · 用时 {durationSec}s</span>
-                          <span className="min-w-0 flex-1 truncate text-white/40">{open ? '' : lastLabel}</span>
+                          <span className="shrink-0 text-white/40">{processMeta || `${events.length} 条`} · 用时 {durationSec}s</span>
+                          <span className="min-w-0 flex-1 truncate text-white/40">{open ? '' : processHint}</span>
                           {!forcedOpen && <span className="shrink-0 text-white/35">{open ? '收起' : '展开'}</span>}
                         </button>
                         {open && (
@@ -3676,6 +3858,16 @@ export default function CdsAgentPage() {
                 </div>
               )}
 	            </div>
+              {autoScrollPaused && (
+                <button
+                  type="button"
+                  onClick={jumpToTimelineBottom}
+                  className="absolute bottom-[142px] left-1/2 z-10 -translate-x-1/2 rounded-full px-3 py-1.5 text-xs font-semibold text-white/72 shadow-lg"
+                  style={{ background: 'rgba(39,39,42,0.94)', border: '1px solid rgba(255,255,255,0.14)' }}
+                >
+                  有新内容，回到底部
+                </button>
+              )}
 
 	            {hasConversation && (
 	              <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
@@ -5399,7 +5591,11 @@ export default function CdsAgentPage() {
                               <span>{messageRoleLabel(message.role)} · {message.status}</span>
                               <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
                             </div>
-                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/76">{message.content}</div>
+                            {message.role === 'assistant' ? (
+                              <MarkdownContent content={displayMessageContent(message)} className="text-sm leading-relaxed text-white/76" />
+                            ) : (
+                              <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/76">{displayMessageContent(message)}</div>
+                            )}
                           </div>
                         </article>
                       );
