@@ -537,6 +537,20 @@ db.defect_share_links.createIndex(
 )
 ```
 
+### marketplace_skill_share_links
+
+```js
+db.marketplace_skill_share_links.createIndex(
+  { "Token": 1 },
+  { name: "uniq_marketplace_skill_share_links_token", unique: true }
+)
+
+db.marketplace_skill_share_links.createIndex(
+  { "CreatedBy": 1, "CreatedAt": -1 },
+  { name: "idx_marketplace_skill_share_links_creator" }
+)
+```
+
 ### defect_fix_reports
 
 ```js

@@ -1745,6 +1745,24 @@
   z-index: 0;
 }
 
+/* Full-card readability scrim — only when a cover image exists.
+   <img> can't carry ::after, so layer the gradient on .mkt-card itself.
+   Transparent-ish at top (keep the art) → dark at bottom (legible text). */
+.mkt-card.has-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(6, 8, 16, 0.10) 0%,
+    rgba(6, 8, 16, 0.04) 38%,
+    rgba(6, 8, 16, 0.42) 66%,
+    rgba(6, 8, 16, 0.78) 100%
+  );
+}
+
 /* Type icon centered in upper area (above glass panel) */
 .mkt-card-icon-zone {
   position: absolute;
@@ -1792,7 +1810,7 @@
   left: 0;
   right: 0;
   padding: 8px 11px 10px;
-  background: rgba(8, 8, 18, 0.48);
+  background: rgba(8, 8, 18, 0.62);
   backdrop-filter: blur(22px) saturate(200%);
   -webkit-backdrop-filter: blur(22px) saturate(200%);
   border-top: 1px solid rgba(255, 255, 255, 0.07);
@@ -1803,7 +1821,7 @@
 }
 
 [data-theme="light"] .mkt-card-glass {
-  background: rgba(248, 245, 255, 0.66);
+  background: rgba(248, 245, 255, 0.82);
   border-top-color: rgba(0, 0, 0, 0.06);
 }
 
@@ -1818,7 +1836,8 @@
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
-  color: rgba(248, 250, 252, 0.96);
+  color: rgba(255, 255, 255, 0.99);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1827,7 +1846,8 @@
 }
 
 [data-theme="light"] .mkt-card-title {
-  color: rgba(15, 23, 42, 0.92);
+  color: rgba(15, 23, 42, 0.98);
+  text-shadow: none;
 }
 
 .mkt-card-official {
@@ -1854,7 +1874,7 @@
 .mkt-card-desc {
   font-size: 10px;
   line-height: 1.4;
-  color: rgba(203, 213, 225, 0.72);
+  color: rgba(226, 232, 240, 0.90);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 1;
@@ -1862,7 +1882,7 @@
 }
 
 [data-theme="light"] .mkt-card-desc {
-  color: rgba(51, 65, 85, 0.72);
+  color: rgba(30, 41, 59, 0.88);
 }
 
 .mkt-card-tags {
@@ -1923,7 +1943,7 @@
   gap: 4px;
   min-width: 0;
   font-size: 10px;
-  color: rgba(148, 163, 184, 0.80);
+  color: rgba(203, 213, 225, 0.86);
 }
 
 [data-theme="light"] .mkt-card-meta {

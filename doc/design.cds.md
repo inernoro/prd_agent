@@ -507,3 +507,8 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 | fix | cds | 分支列表首屏快路径跳过 worktree git log，进一步缩短首屏等待 |
 | fix | cds | 扩大提交实时流记录点击热区，并为提交标签增加状态图标 |
 | fix | cds | 优化提交实时流面板信息密度，折叠态显示最新分支与精确更新时间 |
+| fix | cds | 将项目卡片 Nacos 单字母标识改为更清晰的 Na 专用标识 |
+| fix | cds | 修复预览等待页误把模块资源请求返回为 HTML 导致 MIME 报错的问题 |
+| fix | cds | 修复失败分支访问预览页会反复触发自动部署的问题，并同步失败服务与错误信息到分支卡片 |
+| fix | cds | 统一分支页项目切换器显示口径，优先展示项目名并保留 slug 辅助识别 |
+| fix | cds | 使用 React Bits ShinyText 优化左侧 CDS 标识，加入克制的银白扫光动效 |

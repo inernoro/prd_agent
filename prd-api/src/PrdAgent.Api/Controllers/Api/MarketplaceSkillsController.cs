@@ -576,6 +576,104 @@ public class MarketplaceSkillsController : ControllerBase
     }
 
     // ======================================================================
+    // 公开分享（免登录只读浏览技能包）
+    // ======================================================================
+
+    public sealed class CreateSkillShareRequest
+    {
+        /// <summary>有效天数；不传 = 永久</summary>
+        public int? ExpiresInDays { get; set; }
+    }
+
+    [HttpPost("{id}/share")]
+    public async Task<IActionResult> CreateShare(string id, [FromBody] CreateSkillShareRequest? body, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return BadRequest(ApiResponse<object>.Fail("NOT_SHAREABLE", "官方内置技能无需分享"));
+
+        var skill = await _db.MarketplaceSkills.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在或已下架"));
+
+        var author = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var createdByName = author?.DisplayName ?? author?.Username ?? "未知用户";
+
+        DateTime? expiresAt = null;
+        if (body?.ExpiresInDays is int days && days > 0)
+            expiresAt = DateTime.UtcNow.AddDays(Math.Min(days, 3650));
+
+        var link = new MarketplaceSkillShareLink
+        {
+            SkillId = skill.Id,
+            SkillTitle = skill.Title,
+            CreatedBy = userId,
+            CreatedByName = createdByName,
+            ExpiresAt = expiresAt,
+        };
+        await _db.MarketplaceSkillShareLinks.InsertOneAsync(link, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shareLink = new
+            {
+                token = link.Token,
+                skillId = link.SkillId,
+                skillTitle = link.SkillTitle,
+                viewCount = link.ViewCount,
+                createdByName = link.CreatedByName,
+                createdAt = link.CreatedAt,
+                expiresAt = link.ExpiresAt,
+            },
+            shareUrl = $"/s/skill/{link.Token}",
+        }));
+    }
+
+    [HttpGet("public/skill-share/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ViewShare(string token, CancellationToken ct)
+    {
+        var link = await _db.MarketplaceSkillShareLinks.Find(l => l.Token == token).FirstOrDefaultAsync(ct);
+        if (link == null || link.IsRevoked)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "分享链接不存在或已撤销"));
+        if (link.ExpiresAt.HasValue && link.ExpiresAt.Value < DateTime.UtcNow)
+            return NotFound(ApiResponse<object>.Fail("EXPIRED", "分享链接已过期"));
+
+        var skill = await _db.MarketplaceSkills.Find(x => x.Id == link.SkillId && x.IsPublic).FirstOrDefaultAsync(ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "关联技能已删除或下架"));
+
+        // 浏览计数 fire-and-forget（客户端断开不影响，server-authority 规则）
+        _ = _db.MarketplaceSkillShareLinks.UpdateOneAsync(
+            l => l.Id == link.Id,
+            Builders<MarketplaceSkillShareLink>.Update
+                .Inc(l => l.ViewCount, 1)
+                .Set(l => l.LastViewedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            token = link.Token,
+            skillTitle = link.SkillTitle,
+            createdByName = link.CreatedByName,
+            skill = new
+            {
+                id = skill.Id,
+                title = skill.Title,
+                description = skill.Description,
+                iconEmoji = skill.IconEmoji,
+                coverImageUrl = skill.CoverImageUrl,
+                tags = skill.Tags ?? new List<string>(),
+                zipUrl = skill.ZipUrl,
+                zipSizeBytes = skill.ZipSizeBytes,
+                originalFileName = skill.OriginalFileName,
+                hasSkillMd = skill.HasSkillMd,
+            },
+        }));
+    }
+
+    // ======================================================================
     // Helpers
     // ======================================================================
 

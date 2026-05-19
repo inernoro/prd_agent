@@ -115,6 +115,7 @@ public class MongoDbContext
 
     // 海鲜市场「技能」条目（用户上传的 zip 技能包）
     public IMongoCollection<MarketplaceSkill> MarketplaceSkills => _database.GetCollection<MarketplaceSkill>("marketplace_skills");
+    public IMongoCollection<MarketplaceSkillShareLink> MarketplaceSkillShareLinks => _database.GetCollection<MarketplaceSkillShareLink>("marketplace_skill_share_links");
 
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
@@ -974,6 +975,15 @@ public class MongoDbContext
         DefectShareLinks.Indexes.CreateOne(new CreateIndexModel<DefectShareLink>(
             Builders<DefectShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_share_links_creator" }));
+
+        // MarketplaceSkillShareLinks：Token 唯一索引（公开匿名读端点按 token 查，必须有索引）
+        // 注：本方法按 no-auto-index 规则不在运行时执行，此处仅作 DBA 手动建索引的参考来源
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.Token),
+            new CreateIndexOptions { Name = "uniq_marketplace_skill_share_links_token", Unique = true }));
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_creator" }));
 
         // DefectFixReports：按分享链接和 Token 查询
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(

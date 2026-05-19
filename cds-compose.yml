@@ -124,7 +124,9 @@ services:
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      cds.readiness-timeout: "600"
+      # admin static 模式每次部署都 pnpm install + vite build（重型依赖 mermaid/katex/cytoscape，
+      # 共享 CDS 主机冷构建实测 ~614s）。600s 上限会必现"就绪探测超时"，提到 1200s 留足余量。
+      cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──
