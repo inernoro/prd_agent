@@ -724,7 +724,7 @@ export default function CdsAgentPage() {
   const [busy, setBusy] = useState(false);
   const [testingProfile, setTestingProfile] = useState(false);
   const [profileTest, setProfileTest] = useState<string>('');
-  const [prompt, setPrompt] = useState('巡检当前仓库，找出最值得修复的一个小问题，并说明准备如何提交 PR');
+  const [prompt, setPrompt] = useState('');
   const [contextDraft, setContextDraft] = useState({
     files: '',
     urls: '',
@@ -3125,12 +3125,50 @@ export default function CdsAgentPage() {
       : timeoutAt
         ? `${formatDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
         : `启动后 ${formatDuration(timeoutSeconds)}`;
+    const hasUserMessage = messages.some((message) => message.role === 'user');
+    const hasAssistantOutput = Boolean(lastAssistant?.content.trim());
+    const hasRuntimeRun = Boolean(activeSession?.currentRuntimeRunId);
+    const usefulEventTypes = new Set(['tool_call', 'tool_result', 'text_delta', 'done', 'file', 'diff', 'error', 'browser', 'manual']);
+    const usefulEvents = events.filter((event) => usefulEventTypes.has(event.type));
+    const latestEventAt = events.length > 0 ? new Date(events[events.length - 1].createdAt) : null;
+    const latestUsefulEventAt = usefulEvents.length > 0 ? new Date(usefulEvents[usefulEvents.length - 1].createdAt) : null;
+    const usefulBaseAt = latestUsefulEventAt?.getTime() ?? sessionStartedAt?.getTime() ?? (activeSession?.createdAt ? new Date(activeSession.createdAt).getTime() : null);
+    const quietSeconds = activeSessionRuntimeState.isLive && usefulBaseAt
+      ? Math.max(0, Math.round((nowTick - usefulBaseAt) / 1000))
+      : null;
+    const emptyExecution = Boolean(activeSession && hasRuntimeRun && !hasAssistantOutput && artifacts.length === 0 && usefulEvents.length === 0 && events.length > 0);
+    const staleExecution = Boolean(activeSessionRuntimeState.isLive && !hasAssistantOutput && artifacts.length === 0 && quietSeconds !== null && quietSeconds >= 120);
+    const executionKind = !activeSession
+      ? '等待创建'
+      : !hasUserMessage && !hasRuntimeRun
+        ? '等待输入'
+        : activeSessionTimedOut
+          ? '已超时'
+          : emptyExecution
+            ? '空执行'
+            : staleExecution
+              ? '疑似假死'
+              : activeSessionRuntimeState.isLive
+                ? '执行中'
+                : hasAssistantOutput || artifacts.length > 0
+                  ? '有结果'
+                  : '等待输出';
+    const executionDetail = emptyExecution
+      ? '已有 run 但没有有效输出事件'
+      : staleExecution
+        ? `超过 ${formatDuration(quietSeconds ?? 0)} 没有有效输出`
+        : latestUsefulEventAt
+          ? `${usefulEvents.length} 个有效事件 · ${formatClockTime(latestUsefulEventAt)}`
+          : '未开始或尚无有效事件';
 	    const simpleTelemetry = [
 	      { label: '任务状态', value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未创建', detail: activeSessionTimedOut ? '旧 run 已超时；再次运行会创建新会话' : activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
+        { label: '执行判定', value: executionKind, detail: executionDetail },
 	      { label: 'traceId', value: activeSession ? shortId(activeSession.traceId, 14) : '待生成', detail: activeSession?.cdsSessionId ? `CDS ${shortId(activeSession.cdsSessionId, 10)}` : 'MAP/CDS 全链路定位' },
-      { label: '耗时', value: sessionStartedAt ? formatDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `started ${formatClockTime(sessionStartedAt)}` : '启动后开始计时' },
+      { label: '耗时', value: sessionStartedAt ? formatDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `session ${formatClockTime(sessionStartedAt)}` : '启动后开始计时' },
       { label: 'timeoutAt', value: timeoutAt ? formatClockTime(timeoutAt) : '待计算', detail: timeoutState },
       { label: 'lastEventSeq', value: String(lastSeq), detail: eventStreamHealthy ? 'SSE live' : events.length > 0 ? '分页回放' : '暂无事件' },
+        { label: '最后有效输出', value: latestUsefulEventAt ? formatClockTime(latestUsefulEventAt) : '无', detail: latestEventAt ? `最后事件 ${formatClockTime(latestEventAt)}` : '暂无事件' },
+        { label: '计时口径', value: 'Session', detail: '不是容器 uptime；容器长时间存活不等于任务仍执行' },
 	      { label: 'Stop', value: stopState, detail: runtimeDiagnostics.cancelEvidence.eventCount > 0 ? runtimeDiagnostics.cancelEvidence.latestMessage || runtimeDiagnostics.cancelState : runtimeDiagnostics.cancelState },
 	      { label: '产物入口', value: `${artifacts.length}`, detail: artifacts.length > 0 ? '右侧可查看和复制' : '等待 diff / 日志 / 快照' },
 	    ];
@@ -3149,6 +3187,11 @@ export default function CdsAgentPage() {
 	        detail: activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · trace ${shortId(activeSession.traceId, 12)}` : '输入任务后点击运行',
 	        state: activeSession ? 'pass' : 'pending',
 	      },
+        {
+          label: '执行有效性',
+          detail: activeSession ? executionDetail : '发起后判断是否有真实输出',
+          state: emptyExecution || staleExecution || activeSessionTimedOut ? 'warn' : activeSession ? 'pass' : 'idle',
+        },
 	      {
 	        label: lastAssistant || artifacts.length > 0 ? '结果可复盘' : '等待 Agent 输出',
 	        detail: artifacts.length > 0 ? `${artifacts.length} 个产物 / ${lastSeq} 个事件` : `${lastSeq} 个事件 / ${messages.length} 条消息`,
