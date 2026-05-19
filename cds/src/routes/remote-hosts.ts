@@ -1766,8 +1766,8 @@ async function runCdsManagedOfficialSdkTransport(
       body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
-    const body = await response.text();
     if (!response.ok) {
+      const body = await response.text();
       const error = {
         code: 'cds_managed_runtime_transport_http_error',
         message: `CDS-managed runtime returned HTTP ${response.status}`,
@@ -1784,7 +1784,9 @@ async function runCdsManagedOfficialSdkTransport(
       return { accepted: false, error };
     }
 
-    const result = ingestOfficialSdkSse(session, body, transport);
+    const result = response.body
+      ? await ingestOfficialSdkSseStream(session, response.body, transport)
+      : ingestOfficialSdkSse(session, await response.text(), transport);
     session.updatedAt = new Date().toISOString();
     return result;
   } catch (err) {
@@ -1813,108 +1815,173 @@ function ingestOfficialSdkSse(
   body: string,
   transport: CdsManagedRuntimeTransport,
 ): CdsManagedRuntimeResult {
-  let finalText = '';
-  let accepted = false;
+  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false };
   for (const frame of parseSseFrames(body)) {
-    const rawData = frame.data.join('\n').trim();
-    if (!rawData) continue;
-    let payload: Record<string, unknown>;
-    try {
-      payload = JSON.parse(rawData) as Record<string, unknown>;
-    } catch {
-      pushCdsAgentEvent(session, 'log', {
-        level: 'warn',
-        message: `ignored malformed runtime SSE event=${frame.event || 'message'}`,
-        source: 'cds-managed-runtime-transport',
-      });
-      continue;
-    }
-    const sidecarType = normalizeOptionalString(payload.type) || frame.event || 'log';
-    accepted = true;
-    if (sidecarType === 'runtime_init') {
-      pushCdsAgentEvent(session, 'runtime_init', {
-        message: payload.message,
-        content: payload.content,
-        runtimeAdapter: 'claude-agent-sdk',
-        loopOwner: 'claude-agent-sdk',
-        runtimeOwnedBy: 'cds-managed-runtime',
-        transport: toCdsManagedRuntimeTransportView(transport),
-      });
-      continue;
-    }
-    if (sidecarType === 'text_delta') {
-      const text = normalizeOptionalString(payload.text) || '';
-      if (text) finalText += text;
-      pushCdsAgentEvent(session, 'text_delta', { text });
-      continue;
-    }
-    if (sidecarType === 'tool_call') {
-      pushCdsAgentEvent(session, 'tool_call', {
-        approvalId: normalizeOptionalString(payload.tool_use_id),
-        toolName: normalizeOptionalString(payload.tool_name),
-        input: payload.tool_input,
-        content: payload.content,
-        status: 'waiting',
-        source: 'claude-agent-sdk',
-      });
-      continue;
-    }
-    if (sidecarType === 'tool_result') {
-      pushCdsAgentEvent(session, 'tool_result', {
-        approvalId: normalizeOptionalString(payload.tool_use_id),
-        toolName: normalizeOptionalString(payload.tool_name),
-        content: payload.content,
-        status: 'completed',
-        source: 'claude-agent-sdk',
-      });
-      continue;
-    }
-    if (sidecarType === 'usage') {
-      pushCdsAgentEvent(session, 'usage', {
-        inputTokens: payload.input_tokens,
-        outputTokens: payload.output_tokens,
-        content: payload.content,
-        source: 'claude-agent-sdk',
-      });
-      continue;
-    }
-    if (sidecarType === 'done') {
-      const doneText = normalizeOptionalString(payload.final_text) || finalText;
-      pushCdsAgentEvent(session, 'done', {
-        finalText: doneText,
-        inputTokens: payload.input_tokens,
-        outputTokens: payload.output_tokens,
-        content: payload.content,
-      });
-      session.messages.push({ role: 'assistant', content: doneText, createdAt: new Date().toISOString() });
-      session.status = 'idle';
-      session.logs.push(`[${new Date().toISOString()}] runtime done owner=cds-managed-runtime loopOwner=claude-agent-sdk`);
-      continue;
-    }
-    if (sidecarType === 'error') {
-      const code = normalizeOptionalString(payload.error_code) || 'cds_managed_runtime_error';
-      const error = {
-        code,
-        message: normalizeOptionalString(payload.message) || 'CDS-managed official SDK runtime returned an error',
-        content: payload.content,
-        runtime: session.runtime,
-        runtimeProfileId: session.runtimeProfileId,
-        transport: toCdsManagedRuntimeTransportView(transport),
-        retryable: code !== 'claude_agent_sdk_result_error',
-      };
-      session.status = 'failed';
-      pushCdsAgentEvent(session, 'error', error);
-      session.logs.push(`[${new Date().toISOString()}] runtime error owner=cds-managed-runtime reason=${error.code}`);
-      return { accepted: false, error };
-    }
-    pushCdsAgentEvent(session, 'log', {
-      level: 'info',
-      message: `runtime event ${sidecarType}`,
-      source: 'claude-agent-sdk',
-      payload,
-    });
+    const terminal = ingestOfficialSdkSseFrame(session, frame, transport, state);
+    if (terminal) return terminal;
   }
-  if (!accepted) {
+  return finishOfficialSdkSseIngest(session, transport, state);
+}
+
+async function ingestOfficialSdkSseStream(
+  session: CdsAgentSession,
+  stream: ReadableStream<Uint8Array>,
+  transport: CdsManagedRuntimeTransport,
+): Promise<CdsManagedRuntimeResult> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false };
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const chunk = buffer.slice(0, boundary).trim();
+      buffer = buffer.slice(boundary + 2);
+      if (chunk) {
+        const terminal = ingestOfficialSdkSseFrame(session, parseSseFrameChunk(chunk), transport, state);
+        if (terminal) {
+          await reader.cancel();
+          return terminal;
+        }
+      }
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+
+  buffer += decoder.decode();
+  const finalChunk = buffer.trim();
+  if (finalChunk) {
+    const terminal = ingestOfficialSdkSseFrame(session, parseSseFrameChunk(finalChunk), transport, state);
+    if (terminal) return terminal;
+  }
+
+  return finishOfficialSdkSseIngest(session, transport, state);
+}
+
+interface OfficialSdkSseIngestState {
+  finalText: string;
+  accepted: boolean;
+}
+
+function ingestOfficialSdkSseFrame(
+  session: CdsAgentSession,
+  frame: { event?: string; data: string[] },
+  transport: CdsManagedRuntimeTransport,
+  state: OfficialSdkSseIngestState,
+): CdsManagedRuntimeResult | null {
+  const rawData = frame.data.join('\n').trim();
+  if (!rawData) return null;
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawData) as Record<string, unknown>;
+  } catch {
+    pushCdsAgentEvent(session, 'log', {
+      level: 'warn',
+      message: `ignored malformed runtime SSE event=${frame.event || 'message'}`,
+      source: 'cds-managed-runtime-transport',
+    });
+    return null;
+  }
+
+  const sidecarType = normalizeOptionalString(payload.type) || frame.event || 'log';
+  state.accepted = true;
+  if (sidecarType === 'runtime_init') {
+    pushCdsAgentEvent(session, 'runtime_init', {
+      message: payload.message,
+      content: payload.content,
+      runtimeAdapter: 'claude-agent-sdk',
+      loopOwner: 'claude-agent-sdk',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      transport: toCdsManagedRuntimeTransportView(transport),
+    });
+    return null;
+  }
+  if (sidecarType === 'text_delta') {
+    const text = normalizeOptionalString(payload.text) || '';
+    if (text) state.finalText += text;
+    pushCdsAgentEvent(session, 'text_delta', { text });
+    return null;
+  }
+  if (sidecarType === 'tool_call') {
+    pushCdsAgentEvent(session, 'tool_call', {
+      approvalId: normalizeOptionalString(payload.tool_use_id),
+      toolName: normalizeOptionalString(payload.tool_name),
+      input: payload.tool_input,
+      content: payload.content,
+      status: 'waiting',
+      source: 'claude-agent-sdk',
+    });
+    return null;
+  }
+  if (sidecarType === 'tool_result') {
+    pushCdsAgentEvent(session, 'tool_result', {
+      approvalId: normalizeOptionalString(payload.tool_use_id),
+      toolName: normalizeOptionalString(payload.tool_name),
+      content: payload.content,
+      status: 'completed',
+      source: 'claude-agent-sdk',
+    });
+    return null;
+  }
+  if (sidecarType === 'usage') {
+    pushCdsAgentEvent(session, 'usage', {
+      inputTokens: payload.input_tokens,
+      outputTokens: payload.output_tokens,
+      content: payload.content,
+      source: 'claude-agent-sdk',
+    });
+    return null;
+  }
+  if (sidecarType === 'done') {
+    const doneText = normalizeOptionalString(payload.final_text) || state.finalText;
+    pushCdsAgentEvent(session, 'done', {
+      finalText: doneText,
+      inputTokens: payload.input_tokens,
+      outputTokens: payload.output_tokens,
+      content: payload.content,
+    });
+    session.messages.push({ role: 'assistant', content: doneText, createdAt: new Date().toISOString() });
+    session.status = 'idle';
+    session.logs.push(`[${new Date().toISOString()}] runtime done owner=cds-managed-runtime loopOwner=claude-agent-sdk`);
+    return null;
+  }
+  if (sidecarType === 'error') {
+    const code = normalizeOptionalString(payload.error_code) || 'cds_managed_runtime_error';
+    const error = {
+      code,
+      message: normalizeOptionalString(payload.message) || 'CDS-managed official SDK runtime returned an error',
+      content: payload.content,
+      runtime: session.runtime,
+      runtimeProfileId: session.runtimeProfileId,
+      transport: toCdsManagedRuntimeTransportView(transport),
+      retryable: code !== 'claude_agent_sdk_result_error',
+    };
+    session.status = 'failed';
+    pushCdsAgentEvent(session, 'error', error);
+    return { accepted: false, error };
+  }
+
+  pushCdsAgentEvent(session, 'log', {
+    level: 'info',
+    message: `runtime event ${sidecarType}`,
+    source: 'claude-agent-sdk',
+    payload,
+  });
+  return null;
+}
+
+function finishOfficialSdkSseIngest(
+  session: CdsAgentSession,
+  transport: CdsManagedRuntimeTransport,
+  state: OfficialSdkSseIngestState,
+): CdsManagedRuntimeResult {
+  if (!state.accepted) {
     const error = {
       code: 'cds_managed_runtime_empty_stream',
       message: 'CDS-managed official SDK runtime returned no SSE events',
@@ -1927,6 +1994,7 @@ function ingestOfficialSdkSse(
     pushCdsAgentEvent(session, 'error', error);
     return { accepted: false, error };
   }
+
   if (session.status === 'running') session.status = 'idle';
   return { accepted: true };
 }
@@ -1935,17 +2003,21 @@ function parseSseFrames(body: string): Array<{ event?: string; data: string[] }>
   const normalized = body.replace(/\r\n/g, '\n');
   const chunks = normalized.split(/\n\n+/).map((chunk) => chunk.trim()).filter(Boolean);
   return chunks.map((chunk) => {
-    const frame: { event?: string; data: string[] } = { data: [] };
-    for (const line of chunk.split('\n')) {
-      if (!line || line.startsWith(':')) continue;
-      if (line.startsWith('event:')) {
-        frame.event = line.slice('event:'.length).trim();
-      } else if (line.startsWith('data:')) {
-        frame.data.push(line.slice('data:'.length).trimStart());
-      }
-    }
-    return frame;
+    return parseSseFrameChunk(chunk);
   });
+}
+
+function parseSseFrameChunk(chunk: string): { event?: string; data: string[] } {
+  const frame: { event?: string; data: string[] } = { data: [] };
+  for (const line of chunk.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) {
+      frame.event = line.slice('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      frame.data.push(line.slice('data:'.length).trimStart());
+    }
+  }
+  return frame;
 }
 
 function buildCdsManagedRuntimeUnavailable(session: CdsAgentSession): Record<string, unknown> {
