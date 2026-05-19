@@ -178,18 +178,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "CDS 连接 ID 不能为空");
         }
 
-        var connection = await _db.InfraConnections
-            .Find(x => x.Id == request.ConnectionId)
-            .FirstOrDefaultAsync(ct);
-        if (connection == null)
-        {
-            throw new InfraAgentSessionException(
-                InfraAgentSessionErrorCodes.ConnectionNotFound,
-                "CDS 连接不存在",
-                StatusCodes.Status404NotFound);
-        }
-
-        EnsureConnectionNotRevoked(connection);
+        var connection = await GetActiveConnectionAsync(request.ConnectionId, ct);
 
         var now = DateTime.UtcNow;
         var sessionId = Guid.NewGuid().ToString("N");
@@ -901,7 +890,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         if (session == null) return null;
 
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
-        var token = await GetLongTokenAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
         var branchId = string.IsNullOrWhiteSpace(request.BranchId)
             ? "prd-agent-main"
             : request.BranchId.Trim();
@@ -997,7 +986,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
-        var token = await GetLongTokenAsync(session.ConnectionId, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
         var branchId = string.IsNullOrWhiteSpace(request.BranchId)
             ? "prd-agent-main"
             : request.BranchId.Trim();
@@ -1310,8 +1299,45 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "CDS 连接不存在",
                 StatusCodes.Status404NotFound);
         }
+        if (IsConnectionUsable(connection))
+        {
+            return connection;
+        }
+
+        var replacement = await FindActiveReplacementConnectionAsync(connection, ct);
+        if (replacement != null)
+        {
+            _logger.LogWarning(
+                "Infra agent session remapped revoked CDS connection {OldConnectionId} to active system connection {NewConnectionId} project={ProjectId}",
+                connection.Id,
+                replacement.Id,
+                replacement.ProjectId);
+            return replacement;
+        }
+
         EnsureConnectionNotRevoked(connection);
         return connection;
+    }
+
+    private async Task<InfraConnection?> FindActiveReplacementConnectionAsync(InfraConnection revokedConnection, CancellationToken ct)
+    {
+        return await _db.InfraConnections
+            .Find(c => c.Id != revokedConnection.Id
+                && c.Partner == revokedConnection.Partner
+                && c.PartnerBaseUrl == revokedConnection.PartnerBaseUrl
+                && c.ProjectId == revokedConnection.ProjectId
+                && c.Status == "active"
+                && c.LongTokenEncrypted != string.Empty
+                && c.LongTokenExpiresAt > DateTime.UtcNow)
+            .SortByDescending(c => c.LastProbeOk)
+            .ThenByDescending(c => c.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private static bool IsConnectionUsable(InfraConnection connection)
+    {
+        return !string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase)
+            || HasRecentHealthyProbe(connection);
     }
 
     private static void EnsureConnectionNotRevoked(InfraConnection connection)
