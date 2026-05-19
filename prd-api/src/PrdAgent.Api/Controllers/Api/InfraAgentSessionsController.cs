@@ -1126,6 +1126,14 @@ public class InfraAgentSessionsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { dashboard }));
     }
 
+    [HttpGet("governance-dashboard")]
+    public async Task<IActionResult> GovernanceDashboard(CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        var dashboard = await _service.GetGovernanceDashboardAsync(userId, ct);
+        return Ok(ApiResponse<object>.Ok(new { dashboard }));
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateInfraAgentSessionRequest req, CancellationToken ct)
     {

@@ -10,6 +10,8 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentScheduleDashboardView> GetScheduleDashboardAsync(string userId, int days, CancellationToken ct);
 
+    Task<InfraAgentGovernanceDashboardView> GetGovernanceDashboardAsync(string userId, CancellationToken ct);
+
     Task<InfraAgentSessionView> CreateAsync(string userId, CreateInfraAgentSessionRequest request, CancellationToken ct);
 
     Task<InfraAgentSessionView?> StartAsync(string userId, string id, StartInfraAgentSessionRequest request, CancellationToken ct);
@@ -302,6 +304,52 @@ public record InfraAgentKnowledgeGovernanceView(
     int WorkflowCount,
     int ScheduleCount,
     string Boundary
+);
+
+public record InfraAgentGovernanceDashboardView(
+    string SchemaVersion,
+    DateTime GeneratedAt,
+    InfraAgentGovernanceSubjectView Subject,
+    InfraAgentGovernanceSummaryView Summary,
+    IReadOnlyList<InfraAgentGovernanceScopeView> Scopes,
+    IReadOnlyList<InfraAgentGovernanceGateView> Gates,
+    IReadOnlyList<string> NextActions
+);
+
+public record InfraAgentGovernanceSubjectView(
+    string UserId,
+    IReadOnlyList<string> TeamIds,
+    int TeamCount
+);
+
+public record InfraAgentGovernanceSummaryView(
+    int OwnedWorkflowCount,
+    int OwnedKnowledgeBaseCount,
+    int PublicKnowledgeBaseCount,
+    int RuntimeProfileCount,
+    int OwnedRuntimeProfileCount,
+    bool DefaultRuntimeProfileOwned,
+    int WritablePolicySessionCount,
+    int WaitingApprovalExecutionCount,
+    int PassedGateCount,
+    int TotalGateCount
+);
+
+public record InfraAgentGovernanceScopeView(
+    string Area,
+    string State,
+    string Isolation,
+    string Evidence,
+    string Risk,
+    string NextAction
+);
+
+public record InfraAgentGovernanceGateView(
+    string Code,
+    string Label,
+    string Status,
+    string Evidence,
+    string NextAction
 );
 
 public record InfraAgentTraceBundleView(

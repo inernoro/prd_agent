@@ -191,6 +191,44 @@ export interface InfraAgentScheduleDashboardView {
   };
 }
 
+export interface InfraAgentGovernanceDashboardView {
+  schemaVersion: string;
+  generatedAt: string;
+  subject: {
+    userId: string;
+    teamIds: string[];
+    teamCount: number;
+  };
+  summary: {
+    ownedWorkflowCount: number;
+    ownedKnowledgeBaseCount: number;
+    publicKnowledgeBaseCount: number;
+    runtimeProfileCount: number;
+    ownedRuntimeProfileCount: number;
+    defaultRuntimeProfileOwned: boolean;
+    writablePolicySessionCount: number;
+    waitingApprovalExecutionCount: number;
+    passedGateCount: number;
+    totalGateCount: number;
+  };
+  scopes: Array<{
+    area: string;
+    state: string;
+    isolation: string;
+    evidence: string;
+    risk: string;
+    nextAction: string;
+  }>;
+  gates: Array<{
+    code: string;
+    label: string;
+    status: string;
+    evidence: string;
+    nextAction: string;
+  }>;
+  nextActions: string[];
+}
+
 export interface InfraAgentTraceBundleView {
   schemaVersion: string;
   exportedAt: string;
@@ -615,6 +653,10 @@ interface ScheduleDashboardResp {
   dashboard: InfraAgentScheduleDashboardView;
 }
 
+interface GovernanceDashboardResp {
+  dashboard: InfraAgentGovernanceDashboardView;
+}
+
 interface HookProfilesResp {
   items: InfraAgentHookProfileView[];
 }
@@ -675,6 +717,10 @@ export async function getInfraAgentSlaDashboard(days = 7): Promise<ApiResponse<S
 
 export async function getInfraAgentScheduleDashboard(days = 14): Promise<ApiResponse<ScheduleDashboardResp>> {
   return await apiRequest<ScheduleDashboardResp>(`${api.infraAgentSessions.scheduleDashboard()}?days=${days}`, { method: 'GET' });
+}
+
+export async function getInfraAgentGovernanceDashboard(): Promise<ApiResponse<GovernanceDashboardResp>> {
+  return await apiRequest<GovernanceDashboardResp>(api.infraAgentSessions.governanceDashboard(), { method: 'GET' });
 }
 
 export async function createInfraAgentSession(input: {

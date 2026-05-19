@@ -8,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.InfraConnections;
+using KnowledgeBaseStore = PrdAgent.Core.Models.DocumentStore;
 
 namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 
@@ -107,6 +108,52 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             .ToListAsync(ct);
 
         return BuildScheduleDashboard(workflows, schedules, executions, windowDays, now);
+    }
+
+    public async Task<InfraAgentGovernanceDashboardView> GetGovernanceDashboardAsync(string userId, CancellationToken ct)
+    {
+        var memberships = await _db.ReportTeamMembers
+            .Find(x => x.UserId == userId)
+            .Limit(200)
+            .ToListAsync(ct);
+        var memberTeamIds = memberships
+            .Select(x => x.TeamId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var teamFilter = Builders<ReportTeam>.Filter.Eq(x => x.LeaderUserId, userId);
+        if (memberTeamIds.Count > 0)
+        {
+            teamFilter |= Builders<ReportTeam>.Filter.In(x => x.Id, memberTeamIds);
+        }
+
+        var teams = await _db.ReportTeams
+            .Find(teamFilter)
+            .Limit(200)
+            .ToListAsync(ct);
+        var workflows = await _db.Workflows
+            .Find(x => x.CreatedBy == userId || x.OwnerUserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var knowledgeStores = await _db.DocumentStores
+            .Find(x => x.OwnerId == userId || x.IsPublic)
+            .Limit(500)
+            .ToListAsync(ct);
+        var profiles = await _db.InfraAgentRuntimeProfiles
+            .Find(_ => true)
+            .Limit(500)
+            .ToListAsync(ct);
+        var sessions = await _db.InfraAgentSessions
+            .Find(x => x.UserId == userId && !x.IsArchived)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(500)
+            .ToListAsync(ct);
+        var executions = await _db.WorkflowExecutions
+            .Find(x => x.TriggeredBy == userId && x.Status == WorkflowExecutionStatus.WaitingApproval)
+            .Limit(200)
+            .ToListAsync(ct);
+
+        return BuildGovernanceDashboard(userId, teams, workflows, knowledgeStores, profiles, sessions, executions);
     }
 
     public async Task<InfraAgentSessionView> CreateAsync(
@@ -2567,6 +2614,126 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 knowledgeWorkflowCount,
                 knowledgeScheduleCount,
                 "readonly-only: Agent may list/search/read knowledge base content; write/draft/apply/commit are out of P3-4 scope"));
+    }
+
+    public static InfraAgentGovernanceDashboardView BuildGovernanceDashboard(
+        string userId,
+        IReadOnlyList<ReportTeam> teams,
+        IReadOnlyList<Workflow> workflows,
+        IReadOnlyList<KnowledgeBaseStore> knowledgeStores,
+        IReadOnlyList<InfraAgentRuntimeProfile> profiles,
+        IReadOnlyList<InfraAgentSession> sessions,
+        IReadOnlyList<WorkflowExecution> waitingApprovalExecutions,
+        DateTime? generatedAt = null)
+    {
+        var now = generatedAt ?? DateTime.UtcNow;
+        var teamIds = teams
+            .Select(x => x.Id)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+        var ownedKnowledgeBaseCount = knowledgeStores.Count(x => string.Equals(x.OwnerId, userId, StringComparison.Ordinal));
+        var publicKnowledgeBaseCount = knowledgeStores.Count(x => x.IsPublic && !string.Equals(x.OwnerId, userId, StringComparison.Ordinal));
+        var ownedProfileCount = profiles.Count(x => string.Equals(x.CreatedByUserId, userId, StringComparison.Ordinal));
+        var defaultProfile = profiles.FirstOrDefault(x => x.IsDefault);
+        var defaultProfileOwned = defaultProfile != null && string.Equals(defaultProfile.CreatedByUserId, userId, StringComparison.Ordinal);
+        var writablePolicySessionCount = sessions.Count(x => string.Equals(x.ToolPolicy, InfraAgentToolPolicies.CodeWritableConfirm, StringComparison.OrdinalIgnoreCase));
+        var gates = new List<InfraAgentGovernanceGateView>
+        {
+            new(
+                "GOV-REPO-OWNER",
+                "Repository/workflow scope",
+                workflows.All(x => string.Equals(x.CreatedBy, userId, StringComparison.Ordinal) || string.Equals(x.OwnerUserId, userId, StringComparison.Ordinal)) ? "pass" : "warn",
+                "CDS Agent workflow and session queries are user-scoped before aggregation.",
+                "Add repository allow-list policy before enabling cross-team writable runs."),
+            new(
+                "GOV-KB-READONLY",
+                "KnowledgeBase readonly scope",
+                "pass",
+                "kb_list/kb_search/kb_read use owner-or-public filters; kb_apply requires owned store and MAP approval.",
+                "Map owned/public stores to explicit team scopes before batch governance writes."),
+            new(
+                "GOV-PROFILE-SCOPE",
+                "Runtime profile scope",
+                defaultProfile == null || defaultProfileOwned ? "pass" : "warn",
+                defaultProfile == null
+                    ? "No default runtime profile is configured."
+                    : defaultProfileOwned
+                        ? "Default runtime profile is owned by the current subject."
+                        : "Default runtime profile records an owner, but current runtime profile APIs still expose global default semantics.",
+                "Introduce team/user-scoped profile resolve before allowing organization-wide default routing."),
+            new(
+                "GOV-APPROVAL-WRITES",
+                "Approval policy for writes",
+                writablePolicySessionCount == 0 || waitingApprovalExecutions.Count > 0 ? "pass" : "warn",
+                writablePolicySessionCount == 0
+                    ? "No active code-writable CDS Agent sessions in this subject."
+                    : $"{writablePolicySessionCount} code-writable session(s); {waitingApprovalExecutions.Count} workflow execution(s) currently waiting approval.",
+                "Keep code/KB writes behind MAP approval and expose stale waiting approvals in team governance.")
+        };
+        var scopes = new List<InfraAgentGovernanceScopeView>
+        {
+            new(
+                "repository",
+                "partial",
+                "User-owned workflows and sessions are filtered; repository allow-list is not yet a first-class team policy.",
+                $"{workflows.Count} owned workflow(s); {sessions.Count} active/visible CDS Agent session(s).",
+                "Cross-team repository boundaries are implicit in session owner fields.",
+                "Add explicit repository/team policy before scheduled writable remediation."),
+            new(
+                "knowledge-base",
+                "enforced-readonly",
+                "Readonly tools can access owned or public stores; apply requires owned store and approval.",
+                $"{ownedKnowledgeBaseCount} owned store(s); {publicKnowledgeBaseCount} public store(s) visible.",
+                "Public stores are readable by design; writes still require owned store.",
+                "Bind stores to teams before enabling batch apply."),
+            new(
+                "runtime-profile",
+                defaultProfile == null || defaultProfileOwned ? "recorded" : "needs-enforcement",
+                "Profiles record CreatedByUserId; current default profile selection is still global.",
+                $"{ownedProfileCount}/{profiles.Count} runtime profile(s) owned by current subject.",
+                defaultProfile == null || defaultProfileOwned
+                    ? "No cross-owner default observed in this snapshot."
+                    : "A global default profile can route runs for another subject unless scoped resolve is added.",
+                "Make profile list/resolve team-aware before declaring P3-5 complete."),
+            new(
+                "approval-policy",
+                "enforced",
+                "Dangerous code/KB write tools require MAP approval or explicit writable policy.",
+                $"{writablePolicySessionCount} writable session(s); {waitingApprovalExecutions.Count} waiting approval execution(s).",
+                "Long waiting approvals can block workflow runs if not surfaced to team owners.",
+                "Add team-level approval owner and stale-approval SLA.")
+        };
+        var passed = gates.Count(x => x.Status == "pass");
+        var nextActions = gates
+            .Where(x => x.Status != "pass")
+            .Select(x => x.NextAction)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (nextActions.Count == 0)
+        {
+            nextActions.Add("Continue with explicit team policy data model for repository/profile/approval ownership.");
+        }
+
+        return new InfraAgentGovernanceDashboardView(
+            "cds-agent-governance-dashboard/v1",
+            now,
+            new InfraAgentGovernanceSubjectView(userId, teamIds, teamIds.Count),
+            new InfraAgentGovernanceSummaryView(
+                workflows.Count,
+                ownedKnowledgeBaseCount,
+                publicKnowledgeBaseCount,
+                profiles.Count,
+                ownedProfileCount,
+                defaultProfileOwned,
+                writablePolicySessionCount,
+                waitingApprovalExecutions.Count,
+                passed,
+                gates.Count),
+            scopes,
+            gates,
+            nextActions);
     }
 
     public static InfraAgentTraceBundleView BuildTraceBundle(

@@ -282,6 +282,32 @@ public class InfraAgentSessionsControllerTests
     }
 
     [Fact]
+    public async Task GovernanceDashboard_ShouldUseCurrentUser()
+    {
+        var service = new Mock<IInfraAgentSessionService>();
+        var now = DateTime.UtcNow;
+        var expected = new InfraAgentGovernanceDashboardView(
+            "cds-agent-governance-dashboard/v1",
+            now,
+            new InfraAgentGovernanceSubjectView("user-1", Array.Empty<string>(), 0),
+            new InfraAgentGovernanceSummaryView(1, 1, 0, 1, 1, true, 0, 0, 4, 4),
+            Array.Empty<InfraAgentGovernanceScopeView>(),
+            Array.Empty<InfraAgentGovernanceGateView>(),
+            Array.Empty<string>());
+        service
+            .Setup(x => x.GetGovernanceDashboardAsync("user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var controller = BuildController(service.Object, "user-1");
+
+        var result = await controller.GovernanceDashboard(CancellationToken.None);
+
+        var objectResult = result.ShouldBeOfType<OkObjectResult>();
+        objectResult.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        service.Verify(x => x.GetGovernanceDashboardAsync("user-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task RunReadonlyChecks_ShouldReturnSession()
     {
         var service = new Mock<IInfraAgentSessionService>();

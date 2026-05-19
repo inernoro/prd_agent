@@ -16,6 +16,7 @@ import {
   createInfraAgentRuntimeProfileFromTemplate,
   createInfraAgentSession,
   deleteInfraAgentRuntimeProfile,
+  getInfraAgentGovernanceDashboard,
   getInfraAgentLogs,
   getInfraAgentRuntimeAdapterMatrix,
   getInfraAgentRuntimeStatus,
@@ -41,6 +42,7 @@ import {
   updateInfraAgentRuntimeProfile,
   type InfraAgentEventView,
   type InfraAgentMessageView,
+  type InfraAgentGovernanceDashboardView,
   type InfraAgentRuntimeAdapterCompatibilityView,
   type InfraAgentRuntimeAdapterMatrixView,
   type InfraAgentRuntimeDiagnostics,
@@ -689,6 +691,7 @@ export default function CdsAgentPage() {
   const [adapterMatrix, setAdapterMatrix] = useState<InfraAgentRuntimeAdapterMatrixView | null>(null);
   const [slaDashboard, setSlaDashboard] = useState<InfraAgentSlaDashboardView | null>(null);
   const [scheduleDashboard, setScheduleDashboard] = useState<InfraAgentScheduleDashboardView | null>(null);
+  const [governanceDashboard, setGovernanceDashboard] = useState<InfraAgentGovernanceDashboardView | null>(null);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
@@ -927,6 +930,8 @@ export default function CdsAgentPage() {
   const scheduleSummary = scheduleDashboard?.summary ?? null;
   const nextCdsAgentSchedule = scheduleDashboard?.schedules?.[0] ?? null;
   const latestScheduledExecution = scheduleDashboard?.recentExecutions?.[0] ?? null;
+  const governanceSummary = governanceDashboard?.summary ?? null;
+  const governanceProfileGate = governanceDashboard?.gates?.find((item) => item.code === 'GOV-PROFILE-SCOPE') ?? null;
   const gitContext = useMemo(() => {
     let branch = '';
     let commit = '';
@@ -2176,7 +2181,7 @@ export default function CdsAgentPage() {
 
   async function loadAll() {
     const requestedSessionId = readRequestedSessionId();
-    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, slaDashboardRes, scheduleDashboardRes, sessionRes, runtimeRes] = await Promise.all([
+    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, slaDashboardRes, scheduleDashboardRes, governanceDashboardRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentRuntimeProfileTemplates(),
@@ -2184,6 +2189,7 @@ export default function CdsAgentPage() {
       getInfraAgentRuntimeAdapterMatrix(),
       getInfraAgentSlaDashboard(7),
       getInfraAgentScheduleDashboard(14),
+      getInfraAgentGovernanceDashboard(),
       listInfraAgentSessions(100),
       getInfraAgentRuntimeStatus(true),
     ]);
@@ -2213,6 +2219,9 @@ export default function CdsAgentPage() {
     }
     if (scheduleDashboardRes.success) {
       setScheduleDashboard(scheduleDashboardRes.data?.dashboard ?? null);
+    }
+    if (governanceDashboardRes.success) {
+      setGovernanceDashboard(governanceDashboardRes.data?.dashboard ?? null);
     }
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
@@ -3712,6 +3721,66 @@ export default function CdsAgentPage() {
                   </div>
                 </a>
               )}
+            </div>
+          )}
+        </section>
+
+        <section
+          className="rounded-xl px-4 py-3"
+          style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-white/78">
+                <ShieldCheck size={15} /> 权限 / 组织治理
+              </div>
+              <div className="mt-1 text-xs text-white/42">
+                {governanceDashboard
+                  ? `${governanceDashboard.subject.teamCount} 个团队上下文 · ${governanceSummary?.passedGateCount ?? 0}/${governanceSummary?.totalGateCount ?? 0} gates`
+                  : '等待治理边界指标'}
+              </div>
+            </div>
+            <div className={`rounded px-2 py-1 text-xs ${governanceProfileGate?.status === 'warn' ? 'text-amber-100/80' : 'text-emerald-100/80'}`} style={{ background: governanceProfileGate?.status === 'warn' ? 'rgba(245,158,11,0.1)' : 'rgba(34,197,94,0.1)' }}>
+              profile {governanceProfileGate?.status ?? 'unknown'}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            {[
+              { label: '团队', value: governanceDashboard?.subject.teamCount ?? 0, hint: governanceDashboard?.subject.teamIds.slice(0, 2).join(' / ') || '当前用户上下文' },
+              { label: '工作流', value: governanceSummary?.ownedWorkflowCount ?? 0, hint: 'owner scoped' },
+              { label: '知识库', value: governanceSummary?.ownedKnowledgeBaseCount ?? 0, hint: `${governanceSummary?.publicKnowledgeBaseCount ?? 0} public readable` },
+              { label: 'Profile', value: `${governanceSummary?.ownedRuntimeProfileCount ?? 0}/${governanceSummary?.runtimeProfileCount ?? 0}`, hint: governanceSummary?.defaultRuntimeProfileOwned ? 'default owned' : 'global default visible' },
+              { label: '审批', value: governanceSummary?.waitingApprovalExecutionCount ?? 0, hint: `${governanceSummary?.writablePolicySessionCount ?? 0} writable sessions` },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="min-h-[72px] rounded-lg px-3 py-2"
+                style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <div className="text-xs text-white/42">{item.label}</div>
+                <div className="mt-1 truncate text-xl font-semibold leading-tight text-white/84">{item.value}</div>
+                <div className="mt-1 truncate text-xs text-white/38">{item.hint}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2">
+            {(governanceDashboard?.scopes ?? []).slice(0, 4).map((scope) => (
+              <div
+                key={scope.area}
+                className="min-w-0 rounded-lg px-3 py-2"
+                style={{ background: 'rgba(15,23,42,0.36)', border: '1px solid rgba(148,163,184,0.12)' }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-semibold text-white/70">{scope.area}</span>
+                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-cyan-100/70" style={{ background: 'rgba(56,189,248,0.1)' }}>{scope.state}</span>
+                </div>
+                <div className="mt-1 truncate text-xs text-white/42">{scope.evidence}</div>
+              </div>
+            ))}
+          </div>
+          {governanceDashboard?.nextActions?.[0] && (
+            <div className="mt-3 truncate rounded-lg px-3 py-2 text-xs text-amber-100/70" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.14)' }}>
+              {governanceDashboard.nextActions[0]}
             </div>
           )}
         </section>
