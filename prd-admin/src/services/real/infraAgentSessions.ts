@@ -192,6 +192,60 @@ export interface InfraAgentRuntimeAdapterCompatibilityView {
   nextActions: string[];
 }
 
+export interface InfraAgentRuntimeAdapterMatrixView {
+  schemaVersion: string;
+  generatedAt: string;
+  desiredRuntimeAdapter: string;
+  summary: {
+    adapterCount: number;
+    routableAdapterCount: number;
+    defaultRoutableAdapterCount: number;
+    blockedAdapterCount: number;
+    profileCount: number;
+    templateCount: number;
+  };
+  rows: InfraAgentRuntimeAdapterMatrixRowView[];
+}
+
+export interface InfraAgentRuntimeAdapterMatrixRowView {
+  adapterId: string;
+  label: string;
+  status: string;
+  routeState: string;
+  isDesired: boolean;
+  routableByDefault: boolean;
+  loopOwner: string;
+  mapRole: string;
+  cdsRole: string;
+  gates: Array<{ code: string; status: string; reason: string }>;
+  missingAdapterContracts: string[];
+  profileCandidates: Array<{
+    id: string;
+    name: string;
+    runtime: string;
+    protocol: string;
+    model: string;
+    hasApiKey: boolean;
+    isDefault: boolean;
+    compatible: boolean;
+    reasonCode: string;
+    reason: string;
+    nextActions: string[];
+  }>;
+  templateCandidates: Array<{
+    id: string;
+    name: string;
+    runtime: string;
+    protocol: string;
+    model: string;
+    isDefaultRecommended: boolean;
+    compatible: boolean;
+    reasonCode: string;
+    reason: string;
+  }>;
+  nextActions: string[];
+}
+
 export interface InfraAgentRuntimeProfileTestResult {
   id: string;
   success: boolean;
@@ -465,6 +519,10 @@ interface RuntimeAdapterCompatibilityResp {
   items: InfraAgentRuntimeAdapterCompatibilityView[];
 }
 
+interface RuntimeAdapterMatrixResp {
+  matrix: InfraAgentRuntimeAdapterMatrixView;
+}
+
 interface RuntimeProfileResp {
   item: InfraAgentRuntimeProfileView;
 }
@@ -728,6 +786,10 @@ export async function listInfraAgentRuntimeProfileTemplates(): Promise<ApiRespon
 
 export async function listInfraAgentRuntimeAdapterCompatibility(): Promise<ApiResponse<RuntimeAdapterCompatibilityResp>> {
   return await apiRequest<RuntimeAdapterCompatibilityResp>(api.infraAgentRuntimeProfiles.adapterCompatibility(), { method: 'GET' });
+}
+
+export async function getInfraAgentRuntimeAdapterMatrix(): Promise<ApiResponse<RuntimeAdapterMatrixResp>> {
+  return await apiRequest<RuntimeAdapterMatrixResp>(api.infraAgentRuntimeProfiles.adapterMatrix(), { method: 'GET' });
 }
 
 export async function createInfraAgentRuntimeProfile(input: {

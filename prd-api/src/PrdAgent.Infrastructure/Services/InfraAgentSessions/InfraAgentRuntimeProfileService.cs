@@ -55,6 +55,16 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return Task.FromResult(InfraAgentRuntimeAdapterCompatibility.All.ToList());
     }
 
+    public async Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(CancellationToken ct)
+    {
+        var profiles = await ListAsync(ct);
+        var templates = InfraAgentRuntimeProfileTemplates.All;
+        return InfraAgentRuntimeAdapterCompatibility.BuildMatrix(
+            InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter(),
+            profiles,
+            templates);
+    }
+
     public async Task<InfraAgentRuntimeProfileView> CreateAsync(
         string userId,
         UpsertInfraAgentRuntimeProfileRequest request,

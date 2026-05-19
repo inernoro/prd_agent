@@ -10,6 +10,8 @@ public interface IInfraAgentRuntimeProfileService
 
     Task<List<InfraAgentRuntimeAdapterCompatibilityView>> ListAdapterCompatibilityAsync(CancellationToken ct);
 
+    Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(CancellationToken ct);
+
     Task<InfraAgentRuntimeProfileView> CreateAsync(string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileView> CreateFromTemplateAsync(string templateId, string userId, CreateInfraAgentRuntimeProfileFromTemplateRequest request, CancellationToken ct);
@@ -105,6 +107,72 @@ public record InfraAgentRuntimeAdapterCompatibilityView(
     IReadOnlyList<string> KnownIncompatibleProfilePatterns,
     IReadOnlyList<string> Notes,
     IReadOnlyList<string> NextActions
+);
+
+public record InfraAgentRuntimeAdapterMatrixView(
+    string SchemaVersion,
+    DateTime GeneratedAt,
+    string DesiredRuntimeAdapter,
+    InfraAgentRuntimeAdapterMatrixSummaryView Summary,
+    IReadOnlyList<InfraAgentRuntimeAdapterMatrixRowView> Rows
+);
+
+public record InfraAgentRuntimeAdapterMatrixSummaryView(
+    int AdapterCount,
+    int RoutableAdapterCount,
+    int DefaultRoutableAdapterCount,
+    int BlockedAdapterCount,
+    int ProfileCount,
+    int TemplateCount
+);
+
+public record InfraAgentRuntimeAdapterMatrixRowView(
+    string AdapterId,
+    string Label,
+    string Status,
+    string RouteState,
+    bool IsDesired,
+    bool RoutableByDefault,
+    string LoopOwner,
+    string MapRole,
+    string CdsRole,
+    IReadOnlyList<InfraAgentRuntimeAdapterGateView> Gates,
+    IReadOnlyList<string> MissingAdapterContracts,
+    IReadOnlyList<InfraAgentRuntimeAdapterProfileCandidateView> ProfileCandidates,
+    IReadOnlyList<InfraAgentRuntimeAdapterTemplateCandidateView> TemplateCandidates,
+    IReadOnlyList<string> NextActions
+);
+
+public record InfraAgentRuntimeAdapterGateView(
+    string Code,
+    string Status,
+    string Reason
+);
+
+public record InfraAgentRuntimeAdapterProfileCandidateView(
+    string Id,
+    string Name,
+    string Runtime,
+    string Protocol,
+    string Model,
+    bool HasApiKey,
+    bool IsDefault,
+    bool Compatible,
+    string ReasonCode,
+    string Reason,
+    IReadOnlyList<string> NextActions
+);
+
+public record InfraAgentRuntimeAdapterTemplateCandidateView(
+    string Id,
+    string Name,
+    string Runtime,
+    string Protocol,
+    string Model,
+    bool IsDefaultRecommended,
+    bool Compatible,
+    string ReasonCode,
+    string Reason
 );
 
 public record InfraAgentRuntimeProfileSecretView(
@@ -441,6 +509,149 @@ public static class InfraAgentRuntimeAdapterCompatibility
                 "在真实 provider smoke 和页面诊断都通过前，不要把代码审查任务默认路由到 google-adk。"
             ])
     ];
+
+    public static InfraAgentRuntimeAdapterMatrixView BuildMatrix(
+        string? desiredRuntimeAdapter,
+        IReadOnlyList<InfraAgentRuntimeProfileView> profiles,
+        IReadOnlyList<InfraAgentRuntimeProfileTemplateView> templates)
+    {
+        var desired = string.IsNullOrWhiteSpace(desiredRuntimeAdapter)
+            ? InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk
+            : desiredRuntimeAdapter.Trim();
+        var rows = All.Select(adapter =>
+        {
+            var routeState = BuildRouteState(adapter);
+            var gates = adapter.RequiredEvidenceGates.Select(gate => new InfraAgentRuntimeAdapterGateView(
+                gate,
+                adapter.MissingAdapterContracts.Count == 0 && adapter.RoutableByDefault ? "pass" : "blocked",
+                adapter.MissingAdapterContracts.Count == 0
+                    ? "contract satisfied"
+                    : $"missing: {string.Join(", ", adapter.MissingAdapterContracts)}")).ToList();
+            var profileCandidates = profiles
+                .Select(profile => BuildProfileCandidate(adapter, profile))
+                .OrderByDescending(x => x.Compatible)
+                .ThenByDescending(x => x.IsDefault)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var templateCandidates = templates
+                .Select(template => BuildTemplateCandidate(adapter, template))
+                .OrderByDescending(x => x.Compatible)
+                .ThenByDescending(x => x.IsDefaultRecommended)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return new InfraAgentRuntimeAdapterMatrixRowView(
+                adapter.Id,
+                adapter.Label,
+                adapter.Status,
+                routeState,
+                string.Equals(adapter.Id, desired, StringComparison.OrdinalIgnoreCase),
+                adapter.RoutableByDefault,
+                adapter.LoopOwner,
+                adapter.MapRole,
+                adapter.CdsRole,
+                gates,
+                adapter.MissingAdapterContracts,
+                profileCandidates,
+                templateCandidates,
+                adapter.NextActions);
+        }).ToList();
+
+        return new InfraAgentRuntimeAdapterMatrixView(
+            "cds-agent-runtime-adapter-matrix/v1",
+            DateTime.UtcNow,
+            desired,
+            new InfraAgentRuntimeAdapterMatrixSummaryView(
+                rows.Count,
+                rows.Count(x => x.RouteState is "default-routable" or "explicit-fallback"),
+                rows.Count(x => x.RouteState == "default-routable"),
+                rows.Count(x => x.RouteState is "blocked" or "planned-blocked"),
+                profiles.Count,
+                templates.Count),
+            rows);
+    }
+
+    private static string BuildRouteState(InfraAgentRuntimeAdapterCompatibilityView adapter)
+    {
+        if (adapter.MissingAdapterContracts.Count > 0) return "planned-blocked";
+        if (adapter.RoutableByDefault) return "default-routable";
+        if (adapter.Status.Contains("fallback", StringComparison.OrdinalIgnoreCase)) return "explicit-fallback";
+        return "blocked";
+    }
+
+    private static InfraAgentRuntimeAdapterProfileCandidateView BuildProfileCandidate(
+        InfraAgentRuntimeAdapterCompatibilityView adapter,
+        InfraAgentRuntimeProfileView profile)
+    {
+        var decision = AnalyzeProfileForAdapter(adapter, profile.Runtime, profile.Protocol, profile.Model);
+        return new InfraAgentRuntimeAdapterProfileCandidateView(
+            profile.Id,
+            profile.Name,
+            profile.Runtime,
+            profile.Protocol,
+            profile.Model,
+            profile.HasApiKey,
+            profile.IsDefault,
+            decision.Compatible,
+            decision.ReasonCode,
+            decision.Reason,
+            decision.NextActions);
+    }
+
+    private static InfraAgentRuntimeAdapterTemplateCandidateView BuildTemplateCandidate(
+        InfraAgentRuntimeAdapterCompatibilityView adapter,
+        InfraAgentRuntimeProfileTemplateView template)
+    {
+        var decision = AnalyzeProfileForAdapter(adapter, template.Runtime, template.Protocol, template.Model);
+        var explicitlyCompatible = template.CompatibleRuntimeAdapters.Contains(adapter.Id, StringComparer.OrdinalIgnoreCase);
+        var compatible = decision.Compatible || explicitlyCompatible;
+        return new InfraAgentRuntimeAdapterTemplateCandidateView(
+            template.Id,
+            template.Name,
+            template.Runtime,
+            template.Protocol,
+            template.Model,
+            template.IsDefaultRecommended,
+            compatible,
+            compatible ? decision.ReasonCode : "template-adapter-mismatch",
+            compatible ? decision.Reason : "该模板未声明兼容当前 adapter。");
+    }
+
+    private static InfraAgentRuntimeProfileCompatibilityDecision AnalyzeProfileForAdapter(
+        InfraAgentRuntimeAdapterCompatibilityView adapter,
+        string? runtime,
+        string? protocol,
+        string? model)
+    {
+        if (string.Equals(adapter.Id, InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk, StringComparison.OrdinalIgnoreCase))
+        {
+            return InfraAgentRuntimeProfileCompatibility.AnalyzeForDesiredRuntimeAdapter(adapter.Id, runtime, protocol, model);
+        }
+
+        if (adapter.SupportedProfileProtocols.Count == 0)
+        {
+            return new InfraAgentRuntimeProfileCompatibilityDecision(
+                false,
+                "adapter-profile-contract-missing",
+                "该 adapter 尚未声明 profile protocol contract，不能把现有 profile 自动路由过去。",
+                adapter.NextActions);
+        }
+
+        if (adapter.SupportedProfileProtocols.Contains(protocol ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+        {
+            return new InfraAgentRuntimeProfileCompatibilityDecision(
+                true,
+                "profile-protocol-compatible",
+                $"profile protocol={protocol} 与 adapter 支持的 profile protocol 匹配；仍需通过 adapter contract 和 smoke gate 才能路由。",
+                Array.Empty<string>());
+        }
+
+        return new InfraAgentRuntimeProfileCompatibilityDecision(
+            false,
+            "profile-protocol-mismatch",
+            $"profile protocol={protocol ?? "unknown"} 不在 adapter 支持列表：{string.Join(", ", adapter.SupportedProfileProtocols)}。",
+            adapter.NextActions);
+    }
 }
 
 public static class InfraAgentRuntimeProfileErrorCodes

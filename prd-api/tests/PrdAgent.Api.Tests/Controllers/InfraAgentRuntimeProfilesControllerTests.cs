@@ -94,6 +94,54 @@ public class InfraAgentRuntimeProfilesControllerTests
         googleAdk.NextActions.ShouldContain(x => x.Contains("不要把代码审查任务默认路由到 google-adk", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task AdapterMatrix_ShouldExposeRouteStateAndProfileCandidates()
+    {
+        var service = new Mock<IInfraAgentRuntimeProfileService>();
+        var profile = new InfraAgentRuntimeProfileView(
+            "profile-1",
+            "Team Claude",
+            InfraAgentRuntimes.ClaudeSdk,
+            InfraAgentRuntimeProtocols.Anthropic,
+            "https://anthropic-compatible.example/v1",
+            "deepseek-via-cc-switch",
+            2,
+            4096,
+            900,
+            InfraAgentRuntimeNetworkPolicies.Restricted,
+            30,
+            true,
+            true,
+            DateTime.UtcNow,
+            DateTime.UtcNow);
+        var matrix = InfraAgentRuntimeAdapterCompatibility.BuildMatrix(
+            InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk,
+            new[] { profile },
+            InfraAgentRuntimeProfileTemplates.All);
+        service
+            .Setup(x => x.GetAdapterMatrixAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(matrix);
+        var controller = new InfraAgentRuntimeProfilesController(service.Object);
+
+        var result = await controller.AdapterMatrix(CancellationToken.None);
+
+        var ok = result.ShouldBeOfType<OkObjectResult>();
+        var response = ok.Value.ShouldBeOfType<ApiResponse<object>>();
+        var data = response.Data.ShouldNotBeNull();
+        var matrixProperty = data.GetType().GetProperty("matrix").ShouldNotBeNull();
+        var item = matrixProperty.GetValue(data).ShouldBeOfType<InfraAgentRuntimeAdapterMatrixView>();
+        item.SchemaVersion.ShouldBe("cds-agent-runtime-adapter-matrix/v1");
+        item.Summary.AdapterCount.ShouldBeGreaterThan(1);
+        item.Summary.ProfileCount.ShouldBe(1);
+        var official = item.Rows.Single(x => x.AdapterId == InfraAgentRuntimeAdapterDefaults.OfficialClaudeAgentSdk);
+        official.RouteState.ShouldBe("default-routable");
+        official.ProfileCandidates.Single().Compatible.ShouldBeTrue();
+        var openAiAgents = item.Rows.Single(x => x.AdapterId == InfraAgentRuntimeAdapterCompatibility.OpenAiAgentsSdkPlanned);
+        openAiAgents.RouteState.ShouldBe("planned-blocked");
+        openAiAgents.MissingAdapterContracts.ShouldContain("map-approval-bridge");
+        service.Verify(x => x.GetAdapterMatrixAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

@@ -40,6 +40,13 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    [HttpGet("adapter-matrix")]
+    public async Task<IActionResult> AdapterMatrix(CancellationToken ct)
+    {
+        var matrix = await _service.GetAdapterMatrixAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { matrix }));
+    }
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] UpsertInfraAgentRuntimeProfileRequest req, CancellationToken ct)
     {

@@ -17,6 +17,7 @@ import {
   createInfraAgentSession,
   deleteInfraAgentRuntimeProfile,
   getInfraAgentLogs,
+  getInfraAgentRuntimeAdapterMatrix,
   getInfraAgentRuntimeStatus,
   getInfraAgentTraceBundle,
   importDefaultInfraAgentRuntimeProfile,
@@ -39,6 +40,7 @@ import {
   type InfraAgentEventView,
   type InfraAgentMessageView,
   type InfraAgentRuntimeAdapterCompatibilityView,
+  type InfraAgentRuntimeAdapterMatrixView,
   type InfraAgentRuntimeDiagnostics,
   type InfraAgentRuntimeProfileTemplateView,
   type InfraAgentRuntimeProfileView,
@@ -645,6 +647,7 @@ export default function CdsAgentPage() {
   const [profiles, setProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
   const [profileTemplates, setProfileTemplates] = useState<InfraAgentRuntimeProfileTemplateView[]>([]);
   const [adapterCompatibility, setAdapterCompatibility] = useState<InfraAgentRuntimeAdapterCompatibilityView[]>([]);
+  const [adapterMatrix, setAdapterMatrix] = useState<InfraAgentRuntimeAdapterMatrixView | null>(null);
   const [sessions, setSessions] = useState<InfraAgentSessionView[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<InfraAgentMessageView[]>([]);
@@ -2127,11 +2130,12 @@ export default function CdsAgentPage() {
 
   async function loadAll() {
     const requestedSessionId = readRequestedSessionId();
-    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, sessionRes, runtimeRes] = await Promise.all([
+    const [connRes, profileRes, profileTemplateRes, adapterCompatibilityRes, adapterMatrixRes, sessionRes, runtimeRes] = await Promise.all([
       listInfraConnections(),
       listInfraAgentRuntimeProfiles(),
       listInfraAgentRuntimeProfileTemplates(),
       listInfraAgentRuntimeAdapterCompatibility(),
+      getInfraAgentRuntimeAdapterMatrix(),
       listInfraAgentSessions(100),
       getInfraAgentRuntimeStatus(true),
     ]);
@@ -2152,6 +2156,9 @@ export default function CdsAgentPage() {
     }
     if (adapterCompatibilityRes.success) {
       setAdapterCompatibility(adapterCompatibilityRes.data?.items ?? []);
+    }
+    if (adapterMatrixRes.success) {
+      setAdapterMatrix(adapterMatrixRes.data?.matrix ?? null);
     }
     if (sessionRes.success) {
       const items = sortSessions(sessionRes.data?.items ?? []);
@@ -4704,6 +4711,55 @@ export default function CdsAgentPage() {
                                   </div>
                                 </div>
                               ))}
+                            </div>
+                          </div>
+                        )}
+                        {adapterMatrix && (
+                          <div className="mt-2 rounded-md px-3 py-2" style={{ background: 'rgba(15,23,42,0.58)', border: '1px solid rgba(148,163,184,0.14)' }}>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <div className="text-[11px] font-semibold text-white/38">Adapter matrix</div>
+                                <div className="mt-1 text-xs text-white/58">
+                                  {adapterMatrix.summary.defaultRoutableAdapterCount} default / {adapterMatrix.summary.blockedAdapterCount} blocked · {adapterMatrix.summary.profileCount} profiles
+                                </div>
+                              </div>
+                              <span className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-white/62" style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                {adapterMatrix.desiredRuntimeAdapter}
+                              </span>
+                            </div>
+                            <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                              {adapterMatrix.rows.map((row) => {
+                                const compatibleProfiles = row.profileCandidates.filter((item) => item.compatible).length;
+                                const blocked = row.routeState === 'planned-blocked' || row.routeState === 'blocked';
+                                return (
+                                  <div
+                                    key={row.adapterId}
+                                    className="rounded-md px-2.5 py-2"
+                                    style={{
+                                      background: row.isDesired ? 'rgba(56,189,248,0.08)' : blocked ? 'rgba(245,158,11,0.06)' : 'rgba(34,197,94,0.06)',
+                                      border: row.isDesired ? '1px solid rgba(56,189,248,0.24)' : blocked ? '1px solid rgba(245,158,11,0.16)' : '1px solid rgba(34,197,94,0.16)',
+                                    }}
+                                  >
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="truncate text-xs font-semibold text-white/72">{row.label}</div>
+                                        <div className="mt-0.5 text-[11px] text-white/38">{row.adapterId} · {row.routeState}</div>
+                                      </div>
+                                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold" style={{ background: blocked ? 'rgba(245,158,11,0.14)' : 'rgba(34,197,94,0.14)', color: blocked ? 'rgba(253,230,138,0.9)' : 'rgba(134,239,172,0.9)' }}>
+                                        {blocked ? 'BLOCKED' : 'ROUTABLE'}
+                                      </span>
+                                    </div>
+                                    <div className="mt-1 text-xs leading-relaxed text-white/50">
+                                      profiles {compatibleProfiles}/{row.profileCandidates.length} · gates {row.gates.filter((gate) => gate.status === 'pass').length}/{row.gates.length}
+                                    </div>
+                                    <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">
+                                      {row.missingAdapterContracts.length > 0
+                                        ? `missing ${row.missingAdapterContracts.join(' / ')}`
+                                        : row.profileCandidates.find((item) => item.compatible)?.reason || row.nextActions[0] || 'contract ready'}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
