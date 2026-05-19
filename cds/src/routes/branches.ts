@@ -4343,8 +4343,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 的历史挤出 200 条上限，导致"谁停的/为什么"时间线对高频项目恰好失效
     // （Codex review P1）。getActivityLogs 不传 limit 返回项目全部（最新在前）。
     const all = stateService.getActivityLogs(entry.projectId, { sinceIso });
-    const logs = all.filter((e) => e.branchId === id).slice(0, limit);
-    res.json({ branchId: id, logs, total: logs.length });
+    const matched = all.filter((e) => e.branchId === id);
+    const logs = matched.slice(0, limit);
+    // total 必须是过滤后、截断前的命中总数，否则消费方无法判断"还有没有更多"
+    // （截断后 total===logs.length 永远 ≤ limit，分页/加载更多失效）。Cursor Bugbot。
+    res.json({ branchId: id, logs, total: matched.length });
   });
 
   // ── Set default branch ──
