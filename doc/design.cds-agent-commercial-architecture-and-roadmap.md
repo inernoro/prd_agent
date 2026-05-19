@@ -20,9 +20,9 @@
 | --- | --- |
 | 主架构 | MAP 只连 CDS；CDS 管理 runtime/container/sandbox；Claude Agent SDK 是 CDS-managed runtime |
 | 当前已验收 | 官方 SDK 只读代码巡检闭环通过；默认 hardened-readonly profile 不暴露 Bash/Edit/Write |
-| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；P4-3 远端试用入口与发布验收包已归档 |
+| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；P4-3 远端试用入口与发布验收包已归档；P4-4 发布/合并策略评估已归档 |
 | 当前分支 | `codex/cds-agent-workbench-ui` 已部署到远端 preview commit `6b2f1552e` |
-| 当前最高优先级 | P4-4 发布/合并策略评估：决定合并 main 还是继续 preview 试用 |
+| 当前最高优先级 | P4-5 后续 writable/PR/KB apply 试用计划：只列试用边界、审批门禁和回滚，不默认开放写入 |
 | 当前不是主线 | SSH、remote host env、sidecar image registry 都只能作为 operator/debug fallback，不能作为普通用户路径 |
 | 当前风险 | 只读巡检远端可用；写文件、知识库改写、PR 仍必须走 writable profile、审批和差异应用机制，不进入默认路径 |
 
@@ -439,12 +439,11 @@ Phase 2 smoke 清单：
 
 ## 11. 下一轮最小开发计划
 
-Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口`、`P4-2 远端 R1 provider-switch profile 闭环` 和 `P4-3 远端试用入口说明与验收包` 已完成。下一轮不再处理 provider key/profile 阻塞，重点转为发布/合并策略：保留当前可用闭环，决定是否合并 main 或继续 preview 试用。
+Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口`、`P4-2 远端 R1 provider-switch profile 闭环`、`P4-3 远端试用入口说明与验收包` 和 `P4-4 发布/合并策略评估` 已完成。下一轮不再处理 provider key/profile 阻塞，重点转为后续写入能力试用规划：列清 writable/PR/KB apply 的边界、审批门禁和回滚路径，不默认开放写入。
 
 | 顺序 | 任务 | 预计 | 是否需要用户 |
 | --- | --- | --- | --- |
-| 1 | P4-4 发布/合并策略评估 | 0.5d | 需要确认是否合并 main 或继续预览 |
-| 2 | P4-5 后续 writable/PR/KB apply 试用计划 | 0.5d | 需要确认是否进入写入能力 |
+| 1 | P4-5 后续 writable/PR/KB apply 试用计划 | 0.5d | 需要确认是否进入写入能力 |
 
 如果某个任务同一问题反复修正超过 3 次，必须暂停写代码，先在本文件追加“根因复盘”，再决定是否换实现路径。
 
@@ -493,7 +492,7 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | [x] Phase 1 商业级最小可用 | 本地验收完成 | 用户能用简洁面板跑只读代码巡检、知识库只读搜索，并能从工作流调度一次 Agent | 3 步内启动；可观测字段齐全；stop/timeout 可见；`CdsAgentRun` 最小工作流通过；KB search/read 通过；Phase 1 验收包已生成 |
 | [x] Phase 2 可写协作 | 本地验收完成，6/6 | Agent 能生成代码/知识库 draft/diff，并通过人工审批 apply | 写操作不直落库；diff 可审查；workflow 可暂停/恢复；writable profile 有显式审批边界；Phase 2 验收包已生成 |
 | [x] Phase 3 规模化商业能力 | 本地验收完成 | 团队级巡检、知识治理、多运行时和成本治理 | trace bundle 可导出；adapter matrix 可见；SLA/成本面板可见；定时巡检/知识治理只读视图可见；权限/组织治理只读视图可见；runtime profile 已支持 owner-or-team 可见且 update/delete owner-only；repository/profile/approval owner UI 已可读可跳转；Phase 3 验收包已生成 |
-| [x] Phase 4 远端试用与发布验收 | P4-1/P4-2/P4-3 完成 | 远端 preview 可被真实用户路径试用，并证明 provider-backed 只读巡检能闭环 | P4-1 远端 API/视觉通过；P4-2 provider-backed one-cycle 通过，S1/S2/S3/V1/N6 全部有证据；P4-3 试用入口、复跑命令、失败排查和发布验收边界已归档 |
+| [x] Phase 4 远端试用与发布验收 | P4-1/P4-2/P4-3/P4-4 完成 | 远端 preview 可被真实用户路径试用，并证明 provider-backed 只读巡检能闭环 | P4-1 远端 API/视觉通过；P4-2 provider-backed one-cycle 通过，S1/S2/S3/V1/N6 全部有证据；P4-3 试用入口、复跑命令、失败排查和发布验收边界已归档；P4-4 已给出发布/合并策略 |
 
 ### 14.2 Phase 0 测试对勾
 
@@ -559,10 +558,11 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | [x] | 完成 P4-2 远端 R1 provider-switch profile 闭环 | 已导入远端系统主模型 DeepSeek V3.2 provider-switch profile；修复 CDS official SDK runtime 事件流式 ingest、MAP 远程错误终态归并和 `error_max_turns` 分类；provider-backed one-cycle 通过，证明远端只读代码巡检、危险工具阻断、stop、视觉和非代码边界均可复跑 |
 | [x] | 沉淀 P4-2 正式验收报告 | 已生成 Markdown/HTML/PDF 报告，归档远端 provider-backed one-cycle 结论、gate 清单、修复点、耗时、视觉截图和残留风险 |
 | [x] | 完成 P4-3 远端试用入口说明与验收包 | 已生成 Markdown/HTML/PDF 验收包，明确普通用户 3 步试用、研发复跑命令、结果查看、失败排查、发布验收边界和不开放能力 |
+| [x] | 完成 P4-4 发布/合并策略评估 | 已生成 Markdown/HTML/PDF 评估报告；确认当前分支 ahead 421 / behind 18，dry-run merge-tree 无文本冲突；结论是不建议直接合并 main，推荐先在当前分支合入 `origin/main` 后跑门禁和 preview 验收 |
 
 ### 14.6 下一次开发入口
 
-Phase 0/1/2/3 已完成本地验收，P4-1/P4-2/P4-3 已完成远端 provider-backed 只读巡检和试用入口收口。下一次开发入口是 `P4-4 发布/合并策略评估`：不再做 provider/profile 修复；只判断当前分支是否合并 main、是否继续 preview 试用、合并前需要哪些最后门禁。
+Phase 0/1/2/3 已完成本地验收，P4-1/P4-2/P4-3/P4-4 已完成远端 provider-backed 只读巡检、试用入口和发布/合并策略收口。下一次开发入口是 `P4-5 后续 writable/PR/KB apply 试用计划`：不默认打开写入；只定义代码写入、知识库 apply、PR、commit 的试用边界、审批门禁、失败回滚和进入条件。
 
 ### 14.7 Phase 3 当前进度
 
@@ -585,4 +585,5 @@ Phase 0/1/2/3 已完成本地验收，P4-1/P4-2/P4-3 已完成远端 provider-ba
 | [x] | P4-1 远端发布前验收与试用入口 | 远端先验收真实入口，再决定是否需要关键部署 | 本地关键 smoke 通过；self-update 预检不误报；远端 preview API 可达；runtime-status 可读；远端 `/cds-agent` 视觉信号完整；无运行时代码差异时不重复部署 | `doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.md`；`doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.html`；`doc/report.cds-agent-p4-1-remote-preflight-2026-05-19.pdf`；`scripts/preflight-cds-agent-cds-self-update.sh` pass；`scripts/smoke-cds-agent-phase3-acceptance.sh` pass；`scripts/smoke-cds-agent-simple-panel.sh` pass；`scripts/smoke-cds-agent-workflow-node.sh` pass；`scripts/smoke-cds-agent-kb-readonly-tools.sh` pass；远端 root HTTP 200；远端 session API success；远端 runtime-status `/tmp/cds-agent-p4-1/runtime-status.json`；视觉截图 `/tmp/cds-agent-p4-1-remote-workbench.png`；视觉 coverage `/tmp/cds-agent-p4-1-remote-workbench.coverage.json` pass |
 | [x] | P4-2 远端 R1 provider-switch profile 闭环 | 用户可以真实发起一次 provider-backed 只读代码巡检 | 远端 `runtime-status` 不再卡在 `R1/N1`；默认 profile 使用可用 provider-switch 配置；provider-backed one-cycle pass；简洁面板显示真实 session/result/artifacts | `doc/report.cds-agent-p4-2-provider-closure-2026-05-19.md`；`doc/report.cds-agent-p4-2-provider-closure-2026-05-19.html`；`doc/report.cds-agent-p4-2-provider-closure-2026-05-19.pdf`；commit `6b2f1552e` 已部署；`/tmp/cds-agent-p4-2-one-cycle-accepted/cycle-summary.json`：`commercialComplete=true`、R0/A0/R1/S1/S2/S3/V1/N6 pass、10 passed / 1 legacy skip / 0 failed；S1 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/s1-report.json`；S2/S3 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json`；视觉截图 `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png`；视觉 coverage `/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.coverage.json`；R1 报告 `/tmp/cds-agent-p4-2-one-cycle-accepted/r1-report.json`；远端 preview `https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent` |
 | [x] | P4-3 远端试用入口说明与验收包 | 用户和研发能按同一个入口试用、复跑、看结果、看失败原因 | 不新增架构、不新增 agent loop；补齐试用步骤、复跑命令、失败排查入口和发布验收包 | `doc/report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19.md`；`doc/report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19.html`；`doc/report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19.pdf` |
-| [ ] | P4-4 发布/合并策略评估 | 决定当前分支是否合并 main 或继续 preview 试用 | 对比 main 差异、列出发布风险、确认最终门禁和回滚方式 | 下一步，需要用户确认发布方向 |
+| [x] | P4-4 发布/合并策略评估 | 决定当前分支是否合并 main 或继续 preview 试用 | 对比 main 差异、列出发布风险、确认最终门禁和回滚方式 | `doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.md`；`doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.html`；`doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.pdf`；`git rev-list --left-right --count origin/main...HEAD`：`18 421`；`git merge-tree --write-tree origin/main HEAD` pass，tree `c3f9f6416e721309cb1420368d8a854529e89ca2` |
+| [ ] | P4-5 后续 writable/PR/KB apply 试用计划 | 写入能力进入试用前有清晰边界和回滚 | 不默认开放写入；列出 writable profile、KB apply、PR、commit 的审批、diff、回滚和验收门禁 | 下一步，需要用户确认是否进入写入能力 |
