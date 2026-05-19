@@ -122,6 +122,7 @@ async def prepare_git_workspace(req: SidecarRunRequest) -> tuple[str | None, dic
                 await run_git(["checkout", "--force", "FETCH_HEAD"], cwd=target)
             else:
                 await run_git(["fetch", "--all", "--prune"], cwd=target, env=git_env)
+                await run_git(["checkout", "--force", "origin/HEAD"], cwd=target)
         else:
             metadata["workspaceAction"] = "clone"
             if target.exists() and any(target.iterdir()):

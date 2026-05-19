@@ -426,7 +426,7 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(GIT_ENVS[0]["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader")
         self.assertEqual(GIT_ENVS[0]["GIT_CONFIG_VALUE_0"], "AUTHORIZATION: bearer ghp-private-test")
 
-    async def test_existing_git_workspace_fetches_under_same_workspace_path(self) -> None:
+    async def test_existing_git_workspace_fetches_explicit_ref_under_same_workspace_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspaces_root:
             os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
             req = build_request().model_copy(update={
@@ -446,6 +446,27 @@ class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.content["workspace"]["workspaceAction"], "fetch")
         self.assertEqual(GIT_COMMANDS[0], ["git", "fetch", "--depth", "1", "origin", "main"])
         self.assertEqual(GIT_COMMANDS[1], ["git", "checkout", "--force", "FETCH_HEAD"])
+
+    async def test_existing_default_git_workspace_checks_out_fetched_origin_head(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": None,
+            })
+            slug = "inernoro-prd_agent-default-2f4ed769c8"
+            existing = Path(workspaces_root) / slug
+            (existing / ".git").mkdir(parents=True)
+
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspace"]["workspaceAction"], "fetch")
+        self.assertEqual(GIT_COMMANDS[0], ["git", "fetch", "--all", "--prune"])
+        self.assertEqual(GIT_COMMANDS[1], ["git", "checkout", "--force", "origin/HEAD"])
 
     async def test_invalid_git_repository_returns_structured_error(self) -> None:
         req = build_request().model_copy(update={

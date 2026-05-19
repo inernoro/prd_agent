@@ -398,6 +398,8 @@ export class ContainerService {
   ): Promise<void> {
     if (aliases.length === 0) return;
     const removed = new Set<string>();
+    const isSameServiceFallbackName = (name: string): boolean =>
+      name === service.containerName || name.startsWith(`${service.containerName}-`);
     const removeStale = async (name: string, staleAliases: string[], source: string, id?: string): Promise<void> => {
       const cleanName = name.replace(/^\/+/, '');
       const target = id || cleanName;
@@ -463,6 +465,7 @@ export class ContainerService {
         const [containerId = id, name = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
         const cleanName = name.replace(/^\/+/, '');
         if (!cleanName || cleanName === service.containerName || removed.has(containerId)) continue;
+        if (!isSameServiceFallbackName(cleanName)) continue;
         let staleAliases: string[] = [];
         try {
           const parsed = JSON.parse(aliasesJson);
@@ -499,6 +502,7 @@ export class ContainerService {
       const name = typeof endpoint.Name === 'string' ? endpoint.Name : '';
       const cleanName = name.replace(/^\/+/, '');
       if (!cleanName || cleanName === service.containerName || removed.has(cleanName)) continue;
+      if (!isSameServiceFallbackName(cleanName)) continue;
       const staleAliases = Array.isArray(endpoint.Aliases)
         ? endpoint.Aliases.filter((item): item is string => typeof item === 'string')
         : [];

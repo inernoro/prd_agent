@@ -393,6 +393,7 @@ export class GitHubWebhookDispatcher {
 
   private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
     const changedPaths = this.changedPathsFromPush(event);
+    if ((event.commits || []).length >= 2048) return { ok: false, changedPaths };
     if (changedPaths.length === 0) return { ok: false, changedPaths };
     const impact = analyzeChangeImpact(changedPaths);
     return {

@@ -234,7 +234,10 @@ class SdkToolingHelperTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(await tooling.can_use_tool("Read", {}, None), PermissionResultAllow)
         self.assertIsInstance(await tooling.can_use_tool("Bash", {"cmd": "pwd"}, None), PermissionResultAllow)
         self.assertEqual(bridge.permission[0], "Bash")
-        self.assertEqual(bridge.waited, ("Bash", "bash-permissions"))
+        self.assertEqual(bridge.waited, ("Bash", "bash-permissions-1"))
+
+        self.assertIsInstance(await tooling.can_use_tool("Bash", {"cmd": "ls"}, None), PermissionResultAllow)
+        self.assertEqual(bridge.waited, ("Bash", "bash-permissions-2"))
 
     async def test_permission_callback_denies_failed_or_rejected_map_approval(self) -> None:
         failed_bridge = FakeBridge(permission_requested=False)

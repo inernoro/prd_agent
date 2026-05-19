@@ -684,6 +684,25 @@ def _resolve_deploy_branch_id(branch: str) -> str:
         ]
         if len(project_matches) == 1:
             return str(project_matches[0]["id"])
+        if len(project_matches) == 0:
+            die(
+                f"CDS_PROJECT_ID={project_id} 下不存在分支: {branch}",
+                code=2,
+                extra={
+                    "data": {
+                        "branch": branch,
+                        "projectId": project_id,
+                        "guessedBranchId": guessed,
+                        "matchedOtherProjects": [
+                            {
+                                "id": b.get("id"),
+                                "projectId": b.get("projectId") or b.get("project"),
+                            }
+                            for b in matches
+                        ],
+                    }
+                })
+            return guessed
 
     if len(matches) == 1:
         return str(matches[0]["id"])
@@ -705,6 +724,7 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                     ],
                 }
             })
+        return guessed
 
     die(
         f"CDS 分支不存在: git branch={branch} guessedBranchId={guessed}",
@@ -716,6 +736,7 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                 "nextCommand": f"cdscli branch create --project <projectId> --branch {branch}",
             }
         })
+    return guessed
 
 
 def _check_blocking_pending_import(branch_id: str) -> dict[str, Any] | None:
@@ -5397,7 +5418,8 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     trigger_status = trigger.get("status")
     trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
     if trigger_http_error or (not trigger["triggered"] and not str(trigger.get("error") or "").startswith("timeout_")):
-        die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
+        trigger_error = trigger.get("error") or (f"http_{trigger_status}" if trigger_status is not None else "unknown")
+        die(f"deploy 触发失败: {trigger_error}",
             code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
                 "data": {
@@ -5410,6 +5432,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
                     "partial": trigger.get("partial", False),
                 },
             })
+        return
     if not trigger["triggered"]:
         print(f"[3/4] CDS deploy trigger not confirmed ({trigger.get('error')}); polling branch status", file=sys.stderr)
     time.sleep(3)

@@ -270,6 +270,43 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.deployRequest).toEqual({ branchId: 'proj-main', commitSha: 'beadfeed01234567890abcdef1234567890abcde' });
     });
 
+    it('does not docs-only skip when GitHub push commit payload may be truncated', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt/p1/proj-main',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+      const commits = Array.from({ length: 2048 }, (_, index) => ({
+        id: `doc${index}`,
+        modified: [`doc/change-${index}.md`],
+      }));
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: 'abfecd501234567890abcdef1234567890abcde',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        commits,
+      });
+
+      expect(result.action).toBe('branch-refreshed');
+      expect(result.deployRequest).toEqual({ branchId: 'proj-main', commitSha: 'abfecd501234567890abcdef1234567890abcde' });
+    });
+
     it('refreshes a pre-existing legacy-format branch after legacyFlag was flipped off', async () => {
       // Regression for the "two main branches" phantom duplicate bug:
       // when a project migrated from legacyFlag=true → false, a later

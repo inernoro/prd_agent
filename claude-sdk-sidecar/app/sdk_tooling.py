@@ -45,15 +45,18 @@ def build_sdk_tooling(
         )
         map_tool_names = [f"mcp__map__{tool_def.name}" for tool_def in req.tools]
 
+    fallback_approval_seq = 0
+
     async def can_use_tool(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
+        nonlocal fallback_approval_seq
         normalized = tool_name.strip()
         if normalized.lower() not in {"bash", "edit", "write"}:
             return permission_result_allow()
 
-        approval_id = (
-            getattr(context, "tool_use_id", None)
-            or f"{normalized.lower()}-{req.run_id}"
-        )
+        approval_id = getattr(context, "tool_use_id", None)
+        if not approval_id:
+            fallback_approval_seq += 1
+            approval_id = f"{normalized.lower()}-{req.run_id}-{fallback_approval_seq}"
         description = (
             getattr(context, "description", None)
             or getattr(context, "title", None)

@@ -136,7 +136,7 @@ describe('ContainerService', () => {
       expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
     });
 
-    it('should remove unlabeled stale network endpoints with the same service alias', async () => {
+    it('should remove unlabeled stale network endpoints only for the same service container prefix', async () => {
       mock.addResponsePattern(/docker ps -aq --filter 'network=cds-network'/, () => ({
         stdout: ['stale-id', 'other-branch-id', 'current-id'].join('\n'),
         stderr: '',
@@ -188,7 +188,7 @@ describe('ContainerService', () => {
 
       const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
       expect(rmCommands.some(c => c.includes("'stale-id'"))).toBe(true);
-      expect(rmCommands.some(c => c.includes("'other-branch-id'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'other-branch-id'"))).toBe(false);
       const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'stale-id'"));
       const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
       expect(staleRmIndex).toBeGreaterThanOrEqual(0);
