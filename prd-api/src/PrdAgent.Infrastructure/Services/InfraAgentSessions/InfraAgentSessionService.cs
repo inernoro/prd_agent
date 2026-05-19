@@ -399,14 +399,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
         var token = await GetLongTokenAsync(connection.Id, ct);
-        using var response = await SendCdsJsonAsync(
-            HttpMethod.Post,
-            connection,
-            token,
-            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/messages",
-            new { content = request.Content.Trim() },
-            ct);
-        var cdsItem = await ReadCdsItemAsync(response, ct);
+        var cdsItem = await PostMessageToCdsAsync(connection, token, session, request.Content.Trim(), ct);
         var cdsStatus = MapCdsStatus(GetString(cdsItem, "status"));
         var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
         if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
@@ -445,6 +438,70 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 DateTime.UtcNow), ct);
         }
         return ToView(session);
+
+        async Task<JsonElement> PostMessageToCdsAsync(
+            InfraConnection currentConnection,
+            string currentToken,
+            InfraAgentSession currentSession,
+            string content,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var postResponse = await SendCdsJsonAsync(
+                    HttpMethod.Post,
+                    currentConnection,
+                    currentToken,
+                    $"/api/projects/{Uri.EscapeDataString(currentSession.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(currentSession.CdsSessionId!)}/messages",
+                    new { content },
+                    cancellationToken);
+                return await ReadCdsItemAsync(postResponse, cancellationToken);
+            }
+            catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
+            {
+                await AppendRawEventAsync(
+                    currentSession.Id,
+                    await NextEventSeqAsync(currentSession.Id, cancellationToken),
+                    InfraAgentEventTypes.Log,
+                    JsonSerializer.Serialize(new
+                    {
+                        level = "warning",
+                        source = "cds-session-transport",
+                        message = "remote CDS session was missing; recreating runtime session before dispatch",
+                        oldCdsSessionId = currentSession.CdsSessionId
+                    }),
+                    cancellationToken);
+                await _db.InfraAgentSessions.UpdateOneAsync(
+                    x => x.Id == currentSession.Id && x.UserId == userId,
+                    Builders<InfraAgentSession>.Update
+                        .Set(x => x.CdsSessionId, null)
+                        .Set(x => x.Status, InfraAgentSessionStatuses.Idle)
+                        .Set(x => x.LastError, null),
+                    cancellationToken: cancellationToken);
+                currentSession.CdsSessionId = null;
+                currentSession.Status = InfraAgentSessionStatuses.Idle;
+
+                var restarted = await StartAsync(userId, currentSession.Id, new StartInfraAgentSessionRequest(currentSession.Runtime, currentSession.Model), cancellationToken);
+                if (restarted == null)
+                {
+                    throw;
+                }
+                currentSession = FromView(restarted);
+                currentConnection = await GetActiveConnectionAsync(currentSession.ConnectionId, cancellationToken);
+                currentToken = await GetLongTokenAsync(currentConnection.Id, cancellationToken);
+                using var retryResponse = await SendCdsJsonAsync(
+                    HttpMethod.Post,
+                    currentConnection,
+                    currentToken,
+                    $"/api/projects/{Uri.EscapeDataString(currentSession.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(currentSession.CdsSessionId!)}/messages",
+                    new { content },
+                    cancellationToken);
+                session = currentSession;
+                connection = currentConnection;
+                token = currentToken;
+                return await ReadCdsItemAsync(retryResponse, cancellationToken);
+            }
+        }
     }
 
     public async Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct)
@@ -651,14 +708,32 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 await RunHookAsync(session, hookProfile, "beforeStop", hookProfile?.BeforeStop, blockOnFailure: false, ct);
                 var connection = await GetActiveConnectionAsync(session.ConnectionId, ct);
                 var token = await GetLongTokenAsync(connection.Id, ct);
-                using var response = await SendCdsJsonAsync(
-                    HttpMethod.Post,
-                    connection,
-                    token,
-                    $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
-                    new { },
-                    ct);
-                response.EnsureSuccessStatusCode();
+                try
+                {
+                    using var response = await SendCdsJsonAsync(
+                        HttpMethod.Post,
+                        connection,
+                        token,
+                        $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/stop",
+                        new { },
+                        ct);
+                    response.EnsureSuccessStatusCode();
+                }
+                catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
+                {
+                    await AppendRawEventAsync(
+                        session.Id,
+                        await NextEventSeqAsync(session.Id, ct),
+                        InfraAgentEventTypes.Log,
+                        JsonSerializer.Serialize(new
+                        {
+                            level = "warning",
+                            source = "cds-session-transport",
+                            message = "remote CDS session was already gone; marking MAP session stopped",
+                            oldCdsSessionId = session.CdsSessionId
+                        }),
+                        ct);
+                }
                 await RunHookAsync(session, hookProfile, "afterStop", hookProfile?.AfterStop, blockOnFailure: false, ct);
             }
         }
@@ -1338,6 +1413,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         return !string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase)
             || HasRecentHealthyProbe(connection);
+    }
+
+    private static bool IsCdsSessionNotFound(InfraAgentSessionException ex)
+    {
+        return string.Equals(ex.ErrorCode, InfraAgentSessionErrorCodes.CdsRequestFailed, StringComparison.OrdinalIgnoreCase)
+            && ex.Message.Contains("session_not_found", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void EnsureConnectionNotRevoked(InfraConnection connection)
