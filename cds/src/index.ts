@@ -513,6 +513,11 @@ schedulerService.setCoolFn(async (slug: string) => {
   stateService.save();
   for (const svc of Object.values(branch.services)) {
     if (svc.status === 'running' || svc.status === 'starting') {
+      // 先把 svc.status 翻成 stopping 再 await stop()。stop() 重构后容器
+      // 停止仍保留(exited)，若此处仍是 running，30s auto-restart tick 命中
+      // 这段 await 窗口会把"正在主动降温"的容器误判为 crash、bump stopCount、
+      // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
+      svc.status = 'stopping';
       try {
         await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）');
       } catch (err) {
@@ -657,6 +662,10 @@ const autoLifecycleService = new AutoLifecycleService(
 
       for (const svc of Object.values(branch.services)) {
         if (svc.status === 'running' || svc.status === 'starting') {
+          // 同 coolFn：先翻 stopping 再 await stop()，否则 auto-restart tick
+          // 在 await 窗口会把主动停止误判为 crash 并 docker start 抢跑
+          // （Cursor Bugbot High）。
+          svc.status = 'stopping';
           try {
             await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）');
           } catch (err) {
@@ -881,7 +890,19 @@ janitorService.setRemoveFn(async (slug: string) => {
         if (found) {
           // Container exists in Docker — sync status
           const wasStatus = svc.status;
-          svc.status = found.running ? 'running' : 'error';
+          if (found.running) {
+            svc.status = 'running';
+          } else if (wasStatus === 'running' || wasStatus === 'starting') {
+            // 持久态认为在跑但容器已退出 → 真·异常退出，标 error
+            svc.status = 'error';
+            svc.errorMessage = '容器异常退出，疑似崩溃，需重新部署';
+          } else {
+            // stop() 重构后主动停止保留容器(exited)：CDS 进程重启后 boot
+            // reconcile 不得把"被用户/调度器/auto-lifecycle 主动停掉"的分支
+            // 误标 error。退出且持久态非 running/starting → 归一为 stopped
+            // （Cursor Bugbot Medium）。
+            svc.status = 'stopped';
+          }
           if (wasStatus !== svc.status) appReconciled++;
           appContainers.delete(key);
         } else if (svc.status === 'running') {
