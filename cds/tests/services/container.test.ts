@@ -272,6 +272,20 @@ describe('ContainerService', () => {
       expect(mock.commands[0]).toBe('docker stop cds-feature-a-api');
       expect(mock.commands[1]).toBe('docker rm cds-feature-a-api');
     });
+
+    it('is idempotent for already-stopped containers: docker stop non-zero must NOT skip docker rm (Codex P1 @ ade2a21)', async () => {
+      // 容器已是 exited:模拟 docker stop 返回非零(Codex 担心的场景)。
+      // remove() 是两条相互独立的 await shell.exec —— shell.exec 在非零退出
+      // 时 resolve(不 reject),所以第二条 docker rm 必达,不会被第一条短路。
+      // (实际 docker 里 `docker stop <已停容器>` 也是 exit 0 幂等;此处用非零
+      // 是更严苛的反例,证明即便非零 rm 仍执行。)
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'already stopped', exitCode: 1 }));
+      mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await expect(service.remove('cds-feature-a-api')).resolves.toBeUndefined();
+      expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
+      expect(mock.commands.some((c) => c === 'docker rm cds-feature-a-api')).toBe(true);
+    });
   });
 
   describe('isRunning', () => {
