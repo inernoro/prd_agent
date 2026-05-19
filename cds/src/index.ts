@@ -477,32 +477,37 @@ const gracefulShutdownController = createGracefulShutdownController();
 // over the config-file setting so operators can flip the scheduler without
 // shelling into the box. `undefined` means "no override, use config".
 {
+  // cds.config.json 省略 scheduler 块时也要让持久化的 UI override 生效:
+  // 先把默认 scheduler config 实体化,否则下面三个 override 因 `&&
+  // config.scheduler` 守卫被跳过,用户在 Dashboard 存的 enabled/idleTTL/
+  // maxHot 重启后丢回默认,违反"survives restart"(Codex P2)。实体化后
+  // SchedulerService 也从同一个对象构造,保持一致。
+  if (!config.scheduler) {
+    config.scheduler = {
+      enabled: false,
+      maxHotBranches: 3,
+      idleTTLSeconds: 900,
+      tickIntervalSeconds: 60,
+      pinnedBranches: [],
+    };
+  }
   const uiOverride = stateService.getSchedulerEnabledOverride();
-  if (uiOverride !== undefined && config.scheduler) {
+  if (uiOverride !== undefined) {
     config.scheduler.enabled = uiOverride;
     console.log(`  [scheduler] applying UI override: enabled=${uiOverride}`);
   }
   const idleTTLOverride = stateService.getSchedulerIdleTTLOverride();
-  if (idleTTLOverride !== undefined && config.scheduler) {
+  if (idleTTLOverride !== undefined) {
     config.scheduler.idleTTLSeconds = idleTTLOverride;
     console.log(`  [scheduler] applying UI override: idleTTLSeconds=${idleTTLOverride}`);
   }
   const maxHotOverride = stateService.getSchedulerMaxHotOverride();
-  if (maxHotOverride !== undefined && config.scheduler) {
+  if (maxHotOverride !== undefined) {
     config.scheduler.maxHotBranches = maxHotOverride;
     console.log(`  [scheduler] applying UI override: maxHotBranches=${maxHotOverride}`);
   }
 }
-const schedulerService = new SchedulerService(
-  stateService,
-  config.scheduler || {
-    enabled: false,
-    maxHotBranches: 3,
-    idleTTLSeconds: 900,
-    tickIntervalSeconds: 60,
-    pinnedBranches: [],
-  },
-);
+const schedulerService = new SchedulerService(stateService, config.scheduler);
 // coolFn: stop all containers of a branch but keep the branch entry in state.
 // The next request to this branch will trigger the existing auto-build path,
 // which re-runs docker run and brings the services back to HOT.
@@ -896,11 +901,16 @@ janitorService.setRemoveFn(async (slug: string) => {
             // 持久态认为在跑但容器已退出 → 真·异常退出，标 error
             svc.status = 'error';
             svc.errorMessage = '容器异常退出，疑似崩溃，需重新部署';
+          } else if (wasStatus === 'error') {
+            // 已知失败态(auto-restart 耗尽 / 部署失败)不得在重启后被降级为
+            // stopped，否则失败看起来像正常停止，没人去 redeploy。保持 error
+            // 且保留原 errorMessage（Cursor Bugbot Medium）。
+            svc.status = 'error';
           } else {
             // stop() 重构后主动停止保留容器(exited)：CDS 进程重启后 boot
             // reconcile 不得把"被用户/调度器/auto-lifecycle 主动停掉"的分支
-            // 误标 error。退出且持久态非 running/starting → 归一为 stopped
-            // （Cursor Bugbot Medium）。
+            // 误标 error。退出且持久态为 stopped/idle/stopping 等 → 归一为
+            // stopped（Cursor Bugbot Medium）。
             svc.status = 'stopped';
           }
           if (wasStatus !== svc.status) appReconciled++;
