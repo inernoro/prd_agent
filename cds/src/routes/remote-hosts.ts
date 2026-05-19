@@ -936,9 +936,10 @@ export function resolvePreviewRootDomain(): string {
 export function shouldIncludeBranchServicesInInstanceDiscovery(
   project: Pick<Project, 'kind'> | null | undefined,
 ): boolean {
-  // Source-mode shared-service projects, such as the CDS-managed sidecar pool,
-  // run as normal branch services rather than ServiceDeployment records. They
-  // still need to be discoverable by MAP through /projects/:id/instances.
+  // Source-mode shared-service projects, such as the CDS-managed runtime pool,
+  // run as normal branch services rather than ServiceDeployment records. Keep
+  // regular git/manual projects out of this path so MAP does not mistake
+  // business branch services for CDS-managed Agent runtime capacity.
   return project?.kind === 'shared-service';
 }
 

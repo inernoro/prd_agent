@@ -33,6 +33,48 @@ export type ExecutionRunwayState = {
   providerCallLabel: string;
 };
 
+export type SessionRuntimeStateInput = {
+  status?: string | null;
+  startedAt?: string | null;
+  stoppedAt?: string | null;
+  timeoutSeconds?: number | null;
+};
+
+export type SessionRuntimeState = {
+  effectiveStatus: string;
+  isLive: boolean;
+  timedOut: boolean;
+  timeoutAt: Date | null;
+  elapsedSeconds: number;
+};
+
+export function resolveSessionRuntimeState(
+  input: SessionRuntimeStateInput | null | undefined,
+  nowMs = Date.now(),
+): SessionRuntimeState {
+  const status = input?.status || 'idle';
+  const startedAt = input?.startedAt ? new Date(input.startedAt) : null;
+  const stoppedAt = input?.stoppedAt ? new Date(input.stoppedAt) : null;
+  const timeoutSeconds = Math.max(0, Math.round(input?.timeoutSeconds ?? 0));
+  const timeoutAt = startedAt && timeoutSeconds > 0
+    ? new Date(startedAt.getTime() + timeoutSeconds * 1000)
+    : null;
+  const rawLive = status === 'running' || status === 'creating' || status === 'stopping';
+  const timedOut = Boolean(rawLive && timeoutAt && nowMs >= timeoutAt.getTime());
+  const endMs = stoppedAt?.getTime() ?? (timedOut && timeoutAt ? timeoutAt.getTime() : nowMs);
+  const elapsedSeconds = startedAt
+    ? Math.max(0, Math.round((endMs - startedAt.getTime()) / 1000))
+    : 0;
+
+  return {
+    effectiveStatus: timedOut ? 'timed_out' : status,
+    isLive: rawLive && !timedOut,
+    timedOut,
+    timeoutAt,
+    elapsedSeconds,
+  };
+}
+
 export function resolveProviderEvidenceState(input: ProviderEvidenceInput): ProviderEvidenceState {
   const eligible = input.defaultProfileReady && input.officialLoopReady;
   const blockedDetail = input.defaultProfileReady

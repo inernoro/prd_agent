@@ -52,7 +52,7 @@ import {
   type InfraAgentSessionView,
   type InfraAgentSlaDashboardView,
 } from '@/services/real/infraAgentSessions';
-import { resolveExecutionRunway, resolveProviderEvidenceState } from './cdsAgentReadiness';
+import { resolveExecutionRunway, resolveProviderEvidenceState, resolveSessionRuntimeState } from './cdsAgentReadiness';
 
 const EVENT_PAGE_LIMIT = 500;
 const EVENT_MAX_BATCHES_PER_REFRESH = 20;
@@ -65,6 +65,7 @@ function statusLabel(status: string): string {
   if (status === 'stopping') return '停止中';
   if (status === 'stopped') return '已停止';
   if (status === 'failed') return '失败';
+  if (status === 'timed_out') return '已超时';
   return status;
 }
 
@@ -146,6 +147,7 @@ function statusRank(status: string): number {
   if (status === 'creating') return 1;
   if (status === 'idle') return 2;
   if (status === 'stopping') return 3;
+  if (status === 'timed_out') return 4;
   if (status === 'failed') return 4;
   if (status === 'stopped') return 5;
   return 6;
@@ -270,8 +272,9 @@ function boolStatus(value: boolean | null | undefined, yes = 'OK', no = '缺失'
 }
 
 function sortSessions(items: InfraAgentSessionView[]): InfraAgentSessionView[] {
+  const now = Date.now();
   return [...items].sort((a, b) => {
-    const rank = statusRank(a.status) - statusRank(b.status);
+    const rank = statusRank(resolveSessionRuntimeState(a, now).effectiveStatus) - statusRank(resolveSessionRuntimeState(b, now).effectiveStatus);
     if (rank !== 0) return rank;
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
   });
@@ -788,6 +791,12 @@ export default function CdsAgentPage() {
     [sessions],
   );
   const activeSession = sessions.find((item) => item.id === activeSessionId) ?? sortedSessions[0] ?? null;
+  const activeSessionRuntimeState = useMemo(
+    () => resolveSessionRuntimeState(activeSession, nowTick),
+    [activeSession, nowTick],
+  );
+  const activeSessionEffectiveStatus = activeSessionRuntimeState.effectiveStatus;
+  const activeSessionTimedOut = activeSessionRuntimeState.timedOut;
   const activeSessionProfile = activeSession?.runtimeProfileId
     ? profiles.find((item) => item.id === activeSession.runtimeProfileId) ?? null
     : activeProfile;
@@ -808,8 +817,8 @@ export default function CdsAgentPage() {
   );
   const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason && !activeRuntimePoolBlockReason);
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason && !activeRuntimePoolBlockReason);
-  const canStartActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSession.status));
-  const canSendActiveSession = Boolean(activeSession && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSession.status === 'running' || activeSession.status === 'idle'));
+  const canStartActiveSession = Boolean(activeSession && !activeSessionTimedOut && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSessionEffectiveStatus));
+  const canSendActiveSession = Boolean(activeSession && !activeSessionTimedOut && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSessionEffectiveStatus === 'running' || activeSessionEffectiveStatus === 'idle'));
   const canRecordManualInput = Boolean(activeSession?.manualTakeoverEnabled && prompt.trim());
   const defaultRuntimeProfileDiagnostics = runtimeStatus?.defaultRuntimeProfile ?? null;
   const r1DefaultProfileBlocked = Boolean(defaultRuntimeProfileDiagnostics && (
@@ -1801,10 +1810,10 @@ export default function CdsAgentPage() {
   const runwaySteps = [
     {
       label: 'MAP 会话',
-      value: activeSession ? statusLabel(activeSession.status) : '未创建',
-      detail: activeSession ? `trace ${activeSession.traceId.slice(0, 12)}` : '先新建远程任务',
+      value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未创建',
+      detail: activeSessionTimedOut ? `trace ${activeSession.traceId.slice(0, 12)} · 已到达 timeout` : activeSession ? `trace ${activeSession.traceId.slice(0, 12)}` : '先新建远程任务',
       icon: MessageSquare,
-      state: activeSession ? 'pass' : 'pending',
+      state: activeSessionTimedOut ? 'warn' : activeSession ? 'pass' : 'pending',
     },
     {
       label: 'CDS Runtime',
@@ -1985,12 +1994,12 @@ export default function CdsAgentPage() {
             {runtimeDiagnostics.commercialBlockingCode === 'R1' && (
               <button
                 type="button"
-                onClick={() => void applyAnthropicOfficialTemplate()}
-                disabled={!anthropicOfficialProfileTemplate}
+                onClick={() => void importDefaultProfile()}
+                disabled={busy}
                 className="inline-flex min-h-8 items-center justify-center gap-2 rounded-md px-2 text-xs font-semibold disabled:opacity-45"
                 style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.32)', color: 'rgba(253,230,138,0.95)' }}
               >
-                <KeyRound size={12} /> 准备默认 Claude 配置
+                <KeyRound size={12} /> 同步系统主模型
               </button>
             )}
           </div>
@@ -2045,7 +2054,7 @@ export default function CdsAgentPage() {
 
   // 运行中自动刷新会话元数据；事件优先走 SSE afterSeq 续读，异常时由 refreshDetail 兜底。
   const activeSessionForPoll = sessions.find((item) => item.id === activeSessionId) ?? null;
-  const isLiveStatus = activeSessionForPoll?.status === 'running' || activeSessionForPoll?.status === 'creating';
+  const isLiveStatus = resolveSessionRuntimeState(activeSessionForPoll, nowTick).isLive;
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) return;
     const tick = window.setInterval(() => {
@@ -2372,7 +2381,7 @@ export default function CdsAgentPage() {
       return;
     }
 
-    let session = activeSession;
+    let session = activeSessionTimedOut ? null : activeSession;
     if (!session && !activeConnection) {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
       return;
@@ -3079,15 +3088,21 @@ export default function CdsAgentPage() {
       prompt.trim()
       && !busy
       && (
-        (activeSession && (canSendActiveSession || canStartActiveSession || canRecordManualInput))
-        || (!activeSession && canCreateSession)
+        (activeSession && !activeSessionTimedOut && (canSendActiveSession || canStartActiveSession || canRecordManualInput))
+        || ((!activeSession || activeSessionTimedOut) && canCreateSession)
       ),
     );
     const sendDisabled = !canRunSimplePrompt;
 
     // 左侧任务分组：运行中 vs 已完成。
-    const runningSessions = visibleSessions.filter((s) => s.status === 'running' || s.status === 'creating' || s.status === 'idle');
-    const finishedSessions = visibleSessions.filter((s) => s.status === 'stopped' || s.status === 'failed' || s.status === 'stopping');
+    const runningSessions = visibleSessions.filter((s) => {
+      const state = resolveSessionRuntimeState(s, nowTick).effectiveStatus;
+      return state === 'running' || state === 'creating' || state === 'idle';
+    });
+    const finishedSessions = visibleSessions.filter((s) => {
+      const state = resolveSessionRuntimeState(s, nowTick).effectiveStatus;
+      return state === 'stopped' || state === 'failed' || state === 'stopping' || state === 'timed_out';
+    });
     const promptPresets = [
       '巡检当前仓库，找一个小问题并给出修复计划',
       '读取 README 和最近 changelog，总结这个功能怎么验收',
@@ -3106,15 +3121,14 @@ export default function CdsAgentPage() {
       waitedSec = Math.max(0, Math.round((nowTick - base) / 1000));
     }
     const sessionStartedAt = activeSession?.startedAt ? new Date(activeSession.startedAt) : activeSession?.createdAt ? new Date(activeSession.createdAt) : null;
-    const sessionEndedAt = activeSession?.stoppedAt ? new Date(activeSession.stoppedAt) : null;
-    const elapsedSeconds = sessionStartedAt
-      ? Math.max(0, Math.round(((sessionEndedAt?.getTime() ?? nowTick) - sessionStartedAt.getTime()) / 1000))
-      : 0;
+    const elapsedSeconds = activeSessionRuntimeState.elapsedSeconds;
     const timeoutSeconds = activeSession?.timeoutSeconds ?? activeRuntimeProfile?.timeoutSeconds ?? 900;
-    const timeoutAt = sessionStartedAt ? new Date(sessionStartedAt.getTime() + timeoutSeconds * 1000) : null;
-    const timeoutReached = Boolean(timeoutAt && nowTick >= timeoutAt.getTime() && ['running', 'creating', 'stopping'].includes(activeSession?.status ?? ''));
+    const timeoutAt = activeSessionRuntimeState.timeoutAt ?? (sessionStartedAt ? new Date(sessionStartedAt.getTime() + timeoutSeconds * 1000) : null);
+    const timeoutReached = activeSessionTimedOut;
     const lastSeq = latestEventSeq(events);
-    const stopState = activeSession?.status === 'stopping'
+    const stopState = activeSessionTimedOut
+      ? '已超时'
+      : activeSession?.status === 'stopping'
       ? '停止中'
       : activeSession?.status === 'stopped'
         ? '已停止'
@@ -3127,7 +3141,7 @@ export default function CdsAgentPage() {
         ? `${formatDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
         : `启动后 ${formatDuration(timeoutSeconds)}`;
     const simpleTelemetry = [
-      { label: '任务状态', value: activeSession ? statusLabel(activeSession.status) : '未创建', detail: activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
+      { label: '任务状态', value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未创建', detail: activeSessionTimedOut ? '旧 run 已超时；再次运行会创建新会话' : activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
       { label: 'traceId', value: activeSession ? shortId(activeSession.traceId, 14) : '待生成', detail: activeSession?.cdsSessionId ? `CDS ${shortId(activeSession.cdsSessionId, 10)}` : 'MAP/CDS 全链路定位' },
       { label: '耗时', value: sessionStartedAt ? formatDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `started ${formatClockTime(sessionStartedAt)}` : '启动后开始计时' },
       { label: 'timeoutAt', value: timeoutAt ? formatClockTime(timeoutAt) : '待计算', detail: timeoutState },
@@ -3140,7 +3154,7 @@ export default function CdsAgentPage() {
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
-            <p className="mt-1 text-sm text-white/55">告诉它要做什么，它会在远程沙箱里读代码、改文件、跑测试，过程实时可见。</p>
+            <p className="mt-1 text-sm text-white/55">三步发起只读代码巡检：选仓库、写任务、运行；状态、trace、超时、事件和产物实时可见。</p>
           </div>
           <div className="flex items-center gap-2">
             {viewToggle}
@@ -3236,11 +3250,11 @@ export default function CdsAgentPage() {
                 {activeProfileBlockReason && (
                   <button
                     type="button"
-                    onClick={() => void applyAnthropicOfficialTemplate()}
+                    onClick={() => void importDefaultProfile()}
                     className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs"
                     style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
                   >
-                    <Server size={12} /> Anthropic 官方模板
+                    <Server size={12} /> 同步系统主模型
                   </button>
                 )}
               </div>
@@ -3272,7 +3286,8 @@ export default function CdsAgentPage() {
                     <div className="px-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">{groupLabel} · {list.length}</div>
                     {list.map((session) => {
                       const selected = session.id === activeSession?.id;
-                      const live = session.status === 'running' || session.status === 'creating';
+                      const sessionState = resolveSessionRuntimeState(session, nowTick);
+                      const live = sessionState.isLive;
                       return (
                         <button
                           key={session.id}
@@ -3288,7 +3303,7 @@ export default function CdsAgentPage() {
                             {live && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />}
                             <span className="truncate text-sm text-white/78">{session.title}</span>
                           </div>
-                          <div className="mt-1 text-xs text-white/42">{statusLabel(session.status)} · {new Date(session.updatedAt).toLocaleString()}</div>
+                          <div className="mt-1 text-xs text-white/42">{statusLabel(sessionState.effectiveStatus)} · {new Date(session.updatedAt).toLocaleString()}</div>
                         </button>
                       );
                     })}
@@ -3303,7 +3318,7 @@ export default function CdsAgentPage() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-white/78">{activeSession ? activeSession.title : '未选择任务'}</div>
                 <div className="mt-0.5 truncate text-xs text-white/42">
-                  {activeSession ? `${statusLabel(activeSession.status)} · ${activeSessionProfile?.model ?? activeProfile?.model ?? '未配置模型'}` : '从左侧选择或新建一个任务'}
+                  {activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · ${activeSessionProfile?.model ?? activeProfile?.model ?? '未配置模型'}` : '从左侧选择或新建一个任务'}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -3318,7 +3333,7 @@ export default function CdsAgentPage() {
                     <Play size={14} /> {primaryActionLabel(activeSession.status)}
                   </button>
                 )}
-                {activeSession && (activeSession.status === 'running' || activeSession.status === 'creating') && (
+                {activeSession && activeSessionRuntimeState.isLive && (
                   <button
                     type="button"
                     onClick={() => void stopSession()}

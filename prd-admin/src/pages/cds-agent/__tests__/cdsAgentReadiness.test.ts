@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveExecutionRunway, resolveProviderEvidenceState } from '../cdsAgentReadiness';
+import { resolveExecutionRunway, resolveProviderEvidenceState, resolveSessionRuntimeState } from '../cdsAgentReadiness';
 
 describe('CDS Agent provider readiness evidence', () => {
   it('does not let old session events pass S1/S2/S3 while R1 is blocked', () => {
@@ -117,5 +117,34 @@ describe('CDS Agent execution runway', () => {
     expect(state.deployDecision).toBe('deploy-only-on-change');
     expect(state.deployLabel).toBe('仅代码/环境变更时部署');
     expect(state.commandKind).toBe('none');
+  });
+});
+
+describe('CDS Agent simple session runtime state', () => {
+  it('demotes stale running sessions to timed_out after timeoutAt', () => {
+    const state = resolveSessionRuntimeState({
+      status: 'running',
+      startedAt: '2026-05-19T00:00:00.000Z',
+      timeoutSeconds: 900,
+    }, Date.parse('2026-05-19T00:20:00.000Z'));
+
+    expect(state.effectiveStatus).toBe('timed_out');
+    expect(state.isLive).toBe(false);
+    expect(state.timedOut).toBe(true);
+    expect(state.timeoutAt?.toISOString()).toBe('2026-05-19T00:15:00.000Z');
+    expect(state.elapsedSeconds).toBe(900);
+  });
+
+  it('keeps fresh running sessions live before timeoutAt', () => {
+    const state = resolveSessionRuntimeState({
+      status: 'running',
+      startedAt: '2026-05-19T00:00:00.000Z',
+      timeoutSeconds: 900,
+    }, Date.parse('2026-05-19T00:10:00.000Z'));
+
+    expect(state.effectiveStatus).toBe('running');
+    expect(state.isLive).toBe(true);
+    expect(state.timedOut).toBe(false);
+    expect(state.elapsedSeconds).toBe(600);
   });
 });

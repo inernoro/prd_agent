@@ -20,9 +20,9 @@
 | --- | --- |
 | 主架构 | MAP 只连 CDS；CDS 管理 runtime/container/sandbox；Claude Agent SDK 是 CDS-managed runtime |
 | 当前已验收 | 官方 SDK 只读代码巡检闭环通过；默认 hardened-readonly profile 不暴露 Bash/Edit/Write |
-| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；P4-3/P4-4/P4-5 已归档；目标级审计 `doc/report.cds-agent-goal-completion-audit-2026-05-19.md`：`Goal status=complete`；`origin/main` 已合入当前分支且本地门禁通过 |
+| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；P4-3/P4-4/P4-5 已归档；目标级审计 `doc/report.cds-agent-goal-completion-audit-2026-05-19.md`：`Goal status=complete`；`origin/main` 已合入当前分支；合并后 CI 回归和简洁模式可用性问题已完成本地修复验证 |
 | 当前分支 | `codex/cds-agent-workbench-ui` 已合入 `origin/main`；远端 preview 当前仍是已验收 runtime commit `6b2f1552e`，合并后的新 HEAD 尚未做 preview 部署 |
-| 当前最高优先级 | 合主分支后的本地门禁已通过；下一步是决定是否执行 preview 部署/self-update 并重跑远端视觉/provider one-cycle，或继续只读 preview 试用 |
+| 当前最高优先级 | 推送 CI/简洁模式修复后等待 GitHub checks 和 CDS deploy 回绿；随后重跑远端 `/cds-agent` 视觉截图和 provider one-cycle |
 | 当前不是主线 | SSH、remote host env、sidecar image registry 都只能作为 operator/debug fallback，不能作为普通用户路径 |
 | 当前风险 | 只读巡检远端可用；写文件、知识库改写、PR 仍必须走 writable profile、审批和差异应用机制，不进入默认路径 |
 
@@ -564,13 +564,14 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | [x] | 完成 P4-5 writable/PR/KB apply 试用计划 | 已生成 Markdown/HTML/PDF 试用计划；明确默认只读不变，写入按 W1/W2/W3/W4 灰度进入，所有正式写入必须有 MAP approval、diff、trace、artifact 和回滚证据 |
 | [x] | 完成目标级 completion audit | `scripts/audit-cds-agent-goal.sh` 已用 P4-2 provider-backed one-cycle 证据跑通；`Goal status=complete`、`Commercial complete=true`、`Current blocking gate=complete`；A0/D0/D1/N6/Evidence index/R0 recovery 全部 pass |
 | [x] | 合入 `origin/main` 并完成本地门禁 | merge commit `37ca12678` 已把 `origin/main` 合入当前分支；`git rev-list --left-right --count origin/main...HEAD` 为 `0 426`；合并后 `git diff --check`、CDS build/test、sidecar tests、前端 tsc/test/build、后端 Agent 聚焦测试和 CDS Agent smoke 全部通过 |
+| [x] | 修复合并后 CI 回归和简洁模式阻塞 | CI 失败根因是 `remote-hosts-helpers` 与实例发现隔离测试语义冲突；已收敛为普通 `git/manual` 不暴露 branch services、`shared-service` 才暴露 CDS-managed runtime pool；简洁模式已把超时旧 run 识别为 `已超时`，再次运行会创建新会话，并把 R1 引导从 Anthropic 官方模板改为同步系统主模型 |
 
 ### 14.6 下一次开发入口
 
-Phase 0/1/2/3/P4 已完成文档化验收与远端只读试用收口；`origin/main` 已合入当前分支并通过本地门禁。下一次入口是三选一：
+Phase 0/1/2/3/P4 已完成文档化验收与远端只读试用收口；`origin/main` 已合入当前分支，合并后 CI 回归和简洁模式阻塞已在本地修复。下一次入口是三选一：
 
-1. 继续 preview 真实试用并收集问题。
-2. 执行合并后 preview 部署/self-update，并重跑远端视觉和 provider one-cycle。
+1. 等待 GitHub checks 和 CDS deploy 回绿后，重跑远端 `/cds-agent` 视觉截图和 provider one-cycle。
+2. 继续 preview 真实试用并收集问题。
 3. 执行 P4-5 推荐路径：进入 W1/W2 KB draft/apply 写入灰度，先指定试用知识库和 owner。
 
 ### 14.7 Phase 3 当前进度
@@ -597,9 +598,11 @@ Phase 0/1/2/3/P4 已完成文档化验收与远端只读试用收口；`origin/m
 | [x] | P4-4 发布/合并策略评估 | 决定当前分支是否合并 main 或继续 preview 试用 | 对比 main 差异、列出发布风险、确认最终门禁和回滚方式 | `doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.md`；`doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.html`；`doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.pdf`；合并前 `git rev-list --left-right --count origin/main...HEAD`：`18 421`；`git merge-tree --write-tree origin/main HEAD` pass；合并后 merge commit `37ca12678`，`git rev-list --left-right --count origin/main...HEAD`：`0 426` |
 | [x] | P4-5 后续 writable/PR/KB apply 试用计划 | 写入能力进入试用前有清晰边界和回滚 | 不默认开放写入；列出 writable profile、KB apply、PR、commit 的审批、diff、回滚和验收门禁 | `doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.md`；`doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.html`；`doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.pdf`；本地能力证据 `doc/report.cds-agent-phase2-acceptance-2026-05-19.md`；smoke 边界 `scripts/smoke-cds-agent-writable-profile.sh`、`scripts/smoke-cds-agent-kb-diff-apply.sh`、`scripts/smoke-cds-agent-workflow-approval.sh` |
 | [x] | P4-6 合并 main 后本地门禁 | 当前分支不再落后 main，并证明合并未破坏 CDS Agent 本地闭环 | `origin/main` 已合入；本地关键门禁通过；远端 preview 部署另行决策 | `git diff --check HEAD~1..HEAD` pass；`bash -n` 关键脚本 pass；`pytest claude-sdk-sidecar/tests`：47/47 pass；`npm --prefix cds test -- --run tests/routes/remote-hosts-instances.test.ts`：8/8 pass；`npm --prefix cds run build` pass；`bash scripts/smoke-cds-agent-simple-panel.sh` pass；`bash scripts/smoke-cds-agent-workflow-node.sh` pass；`bash scripts/smoke-cds-agent-kb-readonly-tools.sh` pass；`pnpm --prefix prd-admin tsc` pass；`pnpm --prefix prd-admin test -- src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：281/281 pass；`dotnet test ... --filter InfraAgent...`：107/107 pass；`pnpm --prefix prd-admin build` pass（仅既有 chunk/circular warnings） |
+| [x] | P4-7 合并后 CI/简洁模式修复 | 让 PR checks 重新具备通过条件，并让简洁模式不再卡在超时旧 session 或厂商模板误导 | CDS 实例发现隔离语义统一；超时旧会话在 UI 中显示 `已超时` 并从运行中移走；再次运行会创建新 session；R1/simple 引导改为同步系统主模型；远端视觉需等本提交部署后复验 | GitHub 失败日志：`CDS Build & Test` 仅 1 个 CDS 单测失败；本地 `npm --prefix cds test`：86 files / 1469 tests pass；`npm --prefix cds test -- --run tests/routes/remote-hosts-helpers.test.ts tests/routes/remote-hosts-instances.test.ts`：22/22 pass；`pnpm --prefix prd-admin test -- src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`：283/283 pass；`pnpm --prefix prd-admin tsc` pass；`pnpm --prefix prd-admin build` pass；`git diff --check` pass |
 
 ### 14.9 目标级审计
 
 | 对勾 | 审计项 | 结论 | 证据 |
 | --- | --- | --- | --- |
 | [x] | CDS Agent 商业级可用闭环 | `Goal status=complete`，`Commercial complete=true`，`Current blocking gate=complete` | `doc/report.cds-agent-goal-completion-audit-2026-05-19.md`；`doc/report.cds-agent-goal-completion-audit-2026-05-19.html`；`doc/report.cds-agent-goal-completion-audit-2026-05-19.pdf`；`/tmp/cds-agent-goal-audit-current.json`；命令 `CDS_AGENT_GOAL_CYCLE_SUMMARY=/tmp/cds-agent-p4-2-one-cycle-accepted/cycle-summary.json bash scripts/audit-cds-agent-goal.sh` pass |
+| [x] | 合并 main 后回归修复 | CI 失败不是全线构建崩溃，而是 CDS 两个 workflow 共享同一个单测失败；已修复并完成本地全量 CDS test、前端 test/tsc/build | `CDS Build & Test` failure: `tests/routes/remote-hosts-helpers.test.ts`；修复文件：`cds/src/routes/remote-hosts.ts`、`cds/tests/routes/remote-hosts-helpers.test.ts`、`prd-admin/src/pages/cds-agent/CdsAgentPage.tsx`、`prd-admin/src/pages/cds-agent/cdsAgentReadiness.ts`、`prd-admin/src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts`；本轮等待推送后 GitHub checks 回绿 |
