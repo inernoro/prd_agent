@@ -2920,7 +2920,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         sendSSE(res, 'step', { step: 'stop', status: 'done', title: `已停止 ${svc.containerName}` });
       }
 
@@ -5415,7 +5415,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (Object.prototype.hasOwnProperty.call(svcs, removedProfileId)) {
           const svc = (svcs as any)[removedProfileId];
           if (svc?.containerName) {
-            try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+            try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
           }
           delete (svcs as any)[removedProfileId];
         }
@@ -5635,7 +5635,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 1) 停容器
     if (containerName) {
       try {
-        await containerService.stop(containerName);
+        await containerService.remove(containerName);
         steps.push({ step: `停止 ${containerName}`, ok: true });
       } catch (err) {
         steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
@@ -6590,7 +6590,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // Best-effort stop the orphan container.
             const svc = entry.services[profileId];
             if (svc?.containerName) {
-              try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+              try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
             }
             delete entry.services[profileId];
             dropped.push(profileId);
@@ -6628,7 +6628,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6724,7 +6724,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // Stop all containers for this orphan in parallel
         await Promise.all(
           Object.values(entry.services).map(svc =>
-            containerService.stop(svc.containerName).catch(() => { /* ok */ }),
+            containerService.remove(svc.containerName).catch(() => { /* ok */ }),
           ),
         );
         // Remove worktree
@@ -6861,7 +6861,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const entry of branches) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
-            try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+            try { await containerService.remove(svc.containerName); } catch { /* ok */ }
           }
           try {
             const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6878,7 +6878,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const infra = stateService.getInfraServicesForProject(projectFilter);
         for (const svc of infra) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
 
         // 3. Remove this project's profiles / infra / routing / env bucket
@@ -6920,7 +6920,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const entry of branches) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6931,7 +6931,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2. Stop and remove all infra service containers (volumes preserved)
       for (const svc of state.infraServices) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
       }
 
       // 3. Clear all state (but keep the file — it will be overwritten with defaults)

@@ -895,7 +895,56 @@ export class ContainerService {
     }
   }
 
-  async stop(containerName: string): Promise<void> {
+  /**
+   * 容器停止前往其 PID1 stdout 写一行 [CDS-STOP] 哨兵,让 `docker logs`
+   * 末尾留下"这是 CDS 主动停的"证据,与"莫名崩溃"区分。best-effort:
+   * 容器无 sh / distroless / exec 失败都静默跳过 —— 判定"正常 vs 异常
+   * 停止"的权威源是 CDS 侧的 lastStopSource / 活动日志(见 index.ts
+   * runAutoRestartTick),哨兵只是给人查 docker logs 时的肉眼便利。
+   */
+  private async writeStopSentinel(containerName: string, reason: string): Promise<void> {
+    // 容器名拼进 shell 前硬校验(与 getServiceStats 同款白名单:不符合
+    // docker 命名规则的一定不是合法容器名 → 直接放弃写哨兵,reject 比
+    // escape 更安全)。
+    const validName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+    if (!validName.test(containerName)) return;
+    // reason 仅供人读,硬过滤掉所有非 [中文/字母数字/空格/-_.:] 字符,
+    // 杜绝拼进 shell 的注入面(过滤后即便为空也无所谓)。
+    const safeReason =
+      (reason || 'cds-stop').replace(/[^一-龥a-zA-Z0-9 _.:-]/g, '').slice(0, 120) ||
+      'cds-stop';
+    const line = `[CDS-STOP] reason=${safeReason} ts=${new Date().toISOString()}`;
+    try {
+      await this.shell.exec(
+        `docker exec ${containerName} sh -c 'echo "${line}" > /proc/1/fd/1 2>/dev/null'`,
+        { timeout: 3000 },
+      );
+    } catch {
+      /* best-effort:哨兵写失败不影响停止,判定走 CDS 账本 */
+    }
+  }
+
+  /**
+   * 停止容器但**保留**它(不 docker rm)。容器进入 exited 状态:
+   *  - 不占端口 / CPU / 内存,仅保留可写层与 `docker logs`
+   *  - 可被 /restart(docker restart)或 auto-restart(docker start)秒级唤醒
+   *  - docker logs 末尾留有 [CDS-STOP] 哨兵 → 与莫名崩溃区分
+   * 用于:手动停止 / 调度器降温 / auto-lifecycle / 执行器停止 等"还要回来"
+   * 的场景。需要彻底销毁容器(删分支 / reset / 孤儿清理 / force-rebuild)
+   * 请改用 remove()。
+   */
+  async stop(containerName: string, reason = 'cds-stop'): Promise<void> {
+    await this.writeStopSentinel(containerName, reason);
+    await this.shell.exec(`docker stop ${containerName}`);
+  }
+
+  /**
+   * 彻底销毁容器:docker stop + docker rm,容器与其 docker logs 一并消失。
+   * 仅用于明确"销毁"语义的路径(删除分支 / 重置 / 孤儿清理 /
+   * force-rebuild / janitor 回收)。停止后还想唤醒请用 stop()。
+   * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
+   */
+  async remove(containerName: string): Promise<void> {
     await this.shell.exec(`docker stop ${containerName}`);
     await this.shell.exec(`docker rm ${containerName}`);
   }

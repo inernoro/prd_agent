@@ -514,7 +514,7 @@ schedulerService.setCoolFn(async (slug: string) => {
   for (const svc of Object.values(branch.services)) {
     if (svc.status === 'running' || svc.status === 'starting') {
       try {
-        await containerService.stop(svc.containerName);
+        await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）');
       } catch (err) {
         console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
       }
@@ -658,7 +658,7 @@ const autoLifecycleService = new AutoLifecycleService(
       for (const svc of Object.values(branch.services)) {
         if (svc.status === 'running' || svc.status === 'starting') {
           try {
-            await containerService.stop(svc.containerName);
+            await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）');
           } catch (err) {
             console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
           }
@@ -814,7 +814,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     });
   } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
   for (const svc of Object.values(branch.services)) {
-    try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
+    try { await containerService.remove(svc.containerName); } catch { /* best effort */ }
   }
   try {
     const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);

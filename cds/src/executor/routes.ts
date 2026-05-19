@@ -220,7 +220,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
     try {
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）'); } catch { /* ok */ }
         svc.status = 'stopped';
       }
       entry.status = 'idle';
@@ -279,7 +279,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     }
     try {
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
       }
       // P4 Part 18 (G1.2): executor stays on config.repoRoot.
       try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }
