@@ -3058,8 +3058,8 @@ export default function CdsAgentPage() {
     type TimelineBlock =
       | { type: 'msg'; key: string; msg: InfraAgentMessageView }
       | { type: 'group'; key: string; events: InfraAgentEventView[] };
-    const timelineBlocks: TimelineBlock[] = [];
-    for (const item of timelineItems) {
+	    const timelineBlocks: TimelineBlock[] = [];
+	    for (const item of timelineItems) {
       if (item.kind === 'msg') {
         timelineBlocks.push({ type: 'msg', key: item.key, msg: item.msg });
         continue;
@@ -3067,8 +3067,8 @@ export default function CdsAgentPage() {
       const last = timelineBlocks[timelineBlocks.length - 1];
       if (last && last.type === 'group') last.events.push(item.ev);
       else timelineBlocks.push({ type: 'group', key: item.key, events: [item.ev] });
-    }
-    const hasTimeline = timelineBlocks.length > 0;
+	    }
+	    const hasConversation = messages.length > 0;
     const canRunSimplePrompt = Boolean(
       prompt.trim()
       && !busy
@@ -3348,12 +3348,13 @@ export default function CdsAgentPage() {
 	            </div>
 
 	            <div ref={timelineRef} className="mx-auto mt-4 min-h-0 w-full max-w-[980px] flex-1 space-y-3 overflow-y-auto px-4 pb-5 pt-4" style={{ overscrollBehavior: 'contain' }}>
-	              {!hasTimeline ? (
+	              {!hasConversation ? (
 	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 text-center">
 	                  <div>
 	                    <h2 className="text-2xl font-semibold text-white/88">要在这个仓库里检查什么？</h2>
 	                    <div className="mt-2 text-sm text-white/42">输入任务后，CDS 会创建只读 Agent 会话并把过程、结果和产物沉淀下来。</div>
 	                  </div>
+	                  {simpleComposer}
 	                  {simplePromptPresetRow}
 	                </div>
 	              ) : (
@@ -3482,10 +3483,12 @@ export default function CdsAgentPage() {
               )}
 	            </div>
 
-	            <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
-	              {hasTimeline && <div className="mb-3">{simplePromptPresetRow}</div>}
-	              {simpleComposer}
-	            </div>
+	            {hasConversation && (
+	              <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
+	                <div className="mb-3">{simplePromptPresetRow}</div>
+	                {simpleComposer}
+	              </div>
+	            )}
 	          </main>
 
 	          <aside className="min-h-0 overflow-y-auto rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}>
