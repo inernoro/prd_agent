@@ -2276,7 +2276,8 @@ export default function CdsAgentPage() {
     const message = res.error?.message ?? '';
     const isGatewayTransportFailure =
       (code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE')
-      && (message.includes('HTTP 502') || message.includes('/messages'));
+      && message.includes('/messages')
+      && message.includes('HTTP 502');
     return !res.success
       && (code === 'SESSION_NOT_FOUND'
         || code === 'session_not_found'
