@@ -280,11 +280,117 @@ flowchart LR
 
 | 编号 | 任务 | 验收 |
 | --- | --- | --- |
-| P2-1 | 知识库 draft workspace | 改写只落草稿，不直接覆盖 |
-| P2-2 | 知识库 diff/apply/reject | 页面可看差异并应用或拒绝 |
-| P2-3 | 工作流 waiting_approval/pause/resume | 工作流能等人工审批后继续 |
-| P2-4 | writable profile 策略 | 写工具只在明确 profile 和审批下开放 |
-| P2-5 | artifact bundle 导出 | 一次运行可导出报告、事件、diff、截图 |
+| P2-1 | 可写协作安全边界设计 | 写入边界、审批点、回滚路径、工具白名单和验收 smoke 写入本文档 |
+| P2-2 | 知识库 draft workspace | 改写只落草稿，不直接覆盖 |
+| P2-3 | 知识库 diff/apply/reject | 页面可看差异并应用或拒绝 |
+| P2-4 | 工作流 waiting_approval/pause/resume | 工作流能等人工审批后继续 |
+| P2-5 | writable profile 策略 | 写工具只在明确 profile 和审批下开放 |
+| P2-6 | artifact bundle 导出 | 一次运行可导出报告、事件、diff、截图 |
+
+#### Phase 2 有限计划
+
+Phase 2 的第一原则是 `diff-first`：Agent 不能直接覆盖知识库或代码，所有写入先变成 draft/diff，再由 MAP 审批和 apply。CDS 继续负责容器、分支、runtime；MAP 继续负责用户、权限、审批、事件、产物、审计和 UI。官方 SDK 继续负责 agent loop、工具调用和上下文，本仓库只补 adapter bridge 和 MAP 业务边界。
+
+| 小节点 | 预计 | 交付物 | 验收方式 |
+| --- | --- | --- | --- |
+| P2-1 安全边界设计 | 0.5d | 本文档新增可写工具矩阵、审批策略、失败回滚、smoke 列表 | 文档 review + `git diff --check` |
+| P2-2 KB draft workspace | 1-1.5d | `kb_draft_create/read/list/discard`；只新增草稿，不改原文 | 后端单测 + smoke：创建草稿后原 entry 不变 |
+| P2-3 KB diff/apply/reject | 1-2d | draft diff、apply、reject、审计事件 | 单测 + UI 冒烟：能看 diff、拒绝、应用 |
+| P2-4 工作流审批暂停 | 1-1.5d | workflow `waiting_approval`、pause/resume、审批结果回传 | 工作流单测 + smoke：Start -> Agent -> Approval -> Notify |
+| P2-5 代码写入 profile | 1-2d | writable profile、工具白名单、危险工具 MAP approval | provider-gated smoke：写小文件、跑限定测试、生成 diff |
+| P2-6 Phase 2 验收包 | 0.5-1d | Markdown/PDF 验收报告、视觉截图、使用指南 | smoke、单测、构建、视觉证据全部回写 §14 |
+
+当同一小节点连续修正超过 3 次仍不通过时，必须暂停继续堆补丁，回到本节重新判断是否是架构边界、数据模型或验收口径错误。
+
+#### Phase 2 可写工具矩阵
+
+| 工具族 | Phase 1 状态 | Phase 2 目标 | 默认暴露 | 审批 |
+| --- | --- | --- | --- | --- |
+| `kb_list/search/read` | 已完成，只读 | 继续只读 | 是 | 不需要 |
+| `kb_draft_*` | 未实现 | 创建、读取、列出、丢弃草稿 | 否，仅 writable 任务 | 创建可自动，discard 需要用户态权限 |
+| `kb_diff` | 未实现 | 对比原文和草稿 | 否，仅 writable 任务 | 不需要写审批 |
+| `kb_apply` | 未实现 | 将草稿应用到知识库 entry | 否 | 必须 MAP approval |
+| `repo_write_file` | 已存在危险工具 | 仅 writable profile 可用 | 否 | 必须 MAP approval |
+| `repo_run_command` | 已存在命令工具 | 限定测试/检查命令 | 否 | 非只读命令必须 MAP approval |
+| `repo_create_pull_request` | 已存在危险工具 | 明确 PR profile 后开放 | 否 | 必须 MAP approval |
+
+#### Phase 2 验收红线
+
+- 不允许出现绕过 `InfraAgentSessionId` / 用户权限的 KB 写入。
+- 不允许 `kb_apply` 在没有 MAP approval 事件时执行。
+- 不允许默认只读 profile 暴露写工具。
+- 不允许工作流 HTTP 请求长时间阻塞等待人工审批；必须事件化并可恢复。
+- 不允许把 CDS runtime/host 配置变成普通用户路径。
+- 不允许只靠远端部署验证；本地 smoke、单测和视觉证据必须先过。
+
+#### P2-1 可实现契约
+
+P2-1 只定义契约，不写业务代码。P2-2 开始实现时必须按这里落地，除非先回到本文档修正。
+
+KnowledgeBase draft 数据模型建议新增独立集合 `knowledge_base_drafts`，不复用 `document_entries` 原表状态，避免草稿污染正式知识库：
+
+| 字段 | 含义 | 规则 |
+| --- | --- | --- |
+| `id` | draft id | Guid/N 格式 |
+| `sessionId` | InfraAgentSession id | 必填，用于追踪 Agent 运行来源 |
+| `storeId` | 知识库空间 | 必填，创建时校验 owner/public；apply 时必须 owner |
+| `entryId` | 原知识库 entry | 必填，draft 基于一个现有 entry |
+| `baseDocumentId` | 原正文文档 id | 可空，文本类 entry 必填 |
+| `baseContentHash` | 原内容 hash | 必填，用于 apply 前乐观并发校验 |
+| `baseUpdatedAt` | 原 entry 更新时间 | 必填，用于发现原文已变更 |
+| `titleDraft` | 草稿标题 | 可选 |
+| `contentDraft` | 草稿正文 | 必填，草稿只存新内容，不覆盖原文 |
+| `status` | `draft/applied/rejected/discarded` | 默认 `draft` |
+| `createdBy` | 用户 id | 来自 session.UserId |
+| `applyApprovalId` | MAP approval id | apply 成功时必填 |
+| `createdAt/updatedAt/appliedAt` | 时间 | 审计字段 |
+
+工具契约按两个阶段开放：
+
+| 阶段 | 工具 | 作用 | 写入类型 | 审批 |
+| --- | --- | --- | --- | --- |
+| P2-2 | `kb_draft_create` | 基于 entry 创建草稿 | 只写 draft 集合 | 不需要 MAP 写审批，但需要 session 用户权限 |
+| P2-2 | `kb_draft_read` | 读取草稿 | 只读 | 不需要 |
+| P2-2 | `kb_draft_list` | 列出当前 session 或 entry 的草稿 | 只读 | 不需要 |
+| P2-2 | `kb_draft_discard` | 丢弃草稿 | 只改 draft 状态 | 需要 draft owner 权限，不需要 MAP 写审批 |
+| P2-3 | `kb_diff` | 对比原文和草稿 | 只读 | 不需要 |
+| P2-3 | `kb_apply` | 将草稿应用到正式 entry | 写正式知识库 | 必须 MAP approval |
+| P2-3 | `kb_reject` | 拒绝草稿 | 只改 draft 状态 | 需要 draft owner 权限，不需要 MAP 写审批 |
+
+MAP approval 事件结构沿用现有 `/api/agent-tools/approvals/...`，但 `kb_apply` 必须写入可审计字段：
+
+```json
+{
+  "approvalId": "kb-apply-<draftId>-<seq>",
+  "toolName": "kb_apply",
+  "risk": "write",
+  "status": "waiting",
+  "source": "map-tool-approval",
+  "argsSummary": {
+    "storeId": "<storeId>",
+    "entryId": "<entryId>",
+    "draftId": "<draftId>",
+    "baseContentHash": "<hash>",
+    "diffStat": { "added": 0, "removed": 0 }
+  }
+}
+```
+
+`kb_apply` 回滚和并发规则：
+
+- apply 前重新读取 entry/doc，校验 `baseContentHash` 和 `baseUpdatedAt`；不一致则返回 `kb_apply_conflict`，不写正式库。
+- apply 过程必须单向：先校验、再写正式文档、再更新 entry 索引、最后把 draft 标为 `applied`；任何一步失败，draft 保持 `draft` 或标为 `apply_failed`，不得删除。
+- apply 成功事件必须包含 `draftId`、`entryId`、`approvalId`、`previousHash`、`newHash`。
+- 回滚不在 P2-3 自动执行；P2-3 只保证有 previous hash 和 draft 内容可人工恢复。自动 rollback 放 Phase 3。
+
+Phase 2 smoke 清单：
+
+| 脚本 | 覆盖 |
+| --- | --- |
+| `scripts/smoke-cds-agent-kb-draft-workspace.sh` | 创建草稿、读取草稿、列出草稿、丢弃草稿；确认原 entry 不变 |
+| `scripts/smoke-cds-agent-kb-diff-apply.sh` | diff 可读；无 approval 时 apply 被拒；有 approval 后 apply 成功 |
+| `scripts/smoke-cds-agent-workflow-approval.sh` | 工作流进入 `waiting_approval`，审批后 resume 到 Notify |
+| `scripts/smoke-cds-agent-writable-profile.sh` | 默认只读 profile 不暴露写工具；writable profile 才暴露写工具 |
 
 ### Phase 3：规模化商业能力，预计 2-4 周起
 
@@ -417,7 +523,18 @@ flowchart LR
 | [x] | P1-5 KnowledgeBase 只读工具 | Agent 能搜索和读取知识库内容 | `kb_list/search/read` 可用；回答里能显示引用来源 | `prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Tools/KnowledgeBaseReadonlyTools.cs`；`scripts/smoke-cds-agent-kb-readonly-tools.sh` pass；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter "FullyQualifiedName~AgentToolsTests"`：8/8 pass |
 | [x] | P1-6 Phase 1 验收包 | 本地先验收，再决定是否部署 | 冒烟、视觉截图、最小使用指南齐全 | `doc/report.cds-agent-phase1-acceptance-2026-05-19.md`；`doc/report.cds-agent-phase1-acceptance-2026-05-19.pdf`；smoke 三件套 pass；后端相关测试 72/72 pass；`pnpm --prefix prd-admin tsc` pass；前端单测 281/281 pass；`pnpm --prefix prd-admin build` pass；截图 `/tmp/cds-agent-simple-panel-desktop.png`、`/tmp/cds-agent-simple-panel-mobile-quickrun.png`、`/tmp/cds-agent-workflow-p1-4-template-modal.png` |
 
-### 14.4 当前对话完成项
+### 14.4 Phase 2 当前进度
+
+| 对勾 | 小节点 | 最终目标 | 验收标准 | 证据 |
+| --- | --- | --- | --- | --- |
+| [x] | P2-1 可写协作安全边界设计 | 开写工具前先锁住 diff-first、安全审批和回滚边界 | 本文档包含可写工具矩阵、审批策略、失败回滚、smoke 列表；`git diff --check` pass | 本文 §8 `Phase 2 有限计划` / `P2-1 可实现契约`；`git diff --check` pass |
+| [ ] | P2-2 KnowledgeBase draft workspace | Agent 改写只落草稿，不覆盖原文 | `kb_draft_create/read/list/discard` 可用；原 entry 不变；草稿可丢弃 | 下一步 |
+| [ ] | P2-3 KnowledgeBase diff/apply/reject | 用户可审查差异后应用或拒绝 | 页面可看 diff；`kb_apply` 必须有 MAP approval；reject 不改原文 | 等待 P2-2 |
+| [ ] | P2-4 工作流审批暂停/恢复 | 工作流遇到写入审批能暂停并继续 | `waiting_approval`、pause/resume、审批事件和运行详情可见 | 等待 P2-3 |
+| [ ] | P2-5 代码 writable profile | 代码写入只在明确 profile 和审批下开放 | 默认只读 profile 不暴露写工具；writable profile 可写小文件、跑限定测试、生成 diff | 等待 P2-4 |
+| [ ] | P2-6 Phase 2 验收包 | Phase 2 本地先验收，再决定是否部署 | smoke、单测、构建、视觉截图、Markdown/PDF 报告齐全 | 等待 P2-5 |
+
+### 14.5 当前对话完成项
 
 | 对勾 | 事项 | 结果 |
 | --- | --- | --- |
@@ -430,7 +547,8 @@ flowchart LR
 | [x] | 完成 P1-4 工作流最小调度 | 已新增 `CDS Agent 只读代码巡检` 模板；后端 `cds-agent` 胶囊支持创建/复用 session，返回 `sessionId/traceId/status/finalText/artifacts/eventsCursor` 运行句柄；执行详情可从 `cds-agent-run` 产物跳回 `/cds-agent?sessionId=...` |
 | [x] | 完成 P1-5 KnowledgeBase 只读工具 | 已注册 `kb_list`、`kb_search`、`kb_read`；工具从 `InfraAgentSessionId` 反查 session 用户，只允许读取自有或公开知识库；未注册任何 KB 写入工具 |
 | [x] | 完成 P1-6 Phase 1 本地验收包 | 已生成 Markdown/PDF 验收报告；smoke、单测、构建、视觉截图路径已归档 |
+| [x] | 完成 P2-1 可写协作安全边界设计 | 本文新增 Phase 2 有限计划、可写工具矩阵、验收红线、draft 数据模型、审批事件结构、回滚策略和 smoke 清单；当前不直接写可写工具 |
 
-### 14.5 下一次开发入口
+### 14.6 下一次开发入口
 
-Phase 1 已完成本地验收，下一次开发入口是 Phase 2 的可写协作设计与最小实现：知识库 draft/diff、人工审批、apply、commit、PR 写入都必须先走可审查差异，不允许直落库。进入 Phase 2 前先单独写有限计划，明确写入边界、审批点、回滚路径和验收 smoke。
+Phase 2 的安全边界设计已完成。下一次开发入口是 `P2-2 KnowledgeBase draft workspace`：只实现 `kb_draft_create/read/list/discard` 和对应 smoke，确保 Agent 改写只落草稿，不覆盖原文；`kb_diff/apply/reject` 等到 P2-3。
