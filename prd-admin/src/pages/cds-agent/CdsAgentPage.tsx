@@ -2276,6 +2276,7 @@ export default function CdsAgentPage() {
       && (res.error?.code === 'SESSION_NOT_FOUND'
         || res.error?.code === 'session_not_found'
         || res.error?.code === 'connection_not_found'
+        || (res.error?.code === 'cds_request_failed' && res.error?.message?.includes('HTTP 400'))
         || res.error?.message?.includes('会话不存在')
         || res.error?.message?.includes('CDS 连接不存在')
         || res.error?.message?.includes('session_not_found'));
