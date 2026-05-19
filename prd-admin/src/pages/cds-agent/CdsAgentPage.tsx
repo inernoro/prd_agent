@@ -2272,14 +2272,20 @@ export default function CdsAgentPage() {
   }
 
   function isSessionNotFoundFailure(res: { success: boolean; error?: { code?: string; message?: string } | null }) {
+    const code = res.error?.code ?? '';
+    const message = res.error?.message ?? '';
+    const isGatewayTransportFailure =
+      (code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE')
+      && (message.includes('HTTP 502') || message.includes('/messages') || message.includes('/start'));
     return !res.success
-      && (res.error?.code === 'SESSION_NOT_FOUND'
-        || res.error?.code === 'session_not_found'
-        || res.error?.code === 'connection_not_found'
-        || (res.error?.code === 'cds_request_failed' && res.error?.message?.includes('HTTP 400'))
-        || res.error?.message?.includes('会话不存在')
-        || res.error?.message?.includes('CDS 连接不存在')
-        || res.error?.message?.includes('session_not_found'));
+      && (code === 'SESSION_NOT_FOUND'
+        || code === 'session_not_found'
+        || code === 'connection_not_found'
+        || (code === 'cds_request_failed' && message.includes('HTTP 400'))
+        || isGatewayTransportFailure
+        || message.includes('会话不存在')
+        || message.includes('CDS 连接不存在')
+        || message.includes('session_not_found'));
   }
 
   async function createSession() {
