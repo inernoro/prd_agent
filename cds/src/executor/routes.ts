@@ -220,6 +220,11 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
     try {
       for (const svc of Object.values(entry.services)) {
+        // 先翻 stopping 再 await stop()。stop() 重构后容器停止仍保留(exited)，
+        // 执行器进程同样跑 auto-restart 巡检，若此处仍 running，30s tick 命中
+        // await 窗口会把主动停止误判为 crash 并 docker start 抢跑
+        // （Codex P1，与 coolFn / auto-lifecycle / 手动 /stop 同款修复）。
+        svc.status = 'stopping';
         try { await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）'); } catch { /* ok */ }
         svc.status = 'stopped';
       }
