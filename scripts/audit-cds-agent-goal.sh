@@ -1043,25 +1043,62 @@ elif [[ "$runtime_pool_blocker_count" != "0" ]]; then
     }')
 else
   gate_r0="pass"
-  r0_readiness_json=$(jq -cn '{
-    readyForR0Apply: true,
-    readinessOverrideReason: "R0 passed by live CDS-managed runtime capacity evidence",
-    nextAction: "continue R1 Anthropic/Claude-compatible profile repair and provider smokes",
-    operatorFallbackPath: "not product path"
-  }')
-  if [[ -z "$current_blocking_gate" || "$current_blocking_gate" == "R0" ]]; then
-    current_blocking_gate="R1"
+  if [[ "$(json_bool "$commercial_complete")" == "true" \
+    && "$gate_r1" == "pass" \
+    && "$gate_s1" == "pass" \
+    && "$gate_s2s3" == "pass" \
+    && "$gate_v1" == "pass" ]]; then
+    r0_readiness_json=$(jq -cn '{
+      readyForR0Apply: true,
+      readinessOverrideReason: "R0 passed by live CDS-managed runtime capacity evidence",
+      nextAction: "provider-backed hardened read-only path complete",
+      operatorFallbackPath: "not product path"
+    }')
+    current_blocking_gate="complete"
+    blocking_reason=""
+    if [[ -z "$deployment_advice" || "$deployment_advice" == Do\ not\ run\ remote-host/image\ fallback* ]]; then
+      deployment_advice="Provider gates passed. A deploy is only useful after a new code change or when promoting the validated branch."
+    fi
+    if [[ -z "$next_command" || "$next_command" == CDS_HOST=https://cds.miduo.org\ bash\ scripts/smoke-cds-agent-one-cycle.sh* ]]; then
+      next_command="No deploy needed. Re-run only if code/profile changes: CDS_HOST=https://miduo.org SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh"
+    fi
+    next_cycle_plan_json=$(jq -cn '{
+      cycle: "official-sdk-provider-closure",
+      state: "provider-smokes-passed",
+      items: [
+        {order: 1, code: "N1", status: "pass", evidence: "default CDS-managed provider-switch profile is compatible and has key"},
+        {order: 2, code: "N2", status: "pass", evidence: "S1 provider-backed read-only run passed"},
+        {order: 3, code: "N3", status: "pass", evidence: "S2 MAP approval/dangerous-tool boundary passed"},
+        {order: 4, code: "N4", status: "pass", evidence: "S3 stop/cancel controls passed"},
+        {order: 5, code: "N5", status: "pass", evidence: "V1 authenticated visual coverage passed"},
+        {order: 6, code: "N6", status: "pass", evidence: "non-code adapter boundary passed"}
+      ],
+      stopConditions: [
+        "No R0/R1 blocker remains for the hardened read-only path.",
+        "Rerun provider one-cycle only after runtime/profile changes."
+      ]
+    }')
+  else
+    r0_readiness_json=$(jq -cn '{
+      readyForR0Apply: true,
+      readinessOverrideReason: "R0 passed by live CDS-managed runtime capacity evidence",
+      nextAction: "continue R1 Anthropic/Claude-compatible profile repair and provider smokes",
+      operatorFallbackPath: "not product path"
+    }')
+    if [[ -z "$current_blocking_gate" || "$current_blocking_gate" == "R0" ]]; then
+      current_blocking_gate="R1"
+    fi
+    if [[ "$cycle_status" == "missing" || "$cycle_status" == "blocked_r0" ]]; then
+      cycle_status="blocked_r1"
+    fi
+    if [[ -z "$blocking_reason" || "$blocking_reason" == No\ one-cycle\ summary* || "$blocking_reason" == R0V\ live\ evidence* ]]; then
+      blocking_reason="R0 CDS-managed runtime capacity is available; next blocker is R1 Anthropic/Claude-compatible profile/provider proof."
+    fi
+    if [[ -z "$next_command" || "$next_command" == CDS_HOST=https://cds.miduo.org\ bash\ scripts/smoke-cds-agent-one-cycle.sh* ]]; then
+      next_command="CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh # SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is smoke-only; product path is CDS-managed profile/secret"
+    fi
+    deployment_advice="Do not run remote-host/image fallback for R0; continue with R1 profile repair/provider smokes on the CDS-managed runtime path."
   fi
-  if [[ "$cycle_status" == "missing" || "$cycle_status" == "blocked_r0" ]]; then
-    cycle_status="blocked_r1"
-  fi
-  if [[ -z "$blocking_reason" || "$blocking_reason" == No\ one-cycle\ summary* || "$blocking_reason" == R0V\ live\ evidence* ]]; then
-    blocking_reason="R0 CDS-managed runtime capacity is available; next blocker is R1 Anthropic/Claude-compatible profile/provider proof."
-  fi
-  if [[ -z "$next_command" || "$next_command" == CDS_HOST=https://cds.miduo.org\ bash\ scripts/smoke-cds-agent-one-cycle.sh* ]]; then
-    next_command="CDS_HOST=https://cds.miduo.org SMOKE_CDS_AGENT_ANTHROPIC_API_KEY=<sk-ant-...> SMOKE_CDS_AGENT_ALLOW_PROVIDER_CALL=1 bash scripts/smoke-cds-agent-one-cycle.sh # SMOKE_CDS_AGENT_ANTHROPIC_API_KEY is smoke-only; product path is CDS-managed profile/secret"
-  fi
-  deployment_advice="Do not run remote-host/image fallback for R0; continue with R1 profile repair/provider smokes on the CDS-managed runtime path."
 fi
 
 if [[ "$boundary_status" != "pass" ]]; then

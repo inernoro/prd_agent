@@ -20,9 +20,9 @@
 | --- | --- |
 | 主架构 | MAP 只连 CDS；CDS 管理 runtime/container/sandbox；Claude Agent SDK 是 CDS-managed runtime |
 | 当前已验收 | 官方 SDK 只读代码巡检闭环通过；默认 hardened-readonly profile 不暴露 Bash/Edit/Write |
-| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；P4-3 远端试用入口与发布验收包、P4-4 发布/合并策略评估、P4-5 写入灰度试用计划均已归档 |
+| 当前证据 | P4-2 远端 provider-backed one-cycle `commercialComplete=true`，R0/A0/R1/S1/S2/S3/V1/N6 全部 pass，10 passed / 1 legacy skip / 0 failed，总耗时 140s；P4-3/P4-4/P4-5 已归档；目标级审计 `doc/report.cds-agent-goal-completion-audit-2026-05-19.md`：`Goal status=complete` |
 | 当前分支 | `codex/cds-agent-workbench-ui` 已部署到远端 preview commit `6b2f1552e` |
-| 当前最高优先级 | Phase 4 已收口；下一步需要用户选择：继续 preview、先合入 main 跑门禁，或进入 W1/W2 KB 写入灰度 |
+| 当前最高优先级 | 目标级闭环已审计通过；下一步需要用户选择：继续 preview、先合入 main 跑门禁，或进入 W1/W2 KB 写入灰度 |
 | 当前不是主线 | SSH、remote host env、sidecar image registry 都只能作为 operator/debug fallback，不能作为普通用户路径 |
 | 当前风险 | 只读巡检远端可用；写文件、知识库改写、PR 仍必须走 writable profile、审批和差异应用机制，不进入默认路径 |
 
@@ -562,6 +562,7 @@ Phase 0/1/2/3 已完成本地验收，`P4-1 远端发布前验收与试用入口
 | [x] | 完成 P4-3 远端试用入口说明与验收包 | 已生成 Markdown/HTML/PDF 验收包，明确普通用户 3 步试用、研发复跑命令、结果查看、失败排查、发布验收边界和不开放能力 |
 | [x] | 完成 P4-4 发布/合并策略评估 | 已生成 Markdown/HTML/PDF 评估报告；确认当前分支 ahead 421 / behind 18，dry-run merge-tree 无文本冲突；结论是不建议直接合并 main，推荐先在当前分支合入 `origin/main` 后跑门禁和 preview 验收 |
 | [x] | 完成 P4-5 writable/PR/KB apply 试用计划 | 已生成 Markdown/HTML/PDF 试用计划；明确默认只读不变，写入按 W1/W2/W3/W4 灰度进入，所有正式写入必须有 MAP approval、diff、trace、artifact 和回滚证据 |
+| [x] | 完成目标级 completion audit | `scripts/audit-cds-agent-goal.sh` 已用 P4-2 provider-backed one-cycle 证据跑通；`Goal status=complete`、`Commercial complete=true`、`Current blocking gate=complete`；A0/D0/D1/N6/Evidence index/R0 recovery 全部 pass |
 
 ### 14.6 下一次开发入口
 
@@ -594,3 +595,9 @@ Phase 0/1/2/3/P4 已完成文档化验收与远端只读试用收口。下一次
 | [x] | P4-3 远端试用入口说明与验收包 | 用户和研发能按同一个入口试用、复跑、看结果、看失败原因 | 不新增架构、不新增 agent loop；补齐试用步骤、复跑命令、失败排查入口和发布验收包 | `doc/report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19.md`；`doc/report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19.html`；`doc/report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19.pdf` |
 | [x] | P4-4 发布/合并策略评估 | 决定当前分支是否合并 main 或继续 preview 试用 | 对比 main 差异、列出发布风险、确认最终门禁和回滚方式 | `doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.md`；`doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.html`；`doc/report.cds-agent-p4-4-release-merge-strategy-2026-05-19.pdf`；`git rev-list --left-right --count origin/main...HEAD`：`18 421`；`git merge-tree --write-tree origin/main HEAD` pass，tree `c3f9f6416e721309cb1420368d8a854529e89ca2` |
 | [x] | P4-5 后续 writable/PR/KB apply 试用计划 | 写入能力进入试用前有清晰边界和回滚 | 不默认开放写入；列出 writable profile、KB apply、PR、commit 的审批、diff、回滚和验收门禁 | `doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.md`；`doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.html`；`doc/report.cds-agent-p4-5-writable-trial-plan-2026-05-19.pdf`；本地能力证据 `doc/report.cds-agent-phase2-acceptance-2026-05-19.md`；smoke 边界 `scripts/smoke-cds-agent-writable-profile.sh`、`scripts/smoke-cds-agent-kb-diff-apply.sh`、`scripts/smoke-cds-agent-workflow-approval.sh` |
+
+### 14.9 目标级审计
+
+| 对勾 | 审计项 | 结论 | 证据 |
+| --- | --- | --- | --- |
+| [x] | CDS Agent 商业级可用闭环 | `Goal status=complete`，`Commercial complete=true`，`Current blocking gate=complete` | `doc/report.cds-agent-goal-completion-audit-2026-05-19.md`；`doc/report.cds-agent-goal-completion-audit-2026-05-19.html`；`doc/report.cds-agent-goal-completion-audit-2026-05-19.pdf`；`/tmp/cds-agent-goal-audit-current.json`；命令 `CDS_AGENT_GOAL_CYCLE_SUMMARY=/tmp/cds-agent-p4-2-one-cycle-accepted/cycle-summary.json bash scripts/audit-cds-agent-goal.sh` pass |

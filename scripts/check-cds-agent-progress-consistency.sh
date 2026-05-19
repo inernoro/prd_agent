@@ -66,9 +66,21 @@ if [[ -f "$RUNTIME_CAPACITY_SUMMARY" ]] && jq -e '
   runtime_capacity_available=true
 fi
 
+progress_provider_complete=false
+if grep -Fq 'Overall status: provider_smokes_passed' "$PROGRESS_OUTPUT" \
+  && grep -Fq 'Current blocking gate: complete' "$PROGRESS_OUTPUT"; then
+  progress_provider_complete=true
+fi
+
 require_text "$REFRESH_OUTPUT" 'operatorFallbackImageInput: `CDS_AGENT_SIDECAR_IMAGE`' 'refresh fallback image input'
 require_text "$REFRESH_OUTPUT" 'runtimeCapacityStatus: `' 'refresh runtime capacity status'
-if [[ "$runtime_capacity_available" == "true" ]]; then
+if [[ "$progress_provider_complete" == "true" ]]; then
+  require_text "$PROGRESS_OUTPUT" 'Overall status: provider_smokes_passed' 'progress overall status'
+  require_text "$PROGRESS_OUTPUT" 'Current blocking gate: complete' 'progress blocking gate'
+  require_text "$PROGRESS_OUTPUT" 'Provider cycle: commercialComplete=true; status=provider_smokes_passed' 'progress provider cycle'
+  require_text "$PROGRESS_OUTPUT" 'Current provider-backed cycle is complete for the hardened read-only CDS Agent path' 'progress exact next step'
+  require_text "$PROGRESS_OUTPUT" 'Do not redeploy or rebuild unless code/profile changes' 'progress no redeploy advice'
+elif [[ "$runtime_capacity_available" == "true" ]]; then
   require_text "$REFRESH_OUTPUT" 'nextAction: `R0 pass; continue R1 Claude Code provider-switch profile repair and provider smokes`' 'refresh R1 next action'
   require_text "$REFRESH_OUTPUT" 'R0 is passed by live CDS-managed runtime capacity evidence' 'refresh R0 pass command'
   require_text "$PROGRESS_OUTPUT" 'Overall status: blocked_r1' 'progress overall status'
@@ -101,7 +113,13 @@ require_text "$PROGRESS_OUTPUT" '| R0.5 CDS-managed runtime capacity contract | 
 require_text "$PROGRESS_OUTPUT" '| R0.6 CDS-managed runtime capacity reconciler | done_minimal |' 'progress R0.6 done minimal'
 if [[ "$runtime_capacity_available" == "true" ]]; then
   require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | done_live |' 'progress R0.7 done live'
-  require_text "$PROGRESS_OUTPUT" '| R1 Claude Code provider-switch profile | current_blocker |' 'progress R1 current blocker'
+  if [[ "$progress_provider_complete" == "true" ]]; then
+    require_text "$PROGRESS_OUTPUT" '| R1 Claude Code provider-switch profile | done_live |' 'progress R1 done live'
+    require_text "$PROGRESS_OUTPUT" '| S1/S2/S3 One-cycle smokes | done_live |' 'progress S1/S2/S3 done live'
+    require_text "$PROGRESS_OUTPUT" '| V1 Visual verification | pass_live |' 'progress V1 pass live'
+  else
+    require_text "$PROGRESS_OUTPUT" '| R1 Claude Code provider-switch profile | current_blocker |' 'progress R1 current blocker'
+  fi
 else
   require_text "$PROGRESS_OUTPUT" '| R0.7 CDS-managed runtime live apply | in_progress |' 'progress R0.7 in progress'
 fi
@@ -109,8 +127,13 @@ require_text "$PROGRESS_OUTPUT" '| R0.2F Operator fallback host path | fallback 
 
 require_text "$STATUS_DOC" 'Claude SDK Agent 是 CDS-managed runtime/container/sandbox' 'status doc managed runtime'
 require_text "$STATUS_DOC" '只能作为 CDS operator/debug fallback，不能作为普通用户主路径' 'status doc fallback scope'
-require_text "$STATUS_DOC" 'doc/plan.cds-agent-runtime-correction-limited.md' 'status doc correction plan'
-require_text "$STATUS_DOC" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'status doc R0 design'
+if [[ "$progress_provider_complete" == "true" ]]; then
+  require_text "$STATUS_DOC" 'provider_smokes_passed' 'status doc provider complete'
+  require_text "$STATUS_DOC" 'Phase 4 P4-1/P4-2/P4-3/P4-4/P4-5' 'status doc phase4 complete'
+else
+  require_text "$STATUS_DOC" 'doc/plan.cds-agent-runtime-correction-limited.md' 'status doc correction plan'
+  require_text "$STATUS_DOC" 'doc/design.cds-agent-managed-runtime-fact-source.md' 'status doc R0 design'
+fi
 
 printf 'CDS Agent progress consistency: pass\n'
 printf -- '- refresh: %s\n' "$REFRESH_OUTPUT"

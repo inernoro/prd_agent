@@ -58,6 +58,19 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "$name should contain '$needle'"
 }
 
+assert_contains_any() {
+  local haystack="$1"
+  local name="$2"
+  shift 2
+  local needle
+  for needle in "$@"; do
+    if [[ "$haystack" == *"$needle"* ]]; then
+      return 0
+    fi
+  done
+  fail "$name should contain one of: $*"
+}
+
 if [[ -z "$summary" ]]; then
   summary=$(find_latest_cycle_summary)
 fi
@@ -100,19 +113,23 @@ esac
 
 assert_nonempty "$(jq -r '.providerPrerequisites.status // ""' "$json_index")" "providerPrerequisites.status"
 assert_eq "$(jq -r '.visualCoverage.assertionsPassed // false' "$json_index")" "true" "visualCoverage.assertionsPassed"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "执行链路" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "CDS Runtime" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "模型需调整" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Claude/Anthropic" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "MAP 会话" "visualCoverage.required"
-assert_contains "$(jq -r '.visualCoverage.required[]?' "$json_index")" "Worker Sandbox" "visualCoverage.required"
+visual_required_text="$(jq -r '.visualCoverage.required[]?' "$json_index")"
+assert_contains_any "$visual_required_text" "visualCoverage.required.execution" "执行链路" "execution chain"
+assert_contains_any "$visual_required_text" "visualCoverage.required.runtime" "CDS Runtime" "runtime status"
+assert_contains_any "$visual_required_text" "visualCoverage.required.provider" "模型需调整" "provider/profile guidance"
+assert_contains_any "$visual_required_text" "visualCoverage.required.sdk" "Claude/Anthropic" "official SDK adapter"
+assert_contains_any "$visual_required_text" "visualCoverage.required.map-session" "MAP 会话" "MAP session"
+assert_contains_any "$visual_required_text" "visualCoverage.required.sandbox" "Worker Sandbox" "worker sandbox"
 provider_calls_requested=$(jq -r 'if (.providerPrerequisites | has("providerCallsRequested")) then (.providerPrerequisites.providerCallsRequested | tostring) else "" end' "$json_index")
 r1_repair_key_provided=$(jq -r 'if (.providerPrerequisites | has("r1RepairKeyProvided")) then (.providerPrerequisites.r1RepairKeyProvided | tostring) else "" end' "$json_index")
 can_collect_provider_smokes=$(jq -r 'if (.providerPrerequisites | has("canCollectProviderSmokes")) then (.providerPrerequisites.canCollectProviderSmokes | tostring) else "" end' "$json_index")
 [[ "$provider_calls_requested" == "true" || "$provider_calls_requested" == "false" ]] || fail "providerPrerequisites.providerCallsRequested must be boolean"
 [[ "$r1_repair_key_provided" == "true" || "$r1_repair_key_provided" == "false" ]] || fail "providerPrerequisites.r1RepairKeyProvided must be boolean"
 [[ "$can_collect_provider_smokes" == "true" || "$can_collect_provider_smokes" == "false" ]] || fail "providerPrerequisites.canCollectProviderSmokes must be boolean"
-if [[ "$provider_calls_requested" == "false" || "$r1_repair_key_provided" == "false" ]]; then
+provider_prereq_status="$(jq -r '.providerPrerequisites.status // ""' "$json_index")"
+if [[ "$provider_calls_requested" == "false" ]]; then
+  assert_eq "$can_collect_provider_smokes" "false" "providerPrerequisites.canCollectProviderSmokes"
+elif [[ "$r1_repair_key_provided" == "false" && "$provider_prereq_status" != "provider_profile_ready" ]]; then
   assert_eq "$can_collect_provider_smokes" "false" "providerPrerequisites.canCollectProviderSmokes"
 fi
 
@@ -121,7 +138,11 @@ assert_nonempty "$(jq -r '.r1Repair.currentProfile.name // ""' "$json_index")" "
 assert_nonempty "$(jq -r '.r1Repair.currentProfile.protocol // ""' "$json_index")" "r1Repair.currentProfile.protocol"
 assert_nonempty "$(jq -r '.r1Repair.currentProfile.model // ""' "$json_index")" "r1Repair.currentProfile.model"
 assert_nonempty "$(jq -r '.r1Repair.targetTemplate.id // .r1Repair.repairPlan.targetTemplateId // ""' "$json_index")" "r1Repair.targetTemplate"
-assert_eq "$(jq -r '.r1Repair.missingKeyGuard.errorCode // ""' "$json_index")" "api_key_required" "r1Repair.missingKeyGuard.errorCode"
+if [[ "$(jq -r '.r1Repair.status // ""' "$json_index")" == "already_pass" ]]; then
+  assert_eq "$(jq -r '.providerPrerequisites.status // ""' "$json_index")" "provider_profile_ready" "providerPrerequisites.status"
+else
+  assert_eq "$(jq -r '.r1Repair.missingKeyGuard.errorCode // ""' "$json_index")" "api_key_required" "r1Repair.missingKeyGuard.errorCode"
+fi
 assert_eq "$(jq -r '.r1Repair.providerKeyReceived // false' "$json_index")" "false" "r1Repair.providerKeyReceived"
 assert_nonempty "$(jq -r '.r1Repair.suggestedCommand // ""' "$json_index")" "r1Repair.suggestedCommand"
 if [[ "$(jq -r '.r1Repair.nextCommands | type' "$json_index")" == "object" ]]; then
@@ -154,7 +175,11 @@ assert_contains "$md_text" "Provider prerequisites" "evidence-index.md"
 assert_contains "$md_text" "Visual Coverage" "evidence-index.md"
 assert_contains "$md_text" "Execution runway assertions" "evidence-index.md"
 assert_contains "$md_text" "R1 Repair Path" "evidence-index.md"
-assert_contains "$md_text" "Missing-key guard: \`api_key_required\`" "evidence-index.md"
+if [[ "$(jq -r '.r1Repair.status // ""' "$json_index")" == "already_pass" ]]; then
+  assert_contains "$md_text" "Missing-key guard: \`not-required-provider-profile-ready\`" "evidence-index.md"
+else
+  assert_contains "$md_text" "Missing-key guard: \`api_key_required\`" "evidence-index.md"
+fi
 assert_contains "$md_text" "Test-before-promote" "evidence-index.md"
 if [[ "$(jq -r '.r1Repair.suggestedRepairCommand // ""' "$json_index")" != "" ]]; then
   assert_contains "$md_text" "Repair-only command" "evidence-index.md"

@@ -208,7 +208,7 @@ jq -r \
   "## R1 Repair Path\n\n" +
   "- Current profile: `" + ((.r1Repair.currentProfile.name // "unknown") + " / " + (.r1Repair.currentProfile.protocol // "unknown") + " / " + (.r1Repair.currentProfile.model // "unknown")) + "`\n" +
   "- Target template: `" + ((.r1Repair.repairPlan.targetTemplateId // .r1Repair.targetTemplate.id // "unknown") + "` (`" + (.r1Repair.repairPlan.targetProtocol // .r1Repair.targetTemplate.protocol // "unknown") + "`, `" + (.r1Repair.repairPlan.targetModel // .r1Repair.targetTemplate.model // "unknown") + "`)") + "\n" +
-  "- Missing-key guard: `" + (.r1Repair.missingKeyGuard.errorCode // "unknown") + "`\n" +
+  "- Missing-key guard: `" + (if (.r1Repair.status // "") == "already_pass" then "not-required-provider-profile-ready" else (.r1Repair.missingKeyGuard.errorCode // "unknown") end) + "`\n" +
   "- Provider key received: `" + ((.r1Repair.providerKeyReceived // false)|tostring) + "`\n" +
   "- Test-before-promote: backend creates a candidate Anthropic profile, tests upstream, then promotes only on success.\n" +
   (if (.r1Repair.suggestedRepairCommand // "") != "" then "- Repair-only command: `" + (.r1Repair.suggestedRepairCommand // "") + "`\n" else "" end) +
