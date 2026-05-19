@@ -438,6 +438,12 @@ const SIMPLE_VIEW_STORAGE_KEY = 'cds-agent:view-mode';
 
 function readInitialViewMode(): 'simple' | 'pro' {
   try {
+    if (typeof window !== 'undefined') {
+      const requested = new URLSearchParams(window.location.search).get('viewMode')
+        ?? new URLSearchParams(window.location.search).get('mode');
+      if (requested === 'pro') return 'pro';
+      if (requested === 'simple') return 'simple';
+    }
     const saved = sessionStorage.getItem(SIMPLE_VIEW_STORAGE_KEY);
     return saved === 'pro' ? 'pro' : 'simple';
   } catch {
