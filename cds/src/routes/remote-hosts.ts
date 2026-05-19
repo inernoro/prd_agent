@@ -1770,9 +1770,12 @@ function startCdsManagedOfficialSdkTransport(
   content: string,
   transport: CdsManagedRuntimeTransport,
 ): void {
+  const runId = `${session.id}-${session.events.length + 1}`;
+  session.activeRunId = runId;
   void Promise.resolve()
-    .then(() => runCdsManagedOfficialSdkTransport(session, content, transport))
+    .then(() => runCdsManagedOfficialSdkTransport(session, content, transport, runId))
     .catch((err) => {
+      if (session.status === 'stopped') return;
       const error = {
         code: 'cds_managed_runtime_transport_background_failed',
         message: err instanceof Error ? err.message : String(err),
@@ -1792,9 +1795,21 @@ async function runCdsManagedOfficialSdkTransport(
   session: CdsAgentSession,
   content: string,
   transport: CdsManagedRuntimeTransport,
+  runId: string,
 ): Promise<CdsManagedRuntimeResult> {
-  const runId = `${session.id}-${session.events.length + 1}`;
-  session.activeRunId = runId;
+  if (session.status === 'stopped' || session.activeRunId !== runId) {
+    return {
+      accepted: false,
+      error: {
+        code: 'cds_managed_runtime_transport_cancelled_before_start',
+        message: 'CDS-managed runtime transport was cancelled before it started',
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        retryable: false,
+      },
+    };
+  }
   const timeoutMs = Math.max(1_000, session.resourcePolicy.timeoutSeconds * 1_000);
   const controller = new AbortController();
   session.activeRunAbortController = controller;
@@ -1862,7 +1877,8 @@ async function runCdsManagedOfficialSdkTransport(
     return result;
   } catch (err) {
     const aborted = err instanceof Error && err.name === 'AbortError';
-    if (aborted && session.status === 'stopped') {
+    const stoppedDuringRun = (session.status as CdsAgentSessionStatus) === 'stopped';
+    if (aborted && stoppedDuringRun) {
       const error = {
         code: 'cds_managed_runtime_transport_aborted',
         message: 'CDS-managed runtime transport aborted because session was stopped',

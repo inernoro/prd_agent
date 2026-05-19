@@ -706,7 +706,6 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                         ],
                     }
                 })
-            return guessed
         if len(project_matches) == 0:
             die(
                 f"CDS_PROJECT_ID={project_id} 下不存在分支: {branch}",
@@ -725,7 +724,6 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                         ],
                     }
                 })
-            return guessed
 
     for candidate in branches:
         if isinstance(candidate, dict) and candidate.get("id") == guessed:
@@ -751,7 +749,6 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                     ],
                 }
             })
-        return guessed
 
     die(
         f"CDS 分支不存在: git branch={branch} guessedBranchId={guessed}",
@@ -763,7 +760,6 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                 "nextCommand": f"cdscli branch create --project <projectId> --branch {branch}",
             }
         })
-    return guessed
 
 
 def _check_blocking_pending_import(branch_id: str) -> dict[str, Any] | None:

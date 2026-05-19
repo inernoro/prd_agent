@@ -877,6 +877,53 @@ describe('Remote hosts project instances route', () => {
     expect(stream.body).not.toContain('cds_managed_runtime_transport_timeout');
   });
 
+  it('rejects concurrent CDS-managed runtime messages before the background transport starts', async () => {
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const runtime = await startMockOfficialSdkRuntime({ holdOpen: true });
+    addSharedOfficialSdkRuntime(projectId, runtime.port);
+
+    const created = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions`,
+      longToken,
+      { runtime: 'claude-sdk', model: 'deepseek/deepseek-v4-pro', resourcePolicy: { timeoutSeconds: 30 } },
+    );
+    expect(created.status).toBe(201);
+    const sessionId = created.body.item.id;
+
+    const first = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'first long running request' },
+    );
+    const second = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/messages`,
+      longToken,
+      { content: 'should be rejected while first is active' },
+    );
+
+    expect(first.status).toBe(202);
+    expect(first.body.accepted).toBe(true);
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe('session_busy');
+    await waitFor(() => runtime.requests.length === 1);
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${sessionId}/stop`,
+      longToken,
+    );
+    expect(stopped.status).toBe(200);
+    await waitFor(() => runtime.closedRequests.length === 1);
+  });
+
   it('prefers the explicit CDS-managed runtime branch over stale main sidecars', async () => {
     await startServer();
     const { projectId, longToken } = authorizeSharedServiceProject();
