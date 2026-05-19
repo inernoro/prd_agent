@@ -4268,6 +4268,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.lastStoppedAt = undefined;
         entry.lastStopReason = undefined;
         entry.lastStopSource = undefined;
+        // 分支重新跑起来后必须回到 warm pool：调度器降温会把 heatState
+        // 置 cold，若不复位，getHotBranches 不计入它（cold 不算 hot），
+        // maxHotBranches 容量上限被绕过。markHot 内部 isEnabled 守卫 +
+        // 刷新 lastAccessedAt（手动重启视为一次访问，避免立刻又被降温）。
+        // stop 重构后 /restart 真能唤醒已降温分支，此前因容器被 rm 必失败
+        // 而掩盖了这个陈旧状态问题（Cursor Bugbot #640）。
+        schedulerService?.markHot(id);
         stateService.appendActivityLog(entry.projectId, {
           type: 'restart',
           branchId: id,
