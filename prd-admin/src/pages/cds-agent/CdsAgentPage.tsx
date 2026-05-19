@@ -3612,7 +3612,7 @@ export default function CdsAgentPage() {
   return (
     <div className="h-full min-h-0 overflow-y-auto px-6 py-5 text-white" style={{ background: 'linear-gradient(180deg, #101116 0%, #17181d 100%)' }}>
       <div className="mx-auto flex max-w-[1500px] flex-col gap-5">
-        <header className="flex flex-wrap items-center justify-between gap-3">
+        <header className="order-1 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
             <p className="mt-1 text-sm text-white/55">在远程 CDS sandbox 中运行 Claude Code / Codex 类任务，过程、工具审批和日志都留在 MAP。</p>
@@ -3630,7 +3630,31 @@ export default function CdsAgentPage() {
           </div>
         </header>
 
-        <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="order-2 rounded-xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="grid gap-2 md:grid-cols-4">
+              {[
+                { label: '当前会话', value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未选择', hint: activeSession ? shortId(activeSession.traceId, 12) : '先选择或新建' },
+                { label: '模型', value: activeProfile?.model ?? '未配置', hint: activeProfile ? protocolLabel(activeProfile.protocol) : '同步系统主模型' },
+                { label: '运行中', value: metrics.running, hint: `${metrics.totalSessions} 个会话` },
+                { label: '产物', value: metrics.artifactCount, hint: `${metrics.eventCount} 事件` },
+              ].map((item) => (
+                <div key={item.label} className="min-w-0 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="text-[11px] text-white/36">{item.label}</div>
+                  <div className="mt-1 truncate text-sm font-semibold text-white/82">{item.value}</div>
+                  <div className="mt-0.5 truncate text-xs text-white/38">{item.hint}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+              <a href="#pro-workbench" className="inline-flex min-h-9 items-center rounded-lg px-3 text-xs font-semibold text-emerald-100/84" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.24)' }}>工作区</a>
+              <a href="#pro-ops-panels" className="inline-flex min-h-9 items-center rounded-lg px-3 text-xs font-semibold text-white/62 hover:text-white/86" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>指标</a>
+              <a href="#pro-runtime-diagnostics" className="inline-flex min-h-9 items-center rounded-lg px-3 text-xs font-semibold text-white/62 hover:text-white/86" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>诊断</a>
+            </div>
+          </div>
+        </section>
+
+        <section id="pro-ops-panels" className="order-6 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
           {[
             { label: '会话总数', value: metrics.totalSessions, hint: `${metrics.running} 运行中 / ${metrics.stopped} 已停止` },
             { label: '失败会话', value: metrics.failed, hint: metrics.failed > 0 ? '需要重试或检查模型配置' : '当前无失败会话' },
@@ -3651,7 +3675,7 @@ export default function CdsAgentPage() {
         </section>
 
         <section
-          className="rounded-xl px-4 py-3"
+          className="order-7 rounded-xl px-4 py-3"
           style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
         >
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -3693,7 +3717,7 @@ export default function CdsAgentPage() {
         </section>
 
         <section
-          className="rounded-xl px-4 py-3"
+          className="order-8 rounded-xl px-4 py-3"
           style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
         >
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -3773,7 +3797,7 @@ export default function CdsAgentPage() {
         </section>
 
         <section
-          className="rounded-xl px-4 py-3"
+          className="order-9 rounded-xl px-4 py-3"
           style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
         >
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -3862,11 +3886,13 @@ export default function CdsAgentPage() {
           )}
         </section>
 
-        {executionRunway}
+        <div className="order-10">
+          {executionRunway}
+        </div>
 
         {activeSession && (
           <section
-            className="rounded-xl px-4 py-3"
+            className="order-11 rounded-xl px-4 py-3"
             style={{ background: 'rgba(255,255,255,0.032)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3889,7 +3915,7 @@ export default function CdsAgentPage() {
           </section>
         )}
 
-        <section className="grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <section id="pro-workbench" className="order-3 grid gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
             <div className="space-y-3">
               <label className="block space-y-1">
@@ -4340,7 +4366,11 @@ export default function CdsAgentPage() {
                     </div>
                   </div>
                 )}
-                <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}>
+                <details id="pro-runtime-diagnostics" className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}>
+                  <summary className="cursor-pointer select-none text-sm font-semibold text-white/70">
+                    Runtime / 门禁 / 调试诊断
+                  </summary>
+                  <div className="mt-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76">
@@ -5136,6 +5166,7 @@ export default function CdsAgentPage() {
                       </div>
                     )}
                   </div>
+                </details>
                 <div className="min-h-[220px] space-y-3 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><MessageSquare size={13} /> 对话</span>
@@ -5177,7 +5208,11 @@ export default function CdsAgentPage() {
                   )}
                 </div>
 
-                <div className="min-h-0 flex-1 space-y-2 overflow-auto rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <details className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <summary className="cursor-pointer select-none text-xs font-semibold text-white/60">
+                    事件时间线 · {eventReplayMode ? `${displayedEvents.length} / ${events.length}` : `${events.length} 条`}
+                  </summary>
+                  <div className="mt-3 max-h-[420px] space-y-2 overflow-auto pr-1">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><Terminal size={13} /> 事件时间线</span>
@@ -5272,10 +5307,15 @@ export default function CdsAgentPage() {
                       );
                     })
                   )}
-                </div>
-                <div className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-xs font-semibold text-white/62">上下文</div>
+                  </div>
+                </details>
+                <details className="rounded-lg p-3" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <summary className="cursor-pointer select-none text-xs font-semibold text-white/62">
+                    上下文
+                  </summary>
+                  <div className="mt-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-xs text-white/42">文件、网页、项目说明按需补充</div>
                     {hasContextDraft && (
                       <button
                         type="button"
@@ -5285,8 +5325,8 @@ export default function CdsAgentPage() {
                         清空
                       </button>
                     )}
-                  </div>
-                  <div className="grid gap-2 md:grid-cols-3">
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-3">
                     <textarea
                       value={contextDraft.files}
                       onChange={(e) => setContextDraft((prev) => ({ ...prev, files: e.target.value }))}
@@ -5311,8 +5351,9 @@ export default function CdsAgentPage() {
                       style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.09)' }}
                       placeholder="项目文档 / 知识库"
                     />
+                    </div>
                   </div>
-                </div>
+                </details>
                 <div className="flex gap-2">
                   <textarea
                     value={prompt}
