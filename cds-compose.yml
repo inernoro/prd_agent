@@ -61,7 +61,7 @@ x-cds-deploy-modes:
       command: >-
         corepack enable &&
         pnpm install --frozen-lockfile &&
-        pnpm exec vite build &&
+        VITE_BUILD_ID="${VITE_BUILD_ID:-$(date +%Y%m%d%H%M%S)}" pnpm exec vite build &&
         npx -y serve -s dist -l tcp://0.0.0.0:8000
 services:
   # ── App Services (有相对路径 volume mount) ──
@@ -119,7 +119,7 @@ services:
     command: >-
       corepack enable &&
       pnpm install --frozen-lockfile &&
-      pnpm exec vite build &&
+      VITE_BUILD_ID="${VITE_BUILD_ID:-$(date +%Y%m%d%H%M%S)}" pnpm exec vite build &&
       npx -y serve -s dist -l tcp://0.0.0.0:8000
     labels:
       cds.path-prefix: "/"
