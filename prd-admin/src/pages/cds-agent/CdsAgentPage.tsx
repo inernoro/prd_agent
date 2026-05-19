@@ -3119,233 +3119,225 @@ export default function CdsAgentPage() {
       : timeoutAt
         ? `${formatDuration(Math.max(0, Math.round((timeoutAt.getTime() - nowTick) / 1000)))} 后超时`
         : `启动后 ${formatDuration(timeoutSeconds)}`;
-    const simpleTelemetry = [
-      { label: '任务状态', value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未创建', detail: activeSessionTimedOut ? '旧 run 已超时；再次运行会创建新会话' : activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
-      { label: 'traceId', value: activeSession ? shortId(activeSession.traceId, 14) : '待生成', detail: activeSession?.cdsSessionId ? `CDS ${shortId(activeSession.cdsSessionId, 10)}` : 'MAP/CDS 全链路定位' },
+	    const simpleTelemetry = [
+	      { label: '任务状态', value: activeSession ? statusLabel(activeSessionEffectiveStatus) : '未创建', detail: activeSessionTimedOut ? '旧 run 已超时；再次运行会创建新会话' : activeSession?.currentRuntimeRunId ? `run ${shortId(activeSession.currentRuntimeRunId, 10)}` : '可一键创建并运行' },
+	      { label: 'traceId', value: activeSession ? shortId(activeSession.traceId, 14) : '待生成', detail: activeSession?.cdsSessionId ? `CDS ${shortId(activeSession.cdsSessionId, 10)}` : 'MAP/CDS 全链路定位' },
       { label: '耗时', value: sessionStartedAt ? formatDuration(elapsedSeconds) : '未启动', detail: sessionStartedAt ? `started ${formatClockTime(sessionStartedAt)}` : '启动后开始计时' },
       { label: 'timeoutAt', value: timeoutAt ? formatClockTime(timeoutAt) : '待计算', detail: timeoutState },
       { label: 'lastEventSeq', value: String(lastSeq), detail: eventStreamHealthy ? 'SSE live' : events.length > 0 ? '分页回放' : '暂无事件' },
-      { label: 'Stop', value: stopState, detail: runtimeDiagnostics.cancelEvidence.eventCount > 0 ? runtimeDiagnostics.cancelEvidence.latestMessage || runtimeDiagnostics.cancelState : runtimeDiagnostics.cancelState },
-      { label: '产物入口', value: `${artifacts.length}`, detail: artifacts.length > 0 ? '右侧可查看和复制' : '等待 diff / 日志 / 快照' },
-    ];
-    return (
-      <div className="h-full min-h-0 flex flex-col overflow-y-auto px-4 py-5 text-white sm:px-6" style={{ background: '#0F172A' }}>
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-normal">CDS Agent</h1>
-            <p className="mt-1 text-sm text-white/55">三步发起只读代码巡检：选仓库、写任务、运行；状态、trace、超时、事件和产物实时可见。</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {viewToggle}
-            <button
-              type="button"
-              onClick={() => void loadAll()}
-              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/70"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
-            >
-              <RefreshCw size={14} /> 刷新
-            </button>
-          </div>
-        </header>
-
-        <div className="mt-4">
-          {executionRunway}
-        </div>
-
-        <section className="mt-3 rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
-          <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_160px]">
-            <div className="min-w-0 rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-white/36">1. 目标</div>
-              <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_96px]">
-                <input
-                  value={draft.gitRepository}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
-                  placeholder="仓库 URL，可留空使用默认 workspace"
-                  className="min-h-10 rounded-md px-3 text-sm text-white outline-none placeholder:text-white/30"
-                  style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
-                />
-                <input
-                  value={draft.gitRef}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
-                  placeholder="main"
-                  className="min-h-10 rounded-md px-3 text-sm text-white outline-none placeholder:text-white/30"
-                  style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
-                />
-              </div>
-            </div>
-            <div className="min-w-0 rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-white/36">2. 任务</div>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={2}
-                placeholder="例如：巡检当前仓库，找一个小问题并给出修复计划"
-                className="mt-2 min-h-[56px] w-full resize-none rounded-md px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
-                style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
-              />
-            </div>
-            <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-white/36">3. 运行</div>
-              <button
-                type="button"
-                onClick={() => void runSimpleReadonlyReview()}
-                disabled={sendDisabled}
-                className="mt-2 inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-md text-sm font-semibold disabled:opacity-45"
-                style={{ background: 'rgba(34,197,94,0.13)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
-              >
-                {busy ? <MapSpinner size={15} /> : <Play size={15} />}
-                运行只读巡检
-              </button>
-            </div>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-7">
-            {simpleTelemetry.map((item) => (
-              <div key={item.label} className="min-h-[72px] rounded-lg p-2.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                <div className="text-[11px] text-white/36">{item.label}</div>
-                <div className="mt-1 truncate text-sm font-semibold text-white/78">{item.value}</div>
-                <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-white/42">{item.detail}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <div className="mt-3 grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)_300px]">
-          <aside className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-white/60">我的任务</span>
-              <button
-                type="button"
-                onClick={() => void createSession()}
-                disabled={!canCreateSession || busy}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs disabled:opacity-45"
-                style={{ background: 'rgba(99,179,237,0.15)', border: '1px solid rgba(99,179,237,0.34)', color: 'rgba(186,230,253,0.95)' }}
-              >
-                <Plus size={12} /> 新任务
-              </button>
-            </div>
-            {!canCreateSession && (
-              <div className="mb-2 rounded-md px-2 py-1.5 text-xs leading-relaxed text-amber-100/80" style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.24)' }}>
-                {activeProfileBlockReason || activeRuntimePoolBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
-                {activeProfileBlockReason && (
-                  <button
+	      { label: 'Stop', value: stopState, detail: runtimeDiagnostics.cancelEvidence.eventCount > 0 ? runtimeDiagnostics.cancelEvidence.latestMessage || runtimeDiagnostics.cancelState : runtimeDiagnostics.cancelState },
+	      { label: '产物入口', value: `${artifacts.length}`, detail: artifacts.length > 0 ? '右侧可查看和复制' : '等待 diff / 日志 / 快照' },
+	    ];
+	    const activeTargetLabel = activeSession
+	      ? `${activeSession.gitRepository || activeSession.cdsProjectId || '默认 workspace'} · ${activeSession.gitRef || 'main'}`
+	      : `${draft.gitRepository.trim() || '默认 workspace'} · ${draft.gitRef.trim() || 'main'}`;
+	    const progressChecklist = [
+	      { label: '目标仓库', detail: activeTargetLabel, state: 'pass' },
+	      {
+	        label: canCreateSession ? '运行环境就绪' : '等待模型配置',
+	        detail: canCreateSession ? formatResourcePolicy(activeRuntimeProfile) : (activeProfileBlockReason || activeRuntimePoolBlockReason || '需要可用模型后才能创建任务'),
+	        state: canCreateSession ? 'pass' : 'warn',
+	      },
+	      {
+	        label: activeSession ? '任务已创建' : '等待发起巡检',
+	        detail: activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · trace ${shortId(activeSession.traceId, 12)}` : '输入任务后点击运行',
+	        state: activeSession ? 'pass' : 'pending',
+	      },
+	      {
+	        label: lastAssistant || artifacts.length > 0 ? '结果可复盘' : '等待 Agent 输出',
+	        detail: artifacts.length > 0 ? `${artifacts.length} 个产物 / ${lastSeq} 个事件` : `${lastSeq} 个事件 / ${messages.length} 条消息`,
+	        state: lastAssistant || artifacts.length > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
+	      },
+	    ] as const;
+	    const evidenceEvents = displayedEvents
+	      .filter((event) => event.type === 'tool_result' || event.type === 'error' || event.type === 'file' || event.type === 'diff')
+	      .slice(-6)
+	      .reverse();
+	    return (
+	      <div className="h-full min-h-0 overflow-y-auto px-3 py-4 text-white sm:px-5" style={{ background: '#0B0F14' }}>
+	        <div className="mx-auto grid min-h-[calc(100vh-112px)] max-w-[1880px] gap-4 xl:grid-cols-[292px_minmax(0,1fr)_336px]">
+	          <aside className="min-h-[360px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
+	            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+	              <div className="min-w-0">
+	                <div className="text-sm font-semibold text-white/82">任务</div>
+	                <div className="mt-0.5 truncate text-xs text-white/38">{sortedSessions.length} 个会话 · {activeSession ? statusLabel(activeSessionEffectiveStatus) : '待运行'}</div>
+	              </div>
+	              <button
+	                type="button"
+	                onClick={() => void createSession()}
+	                disabled={!canCreateSession || busy}
+	                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/70 disabled:opacity-45"
+	                style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.1)' }}
+	                aria-label="新建任务"
+	              >
+	                <Plus size={15} />
+	              </button>
+	            </div>
+	            {!canCreateSession && (
+	              <div className="m-3 rounded-lg px-3 py-2 text-xs leading-relaxed text-amber-100/80" style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.22)' }}>
+	                {activeProfileBlockReason || activeRuntimePoolBlockReason || '请先在专业模式选择 CDS 连接和模型配置。'}
+	                {activeProfileBlockReason && (
+	                  <button
                     type="button"
-                    onClick={() => void importDefaultProfile()}
-                    className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs"
-                    style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
-                  >
-                    <Server size={12} /> 同步系统主模型
-                  </button>
-                )}
-              </div>
-            )}
-            <label className="mb-3 flex items-center gap-2 rounded-md px-2 py-1.5" style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.14)' }}>
-              <Search size={13} className="text-white/35" />
-              <input
-                value={sessionQuery}
-                onChange={(e) => setSessionQuery(e.target.value)}
+	                    onClick={() => void importDefaultProfile()}
+	                    className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs font-semibold"
+	                    style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.34)', color: 'rgba(253,230,138,0.95)' }}
+	                  >
+	                    <Server size={12} /> 同步系统主模型
+	                  </button>
+	                )}
+	              </div>
+	            )}
+	            <label className="mx-3 mt-3 flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+	              <Search size={13} className="text-white/35" />
+	              <input
+	                value={sessionQuery}
+	                onChange={(e) => setSessionQuery(e.target.value)}
                 className="min-w-0 flex-1 bg-transparent text-xs text-white outline-none placeholder:text-white/32"
-                placeholder="搜索任务、模型、状态"
-              />
-            </label>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-              {sortedSessions.length === 0 ? (
-                <div className="flex h-full min-h-[120px] items-center justify-center rounded-lg text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  还没有任务，点「新任务」开始
-                </div>
-              ) : visibleSessions.length === 0 ? (
-                <div className="flex min-h-[120px] items-center justify-center rounded-lg text-center text-xs text-white/40" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  没有匹配的任务
-                </div>
-              ) : (
+	                placeholder="搜索任务、模型、状态"
+	              />
+	            </label>
+	            <div className="h-[calc(100%-116px)] space-y-3 overflow-y-auto px-3 pb-3 pt-3" style={{ overscrollBehavior: 'contain' }}>
+	              {sortedSessions.length === 0 ? (
+	                <div className="flex h-full min-h-[180px] items-center justify-center rounded-xl text-center text-xs text-white/38" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+	                  还没有任务
+	                </div>
+	              ) : visibleSessions.length === 0 ? (
+	                <div className="flex min-h-[180px] items-center justify-center rounded-xl text-center text-xs text-white/38" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+	                  没有匹配的任务
+	                </div>
+	              ) : (
                 ([
                   ['运行中', runningSessions],
                   ['已完成', finishedSessions],
                 ] as const).filter(([, list]) => list.length > 0).map(([groupLabel, list]) => (
-                  <div key={groupLabel} className="space-y-1.5">
-                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wide text-white/35">{groupLabel} · {list.length}</div>
-                    {list.map((session) => {
-                      const selected = session.id === activeSession?.id;
-                      const sessionState = resolveSessionRuntimeState(session, nowTick);
-                      const live = sessionState.isLive;
-                      return (
+	                  <div key={groupLabel} className="space-y-1.5">
+	                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wide text-white/34">{groupLabel} · {list.length}</div>
+	                    {list.map((session) => {
+	                      const selected = session.id === activeSession?.id;
+	                      const sessionState = resolveSessionRuntimeState(session, nowTick);
+	                      const live = sessionState.isLive;
+	                      return (
                         <button
                           key={session.id}
-                          type="button"
-                          onClick={() => setActiveSessionId(session.id)}
-                          className="block w-full rounded-lg px-3 py-2 text-left"
-                          style={{
-                            background: selected ? 'rgba(99,179,237,0.14)' : 'rgba(0,0,0,0.16)',
-                            border: selected ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.06)',
-                          }}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            {live && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />}
-                            <span className="truncate text-sm text-white/78">{session.title}</span>
-                          </div>
-                          <div className="mt-1 text-xs text-white/42">{statusLabel(sessionState.effectiveStatus)} · {new Date(session.updatedAt).toLocaleString()}</div>
-                        </button>
-                      );
-                    })}
+	                          type="button"
+	                          onClick={() => setActiveSessionId(session.id)}
+	                          className="block w-full rounded-xl px-3 py-2.5 text-left"
+	                          style={{
+	                            background: selected ? 'rgba(34,197,94,0.10)' : 'rgba(0,0,0,0.14)',
+	                            border: selected ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(255,255,255,0.06)',
+	                          }}
+	                        >
+	                          <div className="flex items-center gap-2">
+	                            <span className={`h-2 w-2 shrink-0 rounded-full ${live ? 'animate-pulse bg-emerald-400' : selected ? 'bg-emerald-500/80' : 'bg-white/18'}`} />
+	                            <span className="truncate text-sm font-medium text-white/76">{session.title}</span>
+	                          </div>
+	                          <div className="mt-1 truncate pl-4 text-xs text-white/38">{statusLabel(sessionState.effectiveStatus)} · {new Date(session.updatedAt).toLocaleString()}</div>
+	                        </button>
+	                      );
+	                    })}
                   </div>
                 ))
-              )}
-            </div>
-          </aside>
+	              )}
+	            </div>
+	          </aside>
 
-          <section className="min-h-0 flex flex-col rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-white/78">{activeSession ? activeSession.title : '未选择任务'}</div>
-                <div className="mt-0.5 truncate text-xs text-white/42">
-                  {activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · ${activeSessionProfile?.model ?? activeProfile?.model ?? '未配置模型'}` : '从左侧选择或新建一个任务'}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {activeSession && canStartActiveSession && (
-                  <button
-                    type="button"
-                    onClick={() => void startSession()}
-                    disabled={busy}
-                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-45"
-                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}
-                  >
-                    <Play size={14} /> {primaryActionLabel(activeSessionEffectiveStatus)}
+	          <main className="min-h-[640px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.075)' }}>
+	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
+	              <div className="min-w-0">
+	                <div className="flex items-center gap-2">
+	                  <span className={`h-2.5 w-2.5 rounded-full ${isLiveStatus ? 'animate-pulse bg-emerald-400' : activeSession ? 'bg-white/28' : 'bg-amber-300/80'}`} />
+	                  <h1 className="truncate text-base font-semibold text-white/86">{activeSession ? activeSession.title : 'CDS Agent 只读巡检'}</h1>
+	                </div>
+	                <div className="mt-1 truncate text-xs text-white/42">
+	                  {activeSession ? `${statusLabel(activeSessionEffectiveStatus)} · ${activeTargetLabel}` : '填写目标和任务，点击运行后自动创建 CDS 会话'}
+	                </div>
+	              </div>
+	              <div className="flex items-center gap-2">
+	                {viewToggle}
+	                <button
+	                  type="button"
+	                  onClick={() => void loadAll()}
+	                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white/58 hover:text-white/82"
+	                  style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+	                  aria-label="刷新"
+	                >
+	                  <RefreshCw size={14} />
+	                </button>
+	                {activeSession && canStartActiveSession && (
+	                  <button
+	                    type="button"
+	                    onClick={() => void startSession()}
+	                    disabled={busy}
+	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
+	                    style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: 'rgba(134,239,172,0.95)' }}
+	                  >
+	                    <Play size={14} /> {primaryActionLabel(activeSessionEffectiveStatus)}
                   </button>
                 )}
                 {activeSession && activeSessionRuntimeState.isLive && (
                   <button
-                    type="button"
-                    onClick={() => void stopSession()}
-                    disabled={busy}
-                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm disabled:opacity-45"
-                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}
-                  >
-                    <Square size={14} /> 停止
+	                    type="button"
+	                    onClick={() => void stopSession()}
+	                    disabled={busy}
+	                    className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold disabled:opacity-45"
+	                    style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(252,165,165,0.95)' }}
+	                  >
+	                    <Square size={14} /> 停止
                   </button>
-                )}
-              </div>
-            </div>
+	                )}
+	              </div>
+	            </div>
 
-            <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.78)', border: '1px solid rgba(148,163,184,0.12)', overscrollBehavior: 'contain' }}>
-              {!hasTimeline ? (
-                <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 text-center text-sm text-white/40">
-                  <MessageSquare size={20} className="text-white/30" />
-                  <div>在下方输入要做的事，例如<br />“读一下 README 的前 20 行”</div>
-                </div>
-              ) : (
-                timelineBlocks.map((block) => {
+	            <div className="grid gap-2 px-5 py-4 md:grid-cols-[minmax(0,1fr)_116px]">
+	              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_104px]">
+	                <input
+	                  value={draft.gitRepository}
+	                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+	                  placeholder="仓库 URL，可留空使用默认 workspace"
+	                  className="h-10 rounded-xl px-3 text-sm text-white outline-none placeholder:text-white/28"
+	                  style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}
+	                />
+	                <input
+	                  value={draft.gitRef}
+	                  onChange={(e) => setDraft((prev) => ({ ...prev, gitRef: e.target.value }))}
+	                  placeholder="main"
+	                  className="h-10 rounded-xl px-3 text-sm text-white outline-none placeholder:text-white/28"
+	                  style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}
+	                />
+	              </div>
+	              <button
+	                type="button"
+	                onClick={() => void runSimpleReadonlyReview()}
+	                disabled={sendDisabled}
+	                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl text-sm font-semibold disabled:opacity-45"
+	                style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
+	              >
+	                {busy ? <MapSpinner size={15} /> : <Play size={15} />}
+	                运行
+	              </button>
+	            </div>
+
+	            <div ref={timelineRef} className="mx-5 min-h-[420px] max-h-[calc(100vh-370px)] space-y-3 overflow-y-auto rounded-2xl p-4" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)', overscrollBehavior: 'contain' }}>
+	              {!hasTimeline ? (
+	                <div className="flex h-full min-h-[360px] flex-col items-center justify-center gap-3 text-center text-sm text-white/40">
+	                  <MessageSquare size={24} className="text-white/28" />
+	                  <div className="max-w-sm leading-relaxed">输入巡检目标后运行。Agent 的回复会出现在这里，过程事件默认折叠，避免日志淹没结果。</div>
+	                </div>
+	              ) : (
+	                timelineBlocks.map((block) => {
                   if (block.type === 'msg') {
                     const isUser = block.msg.role === 'user';
                     return (
-                      <article key={block.key} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-                        <div
-                          className="max-w-[82%] rounded-lg px-3 py-2"
-                          style={{
-                            background: isUser ? 'rgba(99,179,237,0.15)' : 'rgba(255,255,255,0.045)',
-                            border: isUser ? '1px solid rgba(99,179,237,0.32)' : '1px solid rgba(255,255,255,0.08)',
-                          }}
-                        >
-                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
+	                      <article key={block.key} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+	                        <div
+	                          className="max-w-[86%] rounded-2xl px-3.5 py-2.5"
+	                          style={{
+	                            background: isUser ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.045)',
+	                            border: isUser ? '1px solid rgba(34,197,94,0.28)' : '1px solid rgba(255,255,255,0.08)',
+	                          }}
+	                        >
+	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
                           {block.msg.role === 'assistant' && lastAssistant && block.msg.id === lastAssistant.id ? (
                             <div className="text-sm leading-relaxed text-white/78">
                               <StreamingText text={block.msg.content} streaming={isLiveStatus} mode="blur" />
@@ -3378,10 +3370,10 @@ export default function CdsAgentPage() {
                     : pendingApproval
                       ? { background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)' }
                       : { background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)' };
-                  return (
-                    <div key={block.key} className="flex justify-start">
-                      <div className="w-full max-w-[92%] rounded-lg" style={headerTone}>
-                        <button
+	                  return (
+	                    <div key={block.key} className="flex justify-start">
+	                      <div className="w-full max-w-[92%] rounded-xl" style={headerTone}>
+	                        <button
                           type="button"
                           onClick={() => setExpandedGroups((prev) => {
                             const next = new Set(prev);
@@ -3389,10 +3381,10 @@ export default function CdsAgentPage() {
                             return next;
                           })}
                           disabled={forcedOpen}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-white/70 disabled:cursor-default"
-                        >
-                          <Terminal size={12} className="shrink-0" />
-                          <span className="shrink-0 font-semibold">
+	                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-white/64 disabled:cursor-default"
+	                        >
+	                          <Terminal size={12} className="shrink-0" />
+	                          <span className="shrink-0 font-semibold">
                             {pendingApproval ? '等待审批' : hasError ? '执行过程（含错误）' : '执行过程'}
                           </span>
                           <span className="shrink-0 text-white/40">{events.length} 步 · 用时 {durationSec}s</span>
@@ -3447,115 +3439,173 @@ export default function CdsAgentPage() {
                     </div>
                   );
                 })
-              )}
-              {awaitingAgent && (
-                <div className="flex justify-start">
-                  <div className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(99,179,237,0.1)', border: '1px solid rgba(99,179,237,0.24)' }}>
-                    <MapSpinner size={13} />
-                    <span>Agent 正在执行… 已等待 {waitedSec}s</span>
-                  </div>
+	              )}
+	              {awaitingAgent && (
+	                <div className="flex justify-start">
+	                  <div className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)' }}>
+	                    <MapSpinner size={13} />
+	                    <span>Agent 正在执行… 已等待 {waitedSec}s</span>
+	                  </div>
                 </div>
               )}
-            </div>
+	            </div>
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              {promptPresets.map((item) => (
-                <button
-                  key={item}
+	            <div className="flex flex-wrap gap-2 px-5 pb-2 pt-3">
+	              {promptPresets.map((item) => (
+	                <button
+	                  key={item}
                   type="button"
-                  onClick={() => setPrompt(item)}
-                  className="rounded-md px-2 py-1 text-xs text-white/48 hover:text-white/76"
-                  style={{ background: 'rgba(15,23,42,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+	                  onClick={() => setPrompt(item)}
+	                  className="rounded-lg px-2.5 py-1.5 text-xs text-white/46 hover:text-white/76"
+	                  style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}
+	                >
+	                  {item}
+	                </button>
+	              ))}
+	            </div>
 
-            <div className="mt-2 flex gap-2">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={3}
-                placeholder="告诉 Agent 要做什么…"
-                className="min-h-[76px] flex-1 resize-none rounded-lg px-3 py-2 text-sm text-white outline-none"
-                style={{ background: 'rgba(15,23,42,0.82)', border: '1px solid rgba(148,163,184,0.16)' }}
-              />
-              <button
-                type="button"
-                onClick={() => void runSimpleReadonlyReview()}
-                disabled={sendDisabled}
-                className="inline-flex w-[112px] items-center justify-center gap-2 rounded-lg text-sm font-medium disabled:opacity-45"
-                style={{ background: 'rgba(99,179,237,0.17)', border: '1px solid rgba(99,179,237,0.4)', color: 'rgba(186,230,253,0.96)' }}
-              >
-                {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
-                {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
-              </button>
-            </div>
-          </section>
+	            <div className="flex gap-2 px-5 pb-5">
+	              <textarea
+	                value={prompt}
+	                onChange={(e) => setPrompt(e.target.value)}
+	                rows={3}
+	                placeholder="告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR"
+	                className="min-h-[78px] flex-1 resize-none rounded-2xl px-4 py-3 text-sm text-white outline-none placeholder:text-white/30"
+	                style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}
+	              />
+	              <button
+	                type="button"
+	                onClick={() => void runSimpleReadonlyReview()}
+	                disabled={sendDisabled}
+	                className="inline-flex w-[92px] items-center justify-center gap-2 rounded-2xl text-sm font-semibold disabled:opacity-45"
+	                style={{ background: 'rgba(34,197,94,0.14)', border: '1px solid rgba(34,197,94,0.34)', color: 'rgba(134,239,172,0.98)' }}
+	              >
+	                {busy ? <MapSpinner size={14} /> : activeSession?.manualTakeoverEnabled ? <UserCheck size={14} /> : <Send size={14} />}
+	                {activeSession?.manualTakeoverEnabled ? '记录' : activeSession ? '发送' : '运行'}
+	              </button>
+	            </div>
+	          </main>
 
-          <aside className="min-h-0 flex flex-col gap-3 rounded-xl p-3" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.18)' }}>
-            <div className="rounded-lg p-3" style={{ background: 'rgba(15,23,42,0.78)', border: gitContext.prUrl ? '1px solid rgba(34,197,94,0.24)' : '1px solid rgba(148,163,184,0.12)' }}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="inline-flex items-center gap-2 text-xs font-semibold text-white/66"><GitPullRequest size={13} /> Pull Request</div>
-                <span className="rounded px-2 py-0.5 text-[11px]" style={{ background: gitContext.prUrl ? 'rgba(34,197,94,0.13)' : 'rgba(148,163,184,0.1)', color: gitContext.prUrl ? 'rgba(134,239,172,0.95)' : 'rgba(148,163,184,0.9)' }}>
-                  {gitContext.prUrl ? 'Ready' : 'Pending'}
-                </span>
-              </div>
-              <div className="mt-3 space-y-1.5 text-xs">
-                <div className="flex justify-between gap-2"><span className="text-white/40">分支</span><span className="truncate text-white/72">{gitContext.branch || '等待 Agent 创建'}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-white/40">提交</span><span className="truncate font-mono text-white/72">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
-                {gitContext.prUrl ? (
-                  <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>
-                    <Globe2 size={12} /> 打开 Pull Request
-                  </a>
-                ) : (
-                  <div className="mt-2 rounded-md px-2 py-2 text-white/38" style={{ background: 'rgba(0,0,0,0.16)' }}>
-                    Agent 产生 diff 并通过审批后，PR 会固定出现在这里。
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-2 text-xs font-semibold text-white/60"><FileText size={13} /> 产物</span>
-              <button
-                type="button"
-                onClick={() => void collectArtifacts()}
-                disabled={!activeSession || busy}
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-white/55 hover:text-white/85 disabled:opacity-45"
-                style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
-              >
-                {busy ? <MapSpinner size={11} /> : <FileSearch size={11} />} 生成产物
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-              {artifacts.length === 0 ? (
-                <div className="rounded-lg px-3 py-4 text-xs text-white/42" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                  <div className="font-semibold text-white/58">等待证据</div>
-                  <div className="mt-2 space-y-1.5 leading-relaxed">
-                    <div>1. 文件树和仓库状态会证明它看过代码。</div>
-                    <div>2. diff、命令输出和日志会证明它真的执行过。</div>
-                    <div>3. PR 链接或页面快照会成为最终交付物。</div>
-                  </div>
-                </div>
-              ) : (
-                artifacts.map((artifact) => (
-                  <div key={artifact.id} className="rounded-lg p-2.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white/72">{artifactIcon(artifact.kind)} {artifact.title}</span>
-                      <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="rounded p-1 text-white/40 hover:text-white/80" aria-label={`复制${artifact.title}`}>
-                        <Copy size={12} />
-                      </button>
-                    </div>
-                    <div className="mt-1 truncate text-xs text-white/45">{artifact.summary}</div>
-                    <pre className="mt-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-xs text-white/62">{artifact.body}</pre>
-                  </div>
-                ))
-              )}
-            </div>
-          </aside>
-        </div>
-      </div>
+	          <aside className="min-h-[520px] overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)' }}>
+	            <div className="border-b border-white/10 px-4 py-4">
+	              <div className="flex items-center justify-between gap-3">
+	                <div>
+	                  <div className="text-sm font-semibold text-white/82">进度</div>
+	                  <div className="mt-1 text-xs text-white/42">
+	                    {progressChecklist.filter((item) => item.state === 'pass').length}/{progressChecklist.length} 已完成
+	                  </div>
+	                </div>
+	                <span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: isLiveStatus ? 'rgba(34,197,94,0.14)' : 'rgba(255,255,255,0.06)', color: isLiveStatus ? 'rgba(134,239,172,0.95)' : 'rgba(203,213,225,0.72)' }}>
+	                  {activeSession ? statusLabel(activeSessionEffectiveStatus) : '待运行'}
+	                </span>
+	              </div>
+	              <div className="mt-4 space-y-3">
+	                {progressChecklist.map((item) => {
+	                  const done = item.state === 'pass';
+	                  const warn = item.state === 'warn';
+	                  return (
+	                    <div key={item.label} className="flex gap-2.5">
+	                      <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full" style={{ background: done ? 'rgba(34,197,94,0.2)' : warn ? 'rgba(245,158,11,0.18)' : 'rgba(255,255,255,0.08)', color: done ? 'rgba(134,239,172,0.95)' : warn ? 'rgba(253,230,138,0.92)' : 'rgba(148,163,184,0.74)' }}>
+	                        {done ? <ShieldCheck size={12} /> : warn ? <KeyRound size={11} /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+	                      </span>
+	                      <div className="min-w-0">
+	                        <div className="text-sm font-medium text-white/76">{item.label}</div>
+	                        <div className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-white/40">{item.detail}</div>
+	                      </div>
+	                    </div>
+	                  );
+	                })}
+	              </div>
+	            </div>
+
+	            <div className="border-b border-white/10 px-4 py-4">
+	              <div className="mb-3 flex items-center justify-between gap-2">
+	                <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76"><GitPullRequest size={14} /> Git</div>
+	                <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: gitContext.prUrl ? 'rgba(34,197,94,0.13)' : 'rgba(148,163,184,0.1)', color: gitContext.prUrl ? 'rgba(134,239,172,0.95)' : 'rgba(148,163,184,0.86)' }}>
+	                  {gitContext.prUrl ? 'Ready' : 'Pending'}
+	                </span>
+	              </div>
+	              <div className="space-y-2 text-xs">
+	                <div className="flex justify-between gap-3"><span className="text-white/38">目标</span><span className="min-w-0 truncate text-white/70">{activeTargetLabel}</span></div>
+	                <div className="flex justify-between gap-3"><span className="text-white/38">分支</span><span className="min-w-0 truncate text-white/70">{gitContext.branch || '等待 Agent 创建'}</span></div>
+	                <div className="flex justify-between gap-3"><span className="text-white/38">提交</span><span className="font-mono text-white/70">{gitContext.commit ? gitContext.commit.slice(0, 12) : 'n/a'}</span></div>
+	              </div>
+	              {gitContext.prUrl && (
+	                <a href={gitContext.prUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(134,239,172,0.95)' }}>
+	                  <Globe2 size={12} /> 打开 Pull Request
+	                </a>
+	              )}
+	            </div>
+
+	            <div className="border-b border-white/10 px-4 py-4">
+	              <div className="mb-3 flex items-center justify-between gap-2">
+	                <span className="inline-flex items-center gap-2 text-sm font-semibold text-white/76"><FileText size={14} /> 证据</span>
+	                <button
+	                  type="button"
+	                  onClick={() => void collectArtifacts()}
+	                  disabled={!activeSession || busy}
+	                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-white/55 hover:text-white/85 disabled:opacity-45"
+	                  style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}
+	                >
+	                  {busy ? <MapSpinner size={11} /> : <FileSearch size={11} />} 生成
+	                </button>
+	              </div>
+	              <div className="max-h-[260px] space-y-2 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+	                {artifacts.length > 0 ? artifacts.map((artifact) => (
+	                  <div key={artifact.id} className="rounded-xl p-2.5" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+	                    <div className="flex items-center justify-between gap-2">
+	                      <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-xs font-semibold text-white/72">{artifactIcon(artifact.kind)} {artifact.title}</span>
+	                      <button type="button" onClick={() => void copyText(artifact.title, artifact.body)} className="shrink-0 rounded p-1 text-white/40 hover:text-white/80" aria-label={`复制${artifact.title}`}>
+	                        <Copy size={12} />
+	                      </button>
+	                    </div>
+	                    <div className="mt-1 line-clamp-2 text-xs text-white/42">{artifact.summary}</div>
+	                  </div>
+	                )) : evidenceEvents.length > 0 ? evidenceEvents.map((event) => {
+	                  const payload = parsePayload(event);
+	                  return (
+	                    <div key={event.id} className="rounded-xl px-3 py-2 text-xs" style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.06)' }}>
+	                      <div className="flex items-center justify-between gap-2">
+	                        <span className="font-semibold text-white/66">{event.type === 'error' ? '错误' : event.type === 'diff' ? 'Diff' : event.type === 'file' ? '文件' : '工具结果'}</span>
+	                        <span className="font-mono text-white/30">#{event.seq}</span>
+	                      </div>
+	                      <div className="mt-1 line-clamp-2 text-white/38">{String(payload.message ?? payload.summary ?? payload.path ?? payload.toolName ?? '已记录')}</div>
+	                    </div>
+	                  );
+	                }) : (
+	                  <div className="rounded-xl px-3 py-4 text-xs leading-relaxed text-white/38" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }}>
+	                    等待文件、diff、命令输出或日志证据。
+	                  </div>
+	                )}
+	              </div>
+	            </div>
+
+	            <div className="px-4 py-4">
+	              <div className="mb-3 text-sm font-semibold text-white/76">可观测性</div>
+	              <div className="grid grid-cols-2 gap-2">
+	                {simpleTelemetry.map((item) => (
+	                  <div key={item.label} className="min-h-[64px] rounded-xl p-2.5" style={{ background: 'rgba(0,0,0,0.14)', border: '1px solid rgba(255,255,255,0.055)' }}>
+	                    <div className="truncate text-[11px] text-white/34">{item.label}</div>
+	                    <div className="mt-1 truncate text-xs font-semibold text-white/76">{item.value}</div>
+	                    <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-white/34">{item.detail}</div>
+	                  </div>
+	                ))}
+	              </div>
+	              {(runtimeDiagnostics.commercialNextAction || runtimeDiagnostics.commercialNextCommand) && (
+	                <details className="mt-3 rounded-xl px-3 py-2 text-xs text-white/46" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.055)' }}>
+	                  <summary className="cursor-pointer select-none font-semibold text-white/58">诊断信息</summary>
+	                  {runtimeDiagnostics.commercialNextAction && <div className="mt-2 leading-relaxed">{runtimeDiagnostics.commercialNextAction}</div>}
+	                  {runtimeDiagnostics.commercialNextCommand && (
+	                    <code className="mt-2 block break-all rounded-lg px-2 py-1.5 text-[11px] text-white/55" style={{ background: 'rgba(0,0,0,0.22)' }}>
+	                      {runtimeDiagnostics.commercialNextCommand}
+	                    </code>
+	                  )}
+	                </details>
+	              )}
+	            </div>
+	          </aside>
+	        </div>
+	      </div>
     );
   }
 
