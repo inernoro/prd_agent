@@ -829,13 +829,18 @@ def _preview_root_from_host() -> str:
     host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
     if host.startswith("http://") or host.startswith("https://"):
         host = host.split("://", 1)[1]
-    # 剥端口（如 cds.miduo.org:9900 → cds.miduo.org），后面后缀匹配才稳定
-    host_no_port = host.split(":", 1)[0]
+    # 剥端口，但 IPv6 字面量 `[::1]:9900` 含 `:` 不能用普通 split 切（会把
+    # 地址也切碎成 `[`）。先识别 bracket 形态保留整个 `[...]`，再考虑端口。
+    if host.startswith("["):
+        end = host.find("]")
+        host_no_port = host[: end + 1] if end >= 0 else host
+    else:
+        host_no_port = host.split(":", 1)[0]
     if not host_no_port:
         return "miduo.org"
     # `cds.miduo.org` / 普通 miduo 子域 → 预览根仍走 miduo.org
     # 用**精确后缀**匹配而非子串，避免 `notmiduo.com` / `api.miduo.org.evil.com`
-    # 被误判成 miduo（Codex P2 抓到的子串匹配漏洞）。
+    # 被误判成 miduo（Codex 早前抓的子串匹配漏洞）。
     if host_no_port == "miduo.org" or host_no_port.endswith(".miduo.org"):
         return "miduo.org"
     return host_no_port
