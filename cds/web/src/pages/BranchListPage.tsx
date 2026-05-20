@@ -280,6 +280,12 @@ type BranchAction = {
 type PreviewTarget = Window | null;
 type ActivityTypeFilter = 'all' | 'api' | 'web' | 'ai';
 
+type FailedDeployTarget = {
+  branch: BranchSummary;
+  profileId?: string;
+  label: string;
+};
+
 type HostStatsState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
@@ -1011,6 +1017,7 @@ export function BranchListPage(): JSX.Element {
   const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
+  const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
@@ -1442,6 +1449,29 @@ export function BranchListPage(): JSX.Element {
     () => branches.filter((branch) => selectedBranchIds.includes(branch.id)),
     [branches, selectedBranchIds],
   );
+  const failedDeployTargets = useMemo<FailedDeployTarget[]>(() => {
+    const targets: FailedDeployTarget[] = [];
+    for (const branch of branches) {
+      const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
+      if (failedServices.length > 0) {
+        for (const service of failedServices) {
+          targets.push({
+            branch,
+            profileId: service.profileId,
+            label: `${branch.branch} / ${service.profileId}`,
+          });
+        }
+        continue;
+      }
+      if (branch.status === 'error') {
+        targets.push({
+          branch,
+          label: `${branch.branch} / 全部分支服务`,
+        });
+      }
+    }
+    return targets;
+  }, [branches]);
   // Branches displayed in the grid: favorites first, then by recent activity.
   // We no longer expose status filters or compact toggles in the list itself
   // (the search dropdown and per-card status pill cover those needs).
@@ -1902,6 +1932,89 @@ export function BranchListPage(): JSX.Element {
     }
   }, [refresh, setAction]);
 
+  const redeployFailedContainers = useCallback(async (): Promise<void> => {
+    if (redeployFailedRunning) return;
+    if (failedDeployTargets.length === 0) {
+      setToast('当前项目没有失败容器');
+      return;
+    }
+
+    setRedeployFailedRunning(true);
+    try {
+      const startedAt = Date.now();
+      const startedIso = new Date().toISOString();
+      const total = failedDeployTargets.length;
+      let successCount = 0;
+      let failedCount = 0;
+      const failedLabels: string[] = [];
+
+      setToast(`开始队列重部署失败容器：${total} 个`);
+
+      for (let index = 0; index < failedDeployTargets.length; index += 1) {
+        const target = failedDeployTargets[index];
+        const { branch, profileId } = target;
+        const label = `${index + 1}/${total} ${target.label}`;
+        let ok = true;
+
+        setAction(branch.id, createAction('deploy', `队列重部署 ${label}`));
+        try {
+          const endpoint = profileId
+            ? `/api/branches/${encodeURIComponent(branch.id)}/deploy/${encodeURIComponent(profileId)}`
+            : `/api/branches/${encodeURIComponent(branch.id)}/deploy`;
+          await postSse(endpoint, {}, (event, data) => {
+            appendActionLog(branch.id, eventMessage(event, data));
+            if (event === 'complete' && typeof data === 'object' && data !== null && 'ok' in data) {
+              ok = Boolean((data as { ok?: unknown }).ok);
+            }
+            if (event === 'error') ok = false;
+          });
+
+          if (ok) {
+            successCount += 1;
+            setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', `队列重部署完成 ${label}`, 'success'));
+          } else {
+            failedCount += 1;
+            failedLabels.push(target.label);
+            setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', `队列重部署仍失败 ${label}`, 'error'));
+          }
+        } catch (err) {
+          failedCount += 1;
+          const message = err instanceof ApiError ? err.message : String(err);
+          failedLabels.push(`${target.label}: ${message}`);
+          setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', message, 'error'));
+        }
+      }
+
+      try {
+        await refresh(false);
+      } catch {
+        // The queue has already run; a transient list refresh failure should not
+        // prevent the completion notice from being written.
+      }
+
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const noticeTone = failedCount > 0 ? 'warning' : 'info';
+      const failedText = failedLabels.length > 0
+        ? `；仍失败：${failedLabels.slice(0, 5).join('、')}${failedLabels.length > 5 ? ` 等 ${failedLabels.length} 个` : ''}`
+        : '';
+      const noticeId = `branch:${projectId}:redeploy-failed:${startedIso}`;
+      window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
+        detail: {
+          id: noticeId,
+          title: '失败容器重部署队列已完成',
+          body: `共 ${total} 个，成功 ${successCount} 个，失败 ${failedCount} 个，耗时 ${elapsedSec}s${failedText}`,
+          tone: noticeTone,
+          href: `/branches/${encodeURIComponent(projectId)}`,
+          actionLabel: '查看分支',
+          source: 'ops',
+        },
+      }));
+      setToast(`失败容器重部署完成：成功 ${successCount}/${total}${failedCount ? `，失败 ${failedCount}` : ''}`);
+    } finally {
+      setRedeployFailedRunning(false);
+    }
+  }, [appendActionLog, failedDeployTargets, projectId, redeployFailedRunning, refresh, setAction]);
+
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -2314,6 +2427,16 @@ export function BranchListPage(): JSX.Element {
                 <a href={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
                   <Network />
                 </a>
+              </Button>
+              <Button
+                variant={failedDeployTargets.length > 0 ? 'outline' : 'ghost'}
+                size="sm"
+                onClick={() => void redeployFailedContainers()}
+                disabled={redeployFailedRunning || failedDeployTargets.length === 0}
+                title={failedDeployTargets.length > 0 ? `按队列重部署 ${failedDeployTargets.length} 个失败容器` : '当前没有失败容器'}
+              >
+                {redeployFailedRunning ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                重部署失败{failedDeployTargets.length > 0 ? ` ${failedDeployTargets.length}` : ''}
               </Button>
               <Button
                 variant="ghost"
