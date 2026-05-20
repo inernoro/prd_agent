@@ -606,11 +606,31 @@ export interface OperationLogEvent {
   timestamp: string;
 }
 
+/** A tail snapshot of docker logs captured when a deployment finalizes. */
+export interface OperationLogContainerSnapshot {
+  profileId: string;
+  containerName: string;
+  hostPort?: number;
+  status?: ServiceState['status'] | string;
+  capturedAt: string;
+  tailLines: number;
+  source: 'deploy-finalize' | 'deploy-error';
+  logs: string;
+  message?: string;
+}
+
 /** A complete operation log */
 export interface OperationLog {
   type: 'build' | 'run' | 'auto-build';
   startedAt: string;
   finishedAt?: string;
+  /**
+   * Timestamp when CDS judged the branch runtime to be truly ready.
+   * This is stamped after container creation plus readiness/startup probes,
+   * not when docker run starts.
+   */
+  runtimeStartedAt?: string;
+  containerLogSnapshots?: OperationLogContainerSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
 }

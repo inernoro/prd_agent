@@ -15,7 +15,7 @@ import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -1140,6 +1140,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
     githubApp,
     config,
   });
+
+  async function captureContainerLogSnapshots(
+    entry: BranchEntry,
+    source: OperationLogContainerSnapshot['source'],
+    profileIds?: Set<string>,
+    tailLines = 500,
+  ): Promise<OperationLogContainerSnapshot[]> {
+    const services = Object.entries(entry.services || {})
+      .filter(([profileId, svc]) => (!profileIds || profileIds.has(profileId)) && !!svc.containerName);
+    const snapshots: OperationLogContainerSnapshot[] = [];
+
+    for (const [profileId, svc] of services) {
+      try {
+        const raw = await containerService.getLogs(svc.containerName, tailLines);
+        snapshots.push({
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          capturedAt: new Date().toISOString(),
+          tailLines,
+          source,
+          logs: maskSecretsText(raw, { mask: true }),
+        });
+      } catch (err) {
+        snapshots.push({
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          capturedAt: new Date().toISOString(),
+          tailLines,
+          source,
+          logs: '',
+          message: (err as Error)?.message || String(err),
+        });
+      }
+    }
+    return snapshots;
+  }
 
   const resolveProjectIdParam = (raw: unknown): string | null => {
     if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -3669,6 +3709,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       opLog.status = hasError ? 'error' : 'completed';
       opLog.finishedAt = new Date().toISOString();
+      if (!hasError && hasRunning) {
+        const runtimeReadyAt = new Date().toISOString();
+        entry.lastReadyAt = runtimeReadyAt;
+        opLog.runtimeStartedAt = runtimeReadyAt;
+        logEvent({
+          step: 'runtime-ready',
+          status: 'done',
+          title: '运行时已通过就绪探测',
+          detail: { profileIds: Array.from(activeProfileIds) },
+          timestamp: runtimeReadyAt,
+        });
+      }
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+        entry,
+        hasError ? 'deploy-error' : 'deploy-finalize',
+        activeProfileIds,
+      );
       stateService.appendLog(id, opLog);
       stateService.save();
 
@@ -3793,6 +3850,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = errMsg;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error');
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${errMsg}`);
@@ -3975,6 +4033,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
       opLog.finishedAt = new Date().toISOString();
+      if (svc.status === 'running') {
+        const runtimeReadyAt = new Date().toISOString();
+        entry.lastReadyAt = runtimeReadyAt;
+        opLog.runtimeStartedAt = runtimeReadyAt;
+        logEvent({
+          step: 'runtime-ready',
+          status: 'done',
+          title: `${profile.name} 已通过就绪探测`,
+          detail: { profileIds: [profile.id] },
+          timestamp: runtimeReadyAt,
+        });
+      }
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+        entry,
+        svc.status === 'running' ? 'deploy-finalize' : 'deploy-error',
+        new Set([profile.id]),
+      );
       stateService.appendLog(id, opLog);
       stateService.save();
 
@@ -3992,6 +4067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = (err as Error).message;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${(err as Error).message}`);

@@ -113,8 +113,22 @@ interface OperationLog {
   type: string;
   startedAt: string;
   finishedAt?: string;
+  runtimeStartedAt?: string;
+  containerLogSnapshots?: DeploymentContainerLogSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
+}
+
+export interface DeploymentContainerLogSnapshot {
+  profileId: string;
+  containerName: string;
+  hostPort?: number;
+  status?: string;
+  capturedAt: string;
+  tailLines: number;
+  source: 'deploy-finalize' | 'deploy-error';
+  logs: string;
+  message?: string;
 }
 
 interface ServiceLogsState {
@@ -199,6 +213,9 @@ export interface BranchDeploymentItem {
   log: string[];
   startedAt: number;
   finishedAt?: number;
+  runtimeStartedAt?: number;
+  runtimeEndedAt?: number;
+  containerLogSnapshots?: DeploymentContainerLogSnapshot[];
   lastStep?: string;
   phase?: string;
   suggestion?: string;
@@ -421,6 +438,7 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
   const lines = events.map(eventText);
   const finishedAt = log.finishedAt ? new Date(log.finishedAt).getTime() : undefined;
   const startedAt = log.startedAt ? new Date(log.startedAt).getTime() : Date.now();
+  const runtimeStartedAt = log.runtimeStartedAt ? new Date(log.runtimeStartedAt).getTime() : undefined;
   const status: BranchDeploymentItem['status'] = log.status === 'completed'
     ? 'success'
     : log.status === 'error'
@@ -438,6 +456,8 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
     log: lines,
     startedAt,
     finishedAt,
+    runtimeStartedAt,
+    containerLogSnapshots: log.containerLogSnapshots || [],
     lastStep,
   };
 }
@@ -1076,8 +1096,19 @@ export function BranchDetailDrawer({
       .slice(0, 6)
       .map((log) => legacyLogToDeploymentItem(log, branchId));
     const all = [...visibleDeployments, ...legacy];
-    return all.sort((left, right) => right.startedAt - left.startedAt);
-  }, [branchId, visibleDeployments, logs]);
+    const sorted = all.sort((left, right) => right.startedAt - left.startedAt);
+    return sorted.map((item, index) => {
+      if (!item.runtimeStartedAt) return item;
+      const newer = index > 0 ? sorted[index - 1] : null;
+      const stoppedAt = branch?.lastStoppedAt ? new Date(branch.lastStoppedAt).getTime() : undefined;
+      const runtimeEndedAt = newer?.startedAt && newer.startedAt > item.runtimeStartedAt
+        ? newer.startedAt
+        : stoppedAt && stoppedAt > item.runtimeStartedAt
+          ? stoppedAt
+          : undefined;
+      return runtimeEndedAt ? { ...item, runtimeEndedAt } : item;
+    });
+  }, [branch?.lastStoppedAt, branchId, visibleDeployments, logs]);
 
   const activeDeployment = useMemo(
     () => pickActiveDeployment(combinedDeployments, now),
@@ -1261,44 +1292,6 @@ export function BranchDetailDrawer({
       lines: deployment.log.length > 0 ? deployment.log : [deployment.lastStep || deployment.message],
     });
   }, [openBuildLogs]);
-
-  /*
-   * Reset / retry CTAs for ActiveDeployment (Week 4.8 Round 4c).
-   * 之前 ActiveDeployment 的 onResetError / onRetryDiagnosis 是 optional
-   * 但从未传入 → deploy/verify 失败时按钮不渲染。这一刀把这两个 callback
-   * 接到 Drawer,真实调用后端并 reload。
-   */
-  const resetBranchError = useCallback(async (_deployment: BranchDeploymentItem) => {
-    if (!branchId) return;
-    try {
-      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/reset`, { method: 'POST' });
-      await load();
-    } catch (err) {
-      // 失败时把错误吞回 error state,Drawer 顶部会显示
-      setError(err instanceof ApiError ? err.message : String(err));
-    }
-  }, [branchId, load]);
-
-  const retryRuntimeDiagnosis = useCallback(async (_deployment: BranchDeploymentItem) => {
-    if (!branchId) return;
-    // 优先使用当前选中服务,否则用第一个 error 状态服务,再不行用第一个服务
-    const errorSvc = Object.values(branch?.services || {}).find((s) => s.status === 'error');
-    const fallbackSvc = Object.values(branch?.services || {})[0];
-    const target = selectedService?.profileId || errorSvc?.profileId || fallbackSvc?.profileId;
-    if (!target) {
-      setError('没有可诊断的服务');
-      return;
-    }
-    try {
-      await apiRequest(
-        `/api/branches/${encodeURIComponent(branchId)}/verify-runtime/${encodeURIComponent(target)}`,
-        { method: 'POST' },
-      );
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    }
-  }, [branchId, branch, load, selectedService]);
 
   const copyDeploymentDiagnosis = useCallback(async (deployment: BranchDeploymentItem) => {
     const lines = [
@@ -1538,13 +1531,10 @@ export function BranchDetailDrawer({
                     {activeDeployment ? (
                       <ActiveDeployment
                         deployment={activeDeployment}
-                        projectId={projectId}
                         branchErrorMessage={currentFailureReason || undefined}
                         now={now}
                         onOpenLogs={openDeploymentBuildLogs}
                         onCopyDiagnosis={(item) => void copyDeploymentDiagnosis(item)}
-                        onResetError={(item) => void resetBranchError(item)}
-                        onRetryDiagnosis={(item) => void retryRuntimeDiagnosis(item)}
                         containerLogsByPhase={containerLogsByPhase}
                         containerLogControls={inlineContainerLogControls}
                       />

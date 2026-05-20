@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
-import { Clock, Copy, ExternalLink, FileText, Loader2, Maximize2, RotateCcw, Wrench } from 'lucide-react';
+import { Clock, Copy, ExternalLink, Loader2, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
-import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
+import type { PhaseKey } from '@/lib/deploymentPhases';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
-import { PhaseTree, type PhaseLogState, type InlineContainerLogControls } from './PhaseTree';
+import { type PhaseLogState, type InlineContainerLogControls } from './PhaseTree';
 
 function lastLines(text: string, n: number): string {
   if (!text) return '';
@@ -14,9 +14,8 @@ function lastLines(text: string, n: number): string {
 }
 
 /**
- * 2026-05-14: 部署 tab 顶部专属容器日志面板（左侧）。
- * 多容器走 tab strip 切换；右上角"最大化"跳到完整日志 tab。
- * 与 PhaseTree.PhaseLogDetails 视觉对齐，但作为一等公民展示在部署面板正中。
+ * 部署 tab 当前区域只展示容器运行日志。
+ * 阶段树已经从主视图移除，避免右侧检查列表挤占用户真正需要看的日志。
  */
 function PrimaryContainerLogPanel({
   containerLogsByPhase,
@@ -100,8 +99,8 @@ function PrimaryContainerLogPanel({
             容器尚未输出任何日志（多半是进程在监听端口前就退出了）。
           </div>
         ) : (
-          <pre className="max-h-[320px] min-h-[120px] overflow-auto rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
-            {lastLines(state.logs, 120)}
+          <pre className="max-h-[560px] min-h-[280px] overflow-auto rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
+            {lastLines(state.logs, 220)}
           </pre>
         )}
       </div>
@@ -114,32 +113,19 @@ function PrimaryContainerLogPanel({
  *
  * 视觉对齐 Railway / Vercel：
  *  - 顶部 status 大徽章 + commit + 中文 kind + duration
- *  - 中间 PhaseTree 4 阶段（最少高度 ~150px，避免 running → success 抖动）
- *  - 失败阶段下方挂诊断 CTA：
- *      · build + 缺 BuildProfile     → 主按钮「修复构建配置」
- *      · build 通用                   → ghost 「查看完整日志」
- *      · deploy                       → ghost 「重置异常」
- *      · verify                       → ghost 「重新诊断」
+ *  - 中间只显示容器运行日志，阶段检查与调试字段收进完整日志/诊断入口。
  *  - 底部固定一行通用动作：查看日志 / 复制排错摘要
  */
 
 export interface ActiveDeploymentProps {
   deployment: BranchDeploymentItem;
-  projectId: string;
   branchErrorMessage?: string;
   now: number;
   onOpenLogs: (deployment: BranchDeploymentItem) => void;
   onCopyDiagnosis: (deployment: BranchDeploymentItem) => void;
-  onRetryDiagnosis?: (deployment: BranchDeploymentItem) => void;
-  onResetError?: (deployment: BranchDeploymentItem) => void;
-  /**
-   * 失败阶段下方内联展示的容器日志。Drawer 在 deploy / verify 阶段失败时
-   * 自动 fetch 容器日志并通过该 prop 透传，PhaseTree 渲染在错误提示下方。
-   * build 阶段不走这条路径——构建失败的日志在另一个 build-log 面板。
-   */
   containerLogsByPhase?: Partial<Record<PhaseKey, PhaseLogState>>;
   /**
-   * 2026-05-14: 多容器 tab 切换 + 最大化控制，透传给 PhaseTree。
+   * 多容器 tab 切换 + 最大化控制。
    */
   containerLogControls?: InlineContainerLogControls;
 }
@@ -191,111 +177,19 @@ function formatDuration(ms: number): string {
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
-function looksLikeMissingBuildProfile(message: string): boolean {
-  const text = (message || '').toLowerCase();
-  return text.includes('buildprofile')
-    || text.includes('build profile')
-    || text.includes('build_profile')
-    || message.includes('尚未配置构建配置')
-    || message.includes('未找到 BuildProfile')
-    || message.includes('未找到构建配置');
-}
-
 export function ActiveDeployment({
   deployment,
-  projectId,
   branchErrorMessage,
   now,
   onOpenLogs,
   onCopyDiagnosis,
-  onRetryDiagnosis,
-  onResetError,
   containerLogsByPhase,
   containerLogControls,
 }: ActiveDeploymentProps): JSX.Element {
   const displayStatus = effectiveDeploymentStatus(deployment, branchErrorMessage);
-  const phases = useMemo(
-    () => deriveBranchPhases(deployment.log, displayStatus, branchErrorMessage || deployment.message),
-    [branchErrorMessage, deployment.log, deployment.message, displayStatus],
-  );
 
   const duration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
   const isError = displayStatus === 'error';
-  const errorPhaseKey = phases.find((phase) => phase.status === 'error')?.key;
-
-  function renderActionForError(key: PhaseKey): JSX.Element | null {
-    if (!isError || key !== errorPhaseKey) return null;
-
-    const message = branchErrorMessage || deployment.message || '';
-    const settingsHref = `/settings/${encodeURIComponent(projectId)}`;
-
-    if (key === 'build' && looksLikeMissingBuildProfile(message)) {
-      return (
-        <>
-          <Button asChild size="sm">
-            <a href={settingsHref}>
-              <Wrench />
-              修复构建配置
-            </a>
-          </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => onOpenLogs(deployment)}>
-            <FileText />
-            查看完整日志
-          </Button>
-        </>
-      );
-    }
-
-    if (key === 'build') {
-      return (
-        <Button type="button" size="sm" variant="outline" onClick={() => onOpenLogs(deployment)}>
-          <FileText />
-          查看完整日志
-        </Button>
-      );
-    }
-
-    if (key === 'deploy') {
-      return (
-        <>
-          {onResetError ? (
-            <Button type="button" size="sm" variant="outline" onClick={() => onResetError(deployment)}>
-              <RotateCcw />
-              重置异常
-            </Button>
-          ) : null}
-          <Button type="button" size="sm" variant="outline" onClick={() => onOpenLogs(deployment)}>
-            <FileText />
-            查看完整日志
-          </Button>
-        </>
-      );
-    }
-
-    if (key === 'verify') {
-      return (
-        <>
-          {onRetryDiagnosis ? (
-            <Button type="button" size="sm" variant="outline" onClick={() => onRetryDiagnosis(deployment)}>
-              <RotateCcw />
-              重新诊断
-            </Button>
-          ) : null}
-          <Button type="button" size="sm" variant="outline" onClick={() => onOpenLogs(deployment)}>
-            <FileText />
-            查看完整日志
-          </Button>
-        </>
-      );
-    }
-
-    return (
-      <Button type="button" size="sm" variant="outline" onClick={() => onOpenLogs(deployment)}>
-        <FileText />
-        查看完整日志
-      </Button>
-    );
-  }
 
   return (
     <section
@@ -332,25 +226,11 @@ export function ActiveDeployment({
         </span>
       </header>
 
-      {/*
-        2026-05-14: 用户反馈"容器日志应该优先显示"——把容器日志从 PhaseTree 内部
-        提到上面专属面板（多容器 tab + 最大化），PhaseTree 退居下方只显示阶段进度。
-        宽屏 (lg) 走两列：左侧容器日志、右侧阶段树；窄屏堆叠（容器日志在上、阶段树在下）。
-      */}
-      <div className="grid gap-4 px-5 py-4 lg:grid-cols-[3fr_2fr]" style={{ minHeight: 168 }}>
-        <div className="min-w-0 lg:order-1">
-          <PrimaryContainerLogPanel
-            containerLogsByPhase={containerLogsByPhase}
-            containerLogControls={containerLogControls}
-          />
-        </div>
-        <div className="min-w-0 lg:order-2">
-          <PhaseTree
-            phases={phases}
-            onActionForError={renderActionForError}
-            // 容器日志已被提到左侧面板，PhaseTree 不再渲染内嵌日志，避免重复。
-          />
-        </div>
+      <div className="px-5 py-4" style={{ minHeight: 360 }}>
+        <PrimaryContainerLogPanel
+          containerLogsByPhase={containerLogsByPhase}
+          containerLogControls={containerLogControls}
+        />
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-5 py-3">
