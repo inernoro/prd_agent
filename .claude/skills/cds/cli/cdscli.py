@@ -850,6 +850,43 @@ def _branches_path() -> str:
     return "/api/branches"
 
 
+def _match_branches_for_project(branches: list, git_branch: str,
+                                project_slug_hint: str,
+                                already_scoped: bool) -> list:
+    """从 `/api/branches` 结果里筛选属于当前项目的、且 git branch 字段匹配的条目。
+
+    多项目 CDS 同一 git 分支名可能在不同项目都存在；如果没 CDS_PROJECT_ID
+    走 server-side `?project=` 过滤，就要在客户端用本地仓库名 slugify 出来
+    的 hint 做二次过滤——canonical id 形式是 `${projectSlug}-${slugify(branch)}`，
+    且新版后端会返回 `projectSlug` / `projectId` 字段。
+
+    - already_scoped=True 时（CDS_PROJECT_ID 已传给后端）跳过二次过滤
+    - 否则按 `b.projectSlug` / `b.projectId` 优先精确匹配，再用 canonical id
+      前缀启发式（兼容旧版没有 projectSlug 字段的后端）
+    """
+    matches = [b for b in branches if b.get("branch") == git_branch]
+    if already_scoped or len(matches) <= 1:
+        return matches
+    # 多于一条 → 多项目重名，必须按 project hint 筛
+    def _belongs(b: dict) -> bool:
+        if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
+            return True
+        if b.get("projectId") and b["projectId"] == project_slug_hint:
+            return True
+        # canonical id 前缀启发式（兼容老版 API）
+        bid = b.get("id", "")
+        if bid.startswith(f"{project_slug_hint}-"):
+            return True
+        return False
+    scoped = [b for b in matches if _belongs(b)]
+    if not scoped:
+        print(f"[warn] /api/branches 有 {len(matches)} 条同名分支但无一匹配项目"
+              f" hint '{project_slug_hint}'，可能是目录名 ≠ CDS 项目 slug；"
+              f"设 CDS_PROJECT_ID 走 server-side 过滤更稳",
+              file=sys.stderr)
+    return scoped
+
+
 def _warn_quiet_call_error(body: Any, label: str) -> bool:
     """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
     调用方决定是否继续 / 退化。"""
@@ -890,15 +927,22 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
 
     # Step 1: 优先走 CDS API（有 CDS_HOST + 任一认证密钥时；
     # _auth_headers 同时支持 CDS_PROJECT_KEY 与 AI_ACCESS_KEY，这里两者满足其一即可）
-    if os.environ.get("CDS_HOST", "").strip() and _has_cds_auth():
+    cds_host_set = bool(os.environ.get("CDS_HOST", "").strip())
+    if cds_host_set and _has_cds_auth():
         try:
             body = _call("GET", _branches_path(), timeout=10, quiet=True)
             if _warn_quiet_call_error(body, "调 /api/branches"):
                 # 401/5xx 之类——别静默退化让用户以为分支不存在；落到 fallback
                 # 时通过 stderr 警告告知，调用方能看到真实原因。
                 body = {}
-            for b in body.get("branches", []):
-                if b.get("branch") == branch and b.get("previewSlug"):
+            # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
+            # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
+            # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
+            project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+            for b in _match_branches_for_project(
+                    body.get("branches", []), branch,
+                    fallback_project_slug, project_scoped):
+                if b.get("previewSlug"):
                     url = f"https://{b['previewSlug']}.{root}/"
                     if _HUMAN:
                         print(url)
@@ -922,6 +966,11 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         except Exception as ex:
             print(f"[warn] 调 /api/branches 失败 ({ex})，回退本地 v3 推算",
                   file=sys.stderr)
+    elif cds_host_set:
+        # CDS_HOST 设了但没 auth — 给用户明确提示，否则会困惑"为啥不走 API"
+        print(f"[warn] CDS_HOST 已设但缺 AI_ACCESS_KEY / CDS_PROJECT_KEY，"
+              f"跳过 API 走本地 v3 推算（可能与后端 previewSlug 不一致）",
+              file=sys.stderr)
 
     # Step 2: 本地 v3 公式（fallback）— root 仍走 _preview_root_from_host 不写死 miduo.org
     slug = _compute_preview_slug(branch, fallback_project_slug)
@@ -954,12 +1003,16 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         branch = subprocess.check_output(
             ["git", "branch", "--show-current"],
             text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
     except subprocess.CalledProcessError:
         die("当前目录不在 git 仓库内", code=1)
         return
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
+    project_slug_hint = _slugify_for_preview(os.path.basename(repo_root))
     body = _call("GET", _branches_path(), timeout=10, quiet=True)
     # API 失败（401 / 5xx）必须明确暴露，不能被后面 "找不到分支" 的兜底 die 遮蔽
     if isinstance(body, dict) and body.get("__error__"):
@@ -970,9 +1023,12 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         die(f"调 /api/branches 失败 HTTP {status}: {msg}（检查 CDS_HOST / 认证密钥）",
             code=2, extra={"status": status, "body": body.get("body")})
         return
-    for b in body.get("branches", []):
-        if b.get("branch") == branch:
-            bid = b.get("id")
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    matches = _match_branches_for_project(
+        body.get("branches", []), branch, project_slug_hint, project_scoped)
+    for b in matches:
+        bid = b.get("id")
+        if bid:
             if _HUMAN:
                 print(bid)
             else:
