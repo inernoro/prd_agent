@@ -458,6 +458,10 @@ function deployFailureMessage(branch?: BranchSummary): string {
   if (branch.status !== 'error' && failedServices.length === 0) return '';
   const serviceNames = failedServices.map((svc) => svc.profileId).join(', ');
   if (branch.errorMessage) return `应用代码错误：${branch.errorMessage}`;
+  const serviceErrors = failedServices
+    .map((svc) => svc.errorMessage ? `${svc.profileId}: ${svc.errorMessage}` : '')
+    .filter(Boolean);
+  if (serviceErrors.length > 0) return `应用代码错误：${serviceErrors.join('；')}`;
   if (serviceNames) return `应用代码错误：${serviceNames} 启动失败`;
   return '应用代码错误：分支进入异常状态';
 }
@@ -3989,16 +3993,15 @@ function BranchFailureHint({
   const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
     <div
-      className={`flex items-center gap-2 px-5 pb-3 pt-1 text-xs ${
+      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${
         branchIssueLabel(branch) === 'CDS 环境异常'
           ? 'text-destructive/80'
           : 'text-amber-700/90 dark:text-amber-300/90'
       }`}
       title={message}
     >
-      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 truncate">{message}</span>
-      <span className="ml-auto shrink-0 text-muted-foreground">点击查看详情</span>
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 line-clamp-2">{message}</span>
     </div>
   );
 }

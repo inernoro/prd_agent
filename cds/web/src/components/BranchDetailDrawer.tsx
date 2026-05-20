@@ -513,6 +513,38 @@ function buildLlmFailurePrompt(
   return lines.filter((line) => line !== '').join('\n');
 }
 
+function isGenericFailureHint(value: string): boolean {
+  return /未识别的错误模式|查看完整日志诊断/i.test(value);
+}
+
+function failureKeyLogLines(lines: string[], max = 8): string[] {
+  const keywords = [
+    /error\b/i,
+    /exception\b/i,
+    /failed?\b/i,
+    /fatal\b/i,
+    /denied\b/i,
+    /timeout|timed out/i,
+    /not found/i,
+    /cannot|can't/i,
+    /缺少|失败|异常|错误|超时|拒绝|不存在|找不到|无法/,
+  ];
+  const ignored = [
+    /update available/i,
+    /packages?: \+/i,
+    /progress: resolved/i,
+    /all projects are up-to-date/i,
+    /lockfile is up to date/i,
+    /determining projects to restore/i,
+  ];
+  const selected = lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !ignored.some((pattern) => pattern.test(line)))
+    .filter((line) => keywords.some((pattern) => pattern.test(line)));
+  return Array.from(new Set(selected)).slice(-max);
+}
+
 async function copyTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     try {
@@ -719,6 +751,7 @@ export function BranchDetailDrawer({
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [serviceLogs, setServiceLogs] = useState<ServiceLogsState>({ status: 'idle' });
   const [logQuery, setLogQuery] = useState('');
+  const logsSectionRef = useRef<HTMLElement | null>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   // 失败诊断(2026-05-04 UX 优化):分支 status === 'error' 时 lazy-load,显示
   // 错误归类 + 最后 5 行 stderr + 责任归属。
@@ -1437,6 +1470,13 @@ export function BranchDetailDrawer({
     }
   }, [loadServiceLogs, selectedService?.profileId]);
 
+  const openFailureLogs = useCallback((profileId?: string) => {
+    openContainerLogs(profileId);
+    window.requestAnimationFrame(() => {
+      logsSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }, [openContainerLogs]);
+
   if (!open || !branchId) return null;
 
   return (
@@ -1448,7 +1488,7 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
-        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[640px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[860px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
         style={{ minHeight: 0 }}
       >
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
@@ -1580,7 +1620,9 @@ export function BranchDetailDrawer({
                     <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
                     {failureDiag && failureDiag.failedServices.length > 0 ? (
                       <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
-                        {failureDiag.failedServices.map((diag) => (
+                        {failureDiag.failedServices.map((diag) => {
+                          const keyLines = failureKeyLogLines(diag.tailLines);
+                          return (
                           <div key={diag.profileId} className="space-y-1.5">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium uppercase">
@@ -1605,27 +1647,26 @@ export function BranchDetailDrawer({
                                   : '未识别'}
                               </span>
                             </div>
-                            {diag.errorHint ? (
+                            {diag.errorHint && !isGenericFailureHint(diag.errorHint) ? (
                               <div className="text-destructive/90">{diag.errorHint}</div>
                             ) : null}
-                            {diag.tailLines.length > 0 ? (
-                              <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
-                                {diag.tailLines.slice(-5).join('\n')}
+                            {keyLines.length > 0 ? (
+                              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/85">
+                                {keyLines.join('\n')}
                               </pre>
                             ) : null}
                           </div>
-                        ))}
+                          );
+                        })}
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveTab('logs');
-                            setLogsMode('container');
                             const first = failureDiag.failedServices[0];
-                            if (first) setSelectedServiceId(first.profileId);
+                            openFailureLogs(first?.profileId);
                           }}
                           className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
                         >
-                          查看完整日志 →
+                          打开容器日志 →
                         </button>
                       </div>
                     ) : null}
@@ -1703,7 +1744,7 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 {activeTab === 'logs' ? (
-                  <section className="cds-surface-raised cds-hairline">
+                  <section ref={logsSectionRef} className="cds-surface-raised cds-hairline">
                     <header className="border-b border-[hsl(var(--hairline))] px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
