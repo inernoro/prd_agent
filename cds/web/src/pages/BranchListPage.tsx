@@ -969,10 +969,9 @@ export function BranchListPage(): JSX.Element {
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   /**
-   * 2026-05-14: 用户多次反馈"知道还要去填，但每次进来都被这条横幅打断"。
-   * 加一个"我知道了"按钮：点了之后弹出"到哪里填"的路径提示，确认后关闭横幅。
-   * 用 sessionStorage 而非 localStorage（项目规则禁用 localStorage 防止部署后串缓存），
-   * key 里带 pendingEnvKeys 列表的指纹，新增缺失的 env key 时横幅会自动复活。
+   * 2026-05-20: 这是用户明确关闭的提示偏好，不是部署运行缓存。
+   * 按项目 + 缺失变量指纹长期保存，避免用户每次开页面都被同一条横幅打断；
+   * 只有新增缺失变量或浏览器站点数据被清理时才重新出现。
    */
   const [envBannerDismissed, setEnvBannerDismissed] = useState(false);
   const [envHintDialogOpen, setEnvHintDialogOpen] = useState(false);
@@ -984,14 +983,24 @@ export function BranchListPage(): JSX.Element {
   useEffect(() => {
     if (!envBannerStorageKey) { setEnvBannerDismissed(false); return; }
     try {
-      setEnvBannerDismissed(sessionStorage.getItem(envBannerStorageKey) === '1');
+      const dismissed =
+        localStorage.getItem(envBannerStorageKey) === '1' ||
+        sessionStorage.getItem(envBannerStorageKey) === '1';
+      if (dismissed && localStorage.getItem(envBannerStorageKey) !== '1') {
+        localStorage.setItem(envBannerStorageKey, '1');
+      }
+      setEnvBannerDismissed(dismissed);
     } catch {
       setEnvBannerDismissed(false);
     }
   }, [envBannerStorageKey]);
   const dismissEnvBanner = useCallback(() => {
     if (!envBannerStorageKey) return;
-    try { sessionStorage.setItem(envBannerStorageKey, '1'); } catch { /* sessionStorage 不可用就忍一会 */ }
+    try {
+      localStorage.setItem(envBannerStorageKey, '1');
+    } catch {
+      try { sessionStorage.setItem(envBannerStorageKey, '1'); } catch { /* browser storage unavailable */ }
+    }
     setEnvBannerDismissed(true);
     setEnvHintDialogOpen(false);
   }, [envBannerStorageKey]);
@@ -2306,8 +2315,7 @@ export function BranchListPage(): JSX.Element {
                 </a>
               </div>
               <div className="text-xs text-muted-foreground">
-                这条横幅以本浏览器会话为单位关闭（关闭浏览器或开新窗口会重新出现）。如果之后新增了
-                未填的环境变量，横幅也会再次显示。
+                这条横幅会在本浏览器长期隐藏；只有检测到新的未填环境变量，或浏览器站点数据被清理后才会再次显示。
               </div>
             </div>
             <DialogFooter>
