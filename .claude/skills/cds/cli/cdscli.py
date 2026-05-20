@@ -756,10 +756,7 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
     """
     branch_id = args.id
     body = _call("GET", "/api/branches", timeout=30)
-    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
-    if host.startswith("http://") or host.startswith("https://"):
-        host = host.split("://", 1)[1]
-    root = "miduo.org" if (not host or "miduo" in host) else host
+    root = _preview_root_from_host()
     for b in body.get("branches", []):
         if b.get("id") == branch_id:
             slug = b.get("previewSlug") or b.get("id")
@@ -782,8 +779,9 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
 # 统一调 `cdscli preview-url`。这是预览 URL 唯一的可执行 SSOT。
 #
 # 决策顺序（从最准 → 最 fallback）：
-#   1. CDS API：有 CDS_HOST + AI_ACCESS_KEY → 查 /api/branches 匹配 git 分支，
-#      拿后端 `previewSlug` 字段（永远与 cds/src/services/preview-slug.ts 对齐）
+#   1. CDS API：有 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) → 查
+#      /api/branches 匹配 git 分支，拿后端 `previewSlug` 字段（永远与
+#      cds/src/services/preview-slug.ts 对齐）
 #   2. 本地 v3 公式：没 CDS context → 用 git 分支名 + 仓库根目录名 slugify 推算
 #      （依赖「目录名 slugify 后 == CDS 项目 slug」的隐含约定）
 #   3. 失败：未在 git 仓库里 / 没分支 → exit 1
@@ -817,6 +815,37 @@ def _compute_preview_slug(branch: str, project_slug: str) -> str:
     return f"{tail}-{prefix}-{project}"
 
 
+def _preview_root_from_host() -> str:
+    """从 CDS_HOST 推预览域根（共享给所有 preview-url 相关函数，无 CDS_HOST 时
+    回退 `miduo.org`，避免 fallback 写死单一 root）。"""
+    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
+    if host.startswith("http://") or host.startswith("https://"):
+        host = host.split("://", 1)[1]
+    if not host:
+        return "miduo.org"
+    # `cds.miduo.org` / 普通 miduo 子域 → 预览根仍走 miduo.org
+    return "miduo.org" if "miduo" in host else host
+
+
+def _has_cds_auth() -> bool:
+    """与 _auth_headers() 的逻辑保持一致：项目级 cdsp_* 或全局 AI_ACCESS_KEY 任一。"""
+    return bool(os.environ.get("CDS_PROJECT_KEY", "").strip()
+                or os.environ.get("AI_ACCESS_KEY", "").strip())
+
+
+def _warn_quiet_call_error(body: Any, label: str) -> bool:
+    """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
+    调用方决定是否继续 / 退化。"""
+    if isinstance(body, dict) and body.get("__error__"):
+        status = body.get("status")
+        msg = body.get("body")
+        if isinstance(msg, dict):
+            msg = msg.get("message") or msg.get("error") or msg
+        print(f"[warn] {label}: HTTP {status} — {msg}", file=sys.stderr)
+        return True
+    return False
+
+
 def cmd_preview_url(args: argparse.Namespace) -> None:
     """打印当前分支的 v3 预览 URL（自动检测 git 分支 + 项目，无需参数）。
 
@@ -840,16 +869,17 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
 
     project_basename = os.path.basename(repo_root)
     fallback_project_slug = _slugify_for_preview(project_basename)
+    root = _preview_root_from_host()
 
-    # Step 1: 优先走 CDS API（有 CDS_HOST + AI_ACCESS_KEY 时）
-    if (os.environ.get("CDS_HOST", "").strip()
-            and os.environ.get("AI_ACCESS_KEY", "").strip()):
+    # Step 1: 优先走 CDS API（有 CDS_HOST + 任一认证密钥时；
+    # _auth_headers 同时支持 CDS_PROJECT_KEY 与 AI_ACCESS_KEY，这里两者满足其一即可）
+    if os.environ.get("CDS_HOST", "").strip() and _has_cds_auth():
         try:
             body = _call("GET", "/api/branches", timeout=10, quiet=True)
-            host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
-            if host.startswith("http://") or host.startswith("https://"):
-                host = host.split("://", 1)[1]
-            root = "miduo.org" if (not host or "miduo" in host) else host
+            if _warn_quiet_call_error(body, "调 /api/branches"):
+                # 401/5xx 之类——别静默退化让用户以为分支不存在；落到 fallback
+                # 时通过 stderr 警告告知，调用方能看到真实原因。
+                body = {}
             for b in body.get("branches", []):
                 if b.get("branch") == branch and b.get("previewSlug"):
                     url = f"https://{b['previewSlug']}.{root}/"
@@ -869,9 +899,9 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             print(f"[warn] 调 /api/branches 失败 ({ex})，回退本地 v3 推算",
                   file=sys.stderr)
 
-    # Step 2: 本地 v3 公式（fallback）
+    # Step 2: 本地 v3 公式（fallback）— root 仍走 _preview_root_from_host 不写死 miduo.org
     slug = _compute_preview_slug(branch, fallback_project_slug)
-    url = f"https://{slug}.miduo.org/"
+    url = f"https://{slug}.{root}/"
     if _HUMAN:
         print(url)
     else:
@@ -882,7 +912,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "previewSlug": slug,
             "url": url,
             "note": "本地推算依赖「目录名 slugify 后 == CDS 项目 slug」。"
-                    "设置 CDS_HOST + AI_ACCESS_KEY 走 API 模式更准。",
+                    "设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) 走 API 模式更准。",
         })
 
 
@@ -894,7 +924,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     （bridge / agent-guide / 任何 cdscli 子命令）都应通过这条命令拿 id，
     禁止手算。
 
-    依赖：CDS_HOST + AI_ACCESS_KEY，否则 exit 1。
+    依赖：CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY)，否则 exit 1。
     """
     try:
         branch = subprocess.check_output(
@@ -907,6 +937,15 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）", code=1)
         return
     body = _call("GET", "/api/branches", timeout=10, quiet=True)
+    # API 失败（401 / 5xx）必须明确暴露，不能被后面 "找不到分支" 的兜底 die 遮蔽
+    if isinstance(body, dict) and body.get("__error__"):
+        status = body.get("status")
+        msg = body.get("body")
+        if isinstance(msg, dict):
+            msg = msg.get("message") or msg.get("error") or msg
+        die(f"调 /api/branches 失败 HTTP {status}: {msg}（检查 CDS_HOST / 认证密钥）",
+            code=2, extra={"status": status, "body": body.get("body")})
+        return
     for b in body.get("branches", []):
         if b.get("branch") == branch:
             bid = b.get("id")
@@ -5037,14 +5076,15 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     CDS 下不可用——此处永久废弃该写法。
     """
     branch_id = args.id
-    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
-    if host.startswith("http://") or host.startswith("https://"):
-        host = host.split("://", 1)[1]
-    root = "miduo.org" if (not host or "miduo" in host) else host
+    root = _preview_root_from_host()
     # 优先查 API 拿 v3 previewSlug；查不到才回退裸 id 模式（伴随 stderr 警告）
     preview_slug = branch_id
     try:
         body = _call("GET", "/api/branches", timeout=30, quiet=True)
+        if _warn_quiet_call_error(body, "拉 /api/branches"):
+            # 401/5xx 等 — 警告已出，退化到裸 id，与下面 "未返回 previewSlug" 路径
+            # 行为一致
+            body = {}
         for b in body.get("branches", []):
             if b.get("id") == branch_id:
                 preview_slug = b.get("previewSlug") or branch_id
