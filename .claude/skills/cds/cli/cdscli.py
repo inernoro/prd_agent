@@ -767,7 +767,9 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
                     f"CDS 版本过旧或后端 bug，请升级 CDS 或检查 cds/src/routes/branches.ts",
                     code=3, extra={"branch": b})
                 return
-            url = f"https://{slug}.{root}"
+            # trailing `/` 与 `preview-url` 顶层命令对齐，避免下游脚本因 URL
+            # 形态不一致而需要 sed 归一
+            url = f"https://{slug}.{root}/"
             if _HUMAN:
                 print(url)
             else:
@@ -861,13 +863,13 @@ def _match_branches_for_project(branches: list, git_branch: str,
     且新版后端会返回 `projectSlug` / `projectId` 字段。
 
     - already_scoped=True 时（CDS_PROJECT_ID 已传给后端）跳过二次过滤
-    - 否则按 `b.projectSlug` / `b.projectId` 优先精确匹配，再用 canonical id
-      前缀启发式（兼容旧版没有 projectSlug 字段的后端）
+    - 否则永远按 project hint 校验——**即使只有一条匹配也要过滤**，否则别项目
+      的同名分支会被误当成本项目的（用户无该分支但 CDS 上有他人同名）
     """
     matches = [b for b in branches if b.get("branch") == git_branch]
-    if already_scoped or len(matches) <= 1:
+    if already_scoped:
         return matches
-    # 多于一条 → 多项目重名，必须按 project hint 筛
+    # 不论几条都按 project hint 筛——单条来自别项目的同样要过滤掉
     def _belongs(b: dict) -> bool:
         if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
             return True
@@ -877,6 +879,9 @@ def _match_branches_for_project(branches: list, git_branch: str,
         bid = b.get("id", "")
         if bid.startswith(f"{project_slug_hint}-"):
             return True
+        # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。这种情况
+        # 只在 hint 等于 default / legacy 项目时可信，否则可能误匹配 —— 这里
+        # 保守地不放行，让用户显式设 CDS_PROJECT_ID。
         return False
     scoped = [b for b in matches if _belongs(b)]
     if not scoped:
