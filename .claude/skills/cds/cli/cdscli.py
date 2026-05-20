@@ -765,8 +765,9 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
             code=3, extra={"body": body if isinstance(body, str) else repr(body)})
         return
     # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值只在 key
-    # 缺失时生效），下面 for 迭代会 TypeError。统一 `or []` 兜底。
-    for b in (body.get("branches") or []):
+    # 缺失时生效），下面 for 迭代会 TypeError。统一 `or []` 兜底；同时过滤非 dict
+    # 元素，防 `[null]` / 混合类型 payload 让 .get() AttributeError 给 traceback。
+    for b in [x for x in (body.get("branches") or []) if isinstance(x, dict)]:
         if b.get("id") == branch_id:
             slug = b.get("previewSlug")
             if not slug:
@@ -929,7 +930,9 @@ def _match_branches_for_project(branches: list, git_branch: str,
     """
     # `body.get("branches", [])` 在 `"branches": null` 时返回 None（默认值只在
     # key 缺失时生效），传到这里迭代会 TypeError。在入口统一兜底为空 list。
-    branches = branches or []
+    # 同时过滤非 dict 元素（API 可能返回 `[null]` / 混合类型 / 字符串等异常 payload），
+    # 避免下面 `.get()` AttributeError 把畸形数据问题伪装成 traceback。
+    branches = [b for b in (branches or []) if isinstance(b, dict)]
     matches = [b for b in branches if b.get("branch") == git_branch]
     if already_scoped:
         return matches
@@ -5327,8 +5330,10 @@ def cmd_smoke(args: argparse.Namespace) -> None:
             api_failed = True
         if not api_failed:
             # `body.get("branches", [])` 在 "branches": null 时返回 None；统一
-            # `or []` 兜底，下面 for 迭代不再 TypeError。
-            branches = (body.get("branches") or []) if isinstance(body, dict) else []
+            # `or []` 兜底，下面 for 迭代不再 TypeError。同时过滤非 dict 元素，
+            # 防 `[null]` / 混合类型让 .get() AttributeError 给 traceback。
+            raw = (body.get("branches") or []) if isinstance(body, dict) else []
+            branches = [x for x in raw if isinstance(x, dict)]
             matched = False
             for b in branches:
                 if b.get("id") == branch_id:
