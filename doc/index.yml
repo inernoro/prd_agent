@@ -84,6 +84,8 @@ docs:
   design.cds-agent-api: CDS Agent API 契约设计
   design.cds-agent-runtime-architecture: CDS Agent 运行时架构设计
   design.cds-agent-official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
+  design.cds-agent-commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
+  design.cds-agent-managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
@@ -141,6 +143,7 @@ docs:
   guide.cds-agent-next-agent-testing: CDS Agent 下一代测试与涌现建议
   guide.cds-agent-admin: CDS Agent 管理员指南
   guide.cds-agent-runbook: CDS Agent 运行手册
+  guide.cds-agent-runtime-pool-recovery: CDS Agent Runtime Pool 恢复与官方 SDK Smoke · 指南
   guide.cds-env: CDS 环境变量配置指南
   guide.troubleshooting: 疑难杂症排查手册
   guide.prd-agent-operations: PRD Agent 全平台操作手册
@@ -222,6 +225,7 @@ docs:
   plan.cds-status: CDS 当前状态看板（唯一"我在哪"入口，每次 handoff 必更新）
   plan.cds-agent-workbench: CDS Agent 工作台完全可用路线
   plan.cds-agent-official-sdk-migration: CDS Agent 官方 SDK Adapter 迁移计划
+  plan.cds-agent-runtime-correction-limited: CDS Agent Runtime 架构纠偏 · 有限计划
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划
@@ -246,6 +250,20 @@ docs:
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
 
   # ── 七、周报（降序：最新在前）──
+  report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
+  report.cds-agent-p4-1-remote-preflight-2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
+  report.cds-agent-p4-2-provider-closure-2026-05-19: CDS Agent P4-2 远端 Provider 闭环验收报告
+  report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19: CDS Agent P4-3 远端试用入口与发布验收包
+  report.cds-agent-p4-4-release-merge-strategy-2026-05-19: CDS Agent P4-4 发布/合并策略评估报告
+  report.cds-agent-p4-5-writable-trial-plan-2026-05-19: CDS Agent P4-5 writable / PR / KB apply 试用计划
+  report.cds-agent-phase1-acceptance-2026-05-19: CDS Agent Phase 1 验收报告
+  report.cds-agent-phase2-acceptance-2026-05-19: CDS Agent Phase 2 验收报告
+  report.cds-agent-phase3-acceptance-2026-05-19: CDS Agent Phase 3 验收报告
+  report.cds-agent-execution-ledger-2026-05-18: CDS Agent 执行过程账本
+  report.cds-agent-runtime-pool-contamination-2026-05-18: CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告
+  report.cds-agent-sidecar-contamination-2026-05-18: CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告
+  report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
+  report.cds-agent-current-progress: CDS Agent 当前进度面板
   report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
   report.2026-W19: 周报 2026-W19 (05-04 ~ 05-10)
   report.2026-W18: 周报 2026-W18 (04-27 ~ 05-03)

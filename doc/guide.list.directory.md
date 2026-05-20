@@ -185,6 +185,12 @@
 - [CDS Agent 官方 SDK Adapter 设计](design.cds-agent-official-sdk-adapter) `design.cds-agent-official-sdk-adapter`
   > 保留 MAP/CDS 控制面，把自研 agent loop 压缩为官方 SDK adapter 的边界设计
 
+- [CDS Agent 商业级架构与路线图](design.cds-agent-commercial-architecture-and-roadmap) `design.cds-agent-commercial-architecture-and-roadmap`
+  > CDS Agent 商业级可用的整体架构方案与路线图规划
+
+- [CDS Agent R0 · CDS-managed runtime fact source 设计](design.cds-agent-managed-runtime-fact-source) `design.cds-agent-managed-runtime-fact-source`
+  > CDS-managed runtime 事实来源的设计文档
+
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
@@ -354,6 +360,12 @@
 
 - [CDS Agent 运行手册](guide.cds-agent-runbook) `guide.cds-agent-runbook`
   > CDS Agent 部署检查、401、撤销、runtime、事件恢复、PR 验收失败的排障手册
+
+- [CDS Agent 代码审查上手指南](guide.cds-agent-code-review-quickstart) `guide.cds-agent-code-review-quickstart`
+  > CDS Agent 代码审查功能快速上手指南
+
+- [CDS Agent Runtime Pool 恢复指南](guide.cds-agent-runtime-pool-recovery) `guide.cds-agent-runtime-pool-recovery`
+  > CDS Agent Runtime Pool 恢复与官方 SDK Smoke 测试操作指南
 
 - [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
   > CDS 环境变量的配置与使用说明
@@ -580,6 +592,9 @@
 - [CDS Agent 官方 SDK Adapter 迁移计划](plan.cds-agent-official-sdk-migration) `plan.cds-agent-official-sdk-migration`
   > 一个周期内把 CDS Agent runtime 收缩到官方 SDK adapter 的最小开发计划、调试顺序和验收门槛
 
+- [CDS Agent Runtime 架构纠偏 · 有限计划](plan.cds-agent-runtime-correction-limited) `plan.cds-agent-runtime-correction-limited`
+  > CDS Agent Runtime 架构纠偏的有限范围实施计划
+
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
   > Phase 0-3 长期路线图
 
@@ -642,6 +657,48 @@
   > 2 条 open：x-cds-env TODO secrets 致全量 import 必被拒 / admin static 每次冷 vite build 就绪窗口紧绷
 
 ### 七、周报
+
+- [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
+  > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
+
+- [CDS Agent P4-1 远端发布前验收与试用入口报告](report.cds-agent-p4-1-remote-preflight-2026-05-19) `report.cds-agent-p4-1-remote-preflight-2026-05-19`
+  > CDS Agent P4-1 远端发布前验收与试用入口的验收报告
+
+- [CDS Agent P4-2 远端 Provider 闭环验收报告](report.cds-agent-p4-2-provider-closure-2026-05-19) `report.cds-agent-p4-2-provider-closure-2026-05-19`
+  > CDS Agent P4-2 远端 Provider 闭环验收报告
+
+- [CDS Agent P4-3 远端试用入口与发布验收包](report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19) `report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19`
+  > CDS Agent P4-3 远端试用入口与发布验收包
+
+- [CDS Agent P4-4 发布/合并策略评估报告](report.cds-agent-p4-4-release-merge-strategy-2026-05-19) `report.cds-agent-p4-4-release-merge-strategy-2026-05-19`
+  > CDS Agent P4-4 发布与合并策略的评估报告
+
+- [CDS Agent P4-5 writable/PR/KB apply 试用计划](report.cds-agent-p4-5-writable-trial-plan-2026-05-19) `report.cds-agent-p4-5-writable-trial-plan-2026-05-19`
+  > CDS Agent P4-5 writable / PR / KB apply 试用计划
+
+- [CDS Agent Phase 1 验收报告](report.cds-agent-phase1-acceptance-2026-05-19) `report.cds-agent-phase1-acceptance-2026-05-19`
+  > CDS Agent Phase 1 阶段验收报告（2026-05-19）
+
+- [CDS Agent Phase 2 验收报告](report.cds-agent-phase2-acceptance-2026-05-19) `report.cds-agent-phase2-acceptance-2026-05-19`
+  > CDS Agent Phase 2 阶段验收报告（2026-05-19）
+
+- [CDS Agent Phase 3 验收报告](report.cds-agent-phase3-acceptance-2026-05-19) `report.cds-agent-phase3-acceptance-2026-05-19`
+  > CDS Agent Phase 3 阶段验收报告（2026-05-19）
+
+- [CDS Agent 执行过程账本](report.cds-agent-execution-ledger-2026-05-18) `report.cds-agent-execution-ledger-2026-05-18`
+  > CDS Agent 开发执行过程的完整账本记录（2026-05-18）
+
+- [CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告](report.cds-agent-runtime-pool-contamination-2026-05-18) `report.cds-agent-runtime-pool-contamination-2026-05-18`
+  > CDS Agent SDK Runtime 再次侵入 MAP 主系统的调查与根因分析报告（2026-05-18）
+
+- [CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告](report.cds-agent-sidecar-contamination-2026-05-18) `report.cds-agent-sidecar-contamination-2026-05-18`
+  > CDS Agent sidecar 侵入 MAP 分支服务的调查报告（2026-05-18）
+
+- [Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告](report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18) `report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18`
+  > Claude Agent SDK 容器侵入 MAP 主系统的根因分析报告（2026-05-18）
+
+- [CDS Agent 当前进度面板](report.cds-agent-current-progress) `report.cds-agent-current-progress`
+  > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
 
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词

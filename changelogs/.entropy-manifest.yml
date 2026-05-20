@@ -46,3 +46,8 @@ processed:
   - 2026-05-13_cds-web-pnpm-build-approval.md
   - 2026-05-13_changelog-tabs-rename.md
   - 2026-05-13_dockdrag-defer-preventdefault.md
+  - 2026-05-13_document-store-rename-and-iframe.md
+  - 2026-05-13_fresh-animation-baseline-fix.md
+  - 2026-05-13_fresh-animation-event-driven.md
+  - 2026-05-13_hide-reprocess-for-reference.md
+  - 2026-05-13_markdown-xss-and-ext-list.md
