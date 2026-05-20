@@ -3,7 +3,6 @@ import { ExternalLink, Home, LogIn, Monitor, RefreshCw, ServerCrash, SplitSquare
 
 import { Button } from '@/components/ui/button';
 import { Section } from '@/pages/cds-settings/components';
-import { useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 type LoadingScenario = {
@@ -74,7 +73,6 @@ const loadingPages: LoadingPage[] = [
 ];
 
 export function LoadingPagesTab(): JSX.Element {
-  const { theme } = useTheme();
   const [pageId, setPageId] = useState(loadingPages[0].id);
   const [scenarioId, setScenarioId] = useState(branchScenarios[0].id);
   const [reloadKey, setReloadKey] = useState(0);
@@ -85,7 +83,7 @@ export function LoadingPagesTab(): JSX.Element {
 
   const previewUrl = useMemo(() => {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
-    const params = new URLSearchParams({ theme, t: String(reloadKey) });
+    const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
     if (page.id === 'cds-waiting-room') {
       params.set('status', scenario?.status || 'building');
       params.set('branch', 'reactbits-shape-grid-preview');
@@ -95,12 +93,12 @@ export function LoadingPagesTab(): JSX.Element {
     }
     const separator = page.endpoint.includes('?') ? '&' : '?';
     return `${page.endpoint}${separator}${params.toString()}`;
-  }, [page.endpoint, page.id, page.kind, reloadKey, scenario?.status, theme]);
+  }, [page.endpoint, page.id, page.kind, reloadKey, scenario?.status]);
 
   return (
     <Section
       title="加载页预览"
-      description="集中查看用户会实际遇到的 CDS 状态页。预览跟随当前主题切换，避免只在真实故障时才发现视觉问题。"
+      description="集中查看用户会实际遇到的 CDS 状态页。预览固定使用暗色画布，避免浅色主题下加载动效发虚。"
     >
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] pb-3">
@@ -171,7 +169,7 @@ export function LoadingPagesTab(): JSX.Element {
         </div>
 
         <div className="overflow-hidden rounded-none bg-transparent">
-          <div className="relative aspect-[16/9] min-h-[520px] w-full overflow-hidden bg-[hsl(var(--surface-base))]">
+          <div className="relative aspect-[16/9] min-h-[520px] w-full overflow-hidden bg-[#08070d] text-white">
             {page.kind === 'iframe' ? (
               <iframe
                 key={previewUrl}
@@ -180,9 +178,9 @@ export function LoadingPagesTab(): JSX.Element {
                 className="block h-full w-full border-0 bg-transparent"
               />
             ) : page.id === 'cds-home-loading' ? (
-              <CdsHomeLoadingPreview theme={theme} />
+              <CdsHomeLoadingPreview theme="dark" />
             ) : (
-              <BranchDetailLoadingPreview theme={theme} />
+              <BranchDetailLoadingPreview theme="dark" />
             )}
           </div>
         </div>
