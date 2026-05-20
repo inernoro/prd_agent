@@ -1014,6 +1014,24 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
                          if isinstance(body, dict) and not api_failed else [])
         scoped = _match_branches_for_project(
             branches_list, branch, fallback_project_slug, project_scoped)
+        # 区分两种 scoped 为空的情况，避免静默给错 URL：
+        #   1. raw 本就无该 git 分支 → fallback 合理（用户没部署过）
+        #   2. raw 里**有**但本地项目 hint 过滤排除掉 → 错配，必须 die 否则
+        #      用户拿到的 fallback URL 与后端 previewSlug 不一致（Bugbot Medium）
+        if not scoped and not project_scoped:
+            raw_same_branch = [b for b in branches_list
+                               if b.get("branch") == branch]
+            if raw_same_branch:
+                die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 "
+                    f"'{branch}' 但都不属于本地项目 hint "
+                    f"'{fallback_project_slug}'。可能是仓库目录名 ≠ CDS 项目 "
+                    f"slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
+                    f"或检查 /api/projects 列表。",
+                    code=2, extra={
+                        "rawMatches": raw_same_branch,
+                        "projectHint": fallback_project_slug,
+                    })
+                return
         for b in scoped:
             slug = b.get("previewSlug")
             if slug:
@@ -5251,10 +5269,17 @@ def cmd_smoke(args: argparse.Namespace) -> None:
             branches = (body.get("branches") or []) if isinstance(body, dict) else []
             for b in branches:
                 if b.get("id") == branch_id:
-                    preview_slug = b.get("previewSlug") or branch_id
-                    if not b.get("previewSlug"):
-                        print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
-                              file=sys.stderr)
+                    slug = b.get("previewSlug")
+                    if not slug:
+                        # canonical id ≠ v3 previewSlug，拼出来的 host CDS proxy
+                        # 不会响应，L1-L3 全失败且无意义。与 cmd_branch_preview_url
+                        # 行为对齐：服务端返回不完整 → 明确 die，不静默退化。
+                        die(f"/api/branches 匹配到 '{branch_id}' 但缺 previewSlug "
+                            f"字段。CDS 版本过旧或后端 bug，请升级 CDS 或检查 "
+                            f"cds/src/routes/branches.ts",
+                            code=3, extra={"branch": b})
+                        return
+                    preview_slug = slug
                     break
     else:
         print(f"[warn] CDS_HOST 未设，smoke 跳过 API 查询，用裸 id 拼预览域",
