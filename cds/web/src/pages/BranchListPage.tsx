@@ -3450,7 +3450,7 @@ function BranchCard({
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
+      } ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}

@@ -191,6 +191,49 @@
   }
 
   /*
+   * BranchCard busy rim. ReactBits StarBorder/BorderGlow-inspired, but kept
+   * CSS-only so the branch grid stays cheap while deployments are polling.
+   */
+  .cds-branch-card-busy {
+    isolation: isolate;
+    border-color: rgb(14 165 233 / 0.36) !important;
+    box-shadow:
+      0 0 0 1px rgb(14 165 233 / 0.12),
+      0 16px 36px -30px rgb(14 165 233 / 0.7);
+  }
+
+  .cds-branch-card-busy::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: inherit;
+    padding: 1px;
+    background:
+      conic-gradient(
+        from 0deg,
+        transparent 0deg 42deg,
+        rgb(56 189 248 / 0.12) 68deg,
+        rgb(56 189 248 / 0.72) 96deg,
+        rgb(34 211 238 / 0.2) 130deg,
+        transparent 168deg 360deg
+      );
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    animation: cds-branch-busy-rim 2.2s linear infinite;
+  }
+
+  [data-theme='light'] .cds-branch-card-busy {
+    border-color: rgb(2 132 199 / 0.42) !important;
+    box-shadow:
+      0 0 0 1px rgb(2 132 199 / 0.12),
+      0 16px 34px -28px rgb(2 132 199 / 0.45);
+  }
+
+  /*
    * AI-operated branch preview beacon.
    * React Bits-inspired glow/shimmer treatment: a rotating soft rim, an
    * outer breathing halo, and a tiny icon flash. It marks AI-touched
@@ -785,6 +828,35 @@
       repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(24, 24, 27, 0.16) 76px 78px, transparent 80px 118px);
     filter: blur(0.2px);
   }
+
+  .cds-loading-skeleton-line,
+  .cds-loading-skeleton-panel {
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.035), transparent),
+      hsl(var(--surface-raised) / 0.74);
+    background-size: 220% 100%, 100% 100%;
+    border: 1px solid hsl(var(--hairline) / 0.42);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.035);
+    animation: cds-loading-skeleton-shimmer 2.4s ease-in-out infinite;
+  }
+
+  .cds-loading-skeleton-line {
+    border-radius: 10px;
+  }
+
+  .cds-loading-skeleton-panel {
+    background:
+      radial-gradient(circle at 22% 12%, hsl(var(--foreground) / 0.04), transparent 28%),
+      linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.035), transparent),
+      hsl(var(--surface-raised) / 0.74);
+    background-size: 100% 100%, 220% 100%, 100% 100%;
+  }
+}
+
+@keyframes cds-branch-busy-rim {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes cds-preview-ring-drift {
@@ -793,5 +865,22 @@
   }
   100% {
     transform: translate3d(2%, -2%, 0) scale(1.04);
+  }
+}
+
+@keyframes cds-loading-skeleton-shimmer {
+  0%, 100% {
+    background-position: 160% 0, 0 0, 0 0;
+  }
+  50% {
+    background-position: -60% 0, 0 0, 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cds-branch-card-busy::after,
+  .cds-loading-skeleton-line,
+  .cds-loading-skeleton-panel {
+    animation: none;
   }
 }

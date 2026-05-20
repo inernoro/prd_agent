@@ -209,23 +209,30 @@ function BranchDetailLoadingPreview({ theme }: { theme: 'dark' | 'light' }): JSX
   return (
     <div className="relative h-full overflow-hidden bg-[hsl(var(--surface-base))] text-foreground">
       <PreviewRings theme={theme} />
-      <div className="relative z-10 flex h-full flex-col">
-        <div className="flex h-16 items-center justify-between border-b border-[hsl(var(--hairline))] px-8">
-          <div className="text-lg font-semibold">分支详情</div>
-          <div className="flex gap-3 text-muted-foreground">
-            <ExternalLink className="h-5 w-5" />
-            <RefreshCw className="h-5 w-5 animate-spin" />
+      <div className="relative z-10 h-full px-10 py-8">
+        <div className="mb-8 flex items-center justify-between">
+          <div className="space-y-3">
+            <SkeletonLine className="h-6 w-56" />
+            <SkeletonLine className="h-4 w-80 opacity-70" />
+          </div>
+          <div className="flex gap-3">
+            <SkeletonLine className="h-9 w-24 rounded-md opacity-75" />
+            <SkeletonLine className="h-9 w-9 rounded-md opacity-65" />
           </div>
         </div>
-        <div className="flex flex-1 items-center justify-center px-8">
-          <div className="inline-flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/72 px-6 py-4 text-muted-foreground shadow-2xl backdrop-blur">
-            <RefreshCw className="h-5 w-5 animate-spin" />
-            加载分支详情
-          </div>
+        <div className="cds-loading-skeleton-panel mb-8 h-[58%] rounded-lg" />
+        <div className="space-y-5">
+          <SkeletonLine className="h-6 w-[18%]" />
+          <SkeletonLine className="h-6 w-[28%] opacity-80" />
+          <SkeletonLine className="h-6 w-[22%] opacity-65" />
         </div>
       </div>
     </div>
   );
+}
+
+function SkeletonLine({ className }: { className: string }): JSX.Element {
+  return <div className={`cds-loading-skeleton-line ${className}`} />;
 }
 
 function CdsHomeLoadingPreview({ theme }: { theme: 'dark' | 'light' }): JSX.Element {
