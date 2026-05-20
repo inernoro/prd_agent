@@ -1121,9 +1121,17 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         die(f"调 /api/branches 失败 HTTP {status}: {msg}（检查 CDS_HOST / 认证密钥）",
             code=exit_code, extra={"status": status, "body": body.get("body")})
         return
+    # _call(quiet=True) 在 2xx 但响应非 JSON 时透传原始 str（如代理返回 HTML
+    # 错误页 200）。直接 body.get(...) 会 AttributeError，给用户 traceback
+    # 而不是结构化错误。
+    if not isinstance(body, dict):
+        die(f"/api/branches 返回非 JSON 响应（type={type(body).__name__}），"
+            f"无法解析 — 检查 CDS proxy 是否健康，或 CDS_HOST 是否正确",
+            code=3, extra={"body": body if isinstance(body, str) else repr(body)})
+        return
     project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
     matches = _match_branches_for_project(
-        body.get("branches", []), branch, project_slug_hint, project_scoped)
+        body.get("branches") or [], branch, project_slug_hint, project_scoped)
     for b in matches:
         bid = b.get("id")
         if bid:
