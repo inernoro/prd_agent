@@ -58,41 +58,38 @@ function collectFiles(): string[] {
   return out;
 }
 
-// 已知合法引用（讨论 v1/v2 历史 / SSOT 自身 / 反面案例说明）
+// 已知合法引用（讨论 v1/v2 历史 / SSOT 自身）—— **整文件豁免**仅保留真正
+// 无法用 line-level marker 处理的：实际公式实现（如 cdscli.py 的 v3 SSOT 用了
+// Python f-string `{slug}`，与 v1 形态字面冲突，必须整文件豁免）。
+// 其它解释类文档改用 inline `guard-allow: preview-url-drift` 标记跳过单行，
+// 这样未来谁在这些文件里塞回 v1 公式仍会被守卫抓到。
 const ALLOW_LIST = [
-  // —— SSOT 自身 ——
-  'cds/src/services/preview-slug.ts',          // TS SSOT
-  'prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarRouter.cs', // C# 容器内 fallback（被 parity 测试守护）
-  // —— 解释 / 历史文档 ——
-  '.claude/skills/preview-url/SKILL.md',
-  '.claude/skills/cds/SKILL.md',
-  '.claude/skills/cds-deploy-pipeline/SKILL.md',
-  '.claude/skills/task-handoff-checklist/SKILL.md',
-  '.claude/skills/smoke-test/SKILL.md',
-  '.claude/skills/acceptance-checklist/SKILL.md',
-  '.claude/skills/issues-visual-create/SKILL.md',
-  '.claude/skills/cds/cli/cdscli.py',          // CLI 本体内嵌 SSOT
-  '.claude/skills/cds/reference/smoke.md',     // 反面案例表
-  // —— PR 评论模板 / 类型注释里的 example 字符串 ——
-  'cds/src/services/comment-template.ts',
-  'cds/src/types.ts',
-  'cds/src/routes/branches.ts',
-  // —— 历史 prd-api / Tests 测试 fixture 用了固定 v3 字符串 ——
-  'prd-api/tests/PrdAgent.Tests/DynamicSidecarRegistryTests.cs',
+  // SSOT 自身（TypeScript v3 计算函数；C# 容器内 fallback 实现，由 parity 测试守护）
+  'cds/src/services/preview-slug.ts',
+  'prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarRouter.cs',
+  // cdscli.py 内嵌 v3 SSOT，f-string `{slug}` 会被正则抓但属合法实现
+  '.claude/skills/cds/cli/cdscli.py',
 ];
+
+// Line-level 豁免标记：行尾含此字符串就跳过守卫（用于反面案例 / 历史解释）。
+// 提供这个 mechanism 是为了避免整文件豁免——单点豁免范围最小，未来回归即抓。
+const LINE_ALLOW_MARKER = 'guard-allow: preview-url-drift';
 
 describe('preview URL drift guard', () => {
   it('skills 不得用 v1 公式 `${X}.miduo.org` 拼预览域（除允许清单）', () => {
     const files = collectFiles();
     // 真正的 v1 拼接形态：`https://${单占位符}.miduo.org`（占位符后直接接 .miduo.org，
-    // 中间没有 `-${另一占位符}` 拼接）。必须**显式带占位符** `${X}` / `{X}` 才算 v1，
-    // 字面量 URL（如 `https://prd-agent.miduo.org` / `https://my-branch.miduo.org`）
+    // 中间没有 `-${另一占位符}` 拼接）。必须**显式带占位符** `${X}` / `{X}` / `$X`
+    // 才算 v1，字面量 URL（如 `https://prd-agent.miduo.org` / `https://my-branch.miduo.org`）
     // 不算 —— 它们可能是 v3 SSOT 的展示样例或固定服务地址。
     //
-    // 占位符字符集要包含 `-` 才能吃下文档常见的 `{branch-slug}` / `{branch-id}`
-    // 这类带连字符形态（之前的 `[A-Za-z_][A-Za-z0-9_]*` 漏过，被 Codex 抓出）。
-    // 兼容：bash `${BRANCH_ID}` / Python f-string `{branch_id}` / 文档 `{branch-slug}`。
-    const v1Pattern = /https?:\/\/[`'"]?(?:\$\{[A-Za-z0-9_-]+\}|\{[A-Za-z0-9_-]+\})\.miduo\.org/;
+    // 三种占位符形态都要抓（之前漏过 bash 无大括号风格 `$BRANCH_ID`，Codex P2 抓出）：
+    //   1. `${IDENT}` — bash 带大括号 / shell 参数展开
+    //   2. `{ident}`  — Python f-string / Jinja 模板 / 文档占位 `{branch-slug}`
+    //   3. `$IDENT`   — bash 无大括号变量引用（IDENT 必须 [A-Za-z_]开头，`.` 终止）
+    //
+    // 占位符字符集要包含 `-` 才能吃下文档常见的 `{branch-slug}` / `{branch-id}`。
+    const v1Pattern = /https?:\/\/[`'"]?(?:\$\{[A-Za-z0-9_-]+\}|\$[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z0-9_-]+\})\.miduo\.org/;
     // CDS admin / 静态服务子域不算 preview URL，加白名单防误伤
     const STATIC_HOSTS = ['cds.miduo.org', 'i.miduo.org', 'api.miduo.org'];
     const offenders: { file: string; line: number; text: string }[] = [];
@@ -104,6 +101,8 @@ describe('preview URL drift guard', () => {
         if (!v1Pattern.test(line)) return;
         // 已知静态子域跳过
         if (STATIC_HOSTS.some((h) => line.includes(h))) return;
+        // 行级豁免：源文件用 `guard-allow: preview-url-drift` 标记反面案例 / 历史引用
+        if (line.includes(LINE_ALLOW_MARKER)) return;
         offenders.push({ file: rel, line: idx + 1, text: line.trim() });
       });
     }

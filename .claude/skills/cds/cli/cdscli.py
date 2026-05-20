@@ -1075,15 +1075,23 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）", code=1)
         return
     project_slug_hint = _slugify_for_preview(os.path.basename(repo_root))
+
     body = _call("GET", _branches_path(), timeout=10, quiet=True)
-    # API 失败（401 / 5xx）必须明确暴露，不能被后面 "找不到分支" 的兜底 die 遮蔽
+    # API 失败（401 / 5xx）必须明确暴露，不能被后面 "找不到分支" 的兜底 die 遮蔽。
+    # exit code 遵循 CLI 契约（与 _call(quiet=False) 一致）：4xx → 2（用户/认证类错误），
+    # 5xx → 3（服务端故障，retriable），这样自动化能区分 user error 和 server outage。
     if isinstance(body, dict) and body.get("__error__"):
         status = body.get("status")
         msg = body.get("body")
         if isinstance(msg, dict):
             msg = msg.get("message") or msg.get("error") or msg
+        try:
+            status_int = int(status) if status is not None else 0
+        except (TypeError, ValueError):
+            status_int = 0
+        exit_code = 3 if 500 <= status_int < 600 else 2
         die(f"调 /api/branches 失败 HTTP {status}: {msg}（检查 CDS_HOST / 认证密钥）",
-            code=2, extra={"status": status, "body": body.get("body")})
+            code=exit_code, extra={"status": status, "body": body.get("body")})
         return
     project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
     matches = _match_branches_for_project(
