@@ -537,11 +537,18 @@ function failureKeyLogLines(lines: string[], max = 8): string[] {
     /lockfile is up to date/i,
     /determining projects to restore/i,
   ];
-  const selected = lines
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !ignored.some((pattern) => pattern.test(line)))
-    .filter((line) => keywords.some((pattern) => pattern.test(line)));
+  const cleaned = lines
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim())
+    .filter((line) => !ignored.some((pattern) => pattern.test(line)));
+  const selected: string[] = [];
+  cleaned.forEach((line, index) => {
+    if (!keywords.some((pattern) => pattern.test(line))) return;
+    for (let offset = -1; offset <= 4; offset += 1) {
+      const context = cleaned[index + offset];
+      if (context) selected.push(context.trim());
+    }
+  });
   return Array.from(new Set(selected)).slice(-max);
 }
 
