@@ -26,6 +26,8 @@ const SCAN_TARGETS = [
   path.join(REPO_ROOT, 'prd-api', 'src'),
   path.join(REPO_ROOT, 'prd-admin', 'src'),
   path.join(REPO_ROOT, 'prd-desktop', 'src'),
+  // Tauri Rust 源也要扫——`.rs` 已在 SCAN_EXTENSIONS，目录漏了等于无效
+  path.join(REPO_ROOT, 'prd-desktop', 'src-tauri'),
   path.join(REPO_ROOT, 'prd-video', 'src'),
   path.join(REPO_ROOT, 'cds', 'src'),
   path.join(REPO_ROOT, 'cds', 'web', 'src'),
@@ -123,8 +125,10 @@ describe('preview URL drift guard', () => {
   it('skills 不得用 `tr "/" "-"` 单步推 CDS branch id（多项目 CDS 下会 404）', () => {
     const files = collectFiles();
     // 只匹配「真正在赋值」的代码行，跳过 markdown 注释 / blockquote / shell comment
-    // 触发条件：必须形如 `XXX=$(...tr '/' '-'...)` 或 `XXX | tr '/' '-'`
-    const assignPattern = /^[^#>]*?(\w+\s*=\s*[\$\(]|\|\s*)tr\s+['"]\/['"]\s+['"]-['"]/;
+    // 触发条件：必须形如 `XXX=$(...tr '/' '-'...)` 或 `XXX | tr '/' '-'`。
+    // 引号可选——bash 允许 `tr / -` 不带引号（`/` 和 `-` 都不是 shell 元字符），
+    // 这种形态如果不抓守卫等于没用（Codex P2 抓出此 gap）。
+    const assignPattern = /^[^#>]*?(\w+\s*=\s*[\$\(]|\|\s*)tr\s+['"]?\/['"]?\s+['"]?-['"]?/;
     const offenders: { file: string; line: number; text: string }[] = [];
     for (const f of files) {
       const rel = path.relative(REPO_ROOT, f);
