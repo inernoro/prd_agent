@@ -35,6 +35,7 @@ const APP_NAME_ROUTES: readonly [prefix: string, appName: string][] = [
   ['/workflow-agent', 'workflow-agent'],
   ['/pr-review', 'pr-review'],
   ['/review-agent', 'review-agent'],
+  ['/marking-line-agent', 'marking-line-agent'],
   ['/prd-agent', 'prd-agent'],
   ['/ai-toolbox', 'ai-toolbox'],
   ['/arena', 'arena-agent'],
@@ -234,6 +235,7 @@ export async function apiRequest<T>(
     auth?: boolean;
     emptyResponseData?: T;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }
 ): Promise<ApiResponse<T>> {
   return await apiRequestInner<T>(path, options, false);
@@ -247,6 +249,7 @@ async function apiRequestInner<T>(
     auth?: boolean;
     emptyResponseData?: T;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   } | undefined,
   didRefresh: boolean
 ): Promise<ApiResponse<T>> {
@@ -285,8 +288,11 @@ async function apiRequestInner<T>(
 
   let res: Response;
   try {
-    res = await fetch(url, { method, headers, body });
+    res = await fetch(url, { method, headers, body, signal: options?.signal });
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      return fail('ABORTED', '请求已中止') as unknown as ApiResponse<T>;
+    }
     if (isDisconnectedError(e)) {
       return fail('DISCONNECTED', '已断开连接或服务器不可达') as unknown as ApiResponse<T>;
     }

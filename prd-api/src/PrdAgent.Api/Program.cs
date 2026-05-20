@@ -305,6 +305,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationSer
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.DailyLogPolishService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DefectAgent.DefectPolishService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MarkingLineAgent.MarkingLineDiagramService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MarkingLineAgent.MarkingLineDiagramImageService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务

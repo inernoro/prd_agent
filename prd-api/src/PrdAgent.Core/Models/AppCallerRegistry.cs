@@ -396,6 +396,14 @@ public static class MarkingLineAgent
             Category = "Diagram"
         )]
         public const string Stream = "marking-line-agent.diagram.stream::chat";
+
+        [AppCallerMetadata(
+            "赋码产线示意图-文生图",
+            "根据用户简述生成工业培训用白底产线总览位图（PNG）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Diagram"
+        )]
+        public const string Image = "marking-line-agent.diagram.image::generation";
     }
 }
 

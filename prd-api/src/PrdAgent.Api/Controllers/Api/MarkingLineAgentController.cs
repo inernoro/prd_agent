@@ -19,15 +19,18 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed class MarkingLineAgentController : ControllerBase
 {
     private readonly MarkingLineDiagramService _diagramService;
+    private readonly MarkingLineDiagramImageService _diagramImageService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<MarkingLineAgentController> _logger;
 
     public MarkingLineAgentController(
         MarkingLineDiagramService diagramService,
+        MarkingLineDiagramImageService diagramImageService,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<MarkingLineAgentController> logger)
     {
         _diagramService = diagramService;
+        _diagramImageService = diagramImageService;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
@@ -60,10 +63,71 @@ public sealed class MarkingLineAgentController : ControllerBase
                 holder),
             logger: _logger);
     }
+
+    /// <summary>
+    /// 根据简述生成产线示意图位图（PNG 等，由上游模型决定）。先 Chat 整理英文提示词，再文生图；返回 url 或 base64。
+    /// </summary>
+    [HttpPost("diagram/image")]
+    public async Task<IActionResult> RenderDiagramImage([FromBody] MarkingLineDiagramImageHttpRequest? request)
+    {
+        var userId = this.GetRequiredUserId();
+        var format = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "url" : request!.ResponseFormat!.Trim();
+
+        var result = await _diagramImageService.TryGenerateAsync(
+            userId,
+            request?.Brief ?? string.Empty,
+            format,
+            CancellationToken.None).ConfigureAwait(false);
+
+        if (!result.Success)
+        {
+            var code = result.ErrorCode ?? ErrorCodes.LLM_ERROR;
+            var message = result.ErrorMessage ?? "图片生成失败";
+            if (string.Equals(code, ErrorCodes.CONTENT_EMPTY, StringComparison.Ordinal))
+            {
+                return BadRequest(ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
+            }
+
+            return StatusCode(502, ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
+        }
+
+        var dto = new MarkingLineDiagramImageHttpDto
+        {
+            ImageUrl = result.ImageUrl,
+            ImageBase64 = result.ImageBase64,
+            MimeType = result.MimeType,
+            ImagePromptUsed = result.ImagePromptUsed,
+            RevisedPrompt = result.RevisedPrompt,
+            PromptComposerModel = result.PromptComposerModel,
+            PromptComposerPlatform = result.PromptComposerPlatform,
+        };
+
+        return Ok(ApiResponse<MarkingLineDiagramImageHttpDto>.Ok(dto));
+    }
 }
 
 public sealed class MarkingLineDiagramStreamRequest
 {
     /// <summary>用户对产线、工位、采集点等的文字描述。</summary>
     public string? Brief { get; set; }
+}
+
+public sealed class MarkingLineDiagramImageHttpRequest
+{
+    /// <summary>用户对产线、工位、采集点等的文字描述。</summary>
+    public string? Brief { get; set; }
+
+    /// <summary>上游生图返回格式：<c>url</c>（默认）或 <c>b64_json</c>。</summary>
+    public string? ResponseFormat { get; set; }
+}
+
+public sealed class MarkingLineDiagramImageHttpDto
+{
+    public string? ImageUrl { get; set; }
+    public string? ImageBase64 { get; set; }
+    public string? MimeType { get; set; }
+    public string? ImagePromptUsed { get; set; }
+    public string? RevisedPrompt { get; set; }
+    public string? PromptComposerModel { get; set; }
+    public string? PromptComposerPlatform { get; set; }
 }
