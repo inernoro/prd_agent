@@ -1099,8 +1099,11 @@ describe('Branch Routes', () => {
 
       expect(res.status).toBe(503);
       expect(res.body).toContain('CDS Waiting Room');
-      expect(res.body).toContain('shape-grid-bg');
-      expect(res.body).toContain('rings-orbit');
+      expect(res.body).toContain('magic-rings-canvas');
+      expect(res.body).toContain('id="magic-rings"');
+      expect(res.body).not.toContain('shape-grid-bg');
+      expect(res.body).not.toContain('rings-orbit');
+      expect(res.body).not.toContain('class="panel"');
       expect(res.body).toContain('分支环境正在构建');
     });
   });

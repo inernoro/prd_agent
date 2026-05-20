@@ -221,9 +221,11 @@ describe('ProxyService', () => {
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.headers['Retry-After']).toBe('2');
       expect(written.body).toContain('启动中');
-      expect(written.body).toContain('shape-grid-bg');
-      expect(written.body).toContain('rings-orbit');
-      expect(written.body).not.toContain('magic-rings');
+      expect(written.body).toContain('magic-rings-canvas');
+      expect(written.body).toContain('id="magic-rings"');
+      expect(written.body).not.toContain('shape-grid-bg');
+      expect(written.body).not.toContain('rings-orbit');
+      expect(written.body).not.toContain('class="panel"');
       expect(written.body).toContain('setTimeout');
     });
 

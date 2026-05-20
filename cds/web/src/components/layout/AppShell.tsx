@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronDown, LayoutGrid, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Check, ChevronDown, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
+import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { Button } from '@/components/ui/button';
-import { useTheme } from '@/lib/theme';
+import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
 /*
@@ -84,22 +85,95 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
 }
 
 function FloatingThemeToggle(): JSX.Element {
-  const { theme, toggle } = useTheme();
+  const { theme, mode, setTheme } = useTheme();
+  const [open, setOpen] = useState(false);
   // 2026-05-07 用户反馈"右上角按钮被皮肤挡住":悬浮按钮 z-[70] 盖在 TopBar
   // nav buttons(z 默认)上,导致"运维"等按钮被遮挡。降到 z-[5] 让 nav 按钮
   // 在上层;同时挪到右下角避开 TopBar 区域,跟 GlobalUpdateBadge(也在底部)
   // 不重叠靠水平错开(theme 在 right-3,update badge 在 left)。
+  const changeTheme = (
+    next: 'light' | 'dark' | 'system',
+    event: React.MouseEvent<HTMLButtonElement> | React.PointerEvent<HTMLButtonElement>,
+  ): void => {
+    setOpen(false);
+    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!document.startViewTransition || prefersReduced) {
+      applyThemeMode(next);
+      setTheme(next);
+      return;
+    }
+    const x = event.clientX;
+    const y = event.clientY;
+    const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const transition = document.startViewTransition(() => {
+      applyThemeMode(next);
+      setTheme(next);
+    });
+    void transition.ready.then(() => {
+      document.documentElement.animate(
+        {
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${endRadius}px at ${x}px ${y}px)`,
+          ],
+        },
+        {
+          duration: 520,
+          easing: 'cubic-bezier(.16,1,.3,1)',
+          pseudoElement: '::view-transition-new(root)',
+        },
+      );
+    }).catch(() => { /* best-effort effect */ });
+  };
+
+  const items = [
+    { mode: 'light' as const, label: '白天', icon: Sun },
+    { mode: 'dark' as const, label: '黑天', icon: Moon },
+    { mode: 'system' as const, label: '自动', icon: Monitor },
+  ];
+
   return (
-    <div className="fixed bottom-3 right-3 z-[5]">
+    <div className="fixed bottom-3 right-3 z-[60]">
+      {open ? (
+        <div className="absolute bottom-full right-0 mb-2 w-32 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-1 shadow-2xl">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = mode === item.mode;
+            return (
+              <button
+                key={item.mode}
+                type="button"
+                className={`flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground'}`}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  changeTheme(item.mode, event);
+                }}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  changeTheme(item.mode, event);
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  changeTheme(item.mode, event);
+                }}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span className="flex-1">{item.label}</span>
+                {active ? <Check className="h-3.5 w-3.5" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <Button
         variant="ghost"
         size="icon"
-        onClick={toggle}
+        onClick={() => setOpen((value) => !value)}
         aria-label="切换主题"
-        title={`切换主题(当前: ${theme === 'dark' ? '深色' : '浅色'})`}
+        title={`切换主题(当前: ${mode === 'system' ? `自动/${theme === 'dark' ? '黑天' : '白天'}` : theme === 'dark' ? '黑天' : '白天'})`}
         className="h-9 w-9 rounded-full bg-[hsl(var(--surface-raised))]/80 backdrop-blur shadow-md hover:bg-[hsl(var(--surface-raised))]"
       >
-        {theme === 'dark' ? <Sun /> : <Moon />}
+        {mode === 'system' ? <Monitor /> : theme === 'dark' ? <Moon /> : <Sun />}
       </Button>
     </div>
   );
@@ -215,6 +289,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
         ) : null}
       </div>
       {right ? <div className="flex shrink-0 items-center gap-2">{right}</div> : null}
+      <SiteNoticeInbox />
     </header>
   );
 }

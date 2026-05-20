@@ -152,7 +152,7 @@ export function CdsSettingsPage(): JSX.Element {
         />
       }
     >
-      <Workspace>
+      <Workspace className="cds-workspace-settings">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
           <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
             <TabsList

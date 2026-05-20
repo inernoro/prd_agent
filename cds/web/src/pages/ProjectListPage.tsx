@@ -1256,11 +1256,51 @@ function MysqlIcon(): JSX.Element {
   );
 }
 
+function PostgresIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path
+        d="M6.8 5.2c1.3-1.4 3.1-2.1 5.2-2.1s3.9.7 5.2 2.1c1.2 1.3 1.8 3.2 1.8 5.4 0 2.6-.9 4.7-2.6 6.4l.8 2.8-2.9-1.1c-.7.3-1.5.4-2.3.4-2.1 0-3.9-.7-5.2-2.1C5.6 15.7 5 13.8 5 11.6s.6-4.1 1.8-6.4Z"
+        fill="currentColor"
+      />
+      <path
+        d="M8.8 10.2c.5-1.4 1.5-2.2 3.2-2.2s2.7.8 3.2 2.2M9.5 13.6c1.5.9 3.5.9 5 0"
+        fill="none"
+        stroke="hsl(var(--surface-sunken))"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        opacity="0.82"
+      />
+    </svg>
+  );
+}
+
 function RabbitIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
       <path d="M7 7.5V4.2h2.8v6.1h1.8V4.2h2.8v6.1H17c1.7 0 3 1.3 3 3v4.5H4v-7.5h3Z" fill="currentColor" />
       <path d="M7.4 15.1h9.2" stroke="hsl(var(--surface-sunken))" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+    </svg>
+  );
+}
+
+function MilvusIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <circle cx="7.2" cy="8" r="2.2" fill="currentColor" />
+      <circle cx="16.8" cy="8" r="2.2" fill="currentColor" opacity="0.72" />
+      <circle cx="12" cy="16.1" r="2.8" fill="currentColor" opacity="0.9" />
+      <path d="M9 9.7 11 13.5M15 9.7l-2 3.8M9.5 16.1h5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" opacity="0.7" />
+    </svg>
+  );
+}
+
+function VectorDbIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path d="M5 6.5 12 3l7 3.5v7L12 17l-7-3.5v-7Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M5 6.5 12 10l7-3.5M12 10v7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+      <circle cx="12" cy="20" r="1.6" fill="currentColor" />
     </svg>
   );
 }
@@ -1275,10 +1315,10 @@ function WordmarkIcon({ text }: { text: string }): JSX.Element {
 
 function NacosIcon(): JSX.Element {
   return (
-    <span aria-hidden className="flex flex-col items-center justify-center leading-none">
-      <span className="font-mono text-[15px] font-black tracking-normal">Na</span>
-      <span className="mt-1 h-0.5 w-5 rounded-full bg-current opacity-80" />
-    </span>
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path d="M4.5 15.6c2.2-5.9 5.8-8.9 10.8-9.1 2.1-.1 3.6.5 4.7 1.5-1.7.3-3 1.2-3.9 2.8 1.6.2 2.7.8 3.4 1.9-3 .8-5.8.9-8.5.2-2.4-.6-4.5.2-6.5 2.7Z" fill="currentColor" />
+      <path d="M5.6 17.8c4.2 1.7 8.4 1.6 12.8-.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" opacity="0.85" />
+    </svg>
   );
 }
 
@@ -1309,6 +1349,27 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
       icon: <MysqlIcon />,
     };
   }
+  if (raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') || /\bpg[-_0-9]/.test(raw)) {
+    return {
+      label: 'PostgreSQL',
+      tileClassName: 'border-sky-700/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      icon: <PostgresIcon />,
+    };
+  }
+  if (raw.includes('milvus')) {
+    return {
+      label: 'Milvus',
+      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
+      icon: <MilvusIcon />,
+    };
+  }
+  if (raw.includes('qdrant') || raw.includes('weaviate') || raw.includes('chroma')) {
+    return {
+      label: raw.includes('qdrant') ? 'Qdrant' : raw.includes('weaviate') ? 'Weaviate' : 'Vector DB',
+      tileClassName: 'border-fuchsia-600/45 bg-fuchsia-500/15 text-fuchsia-700 dark:border-fuchsia-500/35 dark:bg-fuchsia-500/10 dark:text-fuchsia-300',
+      icon: <VectorDbIcon />,
+    };
+  }
   if (raw.includes('rabbit')) {
     return {
       label: 'RabbitMQ',
@@ -1332,8 +1393,8 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   }
   return {
     label: service.name || service.id,
-    tileClassName: 'border-sky-500/30 bg-sky-500/10 text-sky-500',
-    icon: <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />,
+    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-600 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-300',
+    icon: <Database className="cds-project-node-icon" />,
   };
 }
 
@@ -1457,7 +1518,7 @@ function ProjectCard({
                       title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
                       aria-label={brand.label}
                     >
-                      {online ? brand.icon : <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />}
+                      {brand.icon}
                     </span>
                   );
                 })

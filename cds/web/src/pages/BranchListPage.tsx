@@ -9,7 +9,6 @@ import {
   ChevronDown,
   Copy,
   Cpu,
-  Database,
   Eye,
   ExternalLink,
   Gauge,
@@ -1001,42 +1000,6 @@ export function BranchListPage(): JSX.Element {
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
-  /**
-   * 2026-05-20: 这是用户明确关闭的提示偏好，不是部署运行缓存。
-   * 按项目 + 缺失变量指纹长期保存，避免用户每次开页面都被同一条横幅打断；
-   * 只有新增缺失变量或浏览器站点数据被清理时才重新出现。
-   */
-  const [envBannerDismissed, setEnvBannerDismissed] = useState(false);
-  const [envHintDialogOpen, setEnvHintDialogOpen] = useState(false);
-  const envBannerStorageKey = useMemo(() => {
-    if (!projectId || pendingEnvKeys.length === 0) return '';
-    const fingerprint = [...pendingEnvKeys].sort().join(',');
-    return `cds.envBannerDismissed.${projectId}.${fingerprint}`;
-  }, [projectId, pendingEnvKeys]);
-  useEffect(() => {
-    if (!envBannerStorageKey) { setEnvBannerDismissed(false); return; }
-    try {
-      const dismissed =
-        localStorage.getItem(envBannerStorageKey) === '1' ||
-        sessionStorage.getItem(envBannerStorageKey) === '1';
-      if (dismissed && localStorage.getItem(envBannerStorageKey) !== '1') {
-        localStorage.setItem(envBannerStorageKey, '1');
-      }
-      setEnvBannerDismissed(dismissed);
-    } catch {
-      setEnvBannerDismissed(false);
-    }
-  }, [envBannerStorageKey]);
-  const dismissEnvBanner = useCallback(() => {
-    if (!envBannerStorageKey) return;
-    try {
-      localStorage.setItem(envBannerStorageKey, '1');
-    } catch {
-      try { sessionStorage.setItem(envBannerStorageKey, '1'); } catch { /* browser storage unavailable */ }
-    }
-    setEnvBannerDismissed(true);
-    setEnvHintDialogOpen(false);
-  }, [envBannerStorageKey]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
@@ -1294,9 +1257,56 @@ export function BranchListPage(): JSX.Element {
     };
   }, [projectId, state.status]);
 
-  // SSE 连接状态(2026-05-04 UX 优化):用绿点替代右上"刷新"按钮的暗示
-  // (用户反馈:刷新按钮存在反而暗示数据不新鲜)。SSE 在线 → 静止绿点;
-  // 中断重连 → 黄色脉冲;失败 → 露出 manual refresh 按钮兜底。
+  useEffect(() => {
+    if (!projectId) return;
+    if (missingRequiredKeys.length === 0) return;
+    const keys = [...missingRequiredKeys].sort();
+    window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
+      detail: {
+        id: `branch:${projectId}:missing-required:${keys.join(',')}`,
+        title: '必填环境变量缺失',
+        body: `${keys.length} 个必填项还没填：${keys.slice(0, 6).join(', ')}${keys.length > 6 ? ` 等 ${keys.length} 项` : ''}。deploy 会被阻止，先去项目设置补齐。`,
+        tone: 'danger',
+        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        actionLabel: '立刻填写',
+        source: 'env',
+      },
+    }));
+  }, [missingRequiredKeys, projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    if (pendingEnvKeys.length === 0) return;
+    const keys = [...pendingEnvKeys].sort();
+    window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
+      detail: {
+        id: `branch:${projectId}:pending-env:${keys.join(',')}`,
+        title: '项目环境变量待补全',
+        body: `${keys.length} 个变量仍是 TODO 占位：${keys.slice(0, 5).join(' · ')}${keys.length > 5 ? ` 等 ${keys.length} 项` : ''}。先填好再部署。`,
+        tone: 'warning',
+        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        actionLabel: '前往填写',
+        source: 'env',
+      },
+    }));
+  }, [pendingEnvKeys, projectId]);
+
+  useEffect(() => {
+    if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;
+    window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
+      detail: {
+        id: `branch:${projectId}:schema-init`,
+        title: '数据库初始化(schema.sql)',
+        body: '检测到 mysql / postgres 类基础设施。需要初始化数据库时，进入环境变量配置向导上传 schema.sql，容器首次启动会自动执行。',
+        tone: 'info',
+        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        actionLabel: '上传初始化 SQL',
+        source: 'schema',
+      },
+    }));
+  }, [projectId, state]);
+
+  // SSE 连接状态只用于故障兜底。在线状态不再渲染绿点,避免无意义状态噪音。
   const [sseConnected, setSseConnected] = useState(true);
   useEffect(() => {
     if (!projectId) return;
@@ -2258,18 +2268,7 @@ export function BranchListPage(): JSX.Element {
                 <Activity />
                 运维
               </Button>
-              {/* SSE 在线状态指示器 + 故障兜底刷新。
-                  - 在线:静止绿点 + tooltip"实时连接中"。
-                  - 离线:黄色脉冲 + 露出 RefreshCw 按钮让用户手动重拉。 */}
-              {sseConnected ? (
-                <span
-                  className="inline-flex h-9 w-9 items-center justify-center"
-                  title="实时连接中(分支状态变化会自动推送)"
-                  aria-label="SSE 在线"
-                >
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" />
-                </span>
-              ) : (
+              {!sseConnected ? (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -2280,7 +2279,7 @@ export function BranchListPage(): JSX.Element {
                 >
                   <RefreshCw />
                 </Button>
-              )}
+              ) : null}
             </>
           }
         />
@@ -2314,122 +2313,6 @@ export function BranchListPage(): JSX.Element {
           <div className="mt-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
             当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
             {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
-          </div>
-        ) : null}
-
-        {/* Phase 9.6 — 缺失必填项 banner(envMeta.kind=required + value 空)。
-            比 pendingEnvKeys 的"TODO 占位检测"更准 — 后端用 envMeta 直接告诉
-            我们哪些 required key 还没填,deploy 会被 412 block。点按钮去填 */}
-        {missingRequiredKeys.length > 0 ? (
-          <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-rose-500/50 bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">必填环境变量缺失,deploy 会被 block</div>
-              <div className="mt-0.5 text-xs leading-5">
-                {missingRequiredKeys.length} 个必填项还没填:
-                <code className="ml-1 break-all">
-                  {missingRequiredKeys.slice(0, 6).join(', ')}
-                  {missingRequiredKeys.length > 6 ? ` 等 ${missingRequiredKeys.length} 项` : ''}
-                </code>
-              </div>
-            </div>
-            <Button asChild size="sm">
-              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
-                <Settings />
-                立刻填写
-              </a>
-            </Button>
-          </div>
-        ) : null}
-
-        {/* Pending env vars banner — surfaces when a cds-compose import
-            left TODO placeholders so the user knows where to fill them
-            in. Without this, deploys fail silently with cryptic errors
-            because services see literal "TODO: 请填写实际值" as their
-            DB password / secret. */}
-        {pendingEnvKeys.length > 0 && !envBannerDismissed ? (
-          <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">项目环境变量待补全</div>
-              <div className="mt-0.5 text-xs leading-5 text-amber-700/80 dark:text-amber-400/80">
-                {pendingEnvKeys.length} 个变量仍是 TODO 占位（{pendingEnvKeys.slice(0, 5).join(' · ')}
-                {pendingEnvKeys.length > 5 ? ` 等 ${pendingEnvKeys.length} 项` : ''}），先去填好再部署。
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button asChild size="sm">
-                <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
-                  <Settings />
-                  前往填写
-                </a>
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setEnvHintDialogOpen(true)}
-                title="提示我以后去哪里填，然后关闭这条横幅"
-              >
-                我知道了
-              </Button>
-            </div>
-          </div>
-        ) : null}
-        <Dialog open={envHintDialogOpen} onOpenChange={setEnvHintDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>下次去这里填环境变量</DialogTitle>
-              <DialogDescription>
-                关掉这条横幅后想再填，按下面路径进。检测到新的占位变量时横幅会自动重新出现。
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 text-sm leading-6">
-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-3 py-2 font-mono text-xs">
-                项目设置 → 环境变量 → 找到待补全的 key 把 TODO 占位替换成真实值
-              </div>
-              <div className="text-xs text-muted-foreground">
-                直链：<a
-                  className="underline underline-offset-2 hover:text-foreground"
-                  href={`/settings/${encodeURIComponent(projectId)}#env`}
-                >
-                  /settings/{projectId}#env
-                </a>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                这条横幅会在本浏览器长期隐藏；只有检测到新的未填环境变量，或浏览器站点数据被清理后才会再次显示。
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setEnvHintDialogOpen(false)}>
-                取消
-              </Button>
-              <Button onClick={dismissEnvBanner}>关闭横幅</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* 数据库初始化提示 banner(2026-05-10):用户多次反馈"找不到初始化数据库的入口"。
-            EnvSetupDialog 支持上传 schema.sql 但藏在「项目设置→环境变量配置向导」里。
-            这里给一个常驻的、显眼的入口,deep-link 到 #env tab 后用户点"打开向导"
-            即可进入 EnvSetupDialog 的 schema 上传步骤。
-            条件:仅当项目 infraServices 含 mysql/postgres/mariadb/mongo 时显示
-            (用户反馈 MAP 等纯前端项目不该看到此 banner)。 */}
-        {state.status === 'ok' && state.hasSchemafulInfra ? (
-          <div className="mt-6 flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-700 dark:text-sky-300">
-            <Database className="mt-0.5 h-4 w-4 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <div className="font-medium">数据库初始化(schema.sql)</div>
-              <div className="mt-0.5 text-xs leading-5 text-sky-700/80 dark:text-sky-300/80">
-                需要给 mysql / postgres 容器导入初始化 SQL?进入「项目设置 → 环境变量配置向导」
-                上传 schema.sql,容器首次启动会自动执行 /docker-entrypoint-initdb.d/ 下的脚本。
-              </div>
-            </div>
-            <Button asChild size="sm" variant="outline">
-              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
-                <Database />
-                上传初始化 SQL
-              </a>
-            </Button>
           </div>
         ) : null}
 
@@ -3506,7 +3389,7 @@ function BranchCard({
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${isAiOperated ? 'ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
+      } ${isAiOperated ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -3534,7 +3417,7 @@ function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <Github
-            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isInterim ? 'animate-pulse' : ''}`}
+            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
             aria-hidden
           />
           <div className="min-w-0 flex-1">
@@ -3552,7 +3435,7 @@ function BranchCard({
                   className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-sky-400/45 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-300"
                   title={`AI 操作过${branch.lastAiOccupantAt ? ` · 最近 ${formatRelativeTime(branch.lastAiOccupantAt)}` : ''}${branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : ''}`}
                 >
-                  <Bot className="h-2.5 w-2.5" aria-hidden />
+                  <Bot className="cds-ai-kinetic-icon cds-ai-delay-1 h-2.5 w-2.5" aria-hidden />
                   AI
                 </span>
               ) : null}
@@ -3567,7 +3450,7 @@ function BranchCard({
                   className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-medium ${runtime.className}`}
                   title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  <Rocket className="h-2.5 w-2.5" aria-hidden />
+                  <Rocket className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   {runtime.label}
                 </span>
               ) : (
@@ -3575,7 +3458,7 @@ function BranchCard({
                   className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
                   title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  <Rocket className="h-2.5 w-2.5" aria-hidden />
+                  <Rocket className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   源码
                 </span>
               )}
@@ -3614,11 +3497,11 @@ function BranchCard({
             title={isInterim ? `${statusLabel(branch.status)}已持续时间` : undefined}
             data-since={isInterim ? busySince || '' : undefined}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
+            <span className={`h-1.5 w-1.5 rounded-full ${isAiOperated ? 'cds-ai-kinetic-dot ' : ''}${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
             {isError ? issueLabel : statusLabel(branch.status)}
             {isInterim ? (
               <>
-                <Clock3 className="h-3 w-3" aria-hidden />
+                <Clock3 className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-3 w-3' : 'h-3 w-3'} aria-hidden />
                 <span className="branch-deploy-timer-value font-mono">{formatElapsedFrom(busySince, now)}</span>
               </>
             ) : null}
@@ -3637,7 +3520,7 @@ function BranchCard({
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
               title={service.profileId}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${chipRailClass}`} aria-hidden />
+              <span className={`h-1.5 w-1.5 rounded-full ${isAiOperated ? 'cds-ai-kinetic-dot ' : ''}${chipRailClass}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
               <span>:{service.hostPort}</span>
             </span>
@@ -3823,7 +3706,7 @@ function BranchCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
-          <GitBranch className="h-4 w-4 shrink-0 text-sky-500" />
+          <GitBranch className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-4 w-4 shrink-0 text-sky-500' : 'h-4 w-4 shrink-0 text-sky-500'} />
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
         </div>
         {/*
@@ -3848,7 +3731,7 @@ function BranchCard({
                   size="icon"
                   variant="outline"
                   className={isAiOperated
-                    ? 'border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                    ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
                     : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
                   title={isAiOperated ? 'AI 操作过 · 预览' : '预览'}
                   aria-label={isAiOperated ? 'AI 操作过，预览' : '预览'}
@@ -3862,7 +3745,7 @@ function BranchCard({
               size="icon"
               variant="outline"
               className={isAiOperated
-                ? 'border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
                 : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
               onClick={onPreview}
               disabled={busy}
@@ -3907,6 +3790,23 @@ function BranchMoreMenu({
 }): JSX.Element {
   return (
     <>
+      <ConfirmAction
+        title={`删除分支 ${branch.branch}？`}
+        description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
+        confirmLabel="确认删除(不可恢复)"
+        disabled={busy}
+        onConfirm={onDelete}
+        trigger={(
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100"
+            aria-label="删除分支"
+            title="删除分支"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
+      />
       <DropdownMenu
         width={200}
         trigger={
@@ -3951,23 +3851,6 @@ function BranchMoreMenu({
           编辑标签
         </DropdownItem>
       </DropdownMenu>
-      <ConfirmAction
-        title={`删除分支 ${branch.branch}？`}
-        description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
-        confirmLabel="确认删除(不可恢复)"
-        disabled={busy}
-        onConfirm={onDelete}
-        trigger={(
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100"
-            aria-label="删除分支"
-            title="删除分支"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        )}
-      />
     </>
   );
 }

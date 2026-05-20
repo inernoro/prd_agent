@@ -9550,7 +9550,7 @@ cdscli project list --human
 
   // GET /api/loading-pages/cds-waiting-room/preview — system-settings preview
   // for hard-to-trigger loading screens. It intentionally reuses
-  // ProxyService.serveStartingPageV2 so opacity, canvas grid, masks, and
+  // ProxyService.serveStartingPageV2 so opacity, MagicRings canvas, masks, and
   // fallback page chrome stay byte-for-byte tied to the real preview path.
   router.get('/loading-pages/cds-waiting-room/preview', (req, res) => {
     const requestedStatus = String(req.query.status || 'building');
