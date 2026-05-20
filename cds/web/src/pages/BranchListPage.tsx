@@ -3465,7 +3465,7 @@ function BranchCard({
                 2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
                 （发布版 / 源码 / 混合）。用户更关心的是"这个分支跑的是热加载还是 publish"，
                 而不是"来源是 webhook 还是手动"。来源信息降级到 title attribute（hover 看到）。
-                运行模式徽章带火箭图标，与抽屉里「本分支运行模式」面板视觉对齐。
+                发布相关运行模式带火箭图标；源码只保留普通文字，避免误导成发布态。
               */}
               {runtime ? (
                 <span
@@ -3480,7 +3480,6 @@ function BranchCard({
                   className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
                   title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   源码
                 </span>
               )}
