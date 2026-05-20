@@ -26,7 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError } from '@/lib/api';
-import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
+import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
   id: string;
@@ -1236,7 +1236,7 @@ export function BranchDetailPage(): JSX.Element {
       }
     >
       <Workspace wide>
-        {state.status === 'loading' ? <LoadingBlock label="加载分支详情" /> : null}
+        {state.status === 'loading' ? <BranchDetailLoadingSkeleton className="rounded-md" /> : null}
         {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
         {state.status === 'select' ? (
           <BranchSelect project={state.project} branches={state.branches} />

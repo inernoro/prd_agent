@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitB
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
@@ -1542,7 +1542,7 @@ export function BranchDetailDrawer({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
-          {loading && !branch ? <LoadingBlock label="加载分支详情" /> : null}
+          {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <>

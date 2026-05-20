@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, GitBranch, Home, LogIn, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { LoadingBlock, Section } from '@/pages/cds-settings/components';
+import { BranchDetailLoadingSkeleton, LoadingBlock, Section } from '@/pages/cds-settings/components';
 import { cn } from '@/lib/utils';
 
 type LoadingScenario = {
@@ -242,30 +242,11 @@ function BranchDetailLoadingPreview({ theme }: { theme: 'dark' | 'light' }): JSX
   return (
     <div className="relative h-full overflow-hidden bg-[hsl(var(--surface-base))] text-foreground">
       <PreviewRings theme={theme} />
-      <div className="relative z-10 h-full px-10 py-8">
-        <div className="mb-8 flex items-center justify-between">
-          <div className="space-y-3">
-            <SkeletonLine className="h-6 w-56" />
-            <SkeletonLine className="h-4 w-80 opacity-70" />
-          </div>
-          <div className="flex gap-3">
-            <SkeletonLine className="h-9 w-24 rounded-md opacity-75" />
-            <SkeletonLine className="h-9 w-9 rounded-md opacity-65" />
-          </div>
-        </div>
-        <div className="cds-loading-skeleton-panel mb-8 h-[58%] rounded-lg" />
-        <div className="space-y-5">
-          <SkeletonLine className="h-6 w-[18%]" />
-          <SkeletonLine className="h-6 w-[28%] opacity-80" />
-          <SkeletonLine className="h-6 w-[22%] opacity-65" />
-        </div>
+      <div className="relative z-10 h-full">
+        <BranchDetailLoadingSkeleton className="h-full min-h-0 bg-transparent" />
       </div>
     </div>
   );
-}
-
-function SkeletonLine({ className }: { className: string }): JSX.Element {
-  return <div className={`cds-loading-skeleton-line ${className}`} />;
 }
 
 function CdsHomeLoadingPreview({ theme }: { theme: 'dark' | 'light' }): JSX.Element {

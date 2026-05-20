@@ -55,6 +55,34 @@ export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.E
   );
 }
 
+export function BranchDetailLoadingSkeleton({ className }: { className?: string }): JSX.Element {
+  return (
+    <div
+      className={cn(
+        'relative min-h-[620px] overflow-hidden bg-[hsl(var(--surface-base))] px-8 py-6 text-foreground',
+        className,
+      )}
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_62%_44%,hsl(var(--foreground)/0.035),transparent_32%),linear-gradient(180deg,hsl(var(--surface-raised)/0.28),transparent_38%)]" />
+      <div className="relative z-10 space-y-7">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="cds-loading-skeleton-line h-11 w-28 rounded-xl" />
+          <div className="cds-loading-skeleton-line h-11 w-28 rounded-xl opacity-85" />
+          <div className="cds-loading-skeleton-line h-11 w-24 rounded-xl opacity-72" />
+        </div>
+
+        <div className="cds-loading-skeleton-panel h-[min(58vh,640px)] min-h-[360px] rounded-2xl" />
+
+        <div className="space-y-5 pb-8">
+          <div className="cds-loading-skeleton-line h-7 w-[22%] min-w-56" />
+          <div className="cds-loading-skeleton-line h-7 w-[32%] min-w-72 opacity-85" />
+          <div className="cds-loading-skeleton-line h-7 w-[25%] min-w-60 opacity-70" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ErrorBlock({ message }: { message: string }): JSX.Element {
   if (message.includes('未登录') || message.includes('401')) {
     return <AuthRequiredBlock />;
