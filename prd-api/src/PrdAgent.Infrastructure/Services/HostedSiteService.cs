@@ -14,6 +14,7 @@ public class HostedSiteService : IHostedSiteService
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _storage;
     private readonly IShortLinkService _shortLinks;
+    private readonly ISharePasswordService _sharePwd;
     private readonly ILogger<HostedSiteService> _logger;
 
     // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
@@ -59,11 +60,17 @@ public class HostedSiteService : IHostedSiteService
         [".map"] = "application/json",
     };
 
-    public HostedSiteService(MongoDbContext db, IAssetStorage storage, IShortLinkService shortLinks, ILogger<HostedSiteService> logger)
+    public HostedSiteService(
+        MongoDbContext db,
+        IAssetStorage storage,
+        IShortLinkService shortLinks,
+        ISharePasswordService sharePwd,
+        ILogger<HostedSiteService> logger)
     {
         _db = db;
         _storage = storage;
         _shortLinks = shortLinks;
+        _sharePwd = sharePwd;
         _logger = logger;
     }
 
@@ -554,8 +561,16 @@ public class HostedSiteService : IHostedSiteService
             }
             if (wantAccess == "password" && reuse.Password != wantPassword)
             {
+                // 密码变更：明文（去重 + 展示给分享者）+ Hash/Salt（校验）一并刷新
+                var h = _sharePwd.Hash(wantPassword!);
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Password, wantPassword));
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.PasswordHash, h.Hash));
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.PasswordSalt, h.Salt));
+                ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, new List<DateTime>()));
                 reuse.Password = wantPassword;
+                reuse.PasswordHash = h.Hash;
+                reuse.PasswordSalt = h.Salt;
+                reuse.RecentAttempts = new List<DateTime>();
             }
             if (reuse.Title != shareTitle)
             {
@@ -579,6 +594,8 @@ public class HostedSiteService : IHostedSiteService
             return reuse;
         }
 
+        // 新分享：同时写明文（去重 + 展示给分享者）和 Hash/Salt（校验主路径）
+        var pwdHash = wantPassword != null ? (SharePasswordHash?)_sharePwd.Hash(wantPassword) : null;
         var share = new WebPageShareLink
         {
             SiteId = shareType != "collection" ? siteId : null,
@@ -589,6 +606,8 @@ public class HostedSiteService : IHostedSiteService
             Description = effDescription,
             AccessLevel = wantAccess,
             Password = wantPassword,
+            PasswordHash = pwdHash?.Hash,
+            PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
             CreatedBy = userId,
             CreatedByName = displayName,
@@ -643,6 +662,64 @@ public class HostedSiteService : IHostedSiteService
         return result.MatchedCount > 0;
     }
 
+    /// <summary>
+    /// 分享访问统一关卡：滑动窗口速率限制 + Hash 优先校验 + 持久化窗口状态。
+    /// 返回 null 表示通过；返回 tuple 时调用方应直接 short-circuit 用对应 HttpStatus 回客户端。
+    /// 不绑定 IP：容器反代下 IP 不可靠，NAT 局域网下会一锅端 —— 改按 shareLink 全局限速。
+    /// </summary>
+    private async Task<(string Error, int HttpStatus, int? RetryAfter)?> EnforceShareAccessAsync(
+        WebPageShareLink share, string? password, CancellationToken ct)
+    {
+        if (share.AccessLevel != "password") return null;
+
+        var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
+        if (!rl.Allowed)
+        {
+            // 即使被拒，也把过期条目清掉一并写回，避免列表无限膨胀
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == share.Id,
+                Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, rl.PrunedAttempts),
+                cancellationToken: ct);
+            var sec = (int)Math.Ceiling(rl.RetryAfter.TotalSeconds);
+            return ($"尝试过于频繁，请 {sec} 秒后再试", 429, sec);
+        }
+
+        // 记录本次尝试时间戳（无论对错）—— 攻击者要破解就只能 10 次/分钟慢慢凿
+        await _db.WebPageShareLinks.UpdateOneAsync(
+            x => x.Id == share.Id,
+            Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, rl.PrunedAttempts),
+            cancellationToken: ct);
+
+        var provided = (password ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(provided))
+            return ("需要提供正确的访问密码", 401, null);
+
+        bool ok;
+        if (!string.IsNullOrEmpty(share.PasswordHash) && !string.IsNullOrEmpty(share.PasswordSalt))
+        {
+            // 新分享：PBKDF2 + FixedTimeEquals
+            ok = _sharePwd.Verify(provided, share.PasswordHash, share.PasswordSalt);
+        }
+        else
+        {
+            // 旧分享回退：明文恒时比对（避免按字符短路泄露前缀长度）
+            ok = _sharePwd.ConstantTimeStringEquals(provided, share.Password ?? string.Empty);
+        }
+
+        if (!ok) return ("需要提供正确的访问密码", 401, null);
+
+        // 密码正确：清空窗口让合法用户不被自己的历史失败拖累；攻击者一旦撞对就进去了，
+        // 清空对安全性无伤
+        if (rl.PrunedAttempts.Count > 0)
+        {
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == share.Id,
+                Builders<WebPageShareLink>.Update.Set(x => x.RecentAttempts, new List<DateTime>()),
+                cancellationToken: ct);
+        }
+        return null;
+    }
+
     public async Task<ShareViewResult?> ViewShareAsync(string token, string? password,
         string? viewerUserId = null, string? viewerName = null,
         string? ipAddress = null, string? userAgent = null,
@@ -655,8 +732,9 @@ public class HostedSiteService : IHostedSiteService
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
             return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400 };
 
-        if (share.AccessLevel == "password" && (string.IsNullOrWhiteSpace(password) || password.Trim() != share.Password))
-            return new ShareViewResult { Error = "需要提供正确的访问密码", HttpStatus = 401 };
+        var gate = await EnforceShareAccessAsync(share, password, ct);
+        if (gate is { } g)
+            return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter };
 
         // 更新浏览量
         await _db.WebPageShareLinks.UpdateOneAsync(
@@ -855,8 +933,9 @@ public class HostedSiteService : IHostedSiteService
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
             return new SaveSharedSiteResult { Error = "分享链接已过期", HttpStatus = 400 };
 
-        if (share.AccessLevel == "password" && (string.IsNullOrWhiteSpace(password) || password.Trim() != share.Password))
-            return new SaveSharedSiteResult { Error = "需要提供正确的访问密码", HttpStatus = 401 };
+        var gate = await EnforceShareAccessAsync(share, password, ct);
+        if (gate is { } g)
+            return new SaveSharedSiteResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter };
 
         // 2. 禁止保存自己的分享
         if (share.CreatedBy == userId)
