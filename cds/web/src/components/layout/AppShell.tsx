@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Check, ChevronDown, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Atom, Check, ChevronDown, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
-import { ShinyText } from '@/components/effects/ShinyText';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { Button } from '@/components/ui/button';
@@ -209,20 +208,11 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
     <nav className="cds-rail" aria-label="主导航">
       <div className="cds-rail-brand">
         <div className="cds-rail-avatar" aria-label="CDS">
-          <ShinyText
-            text="CDS"
-            speed={4.8}
-            delay={2.4}
-            color="hsl(var(--foreground) / 0.78)"
-            shineColor="hsl(var(--foreground))"
-            spread={105}
-            direction="left"
-            className="cds-rail-avatar-text"
-          />
+          <Atom className="cds-rail-avatar-icon" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-foreground">Cloud Dev Suite</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">Projects</div>
+          <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
+          <div className="cds-rail-brand-subtitle mt-0.5">Projects</div>
         </div>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
       </div>
