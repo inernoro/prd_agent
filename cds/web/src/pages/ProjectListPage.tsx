@@ -4,7 +4,9 @@ import {
   ArrowRight,
   Bell,
   Beaker,
+  Braces,
   CheckCircle2,
+  Code2,
   Copy,
   Database,
   Download,
@@ -51,9 +53,14 @@ interface ProjectSummary {
   runningServiceCount?: number;
   appServices?: Array<{
     id: string;
+    name?: string;
     branch: string;
     status?: string;
     runningCount?: number;
+    dockerImage?: string;
+    command?: string;
+    workDir?: string;
+    containerPort?: number;
   }>;
   infraServiceCount?: number;
   runningInfraServiceCount?: number;
@@ -1313,6 +1320,50 @@ function WordmarkIcon({ text }: { text: string }): JSX.Element {
   );
 }
 
+function MinioIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path
+        d="M5 8.3 12 4l7 4.3v7.4L12 20l-7-4.3V8.3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <path d="M5 8.3 12 12.6l7-4.3M12 12.6V20" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" opacity="0.82" />
+      <path d="M8.5 6.2 15.5 10.4" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" opacity="0.55" />
+    </svg>
+  );
+}
+
+function DotnetIcon(): JSX.Element {
+  return <WordmarkIcon text=".NET" />;
+}
+
+function NodeIcon(): JSX.Element {
+  return <WordmarkIcon text="JS" />;
+}
+
+function PythonIcon(): JSX.Element {
+  return <WordmarkIcon text="PY" />;
+}
+
+function JavaIcon(): JSX.Element {
+  return <WordmarkIcon text="JV" />;
+}
+
+function GoIcon(): JSX.Element {
+  return <WordmarkIcon text="GO" />;
+}
+
+function RustIcon(): JSX.Element {
+  return <WordmarkIcon text="RS" />;
+}
+
+function PhpIcon(): JSX.Element {
+  return <WordmarkIcon text="PHP" />;
+}
+
 function NacosIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
@@ -1388,13 +1439,99 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
     return {
       label: 'MinIO',
       tileClassName: 'border-zinc-500/45 bg-zinc-500/15 text-zinc-700 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-200',
-      icon: <WordmarkIcon text="IO" />,
+      icon: <MinioIcon />,
     };
   }
   return {
     label: service.name || service.id,
     tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-600 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-300',
     icon: <Database className="cds-project-node-icon" />,
+  };
+}
+
+function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number], project: ProjectSummary): {
+  label: string;
+  tileClassName: string;
+  icon: JSX.Element;
+} {
+  const raw = [
+    service.id,
+    service.name,
+    service.dockerImage,
+    service.command,
+    service.workDir,
+    project.name,
+    project.slug,
+    project.description,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (raw.includes('dotnet') || raw.includes('aspnet') || raw.includes('.net') || raw.includes('csharp') || raw.includes('csproj')) {
+    return {
+      label: '.NET',
+      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
+      icon: <DotnetIcon />,
+    };
+  }
+  if (raw.includes('node') || raw.includes('pnpm') || raw.includes('npm ') || raw.includes('yarn') || raw.includes('vite') || raw.includes('next') || raw.includes('react')) {
+    return {
+      label: raw.includes('vite') ? 'Vite / Node' : 'Node.js',
+      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300',
+      icon: <NodeIcon />,
+    };
+  }
+  if (raw.includes('python') || raw.includes('pip ') || raw.includes('uvicorn') || raw.includes('fastapi') || raw.includes('django') || raw.includes('flask')) {
+    return {
+      label: 'Python',
+      tileClassName: 'border-blue-600/45 bg-blue-500/15 text-blue-700 dark:border-blue-500/35 dark:bg-blue-500/10 dark:text-blue-300',
+      icon: <PythonIcon />,
+    };
+  }
+  if (raw.includes('java') || raw.includes('maven') || raw.includes('gradle') || raw.includes('spring')) {
+    return {
+      label: 'Java',
+      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-300',
+      icon: <JavaIcon />,
+    };
+  }
+  if (/\bgolang\b|\bgo[:\s-]/.test(raw) || raw.includes('go run') || raw.includes('go build')) {
+    return {
+      label: 'Go',
+      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-300',
+      icon: <GoIcon />,
+    };
+  }
+  if (raw.includes('rust') || raw.includes('cargo')) {
+    return {
+      label: 'Rust',
+      tileClassName: 'border-amber-700/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-300',
+      icon: <RustIcon />,
+    };
+  }
+  if (raw.includes('php') || raw.includes('composer')) {
+    return {
+      label: 'PHP',
+      tileClassName: 'border-indigo-600/45 bg-indigo-500/15 text-indigo-700 dark:border-indigo-500/35 dark:bg-indigo-500/10 dark:text-indigo-300',
+      icon: <PhpIcon />,
+    };
+  }
+  if (raw.includes('nginx') || raw.includes('caddy') || raw.includes('static')) {
+    return {
+      label: 'Static',
+      tileClassName: 'border-lime-600/45 bg-lime-500/15 text-lime-700 dark:border-lime-500/35 dark:bg-lime-500/10 dark:text-lime-300',
+      icon: <Braces className="cds-project-node-icon" />,
+    };
+  }
+  if (raw.includes('api') || raw.includes('server') || raw.includes('backend')) {
+    return {
+      label: 'API Service',
+      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      icon: <Code2 className="cds-project-node-icon" />,
+    };
+  }
+  return {
+    label: service.name || service.id,
+    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-700 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-200',
+    icon: <Code2 className="cds-project-node-icon" />,
   };
 }
 
@@ -1485,23 +1622,26 @@ function ProjectCard({
           <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
             <div className="cds-project-node-row flex flex-wrap items-center justify-center">
               {visibleAppServices.length > 0 ? (
-                visibleAppServices.map((service) => (
-                  <span
-                    key={`${service.branch}-${service.id}`}
-                    className="cds-project-node relative flex items-center justify-center border border-zinc-500/45 bg-zinc-900/10 text-zinc-800 shadow-sm ring-1 ring-inset ring-white/60 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-100 dark:ring-white/5"
-                    title={
-                      (service.runningCount || 0) > 1
-                        ? `${service.id} · ${service.runningCount} 个运行分支`
-                        : `${service.branch} · ${service.id}`
-                    }
-                    aria-label={service.id}
-                  >
-                    <Github className="cds-project-node-icon" />
-                    {(service.runningCount || 0) > 1 ? (
-                      <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
-                    ) : null}
-                  </span>
-                ))
+                visibleAppServices.map((service) => {
+                  const brand = appIconFor(service, project);
+                  return (
+                    <span
+                      key={`${service.branch}-${service.id}`}
+                      className={`cds-project-node relative flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
+                      title={
+                        (service.runningCount || 0) > 1
+                          ? `${brand.label} · ${service.id} · ${service.runningCount} 个运行分支${service.dockerImage ? ` · ${service.dockerImage}` : ''}`
+                          : `${brand.label} · ${service.branch} · ${service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`
+                      }
+                      aria-label={`${brand.label} ${service.id}`}
+                    >
+                      {brand.icon}
+                      {(service.runningCount || 0) > 1 ? (
+                        <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
+                      ) : null}
+                    </span>
+                  );
+                })
               ) : null}
               {visibleInfraServices.length > 0 ? (
                 visibleInfraServices.map((service) => {
