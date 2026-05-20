@@ -759,10 +759,14 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
     root = _preview_root_from_host()
     for b in body.get("branches", []):
         if b.get("id") == branch_id:
-            slug = b.get("previewSlug") or b.get("id")
-            if not b.get("previewSlug"):
-                print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id（v1 公式）",
-                      file=sys.stderr)
+            slug = b.get("previewSlug")
+            if not slug:
+                # canonical id（带 project 前缀）≠ v3 previewSlug，吃下去会输出
+                # 错的 host。明确报错而不是静默退化。后端应永远返回 previewSlug。
+                die(f"/api/branches 响应缺 previewSlug 字段（分支={branch_id}）。"
+                    f"CDS 版本过旧或后端 bug，请升级 CDS 或检查 cds/src/routes/branches.ts",
+                    code=3, extra={"branch": b})
+                return
             url = f"https://{slug}.{root}"
             if _HUMAN:
                 print(url)
@@ -894,7 +898,11 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             print(f"[info] /api/branches 没找到 git 分支 '{branch}'，回退本地 v3 推算",
                   file=sys.stderr)
         except SystemExit:
-            raise
+            # _request 在 URLError / TimeoutError 时 die()→SystemExit。
+            # preview-url 设计承诺"网络故障也能退化给本地 v3"，所以这里
+            # 也要拦下来回退，不能把 CLI 直接打死。
+            print(f"[warn] CDS 不可达（网络错误 / 超时），回退本地 v3 推算",
+                  file=sys.stderr)
         except Exception as ex:
             print(f"[warn] 调 /api/branches 失败 ({ex})，回退本地 v3 推算",
                   file=sys.stderr)
@@ -5092,6 +5100,11 @@ def cmd_smoke(args: argparse.Namespace) -> None:
                     print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
                           file=sys.stderr)
                 break
+    except SystemExit:
+        # _request 网络错误 / 超时 → die → SystemExit。smoke 不应被打死，
+        # 退化到裸 id 探测（这种情况大概率是 CDS 自身就不可达，下面 L1 也会报错）
+        print(f"[warn] CDS 不可达（网络错误 / 超时），回退裸 id 拼预览域",
+              file=sys.stderr)
     except Exception as ex:
         print(f"[warn] 拉 /api/branches 失败({ex})，回退裸 id 拼预览域",
               file=sys.stderr)
