@@ -1548,6 +1548,9 @@ export function BranchDetailDrawer({
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
+                  const recoveredRuntimeWithoutDeployLog =
+                    branch.status === 'running' && !branch.lastDeployAt && Boolean(branch.lastReadyAt || branch.lastAccessedAt);
+                  const displayedDeployCount = Math.max(branch.deployCount || 0, recoveredRuntimeWithoutDeployLog ? 1 : 0);
                   return (
                     <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1562,7 +1565,7 @@ export function BranchDetailDrawer({
                             branch.lastDeployAt || (branch.status === 'running' ? branch.lastReadyAt || branch.lastAccessedAt : undefined),
                           )}
                         </span>
-                        <span>部署次数：{branch.deployCount || 0}</span>
+                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''}</span>
                         <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
                       {/*
