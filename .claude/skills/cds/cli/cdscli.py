@@ -886,6 +886,38 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         })
 
 
+def cmd_branch_id(args: argparse.Namespace) -> None:
+    """打印当前 git 分支对应的 CDS canonical branch id（零参数）。
+
+    多项目 CDS 下，canonical id = `${projectSlug}-${slugify(branch)}`，
+    不是裸 `tr '/' '-'`。所有需要往 `/api/branches/:id` 发请求的 skill
+    （bridge / agent-guide / 任何 cdscli 子命令）都应通过这条命令拿 id，
+    禁止手算。
+
+    依赖：CDS_HOST + AI_ACCESS_KEY，否则 exit 1。
+    """
+    try:
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内", code=1)
+        return
+    if not branch:
+        die("当前没有分支（detached HEAD？）", code=1)
+        return
+    body = _call("GET", "/api/branches", timeout=10, quiet=True)
+    for b in body.get("branches", []):
+        if b.get("branch") == branch:
+            bid = b.get("id")
+            if _HUMAN:
+                print(bid)
+            else:
+                ok({"branch": branch, "branchId": bid})
+            return
+    die(f"CDS 里找不到 git 分支 '{branch}'，先跑 /cds-deploy 部署", code=2)
+
+
 def cmd_branch_create(args: argparse.Namespace) -> None:
     """显式创建分支。POST /api/branches 用 `projectId` 字段(后端约定);
     CLI 暴露 --project flag 抹平这个 friction(F7)。
@@ -5688,6 +5720,12 @@ def _build_parser() -> argparse.ArgumentParser:
              "SSOT: cds/src/services/preview-slug.ts）",
     )
     pu.set_defaults(func=cmd_preview_url)
+
+    bid = sub.add_parser(
+        "branch-id",
+        help="打印当前 git 分支对应的 CDS canonical id（零参数，多项目 CDS 必备）",
+    )
+    bid.set_defaults(func=cmd_branch_id)
 
     hc = sub.add_parser("help-me-check", help="diagnose + 根因分析 + 修复建议")
     hc.add_argument("id", help="branchId")

@@ -370,7 +370,18 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return null;
     }
 
-    private static string? ComputePreviewSlug(string? branch, string? project)
+    /// <summary>
+    /// v3 预览 slug 公式：`${tail}-${prefix}-${projectSlug}` 或无 prefix 时
+    /// `${tail}-${projectSlug}`（中段省略）。
+    ///
+    /// **SSOT 是 `cds/src/services/preview-slug.ts:computePreviewSlug`**。本函数是
+    /// .NET 容器内的"最后兜底" fallback——容器无法回调 CDS API 拿真实 previewSlug 时，
+    /// 用本函数从 GIT_BRANCH + GITHUB_REPOSITORY 自己推算。两边任一改公式都必须同步，
+    /// 由 `prd-api/tests/PrdAgent.Tests/PreviewSlugParityTests.cs` 校验对齐。
+    ///
+    /// 历史踩坑：曾用 v1 公式 `${branchSlug}.miduo.org`，CDS 多项目改造后失效。
+    /// </summary>
+    internal static string? ComputePreviewSlug(string? branch, string? project)
     {
         var projectSlug = Slugify(project);
         var branchValue = (branch ?? string.Empty).Trim();

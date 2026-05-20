@@ -14,22 +14,39 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-// 守卫覆盖范围：skills + 顶层 rule 文件 + 顶层 CLAUDE.md / 子项目 CLAUDE.md
+// 守卫覆盖范围：全仓所有可能生成 / 描述 preview URL 的源
+// - 技能 / 规则 / CLAUDE.md 都是 AI 行为来源
+// - prd-api / prd-admin / prd-desktop / prd-video / scripts / cds-source 是实际代码
+// - cds/src 本身也扫（除了 SSOT 文件和已知白名单测试）
 const SCAN_TARGETS = [
   path.join(REPO_ROOT, '.claude', 'skills'),
   path.join(REPO_ROOT, '.claude', 'rules'),
   path.join(REPO_ROOT, 'CLAUDE.md'),
   path.join(REPO_ROOT, 'cds', 'CLAUDE.md'),
+  path.join(REPO_ROOT, 'prd-api', 'src'),
+  path.join(REPO_ROOT, 'prd-admin', 'src'),
+  path.join(REPO_ROOT, 'prd-desktop', 'src'),
+  path.join(REPO_ROOT, 'prd-video', 'src'),
+  path.join(REPO_ROOT, 'cds', 'src'),
+  path.join(REPO_ROOT, 'cds', 'web', 'src'),
+  path.join(REPO_ROOT, 'scripts'),
+  path.join(REPO_ROOT, 'e2e'),
+  path.join(REPO_ROOT, '.github', 'workflows'),
 ];
+
+const SCAN_EXTENSIONS = ['.md', '.py', '.cs', '.ts', '.tsx', '.js', '.jsx',
+                          '.rs', '.sh', '.ps1', '.yml', '.yaml'];
 
 function walk(target: string, out: string[] = []): string[] {
   if (!fs.existsSync(target)) return out;
   const stat = fs.statSync(target);
   if (stat.isFile()) {
-    if (target.endsWith('.md') || target.endsWith('.py')) out.push(target);
+    if (SCAN_EXTENSIONS.some((ext) => target.endsWith(ext))) out.push(target);
     return out;
   }
   for (const name of fs.readdirSync(target)) {
+    // 跳过明显的产物 / 依赖目录
+    if (['node_modules', 'dist', 'bin', 'obj', '.git', 'build', 'web-legacy'].includes(name)) continue;
     walk(path.join(target, name), out);
   }
   return out;
@@ -41,26 +58,27 @@ function collectFiles(): string[] {
   return out;
 }
 
-// 已知合法引用（讨论 v1/v2 历史 / 引用其他工具 / 解释错误模式）
+// 已知合法引用（讨论 v1/v2 历史 / SSOT 自身 / 反面案例说明）
 const ALLOW_LIST = [
-  // preview-url 技能本身在解释历史 + 把 fallback 计算路径写进去
+  // —— SSOT 自身 ——
+  'cds/src/services/preview-slug.ts',          // TS SSOT
+  'prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarRouter.cs', // C# 容器内 fallback（被 parity 测试守护）
+  // —— 解释 / 历史文档 ——
   '.claude/skills/preview-url/SKILL.md',
-  // cds skill 解释公式
   '.claude/skills/cds/SKILL.md',
-  // cds-deploy-pipeline 解释公式
   '.claude/skills/cds-deploy-pipeline/SKILL.md',
-  // task-handoff 现在内联了 v3 计算（带 SSOT 注释，允许）
   '.claude/skills/task-handoff-checklist/SKILL.md',
-  // smoke-test 显式标注了禁用 v1（带 SSOT 注释，允许）
   '.claude/skills/smoke-test/SKILL.md',
-  // acceptance-checklist 说明里复述了 v3
   '.claude/skills/acceptance-checklist/SKILL.md',
-  // 视觉测试创建器引用了 CLAUDE.md 规则 #11，合法
   '.claude/skills/issues-visual-create/SKILL.md',
-  // cdscli.py 本体里 cmd_smoke / preview-url 都已改成查 /api/branches
-  '.claude/skills/cds/cli/cdscli.py',
-  // cds 的 reference/smoke.md（兜底说明，单独修复）
-  '.claude/skills/cds/reference/smoke.md',
+  '.claude/skills/cds/cli/cdscli.py',          // CLI 本体内嵌 SSOT
+  '.claude/skills/cds/reference/smoke.md',     // 反面案例表
+  // —— PR 评论模板 / 类型注释里的 example 字符串 ——
+  'cds/src/services/comment-template.ts',
+  'cds/src/types.ts',
+  'cds/src/routes/branches.ts',
+  // —— 历史 prd-api / Tests 测试 fixture 用了固定 v3 字符串 ——
+  'prd-api/tests/PrdAgent.Tests/DynamicSidecarRegistryTests.cs',
 ];
 
 describe('preview URL drift guard', () => {
