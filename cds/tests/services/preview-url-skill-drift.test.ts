@@ -84,11 +84,15 @@ const ALLOW_LIST = [
 describe('preview URL drift guard', () => {
   it('skills 不得用 v1 公式 `${X}.miduo.org` 拼预览域（除允许清单）', () => {
     const files = collectFiles();
-    // 真正的 v1 拼接形态：`https://${单变量}.miduo.org`（变量后直接接 .miduo.org，
-    // 中间没有 `-${另一变量}` 拼接）。这能精确捕获 v1 风格，又不会误伤
-    // v3 模板 `https://${tail}-${prefix}-${projectSlug}.miduo.org` 这类多段拼接。
-    // 同时兼容 Python f-string `{branch_id}` 和 bash `${BRANCH_ID}` 两种语法。
-    const v1Pattern = /https?:\/\/[`'"]?\$?\{?[A-Za-z_][A-Za-z0-9_]*\}?\.miduo\.org/;
+    // 真正的 v1 拼接形态：`https://${单占位符}.miduo.org`（占位符后直接接 .miduo.org，
+    // 中间没有 `-${另一占位符}` 拼接）。必须**显式带占位符** `${X}` / `{X}` 才算 v1，
+    // 字面量 URL（如 `https://prd-agent.miduo.org` / `https://my-branch.miduo.org`）
+    // 不算 —— 它们可能是 v3 SSOT 的展示样例或固定服务地址。
+    //
+    // 占位符字符集要包含 `-` 才能吃下文档常见的 `{branch-slug}` / `{branch-id}`
+    // 这类带连字符形态（之前的 `[A-Za-z_][A-Za-z0-9_]*` 漏过，被 Codex 抓出）。
+    // 兼容：bash `${BRANCH_ID}` / Python f-string `{branch_id}` / 文档 `{branch-slug}`。
+    const v1Pattern = /https?:\/\/[`'"]?(?:\$\{[A-Za-z0-9_-]+\}|\{[A-Za-z0-9_-]+\})\.miduo\.org/;
     // CDS admin / 静态服务子域不算 preview URL，加白名单防误伤
     const STATIC_HOSTS = ['cds.miduo.org', 'i.miduo.org', 'api.miduo.org'];
     const offenders: { file: string; line: number; text: string }[] = [];

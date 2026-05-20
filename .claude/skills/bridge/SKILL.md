@@ -186,7 +186,7 @@ curl -sf ... -d '{"action":"scroll","params":{"direction":"down","pixels":500},"
 ### 完整操作流程
 
 ```
-1. 用户打开预览页：https://{branch-id}.miduo.org/
+1. 用户打开预览页（v3 域名见 `cdscli preview-url`）
 2. Agent 调用 start-session → Widget 激活（左下角出现蓝色指示点）
 3. Agent 发送操作指令 → 用户看到鼠标移动 + 目标高亮 + 操作面板
 4. Agent 调用 end-session → Widget 显示"✅ AI 操作完成"后恢复静默
