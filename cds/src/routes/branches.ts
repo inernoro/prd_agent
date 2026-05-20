@@ -1140,6 +1140,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     githubApp,
     config,
   });
+  const remoteBranchRefCache = new Map<string, { at: number; refs: string[] }>();
 
   async function captureContainerLogSnapshots(
     entry: BranchEntry,
@@ -1186,6 +1187,66 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(raw.trim());
     return project?.id || raw.trim();
   };
+
+  async function restoreOriginalBranchRefs(branches: BranchEntry[]): Promise<boolean> {
+    const byRepoRoot = new Map<string, BranchEntry[]>();
+    for (const branch of branches) {
+      const repoRoot = stateService.getProjectRepoRoot(branch.projectId || 'default', config.repoRoot);
+      const group = byRepoRoot.get(repoRoot) || [];
+      group.push(branch);
+      byRepoRoot.set(repoRoot, group);
+    }
+
+    let changed = false;
+    for (const [repoRoot, group] of byRepoRoot) {
+      let remoteRefs: string[];
+      try {
+        const cached = remoteBranchRefCache.get(repoRoot);
+        if (cached && Date.now() - cached.at < 30_000) {
+          remoteRefs = cached.refs;
+        } else {
+          const auth = await gitAuthForRepo(repoRoot);
+          const result = await shell.exec('git ls-remote --heads origin', { cwd: repoRoot, env: auth.env, timeout: 10_000 });
+          if (result.exitCode !== 0) continue;
+          remoteRefs = result.stdout.trim().split('\n')
+            .map((line) => line.replace(/^.*refs\/heads\//, '').trim())
+            .filter(Boolean);
+          remoteBranchRefCache.set(repoRoot, { at: Date.now(), refs: remoteRefs });
+        }
+      } catch {
+        continue;
+      }
+
+      const exactRefs = new Set(remoteRefs);
+      const refsBySlug = new Map<string, string[]>();
+      for (const ref of remoteRefs) {
+        const slug = StateService.slugify(ref);
+        refsBySlug.set(slug, [...(refsBySlug.get(slug) || []), ref]);
+      }
+
+      for (const branch of group) {
+        if (!branch.branch) continue;
+        if (exactRefs.has(branch.branch)) continue;
+
+        const candidates = new Set<string>([StateService.slugify(branch.branch)]);
+        const project = stateService.getProject(branch.projectId || 'default');
+        const projectPrefix = project?.slug ? `${project.slug}-` : '';
+        if (projectPrefix && branch.id.startsWith(projectPrefix)) {
+          candidates.add(branch.id.slice(projectPrefix.length));
+        }
+        candidates.add(StateService.slugify(branch.id));
+
+        const matches = Array.from(candidates)
+          .flatMap((slug) => refsBySlug.get(slug) || [])
+          .filter((ref, index, all) => all.indexOf(ref) === index);
+        if (matches.length === 1 && matches[0] !== branch.branch) {
+          branch.branch = matches[0];
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
 
   const gitAuthForRepo = async (repoRoot: string) => resolveGitAuthEnv({
     repoRoot,
@@ -2093,6 +2154,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
     }
+
+    const restoredBranchRefs = await restoreOriginalBranchRefs(branches);
+    if (restoredBranchRefs) stateService.save();
 
     // Fetch latest commit subject + short SHA for each branch + 计算 v3 previewSlug
     // 让 dashboard 前端不再自己拼 URL（避免又出现"代码改了文档没跟上"），
