@@ -188,7 +188,7 @@ function isSyntheticCdsManagedRuntimeBranch(
   project?: Pick<Project, 'kind'> | null,
 ): boolean {
   if (project?.kind !== 'shared-service') return false;
-  return branch.branch === 'cds-managed-runtime' || branch.githubCommitSha === 'cds-managed-runtime';
+  return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
 }
 
 function summarizeBranchDeployRuntime(

@@ -674,14 +674,6 @@ def _resolve_deploy_branch_id(branch: str) -> str:
     ]
     project_id = os.environ.get("CDS_PROJECT_ID", "").strip()
     if project_id:
-        for candidate in branches:
-            if (
-                isinstance(candidate, dict)
-                and candidate.get("id") == guessed
-                and (candidate.get("projectId") == project_id or candidate.get("project") == project_id)
-            ):
-                return guessed
-
         project_matches = [
             b for b in matches
             if b.get("projectId") == project_id or b.get("project") == project_id
@@ -706,6 +698,14 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                         ],
                     }
                 })
+        for candidate in branches:
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("id") == guessed
+                and candidate.get("branch") == branch
+                and (candidate.get("projectId") == project_id or candidate.get("project") == project_id)
+            ):
+                return guessed
         if len(project_matches) == 0:
             die(
                 f"CDS_PROJECT_ID={project_id} 下不存在分支: {branch}",
@@ -726,7 +726,7 @@ def _resolve_deploy_branch_id(branch: str) -> str:
                 })
 
     for candidate in branches:
-        if isinstance(candidate, dict) and candidate.get("id") == guessed:
+        if isinstance(candidate, dict) and candidate.get("id") == guessed and candidate.get("branch") == branch:
             return guessed
 
     if len(matches) == 1:
@@ -5478,6 +5478,20 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     if final_status == "error":
         die(f"deploy 失败 branchId={branch_id}", code=2,
             extra={"hint": f"cdscli help-me-check {branch_id}"})
+    if final_status != "running":
+        die(
+            f"deploy 轮询超时 branchId={branch_id}",
+            code=2,
+            extra={
+                "data": {
+                    "stage": "deploy_poll_timeout",
+                    "branchId": branch_id,
+                    "timeout": args.timeout,
+                    "lastStatus": final_status,
+                },
+                "hint": f"cdscli help-me-check {branch_id}",
+            },
+        )
 
     # 5. Smoke (skip on --no-smoke)
     if not args.no_smoke:

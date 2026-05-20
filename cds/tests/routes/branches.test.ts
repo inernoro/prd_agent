@@ -579,6 +579,36 @@ describe('Branch Routes', () => {
       expect(mock.commands.some(command => command.includes('git fetch'))).toBe(false);
     });
 
+    it('does not skip pull when only the synthetic SHA sentinel matches', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'shared-sidecar-pool',
+        slug: 'shared-sidecar-pool',
+        name: 'Shared Sidecar Pool',
+        kind: 'shared-service',
+        createdAt: now,
+        updatedAt: now,
+      });
+      stateService.addBranch({
+        id: 'shared-runtime-stale-sha',
+        projectId: 'shared-sidecar-pool',
+        branch: 'feature/runtime',
+        worktreePath: path.join(tmpDir, 'worktrees', 'shared-runtime-stale-sha'),
+        status: 'running',
+        services: {},
+        createdAt: now,
+        lastAccessedAt: now,
+        githubCommitSha: 'cds-managed-runtime',
+      });
+      mock.commands.length = 0;
+
+      const res = await request(server, 'POST', '/api/branches/shared-runtime-stale-sha/pull');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).skipped).toBeUndefined();
+      expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
+    });
+
     it('should return 404 for unknown branch', async () => {
       const res = await request(server, 'POST', '/api/branches/nope/pull');
       expect(res.status).toBe(404);

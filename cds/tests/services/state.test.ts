@@ -301,6 +301,23 @@ describe('StateService', () => {
       })).toThrow('agent runtime 必须由 CDS shared-service runtime pool 管理');
     });
 
+    it('does not reject ordinary profiles whose env values mention runtime docs', () => {
+      service.addBuildProfile({
+        id: 'api-docs',
+        projectId: 'default',
+        name: 'API Docs',
+        dockerImage: 'node:20',
+        workDir: 'docs',
+        command: 'npm run docs',
+        containerPort: 8080,
+        env: {
+          HELP_URL: 'https://example.test/docs/claude-sidecar-migration',
+        },
+      });
+
+      expect(service.getBuildProfile('api-docs')).toBeDefined();
+    });
+
     it('allows runtime-looking profiles only for shared-service projects', () => {
       service.addProject({
         id: 'shared-sidecar-pool-test',

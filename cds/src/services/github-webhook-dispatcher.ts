@@ -141,6 +141,8 @@ export interface GitHubPushEvent {
     modified?: string[];
     removed?: string[];
   }>;
+  size?: number;
+  distinct_size?: number;
   sender?: { login: string };
 }
 
@@ -393,7 +395,12 @@ export class GitHubWebhookDispatcher {
 
   private isDocsOnlyPush(event: GitHubPushEvent): { ok: boolean; changedPaths: string[] } {
     const changedPaths = this.changedPathsFromPush(event);
-    if ((event.commits || []).length >= 2048) return { ok: false, changedPaths };
+    const commits = event.commits || [];
+    const reportedSize = typeof event.size === 'number' ? event.size : undefined;
+    const distinctSize = typeof event.distinct_size === 'number' ? event.distinct_size : undefined;
+    if (commits.length >= 2048) return { ok: false, changedPaths };
+    if (reportedSize !== undefined && reportedSize > commits.length) return { ok: false, changedPaths };
+    if (distinctSize !== undefined && distinctSize > commits.length) return { ok: false, changedPaths };
     if (changedPaths.length === 0) return { ok: false, changedPaths };
     const impact = analyzeChangeImpact(changedPaths);
     return {

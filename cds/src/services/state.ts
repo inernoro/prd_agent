@@ -49,7 +49,6 @@ function isAgentRuntimeBuildProfile(profile: Partial<BuildProfile>): boolean {
     profile.containerWorkDir,
     profile.command,
     ...Object.keys(env),
-    ...Object.values(env),
   ].filter(Boolean).join(' ').toLowerCase();
 
   if (!text.trim()) return false;

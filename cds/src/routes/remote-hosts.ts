@@ -453,93 +453,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
-    // (hostId, 最新 startedAt) 去重 —— 复用 stateService 里的 SSOT 实现，
-    // 避免路由内联同一段聚合逻辑后两边走偏（PR #529 Bugbot LOW）。
-    const latest = deps.stateService.getLatestDeploymentsByProject(projectId);
-
-    const instances: Array<Record<string, unknown>> = [];
-    const discovery = {
-      projectKind: project.kind || 'unknown',
-      deploymentCount: latest.length,
-      runningDeploymentCount: 0,
-      disabledHostDeploymentCount: 0,
-      branchCount: 0,
-      runningBranchCount: 0,
-      runningBranchServiceCount: 0,
-      runtimeBranchServiceCount: 0,
-      skippedBranchServiceCount: 0,
-      previewRootConfigured: false,
-    };
-    for (const dep of latest) {
-      if (dep.status !== 'running') continue;
-      discovery.runningDeploymentCount += 1;
-      const host = service.getRaw(dep.hostId);
-      if (!host || !host.isEnabled) {
-        discovery.disabledHostDeploymentCount += 1;
-        continue;
-      }
-      instances.push({
-        deploymentId: dep.id,
-        serviceKind: 'operator-fallback-deployment',
-        capacityRole: 'operator-fallback',
-        host: host.host,
-        port: extractPortFromLogs(dep) ?? 7400,
-        healthy: dep.containerHealthOk !== false,
-        version: dep.releaseTag,
-        deployedAt: dep.startedAt,
-        tags: host.tags,
-        hostName: host.name,
-        hostId: host.id,
-      });
-    }
-
-    if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-      const projectSlug = project.slug || project.id;
-      const previewRoot = resolvePreviewRootDomain();
-      discovery.previewRootConfigured = Boolean(previewRoot);
-      const branches = deps.stateService.getBranchesForProject(projectId);
-      discovery.branchCount = branches.length;
-      for (const branch of branches) {
-        if (branch.status !== 'running') continue;
-        discovery.runningBranchCount += 1;
-        for (const serviceState of Object.values(branch.services || {})) {
-          if (serviceState.status !== 'running') continue;
-          discovery.runningBranchServiceCount += 1;
-          const profile = deps.stateService.getBuildProfile(serviceState.profileId);
-          if (!isRuntimeBranchService(serviceState.profileId, profile?.name, serviceState.containerName)) {
-            discovery.skippedBranchServiceCount += 1;
-            continue;
-          }
-          discovery.runtimeBranchServiceCount += 1;
-          const previewSlug = computePreviewSlug(branch.branch, projectSlug);
-          const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
-          const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
-          instances.push({
-            deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
-            profileId: serviceState.profileId,
-            branchId: branch.id,
-            branch: branch.branch,
-            serviceKind: 'branch-service',
-            capacityRole: officialSdkRuntime ? 'product-runtime' : 'runtime-service',
-            runtimeOwnedBy: 'cds-managed-runtime',
-            runtimeAdapter: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
-            loopOwner: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
-            projectKind: project.kind,
-            host: serviceState.containerName,
-            port: serviceState.hostPort,
-            baseUrl,
-            healthy: true,
-            version: branch.githubCommitSha,
-            deployedAt: branch.lastDeployAt || branch.createdAt,
-            tags: ['system', 'default', 'cds-sidecar', `profile:${serviceState.profileId}`, `branch:${branch.branch}`],
-            hostName: profile?.name || serviceState.profileId,
-            hostId: branch.id,
-          });
-        }
-      }
-    }
-
-    const capacity = buildCdsManagedRuntimeCapacity(project, instances, discovery, service.list());
+    const { instances, discovery, capacity } = collectProjectRuntimeInstances(deps.stateService, service, project);
     res.json({ projectId, instances, discovery, capacity });
   });
 
@@ -2001,6 +1915,7 @@ function ingestOfficialSdkSseFrame(
 
   const sidecarType = normalizeOptionalString(payload.type) || frame.event || 'log';
   state.accepted = true;
+  if (session.status === 'stopped') return null;
   if (sidecarType === 'runtime_init') {
     pushCdsAgentEvent(session, 'runtime_init', {
       message: payload.message,
@@ -2093,6 +2008,7 @@ function finishOfficialSdkSseIngest(
   transport: CdsManagedRuntimeTransport,
   state: OfficialSdkSseIngestState,
 ): CdsManagedRuntimeResult {
+  if (session.status === 'stopped') return { accepted: true };
   if (!state.accepted) {
     const error = {
       code: 'cds_managed_runtime_empty_stream',
