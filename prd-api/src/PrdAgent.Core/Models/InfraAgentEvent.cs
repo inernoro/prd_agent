@@ -70,7 +70,22 @@ public static class InfraAgentEventSchema
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.ToolCall, "工具调用请求或审批状态", new[] { "toolName" }, new[] { "approvalId", "status", "risk", "input" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.ToolResult, "工具执行结果", new[] { "toolName" }, new[] { "status", "output", "exitCode", "stdout", "stderr" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Log, "运行日志或诊断信息", new[] { "message" }, new[] { "level", "source" }),
-        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Error, "可恢复或终止错误", new[] { "message" }, new[] { "code", "stage" }),
+        new InfraAgentEventSchemaItem(
+            InfraAgentEventTypes.Error,
+            "可恢复或终止错误",
+            new[] { "message" },
+            new[]
+            {
+                "code",
+                "stage",
+                "retryable",
+                "recoveryKind",
+                "nextActions",
+                "source",
+                "runtimeAdapter",
+                "runtimeInstance",
+                "content"
+            }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Done, "Agent 一轮执行完成", Array.Empty<string>(), new[] { "finalText", "usage" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Hook, "启动或停止 hook 执行记录", new[] { "stage", "status" }, new[] { "script", "message" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.File, "文件产物或文件读取摘要", new[] { "path" }, new[] { "content", "size", "sha256" }),

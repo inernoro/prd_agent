@@ -45,9 +45,9 @@ bash claude-sdk-sidecar/smoke.sh
 无 `ANTHROPIC_API_KEY` 时，预期结果是：
 
 - `/healthz` 返回 200。
-- `/readyz` 返回 503，`anthropicKey=false`。
+- `/readyz` 返回 200，`agentAdapter=claude-agent-sdk`，`loopOwner=claude-agent-sdk`。
 - 无 token 调 `/v1/agent/run` 返回 401。
-- T4 真实调用被跳过。
+- T4 返回 `provider_key_missing` 结构化 SSE error，证明 provider key 缺失在 official adapter 边界被识别，而不是伪装成 SDK 运行失败。
 
 要做真实 Anthropic 端到端，把 key 放入环境变量后重跑：
 

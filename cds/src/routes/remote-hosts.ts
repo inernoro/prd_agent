@@ -24,10 +24,13 @@
  */
 import { Router } from 'express';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
-import type { Project, ServiceDeployment } from '../types.js';
+import type { ContainerService } from '../services/container.js';
+import type { BranchEntry, BuildProfile, Project, ServiceDeployment, ServiceState } from '../types.js';
+import type { CdsConfig } from '../types.js';
 import {
   RemoteHostService,
   type RemoteHostInput,
@@ -43,6 +46,8 @@ import { computePreviewSlug } from '../services/preview-slug.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  config?: Pick<CdsConfig, 'portStart'>;
 }
 
 export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
@@ -448,55 +453,88 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
-    // (hostId, 最新 startedAt) 去重 —— 复用 stateService 里的 SSOT 实现，
-    // 避免路由内联同一段聚合逻辑后两边走偏（PR #529 Bugbot LOW）。
-    const latest = deps.stateService.getLatestDeploymentsByProject(projectId);
+    const { instances, discovery, capacity } = collectProjectRuntimeInstances(deps.stateService, service, project);
+    res.json({ projectId, instances, discovery, capacity });
+  });
 
-    const instances: Array<Record<string, unknown>> = [];
-    for (const dep of latest) {
-      if (dep.status !== 'running') continue;
-      const host = service.getRaw(dep.hostId);
-      if (!host || !host.isEnabled) continue;
-      instances.push({
-        deploymentId: dep.id,
-        host: host.host,
-        port: extractPortFromLogs(dep) ?? 7400,
-        healthy: dep.containerHealthOk !== false,
-        version: dep.releaseTag,
-        deployedAt: dep.startedAt,
-        tags: host.tags,
-        hostName: host.name,
-        hostId: host.id,
+  router.get('/projects/:id/runtime-capacity', (req, res) => {
+    const projectId = req.params.id;
+    const token = extractBearerToken(req.headers.authorization);
+    const connection = pairing.authenticateLongToken(token);
+    if (!connection) {
+      res.status(401).json({ error: { code: 'invalid_long_token', message: 'invalid connection token' } });
+      return;
+    }
+    if (connection.projectId !== projectId) {
+      res.status(403).json({ error: { code: 'project_mismatch', message: 'connection token cannot access this project' } });
+      return;
+    }
+    if (!connection.scopes.includes('instance:read')) {
+      res.status(403).json({ error: { code: 'scope_denied', message: 'connection token lacks instance:read' } });
+      return;
+    }
+    const project = deps.stateService.getProject(projectId);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+
+    const instancesResponse = collectProjectRuntimeInstances(deps.stateService, service, project);
+    res.json({ projectId, ...instancesResponse });
+  });
+
+  router.post('/projects/:id/runtime-capacity/reconcile', async (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+
+    const project = deps.stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
+    if (project.kind !== 'shared-service') {
+      res.status(409).json({
+        error: {
+          code: 'runtime_capacity_requires_shared_service_project',
+          message: 'CDS-managed official SDK runtime capacity must be reconciled inside a shared-service project, not an application project.',
+        },
+      });
+      return;
+    }
+
+    const hostPort = parseOptionalHostPort(req.body?.hostPort);
+    if (hostPort === null) {
+      res.status(400).json({
+        error: {
+          code: 'invalid_host_port',
+          message: 'hostPort must be an integer in [1, 65535] when provided',
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = reconcileCdsManagedRuntimeCapacity(deps.stateService, service, project, {
+        apply: req.body?.apply === true,
+        liveApply: req.body?.liveApply === true,
+        force: req.body?.force === true,
+        hostPort,
+        now: new Date().toISOString(),
+        containerService: deps.containerService,
+        portStart: deps.config?.portStart,
+      });
+      res.json({ projectId: project.id, ...(await result) });
+    } catch (err) {
+      res.status(409).json({
+        error: {
+          code: 'runtime_capacity_reconcile_failed',
+          message: (err as Error).message,
+        },
       });
     }
-
-    if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-      const projectSlug = project.slug || project.id;
-      const previewRoot = resolvePreviewRootDomain();
-      for (const branch of deps.stateService.getBranchesForProject(projectId)) {
-        if (branch.status !== 'running') continue;
-        for (const serviceState of Object.values(branch.services || {})) {
-          if (serviceState.status !== 'running') continue;
-          const profile = deps.stateService.getBuildProfile(serviceState.profileId);
-          const previewSlug = computePreviewSlug(branch.branch, projectSlug);
-          const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
-          instances.push({
-            deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
-            host: serviceState.containerName,
-            port: serviceState.hostPort,
-            baseUrl,
-            healthy: true,
-            version: branch.githubCommitSha,
-            deployedAt: branch.lastDeployAt || branch.createdAt,
-            tags: ['system', 'default', 'cds-sidecar'],
-            hostName: profile?.name || serviceState.profileId,
-            hostId: branch.id,
-          });
-        }
-      }
-    }
-
-    res.json({ projectId, instances });
   });
 
   router.post('/projects/:id/agent-sessions', async (req, res) => {
@@ -515,7 +553,14 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const now = new Date().toISOString();
     const runtime = normalizeRuntime(req.body?.runtime);
     const modelBaseUrl = typeof req.body?.modelBaseUrl === 'string' ? req.body.modelBaseUrl : null;
-    const hasModelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0;
+    const modelProtocol = typeof req.body?.modelProtocol === 'string' ? req.body.modelProtocol : null;
+    const modelApiKey = typeof req.body?.modelApiKey === 'string' && req.body.modelApiKey.length > 0
+      ? req.body.modelApiKey
+      : null;
+    const workspaceRoot = typeof req.body?.workspaceRoot === 'string' ? req.body.workspaceRoot : null;
+    const gitRepository = typeof req.body?.gitRepository === 'string' ? req.body.gitRepository : null;
+    const gitRef = typeof req.body?.gitRef === 'string' ? req.body.gitRef : null;
+    const hasModelApiKey = Boolean(modelApiKey);
     const resourcePolicy = normalizeAgentResourcePolicy(req.body?.resourcePolicy);
     const runtimeSource = runtime === 'fake' ? 'fake-runtime' : `${runtime}-runtime`;
     const workerId = runtime === 'fake'
@@ -532,6 +577,10 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       runtime,
       model: typeof req.body?.model === 'string' ? req.body.model : null,
       modelBaseUrl,
+      modelProtocol,
+      workspaceRoot,
+      gitRepository,
+      gitRef,
       hasModelApiKey,
       runtimeProfileId: typeof req.body?.runtimeProfileId === 'string' ? req.body.runtimeProfileId : null,
       resourcePolicy,
@@ -545,12 +594,19 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       messages: [],
       logs: [],
     };
+    if (modelApiKey) {
+      cdsAgentSessionSecrets.set(session.id, { modelApiKey });
+    }
     pushCdsAgentEvent(session, 'status', {
       status: 'running',
       reason: 'session_created',
       runtime,
       model: session.model,
       modelBaseUrl,
+      modelProtocol,
+      workspaceRoot,
+      gitRepository,
+      gitRef,
       runtimeProfileId: session.runtimeProfileId,
       modelCredential: hasModelApiKey ? 'configured' : 'missing',
       resourcePolicy,
@@ -576,6 +632,11 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
     }
+    const project = deps.stateService.getProject(req.params.projectId);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
     res.json({ item: toCdsAgentSessionView(session) });
   });
 
@@ -594,6 +655,15 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(409).json({ error: { code: 'session_stopped', message: 'agent session already stopped' } });
       return;
     }
+    if (session.activeRunId) {
+      res.status(409).json({ error: { code: 'session_busy', message: 'agent session already has a running task' } });
+      return;
+    }
+    const project = deps.stateService.getProject(req.params.projectId);
+    if (!project) {
+      res.status(404).json({ error: { code: 'project_not_found', message: 'project not found' } });
+      return;
+    }
 
     const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
     if (!content) {
@@ -610,15 +680,61 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       source: session.runtime === 'fake' ? 'fake-runtime' : `${session.runtime}-runtime`,
     });
 
-    if (session.runtime !== 'fake') {
+    if (session.runtime === 'claude-sdk') {
+      const transport = resolveCdsManagedRuntimeTransport(deps.stateService, project, session);
+      if (transport) {
+        session.status = 'running';
+        startCdsManagedOfficialSdkTransport(session, content, transport);
+        session.updatedAt = new Date().toISOString();
+        res.status(202).json({
+          item: toCdsAgentSessionView(session),
+          accepted: true,
+          runtimeOwnedBy: 'cds-managed-runtime',
+          transport: toCdsManagedRuntimeTransportView(transport),
+        });
+        return;
+      }
+
+      const unavailable = buildCdsManagedRuntimeUnavailable(session);
+      session.status = 'failed';
+      session.updatedAt = new Date().toISOString();
+      pushCdsAgentEvent(session, 'error', unavailable);
       pushCdsAgentEvent(session, 'log', {
-        level: 'info',
-        message: `${session.runtime} runtime delegated message execution to MAP sidecar bridge`,
+        level: 'warn',
+        message: unavailable.message,
         source: `${session.runtime}-runtime`,
       });
-      session.logs.push(`[${new Date().toISOString()}] message delegated runtime=${session.runtime} chars=${content.length}`);
+      session.logs.push(`[${session.updatedAt}] runtime unavailable runtime=${session.runtime} owner=cds-managed-runtime reason=${unavailable.code}`);
+      res.status(202).json({
+        item: toCdsAgentSessionView(session),
+        accepted: false,
+        runtimeOwnedBy: 'cds-managed-runtime',
+        error: unavailable,
+      });
+      return;
+    }
+    if (session.runtime !== 'fake') {
+      const unavailable = {
+        code: 'runtime_not_implemented',
+        message: `${session.runtime} runtime is not wired to a CDS-managed transport yet`,
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        retryable: false,
+      };
+      session.status = 'failed';
       session.updatedAt = new Date().toISOString();
-      res.status(202).json({ item: toCdsAgentSessionView(session), accepted: true });
+      pushCdsAgentEvent(session, 'error', unavailable);
+      pushCdsAgentEvent(session, 'log', {
+        level: 'warn',
+        message: unavailable.message,
+        source: `${session.runtime}-runtime`,
+      });
+      res.status(202).json({
+        item: toCdsAgentSessionView(session),
+        accepted: false,
+        runtimeOwnedBy: 'unavailable',
+        error: unavailable,
+      });
       return;
     }
 
@@ -713,11 +829,15 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     }
     session.status = 'stopping';
     session.updatedAt = new Date().toISOString();
+    session.activeRunAbortController?.abort();
+    session.activeRunAbortController = undefined;
+    session.activeRunId = undefined;
     pushCdsAgentEvent(session, 'status', { status: 'stopping', reason: 'session_stop_requested' });
     session.logs.push(`[${session.updatedAt}] session stopping`);
     session.status = 'stopped';
     session.updatedAt = new Date().toISOString();
     session.stoppedAt = session.updatedAt;
+    cdsAgentSessionSecrets.delete(session.id);
     pushCdsAgentEvent(session, 'status', { status: 'stopped', reason: 'session_stopped' });
     pushCdsAgentEvent(session, 'log', {
       level: 'info',
@@ -765,11 +885,558 @@ export function resolvePreviewRootDomain(): string {
 export function shouldIncludeBranchServicesInInstanceDiscovery(
   project: Pick<Project, 'kind'> | null | undefined,
 ): boolean {
-  return project?.kind !== 'shared-service';
+  // Source-mode shared-service projects, such as the CDS-managed runtime pool,
+  // run as normal branch services rather than ServiceDeployment records. Keep
+  // regular git/manual projects out of this path so MAP does not mistake
+  // business branch services for CDS-managed Agent runtime capacity.
+  return project?.kind === 'shared-service';
+}
+
+export function isRuntimeBranchService(profileId: string, profileName?: string, containerName?: string): boolean {
+  const text = [profileId, profileName, containerName].filter(Boolean).join(' ').toLowerCase();
+  if (!text.trim()) return false;
+  if (/\b(admin|web|frontend|ui|dashboard)\b/.test(text.replace(/[-_]/g, ' '))) return false;
+  return /\b(api|sidecar|runtime|worker|agent)\b/.test(text.replace(/[-_]/g, ' '));
+}
+
+interface ProjectRuntimeDiscovery {
+  projectKind: string;
+  deploymentCount: number;
+  runningDeploymentCount: number;
+  disabledHostDeploymentCount: number;
+  branchCount: number;
+  runningBranchCount: number;
+  runningBranchServiceCount: number;
+  runtimeBranchServiceCount: number;
+  skippedBranchServiceCount: number;
+  previewRootConfigured: boolean;
+}
+
+interface ProjectRuntimeInstancesResponse {
+  instances: Array<Record<string, unknown>>;
+  discovery: ProjectRuntimeDiscovery;
+  capacity: Record<string, unknown>;
+}
+
+const CDS_MANAGED_RUNTIME_PROFILE_ID_PREFIX = 'claude-agent-sdk-runtime';
+const CDS_MANAGED_RUNTIME_BRANCH_NAME = 'cds-managed-runtime';
+const CDS_MANAGED_RUNTIME_CONTAINER_NAME_PREFIX = 'cds-claude-agent-sdk-runtime';
+
+interface CdsManagedRuntimeReconcileOptions {
+  apply: boolean;
+  liveApply: boolean;
+  force?: boolean;
+  hostPort?: number;
+  now: string;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  portStart?: number;
+}
+
+function collectProjectRuntimeInstances(
+  stateService: StateService,
+  service: RemoteHostService,
+  project: Project,
+): ProjectRuntimeInstancesResponse {
+  const latest = stateService.getLatestDeploymentsByProject(project.id);
+  const instances: Array<Record<string, unknown>> = [];
+  const discovery: ProjectRuntimeDiscovery = {
+    projectKind: project.kind || 'unknown',
+    deploymentCount: latest.length,
+    runningDeploymentCount: 0,
+    disabledHostDeploymentCount: 0,
+    branchCount: 0,
+    runningBranchCount: 0,
+    runningBranchServiceCount: 0,
+    runtimeBranchServiceCount: 0,
+    skippedBranchServiceCount: 0,
+    previewRootConfigured: false,
+  };
+
+  for (const dep of latest) {
+    if (dep.status !== 'running') continue;
+    discovery.runningDeploymentCount += 1;
+    const host = service.getRaw(dep.hostId);
+    if (!host || !host.isEnabled) {
+      discovery.disabledHostDeploymentCount += 1;
+      continue;
+    }
+    instances.push({
+      deploymentId: dep.id,
+      serviceKind: 'operator-fallback-deployment',
+      capacityRole: 'operator-fallback',
+      host: host.host,
+      port: extractPortFromLogs(dep) ?? 7400,
+      healthy: dep.containerHealthOk !== false,
+      version: dep.releaseTag,
+      deployedAt: dep.startedAt,
+      tags: host.tags,
+      hostName: host.name,
+      hostId: host.id,
+    });
+  }
+
+  if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
+    const projectSlug = project.slug || project.id;
+    const previewRoot = resolvePreviewRootDomain();
+    discovery.previewRootConfigured = Boolean(previewRoot);
+    const branches = stateService.getBranchesForProject(project.id);
+    discovery.branchCount = branches.length;
+    for (const branch of branches) {
+      if (branch.status !== 'running') continue;
+      discovery.runningBranchCount += 1;
+      for (const serviceState of Object.values(branch.services || {})) {
+        if (serviceState.status !== 'running') continue;
+        discovery.runningBranchServiceCount += 1;
+        const profile = stateService.getBuildProfile(serviceState.profileId);
+        if (!isRuntimeBranchService(serviceState.profileId, profile?.name, serviceState.containerName)) {
+          discovery.skippedBranchServiceCount += 1;
+          continue;
+        }
+        discovery.runtimeBranchServiceCount += 1;
+        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
+        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
+        instances.push({
+          deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
+          profileId: serviceState.profileId,
+          branchId: branch.id,
+          branch: branch.branch,
+          serviceKind: 'branch-service',
+          capacityRole: officialSdkRuntime ? 'product-runtime' : 'runtime-service',
+          runtimeOwnedBy: 'cds-managed-runtime',
+          runtimeAdapter: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
+          loopOwner: officialSdkRuntime ? 'claude-agent-sdk' : 'unknown',
+          projectKind: project.kind,
+          host: serviceState.containerName,
+          port: serviceState.hostPort,
+          baseUrl,
+          healthy: true,
+          version: branch.githubCommitSha,
+          deployedAt: branch.lastDeployAt || branch.createdAt,
+          tags: ['system', 'default', 'cds-sidecar', `profile:${serviceState.profileId}`, `branch:${branch.branch}`],
+          hostName: profile?.name || serviceState.profileId,
+          hostId: branch.id,
+        });
+      }
+    }
+  }
+
+  return {
+    instances,
+    discovery,
+    capacity: buildCdsManagedRuntimeCapacity(project, instances, discovery, service.list()),
+  };
+}
+
+async function reconcileCdsManagedRuntimeCapacity(
+  stateService: StateService,
+  service: RemoteHostService,
+  project: Project,
+  options: CdsManagedRuntimeReconcileOptions,
+): Promise<Record<string, unknown>> {
+  const before = collectProjectRuntimeInstances(stateService, service, project);
+  const alreadyAvailable = before.capacity.status === 'available';
+  const shouldSkipApply = alreadyAvailable && !options.force;
+  const planned = planCdsManagedRuntimeCapacity(stateService, project, {
+    hostPort: options.hostPort,
+    liveApply: options.liveApply,
+    alreadyAvailable: shouldSkipApply,
+  });
+
+  if (!options.apply || shouldSkipApply) {
+    return {
+      requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      applied: false,
+      status: shouldSkipApply ? 'available' : 'planned',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+      productPathOnly: true,
+      fallbackScope: 'operator-debug-only',
+      plan: planned,
+      capacity: before.capacity,
+      nextAction: shouldSkipApply
+        ? 'CDS-managed official SDK runtime capacity already exists; continue with R1/S1/S2/S3.'
+        : 'Apply this CDS-managed runtime reconcile plan with liveApply=true to start the CDS-managed container; do not ask product users for SSH/env/image.',
+    };
+  }
+
+  const profileId = buildCdsManagedRuntimeProfileId(project.id);
+  const containerName = buildCdsManagedRuntimeContainerName(project.id);
+  const profile = buildCdsManagedRuntimeProfile(project.id);
+  const worktreePath = resolveCdsManagedRuntimeWorktreePath();
+  const existingProfile = stateService.getBuildProfile(profileId);
+  let profileChange: 'created' | 'updated' | 'unchanged' = 'created';
+  if (existingProfile) {
+    if (existingProfile.projectId !== project.id) {
+      throw new Error(`runtime profile ${profileId} belongs to project ${existingProfile.projectId}`);
+    }
+    stateService.updateBuildProfile(profileId, profile);
+    profileChange = 'updated';
+  } else {
+    stateService.addBuildProfile(profile);
+  }
+
+  const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
+  const existingService = branch?.services?.[profileId];
+  const hostPort = options.hostPort
+    || existingService?.hostPort
+    || (options.liveApply && options.portStart ? stateService.allocatePort(options.portStart) : 0);
+  const hostPortReady = !options.liveApply && hostPort ? await probeCdsManagedRuntimeHostPort(hostPort) : false;
+  const initialServiceStatus = hostPortReady ? 'running' : 'starting';
+  const initialBranchStatus = hostPortReady ? 'running' : 'idle';
+  const serviceState: ServiceState = {
+    profileId,
+    containerName,
+    hostPort,
+    status: initialServiceStatus,
+  };
+  let branchChange: 'created' | 'updated' = 'created';
+  let serviceChange: 'created' | 'updated' = 'created';
+  let managedBranch: BranchEntry;
+  if (branch) {
+    branch.services = branch.services || {};
+    serviceChange = branch.services[profileId] ? 'updated' : 'created';
+    branch.services[profileId] = serviceState;
+    branch.status = initialBranchStatus;
+    branch.worktreePath = worktreePath;
+    branch.lastAccessedAt = options.now;
+    branch.lastDeployAt = options.now;
+    branchChange = 'updated';
+    managedBranch = branch;
+  } else {
+    managedBranch = {
+      id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
+      projectId: project.id,
+      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+      worktreePath,
+      status: initialBranchStatus,
+      services: {
+        [profileId]: serviceState,
+      },
+      createdAt: options.now,
+      lastAccessedAt: options.now,
+      lastDeployAt: options.now,
+      githubCommitSha: 'cds-managed-runtime',
+    };
+    stateService.addBranch(managedBranch);
+  }
+  stateService.save();
+
+  let liveApply: Record<string, unknown> = {
+    requested: options.liveApply,
+    attempted: false,
+    status: options.liveApply ? 'not_started' : 'not_requested',
+  };
+  if (options.liveApply) {
+    liveApply = await startCdsManagedRuntimeContainer(
+      stateService,
+      project,
+      managedBranch,
+      profile,
+      serviceState,
+      options,
+    );
+  }
+
+  const after = collectProjectRuntimeInstances(stateService, service, project);
+  return {
+    requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+    applied: true,
+    status: after.capacity.status === 'available' ? 'available' : 'starting',
+    runtimeOwnedBy: 'cds-managed-runtime',
+    loopOwner: 'claude-agent-sdk',
+    productPathOnly: true,
+    fallbackScope: 'operator-debug-only',
+    changes: {
+      profile: profileChange,
+      branch: branchChange,
+      service: serviceChange,
+    },
+    profileId,
+    branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+    containerName,
+    liveApply,
+    capacity: after.capacity,
+    nextAction: after.capacity.status === 'available'
+      ? 'CDS-managed official SDK runtime capacity is available; continue with R1/S1/S2/S3.'
+      : 'CDS accepted the managed runtime profile and branch-service record, but live capacity is not available yet; inspect liveApply status and continue CDS container start without SSH/env/image handoff.',
+  };
+}
+
+function planCdsManagedRuntimeCapacity(
+  stateService: StateService,
+  project: Project,
+  options: { hostPort?: number; liveApply: boolean; alreadyAvailable: boolean },
+): Array<Record<string, unknown>> {
+  if (options.alreadyAvailable) {
+    return [{ step: 'verify-capacity', state: 'already_available' }];
+  }
+  const profileId = buildCdsManagedRuntimeProfileId(project.id);
+  const profile = stateService.getBuildProfile(profileId);
+  const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
+  const liveApplyState = options.liveApply ? 'start_container' : 'not_requested';
+  return [
+    {
+      step: 'ensure-build-profile',
+      profileId,
+      state: profile ? 'update_existing' : 'create',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      loopOwner: 'claude-agent-sdk',
+    },
+    {
+      step: 'ensure-branch-service',
+      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+      state: branch ? 'update_existing' : 'create',
+      targetServiceStatus: options.hostPort && !options.liveApply ? 'running' : 'starting',
+    },
+    {
+      step: 'start-cds-managed-container',
+      state: liveApplyState,
+      runtimeOwnedBy: 'cds-managed-runtime',
+      fallbackScope: 'operator-debug-only',
+    },
+    {
+      step: 'verify-product-capacity',
+      expectedRequirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+      expectedCapacityRole: 'product-runtime',
+      fallbackScope: 'operator-debug-only',
+    },
+  ];
+}
+
+async function startCdsManagedRuntimeContainer(
+  stateService: StateService,
+  project: Project,
+  branch: BranchEntry,
+  profile: BuildProfile,
+  serviceState: ServiceState,
+  options: CdsManagedRuntimeReconcileOptions,
+): Promise<Record<string, unknown>> {
+  if (!options.containerService) {
+    serviceState.status = 'starting';
+    branch.status = 'idle';
+    stateService.save();
+    return {
+      requested: true,
+      attempted: false,
+      status: 'missing_container_service',
+      message: 'CDS container service is not injected into the runtime capacity reconciler.',
+      fallbackScope: 'operator-debug-only',
+    };
+  }
+  if (!serviceState.hostPort || serviceState.hostPort <= 0) {
+    serviceState.status = 'starting';
+    branch.status = 'idle';
+    stateService.save();
+    return {
+      requested: true,
+      attempted: false,
+      status: 'missing_host_port',
+      message: 'CDS could not allocate a host port for the managed runtime container.',
+      fallbackScope: 'operator-debug-only',
+    };
+  }
+
+  const logs: string[] = [];
+  const startedAt = Date.now();
+  serviceState.status = 'building';
+  branch.status = 'building';
+  branch.lastDeployAt = options.now;
+  stateService.save();
+
+  try {
+    await options.containerService.runService(
+      branch,
+      profile,
+      serviceState,
+      (chunk) => {
+        logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
+        if (logs.length > 20) logs.splice(0, logs.length - 20);
+      },
+      stateService.getCustomEnv(project.id),
+    );
+
+    serviceState.status = 'starting';
+    branch.status = 'starting';
+    stateService.save();
+
+    const ready = await options.containerService.waitForReadiness(
+      serviceState.hostPort,
+      profile.readinessProbe,
+      (info) => {
+        logs.push(`readiness ${info.stage} ${info.attempt}/${info.max} ${info.ok ? 'ok' : info.error || 'failed'}`);
+        if (logs.length > 20) logs.splice(0, logs.length - 20);
+      },
+      (chunk) => {
+        logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
+        if (logs.length > 20) logs.splice(0, logs.length - 20);
+      },
+    );
+
+    if (!ready) {
+      serviceState.status = 'error';
+      serviceState.errorMessage = 'CDS-managed official SDK runtime readiness probe failed';
+      branch.status = 'error';
+      branch.errorMessage = serviceState.errorMessage;
+      stateService.save();
+      return {
+        requested: true,
+        attempted: true,
+        status: 'readiness_failed',
+        hostPort: serviceState.hostPort,
+        durationMs: Date.now() - startedAt,
+        logs,
+        fallbackScope: 'operator-debug-only',
+      };
+    }
+
+    serviceState.status = 'running';
+    serviceState.errorMessage = undefined;
+    branch.status = 'running';
+    branch.errorMessage = undefined;
+    branch.lastAccessedAt = new Date().toISOString();
+    branch.lastDeployAt = branch.lastAccessedAt;
+    stateService.save();
+    return {
+      requested: true,
+      attempted: true,
+      status: 'running',
+      hostPort: serviceState.hostPort,
+      durationMs: Date.now() - startedAt,
+      logs,
+      fallbackScope: 'operator-debug-only',
+    };
+  } catch (err) {
+    const message = (err as Error).message;
+    serviceState.status = 'error';
+    serviceState.errorMessage = message;
+    branch.status = 'error';
+    branch.errorMessage = message;
+    stateService.save();
+    return {
+      requested: true,
+      attempted: true,
+      status: 'start_failed',
+      hostPort: serviceState.hostPort,
+      durationMs: Date.now() - startedAt,
+      error: message,
+      logs,
+      fallbackScope: 'operator-debug-only',
+    };
+  }
+}
+
+function buildCdsManagedRuntimeProfileId(projectId: string): string {
+  return `${CDS_MANAGED_RUNTIME_PROFILE_ID_PREFIX}-${slugifyRuntimeSegment(projectId)}`;
+}
+
+function buildCdsManagedRuntimeContainerName(projectId: string): string {
+  return `${CDS_MANAGED_RUNTIME_CONTAINER_NAME_PREFIX}-${slugifyRuntimeSegment(projectId)}`;
+}
+
+async function probeCdsManagedRuntimeHostPort(hostPort: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1_500);
+  try {
+    const response = await fetch(`http://127.0.0.1:${hostPort}/readyz`, { signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildCdsManagedRuntimeProfile(projectId: string): BuildProfile {
+  return {
+    id: buildCdsManagedRuntimeProfileId(projectId),
+    projectId,
+    name: 'Claude Agent SDK Runtime',
+    dockerImage: 'python:3.12-slim',
+    workDir: 'claude-sdk-sidecar',
+    containerWorkDir: '/app',
+    command: 'apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* && python -m pip install --no-cache-dir -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 7400 --no-server-header',
+    containerPort: 7400,
+    env: {
+      SIDECAR_AGENT_ADAPTER: 'claude-agent-sdk',
+      SIDECAR_RUNTIME_OWNER: 'cds-managed-runtime',
+      SIDECAR_LOOP_OWNER: 'claude-agent-sdk',
+      SIDECAR_PROVIDER_KEY_MODE: 'runtime-profile-or-env',
+      SIDECAR_TOKEN: process.env.CDS_MANAGED_RUNTIME_SIDECAR_TOKEN
+        || process.env.CLAUDE_SIDECAR_TOKEN
+        || 'dev-skip',
+    },
+    readinessProbe: {
+      path: '/readyz',
+      timeoutSeconds: 30,
+      intervalSeconds: 1,
+    },
+  };
+}
+
+function resolveCdsManagedRuntimeWorktreePath(): string {
+  const cwd = process.cwd();
+  return path.basename(cwd) === 'cds' ? path.dirname(cwd) : cwd;
+}
+
+function parseOptionalHostPort(value: unknown): number | undefined | null {
+  if (value === undefined || value === null || value === '') return undefined;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return port;
+}
+
+function slugifyRuntimeSegment(value: string): string {
+  return value
+    .replace(/[^a-zA-Z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase() || 'shared-service';
+}
+
+function buildCdsManagedRuntimeCapacity(
+  project: Project,
+  instances: Array<Record<string, unknown>>,
+  discovery: ProjectRuntimeDiscovery,
+  remoteHosts: Array<{ isEnabled?: boolean }>,
+): Record<string, unknown> {
+  const productRuntimeInstances = instances.filter(instance =>
+    instance.capacityRole === 'product-runtime'
+    && instance.runtimeOwnedBy === 'cds-managed-runtime'
+    && instance.runtimeAdapter === 'claude-agent-sdk'
+    && instance.loopOwner === 'claude-agent-sdk'
+    && instance.healthy !== false);
+  const legacyFallbackInstances = instances.filter(instance =>
+    instance.capacityRole === 'operator-fallback');
+  const enabledFallbackHostCount = remoteHosts.filter(host => host.isEnabled !== false).length;
+  const available = project.kind === 'shared-service' && productRuntimeInstances.length > 0;
+
+  return {
+    requirement: 'CDS_MANAGED_RUNTIME_CAPACITY',
+    status: available ? 'available' : 'missing',
+    runtimeOwnedBy: 'cds-managed-runtime',
+    loopOwner: 'claude-agent-sdk',
+    productPath: {
+      projectKind: project.kind,
+      runningOfficialSdkRuntimeCount: productRuntimeInstances.length,
+      branchRuntimeServiceCount: discovery.runtimeBranchServiceCount,
+      runningBranchServiceCount: discovery.runningBranchServiceCount,
+      previewRootConfigured: discovery.previewRootConfigured,
+    },
+    legacyFallback: {
+      runningDeploymentCount: discovery.runningDeploymentCount,
+      enabledRemoteHostCount: enabledFallbackHostCount,
+      runningFallbackInstanceCount: legacyFallbackInstances.length,
+      scope: 'operator-debug-only',
+    },
+    nextAction: available
+      ? 'CDS-managed runtime capacity is available; continue with R1/S1/S2/S3.'
+      : 'Provision or start a CDS-managed official SDK runtime/container/sandbox inside the shared-service project; do not ask product users for SSH/env/image.',
+  };
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';
-type CdsAgentEventType = 'status' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook';
+type CdsAgentEventType = 'status' | 'runtime_init' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook' | 'usage';
 
 interface CdsAgentResourcePolicy {
   cpuCores: number;
@@ -792,6 +1459,10 @@ interface CdsAgentSession {
   runtime: string;
   model: string | null;
   modelBaseUrl: string | null;
+  modelProtocol: string | null;
+  workspaceRoot: string | null;
+  gitRepository: string | null;
+  gitRef: string | null;
   hasModelApiKey: boolean;
   runtimeProfileId: string | null;
   resourcePolicy: CdsAgentResourcePolicy;
@@ -802,12 +1473,38 @@ interface CdsAgentSession {
   createdAt: string;
   updatedAt: string;
   stoppedAt?: string;
+  activeRunId?: string;
+  activeRunAbortController?: AbortController;
   events: CdsAgentEvent[];
   messages: Array<{ role: string; content: string; createdAt: string }>;
   logs: string[];
 }
 
 const cdsAgentSessions = new Map<string, CdsAgentSession>();
+const cdsAgentSessionSecrets = new Map<string, { modelApiKey: string }>();
+
+interface CdsManagedRuntimeTransport {
+  source: 'cds-branch-service';
+  runtimeOwnedBy: 'cds-managed-runtime';
+  baseUrl: string;
+  authToken?: string;
+  authTokenSource?: 'build-profile-env';
+  projectId: string;
+  projectKind: string;
+  branchId: string;
+  branch: string;
+  profileId: string;
+  profileName: string;
+  containerName: string;
+  hostPort: number;
+  runtimeAdapter: 'claude-agent-sdk';
+  loopOwner: 'claude-agent-sdk';
+}
+
+interface CdsManagedRuntimeResult {
+  accepted: boolean;
+  error?: Record<string, unknown>;
+}
 
 function authenticateProjectRequest(
   authorization: string | string[] | undefined,
@@ -859,6 +1556,10 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
     runtime: session.runtime,
     model: session.model,
     modelBaseUrl: session.modelBaseUrl,
+    modelProtocol: session.modelProtocol,
+    workspaceRoot: session.workspaceRoot,
+    gitRepository: session.gitRepository,
+    gitRef: session.gitRef,
     hasModelApiKey: session.hasModelApiKey,
     runtimeProfileId: session.runtimeProfileId,
     resourcePolicy: session.resourcePolicy,
@@ -873,8 +1574,518 @@ function toCdsAgentSessionView(session: CdsAgentSession): Record<string, unknown
   };
 }
 
+function resolveCdsManagedRuntimeTransport(
+  stateService: StateService,
+  project: Project,
+  session: CdsAgentSession,
+): CdsManagedRuntimeTransport | null {
+  if (project.kind !== 'shared-service') return null;
+  const branches = stateService.getBranchesForProject(project.id);
+  const candidates: CdsManagedRuntimeTransport[] = [];
+  for (const branch of branches) {
+    if (branch.status !== 'running') continue;
+    for (const serviceState of Object.values(branch.services || {})) {
+      if (serviceState.status !== 'running') continue;
+      const profile = stateService.getBuildProfile(serviceState.profileId);
+      if (!isOfficialSdkRuntimeService(session.runtime, serviceState, profile)) continue;
+      const baseUrl = resolveCdsManagedRuntimeBaseUrl(project, branch, serviceState);
+      if (!baseUrl) continue;
+      const token = normalizeOptionalString(profile?.env?.SIDECAR_TOKEN);
+      candidates.push({
+        source: 'cds-branch-service',
+        runtimeOwnedBy: 'cds-managed-runtime',
+        baseUrl,
+        authToken: token || undefined,
+        authTokenSource: token ? 'build-profile-env' : undefined,
+        projectId: project.id,
+        projectKind: project.kind,
+        branchId: branch.id,
+        branch: branch.branch,
+        profileId: serviceState.profileId,
+        profileName: profile?.name || serviceState.profileId,
+        containerName: serviceState.containerName,
+        hostPort: serviceState.hostPort,
+        runtimeAdapter: 'claude-agent-sdk',
+        loopOwner: 'claude-agent-sdk',
+      });
+    }
+  }
+  candidates.sort((a, b) => scoreCdsManagedRuntimeTransport(b) - scoreCdsManagedRuntimeTransport(a));
+  return candidates[0] || null;
+}
+
+function scoreCdsManagedRuntimeTransport(transport: CdsManagedRuntimeTransport): number {
+  let score = 0;
+  if (transport.profileId === buildCdsManagedRuntimeProfileId(transport.projectId)) score += 100;
+  if (transport.profileId === CDS_MANAGED_RUNTIME_PROFILE_ID_PREFIX) score += 75;
+  if (transport.branch === CDS_MANAGED_RUNTIME_BRANCH_NAME) score += 50;
+  if (transport.containerName === buildCdsManagedRuntimeContainerName(transport.projectId)) score += 20;
+  if (transport.containerName === CDS_MANAGED_RUNTIME_CONTAINER_NAME_PREFIX) score += 10;
+  if (transport.authToken) score += 1;
+  return score;
+}
+
+function isOfficialSdkRuntimeService(
+  runtime: string,
+  serviceState: ServiceState,
+  profile?: BuildProfile,
+): boolean {
+  if (runtime !== 'claude-sdk') return false;
+  const text = [
+    serviceState.profileId,
+    serviceState.containerName,
+    profile?.name,
+    profile?.workDir,
+    profile?.dockerImage,
+    profile?.command,
+    profile?.env?.SIDECAR_AGENT_ADAPTER,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (!text.trim()) return false;
+  if (profile?.env?.SIDECAR_AGENT_ADAPTER === 'legacy-sidecar') return false;
+  if (text.includes('claude-agent-sdk') || text.includes('claude-sdk-sidecar')) return true;
+  return text.includes('claude') && (text.includes('agent') || text.includes('sidecar') || text.includes('runtime'));
+}
+
+function resolveCdsManagedRuntimeBaseUrl(
+  project: Project,
+  branch: BranchEntry,
+  serviceState: ServiceState,
+): string | null {
+  if (Number.isInteger(serviceState.hostPort) && serviceState.hostPort > 0) {
+    return `http://127.0.0.1:${serviceState.hostPort}`;
+  }
+  const previewRoot = resolvePreviewRootDomain();
+  if (!previewRoot) return null;
+  const previewSlug = computePreviewSlug(branch.branch, project.slug || project.id);
+  return `https://${previewSlug}.${previewRoot}`;
+}
+
+function toCdsManagedRuntimeTransportView(transport: CdsManagedRuntimeTransport): Record<string, unknown> {
+  return {
+    source: transport.source,
+    runtimeOwnedBy: transport.runtimeOwnedBy,
+    baseUrl: transport.baseUrl,
+    projectId: transport.projectId,
+    projectKind: transport.projectKind,
+    branchId: transport.branchId,
+    branch: transport.branch,
+    profileId: transport.profileId,
+    profileName: transport.profileName,
+    containerName: transport.containerName,
+    hostPort: transport.hostPort,
+    runtimeAdapter: transport.runtimeAdapter,
+    loopOwner: transport.loopOwner,
+    auth: transport.authToken ? { configured: true, source: transport.authTokenSource } : { configured: false },
+  };
+}
+
+function startCdsManagedOfficialSdkTransport(
+  session: CdsAgentSession,
+  content: string,
+  transport: CdsManagedRuntimeTransport,
+): void {
+  const runId = `${session.id}-${session.events.length + 1}`;
+  session.activeRunId = runId;
+  void Promise.resolve()
+    .then(() => runCdsManagedOfficialSdkTransport(session, content, transport, runId))
+    .catch((err) => {
+      if (session.status === 'stopped') return;
+      const error = {
+        code: 'cds_managed_runtime_transport_background_failed',
+        message: err instanceof Error ? err.message : String(err),
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        retryable: true,
+      };
+      session.status = 'failed';
+      session.updatedAt = new Date().toISOString();
+      pushCdsAgentEvent(session, 'error', error);
+      session.logs.push(`[${session.updatedAt}] runtime transport background failed owner=cds-managed-runtime`);
+    });
+}
+
+async function runCdsManagedOfficialSdkTransport(
+  session: CdsAgentSession,
+  content: string,
+  transport: CdsManagedRuntimeTransport,
+  runId: string,
+): Promise<CdsManagedRuntimeResult> {
+  if (session.status === 'stopped' || session.activeRunId !== runId) {
+    return {
+      accepted: false,
+      error: {
+        code: 'cds_managed_runtime_transport_cancelled_before_start',
+        message: 'CDS-managed runtime transport was cancelled before it started',
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        retryable: false,
+      },
+    };
+  }
+  const timeoutMs = Math.max(1_000, session.resourcePolicy.timeoutSeconds * 1_000);
+  const controller = new AbortController();
+  session.activeRunAbortController = controller;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const url = `${transport.baseUrl.replace(/\/+$/, '')}/v1/agent/run`;
+  const requestBody = {
+    runId,
+    model: session.model || 'claude-sonnet-4-20250514',
+    messages: session.messages.map((message) => ({ role: message.role, content: message.content })),
+    runtimeAdapter: 'claude-agent-sdk',
+    mapSessionId: session.id,
+    traceId: session.id,
+    maxTurns: resolveAgentMaxTurns(content),
+    timeoutSeconds: session.resourcePolicy.timeoutSeconds,
+    baseUrl: session.modelBaseUrl || undefined,
+    apiKey: cdsAgentSessionSecrets.get(session.id)?.modelApiKey || undefined,
+    protocol: session.modelProtocol || undefined,
+    workspaceRoot: session.workspaceRoot || undefined,
+    gitRepository: session.gitRepository || undefined,
+    gitRef: session.gitRef || undefined,
+    systemPrompt: [
+      'You are running as a CDS-managed Claude SDK runtime.',
+      'MAP is only the control-plane client; CDS owns runtime/container/sandbox execution.',
+    ].join(' '),
+  };
+
+  pushCdsAgentEvent(session, 'log', {
+    level: 'info',
+    message: `dispatching run to CDS-managed official SDK runtime profile=${transport.profileId} branch=${transport.branch}`,
+    source: 'cds-managed-runtime-transport',
+  });
+  session.logs.push(`[${new Date().toISOString()}] dispatch runtime=${session.runtime} owner=cds-managed-runtime transport=${transport.source} profile=${transport.profileId} branch=${transport.branch}`);
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+    if (transport.authToken) headers.Authorization = `Bearer ${transport.authToken}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      const error = {
+        code: 'cds_managed_runtime_transport_http_error',
+        message: `CDS-managed runtime returned HTTP ${response.status}`,
+        status: response.status,
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        body: body.slice(0, 800),
+        retryable: response.status >= 500,
+      };
+      session.status = 'failed';
+      pushCdsAgentEvent(session, 'error', error);
+      session.logs.push(`[${new Date().toISOString()}] runtime transport http error status=${response.status} owner=cds-managed-runtime`);
+      return { accepted: false, error };
+    }
+
+    const result = response.body
+      ? await ingestOfficialSdkSseStream(session, response.body, transport)
+      : ingestOfficialSdkSse(session, await response.text(), transport);
+    session.updatedAt = new Date().toISOString();
+    return result;
+  } catch (err) {
+    const aborted = err instanceof Error && err.name === 'AbortError';
+    const stoppedDuringRun = (session.status as CdsAgentSessionStatus) === 'stopped';
+    if (aborted && stoppedDuringRun) {
+      const error = {
+        code: 'cds_managed_runtime_transport_aborted',
+        message: 'CDS-managed runtime transport aborted because session was stopped',
+        runtime: session.runtime,
+        runtimeProfileId: session.runtimeProfileId,
+        transport: toCdsManagedRuntimeTransportView(transport),
+        retryable: false,
+      };
+      pushCdsAgentEvent(session, 'log', {
+        level: 'info',
+        code: error.code,
+        message: error.message,
+        source: 'cds-managed-runtime-transport',
+      });
+      session.logs.push(`[${new Date().toISOString()}] runtime transport aborted owner=cds-managed-runtime reason=session_stopped`);
+      return { accepted: false, error };
+    }
+    const error = {
+      code: aborted ? 'cds_managed_runtime_transport_timeout' : 'cds_managed_runtime_transport_failed',
+      message: aborted
+        ? `CDS-managed runtime transport timed out after ${session.resourcePolicy.timeoutSeconds}s`
+        : (err as Error).message,
+      runtime: session.runtime,
+      runtimeProfileId: session.runtimeProfileId,
+      transport: toCdsManagedRuntimeTransportView(transport),
+      retryable: true,
+    };
+    session.status = 'failed';
+    pushCdsAgentEvent(session, 'error', error);
+    session.logs.push(`[${new Date().toISOString()}] runtime transport failed owner=cds-managed-runtime reason=${error.code}`);
+    return { accepted: false, error };
+  } finally {
+    if (session.activeRunId === runId) {
+      session.activeRunId = undefined;
+      session.activeRunAbortController = undefined;
+    }
+    clearTimeout(timer);
+  }
+}
+
+function ingestOfficialSdkSse(
+  session: CdsAgentSession,
+  body: string,
+  transport: CdsManagedRuntimeTransport,
+): CdsManagedRuntimeResult {
+  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false, terminalSeen: false };
+  for (const frame of parseSseFrames(body)) {
+    const terminal = ingestOfficialSdkSseFrame(session, frame, transport, state);
+    if (terminal) return terminal;
+  }
+  return finishOfficialSdkSseIngest(session, transport, state);
+}
+
+async function ingestOfficialSdkSseStream(
+  session: CdsAgentSession,
+  stream: ReadableStream<Uint8Array>,
+  transport: CdsManagedRuntimeTransport,
+): Promise<CdsManagedRuntimeResult> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const state: OfficialSdkSseIngestState = { finalText: '', accepted: false, terminalSeen: false };
+  let buffer = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const chunk = buffer.slice(0, boundary).trim();
+      buffer = buffer.slice(boundary + 2);
+      if (chunk) {
+        const terminal = ingestOfficialSdkSseFrame(session, parseSseFrameChunk(chunk), transport, state);
+        if (terminal) {
+          await reader.cancel();
+          return terminal;
+        }
+      }
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+
+  buffer += decoder.decode();
+  const finalChunk = buffer.trim();
+  if (finalChunk) {
+    const terminal = ingestOfficialSdkSseFrame(session, parseSseFrameChunk(finalChunk), transport, state);
+    if (terminal) return terminal;
+  }
+
+  return finishOfficialSdkSseIngest(session, transport, state);
+}
+
+interface OfficialSdkSseIngestState {
+  finalText: string;
+  accepted: boolean;
+  terminalSeen: boolean;
+}
+
+function ingestOfficialSdkSseFrame(
+  session: CdsAgentSession,
+  frame: { event?: string; data: string[] },
+  transport: CdsManagedRuntimeTransport,
+  state: OfficialSdkSseIngestState,
+): CdsManagedRuntimeResult | null {
+  const rawData = frame.data.join('\n').trim();
+  if (!rawData) return null;
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawData) as Record<string, unknown>;
+  } catch {
+    pushCdsAgentEvent(session, 'log', {
+      level: 'warn',
+      message: `ignored malformed runtime SSE event=${frame.event || 'message'}`,
+      source: 'cds-managed-runtime-transport',
+    });
+    return null;
+  }
+
+  const sidecarType = normalizeOptionalString(payload.type) || frame.event || 'log';
+  state.accepted = true;
+  if (session.status === 'stopped') return null;
+  if (sidecarType === 'runtime_init') {
+    pushCdsAgentEvent(session, 'runtime_init', {
+      message: payload.message,
+      content: payload.content,
+      runtimeAdapter: 'claude-agent-sdk',
+      loopOwner: 'claude-agent-sdk',
+      runtimeOwnedBy: 'cds-managed-runtime',
+      transport: toCdsManagedRuntimeTransportView(transport),
+    });
+    return null;
+  }
+  if (sidecarType === 'text_delta') {
+    const text = normalizeOptionalString(payload.text) || '';
+    if (text) state.finalText += text;
+    pushCdsAgentEvent(session, 'text_delta', { text });
+    return null;
+  }
+  if (sidecarType === 'tool_call') {
+    pushCdsAgentEvent(session, 'tool_call', {
+      approvalId: normalizeOptionalString(payload.tool_use_id),
+      toolName: normalizeOptionalString(payload.tool_name),
+      input: payload.tool_input,
+      content: payload.content,
+      status: 'waiting',
+      source: 'claude-agent-sdk',
+    });
+    return null;
+  }
+  if (sidecarType === 'tool_result') {
+    pushCdsAgentEvent(session, 'tool_result', {
+      approvalId: normalizeOptionalString(payload.tool_use_id),
+      toolName: normalizeOptionalString(payload.tool_name),
+      content: payload.content,
+      status: 'completed',
+      source: 'claude-agent-sdk',
+    });
+    return null;
+  }
+  if (sidecarType === 'usage') {
+    pushCdsAgentEvent(session, 'usage', {
+      inputTokens: payload.input_tokens,
+      outputTokens: payload.output_tokens,
+      content: payload.content,
+      source: 'claude-agent-sdk',
+    });
+    return null;
+  }
+  if (sidecarType === 'done') {
+    state.terminalSeen = true;
+    const doneText = normalizeOptionalString(payload.final_text) || state.finalText;
+    pushCdsAgentEvent(session, 'done', {
+      finalText: doneText,
+      inputTokens: payload.input_tokens,
+      outputTokens: payload.output_tokens,
+      content: payload.content,
+    });
+    session.messages.push({ role: 'assistant', content: doneText, createdAt: new Date().toISOString() });
+    session.status = 'idle';
+    session.logs.push(`[${new Date().toISOString()}] runtime done owner=cds-managed-runtime loopOwner=claude-agent-sdk`);
+    return null;
+  }
+  if (sidecarType === 'error') {
+    state.terminalSeen = true;
+    const code = normalizeOptionalString(payload.error_code) || 'cds_managed_runtime_error';
+    const error = {
+      code,
+      message: normalizeOptionalString(payload.message) || 'CDS-managed official SDK runtime returned an error',
+      content: payload.content,
+      runtime: session.runtime,
+      runtimeProfileId: session.runtimeProfileId,
+      transport: toCdsManagedRuntimeTransportView(transport),
+      retryable: code !== 'claude_agent_sdk_result_error',
+    };
+    session.status = 'failed';
+    pushCdsAgentEvent(session, 'error', error);
+    return { accepted: false, error };
+  }
+
+  pushCdsAgentEvent(session, 'log', {
+    level: 'info',
+    message: `runtime event ${sidecarType}`,
+    source: 'claude-agent-sdk',
+    payload,
+  });
+  return null;
+}
+
+function finishOfficialSdkSseIngest(
+  session: CdsAgentSession,
+  transport: CdsManagedRuntimeTransport,
+  state: OfficialSdkSseIngestState,
+): CdsManagedRuntimeResult {
+  if (session.status === 'stopped') return { accepted: true };
+  if (!state.accepted) {
+    const error = {
+      code: 'cds_managed_runtime_empty_stream',
+      message: 'CDS-managed official SDK runtime returned no SSE events',
+      runtime: session.runtime,
+      runtimeProfileId: session.runtimeProfileId,
+      transport: toCdsManagedRuntimeTransportView(transport),
+      retryable: true,
+    };
+    session.status = 'failed';
+    pushCdsAgentEvent(session, 'error', error);
+    return { accepted: false, error };
+  }
+
+  if (!state.terminalSeen) {
+    const error = {
+      code: 'cds_managed_runtime_missing_terminal_event',
+      message: 'CDS-managed official SDK runtime stream ended without a terminal done/error event',
+      runtime: session.runtime,
+      runtimeProfileId: session.runtimeProfileId,
+      transport: toCdsManagedRuntimeTransportView(transport),
+      retryable: true,
+    };
+    session.status = 'failed';
+    pushCdsAgentEvent(session, 'error', error);
+    return { accepted: false, error };
+  }
+
+  if (session.status === 'running') session.status = 'idle';
+  return { accepted: true };
+}
+
+function parseSseFrames(body: string): Array<{ event?: string; data: string[] }> {
+  const normalized = body.replace(/\r\n/g, '\n');
+  const chunks = normalized.split(/\n\n+/).map((chunk) => chunk.trim()).filter(Boolean);
+  return chunks.map((chunk) => {
+    return parseSseFrameChunk(chunk);
+  });
+}
+
+function parseSseFrameChunk(chunk: string): { event?: string; data: string[] } {
+  const frame: { event?: string; data: string[] } = { data: [] };
+  for (const line of chunk.split('\n')) {
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) {
+      frame.event = line.slice('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      frame.data.push(line.slice('data:'.length).trimStart());
+    }
+  }
+  return frame;
+}
+
+function buildCdsManagedRuntimeUnavailable(session: CdsAgentSession): Record<string, unknown> {
+  return {
+    code: 'cds_managed_runtime_unavailable',
+    message: `${session.runtime} runtime is owned by CDS, but no CDS-managed runtime/container/sandbox execution path is available yet`,
+    runtime: session.runtime,
+    runtimeProfileId: session.runtimeProfileId,
+    mapRole: 'control-plane-client',
+    cdsRole: 'runtime-container-sandbox-manager',
+    fallbackScope: 'operator-debug-only',
+    retryable: true,
+    nextActions: [
+      'restore or create a CDS-managed runtime project/profile/container',
+      'route /agent-sessions execution to the CDS-managed official SDK runtime',
+      'keep SSH, image, and env handoff as operator/debug fallback only',
+    ],
+  };
+}
+
 function normalizeRuntime(value: unknown): string {
   return value === 'claude-sdk' || value === 'codex' || value === 'custom' ? value : 'fake';
+}
+
+function normalizeOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function normalizeAgentResourcePolicy(value: unknown): CdsAgentResourcePolicy {
@@ -890,6 +2101,19 @@ function normalizeAgentResourcePolicy(value: unknown): CdsAgentResourcePolicy {
 
 function normalizeAgentNetworkPolicy(value: unknown): CdsAgentResourcePolicy['networkPolicy'] {
   return value === 'egress-only' || value === 'open' || value === 'restricted' ? value : 'restricted';
+}
+
+function resolveAgentMaxTurns(content: string): number {
+  const text = content || '';
+  return (
+    text.includes('创建 PR')
+    || text.includes('提交 PR')
+    || /create pr/i.test(text)
+    || /pull request/i.test(text)
+    || text.includes('巡检')
+    || text.includes('修复')
+    || /review/i.test(text)
+  ) ? 40 : 18;
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {

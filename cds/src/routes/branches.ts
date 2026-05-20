@@ -15,7 +15,7 @@ import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -182,6 +182,14 @@ type BranchDeployRuntime = {
 
 // classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
 // auto-lifecycle.ts 共用同一份正则，避免两处漂移）。
+
+function isSyntheticCdsManagedRuntimeBranch(
+  branch: Pick<BranchEntry, 'branch' | 'githubCommitSha'>,
+  project?: Pick<Project, 'kind'> | null,
+): boolean {
+  if (project?.kind !== 'shared-service') return false;
+  return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
+}
 
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,
@@ -927,7 +935,16 @@ function buildSmokeEnv(opts: {
   return env;
 }
 
+export function clearRunningServiceErrorMessages(entry: Pick<BranchEntry, 'services'>): void {
+  for (const svc of Object.values(entry.services || {})) {
+    if (svc.status === 'running' && svc.errorMessage) {
+      svc.errorMessage = undefined;
+    }
+  }
+}
+
 function reconcileBranchStatus(entry: BranchEntry): void {
+  clearRunningServiceErrorMessages(entry);
   const statuses = Object.values(entry.services || {}).map((service) => service.status);
   const previousStatus = entry.status;
   if (statuses.some((status) => status === 'error')) entry.status = 'error';
@@ -2991,7 +3008,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      const result = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const result = isSyntheticCdsManagedRuntimeBranch(entry, project)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'pullCount');
       stateService.stampBranchTimestamp(id, 'lastPullAt');
@@ -3190,7 +3210,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
         force: true,
       });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -3519,6 +3541,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
             if (ready) {
               svc.status = 'running';
+              svc.errorMessage = undefined;
               // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
               // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
               // 据此判断"真发布"还是"配置了但容器没跟上"。
@@ -3847,7 +3870,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -3924,6 +3950,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         if (ready) {
           svc.status = 'running';
+          svc.errorMessage = undefined;
           // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
           svc.deployedMode = effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
@@ -8262,6 +8289,7 @@ cdscli project list --human
             }, mergedEnv);
 
             svc.status = 'running';
+            svc.errorMessage = undefined;
             // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
             // （runService 直接吃 profile.*），钉住其 activeDeployMode。
             svc.deployedMode = profile.activeDeployMode || '';

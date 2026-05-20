@@ -773,6 +773,10 @@ export const api = {
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
     eventSchema: () => '/api/infra-agent-sessions/event-schema',
+    runtimeStatus: () => '/api/infra-agent-sessions/runtime-status',
+    slaDashboard: () => '/api/infra-agent-sessions/sla-dashboard',
+    scheduleDashboard: () => '/api/infra-agent-sessions/schedule-dashboard',
+    governanceDashboard: () => '/api/infra-agent-sessions/governance-dashboard',
     list: () => '/api/infra-agent-sessions',
     create: () => '/api/infra-agent-sessions',
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,
@@ -784,6 +788,7 @@ export const api = {
     stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
     archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
+    traceBundle: (id: string) => `/api/infra-agent-sessions/${id}/trace-bundle`,
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
     captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
     runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,
@@ -801,6 +806,11 @@ export const api = {
 
   infraAgentRuntimeProfiles: {
     list: () => '/api/infra-agent-runtime-profiles',
+    templates: () => '/api/infra-agent-runtime-profiles/templates',
+    adapterCompatibility: () => '/api/infra-agent-runtime-profiles/adapter-compatibility',
+    adapterMatrix: () => '/api/infra-agent-runtime-profiles/adapter-matrix',
+    createFromTemplate: (templateId: string) => `/api/infra-agent-runtime-profiles/templates/${templateId}/profiles`,
+    createDefaultFromTemplateAfterTest: (templateId: string) => `/api/infra-agent-runtime-profiles/templates/${templateId}/default-profile`,
     create: () => '/api/infra-agent-runtime-profiles',
     importDefaultModel: () => '/api/infra-agent-runtime-profiles/import-default-model',
     byId: (id: string) => `/api/infra-agent-runtime-profiles/${id}`,
@@ -962,6 +972,7 @@ export const api = {
       byId: (id: string) => `/api/workflow-agent/executions/${id}`,
       cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
       continue: (id: string) => `/api/workflow-agent/executions/${id}/continue`,
+      rejectApproval: (id: string) => `/api/workflow-agent/executions/${id}/reject-approval`,
       resumeFrom: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>

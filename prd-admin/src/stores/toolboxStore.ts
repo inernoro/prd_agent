@@ -15,6 +15,7 @@ import type {
   ToolboxItem,
   ToolboxItemRun,
   ToolboxRunEvent,
+  ToolboxArtifact,
   AgentInfo,
 } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
@@ -111,6 +112,7 @@ interface ToolboxState {
   currentRun: ToolboxItemRun | null;
   runStatus: 'idle' | 'running' | 'completed' | 'failed';
   runOutput: string;
+  runArtifacts: ToolboxArtifact[];
   runError: string | null;
   unsubscribe: (() => void) | null;
 
@@ -442,6 +444,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   currentRun: null,
   runStatus: 'idle',
   runOutput: '',
+  runArtifacts: [],
   runError: null,
   unsubscribe: null,
 
@@ -596,6 +599,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       view: 'detail',
       runStatus: 'idle',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
   },
@@ -737,6 +741,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       view: 'running',
       runStatus: 'running',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
 
@@ -782,6 +787,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       editingItem: null,
       runStatus: 'idle',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
   },
@@ -796,6 +802,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       currentRun: null,
       runStatus: 'idle',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
   },
@@ -809,6 +816,17 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
         if (event.content) {
           set((state) => ({
             runOutput: state.runOutput + event.content,
+          }));
+        }
+        break;
+
+      case 'step_artifact':
+        if (event.artifact) {
+          set((state) => ({
+            runArtifacts: [
+              ...state.runArtifacts.filter((item) => item.id !== event.artifact?.id),
+              event.artifact!,
+            ],
           }));
         }
         break;

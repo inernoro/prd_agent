@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AgentTools.Tools;
 
 namespace PrdAgent.Infrastructure.Services.AgentTools;
@@ -14,7 +15,7 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
     private readonly Dictionary<string, IAgentTool> _tools = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<AgentToolRegistry> _logger;
 
-    public AgentToolRegistry(ILogger<AgentToolRegistry> logger, IConfiguration configuration)
+    public AgentToolRegistry(ILogger<AgentToolRegistry> logger, IConfiguration configuration, MongoDbContext db)
     {
         _logger = logger;
         var workspace = AgentWorkspace.Resolve(configuration);
@@ -29,6 +30,16 @@ public sealed class AgentToolRegistry : IAgentToolRegistry
         Register(new RepoWriteFileTool(workspace));
         Register(new RepoRunCommandTool(workspace));
         Register(new RepoCreatePullRequestTool(workspace));
+        Register(new KbListTool(db));
+        Register(new KbSearchTool(db));
+        Register(new KbReadTool(db));
+        Register(new KbDraftCreateTool(db));
+        Register(new KbDraftReadTool(db));
+        Register(new KbDraftListTool(db));
+        Register(new KbDraftDiscardTool(db));
+        Register(new KbDiffTool(db));
+        Register(new KbApplyTool(db));
+        Register(new KbRejectTool(db));
         Register(new CdsBridgeSnapshotTool());
         Register(new CdsBridgeActionTool());
     }

@@ -1,6 +1,6 @@
 # CDS Agent 工作台完全可用路线 · 计划
 
-> **版本**：v2.0 | **日期**：2026-05-14 | **状态**：开发中
+> **版本**：v2.3 | **日期**：2026-05-18 | **状态**：MVP 已跑通，官方 SDK adapter 迁移和商业级门禁已重新标注；执行进度以 `executionPanel` 为事实源
 
 ## 1. 目标
 
@@ -10,11 +10,20 @@
 2. 新建 Agent 会话。
 3. 启动 CDS 容器或复用 CDS shared-service worker。
 4. 发送 prompt，让 Claude SDK 或后续可选执行器开始干活。
-5. 在 MAP 页面看到流式输出、工具调用、容器日志、状态变化。
+5. 在 MAP 页面看到持续更新的事件、工具调用、容器日志、状态变化。
 6. 停止、恢复、重试、归档会话。
 7. 对每个阶段都有冒烟测试和视觉测试，测试通过后才勾选完成。
 
 当前已完成的连接授权页只能证明“MAP 能和 CDS 建立连接、探活、展示状态”。本计划要补齐的是“MAP 能通过 CDS 操作 Agent 干活”的产品闭环。
+
+2026-05-17 校准：
+
+- `claude-sdk` 是历史 runtime 名；新的代码审查目标路径是官方 `claude-agent-sdk`。
+- MAP/CDS 必须继续保留控制面职责：登录、连接、workspace、profile、审批、事件、日志、产物、诊断和视觉调试。
+- 自研 agent loop 必须压缩为官方 SDK adapter；除非官方 SDK 没有实现，否则不要继续扩展 legacy sidecar loop。
+- 当前可验证证据是：runtime pool 能发现 `loopOwner=claude-agent-sdk`，profile preflight 能阻断不兼容默认 profile，官方模板和兼容矩阵由后端提供。
+- 当前不可宣称完成的是：远程 preview 还没有配置真实 Anthropic/Claude-compatible 默认 profile，因此 S1/S2/S3 provider run 仍被门禁跳过。
+- A10 证明旧 MVP 链路能完成一次真实自巡检 PR；它不等于官方 SDK adapter 商业级能力全部完成。
 
 ## 2. 完成标准
 
@@ -48,13 +57,63 @@
 | 新建任务 | 页面输入任务 | 基础设施服务页新建测试会话 |
 | 后台执行 | 离开页面继续执行 | 会话状态由后端持久化，页面可恢复 |
 | 流式过程 | 页面能看进度和结果 | SSE 推送消息、工具调用、日志 |
-| 工具调用 | 读文件、编辑、执行命令、搜索 | Claude SDK tools / MCP / CDS 容器命令 |
+| 工具调用 | 读文件、编辑、执行命令、搜索 | MAP/CDS 自研 repo tools / MCP / CDS 容器命令 |
 | 权限控制 | 工具批准、受限网络、凭据隔离 | MAP 页面批准工具，CDS 隔离凭据 |
 | 产物 | 分支、diff、PR、日志 | 先做日志和文本输出，再扩展 diff/PR |
 | 并行任务 | 多任务并行 | 多会话列表和状态隔离 |
 | 恢复/继续 | session resume | MAP 会话恢复、CDS worker reconnect |
 
 第一版不追求一次补齐 PR 创建、GitHub Review、完整 IDE 体验；第一版必须先把“远程会话能启动、能对话、能看到过程、能停止”跑通。
+
+## 3.1 官方 SDK 收敛原则
+
+目标不是把 MAP/CDS 做成另一个 Agent SDK，而是把它做成控制面和可观察性层。
+
+| 能力 | 默认归属 | MAP/CDS 允许保留的部分 |
+| --- | --- | --- |
+| Agent turn loop | 官方 `claude-agent-sdk` | adapter lifecycle、runId 映射、错误归档 |
+| 上下文和代码工具 | 官方 SDK | workspace 准备、仓库授权、路径边界 |
+| 权限回调 | 官方 SDK callback | MAP approval UI、审计、允许/拒绝结果持久化 |
+| Stop/cancel | 官方 SDK interrupt/cancel | MAP stop API、状态机、超时和日志证据 |
+| 事件流 | 官方 SDK stream | MAP/CDS 事件标准化、afterSeq 续读、run bundle |
+| Profile/provider | Anthropic/Claude-compatible profile | 模板、key 加密、兼容性 preflight |
+| 其他非代码智能体 | 各自业务链路 | 不因 CDS Agent sidecar pool 不健康而失败 |
+
+兼容性结论：
+
+- `legacy-sidecar` 只保留为显式 fallback，不能继续扩大功能面。
+- OpenAI-compatible、OpenRouter、DeepSeek profile 可以继续服务其他文本/结构化智能体，但不能直接作为 `claude-agent-sdk` 默认 profile；当前结构化判定必须返回 `compatibilityReasonCode=openai-compatible-non-claude-model`，并提示不要把代码审查任务路由到 `claude-agent-sdk`。
+- Codex-like adapter 目前是 `planned-not-routable`；没有官方可路由实现和明确权限/事件/cancel 映射前，不接入代码审查默认路径。
+- PRD/Defect/Literary/Visual 等非代码智能体不能被强制迁入 Claude Agent SDK sidecar，否则会引入 workspace、审批、长任务和 provider 兼容性副作用。
+
+## 3.2 下一周期最小开发计划
+
+下一周期只关闭“上手就能真实审查代码”的硬门禁，不扩展新功能。
+
+进度展示必须以 `/api/infra-agent-sessions/runtime-status` 返回的 `diagnostics.executionPanel` 为事实源，而不是聊天记录或人工记忆。页面顶部 `当前执行面板` 必须展示：
+
+- `stepIndex/stepTotal`：当前执行到第几项。
+- `passedSteps/pendingSteps`：已完成和未完成数量。
+- `currentStep`：当前应该处理的 N1-N6 项。
+- `timeline`：本周期完整任务列表。
+- `deploymentAdvice`：是否需要部署；`blocked_r1`、默认 profile 不兼容、provider smoke 未开启时不得建议重复部署。
+- `nextCommand`：当前最窄下一条命令。
+
+| 顺序 | 任务 | 完成证据 |
+| --- | --- | --- |
+| N1 | 用 Anthropic 官方模板创建默认 runtime profile，并填入真实 API key | readiness R1 pass，`compatibleWithDesiredRuntimeAdapter=true`；若失败，`compatibilityReasonCode` 必须明确说明原因 |
+| N2 | 运行 S1 只读审查当前仓库 | 远程 session 有 assistant 结果、repo/ref/workspace 证据，无文件变更 |
+| N3 | 运行 S2 工具审批拒绝链路 | 页面出现 MAP approval，拒绝后有 `tool_result` 证据 |
+| N4 | 运行 S3 Stop/cancel 链路 | session 进入 stopped/stopping，并有 cancel/interrupt 事件 |
+| N5 | 捕获远程页面视觉证据 | `/cds-agent?sessionId=...` 显示 sessionId、traceId、adapter、loop owner、workspace、last event/error |
+| N6 | 复跑非代码智能体冒烟 | PRD/Defect/Report 不受 CDS Agent runtime pool 影响 |
+
+本周期不做：
+
+- 不把 OpenAI-compatible profile 硬适配给 Claude Agent SDK。
+- 不把 PRD/Defect/Literary/Visual 强迁到 code sidecar。
+- 不在没有 S1/S2/S3 证据时宣称商业级完成。
+- 不为了 `blocked_r1`、`openai-compatible-non-claude-model` 或 S1/S2/S3 pending 重复 self update / redeploy。
 
 ## 4. 总体架构
 
@@ -81,19 +140,19 @@ prd-api
 CDS
   shared-service project
   session container / worker
-  claude-sdk sidecar or built-in executor
+  Claude sidecar runtime or built-in executor
        |
        v
 Agent runtime
-  Claude SDK / Codex-like executor / later pluggable runtimes
+  Claude sidecar / Codex-like executor / later pluggable runtimes
 ```
 
 核心约束：
 
 - MAP 是用户操作入口，所有交互都在 MAP 页面完成。
 - CDS 是执行和隔离环境，负责容器生命周期、日志、实例发现。
-- Agent runtime 可替换，默认先用 Claude SDK sidecar。
-- 所有长任务必须 SSE 可见，禁止页面静止等待。
+- Agent runtime 可替换，默认先用 Claude sidecar runtime。历史配置值仍叫 `claude-sdk`。
+- 目标上所有长任务必须 SSE 可见，禁止页面静止等待；当前 MVP 仍有同步发送和前端轮询限制，见 2026-05-17 校准项。
 - 会话状态必须可恢复，刷新页面后不能丢失正在运行的任务。
 
 ## 5. 数据模型计划
@@ -253,9 +312,9 @@ Agent runtime
 - 启动失败时页面显示可读错误，不只显示 500。
 - 2026-05-14 真实页面视觉：`https://main-prd-agent.miduo.org/` 登录后进入左侧设置，再进基础设施服务，`CDS Agent 测试会话` 显示 `运行中`、`已停止`，日志可见 `worker=fake-worker-shared-sidecar-pool-mp4anabh` 与 `container=cds-agent-fake-shared-sidecar-pool-mp4anabh`。
 
-### P3 Agent 流式对话
+### P3 Agent 事件化对话
 
-目标：用户能在 MAP 页面输入 prompt，远程 Agent 开始执行，页面看到流式响应。
+目标：用户能在 MAP 页面输入 prompt，远程 Agent 开始执行，页面看到持续更新的事件。生产级目标是真 SSE；当前 MVP 已标准化事件，但页面仍主要靠轮询刷新。
 
 任务：
 
@@ -263,7 +322,7 @@ Agent runtime
 |----|----------|--------------|--------------|------|
 | P3.1 MAP 发送用户消息 | [x] | [x] | [x] | 保存 user message |
 | P3.2 MAP 代理调用 CDS send message | [x] | [x] | [x] | MAP 已代理调用 CDS send message，并统一映射错误 |
-| P3.3 CDS 转发到 Claude SDK sidecar | [x] | [x] | [x] | 当前先用 fake runtime 兜底，UI 显示 runtime；真实 sidecar 替换仍待增强 |
+| P3.3 CDS 转发到 Claude sidecar runtime | [x] | [x] | [x] | 当前有 fake runtime 兜底；真实 sidecar 链路已跑通过，但仍需后台 run / cancel / 分页增强 |
 | P3.4 SSE 事件标准化 | [x] | [x] | [x] | 已标准化 `text_delta`、`tool_call`、`tool_result`、`done`、`error` |
 | P3.5 MAP 持久化 assistant message | [x] | [x] | [x] | `done.finalText` 会持久化 assistant message |
 | P3.6 前端流式渲染 | [x] | [x] | [x] | 前端事件时间线展示 text_delta/done，刷新后可恢复 |
@@ -445,7 +504,7 @@ Agent runtime
 - Chrome 打开 `https://main-prd-agent.miduo.org/`。
 - 从左侧“设置”进入“基础设施服务”。
 - 按页面按钮完成完整流程。
-- 截图或可访问性树能证明页面展示了流式输出、事件、停止状态。
+- 截图或可访问性树能证明页面展示了事件刷新、日志和停止状态；如果是轮询而不是真 SSE，必须在验收记录里写明。
 - 2026-05-14 完整路径视觉记录：`https://main-prd-agent.miduo.org/` 登录后按 `左侧设置 -> 顶部基础设施服务 -> 连接 CDS -> CDS 授权页 -> 授权并返回 MAP -> CDS Agent 测试台` 操作；active 连接为 `miduo.org · https://cds.miduo.org · shared-sidecar-pool-mp4anabh`。
 - 2026-05-14 完整会话视觉记录：session `5bbcd42dde6946b29ada432a4572c1e7` / cdsSession `cds-agent-5fb5e1de0d4f46e8ac974adad6074384`，可见 `running`、`tool_call waiting`、`允许/拒绝`、`tool_result allowed`、`text_delta`、`done`、`beforeStop/afterStop`、`stopped`、刷新恢复。
 - 2026-05-14 最新提交视觉补充：`fe155f10` 登录页右下角环境条可见，证明 admin 静态资源已更新；本轮浏览器会话普通账号重新登录失败，未再次完成工作台点击，因此最新提交的“复制按钮/危险提示”以本地 lint/type/build 与 CDS 部署作为验证，完整工作台视觉证据沿用同日主分支预览上一轮。
@@ -575,7 +634,7 @@ Agent runtime
 - 智能体大模型配置必须允许任意 OpenAI-compatible `baseUrl`、`model` 和 API key，不允许写死 demo model。
 - 最终用户必须看到一个独立、简易、可长期使用的 CDS Agent 页面，而不是只在设置页里操作测试台。
 - sidecar / sandbox runtime 属于 CDS 自托管基础设施能力，不属于每个业务项目的 app profile；当前 `api/admin/claude-sidecar` 三容器形态只允许作为过渡验证链路，最终验收时 `prd-agent` 业务项目不应携带 `claude-sidecar-prd-agent`。
-- 最终验收必须让远程 Claude Code / Codex SDK sandbox 巡检 `prd_agent` 自己，并提交一个巡检 PR。
+- 最终验收必须让远程 CDS Agent sandbox 巡检 `prd_agent` 自己，并提交一个巡检 PR；不得把 `claude-sdk` 历史名写成官方 SDK 完整接入。
 
 ## 14. 市面能力基线
 
@@ -642,7 +701,7 @@ Agent runtime
 
 ### P10 真实远程 runtime
 
-目标：CDS 不再只靠 fake runtime，而是能启动真实 Claude SDK/Codex-like runtime。
+目标：CDS 不再只靠 fake runtime，而是能启动真实 Claude sidecar / Codex-like runtime。
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|

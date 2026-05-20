@@ -56,9 +56,13 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     public bool IsConfigured =>
         GetRoutableInstances(_options.CurrentValue).Count > 0;
 
-    public int InstanceCount => _registry.GetCurrent().Count;
+    public int InstanceCount => GetRoutableInstances(_options.CurrentValue).Count;
 
-    public int HealthyCount => _state.CountHealthy();
+    public int HealthyCount => CountHealthy(GetRoutableInstances(_options.CurrentValue));
+
+    public IReadOnlyList<string> Blockers => BuildPoolBlockers(BuildSnapshotDiagnostics());
+
+    public IReadOnlyList<string> NextActions => BuildPoolNextActions(BuildSnapshotDiagnostics());
 
     public async IAsyncEnumerable<SidecarEvent> RunStreamAsync(
         SidecarRunRequest request,
@@ -140,6 +144,479 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             if (ev.Type == SidecarEventType.Done || ev.Type == SidecarEventType.Error)
                 yield break;
         }
+    }
+
+    public async Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            return new SidecarCancelResult(false, "run_id_empty");
+
+        var instances = GetRoutableInstances(_options.CurrentValue);
+        if (instances.Count == 0)
+            return new SidecarCancelResult(false, "sidecar_not_configured");
+
+        var http = _httpFactory.CreateClient(HttpClientName);
+        var lastReason = "not found";
+        foreach (var instance in instances)
+        {
+            var token = ResolveToken(instance);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                lastReason = "sidecar_token_missing";
+                continue;
+            }
+
+            var url = CombineUrl(instance.BaseUrl, $"/v1/agent/cancel/{Uri.EscapeDataString(runId)}");
+            using var httpReq = new HttpRequestMessage(HttpMethod.Post, url);
+            httpReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            try
+            {
+                using var response = await http.SendAsync(httpReq, ct);
+                var body = await SafeReadString(response, ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    _state.RecordSuccess(instance.Name);
+                    return new SidecarCancelResult(true, null, instance.Name);
+                }
+
+                lastReason = string.IsNullOrWhiteSpace(body)
+                    ? $"sidecar_http_{(int)response.StatusCode}"
+                    : body;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _state.RecordFailure(instance.Name);
+                lastReason = ex.Message;
+            }
+        }
+
+        return new SidecarCancelResult(false, lastReason);
+    }
+
+    public async Task<SidecarPoolDiagnostics> GetDiagnosticsAsync(CancellationToken ct)
+    {
+        var instances = GetRoutableInstances(_options.CurrentValue);
+        var http = _httpFactory.CreateClient(HttpClientName);
+        var results = new List<SidecarInstanceDiagnostics>(instances.Count);
+
+        foreach (var instance in instances)
+        {
+            var token = ResolveToken(instance);
+            var url = CombineUrl(instance.BaseUrl, "/readyz");
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+                var body = await SafeReadString(resp, ct, maxLength: 8_000);
+                var parsed = ParseReadyz(body);
+                var readyzHealthy = resp.IsSuccessStatusCode && parsed.Ready == true;
+                if (readyzHealthy)
+                {
+                    _state.RecordSuccess(instance.Name);
+                }
+                else
+                {
+                    _state.RecordFailure(instance.Name, unhealthyThreshold: 1);
+                }
+
+                results.Add(new SidecarInstanceDiagnostics(
+                    instance.Name,
+                    instance.BaseUrl,
+                    instance.Source,
+                    instance.Tags,
+                    !string.IsNullOrWhiteSpace(token),
+                    readyzHealthy,
+                    (int)resp.StatusCode,
+                    parsed.Ready,
+                    parsed.AnthropicKey,
+                    parsed.ProviderKeyRequiredForReady,
+                    parsed.SidecarToken,
+                    parsed.AgentAdapter,
+                    parsed.AdapterDiagnosticsJson,
+                    resp.IsSuccessStatusCode ? null : Truncate(body, 800),
+                    parsed.ReadyzBlockers,
+                    parsed.ReadyzNextActions,
+                    parsed.LoopOwner,
+                    parsed.SdkLoopEnabled,
+                    parsed.LegacyLoopImport,
+                    parsed.MapRole,
+                    parsed.CdsRole,
+                    parsed.ClaudeCliPath,
+                    parsed.ClaudeCliBundled,
+                    parsed.WorkspacePreparation));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _state.RecordFailure(instance.Name, unhealthyThreshold: 1);
+                results.Add(new SidecarInstanceDiagnostics(
+                    instance.Name,
+                    instance.BaseUrl,
+                    instance.Source,
+                    instance.Tags,
+                    !string.IsNullOrWhiteSpace(token),
+                    _state.IsHealthy(instance.Name),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    ex.Message));
+            }
+        }
+
+        return new SidecarPoolDiagnostics(
+            IsConfigured,
+            InstanceCount,
+            HealthyCount,
+            results,
+            _registry.LastRefreshedAt,
+            _registry.LastRefreshError,
+            BuildPoolBlockers(results),
+            BuildPoolNextActions(results),
+            DiscoveryMetrics: ParseDiscoveryMetrics(_registry.LastRefreshError));
+    }
+
+    private IReadOnlyList<string> BuildPoolBlockers(IReadOnlyList<SidecarInstanceDiagnostics> instances)
+    {
+        var blockers = new List<string>();
+        if (InstanceCount <= 0)
+        {
+            blockers.Add("MAP 当前没有发现任何可路由 sidecar runtime 实例");
+            blockers.Add("未发现静态 ClaudeSdkExecutor:Sidecars，也未发现可用的 CDS paired sidecar 实例");
+            if (!string.IsNullOrWhiteSpace(_registry.LastRefreshError))
+            {
+                blockers.Add(_registry.LastRefreshError);
+            }
+            return blockers;
+        }
+
+        if (HealthyCount <= 0)
+        {
+            blockers.Add("所有已发现的 sidecar runtime 实例当前都不可用");
+        }
+
+        foreach (var instance in instances)
+        {
+            if (!instance.TokenConfigured)
+            {
+                blockers.Add($"{instance.Name}: 缺少 sidecar bearer token");
+            }
+            if (instance.HttpStatus is >= 400)
+            {
+                blockers.Add($"{instance.Name}: /readyz 返回 HTTP {instance.HttpStatus}");
+            }
+            if (instance.Ready == false)
+            {
+                blockers.Add($"{instance.Name}: /readyz ready=false");
+            }
+            if (instance.ProviderKeyRequiredForReady != false && instance.AnthropicKeyConfigured == false)
+            {
+                blockers.Add($"{instance.Name}: 缺少 ANTHROPIC_API_KEY");
+            }
+            if (instance.SidecarTokenConfigured == false)
+            {
+                blockers.Add($"{instance.Name}: 缺少 SIDECAR_TOKEN");
+            }
+            foreach (var blocker in instance.ReadyzBlockers ?? Array.Empty<string>())
+            {
+                blockers.Add($"{instance.Name}: {blocker}");
+            }
+            foreach (var missing in ReadMissingAdapterDependencies(instance.AdapterDiagnosticsJson))
+            {
+                blockers.Add($"{instance.Name}: 缺少 {missing}");
+            }
+            if (!string.IsNullOrWhiteSpace(instance.Error))
+            {
+                blockers.Add($"{instance.Name}: {instance.Error}");
+            }
+        }
+
+        return blockers.Distinct(StringComparer.Ordinal).Take(12).ToList();
+    }
+
+    private IReadOnlyList<SidecarInstanceDiagnostics> BuildSnapshotDiagnostics()
+    {
+        return GetRoutableInstances(_options.CurrentValue)
+            .Select(instance => new SidecarInstanceDiagnostics(
+                instance.Name,
+                instance.BaseUrl,
+                instance.Source,
+                instance.Tags,
+                !string.IsNullOrWhiteSpace(ResolveToken(instance)),
+                _state.IsHealthy(instance.Name),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null))
+            .ToList();
+    }
+
+    private IReadOnlyList<string> BuildPoolNextActions(IReadOnlyList<SidecarInstanceDiagnostics> instances)
+    {
+        var actions = new List<string>();
+        if (InstanceCount <= 0)
+        {
+            var refreshError = _registry.LastRefreshError ?? string.Empty;
+            if (refreshError.Contains("paired-empty-endpoints", StringComparison.OrdinalIgnoreCase)
+                || refreshError.Contains("empty_instances", StringComparison.OrdinalIgnoreCase))
+            {
+                actions.Add("当前 CDS 授权可用但实例列表为空：优先恢复 shared-service runtime pool，并让 /api/projects/{id}/instances 暴露 running 的 shared sidecar 实例");
+                if (!refreshError.Contains("discovery(", StringComparison.OrdinalIgnoreCase))
+                {
+                    actions.Add("当前 CDS 控制面未返回 instances discovery 摘要，说明共享 CDS 本体仍是旧版本或尚未完成发布");
+                }
+                if (HasPositiveDiscoveryMetric(refreshError, "skippedBranchServices")
+                    && !HasPositiveDiscoveryMetric(refreshError, "runtimeBranchServices"))
+                {
+                    actions.Add("CDS 发现到 running shared-service 服务但全部被 runtime 过滤跳过：确认 sidecar runtime profile/service 名称包含 api、sidecar、runtime、worker 或 agent，且不要命名为 admin/web/ui");
+                }
+                else if (!HasPositiveDiscoveryMetric(refreshError, "runningBranchServices"))
+                {
+                    actions.Add("确认 shared sidecar pool 服务正在运行；当前 discovery 未看到 running shared-service sidecar");
+                }
+                else
+                {
+                    actions.Add("确认 shared sidecar pool 服务正在运行，并且服务标签/来源允许 MAP 作为 cds-sidecar 发现");
+                }
+            }
+            else
+            {
+                actions.Add("确认共享 CDS 控制面的 /api/projects/{id}/instances 已包含 shared-service sidecar 实例发现修复");
+                actions.Add("确认 shared sidecar pool 正在运行，并且实例标签/来源允许当前 MAP 发现");
+            }
+
+            if (refreshError.Contains("invalid_long_token", StringComparison.OrdinalIgnoreCase)
+                || HasPositiveDiscoveryMetric(refreshError, "tokenFailures")
+                || refreshError.Contains("DataProtection", StringComparison.OrdinalIgnoreCase))
+            {
+                actions.Add("在 MAP 基础设施设置中重新完成 CDS 长期授权，清理旧 DataProtection key 或 invalid_long_token 失效连接");
+            }
+
+            actions.Add("如需绕过共享 CDS discovery，显式配置 ClaudeSdkExecutor:Enabled=true 与 ClaudeSdkExecutor:Sidecars[0].BaseUrl/Token 指向一个健康的 claude-agent-sdk sidecar");
+            actions.Add("本地/临时验证可设置 CLAUDE_SIDECAR_BASE_URL 与 CLAUDE_SIDECAR_TOKEN，并确保 ClaudeSdkExecutor:Enabled=true");
+        }
+        else if (HealthyCount <= 0)
+        {
+            foreach (var action in instances.SelectMany(x => x.ReadyzNextActions ?? Array.Empty<string>()))
+            {
+                actions.Add(action);
+            }
+            var providerKeyRequired = instances.Any(x => x.ProviderKeyRequiredForReady != false);
+            actions.Add(providerKeyRequired
+                ? "进入 sidecar 容器检查 /readyz，优先修复 ANTHROPIC_API_KEY、SIDECAR_TOKEN 和 claude-agent-sdk"
+                : "进入 sidecar 容器检查 /readyz，优先修复 SIDECAR_TOKEN 和 claude-agent-sdk；模型 provider key 可由 MAP runtime profile 按请求下发");
+            actions.Add("确认 SIDECAR_AGENT_ADAPTER=claude-agent-sdk 时，AGENT_WORKSPACE_ROOT 存在且可读写");
+            actions.Add("修复后刷新 runtime-status，再启动 CDS Agent 会话");
+        }
+
+        if (instances.Any(x => x.AdapterDiagnosticsJson?.Contains("claude-agent-sdk", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            actions.Add("官方 SDK 模式下保持 MAP/CDS 只做控制面，工具执行和 turn loop 继续走 claude-agent-sdk");
+        }
+
+        return actions.Distinct(StringComparer.Ordinal).Take(8).ToList();
+    }
+
+    private static bool HasPositiveDiscoveryMetric(string value, string metric)
+    {
+        return ReadDiscoveryInt(value, metric) > 0;
+    }
+
+    private static int? ReadDiscoveryInt(string value, string metric)
+    {
+        var index = value.IndexOf(metric + "=", StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return null;
+        var start = index + metric.Length + 1;
+        var end = start;
+        while (end < value.Length && char.IsDigit(value[end])) end += 1;
+        return end > start && int.TryParse(value[start..end], out var count) ? count : null;
+    }
+
+    private static string? ReadDiscoveryString(string value, string metric)
+    {
+        var index = value.IndexOf(metric + "=", StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return null;
+        var start = index + metric.Length + 1;
+        var end = start;
+        while (end < value.Length && !char.IsWhiteSpace(value[end]) && value[end] != ')') end += 1;
+        return end > start ? value[start..end] : null;
+    }
+
+    private static bool? ReadDiscoveryBool(string value, string metric)
+    {
+        var raw = ReadDiscoveryString(value, metric);
+        if (string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(raw, "False", StringComparison.OrdinalIgnoreCase)) return false;
+        return null;
+    }
+
+    private static SidecarDiscoveryMetrics? ParseDiscoveryMetrics(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var metrics = new SidecarDiscoveryMetrics(
+            TotalConnections: ReadDiscoveryInt(value, "total"),
+            ActiveCdsConnections: ReadDiscoveryInt(value, "activeCds"),
+            UsableConnections: ReadDiscoveryInt(value, "usable"),
+            TokenFailures: ReadDiscoveryInt(value, "tokenFailures"),
+            EndpointFailures: ReadDiscoveryInt(value, "endpointFailures"),
+            EmptyEndpoints: ReadDiscoveryInt(value, "emptyEndpoints"),
+            EndpointsWithInstances: ReadDiscoveryInt(value, "endpointsWithInstances"),
+            ProjectKind: ReadDiscoveryString(value, "projectKind"),
+            DeploymentCount: ReadDiscoveryInt(value, "deployments"),
+            RunningDeploymentCount: ReadDiscoveryInt(value, "runningDeployments"),
+            DisabledHostDeploymentCount: ReadDiscoveryInt(value, "disabledHostDeployments"),
+            BranchCount: ReadDiscoveryInt(value, "branches"),
+            RunningBranchCount: ReadDiscoveryInt(value, "runningBranches"),
+            RunningBranchServiceCount: ReadDiscoveryInt(value, "runningBranchServices"),
+            RuntimeBranchServiceCount: ReadDiscoveryInt(value, "runtimeBranchServices"),
+            SkippedBranchServiceCount: ReadDiscoveryInt(value, "skippedBranchServices"),
+            PreviewRootConfigured: ReadDiscoveryBool(value, "previewRootConfigured"));
+        return metrics == new SidecarDiscoveryMetrics() ? null : metrics;
+    }
+
+    private static IEnumerable<string> ReadMissingAdapterDependencies(string? diagnosticsJson)
+    {
+        if (string.IsNullOrWhiteSpace(diagnosticsJson)) yield break;
+        JsonDocument? doc = null;
+        try
+        {
+            doc = JsonDocument.Parse(diagnosticsJson);
+            if (!doc.RootElement.TryGetProperty("missing", out var missing) || missing.ValueKind != JsonValueKind.Array)
+            {
+                yield break;
+            }
+
+            foreach (var item in missing.EnumerateArray())
+            {
+                var value = item.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    yield return value!;
+                }
+            }
+        }
+        finally
+        {
+            doc?.Dispose();
+        }
+    }
+
+    private static (bool? Ready, bool? AnthropicKey, bool? ProviderKeyRequiredForReady, bool? SidecarToken, string? AgentAdapter, string? AdapterDiagnosticsJson, IReadOnlyList<string>? ReadyzBlockers, IReadOnlyList<string>? ReadyzNextActions, string? LoopOwner, bool? SdkLoopEnabled, string? LegacyLoopImport, string? MapRole, string? CdsRole, string? ClaudeCliPath, bool? ClaudeCliBundled, SidecarWorkspacePreparationDiagnostics? WorkspacePreparation) ParseReadyz(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            bool? ready = root.TryGetProperty("ready", out var readyElement)
+                && (readyElement.ValueKind == JsonValueKind.True || readyElement.ValueKind == JsonValueKind.False)
+                ? readyElement.GetBoolean()
+                : null;
+            bool? anthropicKey = root.TryGetProperty("anthropicKey", out var anthropicKeyElement)
+                && (anthropicKeyElement.ValueKind == JsonValueKind.True || anthropicKeyElement.ValueKind == JsonValueKind.False)
+                ? anthropicKeyElement.GetBoolean()
+                : null;
+            bool? providerKeyRequiredForReady = root.TryGetProperty("providerKeyRequiredForReady", out var providerKeyElement)
+                && (providerKeyElement.ValueKind == JsonValueKind.True || providerKeyElement.ValueKind == JsonValueKind.False)
+                ? providerKeyElement.GetBoolean()
+                : null;
+            bool? sidecarToken = root.TryGetProperty("sidecarToken", out var sidecarTokenElement)
+                && (sidecarTokenElement.ValueKind == JsonValueKind.True || sidecarTokenElement.ValueKind == JsonValueKind.False)
+                ? sidecarTokenElement.GetBoolean()
+                : null;
+            string? adapter = root.TryGetProperty("agentAdapter", out var adapterElement)
+                && adapterElement.ValueKind == JsonValueKind.String
+                ? adapterElement.GetString()
+                : null;
+            string? adapterDiagnostics = root.TryGetProperty("adapterDiagnostics", out var diagElement)
+                ? diagElement.GetRawText()
+                : null;
+            string? loopOwner = TryReadString(diagElement, "loopOwner");
+            bool? sdkLoopEnabled = TryReadBool(diagElement, "sdkLoopEnabled");
+            string? legacyLoopImport = TryReadString(diagElement, "legacyLoopImport");
+            string? mapRole = TryReadString(diagElement, "mapRole");
+            string? cdsRole = TryReadString(diagElement, "cdsRole");
+            string? claudeCliPath = TryReadString(diagElement, "claudeCliPath");
+            bool? claudeCliBundled = TryReadBool(diagElement, "claudeCliBundled");
+            var workspacePreparation = TryReadWorkspacePreparation(diagElement);
+            var blockers = ReadStringArray(root, "blockers");
+            var nextActions = ReadStringArray(root, "nextActions");
+            return (ready, anthropicKey, providerKeyRequiredForReady, sidecarToken, adapter, adapterDiagnostics, blockers, nextActions, loopOwner, sdkLoopEnabled, legacyLoopImport, mapRole, cdsRole, claudeCliPath, claudeCliBundled, workspacePreparation);
+        }
+        catch (JsonException)
+        {
+            return (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+    }
+
+    private static SidecarWorkspacePreparationDiagnostics? TryReadWorkspacePreparation(JsonElement diagnostics)
+    {
+        if (diagnostics.ValueKind != JsonValueKind.Object
+            || !diagnostics.TryGetProperty("workspacePreparation", out var value)
+            || value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return new SidecarWorkspacePreparationDiagnostics(
+            AutoGitWorkspace: TryReadBool(value, "autoGitWorkspace"),
+            WorkspacesRoot: TryReadString(value, "workspacesRoot"),
+            WorkspacesRootExists: TryReadBool(value, "workspacesRootExists"),
+            GitInstalled: TryReadBool(value, "gitInstalled"),
+            SupportedRepositoryHosts: ReadStringArray(value, "supportedRepositoryHosts"),
+            SupportedRepositoryFormats: ReadStringArray(value, "supportedRepositoryFormats"),
+            PrivateRepositoryAuthConfigured: TryReadBool(value, "privateRepositoryAuthConfigured"),
+            WorkspaceLock: TryReadString(value, "workspaceLock"));
+    }
+
+    private static string? TryReadString(JsonElement value, string name)
+    {
+        return value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty(name, out var item)
+            && item.ValueKind == JsonValueKind.String
+            ? item.GetString()
+            : null;
+    }
+
+    private static bool? TryReadBool(JsonElement value, string name)
+    {
+        return value.ValueKind == JsonValueKind.Object
+            && value.TryGetProperty(name, out var item)
+            && (item.ValueKind == JsonValueKind.True || item.ValueKind == JsonValueKind.False)
+            ? item.GetBoolean()
+            : null;
+    }
+
+    private static IReadOnlyList<string>? ReadStringArray(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var items = value.EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Take(12)
+            .ToList();
+
+        return items.Count > 0 ? items : Array.Empty<string>();
+    }
+
+    private static string Truncate(string value, int max)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= max) return value;
+        return value[..max] + "...";
     }
 
     private async Task<DispatchResult> DispatchAsync(
@@ -243,6 +720,11 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return current
             .Where(s => string.Equals(s.Source, PairedCdsSource, StringComparison.OrdinalIgnoreCase))
             .ToList();
+    }
+
+    private int CountHealthy(IReadOnlyList<DynamicSidecarInstance> instances)
+    {
+        return instances.Count(x => _state.IsHealthy(x.Name));
     }
 
     private static DynamicSidecarInstance PickWeighted(List<DynamicSidecarInstance> alive)
@@ -454,6 +936,12 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
             baseUrl = string.IsNullOrWhiteSpace(req.BaseUrl) ? null : req.BaseUrl,
             apiKey = string.IsNullOrWhiteSpace(req.ApiKey) ? null : req.ApiKey,
             protocol = string.IsNullOrWhiteSpace(req.Protocol) ? null : req.Protocol,
+            runtimeAdapter = string.IsNullOrWhiteSpace(req.RuntimeAdapter) ? null : req.RuntimeAdapter,
+            mapSessionId = string.IsNullOrWhiteSpace(req.MapSessionId) ? null : req.MapSessionId,
+            traceId = string.IsNullOrWhiteSpace(req.TraceId) ? null : req.TraceId,
+            workspaceRoot = string.IsNullOrWhiteSpace(req.WorkspaceRoot) ? null : req.WorkspaceRoot,
+            gitRepository = string.IsNullOrWhiteSpace(req.GitRepository) ? null : req.GitRepository,
+            gitRef = string.IsNullOrWhiteSpace(req.GitRef) ? null : req.GitRef,
         };
         var json = JsonSerializer.Serialize(dto, JsonOpts);
         return new StringContent(json, Encoding.UTF8, "application/json");
@@ -531,7 +1019,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
                 ToolName = TryStr(root, "tool_name"),
                 ToolUseId = TryStr(root, "tool_use_id"),
                 ToolInput = TryClone(root, "tool_input"),
-                Content = TryStr(root, "content"),
+                Content = TryStrOrJson(root, "content"),
                 FinalText = TryStr(root, "final_text"),
                 InputTokens = TryLong(root, "input_tokens"),
                 OutputTokens = TryLong(root, "output_tokens"),
@@ -559,6 +1047,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         "tool_use" => SidecarEventType.ToolUse,
         "tool_result" => SidecarEventType.ToolResult,
         "usage" => SidecarEventType.Usage,
+        "runtime_init" => SidecarEventType.RuntimeInit,
         "done" => SidecarEventType.Done,
         "error" => SidecarEventType.Error,
         _ => SidecarEventType.Unknown,
@@ -568,6 +1057,13 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
             ? v.GetString()
             : v.ValueKind == JsonValueKind.Number ? v.ToString() : null;
+
+    private static string? TryStrOrJson(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null)
+            return null;
+        return v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText();
+    }
 
     private static long? TryLong(JsonElement root, string name) =>
         root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
@@ -589,12 +1085,12 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         return b + p;
     }
 
-    private static async Task<string> SafeReadString(HttpResponseMessage resp, CancellationToken ct)
+    private static async Task<string> SafeReadString(HttpResponseMessage resp, CancellationToken ct, int maxLength = 500)
     {
         try
         {
             var text = await resp.Content.ReadAsStringAsync(ct);
-            return text.Length > 500 ? text[..500] : text;
+            return text.Length > maxLength ? text[..maxLength] : text;
         }
         catch { return string.Empty; }
     }

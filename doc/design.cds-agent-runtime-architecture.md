@@ -2,7 +2,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| 版本 | v2026-05-15 |
+| 版本 | v2026-05-17 |
 | 状态 | active |
 | 读者 | 想理解 CDS Agent 为什么这样设计、哪里已完成、哪里还欠账的人 |
 | 关联 | `doc/report.cds-agent-workbench-2026-05-15.md`、`doc/guide.cds-agent-workbench-reproduce.md`、`doc/guide.cds-agent-next-agent-testing.md`、`doc/spec.cds-map-pairing-protocol.md` |
@@ -28,7 +28,7 @@ CDS Agent 不是“在 MAP 里直接跑一个本地 Claude Code”。它是：
 |---|---|---|---|---|
 | MAP 会话 | MAP | 用户创建，长期保存记录 | 否 | 对话、审批、事件、产物、恢复 |
 | CDS shared-service Project | CDS 系统侧 | 授权时创建，长期存在 | 否 | 承载 sidecar pool / runtime pool 的系统项目 |
-| shared sidecar pool | CDS 系统侧 | 长期运行，按主机部署 | 否 | 提供 Claude SDK / Codex SDK / OpenAI-compatible 调度入口 |
+| shared sidecar pool | CDS 系统侧 | 长期运行，按主机部署 | 否 | 提供 Claude sidecar runtime / Codex-like / OpenAI-compatible 调度入口 |
 | Agent runtime worker | CDS 系统侧 | 会话启动时创建或绑定，结束时释放 | 否 | 真正替用户跑任务、执行工具、产生日志 |
 | 业务项目分支容器 | CDS 项目侧 | 分支预览按需启动 | 是 | `main`、`feature/*` 等网页/API 预览 |
 
@@ -46,7 +46,7 @@ flowchart LR
   MapApi --> CdsAuth["CDS 长期授权连接"]
   CdsAuth --> CdsAgentApi["CDS Agent Sessions API"]
   CdsAgentApi --> RuntimePool["CDS 系统侧 Runtime Pool"]
-  RuntimePool --> Sidecar["Claude SDK / Codex SDK / OpenAI-compatible Sidecar"]
+  RuntimePool --> Sidecar["Claude sidecar / Codex-like / OpenAI-compatible Sidecar"]
   RuntimePool --> Worker["会话级 Worker / Container"]
   Worker --> Repo["远程仓库工作区"]
   Worker --> Browser["Bridge 浏览器操作"]
@@ -74,11 +74,39 @@ flowchart LR
 | 系统级 CDS 授权 | 已完成 | 一次授权后生成长期 token，10 分钟只属于 pairing token，不属于 long token |
 | MAP Agent 页面 | 已完成 | 支持会话、模型配置、事件、工具、日志、产物、远程浏览器入口 |
 | OpenAI-compatible 模型 | 已完成 | 可以配置 baseUrl / model / API key |
-| Claude SDK runtime | 已跑通 | A10 用真实模型完成了仓库巡检并创建 PR |
+| Claude Agent SDK runtime | adapter 已跑通，provider 门禁待关闭 | runtime pool 已能发现 `loopOwner=claude-agent-sdk`；A10 证明旧 MVP 能真实巡检并创建 PR；商业级完成还需真实 Anthropic/Claude-compatible profile 跑通 S1/S2/S3 |
 | 工具审批 | 已完成基础链路 | 危险工具可进入审批事件，结果可追踪 |
 | 远程浏览器 Bridge | 已完成基础链路 | 可以通过 CDS 预览页面操作远程浏览器 |
 | 自巡检 PR | 已完成一次 | PR #617 证明“远程 Agent 能读仓库、跑测试、提交 PR” |
 | shared-service 与分支隔离 | 已修正一处 | 实例发现不再给 shared-service 混入分支服务；项目卡片不再跳分支列表 |
+
+## 4.1 官方 SDK 与自研边界
+
+当前实现不要再笼统称为“Claude sidecar”。准确边界如下：
+
+| 能力 | 来源 | 是否应继续自研 | 说明 |
+|---|---|---|---|
+| Agent turn loop / 上下文 / Claude Code 工具 | 官方 `claude-agent-sdk` | 否 | 新代码审查默认路径；本仓库只保留 adapter 映射 |
+| legacy 多轮工具循环 | 本仓库 `claude-sdk-sidecar/app/agent_loop.py` | 不再扩展 | 只作为显式 fallback，不能作为新能力默认路径 |
+| Sidecar HTTP/SSE 协议 | 本仓库 | 需要保留为薄传输层 | 用于跨主机 runtime 调度、事件转译和 cancel 映射 |
+| 工具审批 | MAP/prd-api 自研 | 必须保留 | 用户权限、危险操作审批和审计归 MAP 管 |
+| repo / PR / browser 工具 | MAP/CDS 自研 | 必须保留 | 与 sandbox、GitHub 凭据、Bridge、产物面板绑定 |
+| Runtime pool / long token / CDS 授权 | CDS/MAP 自研 | 必须保留 | 属于基础设施控制面 |
+
+迁移方向：保留 MAP/CDS 控制面，把自研 agent loop 缩成官方 Claude Code SDK / Claude Agent SDK adapter。这样能减少 agent-loop 和上游事件适配维护量，但不能减少权限、审计、产物、workspace 和运行时池代码。
+
+### 4.2 其他官方 Agent SDK 兼容边界
+
+其他官方智能体框架可以借鉴，但不能因为“有工具调用”或“支持 tracing”就直接路由代码审查任务。MAP/CDS 的准入条件不是模型 API 协议，而是能否把 run、事件、工具审批、取消、workspace、artifact 和诊断稳定映射回控制面。
+
+| 候选 adapter | 当前状态 | 能复用的官方能力 | CDS 仍必须补齐的薄 adapter |
+|---|---|---|---|
+| `claude-agent-sdk` | `default-supported` | Claude Code/Agent SDK turn loop、上下文、工具执行、interrupt | profile 兼容性、MAP approval、SSE/event 归一化、run bundle |
+| `openai-agents-sdk` | `planned-not-routable` | Agents SDK 的 tool calls、handoffs、guardrails、tracing | workspace runtime、MAP approval bridge、cancel、事件/trace 到 run bundle 的映射 |
+| `google-adk` | `planned-not-routable` | ADK 的 agent framework、工具生态和部署/runtime 集成 | session/artifact/tool approval/cancel 到 MAP/CDS 的兼容层 |
+| `legacy-sidecar` | `explicit-fallback` | 无官方 loop 复用；只是迁移期保底 | 不扩展新能力，只用于排障或显式 fallback |
+
+因此，当前产品口径必须保持：只有 `claude-agent-sdk` 是代码审查默认路径；OpenAI Agents SDK、Google ADK、Codex-like runtime 都只能先进入 adapter compatibility matrix，待 S1/S2/S3 同口径 smoke 和页面诊断通过后再允许路由。
 
 ---
 
@@ -163,6 +191,12 @@ sequenceDiagram
 
 | 问题 | 影响 | 当前处理 | 后续动作 |
 |---|---|---|---|
+| `claude-sdk` 命名误导 | 容易混淆历史 runtime、legacy sidecar 和官方 Agent SDK adapter | 文档 v2026-05-17 已校准为官方 `claude-agent-sdk` 是目标路径，legacy sidecar 只作 fallback | UI 和配置说明逐步改成 `Claude Agent SDK runtime`，并显示 profile 兼容性 |
+| 页面是假实时 | 长任务时用户感知像卡住，不能可靠看到每个增量 | 前端 3 秒轮询刷新运行中会话 | 改成后台 run + 真 SSE / afterSeq 增量订阅 |
+| 停止必须证明触达 SDK run | 用户点停止后模型调用可能继续消耗资源 | 已有 runId/cancel 映射和 S3 smoke 入口 | 配置真实 provider 后用 S3 证明 interrupt/cancel 事件 |
+| 事件默认最多 500 条 | 大型审查、PR 创建链路会丢后半段证据 | 当前页面拉 `limit=500` | 事件分页、增量去重、证据包导出 |
+| `repo_run_command` 180 秒上限 | 大型测试和 build 容易超时 | 当前适合短命令和最小测试 | 长命令后台化，stdout/stderr 增量事件 |
+| 其他仓库工作区不产品化 | 用户以为输入 URL 就能审任意仓库 | 当前靠 runtime 环境变量 / workspace | UI 增加 repo/branch 选择和 workspace 准备状态 |
 | shared-service 项目被 UI 当成普通分支项目 | 用户误以为 sidecar pool 有 `main` 分支 | 已修正项目入口、项目统计和实例发现混入问题 | 继续把 shared-service 从普通项目导航中拆出去 |
 | runtime worker 还没有完整资源池模型 | 用户看不到“创建容器 / 复用容器 / 清理容器”的真实状态 | 页面展示 workerId / containerName / resource policy | 增加 Runtime Pool 页面和会话级容器状态 |
 | sidecar 长期应该是 CDS 系统能力 | 若侵入业务项目 profile，会污染每个项目配置 | 当前已把 shared-service 作为系统项目 | 中期抽象为 SystemService，不再叫业务 Project |

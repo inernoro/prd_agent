@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CDS Agent P4-2 远端 Provider 闭环验收报告</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f7f8fb; }
+    main { max-width: 1120px; margin: 0 auto; padding: 42px 36px 64px; }
+    h1 { font-size: 30px; margin: 0 0 10px; }
+    h2 { font-size: 18px; margin: 30px 0 12px; }
+    p { line-height: 1.65; }
+    .meta { color: #667085; margin-bottom: 24px; }
+    .panel { background: #fff; border: 1px solid #dfe4ec; border-radius: 8px; padding: 20px; margin: 16px 0; }
+    .ok { color: #057a55; font-weight: 700; }
+    .warn { color: #b54708; font-weight: 700; }
+    .muted { color: #667085; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+    .metric { background: #fff; border: 1px solid #dfe4ec; border-radius: 8px; padding: 14px; }
+    .metric strong { display: block; font-size: 22px; margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dfe4ec; border-radius: 8px; overflow: hidden; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid #eaedf3; font-size: 13px; line-height: 1.5; }
+    th { background: #eef2f7; color: #344054; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    img { display: block; max-width: 100%; border: 1px solid #dfe4ec; border-radius: 8px; margin-top: 12px; }
+    @media print { body { background: #fff; } main { padding: 24px; } .panel, .metric, table, img { break-inside: avoid; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CDS Agent P4-2 远端 Provider 闭环验收报告</h1>
+  <div class="meta">日期：2026-05-19 · branch：<code>codex/cds-agent-workbench-ui</code> · runtime commit：<code>6b2f1552e</code></div>
+
+  <section class="panel">
+    <h2>结论</h2>
+    <p><span class="ok">P4-2 完成。</span>远端 preview 已跑通 provider-backed 只读代码巡检闭环，<code>commercialComplete=true</code>，R0/A0/R1/S1/S2/S3/V1/N6 全部通过。当前用户可以从 CDS Agent 工作台发起一次真实远端只读代码巡检，并在页面看到 session、trace、事件、结果和产物入口。</p>
+    <p>本轮没有新增自研 agent loop。MAP/CDS 继续作为控制面，CDS 负责 branch/runtime/sandbox 管理，实际推理循环由 official Claude Agent SDK adapter 承担。默认 runtime profile 使用 CDS 管理的 Anthropic-compatible provider-switch 配置；产品主路径不要求用户额外提供 Anthropic 原生 profile/secret。</p>
+  </section>
+
+  <div class="grid">
+    <div class="metric"><strong class="ok">100%</strong><span class="muted">P4-2 gates passed</span></div>
+    <div class="metric"><strong>140s</strong><span class="muted">one-cycle total time</span></div>
+    <div class="metric"><strong>10 / 1 / 0</strong><span class="muted">passed / legacy skip / failed</span></div>
+    <div class="metric"><strong class="ok">19</strong><span class="muted">visual signals covered</span></div>
+  </div>
+
+  <h2>验收清单</h2>
+  <table>
+    <tr><th>Gate</th><th>结果</th><th>说明</th><th>证据</th></tr>
+    <tr><td>R0 runtime ownership</td><td class="ok">pass</td><td>runtime pool 与 sidecar alias 证明 loop owner 为 <code>claude-agent-sdk</code></td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/r0-runtime.log</code></td></tr>
+    <tr><td>A0 official SDK adapter boundary</td><td class="ok">pass</td><td>默认路径走 official SDK adapter，自研 legacy loop 仅为显式 fallback</td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/official-sdk-boundary-report.json</code></td></tr>
+    <tr><td>R1 provider-switch profile</td><td class="ok">pass</td><td>默认 profile 已兼容并带 CDS-managed provider secret</td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/r1-report.json</code></td></tr>
+    <tr><td>S1 read-only code inspection</td><td class="ok">pass</td><td>provider-backed 官方 SDK 完成只读仓库巡检</td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/s1-report.json</code></td></tr>
+    <tr><td>S2 dangerous tool boundary</td><td class="ok">pass</td><td>hardened readonly 下危险工具未获得 MAP approval</td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json</code></td></tr>
+    <tr><td>S3 stop control</td><td class="ok">pass</td><td>SDK run 可被停止，最终状态为 <code>stopped</code></td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/controls-report.json</code></td></tr>
+    <tr><td>V1 visual acceptance</td><td class="ok">pass</td><td>远端工作台截图覆盖 19 个可观测能力信号</td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png</code></td></tr>
+    <tr><td>N6 non-code boundary</td><td class="ok">pass</td><td>非代码智能体与 CDS sidecar runtime pool 边界保持独立</td><td><code>/tmp/cds-agent-p4-2-one-cycle-accepted/n6-non-code-boundary.log</code></td></tr>
+  </table>
+
+  <h2>远端状态</h2>
+  <table>
+    <tr><th>字段</th><th>当前值</th></tr>
+    <tr><td>preview</td><td><code>https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent</code></td></tr>
+    <tr><td>deployed runtime commit</td><td><code>6b2f1552e</code></td></tr>
+    <tr><td>deploy count</td><td><code>452</code></td></tr>
+    <tr><td>last deploy</td><td><code>2026-05-19T09:26:52.783Z</code></td></tr>
+    <tr><td>services</td><td><code>api-prd-agent:10655</code>、<code>admin-prd-agent:10656</code> running</td></tr>
+    <tr><td>runtime relation</td><td><code>runtime_matches_head</code></td></tr>
+  </table>
+
+  <h2>本轮修正</h2>
+  <table>
+    <tr><th>问题</th><th>修正</th></tr>
+    <tr><td>CDS official SDK runtime 等待完整 response 后才 ingest，MAP 长时间看不到事件</td><td>改为流式 ingest <code>/v1/agent/run</code> SSE，运行中即可同步事件</td></tr>
+    <tr><td>SDK <code>error_max_turns</code> 被当成普通运行中状态覆盖，页面终态不清晰</td><td>MAP 导入 CDS error 事件后归并为 failed，并标记 <code>sdk_turn_limit</code> 非重试错误</td></tr>
+    <tr><td>固定 <code>maxTurns=10</code> 导致正常巡检容易提前失败</td><td>按任务类型动态设置 <code>maxTurns</code>，代码巡检类任务提高到 40</td></tr>
+    <tr><td>用户路径被误解为必须 Anthropic 原生认证</td><td>明确产品主路径走 CDS-managed provider-switch；Anthropic 原生 key 只用于显式 native repair/test</td></tr>
+  </table>
+
+  <h2>视觉证据</h2>
+  <p>远端工作台截图覆盖简洁模式、专业模式、trace、事件、工具、产物、SLA、workflow/KB、governance、runtime、sandbox、network boundary、provider guidance 和 official SDK adapter。</p>
+  <img src="file:///tmp/cds-agent-p4-2-one-cycle-accepted/workbench-visual.png" alt="CDS Agent P4-2 remote workbench screenshot" />
+
+  <h2>残留风险与下一步</h2>
+  <table>
+    <tr><th>项</th><th>判断</th><th>处理</th></tr>
+    <tr><td><code>env-sidecar</code> 历史残留 warning</td><td>不阻塞产品主路径；product runtime 与 head 匹配，provider one-cycle 已通过</td><td>保留在 operator/debug 视图观察，不让用户路径依赖该 alias</td></tr>
+    <tr><td>prompt 太宽导致 SDK turn limit</td><td>已能明确失败并显示 <code>sdk_turn_limit</code></td><td>简洁模式默认提供更窄的只读巡检模板</td></tr>
+    <tr><td>P4-3</td><td>下一步</td><td>整理远端试用入口说明与发布验收包，不新增架构、不新增 agent loop</td></tr>
+  </table>
+</main>
+</body>
+</html>

@@ -54,6 +54,43 @@ public sealed class ClaudeSidecarOptions
     public CdsDiscoveryConfig CdsDiscovery { get; set; } = new();
 }
 
+public static class ClaudeSidecarEnvAutoConfigurator
+{
+    public static void Apply(ClaudeSidecarOptions opts, Func<string, string?>? getEnv = null)
+    {
+        if (!opts.AutoConfigureFromEnv) return;
+
+        getEnv ??= Environment.GetEnvironmentVariable;
+        var anthropicKey = getEnv("ANTHROPIC_API_KEY");
+        var sidecarBaseUrl = getEnv("CLAUDE_SIDECAR_BASE_URL");
+        var sidecarToken = getEnv("CLAUDE_SIDECAR_TOKEN");
+        var hasProviderEnv = !string.IsNullOrWhiteSpace(anthropicKey);
+        var hasExplicitSidecarEnv =
+            !string.IsNullOrWhiteSpace(sidecarBaseUrl)
+            || !string.IsNullOrWhiteSpace(sidecarToken);
+
+        if (!hasProviderEnv && !hasExplicitSidecarEnv) return;
+
+        if (opts.Sidecars.Count == 0)
+        {
+            opts.Sidecars.Add(new SidecarInstanceConfig
+            {
+                Name = hasExplicitSidecarEnv ? "env-sidecar" : "default",
+                BaseUrl = !string.IsNullOrWhiteSpace(sidecarBaseUrl)
+                    ? sidecarBaseUrl!
+                    : opts.DefaultSidecarBaseUrl,
+                Token = !string.IsNullOrWhiteSpace(sidecarToken)
+                    ? sidecarToken!
+                    : opts.DefaultSidecarToken,
+                Weight = 1,
+                Tags = new List<string> { "default", hasExplicitSidecarEnv ? "env" : "auto" },
+            });
+        }
+
+        if (!opts.Enabled) opts.Enabled = true;
+    }
+}
+
 public sealed class CdsDiscoveryConfig
 {
     /// <summary>开关。未启用时 prd-api 仅消费 appsettings.Sidecars 静态配置。</summary>
@@ -100,7 +137,11 @@ public sealed class SidecarInstanceConfig
 
 public sealed class HealthCheckConfig
 {
-    public string Path { get; set; } = "/healthz";
+    /// <summary>
+    /// MAP runtime routing uses readiness, not only process liveness, so the default probe is /readyz.
+    /// Container orchestrators can still use sidecar /healthz for low-level liveness.
+    /// </summary>
+    public string Path { get; set; } = "/readyz";
     public int IntervalSeconds { get; set; } = 10;
     public int UnhealthyThreshold { get; set; } = 3;
     public int TimeoutSeconds { get; set; } = 3;

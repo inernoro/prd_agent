@@ -374,6 +374,144 @@ export class ContainerService {
     try { fs.unlinkSync(envFilePath); } catch { /* ok */ }
   }
 
+  private shellQuote(value: string): string {
+    return `'${value.replace(/'/g, `'\\''`)}'`;
+  }
+
+  /**
+   * Remove stale CDS app containers for the same branch/profile before a new
+   * docker run attaches service aliases. Docker DNS keeps every container that
+   * still has a matching network alias, so a leftover endpoint can make
+   * `getent hosts <service-alias>` alternate between old and new containers.
+   *
+   * Scope is intentionally narrow: same branchId + same profileId, excluding
+   * the container name we are about to recreate. Other branches may legitimately
+   * run the same profile id on the same project network.
+   */
+  private async pruneStaleAppContainersForProfile(
+    entry: BranchEntry,
+    profile: BuildProfile,
+    service: ServiceState,
+    network: string,
+    aliases: string[],
+    onOutput?: (chunk: string) => void,
+  ): Promise<void> {
+    if (aliases.length === 0) return;
+    const removed = new Set<string>();
+    const isSameServiceFallbackName = (name: string): boolean =>
+      name === service.containerName || name.startsWith(`${service.containerName}-`);
+    const removeStale = async (name: string, staleAliases: string[], source: string, id?: string): Promise<void> => {
+      const cleanName = name.replace(/^\/+/, '');
+      const target = id || cleanName;
+      if (cleanName === service.containerName || removed.has(target)) return;
+      onOutput?.(`── 清理同 alias 的旧 endpoint(${source}): ${cleanName} (${staleAliases.join(', ')}) ──\n`);
+      const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(target)}`);
+      if (rm.exitCode !== 0) {
+        await this.shell.exec(
+          `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(target)}`,
+        );
+      }
+      removed.add(target);
+    };
+
+    const list = await this.shell.exec(
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format "{{.Names}}"`,
+    );
+    const aliasSet = new Set(aliases);
+
+    if (list.exitCode === 0 && list.stdout.trim()) {
+      const format = [
+        '{{index .Config.Labels "cds.branch.id"}}',
+        '{{index .Config.Labels "cds.profile.id"}}',
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
+      ].join('|');
+
+      for (const name of list.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
+        if (name === service.containerName) continue;
+        const inspect = await this.shell.exec(
+          `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(name)}`,
+        );
+        if (inspect.exitCode !== 0) continue;
+        const [branchId = '', profileId = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
+        if (branchId !== entry.id || profileId !== profile.id) continue;
+
+        let staleAliases: string[] = [];
+        try {
+          const parsed = JSON.parse(aliasesJson);
+          if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
+        } catch {
+          staleAliases = [];
+        }
+        if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+        await removeStale(name, staleAliases, 'labels');
+      }
+    }
+
+    const networkContainers = await this.shell.exec(
+      `docker ps -aq --filter ${this.shellQuote(`network=${network}`)}`,
+    );
+    if (networkContainers.exitCode === 0 && networkContainers.stdout.trim()) {
+      const format = [
+        '{{.Id}}',
+        '{{.Name}}',
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
+      ].join('|');
+      for (const id of networkContainers.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
+        const inspect = await this.shell.exec(
+          `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(id)}`,
+        );
+        if (inspect.exitCode !== 0) continue;
+        const [containerId = id, name = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
+        const cleanName = name.replace(/^\/+/, '');
+        if (!cleanName || cleanName === service.containerName || removed.has(containerId)) continue;
+        if (!isSameServiceFallbackName(cleanName)) continue;
+        let staleAliases: string[] = [];
+        try {
+          const parsed = JSON.parse(aliasesJson);
+          if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
+        } catch {
+          staleAliases = [];
+        }
+        if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+        await removeStale(cleanName, staleAliases, 'network-containers', containerId);
+      }
+    }
+
+    // Older CDS-created containers may not have cds.* labels. Docker DNS is
+    // driven by network endpoints, and a service alias cannot be shared on the
+    // same project network without round-robin responses. Inspect the network
+    // as a second line of defense and keep this profile's aliases unique.
+    const networkInspect = await this.shell.exec(
+      `docker network inspect --format='{{json .Containers}}' ${this.shellQuote(network)}`,
+    );
+    if (networkInspect.exitCode !== 0 || !networkInspect.stdout.trim()) return;
+
+    let containers: Record<string, { Name?: string; Aliases?: unknown }> = {};
+    try {
+      const parsed = JSON.parse(networkInspect.stdout.trim());
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        containers = parsed as Record<string, { Name?: string; Aliases?: unknown }>;
+      }
+    } catch {
+      return;
+    }
+
+    for (const endpoint of Object.values(containers)) {
+      const name = typeof endpoint.Name === 'string' ? endpoint.Name : '';
+      const cleanName = name.replace(/^\/+/, '');
+      if (!cleanName || cleanName === service.containerName || removed.has(cleanName)) continue;
+      if (!isSameServiceFallbackName(cleanName)) continue;
+      const staleAliases = Array.isArray(endpoint.Aliases)
+        ? endpoint.Aliases.filter((item): item is string => typeof item === 'string')
+        : [];
+      if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+      await removeStale(cleanName, staleAliases, 'network');
+    }
+  }
+
   /**
    * Run a branch service from source using a build profile.
    * Mounts the worktree + shared cache volumes into a Docker container.
@@ -388,6 +526,11 @@ export class ContainerService {
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
+    const profileAliases = computeProfileAliases(
+      profile.id,
+      this.getProjectMarkers(entry.projectId),
+    );
+    await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
 
     // Remove any existing container
     await this.shell.exec(`docker rm -f ${service.containerName}`);
@@ -411,9 +554,16 @@ export class ContainerService {
     mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
     mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    // Inject git branch name so frontend build tools (e.g. Vite __GIT_BRANCH__) can pick it up.
+    // Inject git metadata so frontend build tools can stamp bundle URLs.
+    // Branch containers often mount only a subdirectory (e.g. prd-admin -> /app),
+    // so `git rev-parse` inside Vite may fall back to "local". That makes CDN
+    // and browser caches keep stale `*-local.js` assets even after CDS shows a
+    // newer GitHub commit in the widget.
     if (entry.branch) {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (entry.githubCommitSha) {
+      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
     }
 
     // Detect Node.js containers by image name (node:*, *node:*, etc.)
@@ -615,10 +765,6 @@ export class ContainerService {
       //   2. shortAlias        — 去掉项目后缀,如 'imp-api' / 'mysql'(如果与
       //      profile.id 不同)
       // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
-      const profileAliases = computeProfileAliases(
-        profile.id,
-        this.getProjectMarkers(entry.projectId),
-      );
       const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
 
       const runCmd = [

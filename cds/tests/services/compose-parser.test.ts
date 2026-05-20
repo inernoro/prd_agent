@@ -291,6 +291,77 @@ services:
   });
 });
 
+describe('parseStandardCompose — agent runtime sidecar isolation', () => {
+  it('does not import claude-agent-sdk runtime sidecar as a branch BuildProfile', () => {
+    const yaml = `
+services:
+  api:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    volumes:
+      - ./prd-api:/repo/prd-api
+    ports:
+      - "5000"
+  claude-agent-sdk-runtime-v2:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./claude-sdk-sidecar:/app
+    ports:
+      - "7400"
+    command: >-
+      uvicorn app.main:app --host 0.0.0.0 --port 7400
+    environment:
+      SIDECAR_TOKEN: "dev-skip"
+      SIDECAR_AGENT_ADAPTER: "claude-agent-sdk"
+      SIDECAR_PROVIDER_KEY_MODE: "runtime-profile-or-env"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles.map((profile) => profile.id)).toEqual(['api']);
+    expect(cfg!.infraServices.map((service) => service.id)).not.toContain('claude-agent-sdk-runtime-v2');
+  });
+
+  it('does not import legacy claude-sidecar runtime services as branch BuildProfiles', () => {
+    const yaml = `
+services:
+  api:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    volumes:
+      - ./prd-api:/repo/prd-api
+    ports:
+      - "5000"
+  claude-sidecar:
+    image: prdagent/claude-sidecar:dev
+    container_name: claude-sidecar-prd-agent
+    volumes:
+      - ./claude-sdk-sidecar:/app
+    ports:
+      - "7400"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 7400
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles.map((profile) => profile.id)).toEqual(['api']);
+    expect(cfg!.infraServices.map((service) => service.id)).not.toContain('claude-sidecar');
+  });
+
+  it('still imports ordinary worker services that are not agent runtime sidecars', () => {
+    const yaml = `
+services:
+  queue-worker:
+    image: node:20-slim
+    build: ./worker
+    ports:
+      - "9100"
+    command: node worker.js
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.buildProfiles).toHaveLength(1);
+    expect(cfg!.buildProfiles[0].id).toBe('queue-worker');
+  });
+});
+
 /**
  * Bugbot regression(PR #521 第十一轮 Bug 3)— `build:` 指令带 docker
  * healthcheck 的服务是自建 infra(典型:custom-postgres 装扩展),

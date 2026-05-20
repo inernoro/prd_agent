@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CDS Agent P4-1 远端发布前验收报告</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; background: #f7f8fb; }
+    main { max-width: 1120px; margin: 0 auto; padding: 42px 36px 64px; }
+    h1 { font-size: 30px; margin: 0 0 10px; }
+    h2 { font-size: 18px; margin: 30px 0 12px; }
+    p { line-height: 1.65; }
+    .meta { color: #667085; margin-bottom: 24px; }
+    .panel { background: #fff; border: 1px solid #dfe4ec; border-radius: 8px; padding: 20px; margin: 16px 0; }
+    .ok { color: #057a55; font-weight: 700; }
+    .warn { color: #b54708; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dfe4ec; border-radius: 8px; overflow: hidden; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid #eaedf3; font-size: 13px; line-height: 1.5; }
+    th { background: #eef2f7; color: #344054; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    img { display: block; max-width: 100%; border: 1px solid #dfe4ec; border-radius: 8px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>CDS Agent P4-1 远端发布前验收与试用入口报告</h1>
+  <div class="meta">日期：2026-05-19 · preview：<code>cds-agent-workbench-ui-codex-prd-agent</code></div>
+
+  <section class="panel">
+    <h2>结论</h2>
+    <p><span class="ok">P4-1 完成。</span>当前不需要为 P4-1 重复远端部署：远端 preview 运行在 <code>e9e710e94</code>，从该提交到本轮 P3-6 基线没有 <code>prd-api</code>、<code>prd-admin</code>、<code>cds</code> 运行时代码差异。</p>
+    <p><span class="warn">当前最高优先级阻塞是 R1 provider profile。</span>远端 <code>runtime-status</code> 显示 <code>currentBlockingGate=R1</code>、<code>currentStep=N1</code>。下一轮应闭环 provider-switch profile，而不是重复部署。</p>
+  </section>
+
+  <h2>验证清单</h2>
+  <table>
+    <tr><th>项目</th><th>结果</th><th>证据</th></tr>
+    <tr><td>CDS self-update 预检</td><td class="ok">pass</td><td><code>/tmp/cds-agent-p4-1-self-update-preflight.fixed.json</code></td></tr>
+    <tr><td>避免无效部署</td><td class="ok">pass</td><td><code>git diff --quiet e9e710e94..HEAD -- prd-api prd-admin cds</code> exit 0</td></tr>
+    <tr><td>Phase 3 验收包</td><td class="ok">pass</td><td><code>scripts/smoke-cds-agent-phase3-acceptance.sh</code></td></tr>
+    <tr><td>简洁面板</td><td class="ok">pass</td><td><code>scripts/smoke-cds-agent-simple-panel.sh</code></td></tr>
+    <tr><td>工作流节点</td><td class="ok">pass</td><td><code>scripts/smoke-cds-agent-workflow-node.sh</code></td></tr>
+    <tr><td>知识库只读工具</td><td class="ok">pass</td><td><code>scripts/smoke-cds-agent-kb-readonly-tools.sh</code></td></tr>
+    <tr><td>远端 API</td><td class="ok">pass</td><td><code>/api/infra-agent-sessions</code>、<code>/api/infra-agent-sessions/runtime-status</code></td></tr>
+    <tr><td>远端视觉</td><td class="ok">pass</td><td><code>/tmp/cds-agent-p4-1-remote-workbench.png</code>；coverage assertionsPassed=true</td></tr>
+  </table>
+
+  <h2>远端运行状态</h2>
+  <table>
+    <tr><th>字段</th><th>当前值</th></tr>
+    <tr><td>runtime adapter</td><td><code>claude-agent-sdk</code></td></tr>
+    <tr><td>runtime transport</td><td><code>sidecar-runtime-adapter</code></td></tr>
+    <tr><td>instances</td><td><code>3</code></td></tr>
+    <tr><td>healthy instances</td><td><code>2</code></td></tr>
+    <tr><td>blocking gate</td><td><code>R1</code></td></tr>
+    <tr><td>current step</td><td><code>N1</code></td></tr>
+    <tr><td>residual warning</td><td><code>env-sidecar: Resource temporarily unavailable (claude-agent-sdk-runtime-v2-prd-agent:7400)</code></td></tr>
+  </table>
+
+  <h2>视觉证据</h2>
+  <p>远端工作台截图：简洁模式、专业模式、trace、事件、产物、SLA、workflow/KB、governance、runtime、sandbox、provider guidance 和 official SDK adapter 信号全部覆盖。</p>
+  <img src="file:///tmp/cds-agent-p4-1-remote-workbench.png" alt="CDS Agent P4-1 remote workbench screenshot" />
+
+  <h2>下一步</h2>
+  <p>P4-2：远端 R1 provider-switch profile 闭环与试用入口。目标是在不新增 agent loop、不引入 remote host 用户路径的前提下，让远端默认 profile 能走 Claude Code cloud / cc-switch / Anthropic-compatible upstream，然后跑一次 provider-backed one-cycle。</p>
+</main>
+</body>
+</html>

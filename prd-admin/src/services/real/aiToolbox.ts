@@ -89,6 +89,7 @@ export interface ToolboxRunEvent {
   type: string;
   stepId?: string;
   content?: string;
+  artifact?: ToolboxArtifact;
   runStatus?: string;
   errorMessage?: string;
   seq: number;

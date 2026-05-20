@@ -378,7 +378,12 @@ public class InfraConnectionService : IInfraConnectionService
             }
             else
             {
-                error = $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                var body = await SafeReadAsStringAsync(resp.Content, ct);
+                var mapped = MapAcceptError(resp.StatusCode, body);
+                credentialRevoked = string.Equals(mapped.code, "invalid_long_token", StringComparison.OrdinalIgnoreCase);
+                error = credentialRevoked
+                    ? "CDS 长期授权已失效，请重新授权 CDS"
+                    : $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}";
             }
         }
         catch (Exception ex)

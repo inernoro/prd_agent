@@ -201,24 +201,29 @@ export const NodeTypeLabels: Record<string, string> = {
 export const ExecutionStatus = {
   Queued: 'queued',
   Running: 'running',
+  WaitingApproval: 'waiting_approval',
   Completed: 'completed',
   Failed: 'failed',
   Cancelled: 'cancelled',
   Paused: 'paused',
+  TimedOut: 'timed_out',
 } as const;
 
 export const ExecutionStatusLabels: Record<string, string> = {
   queued: '排队中',
   running: '执行中',
+  waiting_approval: '等待审批',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
   paused: '已暂停',
+  timed_out: '已超时',
 };
 
 export const NodeExecutionStatus = {
   Pending: 'pending',
   Running: 'running',
+  WaitingApproval: 'waiting_approval',
   Completed: 'completed',
   Failed: 'failed',
   Skipped: 'skipped',
@@ -280,6 +285,8 @@ export type ListExecutionsContract = (input?: {
 export type GetExecutionContract = (id: string) => Promise<ApiResponse<{ execution: WorkflowExecution }>>;
 
 export type CancelExecutionContract = (id: string) => Promise<ApiResponse<{ cancelled: boolean }>>;
+
+export type RejectApprovalContract = (executionId: string) => Promise<ApiResponse<{ execution: WorkflowExecution }>>;
 
 export type ResumeFromNodeContract = (input: {
   executionId: string;

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AgentTools;
 using PrdAgent.Infrastructure.Services.AgentTools.Tools;
 using Shouldly;
@@ -59,6 +60,28 @@ public class AgentToolsTests : IDisposable
         command.Success.ShouldBeTrue();
         command.Content.ShouldNotBeNull();
         command.Content.ShouldContain("notes/result.txt");
+    }
+
+    [Fact]
+    public void InfraAgentToolPoliciesExposeCodeWriteOnlyForExplicitWritableProfile()
+    {
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("readonly-auto", "repo_read_file").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("readonly-auto", "repo_write_file").ShouldBeFalse();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("confirm-dangerous", "kb_apply").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("confirm-dangerous", "repo_write_file").ShouldBeFalse();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("code-writable-confirm", "repo_write_file").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("code-writable-confirm", "repo_run_command").ShouldBeTrue();
+        InfraAgentToolPolicies.ShouldExposeToolToRuntime("code-writable-confirm", "repo_create_pull_request").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void InfraAgentToolPoliciesDenyCodeWriteInvocationWithoutWritableProfile()
+    {
+        InfraAgentToolPolicies.AllowsToolInvocation("readonly-auto", "repo_write_file").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation("confirm-dangerous", "repo_run_command").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation("code-writable-confirm", "repo_run_command").ShouldBeTrue();
+        InfraAgentToolPolicies.AllowsToolInvocation("code-writable-confirm", "kb_apply").ShouldBeFalse();
+        InfraAgentToolPolicies.AllowsToolInvocation("deny-all", "repo_read_file").ShouldBeFalse();
     }
 
     [Fact]
@@ -179,6 +202,133 @@ public class AgentToolsTests : IDisposable
 
         result.Success.ShouldBeFalse();
         result.ErrorCode.ShouldBe("github_token_missing");
+    }
+
+    [Fact]
+    public void KnowledgeBaseReadonlyToolsExposeOnlyListSearchRead()
+    {
+        var tools = new IAgentTool[]
+        {
+            new KbListTool(null!),
+            new KbSearchTool(null!),
+            new KbReadTool(null!)
+        };
+
+        tools.Select(x => x.Descriptor.Name).ShouldBe(new[] { "kb_list", "kb_search", "kb_read" });
+        foreach (var tool in tools)
+        {
+            tool.Descriptor.Description.ShouldContain("只读");
+            using var schema = JsonDocument.Parse(tool.Descriptor.InputSchemaJson);
+            schema.RootElement.GetProperty("type").GetString().ShouldBe("object");
+        }
+    }
+
+    [Fact]
+    public void KnowledgeBaseSnippetKeepsCitationSearchContext()
+    {
+        var entry = new PrdAgent.Core.Models.DocumentEntry
+        {
+            Title = "Agent Roadmap",
+            Summary = "fallback",
+            ContentIndex = "前置内容，商业级可观察性和 timeout 机制需要在 Agent 面板里稳定展示，后续还有知识库检索。"
+        };
+
+        var snippet = KnowledgeBaseReadonlyToolSupport.BuildSnippet(entry, "timeout");
+
+        snippet.ShouldContain("timeout");
+        snippet.Length.ShouldBeLessThanOrEqualTo(263);
+    }
+
+    [Fact]
+    public void KnowledgeBaseDraftToolsExposeOnlyDraftWorkspaceActions()
+    {
+        var tools = new IAgentTool[]
+        {
+            new KbDraftCreateTool(null!),
+            new KbDraftReadTool(null!),
+            new KbDraftListTool(null!),
+            new KbDraftDiscardTool(null!)
+        };
+
+        tools.Select(x => x.Descriptor.Name).ShouldBe(new[]
+        {
+            "kb_draft_create",
+            "kb_draft_read",
+            "kb_draft_list",
+            "kb_draft_discard"
+        });
+        tools.Select(x => x.Descriptor.Name).ShouldNotContain("kb_apply");
+        tools.Select(x => x.Descriptor.Name).ShouldNotContain("kb_diff");
+        tools.Select(x => x.Descriptor.Name).ShouldNotContain("kb_reject");
+
+        foreach (var tool in tools)
+        {
+            using var schema = JsonDocument.Parse(tool.Descriptor.InputSchemaJson);
+            schema.RootElement.GetProperty("type").GetString().ShouldBe("object");
+        }
+    }
+
+    [Fact]
+    public void KnowledgeBaseDraftHashIsStableAndSensitiveToContent()
+    {
+        var hashA = KnowledgeBaseDraftToolSupport.ComputeContentHash("原始正文\n第二行");
+        var hashB = KnowledgeBaseDraftToolSupport.ComputeContentHash("原始正文\n第二行");
+        var hashC = KnowledgeBaseDraftToolSupport.ComputeContentHash("改写正文\n第二行");
+
+        hashA.ShouldBe(hashB);
+        hashA.ShouldNotBe(hashC);
+        hashA.Length.ShouldBe(64);
+    }
+
+    [Fact]
+    public void KnowledgeBaseDiffApplyRejectToolsExposeP2ThreeActions()
+    {
+        var tools = new IAgentTool[]
+        {
+            new KbDiffTool(null!),
+            new KbApplyTool(null!),
+            new KbRejectTool(null!)
+        };
+
+        tools.Select(x => x.Descriptor.Name).ShouldBe(new[]
+        {
+            "kb_diff",
+            "kb_apply",
+            "kb_reject"
+        });
+        new KbApplyTool(null!).Descriptor.Description.ShouldContain("MAP approval");
+    }
+
+    [Fact]
+    public void KnowledgeBaseDiffSummarizesAddedAndRemovedLines()
+    {
+        var diff = KnowledgeBaseDraftToolSupport.BuildUnifiedDiff(
+            "标题\n旧内容\n保留",
+            "标题\n新内容\n保留\n新增",
+            "before",
+            "after",
+            100);
+
+        var statJson = JsonSerializer.Serialize(diff.diffStat);
+        statJson.ShouldContain("\"added\":2");
+        statJson.ShouldContain("\"removed\":1");
+        diff.unifiedDiff.ShouldContain("--- before");
+        diff.unifiedDiff.ShouldContain("+++ after");
+        diff.unifiedDiff.ShouldContain("-旧内容");
+        diff.unifiedDiff.ShouldContain("+新内容");
+        diff.truncated.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task KnowledgeBaseApplyRequiresMapApprovalBeforeDatabaseAccess()
+    {
+        var result = await new KbApplyTool(null!).InvokeAsync(
+            JsonDocument.Parse("""{"draftId":"draft-1"}""").RootElement,
+            new AgentToolInvocationContext(),
+            CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorCode.ShouldBe("kb_apply_approval_required");
     }
 
     public void Dispose()

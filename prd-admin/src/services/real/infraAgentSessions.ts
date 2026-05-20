@@ -1,4 +1,6 @@
 import { api } from '@/services/api';
+import { readSseStream } from '@/lib/sse';
+import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import { apiRequest } from './apiClient';
 
@@ -15,7 +17,12 @@ export interface InfraAgentSessionView {
   runtimeProfileId?: string | null;
   modelBaseUrl?: string | null;
   runtime: string;
+  runtimeAdapter?: string | null;
+  currentRuntimeRunId?: string | null;
   model?: string | null;
+  workspaceRoot?: string | null;
+  gitRepository?: string | null;
+  gitRef?: string | null;
   resourceCpuCores: number;
   resourceMemoryMb: number;
   timeoutSeconds: number;
@@ -76,6 +83,205 @@ export interface InfraAgentMessageView {
   createdAt: string;
 }
 
+export interface InfraAgentSlaDashboardView {
+  schemaVersion: string;
+  generatedAt: string;
+  windowDays: number;
+  windowStart: string;
+  windowEnd: string;
+  summary: {
+    sessionCount: number;
+    runningCount: number;
+    completedCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    failureRate: number;
+    timeoutRate: number;
+    averageDurationSeconds?: number | null;
+    eventCount: number;
+    toolEventCount: number;
+    errorEventCount: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    tokenUsageObserved: boolean;
+    estimatedCostUsd?: number | null;
+  };
+  statusCounts: Array<{ status: string; count: number }>;
+  runtimeBreakdown: Array<{
+    runtime: string;
+    runtimeAdapter: string;
+    sessionCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    failureRate: number;
+    timeoutRate: number;
+    averageDurationSeconds?: number | null;
+    totalTokens: number;
+    tokenUsageObserved: boolean;
+  }>;
+  daily: Array<{
+    date: string;
+    sessionCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    totalTokens: number;
+  }>;
+}
+
+export interface InfraAgentScheduleDashboardView {
+  schemaVersion: string;
+  generatedAt: string;
+  windowDays: number;
+  summary: {
+    workflowCount: number;
+    cdsAgentNodeCount: number;
+    cronScheduleCount: number;
+    enabledCronScheduleCount: number;
+    dueSoonScheduleCount: number;
+    recentExecutionCount: number;
+    failedRecentExecutionCount: number;
+    knowledgeReadonlyWorkflowCount: number;
+  };
+  workflows: Array<{
+    workflowId: string;
+    name: string;
+    description?: string | null;
+    tags: string[];
+    cdsAgentNodeCount: number;
+    hasKnowledgeReadonlyTools: boolean;
+    hasNotifyNode: boolean;
+    workflowPath: string;
+  }>;
+  schedules: Array<{
+    id: string;
+    workflowId: string;
+    workflowName: string;
+    name: string;
+    mode: string;
+    cronExpression?: string | null;
+    timezone: string;
+    isEnabled: boolean;
+    nextRunAt?: string | null;
+    lastTriggeredAt?: string | null;
+    triggerCount: number;
+    state: string;
+    workflowPath: string;
+  }>;
+  recentExecutions: Array<{
+    id: string;
+    workflowId: string;
+    workflowName: string;
+    traceId: string;
+    status: string;
+    triggerType: string;
+    createdAt: string;
+    durationMs?: number | null;
+    cdsAgentNodeCount: number;
+    cdsAgentSessionId?: string | null;
+    cdsAgentTraceId?: string | null;
+    workbenchPath?: string | null;
+    workflowPath: string;
+  }>;
+  knowledgeGovernance: {
+    readonlyTools: string[];
+    workflowCount: number;
+    scheduleCount: number;
+    boundary: string;
+  };
+}
+
+export interface InfraAgentGovernanceDashboardView {
+  schemaVersion: string;
+  generatedAt: string;
+  subject: {
+    userId: string;
+    teamIds: string[];
+    teamCount: number;
+  };
+  summary: {
+    ownedWorkflowCount: number;
+    ownedKnowledgeBaseCount: number;
+    publicKnowledgeBaseCount: number;
+    runtimeProfileCount: number;
+    ownedRuntimeProfileCount: number;
+    defaultRuntimeProfileOwned: boolean;
+    writablePolicySessionCount: number;
+    waitingApprovalExecutionCount: number;
+    passedGateCount: number;
+    totalGateCount: number;
+    teamSharedRuntimeProfileCount?: number;
+  };
+  scopes: Array<{
+    area: string;
+    state: string;
+    isolation: string;
+    evidence: string;
+    risk: string;
+    nextAction: string;
+  }>;
+  gates: Array<{
+    code: string;
+    label: string;
+    status: string;
+    evidence: string;
+    nextAction: string;
+  }>;
+  nextActions: string[];
+  ownerPolicies?: Array<{
+    area: string;
+    label: string;
+    state: string;
+    owner: string;
+    subject: string;
+    evidence: string;
+    risk: string;
+    nextAction: string;
+    path: string;
+  }> | null;
+}
+
+export interface InfraAgentTraceBundleView {
+  schemaVersion: string;
+  exportedAt: string;
+  session: InfraAgentSessionView;
+  metrics: {
+    messageCount: number;
+    eventCount: number;
+    lastEventSeq: number;
+    artifactCount: number;
+    logLineCount: number;
+    elapsedSeconds?: number | null;
+    timeoutAt?: string | null;
+    timedOut: boolean;
+  };
+  eventTypeCounts: Record<string, number>;
+  messages: InfraAgentMessageView[];
+  events: Array<{
+    id: string;
+    seq: number;
+    traceId: string;
+    type: string;
+    payload: unknown;
+    createdAt: string;
+  }>;
+  artifacts: Array<{
+    id: string;
+    title: string;
+    kind: string;
+    summary: string;
+    body: string;
+    eventSeq?: number | null;
+  }>;
+  logs: string;
+  replay: {
+    workbenchPath: string;
+    eventsApiPath: string;
+    eventsCursor: number;
+    eventsTruncated: boolean;
+  };
+}
+
 export interface InfraAgentHookProfileView {
   id: string;
   userId: string;
@@ -106,6 +312,99 @@ export interface InfraAgentRuntimeProfileView {
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
+  sharedTeamIds?: string[] | null;
+  scope?: string | null;
+  ownerUserId?: string | null;
+}
+
+export interface InfraAgentRuntimeProfileTemplateView {
+  id: string;
+  name: string;
+  description: string;
+  runtime: string;
+  protocol: string;
+  baseUrl: string;
+  model: string;
+  resourceCpuCores: number;
+  resourceMemoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: string;
+  autoCleanupMinutes: number;
+  isDefaultRecommended: boolean;
+  compatibleRuntimeAdapters: string[];
+}
+
+export interface InfraAgentRuntimeAdapterCompatibilityView {
+  id: string;
+  label: string;
+  status: string;
+  routableByDefault: boolean;
+  loopOwner: string;
+  mapRole: string;
+  cdsRole: string;
+  supportedTaskKinds: string[];
+  supportedProfileProtocols: string[];
+  modelHints: string[];
+  compatibleRuntimeProfileTemplateIds: string[];
+  requiredEvidenceGates: string[];
+  missingAdapterContracts: string[];
+  knownIncompatibleProfilePatterns: string[];
+  notes: string[];
+  nextActions: string[];
+}
+
+export interface InfraAgentRuntimeAdapterMatrixView {
+  schemaVersion: string;
+  generatedAt: string;
+  desiredRuntimeAdapter: string;
+  summary: {
+    adapterCount: number;
+    routableAdapterCount: number;
+    defaultRoutableAdapterCount: number;
+    blockedAdapterCount: number;
+    profileCount: number;
+    templateCount: number;
+  };
+  rows: InfraAgentRuntimeAdapterMatrixRowView[];
+}
+
+export interface InfraAgentRuntimeAdapterMatrixRowView {
+  adapterId: string;
+  label: string;
+  status: string;
+  routeState: string;
+  isDesired: boolean;
+  routableByDefault: boolean;
+  loopOwner: string;
+  mapRole: string;
+  cdsRole: string;
+  gates: Array<{ code: string; status: string; reason: string }>;
+  missingAdapterContracts: string[];
+  profileCandidates: Array<{
+    id: string;
+    name: string;
+    runtime: string;
+    protocol: string;
+    model: string;
+    hasApiKey: boolean;
+    isDefault: boolean;
+    compatible: boolean;
+    reasonCode: string;
+    reason: string;
+    nextActions: string[];
+  }>;
+  templateCandidates: Array<{
+    id: string;
+    name: string;
+    runtime: string;
+    protocol: string;
+    model: string;
+    isDefaultRecommended: boolean;
+    compatible: boolean;
+    reasonCode: string;
+    reason: string;
+  }>;
+  nextActions: string[];
 }
 
 export interface InfraAgentRuntimeProfileTestResult {
@@ -118,6 +417,214 @@ export interface InfraAgentRuntimeProfileTestResult {
   model: string;
   httpStatus?: number | null;
   elapsedMs: number;
+}
+
+export interface InfraAgentSidecarInstanceDiagnostics {
+  name: string;
+  baseUrl: string;
+  source: string;
+  tags: string[];
+  tokenConfigured: boolean;
+  healthRegistryHealthy: boolean;
+  httpStatus?: number | null;
+  ready?: boolean | null;
+  anthropicKeyConfigured?: boolean | null;
+  providerKeyRequiredForReady?: boolean | null;
+  sidecarTokenConfigured?: boolean | null;
+  agentAdapter?: string | null;
+  adapterDiagnosticsJson?: string | null;
+  loopOwner?: string | null;
+  sdkLoopEnabled?: boolean | null;
+  legacyLoopImport?: string | null;
+  mapRole?: string | null;
+  cdsRole?: string | null;
+  claudeCliPath?: string | null;
+  claudeCliBundled?: boolean | null;
+  workspacePreparation?: {
+    autoGitWorkspace?: boolean | null;
+    workspacesRoot?: string | null;
+    workspacesRootExists?: boolean | null;
+    gitInstalled?: boolean | null;
+    supportedRepositoryHosts?: string[] | null;
+    supportedRepositoryFormats?: string[] | null;
+    privateRepositoryAuthConfigured?: boolean | null;
+    workspaceLock?: string | null;
+  } | null;
+  error?: string | null;
+  readyzBlockers?: string[] | null;
+  readyzNextActions?: string[] | null;
+}
+
+export interface InfraAgentRuntimeDiagnostics {
+  isConfigured: boolean;
+  instanceCount: number;
+  healthyCount: number;
+  instances: InfraAgentSidecarInstanceDiagnostics[];
+  registryLastRefreshedAt?: string | null;
+  registryLastRefreshError?: string | null;
+  blockers?: string[] | null;
+  nextActions?: string[] | null;
+  desiredRuntimeAdapter?: string | null;
+  runtimeTransport?: string | null;
+  defaultRuntimeProfile?: {
+    id: string;
+    name: string;
+    runtime: string;
+    protocol: string;
+    model: string;
+    hasApiKey: boolean;
+    isDefault: boolean;
+    compatibleWithDesiredRuntimeAdapter: boolean;
+    warning?: string | null;
+    compatibilityReasonCode?: string | null;
+    compatibilityReason?: string | null;
+    compatibilityNextActions?: string[] | null;
+  } | null;
+  commercialReadiness?: {
+    overall: string;
+    passed: number;
+    total: number;
+    gates: Array<{
+      code: string;
+      label: string;
+      status: string;
+      message: string;
+      nextActions?: string[] | null;
+      reasonCode?: string | null;
+    }>;
+    pending: string[];
+  } | null;
+  runtimeProfileRepairPlan?: {
+    gate: string;
+    state: string;
+    currentProfile?: {
+      id: string;
+      name: string;
+      runtime: string;
+      protocol: string;
+      model: string;
+      hasApiKey: boolean;
+      isDefault: boolean;
+      compatibleWithDesiredRuntimeAdapter: boolean;
+      warning?: string | null;
+      compatibilityReasonCode?: string | null;
+      compatibilityReason?: string | null;
+      compatibilityNextActions?: string[] | null;
+    } | null;
+    targetTemplateId: string;
+    targetProtocol: string;
+    targetBaseUrl: string;
+    targetModel: string;
+    targetIsDefaultRecommended: boolean;
+    nextActions: string[];
+  } | null;
+  nextCyclePlan?: {
+    cycle: string;
+    state: string;
+    items: Array<{
+      order: number;
+      code: string;
+      title: string;
+      goal: string;
+      evidence: string;
+      status: string;
+      blockedBy?: string | null;
+      nextActions?: string[] | null;
+    }>;
+    stopConditions: string[];
+  } | null;
+  debugCommands?: Array<{
+    code: string;
+    label: string;
+    command: string;
+    purpose: string;
+    status: string;
+    blockedBy?: string | null;
+  }> | null;
+  executionPanel?: {
+    status: string;
+    commercialComplete: boolean;
+    currentBlockingGate: string;
+    blockingReason: string;
+    deploymentAdvice?: string | null;
+    nextCommand: string;
+    nextCommandCode?: string | null;
+    nextCommandSafety?: string | null;
+    runbook?: Array<{
+      order: number;
+      code: string;
+      title: string;
+      commandCode: string;
+      safety: string;
+      status: string;
+      blockedBy?: string | null;
+      applyManifest?: {
+        safety: string;
+        method: string;
+        endpoint: string;
+        requiredEnv?: string[] | null;
+        preconditions?: Array<{
+          code: string;
+          expected?: string | null;
+          actual?: string | null;
+          passed: boolean;
+        }> | null;
+        expectedPostCheck?: string | null;
+        localPreflightCommand?: string | null;
+        reportFields?: string[] | null;
+        optionalEnv?: string[] | null;
+      } | null;
+    }> | null;
+    gateCounts: Record<string, number>;
+    stepIndex?: number | null;
+    stepTotal?: number | null;
+    passedSteps?: number | null;
+    pendingSteps?: number | null;
+    currentStep?: {
+      order: number;
+      code: string;
+      title: string;
+      status: string;
+      blockedBy?: string | null;
+    } | null;
+    timeline?: Array<{
+      order: number;
+      code: string;
+      title: string;
+      status: string;
+      blockedBy?: string | null;
+    }> | null;
+    taskBoard?: Array<{
+      order: number;
+      code: string;
+      title: string;
+      status: string;
+      nextAction: string;
+      estimatedDuration: string;
+      evidence: string;
+    }> | null;
+    nextStepEta?: string | null;
+    timeSinkAdvice?: string | null;
+  } | null;
+  discoveryMetrics?: {
+    totalConnections?: number | null;
+    activeCdsConnections?: number | null;
+    usableConnections?: number | null;
+    tokenFailures?: number | null;
+    endpointFailures?: number | null;
+    emptyEndpoints?: number | null;
+    endpointsWithInstances?: number | null;
+    projectKind?: string | null;
+    deploymentCount?: number | null;
+    runningDeploymentCount?: number | null;
+    disabledHostDeploymentCount?: number | null;
+    branchCount?: number | null;
+    runningBranchCount?: number | null;
+    runningBranchServiceCount?: number | null;
+    runtimeBranchServiceCount?: number | null;
+    skippedBranchServiceCount?: number | null;
+    previewRootConfigured?: boolean | null;
+  } | null;
 }
 
 interface ListResp {
@@ -136,12 +643,33 @@ interface EventSchemaResp {
   items: InfraAgentEventSchemaItem[];
 }
 
+interface RuntimeStatusResp {
+  diagnostics: InfraAgentRuntimeDiagnostics;
+  discoveryRefreshed?: boolean;
+}
+
 interface MessagesResp {
   items: InfraAgentMessageView[];
 }
 
 interface LogsResp {
   logs: string;
+}
+
+interface TraceBundleResp {
+  bundle: InfraAgentTraceBundleView;
+}
+
+interface SlaDashboardResp {
+  dashboard: InfraAgentSlaDashboardView;
+}
+
+interface ScheduleDashboardResp {
+  dashboard: InfraAgentScheduleDashboardView;
+}
+
+interface GovernanceDashboardResp {
+  dashboard: InfraAgentGovernanceDashboardView;
 }
 
 interface HookProfilesResp {
@@ -156,12 +684,33 @@ interface RuntimeProfilesResp {
   items: InfraAgentRuntimeProfileView[];
 }
 
+interface RuntimeProfileTemplatesResp {
+  items: InfraAgentRuntimeProfileTemplateView[];
+}
+
+interface RuntimeAdapterCompatibilityResp {
+  items: InfraAgentRuntimeAdapterCompatibilityView[];
+}
+
+interface RuntimeAdapterMatrixResp {
+  matrix: InfraAgentRuntimeAdapterMatrixView;
+}
+
 interface RuntimeProfileResp {
   item: InfraAgentRuntimeProfileView;
 }
 
+interface RuntimeProfilePromotionResp {
+  item: InfraAgentRuntimeProfileView;
+  test: InfraAgentRuntimeProfileTestResult;
+}
+
 interface RuntimeProfileTestResp {
   result: InfraAgentRuntimeProfileTestResult;
+}
+
+interface DeleteRuntimeProfileResp {
+  deleted: boolean;
 }
 
 export async function listInfraAgentSessions(limit = 50): Promise<ApiResponse<ListResp>> {
@@ -172,6 +721,23 @@ export async function getInfraAgentEventSchema(): Promise<ApiResponse<EventSchem
   return await apiRequest<EventSchemaResp>(api.infraAgentSessions.eventSchema(), { method: 'GET' });
 }
 
+export async function getInfraAgentRuntimeStatus(refreshDiscovery = false): Promise<ApiResponse<RuntimeStatusResp>> {
+  const suffix = refreshDiscovery ? '?refreshDiscovery=true' : '';
+  return await apiRequest<RuntimeStatusResp>(`${api.infraAgentSessions.runtimeStatus()}${suffix}`, { method: 'GET' });
+}
+
+export async function getInfraAgentSlaDashboard(days = 7): Promise<ApiResponse<SlaDashboardResp>> {
+  return await apiRequest<SlaDashboardResp>(`${api.infraAgentSessions.slaDashboard()}?days=${days}`, { method: 'GET' });
+}
+
+export async function getInfraAgentScheduleDashboard(days = 14): Promise<ApiResponse<ScheduleDashboardResp>> {
+  return await apiRequest<ScheduleDashboardResp>(`${api.infraAgentSessions.scheduleDashboard()}?days=${days}`, { method: 'GET' });
+}
+
+export async function getInfraAgentGovernanceDashboard(): Promise<ApiResponse<GovernanceDashboardResp>> {
+  return await apiRequest<GovernanceDashboardResp>(api.infraAgentSessions.governanceDashboard(), { method: 'GET' });
+}
+
 export async function createInfraAgentSession(input: {
   connectionId: string;
   runtime?: string;
@@ -180,6 +746,9 @@ export async function createInfraAgentSession(input: {
   title?: string;
   toolPolicy?: string;
   hookProfileId?: string;
+  workspaceRoot?: string;
+  gitRepository?: string;
+  gitRef?: string;
 }): Promise<ApiResponse<ItemResp>> {
   return await apiRequest<ItemResp>(api.infraAgentSessions.create(), {
     method: 'POST',
@@ -219,6 +788,12 @@ export async function collectInfraAgentArtifacts(id: string): Promise<ApiRespons
   return await apiRequest<ItemResp>(api.infraAgentSessions.collectArtifacts(encodeURIComponent(id)), {
     method: 'POST',
     body: {},
+  });
+}
+
+export async function getInfraAgentTraceBundle(id: string): Promise<ApiResponse<TraceBundleResp>> {
+  return await apiRequest<TraceBundleResp>(api.infraAgentSessions.traceBundle(encodeURIComponent(id)), {
+    method: 'GET',
   });
 }
 
@@ -288,6 +863,57 @@ export async function listInfraAgentEvents(
   );
 }
 
+export async function streamInfraAgentEvents(
+  id: string,
+  afterSeq: number,
+  limit: number,
+  onEvent: (event: InfraAgentEventView) => void,
+  signal: AbortSignal,
+  onOpen?: () => void,
+): Promise<void> {
+  const baseUrl = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '');
+  const qs = new URLSearchParams();
+  qs.set('afterSeq', String(afterSeq));
+  qs.set('limit', String(limit));
+  const path = `${api.infraAgentSessions.stream(encodeURIComponent(id))}?${qs.toString()}`;
+  const token = useAuthStore.getState().token;
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'text/event-stream',
+      'X-Client': 'admin',
+      'X-Client-Base-Url': window.location.origin,
+      'X-App-Name': 'prd-agent-web',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Infra agent event stream failed: HTTP ${res.status}`);
+  }
+
+  onOpen?.();
+
+  await readSseStream(res, (evt) => {
+    if (evt.event === 'error') {
+      throw new Error(evt.data || 'Infra agent event stream error');
+    }
+    if (!evt.data) return;
+    const seq = Number(evt.id ?? 0);
+    if (!Number.isFinite(seq) || seq <= afterSeq) return;
+    onEvent({
+      id: `${id}:${seq}`,
+      sessionId: id,
+      seq,
+      traceId: '',
+      type: evt.event || 'log',
+      payloadJson: evt.data,
+      createdAt: new Date().toISOString(),
+    });
+  }, signal);
+}
+
 export async function listInfraAgentMessages(
   id: string,
   limit = 200,
@@ -339,6 +965,18 @@ export async function listInfraAgentRuntimeProfiles(): Promise<ApiResponse<Runti
   return await apiRequest<RuntimeProfilesResp>(api.infraAgentRuntimeProfiles.list(), { method: 'GET' });
 }
 
+export async function listInfraAgentRuntimeProfileTemplates(): Promise<ApiResponse<RuntimeProfileTemplatesResp>> {
+  return await apiRequest<RuntimeProfileTemplatesResp>(api.infraAgentRuntimeProfiles.templates(), { method: 'GET' });
+}
+
+export async function listInfraAgentRuntimeAdapterCompatibility(): Promise<ApiResponse<RuntimeAdapterCompatibilityResp>> {
+  return await apiRequest<RuntimeAdapterCompatibilityResp>(api.infraAgentRuntimeProfiles.adapterCompatibility(), { method: 'GET' });
+}
+
+export async function getInfraAgentRuntimeAdapterMatrix(): Promise<ApiResponse<RuntimeAdapterMatrixResp>> {
+  return await apiRequest<RuntimeAdapterMatrixResp>(api.infraAgentRuntimeProfiles.adapterMatrix(), { method: 'GET' });
+}
+
 export async function createInfraAgentRuntimeProfile(input: {
   name?: string;
   runtime?: string;
@@ -354,6 +992,28 @@ export async function createInfraAgentRuntimeProfile(input: {
   isDefault?: boolean;
 }): Promise<ApiResponse<RuntimeProfileResp>> {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.create(), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function createInfraAgentRuntimeProfileFromTemplate(templateId: string, input: {
+  name?: string;
+  apiKey?: string;
+  isDefault?: boolean;
+}): Promise<ApiResponse<RuntimeProfileResp>> {
+  return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.createFromTemplate(encodeURIComponent(templateId)), {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function createDefaultInfraAgentRuntimeProfileFromTemplateAfterTest(templateId: string, input: {
+  name?: string;
+  apiKey?: string;
+  isDefault?: boolean;
+}): Promise<ApiResponse<RuntimeProfilePromotionResp>> {
+  return await apiRequest<RuntimeProfilePromotionResp>(api.infraAgentRuntimeProfiles.createDefaultFromTemplateAfterTest(encodeURIComponent(templateId)), {
     method: 'POST',
     body: input,
   });
@@ -376,6 +1036,12 @@ export async function updateInfraAgentRuntimeProfile(id: string, input: {
   return await apiRequest<RuntimeProfileResp>(api.infraAgentRuntimeProfiles.byId(encodeURIComponent(id)), {
     method: 'PUT',
     body: input,
+  });
+}
+
+export async function deleteInfraAgentRuntimeProfile(id: string): Promise<ApiResponse<DeleteRuntimeProfileResp>> {
+  return await apiRequest<DeleteRuntimeProfileResp>(api.infraAgentRuntimeProfiles.byId(encodeURIComponent(id)), {
+    method: 'DELETE',
   });
 }
 

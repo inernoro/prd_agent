@@ -1170,7 +1170,8 @@ public static class CapsuleTypeRegistry
         AccentHue = 198,
         ConfigSchema = new()
         {
-            new() { Key = "prompt", Label = "任务提示词", FieldType = "textarea", Required = true, Placeholder = "请在远程 sandbox 中巡检 prd_agent 代码并提交 PR", HelpTip = "支持 {{variable}} 变量替换；上游输入会追加到任务上下文中" },
+            new() { Key = "prompt", Label = "只读巡检任务", FieldType = "textarea", Required = true, Placeholder = "请只读巡检当前仓库代码，指出风险、证据和建议；不要写文件、不要提交 PR", HelpTip = "P1-4 仅支持只读代码巡检；支持 {{variable}} 变量替换，上游输入会追加到任务上下文中" },
+            new() { Key = "sessionId", Label = "复用 Session", FieldType = "text", Required = false, HelpTip = "留空时创建新 CDS Agent session；填入已有 sessionId 时复用并继续发送任务" },
             new() { Key = "connectionId", Label = "CDS 连接", FieldType = "text", Required = false, HelpTip = "留空时使用最近 active CDS 连接" },
             new() { Key = "runtimeProfileId", Label = "模型运行配置", FieldType = "text", Required = false, HelpTip = "留空时使用默认模型运行配置" },
             new() { Key = "runtime", Label = "Runtime", FieldType = "select", Required = false, DefaultValue = "claude-sdk", Options = new()
@@ -1180,17 +1181,21 @@ public static class CapsuleTypeRegistry
                 new() { Value = "fake", Label = "Fake Runtime（仅用于链路自测）" },
             }},
             new() { Key = "model", Label = "模型", FieldType = "text", Required = false, Placeholder = "claude-sonnet-4-5 / gpt-5.2 / 自定义模型名" },
-            new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "confirm-dangerous", Options = new()
+            new() { Key = "toolPolicy", Label = "工具策略", FieldType = "select", Required = false, DefaultValue = "readonly-auto", Options = new()
             {
-                new() { Value = "confirm-dangerous", Label = "危险工具需确认" },
                 new() { Value = "readonly-auto", Label = "只读自动允许" },
-                new() { Value = "manual-all", Label = "全部人工确认" },
+                new() { Value = "code-writable-confirm", Label = "代码可写需 MAP 审批" },
+                new() { Value = "confirm-dangerous", Label = "非代码危险工具需确认" },
+                new() { Value = "manual-all", Label = "非代码工具全部人工确认" },
             }},
             new() { Key = "workflowApprovalMode", Label = "工作流审批模式", FieldType = "select", Required = false, DefaultValue = "none", Options = new()
             {
                 new() { Value = "none", Label = "按 Agent 正常执行" },
-                new() { Value = "request-dangerous", Label = "生成危险工具审批并暂停工作流" },
+                new() { Value = "request-dangerous", Label = "生成危险工具审批并等待人工处理" },
             }},
+            new() { Key = "approvalTimeoutSeconds", Label = "审批超时秒数", FieldType = "number", Required = false, DefaultValue = "3600", HelpTip = "工作流进入 waiting_approval 后的人工处理窗口；超时后继续操作会进入 timed_out 分支" },
+            new() { Key = "approvalToolName", Label = "审批工具名", FieldType = "text", Required = false, DefaultValue = "kb_apply", HelpTip = "默认用 kb_apply 验证写入审批暂停；也可填 repo_run_command 等工具名" },
+            new() { Key = "approvalArgsSummary", Label = "审批参数摘要", FieldType = "json", Required = false, DefaultValue = "{\"draftId\":\"workflow-demo-draft\"}", HelpTip = "仅作为审批事件摘要展示，不直接执行写入" },
             new() { Key = "hookProfileId", Label = "Hook Profile", FieldType = "text", Required = false },
             new() { Key = "stopAfterRun", Label = "结束后停止会话", FieldType = "select", Required = false, DefaultValue = "true", Options = new()
             {
@@ -1205,6 +1210,8 @@ public static class CapsuleTypeRegistry
         DefaultOutputSlots = new()
         {
             new() { SlotId = "cds-agent-out", Name = "agentResult", DataType = "text", Required = true, Description = "远程 Agent 输出" },
+            new() { SlotId = "cds-agent-run", Name = "runHandle", DataType = "json", Required = false, Description = "sessionId/traceId/status/finalText/artifacts/eventsCursor 和工作台回跳" },
+            new() { SlotId = "cds-agent-approval", Name = "approvalRequest", DataType = "json", Required = false, Description = "waiting_approval 状态下的 MAP 审批请求" },
             new() { SlotId = "cds-agent-events", Name = "eventTimeline", DataType = "json", Required = false, Description = "事件时间线" },
             new() { SlotId = "cds-agent-log", Name = "runtimeLog", DataType = "text", Required = false, Description = "远程日志" },
         },

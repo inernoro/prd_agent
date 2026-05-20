@@ -1554,6 +1554,15 @@ export function createServer(deps: ServerDeps): express.Express {
         return next();
       }
       if (
+        (
+          (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/runtime-capacity$/.test(reqPath)) ||
+          (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/runtime-capacity\/reconcile$/.test(reqPath))
+        ) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+      if (
         /^\/api\/projects\/[^/]+\/agent-sessions(?:\/.*)?$/.test(reqPath) &&
         /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
       ) {
@@ -2115,7 +2124,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
   // shared-service 远程主机登记（系统级），见 routes/remote-hosts.ts 头部注释。
-  app.use('/api', createRemoteHostsRouter({ stateService: deps.stateService }));
+  app.use('/api', createRemoteHostsRouter({
+    stateService: deps.stateService,
+    containerService: deps.containerService,
+    config: deps.config,
+  }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({
     stateService: deps.stateService,

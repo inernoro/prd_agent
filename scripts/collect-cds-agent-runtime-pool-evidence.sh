@@ -1,0 +1,432 @@
+#!/usr/bin/env bash
+# 只读证据采集: CDS Agent runtime pool recovery
+#
+# 输出一个目录，包含:
+#   - recovery plan
+#   - branch isolation repair dry-run
+#   - remote host pool preparation dry-run
+#   - shared-service pool audit
+#   - optional goal audit
+#   - summary.json / evidence-index.md
+#
+# 不删除、不重启、不部署。远程检查只在 CDS_HOST 存在时执行。
+# 设置 CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 时，会用同一份 summary
+# 刷新 doc/status.cds-agent-current-progress.md。
+
+set -uo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_DIR="${CDS_AGENT_RUNTIME_POOL_EVIDENCE_DIR:-/tmp/cds-agent-runtime-pool-evidence-$(date +%Y%m%d%H%M%S)}"
+RUN_GOAL_AUDIT="${CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT:-1}"
+GOAL_AUDIT_TIMEOUT="${CDS_AGENT_RUNTIME_POOL_GOAL_AUDIT_TIMEOUT:-25}"
+UPDATE_STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC:-0}"
+STATUS_DOC="${CDS_AGENT_RUNTIME_POOL_STATUS_DOC:-$ROOT_DIR/doc/status.cds-agent-current-progress.md}"
+RUNTIME_CAPACITY_REPORT="${CDS_AGENT_RUNTIME_CAPACITY_REPORT:-/tmp/cds-agent-runtime-live-apply-current.json}"
+
+mkdir -p "$OUT_DIR"
+
+step_names=""
+step_statuses=""
+step_seconds=""
+step_logs=""
+
+append_json_string() {
+  local current="$1"
+  local value="$2"
+  local encoded
+  encoded=$(printf '%s' "$value" | jq -R .)
+  if [[ -z "$current" ]]; then
+    printf '%s' "$encoded"
+  else
+    printf '%s,%s' "$current" "$encoded"
+  fi
+}
+
+append_json_number() {
+  local current="$1"
+  local value="$2"
+  if [[ -z "$current" ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s,%s' "$current" "$value"
+  fi
+}
+
+run_capture() {
+  local name="$1"
+  local log="$2"
+  shift 2
+  local started ended duration rc status
+  started=$(date +%s)
+  printf '>>> %s\n' "$name"
+  "$@" >"$log" 2>&1
+  rc=$?
+  ended=$(date +%s)
+  duration=$((ended - started))
+  if (( rc == 0 )); then
+    status="pass"
+  else
+    status="blocked"
+  fi
+  printf '%s %s (%ss) log=%s\n' "$status" "$name" "$duration" "$log"
+  step_names=$(append_json_string "$step_names" "$name")
+  step_statuses=$(append_json_string "$step_statuses" "$status")
+  step_seconds=$(append_json_number "$step_seconds" "$duration")
+  step_logs=$(append_json_string "$step_logs" "$log")
+  return 0
+}
+
+plan_log="$OUT_DIR/runtime-pool-recovery-plan.log"
+repair_dry_run_log="$OUT_DIR/branch-isolation-repair-dry-run.log"
+repair_dry_run_report="$OUT_DIR/branch-isolation-repair-dry-run.json"
+remote_host_prepare_log="$OUT_DIR/remote-host-pool-prepare.log"
+remote_host_prepare_report="$OUT_DIR/remote-host-pool-prepare.json"
+shared_pool_log="$OUT_DIR/shared-service-pool-audit.log"
+goal_audit_log="$OUT_DIR/goal-audit.log"
+goal_audit_report="$OUT_DIR/goal-audit.json"
+
+# The caller may pin OUT_DIR to a stable location such as
+# /tmp/cds-agent-runtime-pool-evidence-current. Remove prior generated
+# artifacts up front so a failed fresh probe cannot silently reuse stale JSON.
+rm -f \
+  "$plan_log" \
+  "$repair_dry_run_log" \
+  "$repair_dry_run_report" \
+  "$remote_host_prepare_log" \
+  "$remote_host_prepare_report" \
+  "$shared_pool_log" \
+  "$goal_audit_log" \
+  "$goal_audit_report" \
+  "$OUT_DIR/summary.json" \
+  "$OUT_DIR/evidence-index.md"
+
+if [[ -n "${CDS_HOST:-}" ]]; then
+  run_capture "runtime pool recovery plan" "$plan_log" \
+    bash "$ROOT_DIR/scripts/plan-cds-agent-runtime-pool-recovery.sh"
+  run_capture "branch isolation repair dry-run" "$repair_dry_run_log" \
+    env SMOKE_CDS_AGENT_BRANCH_ISOLATION_REPAIR_REPORT="$repair_dry_run_report" \
+        bash "$ROOT_DIR/scripts/repair-cds-agent-branch-isolation.sh"
+  run_capture "remote host pool preparation" "$remote_host_prepare_log" \
+    env CDS_AGENT_REMOTE_HOST_POOL_REPORT="$remote_host_prepare_report" \
+        bash "$ROOT_DIR/scripts/prepare-cds-agent-remote-host-pool.sh"
+  run_capture "shared-service pool audit" "$shared_pool_log" \
+    env SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash "$ROOT_DIR/scripts/smoke-cds-agent-shared-service-pool.sh"
+else
+  run_capture "shared-service pool local guard" "$shared_pool_log" \
+    bash "$ROOT_DIR/scripts/smoke-cds-agent-shared-service-pool.sh"
+fi
+
+if [[ "$RUN_GOAL_AUDIT" == "1" ]]; then
+  run_capture "goal completion audit" "$goal_audit_log" \
+    env CDS_AGENT_GOAL_AUDIT_STEP_TIMEOUT_SECONDS="$GOAL_AUDIT_TIMEOUT" \
+        CDS_AGENT_GOAL_AUDIT_REPORT="$goal_audit_report" \
+        bash "$ROOT_DIR/scripts/audit-cds-agent-goal.sh"
+fi
+
+json_file_or_null() {
+  local file="$1"
+  local parsed
+  if [[ -s "$file" ]]; then
+    parsed=$(jq -c . "$file" 2>/dev/null || true)
+    if [[ -n "$parsed" ]]; then
+      printf '%s' "$parsed"
+    else
+      printf 'null'
+    fi
+  else
+    printf 'null'
+  fi
+}
+
+json_from_log_or_null() {
+  local file="$1"
+  local parsed
+  if [[ -s "$file" ]]; then
+    parsed=$(sed -n '/^{/,$p' "$file" | jq -c . 2>/dev/null || true)
+    if [[ -n "$parsed" ]]; then
+      printf '%s' "$parsed"
+    else
+      printf 'null'
+    fi
+  else
+    printf 'null'
+  fi
+}
+
+plan_json=$(json_from_log_or_null "$plan_log")
+goal_json=$(json_file_or_null "$goal_audit_report")
+repair_json=$(json_file_or_null "$repair_dry_run_report")
+remote_host_prepare_json=$(json_file_or_null "$remote_host_prepare_report")
+runtime_capacity_json=$(json_file_or_null "$RUNTIME_CAPACITY_REPORT")
+
+summary="$OUT_DIR/summary.json"
+jq -n \
+  --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg outDir "$OUT_DIR" \
+  --arg cdsHost "${CDS_HOST:-}" \
+  --argjson names "[$step_names]" \
+  --argjson statuses "[$step_statuses]" \
+  --argjson seconds "[$step_seconds]" \
+  --argjson logs "[$step_logs]" \
+  --argjson plan "$plan_json" \
+  --argjson repair "$repair_json" \
+  --argjson remoteHostPrepare "$remote_host_prepare_json" \
+  --argjson runtimeCapacity "$runtime_capacity_json" \
+  --argjson goal "$goal_json" \
+  '{
+    createdAt: $createdAt,
+    outDir: $outDir,
+    cdsHost: (if $cdsHost == "" then null else $cdsHost end),
+    steps: [range(0; ($names | length)) | {
+      name: $names[.],
+      status: $statuses[.],
+      durationSeconds: $seconds[.],
+      log: $logs[.]
+    }],
+    totalSeconds: ($seconds | add // 0),
+    plan: $plan,
+    runtimeCapacity: $runtimeCapacity,
+    branchIsolationRepairDryRun: $repair,
+    remoteHostPoolPreparation: $remoteHostPrepare,
+    goalStatus: ($goal.goalStatus // null),
+    runtimePoolBlockers: (
+      $goal.runtimePoolRecovery.blockers //
+      (if ($runtimeCapacity.ok // false) then
+        []
+      else [
+        (if ($repair == null and $plan == null) then
+          {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:"unproved:evidence-unavailable"}
+        elif (($repair.contaminatedBranchCount // $plan.contaminatedBranchCount // 0) > 0) then
+          {requirement:"BRANCH_LOCAL_SIDECAR_CLEAN", status:("contaminated:" + (($repair.contaminatedBranchCount // $plan.contaminatedBranchCount // 0)|tostring))}
+        else empty end),
+        (if ($remoteHostPrepare == null and $plan == null) then
+          {requirement:"REMOTE_HOST_AVAILABLE", status:"unproved:evidence-unavailable"}
+        elif ((($remoteHostPrepare.enabledHostCount // $plan.enabledRemoteHostCount // "unknown") | tostring | test("^[0-9]+$")) and (($remoteHostPrepare.enabledHostCount // $plan.enabledRemoteHostCount | tonumber) <= 0)) then
+          {requirement:"REMOTE_HOST_AVAILABLE", status:"missing"}
+        else empty end),
+        (if ($plan == null) then
+          {requirement:"SHARED_POOL_RUNNING", status:"unproved:evidence-unavailable"}
+        elif (($plan.sharedRunning // 0) <= 0) then
+          {requirement:"SHARED_POOL_RUNNING", status:"missing"}
+        else empty end)
+      ] end)
+    )
+  }
+  | .missingOrUnproved = ($goal.missingOrUnproved // .runtimePoolBlockers)
+  | .branchIsolation = (
+      {
+        evidenceCaptured: (.branchIsolationRepairDryRun != null or .plan != null),
+        contaminatedBranchCount: (.branchIsolationRepairDryRun.contaminatedBranchCount // .plan.contaminatedBranchCount // null),
+        candidateProfileIds: (.branchIsolationRepairDryRun.candidateProfileIds // .plan.contaminatedProfileIds // []),
+        applyManifest: (.branchIsolationRepairDryRun.applyManifest // null),
+        confirmProfileId: (.branchIsolationRepairDryRun.confirmProfileId // null),
+        repairStatus: (.branchIsolationRepairDryRun.status // "unknown")
+      }
+      | .clean = (.evidenceCaptured and ((.contaminatedBranchCount // -1) == 0))
+      | .verdict = (
+          if (.evidenceCaptured | not) then "evidence-unavailable"
+          elif .clean then "dry-run-clean"
+          else "dry-run-contaminated"
+          end
+        )
+      | .readyForRemoteHostStep = .clean
+      | .nextAction = (
+          if (.evidenceCaptured | not) then
+            "runtime pool evidence was unavailable; rerun with network/auth available before any apply or deploy"
+          elif .clean then
+            "branch isolation already clean; continue R0.7 CDS-managed runtime live apply; remote host recovery is operator fallback only"
+          else
+            "review candidateProfileIds, then rerun scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh with SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 and SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID set to the unique candidate"
+          end
+        )
+    )
+  | .remoteHost = (
+      {
+        prepareStatus: (.remoteHostPoolPreparation.status // "unknown"),
+        evidenceCaptured: (.remoteHostPoolPreparation != null or .plan != null),
+        existingHostCount: (.remoteHostPoolPreparation.existingHostCount // .plan.remoteHostCount // null),
+        enabledHostCount: (.remoteHostPoolPreparation.enabledHostCount // .plan.enabledRemoteHostCount // null),
+        missingConfig: (.remoteHostPoolPreparation.missingConfig // []),
+        sharedRunning: (.plan.sharedRunning // null),
+        runtimeCapacityStatus: (.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.status),
+        runtimeCapacityRunning: (.runtimeCapacity.entries[]? | select(.step == "capacity-after") | .payload.runningOfficialSdkRuntimeCount),
+        branchIsolationClean: .branchIsolation.clean
+      }
+      | .verdict = (
+          if (.branchIsolationClean | not) then "blocked-branch-isolation"
+          elif (.evidenceCaptured | not) then "evidence-unavailable"
+          elif ((.runtimeCapacityStatus // "") == "available") then "cds-managed-runtime-capacity-available"
+          elif ((.prepareStatus // "") == "missing_config") then "dry-run-missing-config"
+          elif (((.enabledHostCount | tostring | tonumber?) // 0) > 0) then "dry-run-host-already-available"
+          elif ((.prepareStatus // "") == "dry_run_ready") then "dry-run-ready"
+          else "dry-run-blocked"
+          end
+        )
+      | .readyForSharedRuntimeDeploy = (.verdict == "dry-run-host-already-available" or .verdict == "cds-managed-runtime-capacity-available")
+      | .readyForProviderSmokes = (((((.runtimeCapacityRunning // .sharedRunning // 0) | tostring | tonumber?) // 0) > 0) or ((.runtimeCapacityStatus // "") == "available"))
+      | .nextAction = (
+          if .verdict == "blocked-branch-isolation" then
+            "clean branch-local sidecar residuals first; do not create remote host or deploy shared runtime yet"
+          elif .verdict == "evidence-unavailable" then
+            "remote host evidence was unavailable; rerun with network/auth available before shared runtime deploy"
+          elif .verdict == "cds-managed-runtime-capacity-available" then
+            "CDS-managed runtime capacity is available; continue R1 profile repair and provider smokes without remote host fallback"
+          elif .verdict == "dry-run-missing-config" then
+            "CDS-managed runtime capacity is absent in live evidence; do not ask product users for remote host variables. Only operator fallback may rerun scripts/run-cds-agent-remote-host-pool-with-evidence.sh with explicit remote host variables"
+          elif .verdict == "dry-run-ready" then
+            "operator fallback configuration is sufficient; rerun with CDS_AGENT_REMOTE_HOST_APPLY=1 only when explicitly choosing fallback recovery"
+          elif .verdict == "dry-run-host-already-available" then
+            "enabled operator fallback host exists; deploy shared official SDK runtime sidecar only as CDS operator recovery"
+          else
+            "inspect remote host preparation and shared-service pool audit before continuing"
+          end
+        )
+    )' > "$summary"
+
+index="$OUT_DIR/evidence-index.md"
+{
+  printf '# CDS Agent Runtime Pool Evidence\n\n'
+  printf '%s\n' "- createdAt: \`$(jq -r '.createdAt' "$summary")\`"
+  printf '%s\n' "- totalSeconds: \`$(jq -r '.totalSeconds' "$summary")\`"
+  printf '%s\n' "- goalStatus: \`$(jq -r '.goalStatus // "not-run"' "$summary")\`"
+  printf '%s\n\n' "- summary: \`$summary\`"
+  printf '## Steps\n\n'
+  jq -r '.steps[] | "- `" + .status + "` " + .name + " · " + (.durationSeconds|tostring) + "s · `" + .log + "`"' "$summary"
+  printf '\n## Runtime Pool Blockers\n\n'
+  if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
+    printf '%s\n' '- none'
+  else
+    jq -r '.runtimePoolBlockers[] | "- `" + .requirement + "` · " + .status' "$summary"
+  fi
+  printf '\n## Branch Isolation Repair Dry Run\n\n'
+  if [[ "$(jq -r '.branchIsolationRepairDryRun == null' "$summary")" == "true" ]]; then
+    printf '%s\n' '- not captured'
+  else
+    jq -r '"- verdict: `" + (.branchIsolation.verdict // "unknown") + "`",
+      "- readyForRemoteHostStep: `" + ((.branchIsolation.readyForRemoteHostStep // false)|tostring) + "`",
+      "- nextAction: " + (.branchIsolation.nextAction // ""),
+      "- status: `" + (.branchIsolationRepairDryRun.status // "unknown") + "`",
+      "- contaminatedBranchCount: `" + ((.branchIsolation.contaminatedBranchCount // 0)|tostring) + "`",
+      "- candidateProfileIds: `" + ((.branchIsolation.candidateProfileIds // []) | join(",")) + "`",
+      "- confirmProfileId: `" + (.branchIsolation.confirmProfileId // "not-set") + "`"' "$summary"
+  fi
+  printf '\n## Operator Fallback Remote Host Preparation\n\n'
+  if [[ "$(jq -r '.remoteHostPoolPreparation == null' "$summary")" == "true" ]]; then
+    printf '%s\n' '- not captured'
+  else
+    jq -r '"- verdict: `" + (.remoteHost.verdict // "unknown") + "`",
+      "- readyForSharedRuntimeDeploy: `" + ((.remoteHost.readyForSharedRuntimeDeploy // false)|tostring) + "`",
+      "- readyForProviderSmokes: `" + ((.remoteHost.readyForProviderSmokes // false)|tostring) + "`",
+      "- nextAction: " + (.remoteHost.nextAction // ""),
+      "- status: `" + (.remoteHostPoolPreparation.status // "unknown") + "`",
+      "- existingHostCount: `" + ((.remoteHost.existingHostCount // 0)|tostring) + "`",
+      "- enabledHostCount: `" + ((.remoteHost.enabledHostCount // 0)|tostring) + "`",
+      "- missingConfig: `" + ((.remoteHost.missingConfig // []) | join(",")) + "`"' "$summary"
+  fi
+  printf '\n## Missing Or Unproved\n\n'
+  if [[ "$(jq -r '.missingOrUnproved | length' "$summary")" == "0" ]]; then
+    printf '%s\n' '- none'
+  else
+    jq -r '.missingOrUnproved[] | "- `" + .requirement + "` · " + .status' "$summary"
+  fi
+} > "$index"
+
+if [[ "$UPDATE_STATUS_DOC" == "1" ]]; then
+  branch_name="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || printf 'unknown')"
+  updated_at="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M Asia/Shanghai')"
+  status_line="R0 runtime pool blocked，目标未完成。"
+  if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
+    status_line="R0 CDS-managed runtime capacity 暂无阻塞；继续执行 R1/S1/S2/S3 验证。"
+  fi
+  mkdir -p "$(dirname "$STATUS_DOC")"
+  {
+    printf '# CDS Agent 当前进度面板\n\n'
+    printf '> 更新时间：%s\n' "$updated_at"
+    printf '> 分支：`%s`\n' "$branch_name"
+    printf '> 状态：%s\n\n' "$status_line"
+    printf '## 当前结论\n\n'
+    if [[ "$(jq -r '.runtimePoolBlockers | length' "$summary")" == "0" ]]; then
+      printf '当前只读证据没有发现 CDS-managed runtime capacity blocker。下一步应重跑 MAP R0/S1/S2/S3/one-cycle，确认 provider 与页面证据。\n\n'
+    else
+      printf '现在不要做普通 preview redeploy，也不要把 SSH/env/image 写成产品主路径。远程 R0V 只读证据显示 CDS-managed runtime capacity 仍缺失：\n\n'
+      jq -r '.runtimePoolBlockers[] | "- `" + .requirement + " = " + .status + "`"' "$summary"
+      printf '\n'
+    fi
+    printf '最新只读证据目录：\n\n'
+    printf -- '- `%s`\n' "$OUT_DIR"
+    printf -- '- `summary.json`: `%s`\n' "$summary"
+    printf -- '- `evidence-index.md`: `%s`\n\n' "$index"
+    printf '本次证据采集总耗时 `%ss`：\n\n' "$(jq -r '.totalSeconds' "$summary")"
+    printf '| 步骤 | 状态 | 耗时 |\n'
+    printf '| --- | --- | --- |\n'
+    jq -r '.steps[] | "| " + .name + " | " + .status + " | " + (.durationSeconds|tostring) + "s |"' "$summary"
+    printf '\n## 为什么不是部署问题\n\n'
+    printf '当前阻塞不在 `prd-api` 或 `prd-admin` 普通应用代码是否能构建，而在 CDS-managed runtime capacity：\n\n'
+    printf -- '- `prd-agent` 业务项目 branch-local sidecar residual 当前为 `0`。\n'
+    printf -- '- `shared-sidecar-pool-mp4anabh` 是 `shared-service`，但没有 running runtime/service。\n'
+    printf -- '- CDS 系统 remote host 列表为空；这只说明 operator fallback 承载能力缺失，不能写成普通用户主路径。\n\n'
+    printf '普通 preview redeploy 不能创建 CDS-managed runtime capacity。继续 redeploy 反而可能让用户以为构建能解决 R0V。\n\n'
+    printf '## 已完成\n\n'
+    printf -- '- MAP/CDS 控制面与官方 SDK adapter 边界已写入后端兼容矩阵。\n'
+    printf -- '- `claude-agent-sdk` 路径已作为目标 adapter；`legacy-sidecar` 只允许显式 fallback。\n'
+    printf -- '- 其他候选官方 SDK，例如 `codex`、`openai-agents-sdk`、`google-adk`，仍为 `planned-not-routable`，避免误路由。\n'
+    printf -- '- 非代码智能体兼容 smoke 已存在，防止 PRD/Defect/Literary/Visual 等智能体被 CDS sidecar runtime pool 污染。\n'
+    printf -- '- runtime-status execution panel 已能把 R0 阻塞的下一步收敛到只读证据采集。\n'
+    printf -- '- 总证据 summary 已聚合 branch isolation 与 remote host/shared runtime verdict，避免跨多个 `/tmp` 目录人工判断。\n'
+    printf -- '- 文档和目标审计已校准到当前 R0 runtime pool 阻塞，而不是旧的“只剩 R1 profile”。\n\n'
+    printf '## 下一步\n\n'
+    printf '必须按这个顺序处理：\n\n'
+    printf '1. 保持 `prd-agent` branch-local sidecar BuildProfile/service residual 为 0。\n'
+    printf '   - dry-run 证据已确认候选 profile：`%s`\n' "$(jq -r '(.branchIsolationRepairDryRun.candidateProfileIds // []) | join(",") // "unknown"' "$summary")"
+    printf '   - verdict：`%s`\n' "$(jq -r '.branchIsolation.verdict // "unknown"' "$summary")"
+    printf '   - readyForRemoteHostStep：`%s`\n' "$(jq -r '.branchIsolation.readyForRemoteHostStep // false' "$summary")"
+    printf '   - nextAction：%s\n' "$(jq -r '.branchIsolation.nextAction // ""' "$summary")"
+    printf '   - apply 确认变量：`SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=%s`\n' "$(jq -r '(.branchIsolation.candidateProfileIds // []) | if length == 1 then .[0] else "REVIEW_CANDIDATES" end' "$summary")"
+    printf '   - 写远程清理前必须使用 evidence wrapper，并在清理后立即跑 post-check。\n'
+    printf '2. 补齐 CDS-managed runtime capacity，而不是要求普通用户配置 remote host/env/image。\n'
+    printf '   - verdict：`%s`\n' "$(jq -r '.remoteHost.verdict // "unknown"' "$summary")"
+    printf '   - readyForSharedRuntimeDeploy：`%s`\n' "$(jq -r '.remoteHost.readyForSharedRuntimeDeploy // false' "$summary")"
+    printf '   - nextAction：%s\n' "$(jq -r '.remoteHost.nextAction // ""' "$summary")"
+    jq -r '(.remoteHostPoolPreparation.missingConfig // [])[]? | "   - 当前缺失：`" + . + "`"' "$summary"
+    printf '3. 只有明确选择 operator fallback recovery 时，才登记 enabled CDS remote host 并部署 shared official SDK runtime sidecar。\n'
+    printf '   - `CDS_AGENT_SIDECAR_IMAGE` 和 SSH 参数是 fallback 操作参数，不是产品主路径输入。\n'
+    printf '4. 重跑 shared-service pool audit。\n'
+    printf '5. R0 通过后，再进入 R1 Anthropic/Claude-compatible profile 和 S1/S2/S3 provider smokes。\n\n'
+    printf '## 当前有效命令\n\n'
+    printf '只读总证据并刷新本文件：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf 'CDS_AGENT_RUNTIME_POOL_RUN_GOAL_AUDIT=0 \\\n'
+    printf 'CDS_AGENT_RUNTIME_POOL_UPDATE_STATUS_DOC=1 \\\n'
+    printf '  bash scripts/collect-cds-agent-runtime-pool-evidence.sh\n'
+    printf '```\n\n'
+    printf 'branch 清理 dry-run：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf '  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh\n'
+    printf '```\n\n'
+    printf 'branch 清理 apply 必须精确确认候选 profile：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf 'SMOKE_CDS_AGENT_BRANCH_ISOLATION_APPLY=1 \\\n'
+    printf 'SMOKE_CDS_AGENT_BRANCH_ISOLATION_CONFIRM_PROFILE_ID=%s \\\n' "$(jq -r '(.branchIsolation.candidateProfileIds // []) | if length == 1 then .[0] else "REVIEW_CANDIDATES" end' "$summary")"
+    printf '  bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh\n'
+    printf '```\n\n'
+    printf 'remote host 准备 dry-run：\n\n'
+    printf '```bash\n'
+    printf 'CDS_HOST=https://cds.miduo.org \\\n'
+    printf '  bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh\n'
+    printf '```\n\n'
+    printf '目标审计：\n\n'
+    printf '```bash\n'
+    printf 'CDS_AGENT_GOAL_AUDIT_REPORT=/tmp/cds-agent-goal-audit.json \\\n'
+    printf '  bash scripts/audit-cds-agent-goal.sh\n'
+    printf '```\n'
+  } > "$STATUS_DOC"
+  printf 'Status doc:   %s\n' "$STATUS_DOC"
+fi
+
+printf '\nEvidence dir: %s\n' "$OUT_DIR"
+printf 'Summary:      %s\n' "$summary"
+printf 'Index:        %s\n' "$index"
+jq '{goalStatus,totalSeconds,branchIsolation:{verdict:.branchIsolation.verdict,readyForRemoteHostStep:.branchIsolation.readyForRemoteHostStep,nextAction:.branchIsolation.nextAction},remoteHost:{verdict:.remoteHost.verdict,readyForSharedRuntimeDeploy:.remoteHost.readyForSharedRuntimeDeploy,readyForProviderSmokes:.remoteHost.readyForProviderSmokes,nextAction:.remoteHost.nextAction},runtimePoolBlockers,missingOrUnproved}' "$summary"

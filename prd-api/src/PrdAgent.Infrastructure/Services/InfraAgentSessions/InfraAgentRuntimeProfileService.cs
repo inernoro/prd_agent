@@ -35,14 +35,35 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         _configuration = configuration;
     }
 
-    public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(CancellationToken ct)
+    public async Task<List<InfraAgentRuntimeProfileView>> ListAsync(string userId, CancellationToken ct)
     {
+        var teamIds = await GetVisibleTeamIdsAsync(userId, ct);
         var items = await _db.InfraAgentRuntimeProfiles
-            .Find(_ => true)
+            .Find(ProfileAccessibleFilter(userId, teamIds))
             .SortByDescending(x => x.IsDefault)
             .ThenByDescending(x => x.UpdatedAt)
             .ToListAsync(ct);
-        return items.Select(ToView).ToList();
+        return items.Select(x => ToView(x, userId)).ToList();
+    }
+
+    public Task<List<InfraAgentRuntimeProfileTemplateView>> ListTemplatesAsync(CancellationToken ct)
+    {
+        return Task.FromResult(InfraAgentRuntimeProfileTemplates.All.ToList());
+    }
+
+    public Task<List<InfraAgentRuntimeAdapterCompatibilityView>> ListAdapterCompatibilityAsync(CancellationToken ct)
+    {
+        return Task.FromResult(InfraAgentRuntimeAdapterCompatibility.All.ToList());
+    }
+
+    public async Task<InfraAgentRuntimeAdapterMatrixView> GetAdapterMatrixAsync(string userId, CancellationToken ct)
+    {
+        var profiles = await ListAsync(userId, ct);
+        var templates = InfraAgentRuntimeProfileTemplates.All;
+        return InfraAgentRuntimeAdapterCompatibility.BuildMatrix(
+            InfraAgentRuntimeAdapterDefaults.ResolveSidecarRuntimeAdapter(),
+            profiles,
+            templates);
     }
 
     public async Task<InfraAgentRuntimeProfileView> CreateAsync(
@@ -73,16 +94,20 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
                 "API key 不能为空");
         }
+        var resolvedApiKey = apiKey ?? string.Empty;
+        var protocol = NormalizeProtocol(request.Protocol);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolvedApiKey);
 
         var now = DateTime.UtcNow;
+        var sharedTeamIds = await NormalizeSharedTeamIdsAsync(userId, request.SharedTeamIds, ct);
         var item = new InfraAgentRuntimeProfile
         {
             Name = name,
             Runtime = NormalizeRuntime(request.Runtime),
-            Protocol = NormalizeProtocol(request.Protocol),
+            Protocol = protocol,
             BaseUrl = baseUrl,
             Model = model,
-            ApiKeyEncrypted = _protector.Protect(apiKey),
+            ApiKeyEncrypted = _protector.Protect(resolvedApiKey),
             ResourceCpuCores = NormalizeCpuCores(request.ResourceCpuCores),
             ResourceMemoryMb = NormalizeMemoryMb(request.ResourceMemoryMb),
             TimeoutSeconds = NormalizeTimeoutSeconds(request.TimeoutSeconds),
@@ -90,6 +115,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes),
             IsDefault = request.IsDefault == true,
             CreatedByUserId = userId,
+            SharedTeamIds = sharedTeamIds,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -97,13 +123,101 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         if (item.IsDefault)
         {
             await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
-                _ => true,
+                ProfileOwnerFilter(userId),
                 Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
                 cancellationToken: ct);
         }
 
         await _db.InfraAgentRuntimeProfiles.InsertOneAsync(item, cancellationToken: ct);
-        return ToView(item);
+        return ToView(item, userId);
+    }
+
+    public Task<InfraAgentRuntimeProfileView> CreateFromTemplateAsync(
+        string templateId,
+        string userId,
+        CreateInfraAgentRuntimeProfileFromTemplateRequest request,
+        CancellationToken ct)
+    {
+        var template = InfraAgentRuntimeProfileTemplates.All
+            .FirstOrDefault(x => string.Equals(x.Id, templateId, StringComparison.OrdinalIgnoreCase));
+        if (template == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.TemplateNotFound,
+                "运行配置模板不存在",
+                StatusCodes.Status404NotFound);
+        }
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForTemplate(template, request.ApiKey);
+
+        var upsert = new UpsertInfraAgentRuntimeProfileRequest(
+            NormalizeOptional(request.Name) ?? template.Name,
+            template.Runtime,
+            template.Protocol,
+            template.BaseUrl,
+            template.Model,
+            request.ApiKey,
+            template.ResourceCpuCores,
+            template.ResourceMemoryMb,
+            template.TimeoutSeconds,
+            template.NetworkPolicy,
+            template.AutoCleanupMinutes,
+            request.IsDefault ?? template.IsDefaultRecommended,
+            request.SharedTeamIds);
+        return CreateAsync(userId, upsert, ct);
+    }
+
+    public async Task<InfraAgentRuntimeProfilePromotionResult> CreateDefaultFromTemplateAfterTestAsync(
+        string templateId,
+        string userId,
+        CreateInfraAgentRuntimeProfileFromTemplateRequest request,
+        CancellationToken ct)
+    {
+        var candidate = await CreateFromTemplateAsync(
+            templateId,
+            userId,
+            request with { IsDefault = false },
+            ct);
+
+        var promoted = false;
+        try
+        {
+            var test = await TestAsync(candidate.Id, userId, ct);
+            if (!test.Success)
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ProfileTestFailed,
+                    $"候选模型配置测试失败：{test.Message}",
+                    StatusCodes.Status422UnprocessableEntity);
+            }
+
+            var promotedItem = await UpdateAsync(
+                candidate.Id,
+                userId,
+                new UpsertInfraAgentRuntimeProfileRequest(
+                    candidate.Name,
+                    candidate.Runtime,
+                    candidate.Protocol,
+                    candidate.BaseUrl,
+                    candidate.Model,
+                    request.ApiKey,
+                    candidate.ResourceCpuCores,
+                    candidate.ResourceMemoryMb,
+                    candidate.TimeoutSeconds,
+                    candidate.NetworkPolicy,
+                    candidate.AutoCleanupMinutes,
+                    true,
+                    candidate.SharedTeamIds),
+                ct);
+            promoted = true;
+            return new InfraAgentRuntimeProfilePromotionResult(promotedItem, test);
+        }
+        finally
+        {
+            if (!promoted)
+            {
+                await DeleteAsync(candidate.Id, userId, ct);
+            }
+        }
     }
 
     public async Task<InfraAgentRuntimeProfileView> UpdateAsync(
@@ -112,7 +226,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         UpsertInfraAgentRuntimeProfileRequest request,
         CancellationToken ct)
     {
-        var item = await _db.InfraAgentRuntimeProfiles.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var item = await _db.InfraAgentRuntimeProfiles.Find(ProfileIdOwnerFilter(id, userId)).FirstOrDefaultAsync(ct);
         if (item == null)
         {
             throw new InfraAgentRuntimeProfileException(
@@ -138,19 +252,43 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
                 InfraAgentRuntimeProfileErrorCodes.ModelRequired,
                 "模型名称不能为空");
         }
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var retainsExistingApiKey = string.IsNullOrWhiteSpace(apiKey);
+        if (retainsExistingApiKey)
         {
-            throw new InfraAgentRuntimeProfileException(
-                InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
-                "更新配置时必须重新输入 API key");
+            if (string.IsNullOrWhiteSpace(item.ApiKeyEncrypted))
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ApiKeyRequired,
+                    "当前配置没有可复用的 provider secret，请输入后再保存");
+            }
+            try
+            {
+                apiKey = _protector.Unprotect(item.ApiKeyEncrypted);
+            }
+            catch (CryptographicException)
+            {
+                throw new InfraAgentRuntimeProfileException(
+                    InfraAgentRuntimeProfileErrorCodes.ApiKeyUnreadable,
+                    $"模型配置「{item.Name}」的 provider secret 无法解密，请重新输入后再保存。",
+                    StatusCodes.Status409Conflict);
+            }
         }
+        var resolvedApiKey = apiKey ?? string.Empty;
+        var protocol = NormalizeProtocol(request.Protocol);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolvedApiKey);
+        var sharedTeamIds = request.SharedTeamIds == null
+            ? item.SharedTeamIds ?? new List<string>()
+            : await NormalizeSharedTeamIdsAsync(userId, request.SharedTeamIds, ct);
 
         item.Name = name;
         item.Runtime = NormalizeRuntime(request.Runtime);
-        item.Protocol = NormalizeProtocol(request.Protocol);
+        item.Protocol = protocol;
         item.BaseUrl = baseUrl;
         item.Model = model;
-        item.ApiKeyEncrypted = _protector.Protect(apiKey);
+        if (!retainsExistingApiKey)
+        {
+            item.ApiKeyEncrypted = _protector.Protect(resolvedApiKey);
+        }
         item.ResourceCpuCores = NormalizeCpuCores(request.ResourceCpuCores);
         item.ResourceMemoryMb = NormalizeMemoryMb(request.ResourceMemoryMb);
         item.TimeoutSeconds = NormalizeTimeoutSeconds(request.TimeoutSeconds);
@@ -158,18 +296,19 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         item.AutoCleanupMinutes = NormalizeAutoCleanupMinutes(request.AutoCleanupMinutes);
         item.IsDefault = request.IsDefault ?? item.IsDefault;
         item.CreatedByUserId = string.IsNullOrWhiteSpace(item.CreatedByUserId) ? userId : item.CreatedByUserId;
+        item.SharedTeamIds = sharedTeamIds;
         item.UpdatedAt = DateTime.UtcNow;
 
         if (item.IsDefault)
         {
             await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
-                x => x.Id != item.Id,
+                ProfileOwnerFilter(userId) & Builders<InfraAgentRuntimeProfile>.Filter.Ne(x => x.Id, item.Id),
                 Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
                 cancellationToken: ct);
         }
 
-        await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == item.Id, item, cancellationToken: ct);
-        return ToView(item);
+        await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(item.Id, userId), item, cancellationToken: ct);
+        return ToView(item, userId);
     }
 
     public async Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct)
@@ -203,12 +342,17 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
 
         var now = DateTime.UtcNow;
+        var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
+        var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
+        var runtime = InferRuntime(protocol, model.ModelName);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
+
         var profile = new InfraAgentRuntimeProfile
         {
             Name = $"系统主模型 · {model.Name}",
-            Runtime = InfraAgentRuntimes.ClaudeSdk,
-            Protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl),
-            BaseUrl = NormalizeModelBaseUrl(resolved.ApiUrl),
+            Runtime = runtime,
+            Protocol = protocol,
+            BaseUrl = baseUrl,
             Model = model.ModelName.Trim(),
             ApiKeyEncrypted = _protector.Protect(resolved.ApiKey),
             ResourceCpuCores = 2,
@@ -218,17 +362,19 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             AutoCleanupMinutes = 30,
             IsDefault = true,
             CreatedByUserId = userId,
+            SharedTeamIds = new List<string>(),
             CreatedAt = now,
             UpdatedAt = now
         };
 
         await _db.InfraAgentRuntimeProfiles.UpdateManyAsync(
-            _ => true,
+            ProfileOwnerFilter(userId),
             Builders<InfraAgentRuntimeProfile>.Update.Set(x => x.IsDefault, false),
             cancellationToken: ct);
 
         var existing = await _db.InfraAgentRuntimeProfiles
             .Find(x => x.Name == profile.Name
+                && x.CreatedByUserId == userId
                 && x.Model == profile.Model
                 && x.BaseUrl == profile.BaseUrl)
             .FirstOrDefaultAsync(ct);
@@ -243,29 +389,53 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             existing.NetworkPolicy = profile.NetworkPolicy;
             existing.AutoCleanupMinutes = profile.AutoCleanupMinutes;
             existing.IsDefault = true;
+            existing.SharedTeamIds = profile.SharedTeamIds;
             existing.UpdatedAt = now;
-            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(x => x.Id == existing.Id, existing, cancellationToken: ct);
-            return ToView(existing);
+            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(existing.Id, userId), existing, cancellationToken: ct);
+            return ToView(existing, userId);
         }
 
         await _db.InfraAgentRuntimeProfiles.InsertOneAsync(profile, cancellationToken: ct);
-        return ToView(profile);
+        return ToView(profile, userId);
     }
 
-    public async Task<bool> DeleteAsync(string id, CancellationToken ct)
+    public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct)
     {
-        var result = await _db.InfraAgentRuntimeProfiles.DeleteOneAsync(x => x.Id == id, ct);
+        var result = await _db.InfraAgentRuntimeProfiles.DeleteOneAsync(ProfileIdOwnerFilter(id, userId), ct);
         return result.DeletedCount > 0;
     }
 
-    public async Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, CancellationToken ct)
+    public async Task<InfraAgentRuntimeProfileSecretView?> ResolveAsync(string? id, string userId, CancellationToken ct)
     {
+        var teamIds = await GetVisibleTeamIdsAsync(userId, ct);
         InfraAgentRuntimeProfile? profile = null;
         if (!string.IsNullOrWhiteSpace(id))
         {
-            profile = await _db.InfraAgentRuntimeProfiles.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+            profile = await _db.InfraAgentRuntimeProfiles
+                .Find(ProfileIdAccessibleFilter(id, userId, teamIds))
+                .FirstOrDefaultAsync(ct);
         }
-        profile ??= await _db.InfraAgentRuntimeProfiles.Find(x => x.IsDefault).FirstOrDefaultAsync(ct);
+        profile ??= await _db.InfraAgentRuntimeProfiles
+            .Find(ProfileOwnerFilter(userId) & Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.IsDefault, true))
+            .FirstOrDefaultAsync(ct);
+        if (profile == null && teamIds.Count > 0)
+        {
+            profile = await _db.InfraAgentRuntimeProfiles
+                .Find(ProfileSharedWithTeamsFilter(teamIds) & Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.IsDefault, true))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+        profile ??= await _db.InfraAgentRuntimeProfiles
+            .Find(ProfileOwnerFilter(userId))
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (profile == null && teamIds.Count > 0)
+        {
+            profile = await _db.InfraAgentRuntimeProfiles
+                .Find(ProfileSharedWithTeamsFilter(teamIds))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
         if (profile == null) return null;
         string apiKey;
         try
@@ -294,9 +464,9 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             apiKey);
     }
 
-    public async Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, CancellationToken ct)
+    public async Task<InfraAgentRuntimeProfileTestResult> TestAsync(string id, string userId, CancellationToken ct)
     {
-        var secret = await ResolveAsync(id, ct);
+        var secret = await ResolveAsync(id, userId, ct);
         if (secret == null)
         {
             throw new InfraAgentRuntimeProfileException(
@@ -360,7 +530,7 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         }
     }
 
-    private InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item) => new(
+    private InfraAgentRuntimeProfileView ToView(InfraAgentRuntimeProfile item, string? userId = null) => new(
         item.Id,
         item.Name,
         item.Runtime,
@@ -375,7 +545,79 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         HasReadableApiKey(item),
         item.IsDefault,
         item.CreatedAt,
-        item.UpdatedAt);
+        item.UpdatedAt,
+        item.SharedTeamIds ?? new List<string>(),
+        string.Equals(item.CreatedByUserId, userId, StringComparison.Ordinal) ? "user-owned" : "team-shared",
+        item.CreatedByUserId);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileOwnerFilter(string userId) =>
+        Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.CreatedByUserId, userId);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileIdOwnerFilter(string id, string userId) =>
+        Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.Id, id) & ProfileOwnerFilter(userId);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileSharedWithTeamsFilter(IReadOnlyList<string> teamIds) =>
+        teamIds.Count == 0
+            ? Builders<InfraAgentRuntimeProfile>.Filter.Where(_ => false)
+            : Builders<InfraAgentRuntimeProfile>.Filter.AnyIn(x => x.SharedTeamIds, teamIds);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileAccessibleFilter(string userId, IReadOnlyList<string> teamIds) =>
+        ProfileOwnerFilter(userId) | ProfileSharedWithTeamsFilter(teamIds);
+
+    private static FilterDefinition<InfraAgentRuntimeProfile> ProfileIdAccessibleFilter(string id, string userId, IReadOnlyList<string> teamIds) =>
+        Builders<InfraAgentRuntimeProfile>.Filter.Eq(x => x.Id, id) & ProfileAccessibleFilter(userId, teamIds);
+
+    private async Task<List<string>> GetVisibleTeamIdsAsync(string userId, CancellationToken ct)
+    {
+        var memberships = await _db.ReportTeamMembers
+            .Find(x => x.UserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var memberTeamIds = memberships
+            .Select(x => x.TeamId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+
+        var leaderTeams = await _db.ReportTeams
+            .Find(x => x.LeaderUserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+
+        return memberTeamIds
+            .Concat(leaderTeams.Select(x => x.Id))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private async Task<List<string>> NormalizeSharedTeamIdsAsync(
+        string userId,
+        IReadOnlyList<string>? requestedTeamIds,
+        CancellationToken ct)
+    {
+        var requested = (requestedTeamIds ?? Array.Empty<string>())
+            .Select(x => NormalizeOptional(x))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+        if (requested.Count == 0) return new List<string>();
+
+        var visibleTeams = await GetVisibleTeamIdsAsync(userId, ct);
+        var visibleSet = visibleTeams.ToHashSet(StringComparer.Ordinal);
+        var invalid = requested.Where(x => !visibleSet.Contains(x)).ToList();
+        if (invalid.Count > 0)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.SharedTeamNotAccessible,
+                $"无权将运行配置共享给团队：{string.Join(", ", invalid)}",
+                StatusCodes.Status403Forbidden);
+        }
+        return requested;
+    }
 
     private bool HasReadableApiKey(InfraAgentRuntimeProfile item)
     {
@@ -394,7 +636,10 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
     private static string NormalizeRuntime(string? runtime)
     {
         var normalized = NormalizeOptional(runtime);
-        return normalized is InfraAgentRuntimes.ClaudeSdk or InfraAgentRuntimes.Codex or InfraAgentRuntimes.Custom
+        return normalized is InfraAgentRuntimes.ClaudeSdk
+            or InfraAgentRuntimes.OpenAiCompatible
+            or InfraAgentRuntimes.Codex
+            or InfraAgentRuntimes.Custom
             ? normalized
             : InfraAgentRuntimes.ClaudeSdk;
     }
@@ -553,6 +798,19 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
             || apiUrl.Contains("/anthropic", StringComparison.OrdinalIgnoreCase)
             ? InfraAgentRuntimeProtocols.Anthropic
             : InfraAgentRuntimeProtocols.OpenAiCompatible;
+    }
+
+    private static string InferRuntime(string protocol, string? modelName)
+    {
+        var normalizedModel = modelName?.Trim() ?? string.Empty;
+        if (string.Equals(protocol, InfraAgentRuntimeProtocols.Anthropic, StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.Contains("claude", StringComparison.OrdinalIgnoreCase)
+            || normalizedModel.StartsWith("anthropic/", StringComparison.OrdinalIgnoreCase))
+        {
+            return InfraAgentRuntimes.ClaudeSdk;
+        }
+
+        return InfraAgentRuntimes.OpenAiCompatible;
     }
 
     private static string NormalizeModelBaseUrl(string apiUrl)

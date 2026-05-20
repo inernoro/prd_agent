@@ -7,7 +7,7 @@ import {
   Brain,
 } from 'lucide-react';
 import { useWorkflowStore } from '@/stores/workflowStore';
-import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, continueExecution, createShareLink } from '@/services';
+import { getExecution, getNodeLogs, resumeFromNode, cancelExecution, continueExecution, rejectApproval, createShareLink } from '@/services';
 import { ExecutionStatusLabels } from '@/services/contracts/workflowAgent';
 import type { ExecutionArtifact, WorkflowExecution } from '@/services/contracts/workflowAgent';
 import { getCapsuleType } from './capsuleRegistry';
@@ -38,6 +38,7 @@ interface LogEntry {
 const nodeStatusIcons: Record<string, React.ReactNode> = {
   pending: <Clock className="w-4 h-4 text-gray-400" />,
   running: <MapSpinner size={16} color="rgb(59, 130, 246)" />,
+  waiting_approval: <PauseCircle className="w-4 h-4 text-amber-500" />,
   completed: <CheckCircle2 className="w-4 h-4 text-green-500" />,
   failed: <AlertCircle className="w-4 h-4 text-red-500" />,
   skipped: <MinusCircle className="w-4 h-4 text-gray-400" />,
@@ -49,6 +50,8 @@ const FINAL_STATUS_LOG: Record<string, { level: LogEntry['level']; label: string
   failed: { level: 'error', label: '失败' },
   cancelled: { level: 'warn', label: '取消' },
   paused: { level: 'warn', label: '暂停' },
+  waiting_approval: { level: 'warn', label: '等待审批' },
+  timed_out: { level: 'error', label: '超时' },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -204,6 +207,13 @@ export function ExecutionDetailPanel() {
       setSsePhase('done');
       setSsePhaseMessage('执行已暂停');
       useWorkflowStore.getState().loadExecution(execId);
+    } else if (eventName === 'execution-waiting-approval') {
+      const pausedNodeName = payload.pausedAtNodeName as string;
+      addLog('warn', `等待审批 — 节点「${pausedNodeName}」正在等待 MAP 工具审批`);
+      stopLogSse();
+      setSsePhase('done');
+      setSsePhaseMessage('等待人工审批');
+      useWorkflowStore.getState().loadExecution(execId);
     } else if (eventName === 'execution-completed') {
       const status = payload.status as string;
       const completed = payload.completedNodes as number;
@@ -264,7 +274,7 @@ export function ExecutionDetailPanel() {
         const res = await getExecution(execId);
         if (res.success && res.data) {
           setSelectedExecution(res.data.execution);
-          if (['completed', 'failed', 'cancelled', 'paused'].includes(res.data.execution.status)) {
+          if (['completed', 'failed', 'cancelled', 'paused', 'waiting_approval', 'timed_out'].includes(res.data.execution.status)) {
             clearInterval(iv);
             setSsePhase('done');
             setSsePhaseMessage('执行结束');
@@ -372,7 +382,7 @@ export function ExecutionDetailPanel() {
     }
 
     // Final status
-    if (['completed', 'failed', 'cancelled', 'paused'].includes(execution.status)) {
+    if (['completed', 'failed', 'cancelled', 'paused', 'waiting_approval', 'timed_out'].includes(execution.status)) {
       const finalStatus = FINAL_STATUS_LOG[execution.status] ?? { level: 'info' as const, label: execution.status };
       entries.push({
         id: `hist-${id++}`,
@@ -437,9 +447,18 @@ export function ExecutionDetailPanel() {
     const res = await continueExecution(exec.id);
     if (res.success && res.data) {
       setSelectedExecution(res.data.execution);
-      if (['completed', 'failed', 'cancelled', 'paused'].includes(res.data.execution.status)) {
+      if (['completed', 'failed', 'cancelled', 'paused', 'waiting_approval', 'timed_out'].includes(res.data.execution.status)) {
         void loadHistoricalLogs(res.data.execution);
       }
+    }
+  };
+
+  const handleRejectApproval = async () => {
+    if (!confirm('拒绝这次 CDS Agent 工具审批并结束工作流？')) return;
+    const res = await rejectApproval(exec.id);
+    if (res.success && res.data) {
+      setSelectedExecution(res.data.execution);
+      void loadHistoricalLogs(res.data.execution);
     }
   };
 
@@ -452,8 +471,9 @@ export function ExecutionDetailPanel() {
     }
   };
 
-  const isTerminal = ['completed', 'failed', 'cancelled'].includes(exec.status);
-  const isPaused = exec.status === 'paused';
+  const isTerminal = ['completed', 'failed', 'cancelled', 'timed_out'].includes(exec.status);
+  const isPaused = exec.status === 'paused' || exec.status === 'waiting_approval';
+  const isWaitingApproval = exec.status === 'waiting_approval';
   const isRunning = ['queued', 'running'].includes(exec.status);
 
   return (
@@ -483,10 +503,20 @@ export function ExecutionDetailPanel() {
             <button
               onClick={handleContinue}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border border-amber-500/20"
-              title="继续执行"
+              title={isWaitingApproval ? '审批通过并继续执行' : '继续执行'}
             >
               <PlayCircle className="w-4 h-4" />
-              继续执行
+              {isWaitingApproval ? '审批通过' : '继续执行'}
+            </button>
+          )}
+          {isWaitingApproval && (
+            <button
+              onClick={handleRejectApproval}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20"
+              title="拒绝审批并结束工作流"
+            >
+              <XCircle className="w-4 h-4" />
+              拒绝
             </button>
           )}
           {!isTerminal && !isPaused && (
@@ -512,9 +542,10 @@ export function ExecutionDetailPanel() {
           <span className={`px-2.5 py-1 rounded text-xs font-medium ${
             exec.status === 'completed' ? 'bg-green-500/10 text-green-600' :
             exec.status === 'failed' ? 'bg-red-500/10 text-red-600' :
+            exec.status === 'timed_out' ? 'bg-red-500/10 text-red-600' :
             exec.status === 'running' ? 'bg-blue-500/10 text-blue-600' :
             exec.status === 'cancelled' ? 'bg-gray-500/10 text-gray-500' :
-            exec.status === 'paused' ? 'bg-amber-500/10 text-amber-500' :
+            exec.status === 'paused' || exec.status === 'waiting_approval' ? 'bg-amber-500/10 text-amber-500' :
             'bg-yellow-500/10 text-yellow-600'
           }`}>
             {ExecutionStatusLabels[exec.status] || exec.status}
@@ -552,6 +583,8 @@ export function ExecutionDetailPanel() {
             ne.status === 'completed' ? 'bg-green-500' :
             ne.status === 'running' ? 'bg-blue-500 animate-pulse' :
             ne.status === 'failed' ? 'bg-red-500' :
+            ne.status === 'waiting_approval' ? 'bg-amber-500 animate-pulse' :
+            ne.status === 'paused' ? 'bg-amber-500' :
             'bg-gray-200';
           return (
             <div key={ne.nodeId} className={`h-2 flex-1 rounded-full ${color}`} title={`${ne.nodeName}: ${ne.status}`} />
@@ -724,11 +757,11 @@ export function ExecutionDetailPanel() {
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
                   )}
-                  {ne.status === 'paused' && (
+                  {(ne.status === 'paused' || ne.status === 'waiting_approval') && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleContinue(); }}
                       className="p-1.5 rounded hover:bg-amber-500/10 text-amber-500"
-                      title="继续执行"
+                      title={ne.status === 'waiting_approval' ? '审批通过并继续执行' : '继续执行'}
                     >
                       <PlayCircle className="w-3.5 h-3.5" />
                     </button>
@@ -929,10 +962,33 @@ function LogLine({ entry }: { entry: LogEntry }) {
 // ═══════════════════════════════════════════════════════════════
 
 function NodeArtifactRow({ artifact, onPreview }: { artifact: ExecutionArtifact; onPreview: () => void }) {
+  const cdsRun = readCdsAgentRunHandle(artifact);
+  const cdsApproval = readCdsAgentApproval(artifact);
   return (
     <div className="flex items-center gap-2 text-xs">
       <FileText className="w-3 h-3 text-muted-foreground" />
       <span className="flex-1 truncate">{artifact.name}</span>
+      {cdsApproval && (
+        <span
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-amber-500/10 text-amber-500"
+          title={`工具 ${cdsApproval.toolName} 等待审批，超时 ${cdsApproval.timeoutAt || '未上报'}`}
+        >
+          <PauseCircle className="w-3 h-3" />
+          等待审批
+        </span>
+      )}
+      {cdsRun && (
+        <a
+          href={cdsRun.workbenchPath}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/15 transition-colors"
+          title={`跳转 CDS Agent 面板：${cdsRun.sessionId}`}
+        >
+          <ExternalLink className="w-3 h-3" />
+          CDS 面板
+        </a>
+      )}
       {artifact.tags?.includes('auto-generated') && (
         <span className="text-[8px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400">透传</span>
       )}
@@ -954,6 +1010,36 @@ function NodeArtifactRow({ artifact, onPreview }: { artifact: ExecutionArtifact;
       )}
     </div>
   );
+}
+
+function readCdsAgentApproval(artifact: ExecutionArtifact): { sessionId: string; approvalId: string; toolName: string; timeoutAt?: string } | null {
+  if (artifact.slotId !== 'cds-agent-approval' || !artifact.inlineContent) return null;
+  try {
+    const data = JSON.parse(artifact.inlineContent) as { sessionId?: string; approvalId?: string; toolName?: string; timeoutAt?: string };
+    if (!data.sessionId || !data.approvalId) return null;
+    return {
+      sessionId: data.sessionId,
+      approvalId: data.approvalId,
+      toolName: data.toolName || 'tool',
+      timeoutAt: data.timeoutAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readCdsAgentRunHandle(artifact: ExecutionArtifact): { sessionId: string; workbenchPath: string } | null {
+  if (artifact.slotId !== 'cds-agent-run' || !artifact.inlineContent) return null;
+  try {
+    const data = JSON.parse(artifact.inlineContent) as { kind?: string; sessionId?: string; workbenchPath?: string };
+    if (data.kind !== 'cds-agent-workflow-run' || !data.sessionId) return null;
+    return {
+      sessionId: data.sessionId,
+      workbenchPath: data.workbenchPath || `/cds-agent?sessionId=${encodeURIComponent(data.sessionId)}`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function formatBytes(bytes: number): string {

@@ -63,7 +63,7 @@ const RESTART_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 ];
 
 /**
- * 完全无影响的文件(纯文档/元数据)。命中即 irrelevantPaths,
+ * 完全无影响的文件(纯文档/元数据/验证脚本)。命中即 irrelevantPaths,
  * 不参与任何判定。
  */
 const IRRELEVANT_PATTERNS: RegExp[] = [
@@ -74,6 +74,10 @@ const IRRELEVANT_PATTERNS: RegExp[] = [
   /(?:^|\/)doc\//,
   /(?:^|\/)\.claude\//,
   /(?:^|\/)\.github\//,
+  /(?:^|\/)e2e\//,
+  /^cds\/tests\//,
+  /^prd-admin\/src\/.+\/__tests__\//,
+  /^scripts\/(?:smoke-|audit-|doctor-|preflight-|verify-|index-)/,
   /(?:^|\/)LICENSE$/i,
   /(?:^|\/)\.gitignore$/,
   /(?:^|\/)\.editorconfig$/,

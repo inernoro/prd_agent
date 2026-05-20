@@ -128,11 +128,15 @@ describe('deriveContainerSlug', () => {
 });
 
 describe('shouldIncludeBranchServicesInInstanceDiscovery', () => {
-  it('普通 git 项目保留分支服务兼容路径', () => {
-    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'git' })).toBe(true);
+  it('普通 git 项目不暴露分支服务，避免业务服务被识别为 Agent runtime', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'git' })).toBe(false);
   });
 
-  it('shared-service 项目只暴露系统级 ServiceDeployment', () => {
-    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'shared-service' })).toBe(false);
+  it('shared-service 项目也暴露源码分支服务，兼容 CDS 托管的 sidecar pool', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'shared-service' })).toBe(true);
+  });
+
+  it('manual 项目不走分支服务实例发现', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'manual' })).toBe(false);
   });
 });

@@ -70,7 +70,10 @@ describe('ContainerService', () => {
       // Spy on writeFileSync to capture the env file content
       const writeSpy = vi.spyOn(fs, 'writeFileSync');
 
-      await service.runService(makeEntry(), makeProfile(), makeService());
+      await service.runService({
+        ...makeEntry(),
+        githubCommitSha: '47c74c1f5aabbccddeeff0011223344556677889',
+      }, makeProfile(), makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
       expect(runCmd).toBeDefined();
@@ -91,8 +94,105 @@ describe('ContainerService', () => {
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('Jwt__Secret=test-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
+      expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
+      expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
 
       writeSpy.mockRestore();
+    });
+
+    it('should remove stale same branch/profile app containers before attaching service aliases', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
+        stdout: [
+          'cds-feature-a-api',
+          'cds-feature-a-api-old',
+          'cds-other-branch-api',
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*cds-feature-a-api-old/, () => ({
+        stdout: 'feature-a|api|["api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*cds-other-branch-api/, () => ({
+        stdout: 'feature-b|api|["api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
+      expect(rmCommands.some(c => c.includes("'cds-feature-a-api-old'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'cds-other-branch-api'"))).toBe(false);
+      expect(rmCommands.some(c => c.includes('docker rm -f cds-feature-a-api'))).toBe(true);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'cds-feature-a-api-old'"));
+      const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
+      expect(staleRmIndex).toBeGreaterThanOrEqual(0);
+      expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
+    });
+
+    it('should remove unlabeled stale network endpoints only for the same service container prefix', async () => {
+      mock.addResponsePattern(/docker ps -aq --filter 'network=cds-network'/, () => ({
+        stdout: ['stale-id', 'other-branch-id', 'current-id'].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*stale-id/, () => ({
+        stdout: 'stale-id|/cds-feature-a-api-stale|["api","cds-feature-a-api-stale"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*other-branch-id/, () => ({
+        stdout: 'other-branch-id|/cds-feature-b-api-stale|["api","cds-feature-b-api-stale"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*current-id/, () => ({
+        stdout: 'current-id|/cds-feature-a-api|["api","cds-feature-a-api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker network inspect --format=.*cds-network/, () => ({
+        stdout: JSON.stringify({
+          stale: {
+            Name: 'cds-feature-a-api-stale',
+            Aliases: ['api', 'cds-feature-a-api-stale'],
+          },
+          otherBranch: {
+            Name: 'cds-feature-b-api-stale',
+            Aliases: ['api', 'cds-feature-b-api-stale'],
+          },
+          current: {
+            Name: 'cds-feature-a-api',
+            Aliases: ['api', 'cds-feature-a-api'],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
+      expect(rmCommands.some(c => c.includes("'stale-id'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'other-branch-id'"))).toBe(false);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'stale-id'"));
+      const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
+      expect(staleRmIndex).toBeGreaterThanOrEqual(0);
+      expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
     });
 
     it('should run a single docker command (no 3-step)', async () => {

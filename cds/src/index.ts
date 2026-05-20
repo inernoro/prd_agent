@@ -863,6 +863,7 @@ janitorService.setRemoveFn(async (slug: string) => {
           // Phase 1: 传入项目 customEnv 让 ${VAR} 展开生效
           await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
           svc.status = 'running';
+          svc.errorMessage = undefined;
           console.log(`  [infra] ${svc.id} recreated successfully`);
         } catch (err) {
           svc.status = 'error';
@@ -2050,6 +2051,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       );
       if (ready) {
         svc.status = 'running';
+        svc.errorMessage = undefined;
         sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
       } else {
         svc.status = 'error';

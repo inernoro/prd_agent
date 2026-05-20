@@ -1,12 +1,19 @@
 # CDS Agent 工作台复现操作 · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-15 | **状态**：已落地
+> **版本**：v1.1 | **日期**：2026-05-17 | **状态**：MVP 复现指南，生产级限制已标注
 
 ## 目标
 
 这份教程让另一个人或下一个智能体复现 CDS Agent 工作台的完整操作：从系统配置、进入页面、创建会话、发送任务、审批工具、查看产物，到让远程 Agent 创建 PR。
 
 不要把接口直连当作最终复现。最终复现必须从 MAP 真实入口进入。
+
+命名校准：
+
+- 页面和 API 里仍有历史 runtime 名 `claude-sdk`。
+- `claude-agent-sdk` 是官方 Claude Agent SDK，不是本仓库自研；本仓库只写 adapter，把官方 SDK 事件、权限、取消和结果映射到 MAP/CDS。
+- 当前默认目标路径是 `runtimeAdapter=claude-agent-sdk`；`legacy-sidecar` 只作为显式 fallback，仍使用官方 `anthropic` Python SDK + 本仓库自研 loop。
+- 复现通过只证明 CDS Agent 工作台链路可用；要证明完整官方 SDK 迁移，必须额外通过 `doc/guide.cds-agent-runtime-pool-recovery.md` 里的 official SDK smoke。
 
 ## 前置条件
 
@@ -174,7 +181,7 @@ python3 .agents/skills/cds/cli/cdscli.py branch status prd-agent-main
 | sidecar 不健康 | CDS shared sidecar pool 未发现或未 running | 查 CDS 系统 sidecar pool health |
 | 工具回调失败 | callback URL 推导错误或公网 524 | 检查 `ClaudeSidecarRouter` callback base 与长命令内网 callback |
 | 页面看不到会话 | 用户隔离生效，当前浏览器不是会话 owner | 切换到会话创建用户再看 |
-| 事件只有前 100 条 | API 分页未用 `afterSeq` | 逐页拉取事件 |
+| 事件不完整 | API 分页或 SSE 续读未用 `afterSeq` | 逐页拉取事件，并检查 cursor 状态 |
 | PR 创建失败 | GitHub token/App 权限不足 | 检查 release 容器 GitHub 凭据 |
 
 ## 十一、验收清单
@@ -185,7 +192,7 @@ python3 .agents/skills/cds/cli/cdscli.py branch status prd-agent-main
 | 长期授权 | active CDS connection 可复用 |
 | 模型配置 | 任意 baseUrl/model 可保存并测试 |
 | 会话生命周期 | create/start/send/stop 全通 |
-| 流式输出 | 页面持续变化，不空白等待 |
+| 事件刷新 | 页面能持续看到事件和日志变化；当前 MVP 允许轮询刷新，但需记录延迟 |
 | 工具审批 | dangerous 工具等待人工确认 |
 | 审批恢复 | 刷新后审批卡仍可操作 |
 | 产物日志 | 文件、diff、命令、浏览器、日志可见 |
@@ -193,9 +200,24 @@ python3 .agents/skills/cds/cli/cdscli.py branch status prd-agent-main
 | 智能体 | AI 百宝箱可委托 CDS Agent |
 | PR | 远程 Agent 可创建真实 PR |
 | 停止释放 | 完成后 status 为 stopped |
+| 官方 SDK | `runtime_init` 显示 `runtimeAdapter=claude-agent-sdk` 且 `loopOwner=claude-agent-sdk` |
 
 ## 十二、交接提示词
 
 ```text
 请按照 doc/guide.cds-agent-workbench-reproduce.md 复现 CDS Agent 工作台。必须从 https://main-prd-agent.miduo.org/ 真实入口进入，经百宝箱打开 CDS Agent。不要直达路由替代视觉测试。先验证 active CDS connection、OpenAI-compatible runtime profile、事件时间线、工具审批和产物面板，再发送一次远程仓库自巡检任务，让 Agent 使用 repo_* 工具读取、修改、测试并创建 PR。完成后输出 PR 链接、测试命令、事件 trace、截图路径和停止状态。
 ```
+
+## 十三、复现时必须额外记录的限制
+
+每次复现报告必须写清楚这些限制是否触发：
+
+| 限制 | 需要记录什么 |
+|------|--------------|
+| 页面轮询刷新 | 是否看到 3 秒级延迟，是否误判为卡住 |
+| 同步发送消息 | `send message` 是否等到 runtime 完成才返回 |
+| 停止取消 | 点击停止后 sidecar run 是否仍有日志或 token 消耗 |
+| 事件上限 | 本次会话事件数是否超过 500，是否需要 afterSeq 补拉 |
+| 命令上限 | 是否有超过 180 秒的测试/build，是否被截断 |
+| PR draft 策略 | 创建的是 draft 还是 ready PR，是否符合任务要求 |
+| 工作区来源 | 审查的是哪个 repo/branch，workspace 是否确认为目标仓库 |

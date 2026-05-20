@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
+using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.InfraConnections;
 
@@ -15,6 +16,15 @@ namespace PrdAgent.Api.Services.Toolbox.Adapters;
 /// </summary>
 public class CdsAgentAdapter : IAgentAdapter
 {
+    private const int EventPageSize = 500;
+    private const int MaxEventPages = 20;
+
+    internal sealed record CdsAgentEventCursorResult(
+        List<InfraAgentEventView> Events,
+        bool IsComplete,
+        long LastSeq
+    );
+
     private readonly MongoDbContext _db;
     private readonly IInfraAgentSessionService _sessions;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
@@ -46,18 +56,23 @@ public class CdsAgentAdapter : IAgentAdapter
         CancellationToken ct = default)
     {
         var content = new System.Text.StringBuilder();
+        var artifacts = new List<ToolboxArtifact>();
         await foreach (var chunk in StreamExecuteAsync(context, ct))
         {
             if (chunk.Type == AgentChunkType.Text && !string.IsNullOrWhiteSpace(chunk.Content))
             {
                 content.Append(chunk.Content);
             }
+            if (chunk.Type == AgentChunkType.Artifact && chunk.Artifact != null)
+            {
+                artifacts.Add(chunk.Artifact);
+            }
             if (chunk.Type == AgentChunkType.Error)
             {
                 return AgentExecutionResult.Fail(chunk.Content ?? "CDS Agent 执行失败");
             }
         }
-        return AgentExecutionResult.Ok(content.ToString());
+        return AgentExecutionResult.Ok(content.ToString(), artifacts);
     }
 
     public async IAsyncEnumerable<AgentStreamChunk> StreamExecuteAsync(
@@ -79,7 +94,7 @@ public class CdsAgentAdapter : IAgentAdapter
                 .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct);
 
-            runtimeProfile = await LoadRuntimeProfileChoiceAsync(ct);
+            runtimeProfile = await LoadRuntimeProfileChoiceAsync(context.UserId, ct);
         }
         catch (Exception ex)
         {
@@ -135,14 +150,49 @@ public class CdsAgentAdapter : IAgentAdapter
         yield return AgentStreamChunk.Text($"远程 runtime 已启动：{session.Runtime} / {session.Model}\n");
 
         var prompt = BuildRemotePrompt(context);
-        yield return AgentStreamChunk.Text("正在发送远程任务并等待事件回放...\n");
+        yield return AgentStreamChunk.Text("正在发送远程任务并将 runtime job 放入后台队列...\n");
         session = await _sessions.SendMessageAsync(
             context.UserId,
             session.Id,
             new SendInfraAgentMessageRequest(prompt),
             ct) ?? session;
 
-        var events = await _sessions.ListEventsAsync(context.UserId, session.Id, 0, 500, ct);
+        var workbenchPath = $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}";
+        var handle = new
+        {
+            kind = "cds-agent-run-handle",
+            sessionId = session.Id,
+            traceId = session.TraceId,
+            toolboxRunId = context.RunId,
+            toolboxStepId = context.StepId,
+            cdsSessionId = session.CdsSessionId,
+            cdsWorkerId = session.CdsWorkerId,
+            runtime = session.Runtime,
+            runtimeAdapter = session.RuntimeAdapter,
+            currentRuntimeRunId = session.CurrentRuntimeRunId,
+            model = session.Model,
+            status = session.Status,
+            workbenchPath,
+            eventStreamPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/stream",
+            eventsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/events",
+            logsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/logs",
+            createdAt = DateTime.UtcNow,
+            note = "Toolbox has delegated the long-running work to CDS Agent. Continue observing and approving tools in the CDS Agent workbench."
+        };
+        yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
+        {
+            Type = ToolboxArtifactType.Json,
+            Name = "CDS Agent 远程运行句柄",
+            MimeType = "application/json",
+            Content = JsonSerializer.Serialize(handle, new JsonSerializerOptions { WriteIndented = true }),
+            SourceStepId = context.StepId
+        });
+        yield return AgentStreamChunk.Text(
+            $"远程任务已委托给 CDS Agent，会话 {session.Id} 正在后台运行。\n" +
+            $"打开工作台继续观察、审批和停止：{workbenchPath}\n");
+
+        var eventCursor = await ListSessionEventsByCursorAsync(context.UserId, session.Id, ct);
+        var events = eventCursor.Events;
         foreach (var evt in events)
         {
             var text = RenderEvent(evt);
@@ -154,6 +204,7 @@ public class CdsAgentAdapter : IAgentAdapter
 
         var eventsJson = JsonSerializer.Serialize(events, new JsonSerializerOptions { WriteIndented = true });
         var logs = await _sessions.GetLogsAsync(context.UserId, session.Id, ct) ?? string.Empty;
+        yield return AgentStreamChunk.Text($"事件读取：{FormatEventCursorSummary(eventCursor)}。\n");
         yield return AgentStreamChunk.ArtifactChunk(new ToolboxArtifact
         {
             Type = ToolboxArtifactType.Json,
@@ -170,7 +221,7 @@ public class CdsAgentAdapter : IAgentAdapter
             Content = logs,
             SourceStepId = context.StepId
         });
-        yield return AgentStreamChunk.Text($"CDS 会话状态：{session.Status}\n");
+        yield return AgentStreamChunk.Text($"CDS 会话当前状态：{session.Status}。后续事件会在 CDS Agent 工作台继续增量更新。\n");
 
         if (string.Equals(session.Status, "failed", StringComparison.OrdinalIgnoreCase))
         {
@@ -184,11 +235,63 @@ public class CdsAgentAdapter : IAgentAdapter
         yield return AgentStreamChunk.Done();
     }
 
-    private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(CancellationToken ct)
+    private async Task<CdsAgentEventCursorResult> ListSessionEventsByCursorAsync(
+        string userId,
+        string sessionId,
+        CancellationToken ct)
+    {
+        return await ListEventsByCursorAsync(
+            (afterSeq, limit, token) => _sessions.ListEventsAsync(userId, sessionId, afterSeq, limit, token),
+            ct);
+    }
+
+    internal static async Task<CdsAgentEventCursorResult> ListEventsByCursorAsync(
+        Func<long, int, CancellationToken, Task<List<InfraAgentEventView>>> listEventsAsync,
+        CancellationToken ct)
+    {
+        var all = new List<InfraAgentEventView>();
+        var afterSeq = 0L;
+        for (var page = 0; page < MaxEventPages; page++)
+        {
+            var batch = await listEventsAsync(afterSeq, EventPageSize, ct);
+            if (batch.Count == 0)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+
+            var progressed = false;
+            foreach (var item in batch.OrderBy(x => x.Seq))
+            {
+                if (item.Seq <= afterSeq) continue;
+                all.Add(item);
+                afterSeq = item.Seq;
+                progressed = true;
+            }
+
+            if (!progressed)
+            {
+                return new CdsAgentEventCursorResult(all, false, afterSeq);
+            }
+
+            if (batch.Count < EventPageSize)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+        }
+        return new CdsAgentEventCursorResult(all, false, afterSeq);
+    }
+
+    internal static string FormatEventCursorSummary(CdsAgentEventCursorResult cursor)
+    {
+        var status = cursor.IsComplete ? "complete" : "truncated_or_stalled";
+        return $"{cursor.Events.Count} events, lastSeq={cursor.LastSeq}, cursor={status}";
+    }
+
+    private async Task<RuntimeProfileChoice?> LoadRuntimeProfileChoiceAsync(string userId, CancellationToken ct)
     {
         try
         {
-            return (await _runtimeProfiles.ListAsync(ct))
+            return (await _runtimeProfiles.ListAsync(userId, ct))
                 .OrderByDescending(x => x.IsDefault)
                 .ThenByDescending(x => x.UpdatedAt)
                 .Select(x => new RuntimeProfileChoice(x.Id, x.Runtime, x.Model, x.IsDefault, x.UpdatedAt))
@@ -200,10 +303,17 @@ public class CdsAgentAdapter : IAgentAdapter
         }
 
         var collection = _db.Database.GetCollection<BsonDocument>("infra_agent_runtime_profiles");
+        var visibleTeamIds = await LoadVisibleTeamIdsAsync(userId, ct);
+        var builder = Builders<BsonDocument>.Filter;
+        var ownerFilter = builder.Eq("CreatedByUserId", userId);
+        var sharedFilter = visibleTeamIds.Count == 0
+            ? builder.Where(_ => false)
+            : builder.AnyIn("SharedTeamIds", visibleTeamIds);
+        var filter = ownerFilter | sharedFilter;
         var sort = Builders<BsonDocument>.Sort
             .Descending("IsDefault")
             .Descending("UpdatedAt");
-        var doc = await collection.Find(Builders<BsonDocument>.Filter.Empty)
+        var doc = await collection.Find(filter)
             .Sort(sort)
             .FirstOrDefaultAsync(ct);
         if (doc == null) return null;
@@ -222,6 +332,26 @@ public class CdsAgentAdapter : IAgentAdapter
             model,
             ReadBool(doc, "IsDefault", "isDefault"),
             ReadDateTime(doc, "UpdatedAt", "updatedAt"));
+    }
+
+    private async Task<List<string>> LoadVisibleTeamIdsAsync(string userId, CancellationToken ct)
+    {
+        var memberships = await _db.ReportTeamMembers
+            .Find(x => x.UserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var leaderTeams = await _db.ReportTeams
+            .Find(x => x.LeaderUserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        return memberships
+            .Select(x => x.TeamId)
+            .Concat(leaderTeams.Select(x => x.Id))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string ReadString(BsonDocument doc, params string[] names)
@@ -291,37 +421,14 @@ public class CdsAgentAdapter : IAgentAdapter
         bool IsDefault,
         DateTime UpdatedAt);
 
+    internal static bool RequiresManagedRuntime(string? runtime)
+    {
+        return string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string RenderEvent(InfraAgentEventView evt)
     {
-        try
-        {
-            using var doc = JsonDocument.Parse(evt.PayloadJson);
-            var root = doc.RootElement;
-            if (evt.Type == InfraAgentEventTypes.TextDelta && root.TryGetProperty("text", out var text))
-            {
-                return text.GetString() ?? string.Empty;
-            }
-            if (evt.Type == InfraAgentEventTypes.Done && root.TryGetProperty("finalText", out var finalText))
-            {
-                return finalText.GetString() ?? string.Empty;
-            }
-            if (evt.Type == InfraAgentEventTypes.ToolCall)
-            {
-                return $"工具调用：{root}";
-            }
-            if (evt.Type == InfraAgentEventTypes.ToolResult)
-            {
-                return $"工具结果：{root}";
-            }
-            if (evt.Type == InfraAgentEventTypes.Error)
-            {
-                return $"错误：{root}";
-            }
-        }
-        catch
-        {
-            return evt.PayloadJson;
-        }
-        return string.Empty;
+        return CdsAgentRuntimeEventRenderer.Render(evt);
     }
 }

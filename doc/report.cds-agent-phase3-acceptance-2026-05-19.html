@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CDS Agent Phase 3 验收报告</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; background: #fff; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 17px; margin: 24px 0 10px; }
+    p { line-height: 1.55; margin: 6px 0; }
+    .meta { color: #4b5563; font-size: 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0 18px; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 6px; background: #ecfdf5; color: #047857; font-weight: 700; font-size: 12px; }
+    .summary { border: 1px solid #d1fae5; background: #f0fdf4; padding: 14px; border-radius: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; min-height: 92px; }
+    .card strong { display: block; margin-bottom: 6px; }
+    .flow { display: grid; grid-template-columns: repeat(9, 1fr); gap: 8px; align-items: center; margin-top: 10px; }
+    .node { border: 1px solid #bae6fd; background: #f0f9ff; border-radius: 8px; padding: 10px 8px; text-align: center; font-size: 12px; min-height: 38px; display: flex; align-items: center; justify-content: center; }
+    .arrow { color: #6b7280; text-align: center; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 10.5px; page-break-inside: avoid; }
+    th, td { border: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
+    th { background: #f9fafb; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    .ok { color: #047857; font-weight: 700; }
+    .warn { color: #92400e; font-weight: 700; }
+    .muted { color: #6b7280; }
+    .shot-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .shot { width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; margin-top: 6px; }
+    .caption { font-size: 10px; color: #6b7280; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>CDS Agent Phase 3 验收报告 <span class="badge">本地通过</span></h1>
+  <div class="meta">
+    <div>日期：2026-05-19</div>
+    <div>分支：codex/cds-agent-workbench-ui</div>
+    <div>基线：e9e710e94</div>
+    <div>范围：P3-1 到 P3-6</div>
+  </div>
+
+  <section class="summary">
+    <strong>结论</strong>
+    <p>Phase 3 规模化商业能力本地验收通过：trace bundle、adapter matrix、SLA/成本、定时巡检、知识治理、权限治理、runtime profile scoped/team-shared policy、owner UI 和验收证据已归档。未执行远端发布。</p>
+  </section>
+
+  <h2>控制面与治理边界</h2>
+  <div class="flow">
+    <div class="node">用户</div><div class="arrow">→</div>
+    <div class="node">MAP 控制面</div><div class="arrow">→</div>
+    <div class="node">CDS 容器/分支</div><div class="arrow">→</div>
+    <div class="node">官方 SDK adapter</div><div class="arrow">→</div>
+    <div class="node">trace/artifact</div>
+  </div>
+  <div class="flow">
+    <div class="node">工作流调度</div><div class="arrow">→</div>
+    <div class="node">CdsAgentRun</div><div class="arrow">→</div>
+    <div class="node">KB 只读治理</div><div class="arrow">→</div>
+    <div class="node">owner policy</div><div class="arrow">→</div>
+    <div class="node">审计复盘</div>
+  </div>
+
+  <h2>阶段完成情况</h2>
+  <div class="grid">
+    <div class="card"><strong>P3-1 trace bundle</strong>运行可导出、复盘、作为验收证据。</div>
+    <div class="card"><strong>P3-2 adapter matrix</strong>默认 adapter、planned adapter 和缺失 contract 可见。</div>
+    <div class="card"><strong>P3-3 SLA/成本</strong>运行量、失败、超时、耗时、token usage 可归因。</div>
+    <div class="card"><strong>P3-4 定时巡检</strong>Cron 工作流进入只读巡检，KB 治理保持只读。</div>
+    <div class="card"><strong>P3-5a/b/c 治理</strong>组织治理、profile scoped resolve、team-shared policy 通过。</div>
+    <div class="card"><strong>P3-5d owner UI</strong>Repository/Profile/Approval owner 可读、可点、可复盘。</div>
+  </div>
+
+  <h2>治理红线</h2>
+  <table>
+    <thead><tr><th>红线</th><th>结果</th><th>证据</th></tr></thead>
+    <tbody>
+      <tr><td>runtime profile 不得回到 global default/resolve</td><td class="ok">pass</td><td><code>smoke-cds-agent-profile-scope.sh</code></td></tr>
+      <tr><td>team-shared profile 不得越权修改或删除</td><td class="ok">pass</td><td><code>smoke-cds-agent-team-shared-profile-policy.sh</code></td></tr>
+      <tr><td>工作流和 toolbox fallback 不得扫描全局 profile</td><td class="ok">pass</td><td><code>smoke-cds-agent-profile-scope.sh</code></td></tr>
+      <tr><td>KB 批量治理不得写入或 apply</td><td class="ok">pass</td><td><code>smoke-cds-agent-schedule-dashboard.sh</code></td></tr>
+      <tr><td>Owner UI 不得触发写入或改变 agent loop</td><td class="ok">pass</td><td><code>smoke-cds-agent-owner-policy-ui.sh</code></td></tr>
+      <tr><td>成本/SLA 不得伪造上游计费</td><td class="ok">pass</td><td><code>smoke-cds-agent-sla-dashboard.sh</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>验收证据</h2>
+  <table>
+    <thead><tr><th>类型</th><th>证据</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>smoke</td><td><code>trace-bundle / adapter-matrix / sla-dashboard / schedule-dashboard / governance-dashboard / profile-scope / team-shared / owner-policy</code></td><td class="ok">pass</td></tr>
+      <tr><td>后端单测</td><td><code>InfraAgentRuntimeProfilesControllerTests | InfraAgentSessionsControllerTests | InfraAgentSessionServiceGovernanceDashboardTests | InfraAgentSessionServiceRuntimeAdapterTests</code></td><td class="ok">56/56 pass</td></tr>
+      <tr><td>前端类型</td><td><code>pnpm --prefix prd-admin tsc</code></td><td class="ok">pass</td></tr>
+      <tr><td>前端单测</td><td><code>pnpm --prefix prd-admin test -- src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts</code></td><td class="ok">281/281 pass</td></tr>
+      <tr><td>前端构建</td><td><code>pnpm --prefix prd-admin build</code></td><td class="ok">pass，存在既有 Rollup warnings</td></tr>
+      <tr><td>代码格式</td><td><code>git diff --check</code></td><td class="ok">pass</td></tr>
+    </tbody>
+  </table>
+
+  <h2>视觉证据</h2>
+  <div class="shot-grid">
+    <div>
+      <img class="shot" src="file:///tmp/cds-agent-p3-2-adapter-matrix.png" alt="adapter matrix" />
+      <div class="caption">P3-2 adapter matrix</div>
+    </div>
+    <div>
+      <img class="shot" src="file:///tmp/cds-agent-p3-3-sla-dashboard.png" alt="SLA dashboard" />
+      <div class="caption">P3-3 SLA / cost dashboard</div>
+    </div>
+    <div>
+      <img class="shot" src="file:///tmp/cds-agent-p3-4-schedule-dashboard.png" alt="schedule dashboard" />
+      <div class="caption">P3-4 schedule / KB governance</div>
+    </div>
+    <div>
+      <img class="shot" src="file:///tmp/cds-agent-p3-5d-owner-policy-ui-report.png" alt="owner policy UI" />
+      <div class="caption">P3-5d owner policy UI</div>
+    </div>
+  </div>
+
+  <h2>使用路径</h2>
+  <p><strong>单次运行复盘：</strong>在 CDS Agent 面板完成只读巡检，导出 trace bundle，用 <code>traceId</code>、<code>lastEventSeq</code>、artifact 和 logs 复盘。</p>
+  <p><strong>多运行时治理：</strong>打开 Adapter matrix，查看默认 <code>claude-agent-sdk</code> 可路由状态和 planned adapter 缺失 contract。</p>
+  <p><strong>团队治理：</strong>打开权限/组织治理，查看 scope 和 Repository/Profile/Approval owner 卡片，并按 path 跳转处理。</p>
+  <p><strong>定时巡检：</strong>通过 workflow schedule 触发 <code>CdsAgentRun</code>，知识库治理只用 <code>kb_list/kb_search/kb_read</code>。</p>
+
+  <h2>后续阶段</h2>
+  <p class="muted">Phase 3 完成后，下一阶段应围绕远端部署验收、真实团队使用反馈、repository allow-list、approval owner、profile sharing 可编辑 UI，以及真实成本计费接入推进。</p>
+</body>
+</html>

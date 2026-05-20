@@ -8,10 +8,12 @@ import { ExecutionStatusLabels } from '@/services/contracts/workflowAgent';
 const statusColors: Record<string, string> = {
   queued: 'bg-yellow-500/10 text-yellow-600',
   running: 'bg-blue-500/10 text-blue-600',
+  waiting_approval: 'bg-amber-500/10 text-amber-600',
   completed: 'bg-green-500/10 text-green-600',
   failed: 'bg-red-500/10 text-red-600',
   cancelled: 'bg-gray-500/10 text-gray-500',
   paused: 'bg-amber-500/10 text-amber-600',
+  timed_out: 'bg-red-500/10 text-red-600',
 };
 
 export function ExecutionListPanel() {
@@ -91,7 +93,7 @@ export function ExecutionListPanel() {
 
       {/* Status filter */}
       <div className="flex gap-2">
-        {['', 'queued', 'running', 'paused', 'completed', 'failed', 'cancelled'].map((s) => (
+        {['', 'queued', 'running', 'waiting_approval', 'paused', 'completed', 'failed', 'timed_out', 'cancelled'].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -130,7 +132,7 @@ export function ExecutionListPanel() {
                 <span className="text-xs text-muted-foreground font-mono">{exec.id.substring(0, 8)}</span>
               </div>
               <div className="flex items-center gap-1.5">
-                {(exec.status === 'queued' || exec.status === 'running') && (
+                {(exec.status === 'queued' || exec.status === 'running' || exec.status === 'waiting_approval') && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleCancel(exec.id); }}
                     className="p-1 rounded hover:bg-destructive/10 text-destructive"
@@ -152,6 +154,7 @@ export function ExecutionListPanel() {
                   ne.status === 'completed' ? 'bg-green-500' :
                   ne.status === 'running' ? 'bg-blue-500 animate-pulse' :
                   ne.status === 'failed' ? 'bg-red-500' :
+                  ne.status === 'waiting_approval' ? 'bg-amber-500 animate-pulse' :
                   ne.status === 'paused' ? 'bg-amber-500' :
                   'bg-gray-300';
                 return (

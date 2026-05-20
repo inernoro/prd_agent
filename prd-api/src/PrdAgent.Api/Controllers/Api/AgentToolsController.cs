@@ -75,12 +75,10 @@ public class AgentToolsController : ControllerBase
             return BadRequest(new { error = "toolName required" });
 
         var session = await FindSessionByRunIdAsync(req.RunId, ct);
-        var cdsToken = session == null
+        var connection = await ResolveSessionConnectionAsync(session, ct);
+        var cdsToken = connection == null
             ? null
-            : await _infraConnections.TryUnprotectLongTokenAsync(session.ConnectionId, ct, revokeOnFailure: false);
-        var connection = session == null
-            ? null
-            : await _db.InfraConnections.Find(x => x.Id == session.ConnectionId).FirstOrDefaultAsync(ct);
+            : await _infraConnections.TryUnprotectLongTokenAsync(connection.Id, ct, revokeOnFailure: false);
 
         var inputElement = req.Input ?? JsonDocument.Parse("{}").RootElement;
         var ctx = new AgentToolInvocationContext
@@ -89,6 +87,7 @@ public class AgentToolsController : ControllerBase
             AppCallerCode = req.AppCallerCode,
             SidecarName = Request.Headers["X-Sidecar-Name"].FirstOrDefault(),
             InfraAgentSessionId = session?.Id,
+            ApprovalId = req.ApprovalId,
             CdsBaseUrl = connection?.PartnerBaseUrl,
             CdsProjectId = connection?.ProjectId,
             CdsLongToken = cdsToken,
@@ -147,6 +146,63 @@ public class AgentToolsController : ControllerBase
         });
     }
 
+    [HttpPost("approvals/{runId}/{approvalId}/request")]
+    public async Task<IActionResult> RequestApproval(
+        string runId,
+        string approvalId,
+        [FromBody] ApprovalRequest? req,
+        CancellationToken ct)
+    {
+        if (!ValidateToken(out var why))
+        {
+            _logger.LogWarning("[AgentTools] /approvals/request 401 reason={Reason}", why);
+            return Unauthorized(new { error = why });
+        }
+
+        if (req == null || string.IsNullOrWhiteSpace(req.ToolName))
+            return BadRequest(new { success = false, errorCode = "toolName_required", message = "toolName required" });
+
+        var session = await FindSessionByRunIdAsync(runId, ct);
+        if (session == null)
+        {
+            return Ok(new
+            {
+                success = false,
+                errorCode = "approval_context_missing",
+                message = "approval request requires an infra agent session context"
+            });
+        }
+
+        var risk = ClassifyToolRisk(req.ToolName);
+        if (!InfraAgentToolPolicies.AllowsToolInvocation(session.ToolPolicy, req.ToolName))
+        {
+            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool denied by tool policy", ct);
+            return Ok(new
+            {
+                success = false,
+                errorCode = "tool_denied_by_writable_profile",
+                message = "tool is not allowed by the current CDS Agent tool policy",
+                risk
+            });
+        }
+
+        if (risk == "readonly")
+        {
+            await AppendToolResultAsync(session.Id, approvalId, "auto_allowed", "readonly tool auto allowed", ct);
+            return Ok(new { success = true, decision = "auto_allowed", risk });
+        }
+
+        await AppendToolCallAsync(
+            session.Id,
+            approvalId,
+            req.ToolName,
+            req.Input,
+            req.Description,
+            risk,
+            ct);
+        return Ok(new { success = true, decision = "waiting", risk });
+    }
+
     private async Task<ToolApprovalDecision> ResolveToolApprovalAsync(
         string? runId,
         string? toolName,
@@ -168,10 +224,13 @@ public class AgentToolsController : ControllerBase
                 : ToolApprovalDecision.Deny("approval_context_missing", "dangerous tool requires an infra agent session approval context", risk);
         }
 
-        if (string.Equals(session.ToolPolicy, "deny-all", StringComparison.OrdinalIgnoreCase))
+        if (!InfraAgentToolPolicies.AllowsToolInvocation(session.ToolPolicy, toolName))
         {
-            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool policy deny-all", ct);
-            return ToolApprovalDecision.Deny("tool_denied_by_policy", "tool policy deny-all", risk);
+            await AppendToolResultAsync(session.Id, approvalId, "denied", "tool denied by tool policy", ct);
+            return ToolApprovalDecision.Deny(
+                "tool_denied_by_writable_profile",
+                "tool is not allowed by the current CDS Agent tool policy",
+                risk);
         }
 
         if (risk == "readonly")
@@ -223,6 +282,42 @@ public class AgentToolsController : ControllerBase
         var sessionId = dash > 0 ? rest[..dash] : rest;
         if (string.IsNullOrWhiteSpace(sessionId)) return null;
         return await _db.InfraAgentSessions.Find(x => x.Id == sessionId).FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<InfraConnection?> ResolveSessionConnectionAsync(InfraAgentSession? session, CancellationToken ct)
+    {
+        if (session == null || string.IsNullOrWhiteSpace(session.ConnectionId))
+            return null;
+
+        var original = await _db.InfraConnections
+            .Find(x => x.Id == session.ConnectionId)
+            .FirstOrDefaultAsync(ct);
+        if (original == null)
+            return null;
+
+        if (!IsRetiredConnection(original))
+            return original;
+
+        var now = DateTime.UtcNow;
+        var replacement = await _db.InfraConnections
+            .Find(x => x.Id != original.Id
+                && x.Partner == original.Partner
+                && x.PartnerBaseUrl == original.PartnerBaseUrl
+                && x.ProjectId == original.ProjectId
+                && x.Status == "active"
+                && x.LongTokenEncrypted != string.Empty
+                && x.LongTokenExpiresAt > now)
+            .SortByDescending(x => x.LastProbeOk)
+            .ThenByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        return replacement ?? original;
+    }
+
+    private static bool IsRetiredConnection(InfraConnection connection)
+    {
+        return string.Equals(connection.Status, "revoked", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(connection.LongTokenEncrypted);
     }
 
     private async Task<string?> FindApprovalDecisionAsync(string sessionId, string approvalId, CancellationToken ct)
@@ -296,11 +391,72 @@ public class AgentToolsController : ControllerBase
         }, cancellationToken: ct);
     }
 
+    private async Task AppendToolCallAsync(
+        string sessionId,
+        string approvalId,
+        string toolName,
+        JsonElement? input,
+        string? description,
+        string risk,
+        CancellationToken ct)
+    {
+        var events = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == sessionId && x.Type == InfraAgentEventTypes.ToolCall)
+            .SortByDescending(x => x.Seq)
+            .Limit(80)
+            .ToListAsync(ct);
+
+        foreach (var evt in events)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.PayloadJson);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("approvalId", out var idElement)
+                    && string.Equals(idElement.GetString(), approvalId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed legacy payloads.
+            }
+        }
+
+        var latest = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == sessionId)
+            .SortByDescending(x => x.Seq)
+            .Limit(1)
+            .FirstOrDefaultAsync(ct);
+
+        await _db.InfraAgentEvents.InsertOneAsync(new InfraAgentEvent
+        {
+            SessionId = sessionId,
+            Seq = (latest?.Seq ?? 0) + 1,
+            Type = InfraAgentEventTypes.ToolCall,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                approvalId,
+                toolName,
+                argsSummary = input?.GetRawText() ?? "{}",
+                description,
+                risk,
+                status = "waiting",
+                source = "claude-agent-sdk-permission"
+            }),
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken: ct);
+    }
+
     private static string ClassifyToolRisk(string toolName)
     {
-        return toolName switch
+        var normalized = toolName.Trim().ToLowerInvariant();
+        return normalized switch
         {
-            "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action" => "dangerous",
+            "kb_apply" => "write",
+            "repo_write_file" or "repo_run_command" or "repo_create_pull_request" or "cds_bridge_action"
+                or "bash" or "edit" or "write" => "dangerous",
             _ => "readonly"
         };
     }
@@ -364,6 +520,13 @@ public class AgentToolsController : ControllerBase
     {
         public string? ToolName { get; set; }
         public int? TimeoutSeconds { get; set; }
+    }
+
+    public sealed class ApprovalRequest
+    {
+        public string? ToolName { get; set; }
+        public JsonElement? Input { get; set; }
+        public string? Description { get; set; }
     }
 
     private sealed record ToolApprovalDecision(

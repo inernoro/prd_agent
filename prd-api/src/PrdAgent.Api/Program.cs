@@ -1045,6 +1045,9 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
 // MAP 端基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任）
 // 详见 spec.cds-map-pairing-protocol.md
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeJobQueue,
+    PrdAgent.Infrastructure.Services.InfraAgentSessions.InMemoryInfraAgentRuntimeJobQueue>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentRuntimeWorker>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
 builder.Services.AddHttpClient(
@@ -1060,41 +1063,23 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraAgentRuntimeProfileSer
 // 详见 doc/design.claude-sdk-executor.md。多实例配置支持本地 / docker-compose / 远程 sandbox 三种部署。
 //
 // 零配置自启：如果 ClaudeSdkExecutor:AutoConfigureFromEnv=true（默认）且环境变量
-// ANTHROPIC_API_KEY 非空，PostConfigure 会自动注入一个 default sidecar 实例并打开 Enabled。
-// 用户只需 echo "ANTHROPIC_API_KEY=sk-ant-xxx" >> .env 然后 docker compose up 即可。
+// ANTHROPIC_API_KEY 或 CLAUDE_SIDECAR_BASE_URL/CLAUDE_SIDECAR_TOKEN 非空，
+// PostConfigure 会自动注入一个 sidecar 实例并打开 Enabled。provider key 可由
+// MAP runtime profile 按请求下发，不要求 prd-api 环境一定持有 ANTHROPIC_API_KEY。
 builder.Services.Configure<PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions>(
     builder.Configuration.GetSection(
         PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions.SectionName));
 builder.Services.PostConfigure<PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarOptions>(opts =>
 {
-    if (!opts.AutoConfigureFromEnv) return;
-
-    var anthropicKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-    if (string.IsNullOrWhiteSpace(anthropicKey)) return;
-
-    if (opts.Sidecars.Count == 0)
-    {
-        var url = Environment.GetEnvironmentVariable("CLAUDE_SIDECAR_BASE_URL")
-            ?? opts.DefaultSidecarBaseUrl;
-        var token = Environment.GetEnvironmentVariable("CLAUDE_SIDECAR_TOKEN")
-            ?? opts.DefaultSidecarToken;
-        opts.Sidecars.Add(new PrdAgent.Infrastructure.Services.ClaudeSidecar.SidecarInstanceConfig
-        {
-            Name = "default",
-            BaseUrl = url,
-            Token = token,
-            Weight = 1,
-            Tags = new List<string> { "default" },
-        });
-    }
-
-    if (!opts.Enabled) opts.Enabled = true;
+    PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarEnvAutoConfigurator.Apply(opts);
 });
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ClaudeSidecar.InstanceStateRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IDynamicSidecarRegistry,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.DynamicSidecarRegistry>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeAdapter,
+    PrdAgent.Infrastructure.Services.AgentRuntime.SidecarRuntimeAdapter>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
 builder.Services.AddHttpClient(
