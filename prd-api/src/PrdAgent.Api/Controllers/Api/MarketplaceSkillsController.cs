@@ -156,6 +156,156 @@ public class MarketplaceSkillsController : ControllerBase
     }
 
     // ======================================================================
+    // AI 详情起草（SSE 流式）
+    // ======================================================================
+
+    /// <summary>
+    /// 拖拽上传时前端调用：读 SKILL.md 内容 → SSE 流式回吐 30 字摘要。
+    /// 目的是「前几秒就有字」：用 chat 模型 + max_tokens=120，token 一到就 flush，
+    /// 用户在拖入文件后立刻看见详情逐字浮现，不会面对空白。
+    /// 详情留空时上传接口仍会兜底，本端点纯属"预填体验"加速。
+    /// </summary>
+    public sealed class DraftDescriptionRequest
+    {
+        public string? Content { get; set; }
+        public string? FileName { get; set; }
+    }
+
+    [HttpPost("draft-description")]
+    public async Task DraftDescription([FromBody] DraftDescriptionRequest? request, CancellationToken ct)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task WriteSseAsync(string ev, object data)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                });
+                await Response.WriteAsync($"event: {ev}\n", ct);
+                await Response.WriteAsync($"data: {json}\n\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            catch { /* 客户端已断 */ }
+        }
+
+        async Task WriteDeltaAsync(string text)
+        {
+            try
+            {
+                // 直接以 \n 分隔的 SSE data 行，便于前端简单拼接（前端按 \n\n 切事件，再读 data:）
+                foreach (var line in text.Split('\n'))
+                {
+                    await Response.WriteAsync($"data: {line}\n", ct);
+                }
+                await Response.WriteAsync("\n", ct);
+                await Response.Body.FlushAsync(ct);
+            }
+            catch { /* 客户端已断 */ }
+        }
+
+        var content = (request?.Content ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(content))
+        {
+            await WriteSseAsync("error", new { message = "SKILL.md 内容为空" });
+            return;
+        }
+        if (content.Length > 2000) content = content[..2000];
+
+        var userId = this.GetRequiredUserId();
+        const string appCallerCode = "marketplace-skill.summary::chat";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: content.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "marketplace-skill-draft-description",
+            RequestType: "chat",
+            AppCallerCode: appCallerCode));
+
+        // 提示词重点：第一句就要是结论，token-by-token 用户就能看到答案在生成
+        var systemPrompt =
+            "你是技能市场的卡片文案助手。读完用户提供的 SKILL.md，用 30 个字以内一句话直接说明"
+            + "这个技能解决什么问题、能做什么。要求："
+            + "(1) 不要任何前缀（不要『这是…』『该技能…』）直接给名词性陈述；"
+            + "(2) 一行成稿，不要换行、不要句号；"
+            + "(3) 中文为主，保留必要英文术语；"
+            + "(4) 严禁 emoji、引号、Markdown 标记。";
+
+        var requestBody = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = content },
+            },
+            ["temperature"] = 0.2,
+            ["max_tokens"] = 120,
+        };
+
+        var emittedAny = false;
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = "chat",
+                RequestBody = requestBody,
+            }, CancellationToken.None))
+            {
+                if (ct.IsCancellationRequested) break;
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    emittedAny = true;
+                    await WriteDeltaAsync(chunk.Content);
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    await WriteSseAsync("error", new { message = chunk.Error ?? "模型返回错误" });
+                    return;
+                }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开，安静退出
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MarketplaceSkills] draft-description 流失败");
+            await WriteSseAsync("error", new { message = "AI 起草失败，可以手动填写" });
+            return;
+        }
+
+        if (!emittedAny)
+        {
+            await WriteSseAsync("error", new { message = "未生成内容" });
+            return;
+        }
+
+        try
+        {
+            await Response.WriteAsync("event: done\ndata: [DONE]\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+        catch { /* ignore */ }
+    }
+
+    // ======================================================================
     // 上传
     // ======================================================================
 

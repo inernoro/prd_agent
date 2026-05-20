@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import JSZip from 'jszip';
 import {
+  ChevronRight,
   ExternalLink,
   FileArchive,
+  FileText,
   Globe,
   Hash,
   ImageIcon,
@@ -15,6 +18,7 @@ import {
 import { Button } from '@/components/design/Button';
 import { updateMarketplaceSkill, uploadMarketplaceSkill } from '@/services';
 import { listSites, type HostedSite } from '@/services/real/webPages';
+import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 
@@ -35,11 +39,28 @@ interface Props {
   editingSkill?: MarketplaceSkillDto | null;
 }
 
-const MAX_ZIP_BYTES = 20 * 1024 * 1024;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_COVER_BYTES = 5 * 1024 * 1024;
 const ALLOWED_COVER_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const ALLOWED_SINGLE_EXT = ['md', 'markdown', 'txt'];
 const FIELD_CLASS = 'prd-field h-9 w-full rounded-[10px] px-3 text-[13px] focus:outline-none';
 const TAG_CLASS = 'surface-action-accent inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px]';
+
+function isSingleFile(f: File): boolean {
+  const ext = f.name.toLowerCase().split('.').pop() ?? '';
+  return ALLOWED_SINGLE_EXT.includes(ext);
+}
+
+async function wrapSingleFileAsZip(f: File): Promise<File> {
+  const zip = new JSZip();
+  const baseName = f.name.replace(/\.(md|markdown|txt)$/i, '');
+  const skillFolder = zip.folder(baseName || 'skill');
+  // 单文件统一作为 SKILL.md 放入 zip，便于后端按既有规则提取摘要
+  const text = await f.text();
+  (skillFolder ?? zip).file('SKILL.md', text);
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  return new File([blob], `${baseName || 'skill'}.zip`, { type: 'application/zip' });
+}
 
 type PreviewTab = 'none' | 'hosted' | 'external';
 
@@ -48,12 +69,15 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState(editingSkill?.title ?? '');
   const [description, setDescription] = useState(editingSkill?.description ?? '');
+  const [descriptionAiActive, setDescriptionAiActive] = useState(false);
+  const [descriptionUserTouched, setDescriptionUserTouched] = useState(!!editingSkill?.description);
   const [iconEmoji, setIconEmoji] = useState(editingSkill?.iconEmoji ?? '🧩');
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>(editingSkill?.tags ?? []);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const aiAbortRef = useRef<AbortController | null>(null);
 
   // 封面图
   const [coverFile, setCoverFile] = useState<File | null>(null);
@@ -128,17 +152,104 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
   const handleFile = (f: File | null) => {
     if (!f) return;
     setError('');
-    const ext = f.name.toLowerCase().split('.').pop();
-    if (ext !== 'zip') {
-      setError('仅支持 .zip 格式的技能包');
+    const ext = (f.name.toLowerCase().split('.').pop() ?? '');
+    const isZip = ext === 'zip';
+    if (!isZip && !ALLOWED_SINGLE_EXT.includes(ext)) {
+      setError('支持 .zip 技能包，或单个 .md / .markdown / .txt 文件');
       return;
     }
-    if (f.size > MAX_ZIP_BYTES) {
-      setError(`文件大小不能超过 ${MAX_ZIP_BYTES / 1024 / 1024}MB`);
+    if (f.size > MAX_FILE_BYTES) {
+      setError(`文件大小不能超过 ${MAX_FILE_BYTES / 1024 / 1024}MB`);
       return;
     }
     setFile(f);
+    void requestAiDraft(f);
   };
+
+  async function extractSkillMd(f: File): Promise<string> {
+    if (isSingleFile(f)) {
+      return await f.text();
+    }
+    try {
+      const zip = await JSZip.loadAsync(f);
+      const entryName = Object.keys(zip.files).find((name) => {
+        const lower = name.toLowerCase();
+        return lower.endsWith('skill.md') || lower.endsWith('/skill.md') || lower === 'skill.md';
+      });
+      if (!entryName) return '';
+      const entry = zip.file(entryName);
+      return entry ? await entry.async('string') : '';
+    } catch {
+      return '';
+    }
+  }
+
+  async function requestAiDraft(f: File) {
+    // 用户已经手动写了详情就不抢走他的输入
+    if (descriptionUserTouched) return;
+    aiAbortRef.current?.abort();
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+
+    let skillMd = '';
+    try {
+      skillMd = await extractSkillMd(f);
+    } catch {
+      return;
+    }
+    if (!skillMd.trim()) return;
+
+    setDescriptionAiActive(true);
+    setDescription('');
+    try {
+      const token = useAuthStore.getState().token;
+      const resp = await fetch('/api/marketplace/skills/draft-description', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({ content: skillMd, fileName: f.name }),
+      });
+      if (!resp.ok || !resp.body) {
+        setDescriptionAiActive(false);
+        return;
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+        for (const ev of events) {
+          // 用户在期间输入，立即让步
+          if (descriptionUserTouched) {
+            controller.abort();
+            return;
+          }
+          for (const line of ev.split('\n')) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+              accumulated += data;
+              setDescription(accumulated.slice(0, 200));
+            }
+          }
+        }
+      }
+    } catch {
+      /* 静默：网络/取消都不打扰用户 */
+    } finally {
+      if (aiAbortRef.current === controller) aiAbortRef.current = null;
+      setDescriptionAiActive(false);
+    }
+  }
 
   const handleCover = (f: File | null) => {
     if (!f) return;
@@ -223,6 +334,10 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
         previewUrl,
         previewHostedSiteId,
       };
+      let uploadFile = file!;
+      if (!isEditing && uploadFile && isSingleFile(uploadFile)) {
+        uploadFile = await wrapSingleFileAsZip(uploadFile);
+      }
       const res = isEditing
         ? await updateMarketplaceSkill({
           id: editingSkill.id,
@@ -230,7 +345,7 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
           removeCover: removeExistingCover,
         })
         : await uploadMarketplaceSkill({
-          file: file!,
+          file: uploadFile,
           ...payload,
           tags: tags.length > 0 ? tags : undefined,
           previewSource: previewSource === 'none' ? undefined : previewSource,
@@ -274,7 +389,7 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
             <p className="mt-0.5 text-[11px] text-token-muted">
               {isEditing
                 ? '只能修改自己上传的技能展示信息 · zip 包本体不会被静默替换'
-                : '.zip ≤ 20MB · 标题/详情留空自动兜底 · 可选封面图 + 预览地址'}
+                : '.zip 或单个 .md ≤ 20 MB · 拖入后 AI 自动起草详情'}
             </p>
           </div>
           <button
@@ -293,7 +408,7 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
           <input
             ref={fileInputRef}
             type="file"
-            accept=".zip,application/zip,application/x-zip-compressed"
+            accept=".zip,.md,.markdown,.txt,application/zip,application/x-zip-compressed,text/markdown,text/plain"
             className="hidden"
             onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
           />
@@ -340,7 +455,11 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
             >
               {file ? (
                 <>
-                  <FileArchive size={24} className="text-token-accent" />
+                  {isSingleFile(file) ? (
+                    <FileText size={24} className="text-token-accent" />
+                  ) : (
+                    <FileArchive size={24} className="text-token-accent" />
+                  )}
                   <div className="text-center">
                     <div className="text-[13px] font-medium text-token-primary">
                       {file.name}
@@ -354,117 +473,57 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
                 <>
                   <UploadCloud size={28} className="text-token-accent opacity-85" />
                   <div className="text-[13px] text-token-secondary">
-                    拖拽 .zip 技能包到这里，或 <span className="text-token-accent">点击选择</span>
+                    拖入 .zip 技能包 或 单个 SKILL.md，或 <span className="text-token-accent">点击选择</span>
                   </div>
                   <div className="text-[11px] text-token-muted">
-                    上限 20 MB · 含 SKILL.md 时自动提取摘要（先规则提取，失败兜底 LLM）
+                    .zip / .md / .markdown / .txt · 单文件 ≤ 20 MB
                   </div>
                 </>
               )}
             </div>
           )}
 
-          {/* 2. 封面图 */}
+          {/* 2. 标题 */}
           <div className="mt-4">
-            <LabelRow
-              label="封面图"
-              hint="卡片主视觉；未上传则使用下方 emoji 兜底"
-            />
-            <div className="flex items-center gap-3">
-              <div
-                onClick={pickCover}
-                className="flex items-center justify-center rounded-[12px] cursor-pointer overflow-hidden transition-colors"
-                style={{
-                  width: 104,
-                  height: 104,
-                  flexShrink: 0,
-                  background: coverPreview
-                    ? `url(${coverPreview}) center/cover`
-                    : 'rgba(255, 255, 255, 0.03)',
-                  border: `1px dashed ${coverPreview ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.18)'}`,
-                }}
-              >
-                {!coverPreview && (
-                  <div className="flex flex-col items-center gap-1.5">
-                    <ImageIcon size={22} className="text-token-accent opacity-85" />
-                    <span className="text-[10px] text-token-muted">
-                      点击上传
-                    </span>
-                  </div>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[12px] leading-5 text-token-secondary">
-                  支持 png / jpg / webp / gif，单张 ≤ 5MB
-                </div>
-                <div className="mt-0.5 text-[11px] leading-5 text-token-muted">
-                  海鲜市场会用这张图作为瀑布流卡片的封面。
-                </div>
-                {coverFile && (
-                  <div className="flex items-center gap-2 mt-2">
-                    <span
-                      className={TAG_CLASS}
-                    >
-                      {coverFile.name.length > 22
-                        ? `${coverFile.name.slice(0, 20)}…`
-                        : coverFile.name}
-                      <button
-                        type="button"
-                        onClick={() => setCoverFile(null)}
-                        className="hover:opacity-70"
-                        aria-label="移除封面图"
-                      >
-                        <X size={10} />
-                      </button>
-                    </span>
-                  </div>
-                )}
-                {editingSkill?.coverImageUrl && !coverFile && !removeExistingCover && (
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    className="mt-2"
-                    onClick={() => setRemoveExistingCover(true)}
-                  >
-                    移除当前封面
-                  </Button>
-                )}
-                {removeExistingCover && !coverFile && (
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="mt-2"
-                    onClick={() => setRemoveExistingCover(false)}
-                  >
-                    恢复当前封面
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 3. 标题 */}
-          <div className="mt-4">
-            <LabelRow label="标题" hint="留空则使用文件名（去扩展名）" />
+            <LabelRow label="标题" />
             <input
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder={file ? file.name.replace(/\.zip$/i, '') : '给你的技能起个名字'}
+              placeholder={file ? file.name.replace(/\.(zip|md|markdown|txt)$/i, '') : '留空将用文件名'}
               maxLength={80}
               className={FIELD_CLASS}
             />
           </div>
 
-          {/* 4. 详情 */}
+          {/* 3. 详情 */}
           <div className="mt-3">
-            <LabelRow
-              label="详情"
-              hint="留空 → 规则提取 SKILL.md → 失败兜底 LLM 30 字摘要"
-            />
+            <div className="flex items-baseline justify-between mb-1.5">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-token-secondary">
+                详情
+                {descriptionAiActive ? (
+                  <span className="surface-action-accent inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[10px]">
+                    <Sparkles size={9} className="animate-pulse" />
+                    AI 起草中…
+                  </span>
+                ) : description && !descriptionUserTouched ? (
+                  <span className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[10px] text-token-accent">
+                    <Sparkles size={9} />
+                    AI 生成
+                  </span>
+                ) : null}
+              </span>
+              <span className="text-[10px] text-token-muted">
+                {file ? '可直接修改，不满意就清空' : '留空则上传时自动生成'}
+              </span>
+            </div>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                setDescriptionUserTouched(true);
+                aiAbortRef.current?.abort();
+              }}
               placeholder="一句话说清这个技能做什么（不超过 200 字）"
               rows={3}
               maxLength={200}
@@ -472,165 +531,238 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
             />
           </div>
 
-          {/* 5. 预览地址 */}
-          <div className="mt-3">
-            <LabelRow label="预览地址" hint="可选：让下载者先在网页上看看效果" />
-            <div className="flex items-center gap-1 mb-2">
-              <PreviewTabBtn
-                active={previewTab === 'none'}
-                onClick={() => setPreviewTab('none')}
-                icon={<Sparkles size={12} />}
-                label="不设置"
-              />
-              <PreviewTabBtn
-                active={previewTab === 'hosted'}
-                onClick={() => setPreviewTab('hosted')}
-                icon={<Globe size={12} />}
-                label="我的托管站点"
-              />
-              <PreviewTabBtn
-                active={previewTab === 'external'}
-                onClick={() => setPreviewTab('external')}
-                icon={<LinkIcon size={12} />}
-                label="外部 URL"
-              />
-            </div>
+          {/* 4. 进阶（折叠） */}
+          <details className="mt-4 group" open={isEditing}>
+            <summary className="flex items-center gap-1.5 cursor-pointer list-none select-none text-[12px] text-token-secondary hover:text-token-primary py-1">
+              <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+              进阶（封面 / 图标 / 预览 / 标签）
+              <span className="text-[10px] text-token-muted">— 不填也能发布</span>
+            </summary>
 
-            {previewTab === 'hosted' && (
+            <div className="mt-3 space-y-4">
+              {/* 4.1 封面图 */}
               <div>
-                {loadingSites ? (
-                  <div className="py-2 text-[12px] text-token-muted">
-                    正在加载我的托管站点...
-                  </div>
-                ) : sites.length === 0 ? (
+                <LabelRow label="封面图" hint="未上传则用下方 emoji 兜底" />
+                <div className="flex items-center gap-3">
                   <div
-                    className="surface-inset rounded-[10px] px-3 py-2 text-[12px] text-token-muted"
-                  >
-                    你还没有托管站点。先去「网页托管」上传一份即可在这里选中。
-                  </div>
-                ) : (
-                  <select
-                    value={selectedSiteId}
-                    onChange={(e) => setSelectedSiteId(e.target.value)}
-                    className={FIELD_CLASS}
-                  >
-                    <option value="">— 选择一个托管站点 —</option>
-                    {sites.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.title || '未命名'} ({s.visibility === 'public' ? '公开' : '私有'})
-                      </option>
-                    ))}
-                  </select>
-                )}
-                {selectedSite?.siteUrl && (
-                  <a
-                    href={selectedSite.siteUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-token-accent"
-                  >
-                    <ExternalLink size={10} />
-                    {selectedSite.siteUrl}
-                  </a>
-                )}
-              </div>
-            )}
-
-            {previewTab === 'external' && (
-              <input
-                type="url"
-                value={previewUrlInput}
-                onChange={(e) => setPreviewUrlInput(e.target.value)}
-                placeholder="https://example.com/preview"
-                maxLength={512}
-                className={FIELD_CLASS}
-              />
-            )}
-          </div>
-
-          {/* 6. Emoji 兜底图标 */}
-          <div className="mt-3">
-            <LabelRow label="图标（emoji）" hint="未上传封面图时作为卡片兜底视觉" />
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={iconEmoji}
-                onChange={(e) => setIconEmoji(e.target.value)}
-                maxLength={4}
-                className="prd-field h-9 w-16 rounded-[10px] px-2 text-center text-[18px] focus:outline-none"
-              />
-              <div className="flex items-center gap-1 flex-wrap">
-                {['🧩', '🤖', '✨', '⚡', '📚', '🎨', '🔧', '🚀', '📦', '🐟'].map((e) => (
-                  <button
-                    key={e}
-                    type="button"
-                    onClick={() => setIconEmoji(e)}
-                    className="w-7 h-7 flex items-center justify-center rounded-[8px] transition-colors hover:bg-white/10"
+                    onClick={pickCover}
+                    className="flex items-center justify-center rounded-[12px] cursor-pointer overflow-hidden transition-colors"
                     style={{
-                      background: iconEmoji === e ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
-                      border: `1px solid ${iconEmoji === e ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.08)'}`,
+                      width: 88,
+                      height: 88,
+                      flexShrink: 0,
+                      background: coverPreview
+                        ? `url(${coverPreview}) center/cover`
+                        : 'rgba(255, 255, 255, 0.03)',
+                      border: `1px dashed ${coverPreview ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.18)'}`,
                     }}
                   >
-                    {e}
-                  </button>
-                ))}
+                    {!coverPreview && (
+                      <div className="flex flex-col items-center gap-1">
+                        <ImageIcon size={20} className="text-token-accent opacity-85" />
+                        <span className="text-[10px] text-token-muted">点击上传</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] text-token-muted">
+                      png / jpg / webp / gif · ≤ 5 MB
+                    </div>
+                    {coverFile && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className={TAG_CLASS}>
+                          {coverFile.name.length > 22
+                            ? `${coverFile.name.slice(0, 20)}…`
+                            : coverFile.name}
+                          <button
+                            type="button"
+                            onClick={() => setCoverFile(null)}
+                            className="hover:opacity-70"
+                            aria-label="移除封面图"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                    {editingSkill?.coverImageUrl && !coverFile && !removeExistingCover && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        className="mt-2"
+                        onClick={() => setRemoveExistingCover(true)}
+                      >
+                        移除当前封面
+                      </Button>
+                    )}
+                    {removeExistingCover && !coverFile && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="mt-2"
+                        onClick={() => setRemoveExistingCover(false)}
+                      >
+                        恢复当前封面
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* 7. 标签 */}
-          <div className="mt-3">
-            <LabelRow label="标签" hint="回车添加，最多 10 个（用于顶部筛选）" />
-            <div className="flex items-center gap-2">
-              <div
-                className="prd-field flex h-9 min-w-0 flex-1 items-center rounded-[10px] px-2"
-              >
-                <Hash size={12} className="text-token-muted" />
-                <input
-                  type="text"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addTag();
-                    }
-                    if (e.key === 'Backspace' && tagInput === '' && tags.length > 0) {
-                      setTags((xs) => xs.slice(0, -1));
-                    }
-                  }}
-                  placeholder={tags.length === 0 ? '如：英文翻译、PRD、审查、导出…' : '继续添加...'}
-                  maxLength={20}
-                  className="h-full flex-1 bg-transparent px-2 text-[13px] text-token-primary focus:outline-none"
-                />
+              {/* 4.2 Emoji */}
+              <div>
+                <LabelRow label="图标（emoji）" hint="无封面时的兜底视觉" />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={iconEmoji}
+                    onChange={(e) => setIconEmoji(e.target.value)}
+                    maxLength={4}
+                    className="prd-field h-9 w-16 rounded-[10px] px-2 text-center text-[18px] focus:outline-none"
+                  />
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {['🧩', '🤖', '✨', '⚡', '📚', '🎨', '🔧', '🚀', '📦', '🐟'].map((e) => (
+                      <button
+                        key={e}
+                        type="button"
+                        onClick={() => setIconEmoji(e)}
+                        className="w-7 h-7 flex items-center justify-center rounded-[8px] transition-colors hover:bg-white/10"
+                        style={{
+                          background: iconEmoji === e ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
+                          border: `1px solid ${iconEmoji === e ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.08)'}`,
+                        }}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
-              <Button variant="secondary" size="xs" onClick={addTag} disabled={!tagInput.trim()}>
-                <Plus size={12} />
-                加标签
-              </Button>
+
+              {/* 4.3 预览地址 */}
+              <div>
+                <LabelRow label="预览地址" hint="让下载者先看效果" />
+                <div className="flex items-center gap-1 mb-2">
+                  <PreviewTabBtn
+                    active={previewTab === 'none'}
+                    onClick={() => setPreviewTab('none')}
+                    icon={<Sparkles size={12} />}
+                    label="不设置"
+                  />
+                  <PreviewTabBtn
+                    active={previewTab === 'hosted'}
+                    onClick={() => setPreviewTab('hosted')}
+                    icon={<Globe size={12} />}
+                    label="我的托管站点"
+                  />
+                  <PreviewTabBtn
+                    active={previewTab === 'external'}
+                    onClick={() => setPreviewTab('external')}
+                    icon={<LinkIcon size={12} />}
+                    label="外部 URL"
+                  />
+                </div>
+
+                {previewTab === 'hosted' && (
+                  <div>
+                    {loadingSites ? (
+                      <div className="py-2 text-[12px] text-token-muted">
+                        正在加载我的托管站点...
+                      </div>
+                    ) : sites.length === 0 ? (
+                      <div className="surface-inset rounded-[10px] px-3 py-2 text-[12px] text-token-muted">
+                        你还没有托管站点。先去「网页托管」上传一份即可在这里选中。
+                      </div>
+                    ) : (
+                      <select
+                        value={selectedSiteId}
+                        onChange={(e) => setSelectedSiteId(e.target.value)}
+                        className={FIELD_CLASS}
+                      >
+                        <option value="">— 选择一个托管站点 —</option>
+                        {sites.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.title || '未命名'} ({s.visibility === 'public' ? '公开' : '私有'})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {selectedSite?.siteUrl && (
+                      <a
+                        href={selectedSite.siteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-token-accent"
+                      >
+                        <ExternalLink size={10} />
+                        {selectedSite.siteUrl}
+                      </a>
+                    )}
+                  </div>
+                )}
+
+                {previewTab === 'external' && (
+                  <input
+                    type="url"
+                    value={previewUrlInput}
+                    onChange={(e) => setPreviewUrlInput(e.target.value)}
+                    placeholder="https://example.com/preview"
+                    maxLength={512}
+                    className={FIELD_CLASS}
+                  />
+                )}
+              </div>
+
+              {/* 4.4 标签 */}
+              <div>
+                <LabelRow label="标签" hint="回车添加，最多 10 个" />
+                <div className="flex items-center gap-2">
+                  <div className="prd-field flex h-9 min-w-0 flex-1 items-center rounded-[10px] px-2">
+                    <Hash size={12} className="text-token-muted" />
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => setTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addTag();
+                        }
+                        if (e.key === 'Backspace' && tagInput === '' && tags.length > 0) {
+                          setTags((xs) => xs.slice(0, -1));
+                        }
+                      }}
+                      placeholder={tags.length === 0 ? '如：英文翻译、PRD、审查、导出…' : '继续添加...'}
+                      maxLength={20}
+                      className="h-full flex-1 bg-transparent px-2 text-[13px] text-token-primary focus:outline-none"
+                    />
+                  </div>
+                  <Button variant="secondary" size="xs" onClick={addTag} disabled={!tagInput.trim()}>
+                    <Plus size={12} />
+                    加标签
+                  </Button>
+                </div>
+                {tags.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    {tags.map((t) => (
+                      <span key={t} className={TAG_CLASS}>
+                        <Hash size={9} />
+                        {t}
+                        <button
+                          type="button"
+                          onClick={() => removeTag(t)}
+                          className="hover:opacity-70"
+                          aria-label={`删除标签 ${t}`}
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-            {tags.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                {tags.map((t) => (
-                  <span
-                    key={t}
-                    className={TAG_CLASS}
-                  >
-                    <Hash size={9} />
-                    {t}
-                    <button
-                      type="button"
-                      onClick={() => removeTag(t)}
-                      className="hover:opacity-70"
-                      aria-label={`删除标签 ${t}`}
-                    >
-                      <X size={10} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          </details>
 
           {error && (
             <div
