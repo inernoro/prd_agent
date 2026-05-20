@@ -138,6 +138,8 @@ interface PreviewModeResponse {
   mode: 'simple' | 'port' | 'multi';
 }
 
+const AI_ACTIVE_TTL_MS = 5 * 60 * 1000;
+
 interface CdsConfigResponse {
   workerPort?: number;
   mainDomain?: string;
@@ -524,6 +526,24 @@ function formatElapsedSecondsFrom(since: string | undefined | null, now: number)
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function aiOperationState(branch: BranchSummary, now: number): { active: boolean; history: boolean; label: string; title: string } {
+  const lastAt = branch.lastAiOccupantAt || null;
+  const lastAtMs = lastAt ? new Date(lastAt).getTime() : Number.NaN;
+  const hasValidLastAt = Number.isFinite(lastAtMs);
+  const active = hasValidLastAt && now - lastAtMs <= AI_ACTIVE_TTL_MS;
+  const history = active || (branch.aiOpCount || 0) > 0 || hasValidLastAt;
+  const relative = hasValidLastAt ? formatRelativeTime(lastAt, '未知时间') : '';
+  const count = branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : '';
+  return {
+    active,
+    history,
+    label: active ? 'AI 正在操作' : 'AI 操作过',
+    title: history
+      ? `${active ? 'AI 正在操作' : 'AI 操作过'}${relative ? ` · 最近 ${relative}` : ''}${count}`
+      : '无 AI 操作记录',
+  };
 }
 
 function branchBusySince(branch: BranchSummary, action?: BranchAction): string | undefined {
@@ -3347,7 +3367,9 @@ function BranchCard({
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
-  const isAiOperated = (branch.aiOpCount || 0) > 0 || Boolean(branch.lastAiOccupantAt);
+  const aiState = aiOperationState(branch, now);
+  const isAiOperated = aiState.history;
+  const isAiActive = aiState.active;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
@@ -3389,7 +3411,7 @@ function BranchCard({
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${isAiOperated ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
+      } ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -3404,7 +3426,7 @@ function BranchCard({
       {highlighted ? (
         <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-primary shadow-[0_0_18px_hsl(var(--primary)/0.45)]" aria-hidden />
       ) : null}
-      {isAiOperated ? (
+      {isAiActive ? (
         <div
           className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-sky-400 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
           aria-hidden
@@ -3417,7 +3439,7 @@ function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <Github
-            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
             aria-hidden
           />
           <div className="min-w-0 flex-1">
@@ -3432,10 +3454,10 @@ function BranchCard({
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
               {isAiOperated ? (
                 <span
-                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-sky-400/45 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-300"
-                  title={`AI 操作过${branch.lastAiOccupantAt ? ` · 最近 ${formatRelativeTime(branch.lastAiOccupantAt)}` : ''}${branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : ''}`}
+                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border border-sky-400/45 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-300 ${isAiActive ? '' : 'opacity-75'}`}
+                  title={aiState.title}
                 >
-                  <Bot className="cds-ai-kinetic-icon cds-ai-delay-1 h-2.5 w-2.5" aria-hidden />
+                  <Bot className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-1 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   AI
                 </span>
               ) : null}
@@ -3450,7 +3472,7 @@ function BranchCard({
                   className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-medium ${runtime.className}`}
                   title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  <Rocket className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
+                  <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   {runtime.label}
                 </span>
               ) : (
@@ -3458,7 +3480,7 @@ function BranchCard({
                   className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
                   title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  <Rocket className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
+                  <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   源码
                 </span>
               )}
@@ -3497,11 +3519,11 @@ function BranchCard({
             title={isInterim ? `${statusLabel(branch.status)}已持续时间` : undefined}
             data-since={isInterim ? busySince || '' : undefined}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${isAiOperated ? 'cds-ai-kinetic-dot ' : ''}${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
+            <span className={`h-1.5 w-1.5 rounded-full ${isAiActive ? 'cds-ai-kinetic-dot ' : ''}${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
             {isError ? issueLabel : statusLabel(branch.status)}
             {isInterim ? (
               <>
-                <Clock3 className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-3 w-3' : 'h-3 w-3'} aria-hidden />
+                <Clock3 className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-3 w-3' : 'h-3 w-3'} aria-hidden />
                 <span className="branch-deploy-timer-value font-mono">{formatElapsedFrom(busySince, now)}</span>
               </>
             ) : null}
@@ -3520,7 +3542,7 @@ function BranchCard({
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
               title={service.profileId}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${isAiOperated ? 'cds-ai-kinetic-dot ' : ''}${chipRailClass}`} aria-hidden />
+              <span className={`h-1.5 w-1.5 rounded-full ${isAiActive ? 'cds-ai-kinetic-dot ' : ''}${chipRailClass}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
               <span>:{service.hostPort}</span>
             </span>
@@ -3706,7 +3728,7 @@ function BranchCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
-          <GitBranch className={isAiOperated ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-4 w-4 shrink-0 text-sky-500' : 'h-4 w-4 shrink-0 text-sky-500'} />
+          <GitBranch className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-4 w-4 shrink-0 text-sky-500' : 'h-4 w-4 shrink-0 text-sky-500'} />
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
         </div>
         {/*
@@ -3730,11 +3752,13 @@ function BranchCard({
                 <Button
                   size="icon"
                   variant="outline"
-                  className={isAiOperated
+                  className={isAiActive
                     ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                    : isAiOperated
+                      ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                     : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                  title={isAiOperated ? 'AI 操作过 · 预览' : '预览'}
-                  aria-label={isAiOperated ? 'AI 操作过，预览' : '预览'}
+                  title={isAiOperated ? `${aiState.label} · 预览` : '预览'}
+                  aria-label={isAiOperated ? `${aiState.label}，预览` : '预览'}
                 >
                   {isAiOperated ? <Bot /> : <Eye />}
                 </Button>
@@ -3744,13 +3768,15 @@ function BranchCard({
             <Button
               size="icon"
               variant="outline"
-              className={isAiOperated
+              className={isAiActive
                 ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                : isAiOperated
+                  ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                 : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
               onClick={onPreview}
               disabled={busy}
-              title={isAiOperated ? 'AI 操作过 · 预览' : '预览'}
-              aria-label={isAiOperated ? 'AI 操作过，预览' : '预览'}
+              title={isAiOperated ? `${aiState.label} · 预览` : '预览'}
+              aria-label={isAiOperated ? `${aiState.label}，预览` : '预览'}
             >
               {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
             </Button>

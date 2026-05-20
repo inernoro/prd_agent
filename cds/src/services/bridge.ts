@@ -103,12 +103,13 @@ interface BridgeConnection {
 
 const COMMAND_TIMEOUT = 15_000;
 const CONNECTION_TTL = 20_000; // connection considered dead if no heartbeat for 20s (widget polls every 5s)
+const SESSION_TTL = 5 * 60_000; // AI sessions expire if no command refreshes them for 5 minutes
 
 export class BridgeService {
   private connections = new Map<string, BridgeConnection>();
   private navigateRequests = new Map<string, NavigateRequest>();
   private handshakeRequests = new Map<string, HandshakeRequest>();
-  private activeSessions = new Set<string>(); // branches with active AI sessions
+  private activeSessions = new Map<string, number>(); // branchId -> last AI command/session timestamp
   private onActivityCallback: ((branchId: string, action: string) => void) | null = null;
   private cleanupTimer: ReturnType<typeof setInterval>;
 
@@ -196,6 +197,10 @@ export class BridgeService {
       return { id: command.id, success: false, error: 'no connection', state: emptyState() };
     }
 
+    if (this.isSessionActive(branchId)) {
+      this.activeSessions.set(branchId, Date.now());
+    }
+
     // Queue the command (FIFO — multiple commands can be queued)
     conn.pendingCommands.push(command);
 
@@ -233,6 +238,7 @@ export class BridgeService {
     }
     conn.pendingResolvers.clear();
     this.connections.delete(branchId);
+    this.activeSessions.delete(branchId);
     this.onActivityCallback?.(branchId, 'Bridge 已断开');
   }
 
@@ -267,7 +273,7 @@ export class BridgeService {
 
   /** Agent starts a session — Widget will begin polling when it detects this */
   startSession(branchId: string): void {
-    this.activeSessions.add(branchId);
+    this.activeSessions.set(branchId, Date.now());
   }
 
   /** Agent ends a session — Widget will stop polling */
@@ -278,7 +284,13 @@ export class BridgeService {
 
   /** Widget checks if an Agent has activated a session for this branch */
   isSessionActive(branchId: string): boolean {
-    return this.activeSessions.has(branchId);
+    const lastActivity = this.activeSessions.get(branchId);
+    if (!lastActivity) return false;
+    if (Date.now() - lastActivity > SESSION_TTL) {
+      this.activeSessions.delete(branchId);
+      return false;
+    }
+    return true;
   }
 
   /** Store a navigate request for the widget to pick up */

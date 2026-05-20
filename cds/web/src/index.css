@@ -173,13 +173,13 @@
   .cds-ai-preview-beacon {
     position: relative;
     isolation: isolate;
-    overflow: visible;
+    overflow: hidden;
     border-color: rgb(56 189 248 / 0.58) !important;
     box-shadow:
       0 0 0 1px rgb(56 189 248 / 0.18),
-      0 0 20px -8px rgb(56 189 248 / 0.9),
+      0 0 18px -10px rgb(56 189 248 / 0.9),
       inset 0 1px 0 rgb(255 255 255 / 0.08);
-    animation: cds-ai-beacon-body 1.65s ease-in-out infinite;
+    animation: cds-ai-beacon-body 1.9s ease-in-out infinite;
   }
 
   .cds-ai-preview-beacon::before,
@@ -191,29 +191,31 @@
   }
 
   .cds-ai-preview-beacon::before {
-    inset: -3px;
-    z-index: -2;
+    inset: 0;
+    z-index: 0;
     background:
       conic-gradient(
         from 0deg,
-        transparent 0deg,
-        rgb(56 189 248 / 0.08) 70deg,
-        rgb(125 211 252 / 0.72) 112deg,
-        rgb(34 211 238 / 0.22) 154deg,
-        transparent 220deg,
+        transparent 0deg 52deg,
+        rgb(56 189 248 / 0.12) 86deg,
+        rgb(125 211 252 / 0.42) 118deg,
+        rgb(34 211 238 / 0.12) 150deg,
+        transparent 196deg,
         transparent 360deg
       );
-    filter: blur(1px);
-    opacity: 0.88;
+    opacity: 0.62;
     animation: cds-ai-beacon-rim 2.8s linear infinite;
   }
 
   .cds-ai-preview-beacon::after {
-    inset: -8px;
-    z-index: -3;
-    background: radial-gradient(circle, rgb(56 189 248 / 0.28), transparent 66%);
-    opacity: 0.46;
-    animation: cds-ai-beacon-halo 1.65s ease-in-out infinite;
+    inset: 3px;
+    z-index: 0;
+    border: 1px solid rgb(125 211 252 / 0.2);
+    box-shadow:
+      inset 0 0 10px rgb(125 211 252 / 0.2),
+      0 0 10px rgb(56 189 248 / 0.16);
+    opacity: 0.72;
+    animation: cds-ai-beacon-halo 1.9s ease-in-out infinite;
   }
 
   .cds-ai-preview-beacon svg {
@@ -273,17 +275,20 @@
     background:
       conic-gradient(
         from 0deg,
-        transparent 0deg,
-        rgb(2 132 199 / 0.06) 70deg,
-        rgb(14 165 233 / 0.58) 112deg,
-        rgb(6 182 212 / 0.2) 154deg,
-        transparent 220deg,
+        transparent 0deg 52deg,
+        rgb(2 132 199 / 0.08) 86deg,
+        rgb(14 165 233 / 0.34) 118deg,
+        rgb(6 182 212 / 0.1) 150deg,
+        transparent 196deg,
         transparent 360deg
       );
   }
 
   [data-theme='light'] .cds-ai-preview-beacon::after {
-    background: radial-gradient(circle, rgb(2 132 199 / 0.2), transparent 66%);
+    border-color: rgb(2 132 199 / 0.18);
+    box-shadow:
+      inset 0 0 10px rgb(2 132 199 / 0.14),
+      0 0 10px rgb(2 132 199 / 0.12);
   }
 
   @keyframes cds-ai-beacon-body {
@@ -292,7 +297,7 @@
       background-color: rgb(56 189 248 / 0.1);
     }
     48% {
-      transform: translateZ(0) scale(1.045);
+      transform: translateZ(0) scale(1.025);
       background-color: rgb(56 189 248 / 0.2);
     }
   }
@@ -303,12 +308,12 @@
 
   @keyframes cds-ai-beacon-halo {
     0%, 100% {
-      opacity: 0.28;
-      transform: scale(0.86);
+      opacity: 0.36;
+      transform: scale(0.94);
     }
     50% {
-      opacity: 0.78;
-      transform: scale(1.08);
+      opacity: 0.82;
+      transform: scale(1);
     }
   }
 
