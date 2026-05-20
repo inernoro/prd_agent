@@ -906,6 +906,9 @@ def _match_branches_for_project(branches: list, git_branch: str,
     - 否则永远按 project hint 校验——**即使只有一条匹配也要过滤**，否则别项目
       的同名分支会被误当成本项目的（用户无该分支但 CDS 上有他人同名）
     """
+    # `body.get("branches", [])` 在 `"branches": null` 时返回 None（默认值只在
+    # key 缺失时生效），传到这里迭代会 TypeError。在入口统一兜底为空 list。
+    branches = branches or []
     matches = [b for b in branches if b.get("branch") == git_branch]
     if already_scoped:
         return matches
