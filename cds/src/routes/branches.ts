@@ -2937,7 +2937,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         sendSSE(res, 'step', { step: 'stop', status: 'done', title: `已停止 ${svc.containerName}` });
       }
 
@@ -4239,6 +4239,144 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── POST /api/branches/:id/restart — 轻量重启（不重建）──
+  //
+  // 与 /deploy 区分：/deploy 是 git pull + 重新构建镜像 + docker run（有代码
+  // 变更时用）；/restart 只对已构建好的容器做 docker restart（没 bug、只是
+  // 服务被停了，直接拉起来，秒级，不动代码）。复用 containerService
+  // .restartServiceInPlace（docker restart + 存活探测）。
+  router.post('/branches/:id/restart', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const remoteExecutor =
+      entry.executorId && registry
+        ? registry.getAll().find(n => n.id === entry.executorId && n.role !== 'embedded')
+        : null;
+    if (remoteExecutor) {
+      res.status(409).json({ error: '该分支运行在远端执行器，请使用「重新部署」' });
+      return;
+    }
+    const services = Object.values(entry.services);
+    if (services.length === 0) {
+      res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
+      return;
+    }
+    try {
+      entry.status = 'restarting';
+      for (const svc of services) svc.status = 'starting';
+      stateService.save();
+
+      const failed: string[] = [];
+      for (const svc of services) {
+        const ok = await containerService.restartServiceInPlace(svc.containerName);
+        if (ok) {
+          svc.status = 'running';
+          svc.errorMessage = undefined;
+        } else {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
+          failed.push(svc.containerName);
+        }
+      }
+
+      if (failed.length === 0) {
+        entry.status = 'running';
+        // 全部成功必须清掉历史 errorMessage，否则下游 UI 仍按失败渲染
+        // （Codex P2）。
+        entry.errorMessage = undefined;
+        entry.lastStoppedAt = undefined;
+        entry.lastStopReason = undefined;
+        entry.lastStopSource = undefined;
+        // 分支重新跑起来后必须回到 warm pool：调度器降温会把 heatState
+        // 置 cold，若不复位，getHotBranches 不计入它（cold 不算 hot），
+        // maxHotBranches 容量上限被绕过。
+        // lastAccessedAt 必须在这里显式刷新：手动重启就是一次访问，而
+        // markHot() 只在 lastAccessedAt 缺失时才补（不更新陈旧值）——被
+        // 空闲 TTL 降温过的分支其 lastAccessedAt 必然很旧，若不刷新，下一
+        // 个 scheduler tick 立刻又按"空闲超时"把它降温，手动重启等于无效
+        // （Codex P1 @ f80d33a）。先刷新再 markHot。
+        // stop 重构后 /restart 真能唤醒已降温分支，此前因容器被 rm 必失败
+        // 而掩盖了这个陈旧状态问题（Cursor Bugbot #640）。
+        entry.lastAccessedAt = new Date().toISOString();
+        schedulerService?.markHot(id);
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'restart',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+          note: '手动重新启动（docker restart，未重建代码）',
+        });
+        stateService.save();
+        res.json({ message: '所有服务已重新启动' });
+      } else {
+        entry.status = 'error';
+        entry.errorMessage = `${failed.length} 个容器重启失败：${failed.join(', ')}`;
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'restart',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+          note: `重新启动部分失败（${failed.join(', ')}），建议「重新部署」`,
+        });
+        stateService.save();
+        res.status(409).json({
+          error: `${failed.length} 个容器重启失败，建议改用「重新部署」`,
+          failed,
+        });
+      }
+    } catch (err) {
+      // 兜底：未预期异常时把分支从 restarting/starting 恢复到 error，否则
+      // UI 会卡在永久"重启中"转圈，只能手动重置（Cursor Bugbot）。
+      try {
+        for (const svc of Object.values(entry.services)) {
+          if (svc.status === 'starting') svc.status = 'error';
+        }
+        entry.status = 'error';
+        entry.errorMessage = `重新启动异常：${(err as Error).message}`;
+        stateService.save();
+      } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── GET /api/branches/:id/activity-logs — 分支维度系统日志（生命周期时间线）──
+  //
+  // 复用 stateService.getActivityLogs（已按最新在前 reverse），按 branchId
+  // 过滤出本分支的 部署 / 停止 / 崩溃 / 重启 / 回收 等事件，供分支详情页
+  // 「系统日志」子页签展示"谁停的 / 何时 / 为什么"。
+  router.get('/branches/:id/activity-logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+    const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
+    // 先按 branchId 过滤再截断，否则繁忙项目里其它分支的事件会把本分支
+    // 的历史挤出 200 条上限，导致"谁停的/为什么"时间线对高频项目恰好失效
+    // （Codex review P1）。getActivityLogs 不传 limit 返回项目全部（最新在前）。
+    const all = stateService.getActivityLogs(entry.projectId, { sinceIso });
+    const matched = all.filter((e) => e.branchId === id);
+    const logs = matched.slice(0, limit);
+    // total 必须是过滤后、截断前的命中总数，否则消费方无法判断"还有没有更多"
+    // （截断后 total===logs.length 永远 ≤ limit，分页/加载更多失效）。Cursor Bugbot。
+    res.json({ branchId: id, logs, total: matched.length });
+  });
+
   // ── Set default branch ──
 
   router.post('/branches/:id/set-default', async (req, res) => {
@@ -5319,7 +5457,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (Object.prototype.hasOwnProperty.call(svcs, removedProfileId)) {
           const svc = (svcs as any)[removedProfileId];
           if (svc?.containerName) {
-            try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+            try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
           }
           delete (svcs as any)[removedProfileId];
         }
@@ -5539,7 +5677,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 1) 停容器
     if (containerName) {
       try {
-        await containerService.stop(containerName);
+        await containerService.remove(containerName);
         steps.push({ step: `停止 ${containerName}`, ok: true });
       } catch (err) {
         steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
@@ -6494,7 +6632,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // Best-effort stop the orphan container.
             const svc = entry.services[profileId];
             if (svc?.containerName) {
-              try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+              try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
             }
             delete entry.services[profileId];
             dropped.push(profileId);
@@ -6532,7 +6670,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6628,7 +6766,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // Stop all containers for this orphan in parallel
         await Promise.all(
           Object.values(entry.services).map(svc =>
-            containerService.stop(svc.containerName).catch(() => { /* ok */ }),
+            containerService.remove(svc.containerName).catch(() => { /* ok */ }),
           ),
         );
         // Remove worktree
@@ -6765,7 +6903,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const entry of branches) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
-            try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+            try { await containerService.remove(svc.containerName); } catch { /* ok */ }
           }
           try {
             const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6782,7 +6920,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const infra = stateService.getInfraServicesForProject(projectFilter);
         for (const svc of infra) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
 
         // 3. Remove this project's profiles / infra / routing / env bucket
@@ -6824,7 +6962,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const entry of branches) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6835,7 +6973,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2. Stop and remove all infra service containers (volumes preserved)
       for (const svc of state.infraServices) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
       }
 
       // 3. Clear all state (but keep the file — it will be overwritten with defaults)
@@ -10937,6 +11075,60 @@ cdscli project list --human
     stateService.save();
     schedulerService.setEnabled(enabled);
     res.json({ enabled, source: 'ui-override' });
+  });
+
+  // ── PUT /api/scheduler/config — tune scheduler params from the UI ──
+  //
+  // Body { enabled?, idleTTLSeconds?, maxHotBranches? } — every field is
+  // optional and validated independently. Each provided field persists an
+  // override to state (survives restart) then mutates the running scheduler.
+  // Mirrors the proven /scheduler/enabled pattern; the two routes write the
+  // same state overrides so they stay consistent.
+  router.put('/scheduler/config', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler service not wired in' });
+      return;
+    }
+    const body = (req.body || {}) as {
+      enabled?: unknown;
+      idleTTLSeconds?: unknown;
+      maxHotBranches?: unknown;
+    };
+
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是 boolean' });
+      return;
+    }
+    if (body.idleTTLSeconds !== undefined) {
+      const v = body.idleTTLSeconds;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 60 || v > 86400) {
+        res.status(400).json({ error: 'idleTTLSeconds 必须是 60 到 86400 之间的整数（秒）' });
+        return;
+      }
+    }
+    if (body.maxHotBranches !== undefined) {
+      const v = body.maxHotBranches;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100) {
+        res.status(400).json({ error: 'maxHotBranches 必须是 0 到 100 之间的整数（0=不限）' });
+        return;
+      }
+    }
+
+    if (typeof body.enabled === 'boolean') {
+      stateService.setSchedulerEnabledOverride(body.enabled);
+      schedulerService.setEnabled(body.enabled);
+    }
+    if (typeof body.idleTTLSeconds === 'number') {
+      stateService.setSchedulerIdleTTLOverride(body.idleTTLSeconds);
+      schedulerService.setIdleTTLSeconds(body.idleTTLSeconds);
+    }
+    if (typeof body.maxHotBranches === 'number') {
+      stateService.setSchedulerMaxHotOverride(body.maxHotBranches);
+      schedulerService.setMaxHotBranches(body.maxHotBranches);
+    }
+    stateService.save();
+
+    res.json({ ...schedulerService.getSnapshot(), source: 'ui-override' });
   });
 
   router.post('/scheduler/pin/:slug', (req, res) => {

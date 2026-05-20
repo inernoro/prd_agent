@@ -383,6 +383,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
     'PUT /scheduler/enabled': '启停调度器',
+    'PUT /scheduler/config': '更新调度器配置',
     'GET /strategy': '获取调度策略',
     'PUT /strategy': '更新调度策略',
     'GET /cluster/status': '获取集群状态',
@@ -463,6 +464,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
+    [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
     [/^POST \/branches\/(.+)\/reset$/, '重置分支状态'],
     [/^GET \/branches\/(.+)\/logs$/, '查看操作日志'],

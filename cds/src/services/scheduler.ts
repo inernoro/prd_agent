@@ -101,6 +101,28 @@ export class SchedulerService {
   }
 
   /**
+   * Update the idle timeout at runtime. No start/stop needed: tick() reads
+   * `this.config.idleTTLSeconds` fresh on every pass, so a running tick loop
+   * picks up the new value automatically. Persistence is the caller's job
+   * (StateService.setSchedulerIdleTTLOverride).
+   */
+  setIdleTTLSeconds(seconds: number): void {
+    if (this.config.idleTTLSeconds === seconds) return;
+    this.config.idleTTLSeconds = seconds;
+    console.log(`[scheduler] idleTTLSeconds set to ${seconds} at runtime (via UI)`);
+  }
+
+  /**
+   * Update the hot-pool cap at runtime. Capacity-based cooling in tick()
+   * reads `this.config.maxHotBranches` fresh, so no restart is required.
+   */
+  setMaxHotBranches(max: number): void {
+    if (this.config.maxHotBranches === max) return;
+    this.config.maxHotBranches = max;
+    console.log(`[scheduler] maxHotBranches set to ${max} at runtime (via UI)`);
+  }
+
+  /**
    * Start the periodic tick. Safe to call multiple times.
    * Does nothing when scheduler is disabled.
    */
