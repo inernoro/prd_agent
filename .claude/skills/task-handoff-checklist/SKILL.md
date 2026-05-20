@@ -133,19 +133,18 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 ### 预览验收地址（需人工验收时必填）
 
-当测试矩阵中存在"⚠️ 需人工"的项目时，自动生成预览地址：
+当测试矩阵中存在"⚠️ 需人工"的项目时，**只跑这一条命令**拿预览域名，**禁止**自己 slugify / 手写 `tr '/' '-'`：
 
 ```bash
-# 获取分支名并生成预览 URL
-BRANCH=$(git branch --show-current)
-SLUG=$(echo "$BRANCH" | tr '/' '-')
-echo "https://${SLUG}.miduo.org/"
+python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
 
-> **预览地址**: https://{branch-slug}.miduo.org/
+它会自动从 `/api/branches` 拿后端真实 `previewSlug`（v3 SSOT，与 `cds/src/services/preview-slug.ts:computePreviewSlug` 同源）。没 CDS 凭据时自动回退本地推算，永不漂。
+
+> **预览地址**: <cdscli 输出原文>
 >
 > **验收路径**:
-> 1. 打开 https://{branch-slug}.miduo.org/{页面路径}
+> 1. 打开 <cdscli 输出原文>{页面路径}
 > 2. {具体操作步骤}
 > 3. {期望结果}
 

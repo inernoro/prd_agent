@@ -14,18 +14,21 @@
 
 CLI 封装：`cdscli smoke <branchId>` 一次性跑完三层。
 
-## 预览域名推断
+## 预览域名取值（v3 SSOT）
 
+**唯一可执行入口**：
+
+```bash
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | sed 's:/$::')
 ```
-branchId = branch.replace(/\//g, '-').toLowerCase()
-preview  = https://<branchId>.miduo.org     // 若 CDS_HOST 含 "miduo"
-         | https://<branchId>.<CDS_HOST>    // 其它
-```
+
+零参数，从 git + `/api/branches` 自动检测；与 `cds/src/services/preview-slug.ts:computePreviewSlug` 永不漂。
+**禁止** `tr '/' '-'` / `${BRANCH_ID}.miduo.org` 这种 v1 拼法。
 
 ## L1 — 根路径
 
 ```bash
-curl -sf "https://$BRANCH_ID.miduo.org/" -o /dev/null -w "code=%{http_code}\n"
+curl -sf "$PREVIEW_URL/" -o /dev/null -w "code=%{http_code}\n"
 # 期望: code=200
 ```
 
@@ -40,14 +43,14 @@ curl -sf "https://$BRANCH_ID.miduo.org/" -o /dev/null -w "code=%{http_code}\n"
 | 通用 | `/robots.txt`（静态兜底）|
 
 ```bash
-curl -sf "https://$BRANCH_ID.miduo.org/api/shortcuts/version-check"
+curl -sf "$PREVIEW_URL/api/shortcuts/version-check"
 # 期望: {"version":N,...}
 ```
 
 ## L3 — 认证 API
 
 ```bash
-curl -sf "https://$BRANCH_ID.miduo.org/api/users?pageSize=1" \
+curl -sf "$PREVIEW_URL/api/users?pageSize=1" \
   -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
   -H "X-AI-Impersonate: $MAP_AI_USER"
 ```
@@ -76,6 +79,7 @@ Cloudflare 偶发把 401 响应重写成空 body HTTP 500。判定方法：
 
 | [FAIL] 做法 | 问题 | [OK] 替代 |
 |---------|------|---------|
+| 自己拼 `https://$BRANCH_ID.miduo.org` | v1 公式，多项目 CDS 下不可用 | 走 `cdscli preview-url`（v3 SSOT） | <!-- guard-allow: preview-url-drift -->
 | Layer 1 就用 container-exec | 嵌套转义复杂，CDN 问题暴露不出 | 直连 `curl preview/` |
 | 不带 `X-AI-Impersonate` 调认证 API | 空 JWT → 401 | 读 `$MAP_AI_USER` 或先 `/api/users` 发现用户名 |
 | 失败后一路 retry | 掩盖真实问题 | 第一次失败就抓 logs 根因分析 |
