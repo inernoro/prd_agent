@@ -5229,16 +5229,23 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     root = _preview_root_from_host()
     # 优先查 API 拿 v3 previewSlug；查不到才回退裸 id 模式（伴随 stderr 警告）。
     # 用 _call_safe 收口所有失败（含网络错误），避免 _request.die() 污染 stdout。
+    # `_call_safe → _cds_base()` 在 CDS_HOST 未设时也会 die；smoke 本意是即使
+    # 没 CDS API 凭据也能跑分层探测，所以前置检查跳过 API 查询，preview_slug
+    # 保持 branch_id（裸 id fallback，与 "未返回 previewSlug" 行为一致）。
     preview_slug = branch_id
-    body = _call_safe("GET", "/api/branches", timeout=30)
-    if not _warn_quiet_call_error(body, "拉 /api/branches"):
-        for b in body.get("branches", []) if isinstance(body, dict) else []:
-            if b.get("id") == branch_id:
-                preview_slug = b.get("previewSlug") or branch_id
-                if not b.get("previewSlug"):
-                    print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
-                          file=sys.stderr)
-                break
+    if os.environ.get("CDS_HOST", "").strip():
+        body = _call_safe("GET", "/api/branches", timeout=30)
+        if not _warn_quiet_call_error(body, "拉 /api/branches"):
+            for b in body.get("branches", []) if isinstance(body, dict) else []:
+                if b.get("id") == branch_id:
+                    preview_slug = b.get("previewSlug") or branch_id
+                    if not b.get("previewSlug"):
+                        print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
+                              file=sys.stderr)
+                    break
+    else:
+        print(f"[warn] CDS_HOST 未设，smoke 跳过 API 查询，用裸 id 拼预览域",
+              file=sys.stderr)
     preview = f"https://{preview_slug}.{root}"
     results: list[dict[str, Any]] = []
 
