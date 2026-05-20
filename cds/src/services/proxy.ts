@@ -355,6 +355,11 @@ export class ProxyService {
     const url = req.url || '/';
     const handleStart = Date.now();
 
+    if (url.startsWith('/_cds/waiting-status')) {
+      this.serveWaitingStatus(req, res);
+      return;
+    }
+
     // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
     // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
     if (url.startsWith('/_cds/')) {
@@ -657,6 +662,36 @@ export class ProxyService {
     res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : message);
   }
 
+  private serveWaitingStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const host = req.headers.host || '';
+    const previewSlug = this.extractPreviewBranch(host) || '';
+    const branch = previewSlug ? this.resolveBranchEntry(previewSlug) : undefined;
+    const url = new URL(req.url || '/_cds/waiting-status', 'http://cds.local');
+    const waitingProfileId = url.searchParams.get('profile') || undefined;
+    const services = branch ? Object.values(branch.services || {}) : [];
+    const waitingService = waitingProfileId && branch ? branch.services?.[waitingProfileId] : undefined;
+    const ready = Boolean(branch && branch.status === 'running' && (!waitingProfileId || waitingService?.status === 'running'));
+    const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(JSON.stringify({
+      ok: true,
+      ready,
+      loading,
+      branch: previewSlug,
+      status: branch?.status || 'not-found',
+      waitingProfileId: waitingProfileId || null,
+      services: services.map((svc) => ({
+        profileId: svc.profileId,
+        status: svc.status,
+      })),
+      errorMessage: branch?.errorMessage || null,
+    }));
+  }
+
   serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
     const safeBranch = this.escapeHtml(branchSlug);
@@ -685,7 +720,7 @@ export class ProxyService {
           const safeProfileId = this.escapeHtml(svc.profileId);
           const base = `${safeProfileId} · ${stageLabel(svc.status)}`;
           const label = waitingProfileId === svc.profileId ? `${base}（正在等待此服务就绪）` : base;
-          return `<div class="svc"><span class="svc-dot" style="--svc-color:${colorFor(svc.status)}">●</span><span>${label}</span></div>`;
+          return `<div class="svc" data-profile="${safeProfileId}"><span class="svc-dot" style="--svc-color:${colorFor(svc.status)}">●</span><span>${label}</span></div>`;
         }).join('')
       : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
@@ -728,6 +763,7 @@ export class ProxyService {
 	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
 	.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
 h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin-bottom:22px;max-width:100%}
+.shiny-text{display:inline-block;color:rgba(247,245,255,.78);background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
 .subtitle{max-width:580px;font-size:clamp(15px,1.45vw,20px);line-height:1.75;color:var(--muted);margin-bottom:28px}
 .meta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
 .chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
@@ -752,6 +788,7 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin
 @keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
 @keyframes glint{0%,38%{transform:translateX(0) skewX(-18deg);opacity:0}54%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
 @keyframes fallback-pulse{0%,100%{filter:saturate(.9) brightness(.8)}50%{filter:saturate(1.2) brightness(1.1)}}
+@keyframes shiny-text{0%{background-position:120% 0}100%{background-position:-120% 0}}
 @media (max-width:760px){.shell{padding:28px;display:flex;align-items:flex-end}.content{width:100%}h1{font-size:44px}.subtitle{font-size:14px}.hint{align-items:flex-start;flex-direction:column}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
@@ -760,16 +797,16 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin
 <main class="shell">
   <section class="content">
     <div class="eyebrow">CDS Waiting Room</div>
-    <h1>${heading}</h1>
-    <p class="subtitle">${subheading}</p>
+    <h1><span class="${shouldAutoRefresh ? 'shiny-text' : ''}" data-role="heading">${heading}</span></h1>
+    <p class="subtitle" data-role="subheading">${subheading}</p>
     <div class="meta">
       <span class="chip branch">${safeBranch}</span>
-      <span class="chip">分支状态 · ${branchLabel}</span>
+      <span class="chip" data-role="branch-status">分支状态 · ${branchLabel}</span>
     </div>
     ${errorNote}
-    <div class="services">${serviceRows}</div>
+    <div class="services" data-role="services">${serviceRows}</div>
     <div class="hint">
-      <span><strong>自动刷新</strong> 每 2 秒检查一次服务状态。</span>
+      <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
       <span class="note">CDS Live Sync</span>
     </div>
   </section>
@@ -855,7 +892,50 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin
   window.addEventListener('resize',resize);
   requestAnimationFrame(draw);
 }());
-${shouldAutoRefresh ? 'window.setTimeout(function(){location.reload()},2000)' : ''}
+${shouldAutoRefresh ? `;(function(){
+  var statusUrl='/_cds/waiting-status${waitingProfileId ? `?profile=${encodeURIComponent(waitingProfileId)}` : ''}';
+  var labels={building:'构建中',starting:'启动中',restarting:'重启中',running:'已就绪',error:'失败',stopping:'停止中',stopped:'已停止',idle:'待命'};
+  var colors={running:'#f8fafc',error:'#fca5a5',building:'#dbe4ee',starting:'#dbe4ee',restarting:'#dbe4ee',stopping:'#6b7280',stopped:'#6b7280',idle:'#6b7280'};
+  var waitingProfile=${JSON.stringify(waitingProfileId || '')};
+  function label(status){return labels[status]||'待命';}
+  function serviceText(svc){
+    var base=svc.profileId+' · '+label(svc.status);
+    return waitingProfile&&waitingProfile===svc.profileId?base+'（正在等待此服务就绪）':base;
+  }
+  function renderServices(services){
+    var root=document.querySelector('[data-role="services"]');
+    if(!root||!Array.isArray(services)||services.length===0)return;
+    root.innerHTML='';
+    services.forEach(function(svc){
+      var row=document.createElement('div');
+      row.className='svc';
+      row.setAttribute('data-profile',svc.profileId);
+      var dot=document.createElement('span');
+      dot.className='svc-dot';
+      dot.style.setProperty('--svc-color',colors[svc.status]||'#6b7280');
+      dot.textContent='●';
+      var text=document.createElement('span');
+      text.textContent=serviceText(svc);
+      row.appendChild(dot);
+      row.appendChild(text);
+      root.appendChild(row);
+    });
+  }
+  function poll(){
+    fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
+      .then(function(res){return res.ok?res.json():null;})
+      .then(function(data){
+        if(!data)return;
+        if(data.ready){location.reload();return;}
+        var statusEl=document.querySelector('[data-role="branch-status"]');
+        if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
+        renderServices(data.services);
+      })
+      .catch(function(){});
+  }
+  window.setInterval(poll,2000);
+  window.setTimeout(poll,400);
+}())` : ''}
 </script>
 </body></html>`;
 

@@ -102,13 +102,13 @@ export function LoadingPagesTab(): JSX.Element {
           </div>
         </div>
 
-        <div className="flex justify-center bg-[#050407] p-3">
+        <div className="flex justify-center bg-[#050407] p-0">
           <div className="aspect-[4/3] h-auto max-h-[min(760px,72vh)] w-full max-w-[calc(min(760px,72vh)*4/3)] overflow-hidden bg-[#050407]">
             <iframe
               key={previewUrl}
               title={`${page.name} ${scenario.label}`}
               src={previewUrl}
-              className="block h-full w-full"
+              className="block h-full w-full border-0"
             />
           </div>
         </div>

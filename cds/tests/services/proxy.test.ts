@@ -226,7 +226,29 @@ describe('ProxyService', () => {
       expect(written.body).not.toContain('shape-grid-bg');
       expect(written.body).not.toContain('rings-orbit');
       expect(written.body).not.toContain('class="panel"');
-      expect(written.body).toContain('setTimeout');
+      expect(written.body).toContain('/_cds/waiting-status');
+      expect(written.body).toContain('shiny-text');
+      expect(written.body).not.toContain('setTimeout(function(){location.reload');
+    });
+
+    it('should expose waiting status as JSON so the loading page can poll without reloading', () => {
+      proxy = new ProxyService(stateService, { previewDomain: 'preview.test' } as any);
+      addBranch('my-branch', 'running', {
+        api: { profileId: 'api', status: 'running' },
+        admin: { profileId: 'admin', status: 'starting' },
+      });
+
+      const req = makeReq({ host: 'my-branch.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(200);
+      expect(written.headers['Content-Type']).toContain('application/json');
+      const payload = JSON.parse(written.body) as { ready: boolean; status: string; waitingProfileId: string; services: Array<{ profileId: string; status: string }> };
+      expect(payload.ready).toBe(false);
+      expect(payload.status).toBe('running');
+      expect(payload.waitingProfileId).toBe('admin');
+      expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
 
     it('should not return waiting-page HTML for module assets while branch is starting', () => {
