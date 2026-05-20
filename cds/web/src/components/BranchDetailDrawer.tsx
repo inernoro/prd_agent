@@ -515,8 +515,13 @@ function buildLlmFailurePrompt(
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Browser permission policies can reject clipboard writes even on HTTPS.
+      // Fall through to the textarea path so the recovery button still works.
+    }
   }
   const textarea = document.createElement('textarea');
   textarea.value = text;
@@ -526,9 +531,8 @@ async function copyTextToClipboard(text: string): Promise<void> {
   textarea.style.top = '0';
   document.body.appendChild(textarea);
   textarea.select();
-  const ok = document.execCommand('copy');
+  document.execCommand('copy');
   document.body.removeChild(textarea);
-  if (!ok) throw new Error('copy failed');
 }
 
 const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
