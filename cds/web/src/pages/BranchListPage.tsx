@@ -174,6 +174,11 @@ interface ActivityEvent {
   userAgent?: string;
 }
 
+interface FocusBranchEventDetail {
+  projectId?: string;
+  branchId?: string;
+}
+
 interface HostStatsResponse {
   mem: {
     totalMB: number;
@@ -996,6 +1001,7 @@ export function BranchListPage(): JSX.Element {
   // 用户从搜索下拉选中已有分支时,使用稳定选中态标记卡片。
   // 不再用短暂 pulse + 计时器,避免分支流刷新/列表重排时动画被吃掉。
   const [highlightedBranchId, setHighlightedBranchId] = useState<string | null>(null);
+  const [highlightPulseBranchId, setHighlightPulseBranchId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [actionClock, setActionClock] = useState(Date.now());
@@ -1028,6 +1034,7 @@ export function BranchListPage(): JSX.Element {
   const [bulkTagError, setBulkTagError] = useState('');
   const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
+  const highlightPulseTimerRef = useRef<number | null>(null);
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
   const previewQueryConsumedRef = useRef(false);
 
@@ -1963,11 +1970,40 @@ export function BranchListPage(): JSX.Element {
   // 选择其它分支,比临时动画更符合"这是你刚选中的面板"的用户心智。
   const focusBranchCard = useCallback((branchId: string): void => {
     setHighlightedBranchId(branchId);
+    if (highlightPulseTimerRef.current) {
+      window.clearTimeout(highlightPulseTimerRef.current);
+      highlightPulseTimerRef.current = null;
+    }
+    setHighlightPulseBranchId(null);
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      requestAnimationFrame(() => {
+        setHighlightPulseBranchId(branchId);
+        highlightPulseTimerRef.current = window.setTimeout(() => {
+          setHighlightPulseBranchId((current) => (current === branchId ? null : current));
+          highlightPulseTimerRef.current = null;
+        }, 900);
+      });
     });
   }, []);
+
+  useEffect(() => () => {
+    if (highlightPulseTimerRef.current) window.clearTimeout(highlightPulseTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const onFocusBranch = (event: Event): void => {
+      const detail = (event as CustomEvent<FocusBranchEventDetail>).detail || {};
+      if (!detail.branchId || detail.projectId !== projectId) return;
+      const branch = branches.find((item) => item.id === detail.branchId);
+      if (!branch) return;
+      setActiveTagFilter(null);
+      focusBranchCard(branch.id);
+    };
+    window.addEventListener('cds:focus-branch', onFocusBranch);
+    return () => window.removeEventListener('cds:focus-branch', onFocusBranch);
+  }, [branches, focusBranchCard, projectId]);
 
   /*
    * Add a remote branch and start its deployment WITHOUT opening a
@@ -2398,6 +2434,7 @@ export function BranchListPage(): JSX.Element {
                     now={actionClock}
                     projectId={projectId}
                     highlighted={highlightedBranchId === branch.id}
+                    highlightPulse={highlightPulseBranchId === branch.id}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
                     onPreview={() => void openPreview(branch, true)}
@@ -3287,6 +3324,7 @@ function BranchCard({
   now,
   capacityWarning,
   highlighted,
+  highlightPulse,
   activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -3319,6 +3357,7 @@ function BranchCard({
   // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
   // 稳定选中态 + 自动滚到可视区。详见 focusBranchCard / index.css。
   highlighted?: boolean;
+  highlightPulse?: boolean;
   // 当前激活的标签过滤(给 chip 高亮显示用)
   activeTagFilter?: string | null;
   onSelect?: () => void;
@@ -3411,7 +3450,7 @@ function BranchCard({
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
+      } ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}

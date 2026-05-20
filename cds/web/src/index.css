@@ -163,6 +163,32 @@
       0 0 0 1px hsl(var(--primary) / 0.35),
       0 18px 42px -30px hsl(var(--primary) / 0.75) !important;
   }
+  @keyframes cds-card-selected-flash {
+    0% {
+      transform: translateY(0);
+      box-shadow:
+        0 0 0 1px hsl(var(--primary) / 0.35),
+        0 0 0 0 hsl(var(--primary) / 0.48),
+        0 18px 42px -30px hsl(var(--primary) / 0.75);
+    }
+    45% {
+      transform: translateY(-2px);
+      box-shadow:
+        0 0 0 1px hsl(var(--primary) / 0.55),
+        0 0 0 5px hsl(var(--primary) / 0.16),
+        0 22px 46px -28px hsl(var(--primary) / 0.9);
+    }
+    100% {
+      transform: translateY(0);
+      box-shadow:
+        0 0 0 1px hsl(var(--primary) / 0.35),
+        0 0 0 0 hsl(var(--primary) / 0),
+        0 18px 42px -30px hsl(var(--primary) / 0.75);
+    }
+  }
+  .cds-card-selected-flash {
+    animation: cds-card-selected-flash 780ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
 
   /*
    * AI-operated branch preview beacon.
