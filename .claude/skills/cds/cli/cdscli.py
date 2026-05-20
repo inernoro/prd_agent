@@ -829,10 +829,16 @@ def _preview_root_from_host() -> str:
     host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
     if host.startswith("http://") or host.startswith("https://"):
         host = host.split("://", 1)[1]
-    if not host:
+    # 剥端口（如 cds.miduo.org:9900 → cds.miduo.org），后面后缀匹配才稳定
+    host_no_port = host.split(":", 1)[0]
+    if not host_no_port:
         return "miduo.org"
     # `cds.miduo.org` / 普通 miduo 子域 → 预览根仍走 miduo.org
-    return "miduo.org" if "miduo" in host else host
+    # 用**精确后缀**匹配而非子串，避免 `notmiduo.com` / `api.miduo.org.evil.com`
+    # 被误判成 miduo（Codex P2 抓到的子串匹配漏洞）。
+    if host_no_port == "miduo.org" or host_no_port.endswith(".miduo.org"):
+        return "miduo.org"
+    return host_no_port
 
 
 def _has_cds_auth() -> bool:
