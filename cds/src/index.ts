@@ -580,7 +580,7 @@ const janitorService = new JanitorService(
   },
   config.worktreeBase,
 );
-// ── AutoLifecycle (2026-05-14 项目级 N 分钟自动切发布版 / 自动停止) ──
+// ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
 const autoLifecycleService = new AutoLifecycleService(

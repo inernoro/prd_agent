@@ -962,7 +962,7 @@ function reconcileBranchStatus(entry: BranchEntry): void {
   else entry.status = 'idle';
 
   // 2026-05-14: 进入 running 时打 lastReadyAt 戳。项目级 autoPublishAfterMinutes /
-  // autoStopAfterMinutes 调度器以本字段为计时起点。从非 running 翻到 running 才更新，
+  // autoPublishAfterMinutes 调度器以本字段为计时起点。从非 running 翻到 running 才更新，
   // 内部 running→running（多次 reconcile）不刷新，避免调度器永远被推迟。
   if (entry.status === 'running' && previousStatus !== 'running') {
     entry.lastReadyAt = new Date().toISOString();

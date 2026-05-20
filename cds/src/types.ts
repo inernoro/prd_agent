@@ -544,7 +544,7 @@ export interface BranchEntry {
   /**
    * 2026-05-14: 容器最近一次进入 running 状态的 ISO 时间戳。
    * 由 reconcileBranchStatus() 在状态机切换到 'running' 时打戳。
-   * 调度器（项目级 autoPublishAfterMinutes / autoStopAfterMinutes）
+   * 调度器（项目级 autoPublishAfterMinutes）
    * 以本字段为计时锚点 —— "完全启动成功之后开始算"。
    * 进入 running 后再回退到其他状态时**不清空**，下一次再次 running 才覆盖；
    * 这样调度器即便错过一拍也能基于上一次有效 ready 时间继续工作。
@@ -1714,11 +1714,9 @@ export interface Project {
    */
   autoPublishAfterMinutes?: number;
   /**
-   * 2026-05-14: 项目级 "运行 N 分钟后自动停止" 策略。
-   * 与 autoPublishAfterMinutes 同时启用时，autoPublish 先行（先切发布版），
-   * autoStop 在新的 ready 计时上再起效。
-   * scheduler 的 idleTTLSeconds（CDS 系统级）是按"最近被访问"算，本字段是按
-   * "部署成功后的存活时间"算 —— 用于"调试完忘了关"这种场景。
+   * Deprecated: 旧版项目级 "运行 N 分钟后自动停止" 策略。
+   * 自动停止已收敛到 CDS 系统级 SchedulerService，避免项目设置中出现
+   * 两个互相打架的分钟值。字段保留仅用于兼容旧 state/API，运行时不再执行。
    */
   autoStopAfterMinutes?: number;
   /**

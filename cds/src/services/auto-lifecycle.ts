@@ -5,14 +5,14 @@ import { isReleaseDeployMode } from './deploy-runtime.js';
 /**
  * 2026-05-14 引入。
  *
- * 项目级 "运行 N 分钟后自动切发布版 / 自动停止" 调度。
+ * 项目级 "运行 N 分钟后自动切发布版" 调度。
  *
  * 与 CDS 系统级 SchedulerService（按 lastAccessedAt 的 idleTTL 降温）正交：
  * - SchedulerService = "没人访问就降温"，按 HTTP 访问刷新。
  * - AutoLifecycleService = "启动满 N 分钟就处理"，按 BranchEntry.lastReadyAt 计时。
  *
- * 两者可同时启用，本服务在 SchedulerService 之前执行，因为停止动作走的是普通
- * containerService.stop 路径，不会和热度状态机冲突。
+ * 系统级自动停止由 SchedulerService 负责，避免项目设置里出现两个相互打架的
+ * 分钟值（auto-publish N 分钟、auto-stop M 分钟）。
  *
  * 设计原则：
  * - 计时锚点用 `lastReadyAt`（容器进入 running 状态时打戳）。HTTP 流量不参与，
@@ -168,8 +168,7 @@ export class AutoLifecycleService {
       const projects = stateService.getProjects();
       for (const project of projects) {
         const autoPublishMin = Number(project.autoPublishAfterMinutes) || 0;
-        const autoStopMin = Number(project.autoStopAfterMinutes) || 0;
-        if (autoPublishMin <= 0 && autoStopMin <= 0) continue;
+        if (autoPublishMin <= 0) continue;
 
         const profiles = stateService.getBuildProfilesForProject(project.id);
 
@@ -228,11 +227,6 @@ export class AutoLifecycleService {
           if (!Number.isFinite(readyMs) || readyMs <= 0) continue;
           const ageSec = Math.floor((this.clock.now() - readyMs) / 1000);
 
-          // 本拍 auto-publish 是否"已尝试但失败"。用于 auto-stop 让位决策：
-          // 让位只在 publish 即将成功时合理；若 publish 反复失败，绝不能
-          // 因此永久挡住 auto-stop，否则分支永远停不下来。
-          let autoPublishFailedThisTick = false;
-
           // ── Auto-publish ───────────────────────────────────────────
           // 已收敛（所有"可切到发布版"的 profile 都已是 release）的分支不再触发，
           // 避免纯源码 sidecar / infra profile 让分支被反复无意义重启。
@@ -240,41 +234,10 @@ export class AutoLifecycleService {
             if (!branchAutoPublishConverged(branch, profiles)) {
               try {
                 await this.applyAutoPublish(branch, profiles, autoPublishMin);
-                continue; // 切完发布版后停下；下次 ready 再走 auto-stop 计时
+                continue; // 切完发布版并重新部署，本拍不再处理该分支。
               } catch (err) {
-                autoPublishFailedThisTick = true;
                 console.error(`[auto-lifecycle] auto-publish "${branch.id}" failed:`, (err as Error).message);
               }
-            }
-          }
-
-          // ── Auto-stop ───────────────────────────────────────────────
-          if (autoStopMin > 0 && ageSec >= autoStopMin * 60) {
-            // 2026-05-14 "autoPublish 先行"让位规则。原实现只要 auto-publish
-            // 开着且未收敛就 skip auto-stop —— 但若 autoStopMin < autoPublishMin
-            // （如 stop=5 / publish=10，6 分钟时），auto-publish **还没到点**
-            // 也不会 fire，auto-stop 却被无限期推迟到 publish 最终触发为止，
-            // 违背用户"stop 阈值更小=先停"的预期（Cursor Bugbot Medium
-            // 2026-05-14 二次反馈）。
-            // 修正：只有当 auto-publish **本拍确实该动**（到点且未收敛）时
-            // 才让位；auto-publish 阈值未到 → 没有待执行的 publish 要先行，
-            // auto-stop 按自己的阈值正常生效。
-            // 2026-05-14 Cursor Bugbot Medium 二次：autoPublishMin===autoStopMin
-            // 且 publish 失败时，override 已回滚 → 仍未收敛 →
-            // autoPublishDuePending 恒为 true → auto-stop 被永久 continue 掉，
-            // 分支永远停不下来。让位只在 publish "即将成功"时合理；本拍
-            // publish 已尝试且失败，就不该再为它让位，auto-stop 兜底接管。
-            const autoPublishDuePending =
-              autoPublishMin > 0 &&
-              ageSec >= autoPublishMin * 60 &&
-              !branchAutoPublishConverged(branch, profiles);
-            if (autoPublishDuePending && !autoPublishFailedThisTick) {
-              continue;
-            }
-            try {
-              await this.applyAutoStop(branch, autoStopMin);
-            } catch (err) {
-              console.error(`[auto-lifecycle] auto-stop "${branch.id}" failed:`, (err as Error).message);
             }
           }
         }
@@ -444,24 +407,4 @@ export class AutoLifecycleService {
     }
   }
 
-  private async applyAutoStop(branch: BranchEntry, minutes: number): Promise<void> {
-    const { stateService, stopBranch } = this.deps;
-    await stopBranch(branch.id);
-    const fresh = stateService.getBranch(branch.id);
-    if (fresh) {
-      fresh.lastStoppedAt = new Date(this.clock.now()).toISOString();
-      fresh.lastStopReason = `项目设置：启动满 ${minutes} 分钟，自动停止（节省资源）`;
-      fresh.lastStopSource = 'system';
-      stateService.save();
-      try {
-        stateService.appendActivityLog(fresh.projectId, {
-          type: 'stop',
-          branchId: fresh.id,
-          branchName: fresh.branch,
-          actor: 'auto-lifecycle',
-          note: fresh.lastStopReason,
-        });
-      } catch { /* */ }
-    }
-  }
 }

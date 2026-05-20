@@ -144,40 +144,39 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
   });
 });
 
-describe('AutoLifecycleService.tick — auto-stop / auto-publish 让位次序', () => {
+describe('AutoLifecycleService.tick — deprecated auto-stop is ignored', () => {
   const at = (min: number) => Date.parse(READY_AT) + min * 60 * 1000;
 
-  it('autoStop=5 < autoPublish=10，6 分钟：auto-publish 未到点 → auto-stop 正常生效', async () => {
+  it('autoStop=5 < autoPublish=10，6 分钟：auto-publish 未到点，旧 auto-stop 不再生效', async () => {
     const h = makeHarness(
       branch(), // deployedMode=dev，未收敛
       { autoPublishAfterMinutes: 10, autoStopAfterMinutes: 5 },
       at(6),
     );
     await h.service.tick();
-    expect(h.stopBranch).toHaveBeenCalledWith('b1'); // auto-stop 没被无限推迟
+    expect(h.stopBranch).not.toHaveBeenCalled();
     expect(h.redeployBranch).not.toHaveBeenCalled(); // auto-publish 还没到点
   });
 
-  it('autoStop=5 < autoPublish=10，11 分钟：两者都到点 → auto-publish 先行', async () => {
+  it('autoStop=5 < autoPublish=10，11 分钟：只执行 auto-publish', async () => {
     const h = makeHarness(
       branch(),
       { autoPublishAfterMinutes: 10, autoStopAfterMinutes: 5 },
       at(11),
     );
     await h.service.tick();
-    expect(h.redeployBranch).toHaveBeenCalledWith('b1'); // publish 先行
-    expect(h.stopBranch).not.toHaveBeenCalled();         // 本拍让位，不停
+    expect(h.redeployBranch).toHaveBeenCalledWith('b1');
+    expect(h.stopBranch).not.toHaveBeenCalled();
   });
 
-  it('autoPublishMin===autoStopMin 且 publish 失败 → auto-stop 兜底接管（不被永久挡）', async () => {
+  it('只有旧 autoStop 配置、autoPublish 关闭时，不停止容器', async () => {
     const h = makeHarness(
       branch(),
-      { autoPublishAfterMinutes: 10, autoStopAfterMinutes: 10 },
+      { autoPublishAfterMinutes: 0, autoStopAfterMinutes: 5 },
       at(11),
     );
-    h.redeployBranch.mockRejectedValueOnce(new Error('publish boom'));
     await h.service.tick();
-    expect(h.redeployBranch).toHaveBeenCalledTimes(1); // 尝试过 publish
-    expect(h.stopBranch).toHaveBeenCalledWith('b1');   // 失败后 auto-stop 兜底
+    expect(h.redeployBranch).not.toHaveBeenCalled();
+    expect(h.stopBranch).not.toHaveBeenCalled();
   });
 });

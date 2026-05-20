@@ -2038,7 +2038,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
       patch.defaultDeployModes = next;
     }
-    // 2026-05-14: 自动切发布版 / 自动停止 两个独立分钟数字段。
+    // 自动切发布版保留为项目级单值；autoStopAfterMinutes 仅兼容旧 API，
+    // 运行时已由系统级 SchedulerService 接管，不再在 AutoLifecycle 执行。
     // 限制 [0, 1440]（24 小时）防止配错。0 = 关闭。
     for (const field of ['autoPublishAfterMinutes', 'autoStopAfterMinutes'] as const) {
       if (body[field] === undefined) continue;
