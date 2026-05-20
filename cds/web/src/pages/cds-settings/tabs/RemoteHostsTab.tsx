@@ -25,6 +25,7 @@ import {
 
 import { apiRequest, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import {
   Dialog,
   DialogContent,
@@ -109,7 +110,6 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
   }, []);
 
   const handleDelete = async (host: RemoteHostPublicView) => {
-    if (!window.confirm(`确认删除远程主机 "${host.name}"（${host.host}）？此操作不可撤销。`)) return;
     try {
       await apiRequest(`/api/cds-system/remote-hosts/${host.id}`, { method: 'DELETE' });
       onToast(`已删除 ${host.name}`);
@@ -310,14 +310,17 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                           >
                             <Rocket className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void handleDelete(h)}
-                            title="删除"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <ConfirmAction
+                            title="删除远程主机"
+                            description={`删除 ${h.name}（${h.host}）。此操作不可撤销。`}
+                            confirmLabel="删除"
+                            onConfirm={() => handleDelete(h)}
+                            trigger={(
+                              <Button variant="ghost" size="sm" title="删除">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          />
                         </div>
                       </td>
                     </tr>

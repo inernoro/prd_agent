@@ -1033,6 +1033,9 @@ export function BranchListPage(): JSX.Element {
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
+  const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
+  const [bulkTagDraft, setBulkTagDraft] = useState('');
+  const [bulkTagError, setBulkTagError] = useState('');
   const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
@@ -1700,20 +1703,36 @@ export function BranchListPage(): JSX.Element {
     await deleteBranchCore(branch);
   }, [deleteBranchCore]);
 
-  const editTags = useCallback(async (branch: BranchSummary): Promise<void> => {
-    const current = (branch.tags || []).join(', ');
-    const input = window.prompt('输入标签，多个标签用逗号分隔', current);
-    if (input === null) return;
+  const editTags = useCallback((branch: BranchSummary): void => {
+    setBulkTagBranchId(branch.id);
+    setBulkTagDraft((branch.tags || []).join(', '));
+    setBulkTagError('');
+  }, []);
+
+  const submitBulkTagEdit = useCallback(async (): Promise<void> => {
+    if (!bulkTagBranchId || state.status !== 'ok') return;
+    const branch = state.branches.find((item) => item.id === bulkTagBranchId);
+    if (!branch) {
+      setBulkTagBranchId(null);
+      return;
+    }
     const tags = Array.from(
       new Set(
-        input
+        bulkTagDraft
           .split(',')
           .map((tag) => tag.trim())
           .filter(Boolean),
       ),
     );
+    if (tags.length === 0 && (branch.tags || []).length > 0) {
+      setBulkTagError('将清空全部标签，请再次点击保存确认');
+      if (bulkTagError !== '将清空全部标签，请再次点击保存确认') return;
+    }
     await patchBranch(branch, { tags });
-  }, [patchBranch]);
+    setBulkTagBranchId(null);
+    setBulkTagDraft('');
+    setBulkTagError('');
+  }, [bulkTagBranchId, bulkTagDraft, bulkTagError, patchBranch, state]);
 
   // 单标签 add:由卡片内浮层输入新标签 → 去重 → PATCH /api/branches/:id
   // optimistic update:UI 立即出现新 chip,失败时回滚。对齐 legacy 行为。
@@ -1753,12 +1772,10 @@ export function BranchListPage(): JSX.Element {
     }
   }, []);
 
-  // 单标签 remove:卡片上 hover 出 × 时点击触发。
-  // 2026-05-07 用户反馈"标签弹窗需要" — 加 window.confirm,误点回头有救。
+  // 单标签 remove:确认入口由卡片内浮层负责。这里只执行乐观更新 + PATCH。
   const removeTagFromBranch = useCallback(async (branch: BranchSummary, tag: string): Promise<void> => {
     const oldTags = branch.tags || [];
     if (!oldTags.includes(tag)) return;
-    if (!window.confirm(`确定从分支「${branch.branch}」删除标签「${tag}」?`)) return;
     const newTags = oldTags.filter((t) => t !== tag);
     setState((current) => {
       if (current.status !== 'ok') return current;
@@ -2948,6 +2965,62 @@ export function BranchListPage(): JSX.Element {
           />
         ) : null}
 
+        {bulkTagBranchId && state.status === 'ok' ? (() => {
+          const target = state.branches.find((branch) => branch.id === bulkTagBranchId);
+          if (!target) return null;
+          return (
+            <Dialog open={true} onOpenChange={(open) => {
+              if (!open) {
+                setBulkTagBranchId(null);
+                setBulkTagDraft('');
+                setBulkTagError('');
+              }
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>编辑标签</DialogTitle>
+                  <DialogDescription>
+                    分支 <span className="font-mono text-foreground">{target.branch}</span>，多个标签用逗号分隔。
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-2">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <Tags className="h-3.5 w-3.5" aria-hidden />
+                    标签
+                  </label>
+                  <textarea
+                    value={bulkTagDraft}
+                    onChange={(event) => {
+                      setBulkTagDraft(event.target.value);
+                      if (bulkTagError) setBulkTagError('');
+                    }}
+                    className="min-h-24 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-primary/55 focus:ring-2 focus:ring-primary/20"
+                    placeholder="例如: 周报Agent, 毒舌秘书"
+                    autoFocus
+                  />
+                  {bulkTagError ? <div className="text-xs text-destructive">{bulkTagError}</div> : null}
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setBulkTagBranchId(null);
+                      setBulkTagDraft('');
+                      setBulkTagError('');
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button type="button" onClick={() => void submitBulkTagEdit()}>
+                    保存
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          );
+        })() : null}
+
         {toast ? (
           <div
             className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
@@ -3343,7 +3416,7 @@ function BranchCard({
   onEditTags: () => void;
   // 单条标签操作(还原 legacy 卡片上的 chips + ×/+ 按钮)
   onAddTag?: (tag: string) => void | Promise<void>;
-  onRemoveTag?: (tag: string) => void;
+  onRemoveTag?: (tag: string) => void | Promise<void>;
   onClickTag?: (tag: string) => void;
 }): JSX.Element {
   /*
@@ -3378,6 +3451,7 @@ function BranchCard({
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
+  const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
@@ -3401,12 +3475,13 @@ function BranchCard({
     setTagDraft('');
     setTagDraftError('');
     setTagEditorOpen(false);
+    setTagDeleteTarget(null);
   };
 
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen ? 'overflow-visible' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget ? 'overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueLabel(branch) === 'CDS 环境异常'
             ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
@@ -3575,7 +3650,8 @@ function BranchCard({
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      onRemoveTag(tag);
+                      setTagEditorOpen(false);
+                      setTagDeleteTarget((current) => (current === tag ? null : tag));
                     }}
                     className="ml-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm opacity-0 transition-opacity hover:bg-destructive/20 hover:text-destructive group-hover/tag:opacity-100 focus:opacity-100"
                     title="删除标签"
@@ -3606,6 +3682,7 @@ function BranchCard({
               onClick={(event) => {
                 event.stopPropagation();
                 setTagEditorOpen((current) => !current);
+                setTagDeleteTarget(null);
                 setTagDraftError('');
               }}
               className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-emerald-400/35 bg-emerald-400/5 px-2 text-[11px] font-medium text-emerald-300/85 transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
@@ -3657,6 +3734,47 @@ function BranchCard({
               </div>
               {tagDraftError ? <div className="mt-1.5 text-[11px] text-destructive">{tagDraftError}</div> : null}
             </form>
+          ) : null}
+          {tagDeleteTarget && onRemoveTag ? (
+            <div
+              className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(300px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              role="dialog"
+              aria-label={`删除标签 ${tagDeleteTarget}`}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === 'Escape') setTagDeleteTarget(null);
+              }}
+            >
+              <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <Tags className="h-3 w-3" aria-hidden />
+                删除标签
+              </div>
+              <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-xs leading-5 text-foreground">
+                从 <span className="font-medium">{branch.branch}</span> 移除{' '}
+                <span className="font-mono text-emerald-300">#{tagDeleteTarget}</span>
+              </div>
+              <div className="mt-2.5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-md border border-[hsl(var(--hairline))] px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                  onClick={() => setTagDeleteTarget(null)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-8 items-center rounded-md bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90"
+                  onClick={() => {
+                    const target = tagDeleteTarget;
+                    setTagDeleteTarget(null);
+                    void onRemoveTag(target);
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
           ) : null}
         </div>
       ) : null}
