@@ -244,6 +244,7 @@ type LoadState =
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
       capacity?: BranchesResponse['capacity'];
+      projectWarning?: string;
       // Codex review(PR #590):banner 条件需要 infra service dockerImage,而非 branch.services 的 key。
       // 因为数据库通常作 infra service 部署(独立于 build-profile),首次 deploy 前 branch.services 为空,
       // 又或者 infra id 是 'db' 之类不含 mysql 关键字。fetch infra 接口取真实信号源。
@@ -470,6 +471,18 @@ function projectSwitcherMeta(project: ProjectSummary): string {
   const title = displayName(project);
   const candidates = [project.slug, project.githubRepoFullName, project.id].filter(Boolean) as string[];
   return candidates.find((value) => value !== title) || '';
+}
+
+function fallbackProjectSummary(projectId: string): ProjectSummary {
+  return {
+    id: projectId,
+    slug: projectId,
+    name: projectId,
+  };
+}
+
+function readableError(err: unknown): string {
+  return err instanceof ApiError ? err.message : String(err);
 }
 
 function formatRelativeTime(value?: string | null, fallback = '等待首次部署'): string {
@@ -1088,15 +1101,30 @@ export function BranchListPage(): JSX.Element {
       const infraUrl = fast
         ? `/api/infra?project=${encodeURIComponent(projectId)}&live=false`
         : `/api/infra?project=${encodeURIComponent(projectId)}`;
-      const [project, branchesRes, previewModeRes, config, infraRes] = await Promise.all([
+      const [projectResult, branchesResult, previewModeResult, configResult, infraResult] = await Promise.allSettled([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(branchUrl),
-        apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
-        apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
+        apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`),
+        apiRequest<CdsConfigResponse>('/api/config'),
         apiRequest<{ services: Array<{ id: string; dockerImage?: string }> }>(
           infraUrl,
-        ).catch(() => ({ services: [] })),
+        ),
       ]);
+      if (branchesResult.status === 'rejected') {
+        throw branchesResult.reason;
+      }
+      const branchesRes = branchesResult.value;
+      const project = projectResult.status === 'fulfilled'
+        ? projectResult.value
+        : fallbackProjectSummary(projectId);
+      const projectWarning = projectResult.status === 'rejected'
+        ? `项目元信息暂时不可读，分支列表已降级继续显示。${readableError(projectResult.reason)}`
+        : undefined;
+      const previewModeRes = previewModeResult.status === 'fulfilled'
+        ? previewModeResult.value
+        : { mode: 'multi' as const };
+      const config = configResult.status === 'fulfilled' ? configResult.value : {};
+      const infraRes = infraResult.status === 'fulfilled' ? infraResult.value : { services: [] };
       // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
       // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
       // Bugbot review(PR #590):**不**含 mongo。banner 文案专写 "schema.sql / mysql / postgres",
@@ -1113,6 +1141,7 @@ export function BranchListPage(): JSX.Element {
         previewMode: previewModeRes.mode || 'multi',
         config,
         capacity: branchesRes.capacity,
+        projectWarning,
         hasSchemafulInfra,
       }));
       if (fast) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
@@ -2239,6 +2268,12 @@ export function BranchListPage(): JSX.Element {
         {state.status === 'error' ? (
           <div className="mt-6">
             <ErrorBlock message={state.message} />
+          </div>
+        ) : null}
+
+        {state.status === 'ok' && state.projectWarning ? (
+          <div className="mt-6 rounded-md border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+            {state.projectWarning}
           </div>
         ) : null}
 
