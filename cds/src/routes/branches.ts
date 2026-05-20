@@ -15,7 +15,7 @@ import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -189,6 +189,14 @@ function isSyntheticCdsManagedRuntimeBranch(
 ): boolean {
   if (project?.kind !== 'shared-service') return false;
   return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
+}
+
+function isAiActivityLog(entry: ProjectActivityLog): boolean {
+  const actor = entry.actor || '';
+  return entry.type === 'ai-occupy'
+    || entry.type === 'ai-release'
+    || actor === 'ai'
+    || actor.startsWith('ai:');
 }
 
 function summarizeBranchDeployRuntime(
@@ -2067,6 +2075,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = Object.values(state.branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
+    const aiActivityByBranch = new Map<string, { count: number; lastAt: string }>();
+    const projectIds = new Set(branches.map((b) => b.projectId || 'default'));
+    const branchIdSet = new Set(branches.map((b) => b.id));
+    const branchNameToIds = new Map<string, string[]>();
+    for (const b of branches) {
+      const ids = branchNameToIds.get(b.branch) || [];
+      ids.push(b.id);
+      branchNameToIds.set(b.branch, ids);
+    }
+    for (const projectId of projectIds) {
+      for (const log of stateService.getActivityLogs(projectId)) {
+        if (!isAiActivityLog(log)) continue;
+        const ids = log.branchId && branchIdSet.has(log.branchId)
+          ? [log.branchId]
+          : log.branchName
+            ? (branchNameToIds.get(log.branchName) || [])
+            : [];
+        for (const id of ids) {
+          const current = aiActivityByBranch.get(id);
+          aiActivityByBranch.set(id, {
+            count: (current?.count || 0) + 1,
+            lastAt: current?.lastAt && current.lastAt > log.at ? current.lastAt : log.at,
+          });
+        }
+      }
+    }
 
     // Batch-reconcile container status (perf fix, 2026-05-03):
     // Old code did `containerService.isRunning(svc.containerName)` sequentially
@@ -2108,8 +2142,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
         );
         if (!live) {
+          const derivedAi = aiActivityByBranch.get(b.id);
           return {
             ...b,
+            aiOpCount: b.aiOpCount || derivedAi?.count,
+            lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
             subject: '',
             previewSlug,
@@ -2122,9 +2159,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
-          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug, deployRuntime };
+          const derivedAi = aiActivityByBranch.get(b.id);
+          return {
+            ...b,
+            aiOpCount: b.aiOpCount || derivedAi?.count,
+            lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
+            commitSha: lines[0] || '',
+            subject: lines[1] || '',
+            previewSlug,
+            deployRuntime,
+          };
         } catch {
-          return { ...b, commitSha: b.githubCommitSha || '', subject: '', previewSlug, deployRuntime };
+          const derivedAi = aiActivityByBranch.get(b.id);
+          return {
+            ...b,
+            aiOpCount: b.aiOpCount || derivedAi?.count,
+            lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
+            commitSha: b.githubCommitSha || '',
+            subject: '',
+            previewSlug,
+            deployRuntime,
+          };
         }
       }),
     );
