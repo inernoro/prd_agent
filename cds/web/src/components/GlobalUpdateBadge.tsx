@@ -57,6 +57,7 @@ type BadgeState =
   | { kind: 'idle' }
   | { kind: 'updated'; fromSha: string; toSha: string }
   | { kind: 'updateAvailable'; count: number; firstSubject?: string }
+  | { kind: 'activeUpdating'; sinceMs: number; trigger?: string; step?: string; title?: string; staleSeconds?: number }
   | { kind: 'restarting'; sinceMs: number }
   | { kind: 'bundleStale'; backendSha: string; bundleSha: string };
 
@@ -168,6 +169,22 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         kind: 'updated',
         fromSha: initialShaRef.current,
         toSha: payload.headSha,
+      });
+      return;
+    }
+    if (payload.activeSelfUpdate && !payload.activeSelfUpdate.interrupted) {
+      const startedMs = Date.parse(payload.activeSelfUpdate.startedAt);
+      const lastTickMs = payload.activeSelfUpdate.lastTickAt ? Date.parse(payload.activeSelfUpdate.lastTickAt) : Number.NaN;
+      const staleSeconds = Number.isFinite(lastTickMs)
+        ? Math.max(0, Math.floor((Date.now() - lastTickMs) / 1000))
+        : undefined;
+      setState({
+        kind: 'activeUpdating',
+        sinceMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
+        trigger: payload.activeSelfUpdate.trigger,
+        step: payload.activeSelfUpdate.step,
+        title: payload.activeSelfUpdate.logTail?.[payload.activeSelfUpdate.logTail.length - 1]?.text,
+        staleSeconds: staleSeconds && staleSeconds >= 10 ? staleSeconds : undefined,
       });
       return;
     }
@@ -393,21 +410,21 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     };
   }, [applyPayload]);
 
-  // restarting 状态下 1s 定时刷新让 "CDS 不可达 Ns" 计时秒数跳动。
+  // restarting / activeUpdating 状态下 1s 定时刷新让计时秒数跳动。
   // elapsed 在 visualForState 里 render 时计算一次,组件本身不会因时间流逝
   // 自动 re-render — 这里 1s 一次轻量 setState 强制重渲染。
   const [, forceTick] = useState(0);
   useEffect(() => {
-    if (state.kind !== 'restarting') return;
+    if (state.kind !== 'restarting' && state.kind !== 'activeUpdating') return;
     const t = window.setInterval(() => forceTick((n) => n + 1), 1000);
     return () => window.clearInterval(t);
   }, [state.kind]);
 
-  // restarting 期间用短周期 HTTP 探测主动反证。SSE 断开后浏览器会自动重连,
+  // restarting / activeUpdating 期间用短周期 HTTP 探测主动反证。SSE 断开后浏览器会自动重连,
   // 但 snapshot/keepalive 不一定立刻回来;一旦 /api/self-status 恢复 200,
   // 就说明控制面已经活着,不能让全屏遮罩继续等 60s fallback polling。
   useEffect(() => {
-    if (state.kind !== 'restarting') return;
+    if (state.kind !== 'restarting' && state.kind !== 'activeUpdating') return;
 
     let cancelled = false;
     let inFlight = false;
@@ -435,7 +452,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     };
 
     const firstTimer = window.setTimeout(() => { void probeRecovered(); }, 1_000);
-    const intervalTimer = window.setInterval(() => { void probeRecovered(); }, 3_000);
+    const intervalTimer = window.setInterval(() => { void probeRecovered(); }, state.kind === 'activeUpdating' ? 2_000 : 3_000);
     return () => {
       cancelled = true;
       window.clearTimeout(firstTimer);
@@ -465,6 +482,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         body: '{}',
         signal: ctrl.signal,
       });
+      window.clearTimeout(abortTimer);
       if (!response.ok) {
         const text = await response.text().catch(() => '');
         // eslint-disable-next-line no-alert
@@ -475,15 +493,6 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      // 2026-05-08:不再"读到第一个 event 就 abort 进 restarting",而是持续读 SSE
-      // 直到 done/error/连接关闭。done.mode=web-only 时直接 refresh,不进 restarting。
-      // 5s 后如果还在读但没拿到 done(说明走了完整重启路径),再切 restarting + abort。
-      const fallbackToRestarting = window.setTimeout(() => {
-        if (!ctrl.signal.aborted) {
-          setState({ kind: 'restarting', sinceMs: Date.now() });
-          ctrl.abort();
-        }
-      }, 5000);
       try {
         while (true) {
           const { value, done } = await reader.read();
@@ -500,14 +509,33 @@ export function GlobalUpdateBadge(): JSX.Element | null {
               const dataRaw = lines.find((l) => l.startsWith('data: '))?.slice(6) || '';
               if (eventName === 'error') {
                 let msg = '未知错误';
+                let activeSelfUpdate: SelfStatusLite['activeSelfUpdate'] | undefined;
                 try {
-                  const data = JSON.parse(dataRaw) as { message?: string; error?: string };
+                  const data = JSON.parse(dataRaw) as { message?: string; error?: string; activeSelfUpdate?: SelfStatusLite['activeSelfUpdate'] };
                   msg = data.message || data.error || msg;
+                  activeSelfUpdate = data.activeSelfUpdate;
                 } catch { /* keep default */ }
+                if (activeSelfUpdate && !activeSelfUpdate.interrupted) {
+                  applyPayload({ activeSelfUpdate }, 'update');
+                  ctrl.abort();
+                  return;
+                }
                 // eslint-disable-next-line no-alert
                 alert(`更新失败: ${msg}`);
                 ctrl.abort();
                 return;
+              }
+              if (eventName === 'step') {
+                try {
+                  const data = JSON.parse(dataRaw) as { step?: string; title?: string };
+                  setState({
+                    kind: 'activeUpdating',
+                    sinceMs: Date.now(),
+                    trigger: 'manual',
+                    step: data.step,
+                    title: data.title,
+                  });
+                } catch { /* ignore malformed step */ }
               }
               if (eventName === 'done') {
                 let mode: string | undefined;
@@ -538,9 +566,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           }
           if (done) break;
         }
-      } finally {
-        window.clearTimeout(fallbackToRestarting);
-      }
+      } finally { /* stream finished or was intentionally aborted */ }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return; // 我们主动 abort,不当错
       // eslint-disable-next-line no-alert
@@ -720,6 +746,26 @@ function visualForState(
           window.location.href = '/cds-settings';
         },
       };
+    case 'activeUpdating': {
+      const elapsed = Math.floor((Date.now() - state.sinceMs) / 1000);
+      const triggerLabel = state.trigger === 'force-sync' ? '强制更新'
+        : state.trigger === 'webhook' ? 'Webhook 更新'
+        : state.trigger === 'auto-poll' ? '自动更新'
+        : '更新';
+      const stepText = state.title || state.step || '等待后端返回进度';
+      const staleText = state.staleSeconds ? ` · ${state.staleSeconds}s 无新心跳` : '';
+      return {
+        icon: <Loader2 className="h-4 w-4 animate-spin" />,
+        label: `${triggerLabel}进行中 ${elapsed}s · ${truncate(stepText, 42)}${staleText}`,
+        title: 'CDS 正在执行 self-update。点击打开更新与重启查看完整流水。',
+        bgClass: 'bg-amber-50 dark:bg-amber-950/30',
+        borderClass: 'border-amber-500/40',
+        textClass: 'text-amber-700 dark:text-amber-300',
+        onClick: () => {
+          window.location.href = '/cds-settings#maintenance';
+        },
+      };
+    }
     case 'restarting': {
       const elapsed = Math.floor((Date.now() - state.sinceMs) / 1000);
       return {

@@ -9832,6 +9832,7 @@ cdscli project list --human
     if (isSelfUpdateBusy(existingActive)) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
       sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
       res.end();
       return;
@@ -9852,6 +9853,7 @@ cdscli project list --human
       trigger: 'manual',
       actor,
     });
+    void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     const send = (step: string, status: string, title: string) => {
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
@@ -9860,6 +9862,7 @@ cdscli project list --human
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
       stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
@@ -10489,6 +10492,7 @@ cdscli project list --human
     if (isSelfUpdateBusy(existingActive)) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
       sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
       res.end();
       return;
@@ -10504,12 +10508,14 @@ cdscli project list --human
       trigger: 'force-sync',
       actor,
     });
+    void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
       stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
