@@ -3481,7 +3481,7 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget ? 'overflow-visible' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueLabel(branch) === 'CDS 环境异常'
             ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
@@ -3737,7 +3737,7 @@ function BranchCard({
           ) : null}
           {tagDeleteTarget && onRemoveTag ? (
             <div
-              className="absolute left-5 top-[calc(100%-4px)] z-30 w-[min(300px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
+              className="absolute left-5 top-[calc(100%-4px)] z-[120] w-[min(300px,calc(100%-40px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-2xl"
               role="dialog"
               aria-label={`删除标签 ${tagDeleteTarget}`}
               onClick={(event) => event.stopPropagation()}
