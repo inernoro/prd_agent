@@ -513,6 +513,24 @@ function buildLlmFailurePrompt(
   return lines.filter((line) => line !== '').join('\n');
 }
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!ok) throw new Error('copy failed');
+}
+
 const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
 
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
@@ -1234,7 +1252,7 @@ export function BranchDetailDrawer({
     if (!branch) return;
     const text = buildLlmFailurePrompt(branch, currentFailureReason, failureDiag?.failedServices || []);
     try {
-      await navigator.clipboard.writeText(text);
+      await copyTextToClipboard(text);
       setCopiedFailurePrompt(true);
       window.setTimeout(() => setCopiedFailurePrompt(false), 1800);
     } catch {
