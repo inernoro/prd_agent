@@ -839,6 +839,46 @@ def _has_cds_auth() -> bool:
                 or os.environ.get("AI_ACCESS_KEY", "").strip())
 
 
+def _call_safe(method: str, path: str, timeout: int = 10) -> Any:
+    """像 _call(quiet=True) 但**网络错误也走 __error__ 包**而不是 _request.die()。
+
+    背景：_request 在 URLError / TimeoutError 时调 die() —— die() 先 print
+    一份错误 JSON 到 stdout，再 sys.exit。如果调用方用 `except SystemExit:`
+    拦下走 fallback 再 print 成功 JSON，**JSON 模式下会输出两份 payload**，
+    机器解析当场崩。
+
+    为了让 preview-url / smoke 这类"网络故障静默退化"的命令真正干净，
+    必须从一开始就不让 die() 写 stdout。本函数直接调 urllib，把所有失败
+    收口为 `{"__error__": True, "status": N, "body": ...}` 包返回。
+    """
+    url = _cds_base() + path
+    headers = {
+        "Accept": "application/json",
+        "X-CdsCli-Version": VERSION,
+        **_auth_headers(),
+    }
+    req = urllib.request.Request(url, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                return raw
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            parsed = raw
+        return {"__error__": True, "status": e.code, "body": parsed}
+    except urllib.error.URLError as e:
+        return {"__error__": True, "status": 0, "body": f"网络错误: {e.reason}"}
+    except TimeoutError:
+        return {"__error__": True, "status": 0,
+                "body": f"请求超时 (timeout={timeout}s)"}
+
+
 def _branches_path() -> str:
     """`/api/branches` 路径，自动追加 `?project=<id>`（取 CDS_PROJECT_ID）。
 
@@ -884,7 +924,9 @@ def _match_branches_for_project(branches: list, git_branch: str,
         # 保守地不放行，让用户显式设 CDS_PROJECT_ID。
         return False
     scoped = [b for b in matches if _belongs(b)]
-    if not scoped:
+    if matches and not scoped:
+        # 仅当后端确实返回了 N 条同名分支但都不属于本项目时才提示。
+        # branches 列表本就为空（API 失败被空集替代）时不打这条噪音 warn。
         print(f"[warn] /api/branches 有 {len(matches)} 条同名分支但无一匹配项目"
               f" hint '{project_slug_hint}'，可能是目录名 ≠ CDS 项目 slug；"
               f"设 CDS_PROJECT_ID 走 server-side 过滤更稳",
@@ -934,42 +976,33 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
     # _auth_headers 同时支持 CDS_PROJECT_KEY 与 AI_ACCESS_KEY，这里两者满足其一即可）
     cds_host_set = bool(os.environ.get("CDS_HOST", "").strip())
     if cds_host_set and _has_cds_auth():
-        try:
-            body = _call("GET", _branches_path(), timeout=10, quiet=True)
-            if _warn_quiet_call_error(body, "调 /api/branches"):
-                # 401/5xx 之类——别静默退化让用户以为分支不存在；落到 fallback
-                # 时通过 stderr 警告告知，调用方能看到真实原因。
-                body = {}
-            # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
-            # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
-            # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
-            project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
-            for b in _match_branches_for_project(
-                    body.get("branches", []), branch,
-                    fallback_project_slug, project_scoped):
-                if b.get("previewSlug"):
-                    url = f"https://{b['previewSlug']}.{root}/"
-                    if _HUMAN:
-                        print(url)
-                    else:
-                        ok({"source": "cds-api", "branch": branch,
-                            "branchId": b.get("id"),
-                            "previewSlug": b["previewSlug"], "url": url})
-                    return
-            # 走到这里说明 CDS 没这条分支，落到 fallback
+        # 用 _call_safe 而不是 _call(quiet=True)：后者在网络错误时会让
+        # _request.die() 往 stdout 写一份错误 JSON，再被 except SystemExit
+        # 拦下走 fallback 又输出一份 ok JSON —— JSON 模式下双份 payload
+        # 让机器解析崩。_call_safe 把所有失败收口为 __error__ 包，单一路径。
+        body = _call_safe("GET", _branches_path(), timeout=10)
+        api_failed = _warn_quiet_call_error(body, "调 /api/branches")
+        # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
+        # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
+        # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
+        project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+        branches_list = (body.get("branches", [])
+                         if isinstance(body, dict) and not api_failed else [])
+        for b in _match_branches_for_project(
+                branches_list, branch, fallback_project_slug, project_scoped):
+            if b.get("previewSlug"):
+                url = f"https://{b['previewSlug']}.{root}/"
+                if _HUMAN:
+                    print(url)
+                else:
+                    ok({"source": "cds-api", "branch": branch,
+                        "branchId": b.get("id"),
+                        "previewSlug": b["previewSlug"], "url": url})
+                return
+        # 走到这里说明 CDS 没这条分支，落到 fallback（api_failed 时上面 warn 过了，
+        # 不再打 "没找到分支" 的 info 避免双重消息）
+        if not api_failed:
             print(f"[info] /api/branches 没找到 git 分支 '{branch}'，回退本地 v3 推算",
-                  file=sys.stderr)
-        except SystemExit as se:
-            # 区分两种 SystemExit:
-            #  - code == 0: 成功路径 ok() 的正常退出，**必须**透传（否则会被吞掉
-            #    导致 JSON 模式下输出两份 payload，source 错位到 fallback）
-            #  - code != 0: _request 的 die() 网络错误 / 超时 — 拦下回退本地 v3
-            if se.code == 0:
-                raise
-            print(f"[warn] CDS 不可达（网络错误 / 超时），回退本地 v3 推算",
-                  file=sys.stderr)
-        except Exception as ex:
-            print(f"[warn] 调 /api/branches 失败 ({ex})，回退本地 v3 推算",
                   file=sys.stderr)
     elif cds_host_set:
         # CDS_HOST 设了但没 auth — 给用户明确提示，否则会困惑"为啥不走 API"
@@ -5162,31 +5195,18 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     """
     branch_id = args.id
     root = _preview_root_from_host()
-    # 优先查 API 拿 v3 previewSlug；查不到才回退裸 id 模式（伴随 stderr 警告）
+    # 优先查 API 拿 v3 previewSlug；查不到才回退裸 id 模式（伴随 stderr 警告）。
+    # 用 _call_safe 收口所有失败（含网络错误），避免 _request.die() 污染 stdout。
     preview_slug = branch_id
-    try:
-        body = _call("GET", "/api/branches", timeout=30, quiet=True)
-        if _warn_quiet_call_error(body, "拉 /api/branches"):
-            # 401/5xx 等 — 警告已出，退化到裸 id，与下面 "未返回 previewSlug" 路径
-            # 行为一致
-            body = {}
-        for b in body.get("branches", []):
+    body = _call_safe("GET", "/api/branches", timeout=30)
+    if not _warn_quiet_call_error(body, "拉 /api/branches"):
+        for b in body.get("branches", []) if isinstance(body, dict) else []:
             if b.get("id") == branch_id:
                 preview_slug = b.get("previewSlug") or branch_id
                 if not b.get("previewSlug"):
                     print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
                           file=sys.stderr)
                 break
-    except SystemExit as se:
-        # 同 cmd_preview_url：code==0 是 ok() 正常退出必须透传，
-        # 非零才是 _request die() 的网络错误/超时
-        if se.code == 0:
-            raise
-        print(f"[warn] CDS 不可达（网络错误 / 超时），回退裸 id 拼预览域",
-              file=sys.stderr)
-    except Exception as ex:
-        print(f"[warn] 拉 /api/branches 失败({ex})，回退裸 id 拼预览域",
-              file=sys.stderr)
     preview = f"https://{preview_slug}.{root}"
     results: list[dict[str, Any]] = []
 
