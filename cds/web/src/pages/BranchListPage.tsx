@@ -1095,7 +1095,9 @@ export function BranchListPage(): JSX.Element {
 
   const refresh = useCallback(async (showLoading = false) => {
     if (!projectId) return;
-    if (showLoading) setState({ status: 'loading' });
+    if (showLoading) {
+      setState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
+    }
     try {
       const fast = showLoading;
       const branchUrl = fast
@@ -1114,7 +1116,14 @@ export function BranchListPage(): JSX.Element {
         ),
       ]);
       if (branchesResult.status === 'rejected') {
-        throw branchesResult.reason;
+        const message = readableError(branchesResult.reason);
+        setState((prev) => prev.status === 'ok'
+          ? {
+            ...prev,
+            projectWarning: `分支列表刷新失败，已保留上次可用内容。${message}`,
+          }
+          : { status: 'error', message });
+        return;
       }
       const branchesRes = branchesResult.value;
       const project = projectResult.status === 'fulfilled'
