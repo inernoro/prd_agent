@@ -568,7 +568,8 @@ export function BranchDetailDrawer({
   const branchIdRef = useRef<string>(branchId || '');
   useEffect(() => { branchIdRef.current = branchId || ''; }, [branchId]);
   // Phase C — Settings tab(2026-05-04)
-  const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
+  const [actionBusy, setActionBusy] = useState<{ branchId: string; action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete' } | null>(null);
+  const currentActionBusy = actionBusy?.branchId === branchId ? actionBusy.action : null;
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [logsMode, setLogsMode] = useState<LogsMode>('build');
   const [selectedBuildLog, setSelectedBuildLog] = useState<BuildLogSelection | null>(null);
@@ -946,7 +947,8 @@ export function BranchDetailDrawer({
     label: string,
   ): Promise<void> => {
     if (!branchId) return;
-    setActionBusy(action);
+    const actionBranchId = branchId;
+    setActionBusy({ branchId: actionBranchId, action });
     try {
       const path = `/api/branches/${encodeURIComponent(branchId)}` + (
         action === 'delete' ? '' : `/${action}`
@@ -965,7 +967,9 @@ export function BranchDetailDrawer({
       const message = err instanceof ApiError ? err.message : String(err);
       onToast?.(`${label} 失败:${message}`);
     } finally {
-      setActionBusy(null);
+      setActionBusy((current) => (
+        current?.branchId === actionBranchId && current.action === action ? null : current
+      ));
     }
   }, [branchId, onToast, onActionComplete, onClose, load]);
 
@@ -1788,7 +1792,7 @@ export function BranchDetailDrawer({
                   <SettingsPanel
                     branch={branch}
                     projectId={projectId}
-                    busy={actionBusy}
+                    busy={currentActionBusy}
                     profileState={profileState}
                     modeSavingProfileId={modeSavingProfileId}
                     confirmDelete={confirmDelete}
@@ -1828,11 +1832,11 @@ export function BranchDetailDrawer({
               <>
                 <Button
                   className="flex-1"
-                  disabled={!!actionBusy}
+                  disabled={!!currentActionBusy}
                   onClick={() => void runBranchAction('deploy', '部署')}
                 >
-                  {actionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
-                  {actionBusy === 'deploy' ? '正在部署…' : '重新部署'}
+                  {currentActionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
+                  {currentActionBusy === 'deploy' ? '正在部署…' : '重新部署'}
                 </Button>
                 <Button asChild variant="outline">
                   <a href={fullPageHref}>
