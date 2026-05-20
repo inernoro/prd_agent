@@ -757,7 +757,9 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
     branch_id = args.id
     body = _call("GET", "/api/branches", timeout=30)
     root = _preview_root_from_host()
-    for b in body.get("branches", []):
+    # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值只在 key
+    # 缺失时生效），下面 for 迭代会 TypeError。统一 `or []` 兜底。
+    for b in (body.get("branches") or []):
         if b.get("id") == branch_id:
             slug = b.get("previewSlug")
             if not slug:
@@ -1000,7 +1002,9 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
         # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
         project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
-        branches_list = (body.get("branches", [])
+        # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值
+        # 只在 key 缺失时生效）；用 `or []` 兜底。
+        branches_list = ((body.get("branches") or [])
                          if isinstance(body, dict) and not api_failed else [])
         scoped = _match_branches_for_project(
             branches_list, branch, fallback_project_slug, project_scoped)
@@ -5236,7 +5240,10 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     if os.environ.get("CDS_HOST", "").strip():
         body = _call_safe("GET", "/api/branches", timeout=30)
         if not _warn_quiet_call_error(body, "拉 /api/branches"):
-            for b in body.get("branches", []) if isinstance(body, dict) else []:
+            # `body.get("branches", [])` 在 "branches": null 时返回 None；统一
+            # `or []` 兜底，下面 for 迭代不再 TypeError。
+            branches = (body.get("branches") or []) if isinstance(body, dict) else []
+            for b in branches:
                 if b.get("id") == branch_id:
                     preview_slug = b.get("previewSlug") or branch_id
                     if not b.get("previewSlug"):
