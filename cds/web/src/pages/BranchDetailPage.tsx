@@ -453,8 +453,8 @@ function filterProxyLogsForBranch(events: ProxyLogEvent[], branch: BranchSummary
   const labels = branchProxyLabels(branch, aliases);
   return events
     .filter((event) => event.branchSlug && labels.has(event.branchSlug.toLowerCase()))
-    .slice(-40)
-    .reverse();
+    .sort((left, right) => right.id - left.id)
+    .slice(0, 40);
 }
 
 function compactOverride(override: BuildProfileOverride): BuildProfileOverride {
@@ -678,7 +678,7 @@ export function BranchDetailPage(): JSX.Element {
         apiRequest<GitLogResponse>(`/api/branches/${encodeURIComponent(branch.id)}/git-log?count=15`).catch(() => ({ commits: [] })),
         apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`).catch(() => ({ profiles: [] })),
         apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`).catch(() => ({ aliases: [] })),
-        apiRequest<ProxyLogResponse>('/api/proxy-log').catch(() => ({ events: [] })),
+        apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })),
         apiRequest<BridgeCheckResponse>(`/api/bridge/check/${encodeURIComponent(branch.id)}`).catch(() => ({ active: false })),
         apiRequest<BridgeConnectionsResponse>('/api/bridge/connections').catch(() => ({ connections: [] })),
         realProjectId
@@ -839,7 +839,7 @@ export function BranchDetailPage(): JSX.Element {
   const refreshProxyLogs = useCallback(async () => {
     if (state.status !== 'ok') return;
     try {
-      const proxyLogs = await apiRequest<ProxyLogResponse>('/api/proxy-log');
+      const proxyLogs = await apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc');
       setState((currentState) => (
         currentState.status === 'ok'
           ? { ...currentState, proxyLogs: filterProxyLogsForBranch(proxyLogs.events || [], currentState.branch, currentState.aliases) }

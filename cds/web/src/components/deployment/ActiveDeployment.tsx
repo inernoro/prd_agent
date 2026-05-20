@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
@@ -35,20 +35,41 @@ function HighlightedLogBlock({
   logs,
   maxLines,
   className = '',
+  autoScrollToBottom = false,
 }: {
   logs: string;
   maxLines?: number;
   className?: string;
+  autoScrollToBottom?: boolean;
 }): JSX.Element {
   const text = maxLines ? lastLines(logs, maxLines) : logs;
   const lines = text.split(/\r?\n/);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const scrollToBottom = () => {
+    const el = viewportRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
+  useEffect(() => {
+    if (autoScrollToBottom) scrollToBottom();
+  }, [autoScrollToBottom, text]);
   return (
-    <div className={`overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 font-mono text-[11px] leading-5 ${className}`}>
-      {lines.map((line, index) => (
-        <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
-          {line || ' '}
-        </div>
-      ))}
+    <div className="relative h-full min-h-0">
+      <button
+        type="button"
+        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[11px] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
+        onClick={scrollToBottom}
+        title="跳到容器日志底部"
+      >
+        <ArrowDownToLine className="h-3 w-3" />
+        底部
+      </button>
+      <div ref={viewportRef} className={`h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[11px] leading-5 ${className}`}>
+        {lines.map((line, index) => (
+          <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
+            {line || ' '}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -141,7 +162,7 @@ function PrimaryContainerLogPanel({
             容器尚未输出任何日志（多半是进程在监听端口前就退出了）。
           </div>
         ) : (
-          <HighlightedLogBlock logs={state.logs} maxLines={220} className="max-h-[560px] min-h-[280px]" />
+          <HighlightedLogBlock logs={state.logs} maxLines={220} className="max-h-[560px] min-h-[280px]" autoScrollToBottom />
         )}
       </div>
       {maximized ? (
@@ -218,7 +239,7 @@ function PrimaryContainerLogPanel({
                   {state.message || '容器日志加载失败'}
                 </div>
               ) : logs.trim() ? (
-                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" />
+                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" autoScrollToBottom />
               ) : (
                 <div className="rounded border border-[hsl(var(--hairline))] px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无容器日志。

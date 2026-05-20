@@ -1190,7 +1190,7 @@ export class ContainerService {
   }
 
   async getLogs(containerName: string, tail = 500): Promise<string> {
-    const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
+    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`);
     return combinedOutput(result);
   }
 
@@ -1205,7 +1205,7 @@ export class ContainerService {
     tail = 200,
   ): AbortController {
     const ac = new AbortController();
-    const child = spawn('docker', ['logs', '-f', '--tail', String(tail), containerName], {
+    const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const forward = (data: Buffer) => {

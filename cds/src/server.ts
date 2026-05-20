@@ -1979,7 +1979,9 @@ export function createServer(deps: ServerDeps): express.Express {
     const all = deps.proxyService.getProxyLog();
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
     const events = afterSeq > 0 ? all.filter(e => e.id > afterSeq) : all;
-    res.json({ events, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
+    const order = req.query.order === 'asc' ? 'asc' : 'desc';
+    const ordered = afterSeq > 0 || order === 'asc' ? events : [...events].reverse();
+    res.json({ events: ordered, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
   });
   app.get('/api/proxy-log/stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
