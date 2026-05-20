@@ -910,18 +910,24 @@ def _match_branches_for_project(branches: list, git_branch: str,
     if already_scoped:
         return matches
     # 不论几条都按 project hint 筛——单条来自别项目的同样要过滤掉
+    legacy_bare_slug = _slugify_for_preview(git_branch)
+
     def _belongs(b: dict) -> bool:
         if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
             return True
         if b.get("projectId") and b["projectId"] == project_slug_hint:
             return True
-        # canonical id 前缀启发式（兼容老版 API）
+        # canonical id 前缀启发式（兼容老版 API 没 projectSlug 字段）
         bid = b.get("id", "")
         if bid.startswith(f"{project_slug_hint}-"):
             return True
-        # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。这种情况
-        # 只在 hint 等于 default / legacy 项目时可信，否则可能误匹配 —— 这里
-        # 保守地不放行，让用户显式设 CDS_PROJECT_ID。
+        # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。CDS 多项目
+        # 改造前的所有项目 / 后来仍带 legacyFlag 的 default 项目都走这种格式。
+        # 兼容办法：b.id 等于 slugify(git_branch) 且 b.legacy 标志为 true（新版
+        # 后端会标记），或者干脆 id 就是裸 slug 形态（向后兼容老版无 legacy
+        # 字段的后端）—— 放行。这样不会漏掉 default/legacy 项目的分支。
+        if bid == legacy_bare_slug:
+            return True
         return False
     scoped = [b for b in matches if _belongs(b)]
     if matches and not scoped:
@@ -988,17 +994,27 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
         branches_list = (body.get("branches", [])
                          if isinstance(body, dict) and not api_failed else [])
-        for b in _match_branches_for_project(
-                branches_list, branch, fallback_project_slug, project_scoped):
-            if b.get("previewSlug"):
-                url = f"https://{b['previewSlug']}.{root}/"
+        scoped = _match_branches_for_project(
+            branches_list, branch, fallback_project_slug, project_scoped)
+        for b in scoped:
+            slug = b.get("previewSlug")
+            if slug:
+                url = f"https://{slug}.{root}/"
                 if _HUMAN:
                     print(url)
                 else:
                     ok({"source": "cds-api", "branch": branch,
                         "branchId": b.get("id"),
-                        "previewSlug": b["previewSlug"], "url": url})
+                        "previewSlug": slug, "url": url})
                 return
+            # 匹配到本项目分支但缺 previewSlug 字段 — 与 `branch preview-url`
+            # 行为一致：服务端返回不完整，明确 die 而不是静默退化到 fallback
+            # （fallback URL 与 CDS 实际不一致，会让用户访问到错的 host）。
+            die(f"/api/branches 匹配到分支 '{branch}'（id={b.get('id')}）"
+                f"但缺 previewSlug 字段。CDS 版本过旧或后端 bug，请升级 CDS "
+                f"或检查 cds/src/routes/branches.ts",
+                code=3, extra={"branch": b})
+            return
         # 走到这里说明 CDS 没这条分支，落到 fallback（api_failed 时上面 warn 过了，
         # 不再打 "没找到分支" 的 info 避免双重消息）
         if not api_failed:
