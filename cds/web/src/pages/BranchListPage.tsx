@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Gauge,
   GitBranch,
+  Github,
   HardDrive,
   Lightbulb,
   Loader2,
@@ -3387,10 +3388,8 @@ function BranchCard({
           - 分支名给最大宽度,truncate(必要时 hover 显示完整) */}
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
-          <span
-            className={`mt-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusRailClass(branch.status)} ${
-              isRunning ? 'shadow-[0_0_8px_rgba(16,185,129,0.45)]' : ''
-            } ${isInterim ? 'animate-pulse' : ''}`}
+          <Github
+            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isInterim ? 'animate-pulse' : ''}`}
             aria-hidden
           />
           <div className="min-w-0 flex-1">
@@ -3497,16 +3496,6 @@ function BranchCard({
             </span>
           ) : null
         )}
-        {/*
-          2026-05-14：原本在 chip 行的「发布版」徽章上移到标题行（替代 Webhook），
-          此处保留来源 chip（手动/Webhook/待配置），让用户在卡片正文区仍能看到分支来源。
-        */}
-        <span
-          className={`inline-flex h-6 shrink-0 items-center rounded-md border px-2 text-xs ${origin.className}`}
-          title={origin.title}
-        >
-          {origin.label}
-        </span>
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
           {timeBadge.label} {timeBadge.text}
         </span>
