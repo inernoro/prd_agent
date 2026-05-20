@@ -1592,22 +1592,24 @@ export function BranchDetailDrawer({
                     </div>
                   );
                 })()}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                  {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
-                  <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
+                <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                    {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                    <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
+                  </div>
+                  {/*
+                    Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
+                    绿点旁边没有 URL"):running 时显眼显示 production 域名,
+                    hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
+                  */}
+                  {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
+                    <PreviewUrlChip url={previewUrl} />
+                  ) : null}
+                  {branch.subject ? (
+                    <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{branch.subject}</p>
+                  ) : null}
                 </div>
-                {/*
-                  Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
-                  绿点旁边没有 URL"):running 时显眼显示 production 域名,
-                  hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
-                */}
-                {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
-                  <PreviewUrlChip url={previewUrl} />
-                ) : null}
-                {branch.subject ? (
-                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{branch.subject}</p>
-                ) : null}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="flex flex-wrap items-center justify-between gap-2">

@@ -5007,8 +5007,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 时合成一条最简记录，把 errorMessage 浮起来给 Agent / UI 看。否则用户只看到
     // 状态 'error' 没有原因，无法判断发生了什么。这条 fallback 记录带 synthetic=true
     // 标记，前端可以选择性区分对待。
-    const isFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
-    const fallbackLogs = isFallback
+    const runningServices = Object.values(branch?.services || {}).filter((svc) => svc.status === 'running');
+    const hasRecoveredRuntime = logs.length === 0 && !!branch && branch.status === 'running' && runningServices.length > 0;
+    const isErrorFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
+    const fallbackLogs = isErrorFallback
       ? [{
           id: `synthetic-${id}`,
           synthetic: true,
@@ -5026,11 +5028,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
             timestamp: branch?.lastAccessedAt || new Date().toISOString(),
           }],
         }]
+      : hasRecoveredRuntime
+        ? [{
+            type: 'build',
+            status: 'completed',
+            startedAt: branch.lastAccessedAt || branch.lastReadyAt || branch.createdAt || new Date().toISOString(),
+            finishedAt: branch.lastReadyAt || branch.lastAccessedAt || new Date().toISOString(),
+            runtimeStartedAt: branch.lastReadyAt || branch.lastAccessedAt || undefined,
+            events: [
+              {
+                step: 'runtime-recovered',
+                status: 'done',
+                title: '运行态已恢复，但原始构建记录缺失',
+                log:
+                  'CDS 当前能确认该分支容器正在运行，但没有找到本次部署的 OperationLog。' +
+                  '常见原因是部署请求/进程在最终 appendLog 前中断，或历史版本只写入 service state 而没有写入部署历史。' +
+                  '请查看容器日志作为运行证据；下一次重新部署后会生成完整构建记录。',
+                detail: {
+                  recoveredFrom: 'branch.services',
+                  runningServices: runningServices.map((svc) => ({
+                    profileId: svc.profileId,
+                    containerName: svc.containerName,
+                    hostPort: svc.hostPort,
+                  })),
+                },
+                timestamp: branch.lastReadyAt || branch.lastAccessedAt || new Date().toISOString(),
+              },
+            ],
+          }]
       : [];
 
     res.json({
       logs: logs.length > 0 ? logs : fallbackLogs,
-      logsAreSynthetic: isFallback || undefined,
+      logsAreSynthetic: (isErrorFallback || hasRecoveredRuntime) || undefined,
       branchStatus: branch?.status,
       branchErrorMessage: branch?.errorMessage,
       liveStreamHint: {
