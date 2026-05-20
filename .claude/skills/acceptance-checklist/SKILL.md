@@ -314,5 +314,5 @@ Phase 4 (Web)：浏览器看到状态变化
 - **中文输出**：所有 checkpoint 描述和错误提示必须中文
 - **不写盘默认**：生成的 UAT 文档默认只打印到对话。仅当用户明确说"保存"时才 Write 到 `/tmp/` 或 `doc/report.*`
 - **禁止创建 `doc/` 下的永久文档**：UAT 是一次性产物，不要污染 `doc/` 目录结构
-- **预览地址自动化**：Web 场景时用 `preview-url` skill 的逻辑自动生成 `{branch-slug}.miduo.org` 地址
+- **预览地址自动化**：Web 场景时用 `/preview-url` 技能（SSOT: `cds/src/services/preview-slug.ts:computePreviewSlug`）自动生成 v3 格式 `{tail}-{prefix}-{projectSlug}.miduo.org` 地址。**禁止手拼**：v1 (`{branch-slug}.miduo.org`) / v2 (`{projectSlug}-{branchSlug}.miduo.org`) 公式在多项目 CDS 下不可用
 - **参考 `CLAUDE.md` 规则 #9**：新 Agent / 新页面交付必须同时声明【位置】和【路径】两行，UAT 清单顶部应复述这两行

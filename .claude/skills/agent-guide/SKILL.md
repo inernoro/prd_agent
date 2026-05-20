@@ -309,7 +309,13 @@ ls .agent-workspace/*/progress.md 2>/dev/null
 当使用 `/cds-deploy` 部署到 CDS 后，**必须自动给分支打标签**（≤7 字），方便用户在 CDS Dashboard 一眼识别：
 
 ```bash
-BRANCH_ID=$(echo "$BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+# 多项目 CDS canonical id = ${projectSlug}-${slugify(branch)}，不是裸 `tr '/' '-'`。
+# 必须查 /api/branches 拿真正的 id（match git branch 字段）：
+BRANCH_ID=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" "$CDS/api/branches" \
+  | python3 -c "import json,sys,os
+target=os.environ['BRANCH']
+for b in json.load(sys.stdin).get('branches',[]):
+    if b.get('branch')==target: print(b['id']); break")
 curl -sf -X PATCH "$CDS/api/branches/$BRANCH_ID" \
   -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
   -H "Content-Type: application/json" \

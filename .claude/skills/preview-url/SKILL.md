@@ -51,13 +51,36 @@ https://${tail}-${prefix}-${projectSlug}.miduo.org/
 
 ## 执行流程
 
-### Step 1: 必须执行 Python 脚本计算（禁止大模型手动推算）
+### Step 1: 必须执行脚本计算（禁止大模型手动推算）
 
 > **严禁**：AI 直接在脑子里把分支名转成 slug 然后写进回复。
 > 大小写转换极易出错（如 `bRUsO` 手算成 `brusso` 而非 `bruso`）。
 > 必须通过 Bash 工具执行下方脚本，把脚本输出的 URL 复制到回复。
 
-```python
+**优先路径（推荐）**：查 CDS `/api/branches` 拿后端真实的 `previewSlug`，跟服务器永不漂移：
+
+```bash
+# 需要 CDS_HOST + AI_ACCESS_KEY；查到就用 v3 SSOT，查不到再走 fallback
+if [ -n "$CDS_HOST" ] && [ -n "$AI_ACCESS_KEY" ]; then
+  HOST_NO_PROTO="${CDS_HOST#http://}"; HOST_NO_PROTO="${HOST_NO_PROTO#https://}"
+  GIT_BRANCH=$(git branch --show-current)
+  URL=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" "https://$HOST_NO_PROTO/api/branches" \
+    | GIT_BRANCH="$GIT_BRANCH" python3 -c "
+import json,sys,os
+host=os.environ.get('HOST_NO_PROTO','')
+root='miduo.org' if (not host or 'miduo' in host) else host
+target=os.environ['GIT_BRANCH']
+for b in json.load(sys.stdin).get('branches',[]):
+    if b.get('branch')==target and b.get('previewSlug'):
+        print(f\"https://{b['previewSlug']}.{root}/\"); break")
+  [ -n "$URL" ] && echo "$URL" && exit 0
+fi
+# 走到这里说明没拿到（CDS_HOST 没配 / 分支没在 CDS / API 异常），fallback 到本地计算
+```
+
+**Fallback（本地计算 v3 SSOT，目录名当 project slug）**：
+
+```bash
 python3 -c "
 import re, subprocess, os
 
@@ -74,13 +97,17 @@ project = slugify(os.path.basename(root))
 if '/' in branch:
     prefix = slugify(branch.split('/')[0])
     tail   = slugify(branch[len(branch.split('/')[0])+1:])
-    slug   = f'{tail}-{prefix}-{project}'
+    slug   = f'{tail}-{prefix}-{project}' if prefix and tail else f'{tail or prefix}-{project}'
 else:
     slug = f'{slugify(branch)}-{project}'
 
 print(f'https://{slug}.miduo.org/')
 "
 ```
+
+> ⚠ Fallback 依赖「目录名 slugify 后 == CDS 项目 slug」这个隐含约定。本仓库
+> `prd_agent` → `prd-agent` 恰好成立；外部 fork / 重命名目录会偏。
+> 真要严谨永远走优先路径。
 
 把脚本输出的 URL 直接用于回复，不得修改。
 

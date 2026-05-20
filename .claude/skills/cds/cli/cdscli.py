@@ -742,6 +742,37 @@ def cmd_branch_history(args: argparse.Namespace) -> None:
     ok(recent)
 
 
+def cmd_branch_preview_url(args: argparse.Namespace) -> None:
+    """打印分支的 v3 预览域名（来自 `/api/branches` 的 previewSlug 字段，
+    后端唯一来源 `cds/src/services/preview-slug.ts:computePreviewSlug`）。
+
+    `BRANCH_ID` 是 CDS 内部 canonical id（如 `prd-agent-claude-foo-bar`），
+    不是裸 git 分支名。可先调 `branch list` 看。
+
+    退化路径：API 没返回 previewSlug 时（旧版本 CDS / 临时故障）回退到
+    `id.host` 形式并打 stderr 警告。
+    """
+    branch_id = args.id
+    body = _call("GET", "/api/branches", timeout=30)
+    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
+    if host.startswith("http://") or host.startswith("https://"):
+        host = host.split("://", 1)[1]
+    root = "miduo.org" if (not host or "miduo" in host) else host
+    for b in body.get("branches", []):
+        if b.get("id") == branch_id:
+            slug = b.get("previewSlug") or b.get("id")
+            if not b.get("previewSlug"):
+                print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id（v1 公式）",
+                      file=sys.stderr)
+            url = f"https://{slug}.{root}"
+            if _HUMAN:
+                print(url)
+            else:
+                ok({"branchId": branch_id, "previewSlug": slug, "url": url})
+            return
+    die(f"分支不存在: {branch_id}", code=2)
+
+
 def cmd_branch_create(args: argparse.Namespace) -> None:
     """显式创建分支。POST /api/branches 用 `projectId` 字段(后端约定);
     CLI 暴露 --project flag 抹平这个 friction(F7)。
@@ -4853,10 +4884,33 @@ def _walk(root: str, depth: int = 2) -> list[str]:
 
 
 def cmd_smoke(args: argparse.Namespace) -> None:
-    """分层冒烟：L1 预览域根路径 / L2 version-check / L3 认证 API。"""
+    """分层冒烟：L1 预览域根路径 / L2 version-check / L3 认证 API。
+
+    预览域名走 `/api/branches` 的 previewSlug 字段（v3 SSOT，由后端
+    `cds/src/services/preview-slug.ts:computePreviewSlug` 唯一生成）。
+    历史踩坑：曾用 `f"https://{branch_id}.miduo.org"` v1 公式，在多项目
+    CDS 下不可用——此处永久废弃该写法。
+    """
     branch_id = args.id
-    host = os.environ.get("CDS_HOST", "")
-    preview = f"https://{branch_id}.miduo.org" if host.endswith(".miduo.org") or "miduo" in host else f"https://{branch_id}.{host}"
+    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
+    if host.startswith("http://") or host.startswith("https://"):
+        host = host.split("://", 1)[1]
+    root = "miduo.org" if (not host or "miduo" in host) else host
+    # 优先查 API 拿 v3 previewSlug；查不到才回退裸 id 模式（伴随 stderr 警告）
+    preview_slug = branch_id
+    try:
+        body = _call("GET", "/api/branches", timeout=30, quiet=True)
+        for b in body.get("branches", []):
+            if b.get("id") == branch_id:
+                preview_slug = b.get("previewSlug") or branch_id
+                if not b.get("previewSlug"):
+                    print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
+                          file=sys.stderr)
+                break
+    except Exception as ex:
+        print(f"[warn] 拉 /api/branches 失败({ex})，回退裸 id 拼预览域",
+              file=sys.stderr)
+    preview = f"https://{preview_slug}.{root}"
     results: list[dict[str, Any]] = []
 
     def probe(name: str, url: str, headers: dict[str, str] | None = None,
@@ -5412,6 +5466,10 @@ def _build_parser() -> argparse.ArgumentParser:
     be.set_defaults(func=cmd_branch_exec)
     bh = br.add_parser("history"); bh.add_argument("id"); bh.add_argument("--limit", type=int, default=1)
     bh.set_defaults(func=cmd_branch_history)
+    bp = br.add_parser("preview-url",
+                       help="打印分支 v3 预览域名(来自 /api/branches 的 previewSlug)")
+    bp.add_argument("id", help="CDS canonical branch id (非裸 git 分支名)")
+    bp.set_defaults(func=cmd_branch_preview_url)
     bc = br.add_parser("create",
                        help="显式创建分支(--project + --branch)。"
                             "API body 字段是 projectId,这里用 --project 抹平。")

@@ -59,8 +59,13 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 
 通过预览域名直连 MAP 平台 API（无需 container-exec 中转）：
 
+> ⚠ `PREVIEW_URL` **必须**走 `/preview-url` 技能或 `cdscli` 拿 v3 域名，禁止用 `${BRANCH_ID}.miduo.org` 这种 v1 拼法（多项目 CDS 下不可用）。
+> SSOT: `cds/src/services/preview-slug.ts:computePreviewSlug`。
+
 ```bash
-PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
+# 推荐：让 cdscli 直接给真实预览域名（它会查 /api/branches 拿 previewSlug）
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py branch preview-url "$BRANCH_ID")
+# 或者：触发 /preview-url 技能生成
 IMPERSONATE="${MAP_AI_USER}"
 
 # 直接调用（AI_ACCESS_KEY 通用认证）
@@ -405,8 +410,10 @@ Step 2: 分层冒烟测试（优先直连预览域名，失败时才用 containe
 ```bash
 #!/bin/bash
 # CDS 远程冒烟测试 — MAP 直连模式（推荐）
-BRANCH_ID="claude-xxx-yyy"  # 从分支名推导
-PREVIEW_URL="https://${BRANCH_ID}.miduo.org"
+BRANCH_ID="claude-xxx-yyy"  # CDS 内部 branch id（canonical: ${projectSlug}-${slugify(branch)})
+# v3 预览域：必须从 CDS 拿 previewSlug（基于 `cds/src/services/preview-slug.ts` SSOT）
+# 禁止 PREVIEW_URL="https://${BRANCH_ID}.miduo.org" —— 那是 v1 公式，多项目 CDS 不可用
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py branch preview-url "$BRANCH_ID")
 IMPERSONATE="${MAP_AI_USER:?请设置环境变量 MAP_AI_USER}"
 
 AUTH=(-H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "X-AI-Impersonate: $IMPERSONATE" -H "Content-Type: application/json")

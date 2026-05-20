@@ -133,19 +133,35 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 
 ### 预览验收地址（需人工验收时必填）
 
-当测试矩阵中存在"⚠️ 需人工"的项目时，自动生成预览地址：
+当测试矩阵中存在"⚠️ 需人工"的项目时，**必须**调 `/preview-url` 技能生成 v3 格式预览地址，禁止手拼。
+
+> 历史踩坑：本节曾内联 `SLUG=$(echo "$BRANCH" | tr '/' '-')` 的 v1 公式，
+> 在多项目 CDS（v3 = `{tail}-{prefix}-{projectSlug}`）下生成的 URL 不可用。
+> 现在统一走 SSOT (`cds/src/services/preview-slug.ts:computePreviewSlug`)。
+
+调用方式：
 
 ```bash
-# 获取分支名并生成预览 URL
-BRANCH=$(git branch --show-current)
-SLUG=$(echo "$BRANCH" | tr '/' '-')
-echo "https://${SLUG}.miduo.org/"
+# 由 AI 触发 /preview-url 技能；或直接跑下方 Python 与 SSOT 同公式
+python3 -c "
+import re, subprocess, os
+def slugify(s):
+    return re.sub(r'-+', '-', re.sub(r'[^a-z0-9-]', '-', s.lower())).strip('-')
+branch = subprocess.check_output(['git','branch','--show-current'], text=True).strip()
+project = slugify(os.path.basename(subprocess.check_output(['git','rev-parse','--show-toplevel'], text=True).strip()))
+if '/' in branch:
+    prefix, tail = slugify(branch.split('/',1)[0]), slugify(branch.split('/',1)[1])
+    slug = f'{tail}-{prefix}-{project}' if prefix and tail else f'{tail or prefix}-{project}'
+else:
+    slug = f'{slugify(branch)}-{project}'
+print(f'https://{slug}.miduo.org/')
+"
 ```
 
-> **预览地址**: https://{branch-slug}.miduo.org/
+> **预览地址**: https://{tail}-{prefix}-{projectSlug}.miduo.org/
 >
 > **验收路径**:
-> 1. 打开 https://{branch-slug}.miduo.org/{页面路径}
+> 1. 打开 https://{tail}-{prefix}-{projectSlug}.miduo.org/{页面路径}
 > 2. {具体操作步骤}
 > 3. {期望结果}
 
