@@ -5310,7 +5310,18 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     preview_slug = branch_id
     if os.environ.get("CDS_HOST", "").strip():
         body = _call_safe("GET", "/api/branches", timeout=30)
-        if not _warn_quiet_call_error(body, "拉 /api/branches"):
+        api_failed = _warn_quiet_call_error(body, "拉 /api/branches")
+        # 2xx 非 JSON 响应（代理 / WAF 返回 HTML 错误页 200 等）必须显式警告，
+        # 不能静默把 body 当空 branches 走 canonical-id-as-host 探测——CDS proxy
+        # 不按 canonical id 路由，L1-L3 全失败但误导成 smoke 自己的问题，
+        # 掩盖真正的 proxy 故障。与 cmd_preview_url 对齐。
+        if not api_failed and not isinstance(body, dict):
+            print(f"[warn] /api/branches 返回非 JSON 响应"
+                  f"（type={type(body).__name__}），可能 CDS proxy 异常；"
+                  f"smoke 仍继续但用裸 id 拼预览域（探测结果可能误导）",
+                  file=sys.stderr)
+            api_failed = True
+        if not api_failed:
             # `body.get("branches", [])` 在 "branches": null 时返回 None；统一
             # `or []` 兜底，下面 for 迭代不再 TypeError。
             branches = (body.get("branches") or []) if isinstance(body, dict) else []
