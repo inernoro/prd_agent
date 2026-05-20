@@ -757,6 +757,13 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
     branch_id = args.id
     body = _call("GET", "/api/branches", timeout=30)
     root = _preview_root_from_host()
+    # 2xx 非 JSON 响应（如代理 / WAF 返回 HTML 错误页 200）时 _call 透传 str；
+    # 直接 body.get(...) AttributeError。与 cmd_branch_id 对齐守护。
+    if not isinstance(body, dict):
+        die(f"/api/branches 返回非 JSON 响应（type={type(body).__name__}），"
+            f"无法解析 — 检查 CDS proxy 是否健康，或 CDS_HOST 是否正确",
+            code=3, extra={"body": body if isinstance(body, str) else repr(body)})
+        return
     # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值只在 key
     # 缺失时生效），下面 for 迭代会 TypeError。统一 `or []` 兜底。
     for b in (body.get("branches") or []):
@@ -1009,6 +1016,16 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         # 让机器解析崩。_call_safe 把所有失败收口为 __error__ 包，单一路径。
         body = _call_safe("GET", _branches_path(), timeout=10)
         api_failed = _warn_quiet_call_error(body, "调 /api/branches")
+        # 2xx 非 JSON 响应（代理 / WAF 返回 HTML 错误页 200 等）时 _call_safe
+        # 透传原始 str。不能静默退化到 fallback URL，否则会掩盖 proxy 故障 +
+        # 给可能错的 URL。stderr 警告告知用户，再走本地 fallback（与 API 错误
+        # 路径一致：用户已被警告，结果仍可用最稳妥的本地推算）。
+        if not api_failed and not isinstance(body, dict):
+            print(f"[warn] /api/branches 返回非 JSON 响应"
+                  f"（type={type(body).__name__}），可能 CDS proxy 异常；"
+                  f"回退本地 v3 推算（结果可能与 CDS 实际不符）",
+                  file=sys.stderr)
+            api_failed = True
         # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
         # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
         # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
