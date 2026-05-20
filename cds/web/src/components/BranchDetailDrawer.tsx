@@ -450,6 +450,69 @@ function branchFailureReason(branch: BranchDetailData): string {
   return failed.map((svc) => `${svc.profileId}: ${svc.errorMessage || '启动失败'}`).join('\n');
 }
 
+function buildLlmFailurePrompt(
+  branch: BranchDetailData,
+  failureReason: string,
+  diagnostics: Array<{
+    profileId: string;
+    containerName?: string;
+    tailLines: string[];
+    errorCategory: string;
+    errorHint: string;
+    responsibilitySide: 'code' | 'config' | 'cds' | 'unknown';
+  }>,
+): string {
+  const services = Object.values(branch.services || {});
+  const lines = [
+    '请作为资深工程师分析并修复下面这个 CDS 分支部署/启动失败问题。',
+    '要求：先判断是应用代码、配置、依赖、资源还是 CDS 平台问题；给出最小修复步骤；如果需要改代码，请指出应检查的文件、命令和验证方式。',
+    '',
+    '## 分支上下文',
+    `项目ID: ${branch.projectId}`,
+    `分支ID: ${branch.id}`,
+    `分支名: ${branch.branch}`,
+    `状态: ${branch.status}`,
+    branch.githubRepoFullName ? `GitHub仓库: ${branch.githubRepoFullName}` : '',
+    branch.githubCommitSha ? `GitHub提交: ${branch.githubCommitSha}` : '',
+    branch.commitSha ? `当前提交: ${branch.commitSha}` : '',
+    branch.lastDeployAt ? `最近成功部署: ${branch.lastDeployAt}` : '',
+    '',
+    '## 失败摘要',
+    failureReason || branch.errorMessage || '未提供失败摘要',
+    '',
+    '## 服务状态',
+    ...services.map((svc) => [
+      `- ${svc.profileId}`,
+      `container=${svc.containerName}`,
+      `port=${svc.hostPort}`,
+      `status=${svc.status}`,
+      svc.errorMessage ? `error=${svc.errorMessage}` : '',
+    ].filter(Boolean).join(' · ')),
+    '',
+    '## CDS 诊断',
+    diagnostics.length > 0
+      ? diagnostics.map((diag) => [
+        `### ${diag.profileId}`,
+        diag.containerName ? `container: ${diag.containerName}` : '',
+        `category: ${diag.errorCategory}`,
+        `side: ${diag.responsibilitySide}`,
+        diag.errorHint ? `hint: ${diag.errorHint}` : '',
+        diag.tailLines.length > 0 ? 'tail logs:' : '',
+        diag.tailLines.slice(-30).join('\n'),
+      ].filter(Boolean).join('\n')).join('\n\n')
+      : 'CDS 未返回结构化诊断；请基于失败摘要和服务状态分析。',
+    '',
+    '## 可用排查入口',
+    `- GET /api/branches/${encodeURIComponent(branch.id)}/failure-diagnosis`,
+    `- GET /api/branches/${encodeURIComponent(branch.id)}/logs`,
+    `- POST /api/branches/${encodeURIComponent(branch.id)}/container-logs { "profileId": "<服务ID>" }`,
+    `- GET /api/branches/${encodeURIComponent(branch.id)}/activity-logs?limit=100`,
+    '',
+    '请输出：根因判断、修复方案、验证命令、风险点。',
+  ];
+  return lines.filter((line) => line !== '').join('\n');
+}
+
 const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
 
 function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchDeploymentItem {
@@ -640,12 +703,14 @@ export function BranchDetailDrawer({
   const [failureDiag, setFailureDiag] = useState<{
     failedServices: Array<{
       profileId: string;
+      containerName?: string;
       tailLines: string[];
       errorCategory: string;
       errorHint: string;
       responsibilitySide: 'code' | 'config' | 'cds' | 'unknown';
     }>;
   } | null>(null);
+  const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
   const load = useCallback(async () => {
     if (!branchId) return;
@@ -837,6 +902,7 @@ export function BranchDetailDrawer({
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
     setTriggerLogsState({ status: 'idle' });
+    setCopiedFailurePrompt(false);
     // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
     // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
     setSystemLogsState({ status: 'idle' });
@@ -872,12 +938,13 @@ export function BranchDetailDrawer({
       try {
         const r = await apiRequest<{ failedServices?: Array<{
           profileId: string; tailLines?: string[]; errorCategory?: string;
-          errorHint?: string; responsibilitySide?: string;
+          containerName?: string; errorHint?: string; responsibilitySide?: string;
         }> }>(`/api/branches/${encodeURIComponent(branchId)}/failure-diagnosis`);
         if (cancelled) return;
         setFailureDiag({
           failedServices: (r.failedServices || []).map((s) => ({
             profileId: s.profileId,
+            containerName: s.containerName,
             tailLines: s.tailLines || [],
             errorCategory: s.errorCategory || 'unknown',
             errorHint: s.errorHint || '',
@@ -1163,6 +1230,17 @@ export function BranchDetailDrawer({
     ? githubBranchTreeUrl(branch.githubRepoFullName, branch.branch)
     : '';
   const currentFailureReason = branch ? branchFailureReason(branch) : '';
+  const copyFailurePrompt = useCallback(async () => {
+    if (!branch) return;
+    const text = buildLlmFailurePrompt(branch, currentFailureReason, failureDiag?.failedServices || []);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedFailurePrompt(true);
+      window.setTimeout(() => setCopiedFailurePrompt(false), 1800);
+    } catch {
+      setCopiedFailurePrompt(false);
+    }
+  }, [branch, currentFailureReason, failureDiag]);
   const visibleActivityEvents = useMemo(() => {
     if (!branch) return [];
     return activityEvents
@@ -1463,7 +1541,20 @@ export function BranchDetailDrawer({
                 ) : null}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-                    <div className="font-semibold">最近失败原因</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-semibold">最近失败原因</div>
+                      <button
+                        type="button"
+                        onClick={() => void copyFailurePrompt()}
+                        className={`inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/45 bg-destructive/15 px-2 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/25 ${
+                          copiedFailurePrompt ? '' : 'animate-pulse'
+                        }`}
+                        title="复制错误上下文和大模型修复提示词"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        {copiedFailurePrompt ? '已复制' : '复制到大模型'}
+                      </button>
+                    </div>
                     <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
                     {failureDiag && failureDiag.failedServices.length > 0 ? (
                       <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">

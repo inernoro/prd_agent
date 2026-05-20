@@ -5,6 +5,7 @@ import {
   Activity,
   AlertCircle,
   ArrowLeft,
+  Bot,
   ChevronDown,
   Copy,
   Cpu,
@@ -98,6 +99,8 @@ interface BranchSummary {
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
+  aiOpCount?: number;
+  lastAiOccupantAt?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
     label: string;
@@ -3457,6 +3460,7 @@ function BranchCard({
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
+  const isAiOperated = (branch.aiOpCount || 0) > 0 || Boolean(branch.lastAiOccupantAt);
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
@@ -3498,7 +3502,7 @@ function BranchCard({
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${highlighted ? 'cds-card-selected' : ''}`}
+      } ${isAiOperated ? 'ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -3512,6 +3516,12 @@ function BranchCard({
     >
       {highlighted ? (
         <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-primary shadow-[0_0_18px_hsl(var(--primary)/0.45)]" aria-hidden />
+      ) : null}
+      {isAiOperated ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-sky-400 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
+          aria-hidden
+        />
       ) : null}
       {/* Header — 用户反馈 2026-05-06:
           - 时间和 ··· 不可挡住分支名 → 时间下沉到 chip 行右侧 / commit 行,
@@ -3533,6 +3543,15 @@ function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
+              {isAiOperated ? (
+                <span
+                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-sky-400/45 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-300"
+                  title={`AI 操作过${branch.lastAiOccupantAt ? ` · 最近 ${formatRelativeTime(branch.lastAiOccupantAt)}` : ''}${branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : ''}`}
+                >
+                  <Bot className="h-2.5 w-2.5" aria-hidden />
+                  AI
+                </span>
+              ) : null}
               {/*
                 2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
                 （发布版 / 源码 / 混合）。用户更关心的是"这个分支跑的是热加载还是 publish"，
@@ -3827,11 +3846,13 @@ function BranchCard({
                 <Button
                   size="icon"
                   variant="outline"
-                  className="border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
-                  title="预览"
-                  aria-label="预览"
+                  className={isAiOperated
+                    ? 'border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                    : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
+                  title={isAiOperated ? 'AI 操作过 · 预览' : '预览'}
+                  aria-label={isAiOperated ? 'AI 操作过，预览' : '预览'}
                 >
-                  <Eye />
+                  {isAiOperated ? <Bot /> : <Eye />}
                 </Button>
               )}
             />
@@ -3839,13 +3860,15 @@ function BranchCard({
             <Button
               size="icon"
               variant="outline"
-              className="border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+              className={isAiOperated
+                ? 'border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
               onClick={onPreview}
               disabled={busy}
-              title="预览"
-              aria-label="预览"
+              title={isAiOperated ? 'AI 操作过 · 预览' : '预览'}
+              aria-label={isAiOperated ? 'AI 操作过，预览' : '预览'}
             >
-              {busy ? <Loader2 className="animate-spin" /> : <Eye />}
+              {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
             </Button>
           )
         ) : isInterim ? (
