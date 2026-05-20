@@ -836,8 +836,10 @@ def _preview_root_from_host() -> str:
     host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
     if host.startswith("http://") or host.startswith("https://"):
         host = host.split("://", 1)[1]
-    # 剥端口，但 IPv6 字面量 `[::1]:9900` 含 `:` 不能用普通 split 切（会把
-    # 地址也切碎成 `[`）。先识别 bracket 形态保留整个 `[...]`，再考虑端口。
+    # 拆出 port-less 部分用于后缀匹配（IPv6 bracket-aware；普通 host split `:`）。
+    # 注意：port-less 仅用于"是否走 miduo.org 预览根"的判断，**不能**直接当返回值——
+    # 非 miduo 部署（如 `localhost:9900`）必须保留 port，否则下游拼出 `slug.localhost/`
+    # 而非 `slug.localhost:9900/`，整个 preview URL 走错端口（Codex P2 抓出）。
     if host.startswith("["):
         end = host.find("]")
         host_no_port = host[: end + 1] if end >= 0 else host
@@ -845,12 +847,11 @@ def _preview_root_from_host() -> str:
         host_no_port = host.split(":", 1)[0]
     if not host_no_port:
         return "miduo.org"
-    # `cds.miduo.org` / 普通 miduo 子域 → 预览根仍走 miduo.org
-    # 用**精确后缀**匹配而非子串，避免 `notmiduo.com` / `api.miduo.org.evil.com`
-    # 被误判成 miduo（Codex 早前抓的子串匹配漏洞）。
+    # `cds.miduo.org` / 普通 miduo 子域 → 预览根仍走 miduo.org（无 port，由 cds
+    # proxy 接管 80/443）；非 miduo 部署返回原始 host 保留 port 信息。
     if host_no_port == "miduo.org" or host_no_port.endswith(".miduo.org"):
         return "miduo.org"
-    return host_no_port
+    return host
 
 
 def _has_cds_auth() -> bool:
