@@ -496,18 +496,30 @@ function formatElapsedFrom(since: string | undefined | null, now: number): strin
   return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
 }
 
+function formatElapsedSecondsFrom(since: string | undefined | null, now: number): string {
+  if (!since) return '0s';
+  const ts = new Date(since).getTime();
+  if (!Number.isFinite(ts)) return '0s';
+  const seconds = Math.max(0, Math.floor((now - ts) / 1000));
+  if (seconds < 3600) return `${seconds}s`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
 function branchBusySince(branch: BranchSummary, action?: BranchAction): string | undefined {
   if (action?.status === 'running') return new Date(action.startedAt).toISOString();
   return branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt;
 }
 
-function branchTimeBadge(branch: BranchSummary): { label: string; text: string; title: string } {
+function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: string): { label: string; text: string; title: string } {
   if (isBusy(branch)) {
+    const since = busySince || branchBusySince(branch);
     return {
       label: '部署',
-      text: '进行中',
-      title: branch.lastAccessedAt
-        ? `最近一次部署尝试: ${branch.lastAccessedAt}`
+      text: formatElapsedSecondsFrom(since, now),
+      title: since
+        ? `部署已持续 ${formatElapsedSecondsFrom(since, now)}；开始时间: ${since}`
         : '部署正在进行，完成后会写入最近部署时间',
     };
   }
@@ -3321,13 +3333,13 @@ function BranchCard({
   const isRunning = branch.status === 'running';
   const isError = branch.status === 'error';
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
-  const timeBadge = branchTimeBadge(branch);
+  const busySince = isInterim ? branchBusySince(branch, action) : undefined;
+  const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
-  const busySince = isInterim ? branchBusySince(branch, action) : undefined;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
