@@ -911,6 +911,12 @@ def _match_branches_for_project(branches: list, git_branch: str,
         return matches
     # 不论几条都按 project hint 筛——单条来自别项目的同样要过滤掉
     legacy_bare_slug = _slugify_for_preview(git_branch)
+    # 探测 CDS 实例是否已多项目化：只要 branches 列表里有**任何** entry
+    # 带 projectId / projectSlug 字段，就说明后端是新版多项目格式，此时
+    # legacy 兜底（裸 slug id）会跨项目误匹配（Bugbot High：另一项目的
+    # legacy entry 会污染本项目结果）—— 必须禁用 legacy 启发式。
+    multi_project_cds = any(b.get("projectId") or b.get("projectSlug")
+                            for b in branches)
 
     def _belongs(b: dict) -> bool:
         if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
@@ -921,12 +927,11 @@ def _match_branches_for_project(branches: list, git_branch: str,
         bid = b.get("id", "")
         if bid.startswith(f"{project_slug_hint}-"):
             return True
-        # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。CDS 多项目
-        # 改造前的所有项目 / 后来仍带 legacyFlag 的 default 项目都走这种格式。
-        # 兼容办法：b.id 等于 slugify(git_branch) 且 b.legacy 标志为 true（新版
-        # 后端会标记），或者干脆 id 就是裸 slug 形态（向后兼容老版无 legacy
-        # 字段的后端）—— 放行。这样不会漏掉 default/legacy 项目的分支。
-        if bid == legacy_bare_slug:
+        # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。仅在
+        # **整个 CDS 实例都还是 legacy 单项目格式**时放行——避免多项目
+        # CDS 下别人的 legacy entry 被误判成本项目。
+        # 后端显式 `b.legacy=true` 也算（新版后端可能加这个字段）。
+        if bid == legacy_bare_slug and (b.get("legacy") or not multi_project_cds):
             return True
         return False
     scoped = [b for b in matches if _belongs(b)]
