@@ -32,8 +32,10 @@ import argparse
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
 import os
+import re
 import secrets
 import socket
+import subprocess
 import sys
 import time
 import urllib.error
@@ -771,6 +773,117 @@ def cmd_branch_preview_url(args: argparse.Namespace) -> None:
                 ok({"branchId": branch_id, "previewSlug": slug, "url": url})
             return
     die(f"分支不存在: {branch_id}", code=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 预览 URL 顶层入口（零参数，AI / handoff / smoke 全部走这里）
+#
+# 设计哲学：所有 skill / 文档 / commit message **不得自己 slugify / 拼 URL**，
+# 统一调 `cdscli preview-url`。这是预览 URL 唯一的可执行 SSOT。
+#
+# 决策顺序（从最准 → 最 fallback）：
+#   1. CDS API：有 CDS_HOST + AI_ACCESS_KEY → 查 /api/branches 匹配 git 分支，
+#      拿后端 `previewSlug` 字段（永远与 cds/src/services/preview-slug.ts 对齐）
+#   2. 本地 v3 公式：没 CDS context → 用 git 分支名 + 仓库根目录名 slugify 推算
+#      （依赖「目录名 slugify 后 == CDS 项目 slug」的隐含约定）
+#   3. 失败：未在 git 仓库里 / 没分支 → exit 1
+# ──────────────────────────────────────────────────────────────────────────
+def _slugify_for_preview(s: str) -> str:
+    """与 cds/src/services/preview-slug.ts:slugifyForPreview 完全一致。"""
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9-]+', '-', s)
+    s = re.sub(r'-+', '-', s)
+    return s.strip('-')
+
+
+def _compute_preview_slug(branch: str, project_slug: str) -> str:
+    """与 cds/src/services/preview-slug.ts:computePreviewSlug 完全一致（v3）。
+
+    本仓库其它任何 Python 脚本都不应再自己实现这套逻辑——import 这里。
+    """
+    project = _slugify_for_preview(project_slug)
+    if not branch:
+        return project
+    cut_at = branch.find('/')
+    if cut_at < 0:
+        tail = _slugify_for_preview(branch)
+        return f"{tail}-{project}" if tail else project
+    prefix = _slugify_for_preview(branch[:cut_at])
+    tail = _slugify_for_preview(branch[cut_at + 1:])
+    if not prefix:
+        return f"{tail}-{project}" if tail else project
+    if not tail:
+        return f"{prefix}-{project}"
+    return f"{tail}-{prefix}-{project}"
+
+
+def cmd_preview_url(args: argparse.Namespace) -> None:
+    """打印当前分支的 v3 预览 URL（自动检测 git 分支 + 项目，无需参数）。
+
+    所有 skill / 文档 / handoff message **必须**走这条命令，禁止自己 slugify。
+    SSOT：cds/src/services/preview-slug.ts:computePreviewSlug（v3）。
+    """
+    # Step 0: 取 git 分支 + 仓库根
+    try:
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内", code=1)
+        return
+    if not branch:
+        die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
+        return
+
+    project_basename = os.path.basename(repo_root)
+    fallback_project_slug = _slugify_for_preview(project_basename)
+
+    # Step 1: 优先走 CDS API（有 CDS_HOST + AI_ACCESS_KEY 时）
+    if (os.environ.get("CDS_HOST", "").strip()
+            and os.environ.get("AI_ACCESS_KEY", "").strip()):
+        try:
+            body = _call("GET", "/api/branches", timeout=10, quiet=True)
+            host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
+            if host.startswith("http://") or host.startswith("https://"):
+                host = host.split("://", 1)[1]
+            root = "miduo.org" if (not host or "miduo" in host) else host
+            for b in body.get("branches", []):
+                if b.get("branch") == branch and b.get("previewSlug"):
+                    url = f"https://{b['previewSlug']}.{root}/"
+                    if _HUMAN:
+                        print(url)
+                    else:
+                        ok({"source": "cds-api", "branch": branch,
+                            "branchId": b.get("id"),
+                            "previewSlug": b["previewSlug"], "url": url})
+                    return
+            # 走到这里说明 CDS 没这条分支，落到 fallback
+            print(f"[info] /api/branches 没找到 git 分支 '{branch}'，回退本地 v3 推算",
+                  file=sys.stderr)
+        except SystemExit:
+            raise
+        except Exception as ex:
+            print(f"[warn] 调 /api/branches 失败 ({ex})，回退本地 v3 推算",
+                  file=sys.stderr)
+
+    # Step 2: 本地 v3 公式（fallback）
+    slug = _compute_preview_slug(branch, fallback_project_slug)
+    url = f"https://{slug}.miduo.org/"
+    if _HUMAN:
+        print(url)
+    else:
+        ok({
+            "source": "local-v3-fallback",
+            "branch": branch,
+            "projectSlug": fallback_project_slug,
+            "previewSlug": slug,
+            "url": url,
+            "note": "本地推算依赖「目录名 slugify 后 == CDS 项目 slug」。"
+                    "设置 CDS_HOST + AI_ACCESS_KEY 走 API 模式更准。",
+        })
 
 
 def cmd_branch_create(args: argparse.Namespace) -> None:
@@ -5568,6 +5681,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")
     sm.add_argument("id", help="branchId")
     sm.set_defaults(func=cmd_smoke)
+
+    pu = sub.add_parser(
+        "preview-url",
+        help="打印当前分支的 v3 预览 URL（零参数，自动从 git + /api/branches 检测，"
+             "SSOT: cds/src/services/preview-slug.ts）",
+    )
+    pu.set_defaults(func=cmd_preview_url)
 
     hc = sub.add_parser("help-me-check", help="diagnose + 根因分析 + 修复建议")
     hc.add_argument("id", help="branchId")

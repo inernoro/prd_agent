@@ -14,16 +14,30 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const SKILLS_DIR = path.join(REPO_ROOT, '.claude', 'skills');
+// 守卫覆盖范围：skills + 顶层 rule 文件 + 顶层 CLAUDE.md / 子项目 CLAUDE.md
+const SCAN_TARGETS = [
+  path.join(REPO_ROOT, '.claude', 'skills'),
+  path.join(REPO_ROOT, '.claude', 'rules'),
+  path.join(REPO_ROOT, 'CLAUDE.md'),
+  path.join(REPO_ROOT, 'cds', 'CLAUDE.md'),
+];
 
-function walk(dir: string, out: string[] = []): string[] {
-  if (!fs.existsSync(dir)) return out;
-  for (const name of fs.readdirSync(dir)) {
-    const full = path.join(dir, name);
-    const stat = fs.statSync(full);
-    if (stat.isDirectory()) walk(full, out);
-    else if (full.endsWith('.md') || full.endsWith('.py')) out.push(full);
+function walk(target: string, out: string[] = []): string[] {
+  if (!fs.existsSync(target)) return out;
+  const stat = fs.statSync(target);
+  if (stat.isFile()) {
+    if (target.endsWith('.md') || target.endsWith('.py')) out.push(target);
+    return out;
   }
+  for (const name of fs.readdirSync(target)) {
+    walk(path.join(target, name), out);
+  }
+  return out;
+}
+
+function collectFiles(): string[] {
+  const out: string[] = [];
+  for (const t of SCAN_TARGETS) walk(t, out);
   return out;
 }
 
@@ -51,19 +65,24 @@ const ALLOW_LIST = [
 
 describe('preview URL drift guard', () => {
   it('skills 不得用 v1 公式 `${X}.miduo.org` 拼预览域（除允许清单）', () => {
-    const files = walk(SKILLS_DIR);
-    // 匹配「shell 变量 / Python f-string 直接接 `.miduo.org` 后跟引号或斜杠或空白」
-    // 即 v1 老公式的典型形态：${BRANCH_ID}.miduo.org / {branch_id}.miduo.org
-    const v1Pattern = /[`"'$]\{?[A-Za-z_][A-Za-z0-9_]*\}?\.miduo\.org/;
+    const files = collectFiles();
+    // 真正的 v1 拼接形态：`https://${单变量}.miduo.org`（变量后直接接 .miduo.org，
+    // 中间没有 `-${另一变量}` 拼接）。这能精确捕获 v1 风格，又不会误伤
+    // v3 模板 `https://${tail}-${prefix}-${projectSlug}.miduo.org` 这类多段拼接。
+    // 同时兼容 Python f-string `{branch_id}` 和 bash `${BRANCH_ID}` 两种语法。
+    const v1Pattern = /https?:\/\/[`'"]?\$?\{?[A-Za-z_][A-Za-z0-9_]*\}?\.miduo\.org/;
+    // CDS admin / 静态服务子域不算 preview URL，加白名单防误伤
+    const STATIC_HOSTS = ['cds.miduo.org', 'i.miduo.org', 'api.miduo.org'];
     const offenders: { file: string; line: number; text: string }[] = [];
     for (const f of files) {
       const rel = path.relative(REPO_ROOT, f);
       if (ALLOW_LIST.includes(rel)) continue;
       const lines = fs.readFileSync(f, 'utf8').split('\n');
       lines.forEach((line, idx) => {
-        if (v1Pattern.test(line)) {
-          offenders.push({ file: rel, line: idx + 1, text: line.trim() });
-        }
+        if (!v1Pattern.test(line)) return;
+        // 已知静态子域跳过
+        if (STATIC_HOSTS.some((h) => line.includes(h))) return;
+        offenders.push({ file: rel, line: idx + 1, text: line.trim() });
       });
     }
     if (offenders.length > 0) {
@@ -81,7 +100,7 @@ describe('preview URL drift guard', () => {
   });
 
   it('skills 不得用 `tr "/" "-"` 单步推 CDS branch id（多项目 CDS 下会 404）', () => {
-    const files = walk(SKILLS_DIR);
+    const files = collectFiles();
     // 只匹配「真正在赋值」的代码行，跳过 markdown 注释 / blockquote / shell comment
     // 触发条件：必须形如 `XXX=$(...tr '/' '-'...)` 或 `XXX | tr '/' '-'`
     const assignPattern = /^[^#>]*?(\w+\s*=\s*[\$\(]|\|\s*)tr\s+['"]\/['"]\s+['"]-['"]/;

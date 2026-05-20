@@ -1,139 +1,72 @@
 ---
 name: preview-url
-description: 根据当前 Git 仓库根目录名(项目 slug)和分支名,自动生成 CDS v3 预览验收地址。格式:`https://${tail}-${prefix}-${projectSlug}.miduo.org/`,重要的靠前(分支主特征 → agent 前缀 → 项目名)。所有 slug 都做小写化 + 非 alnum-hyphen 替换。用于需要人工验收的场景,快速提供可访问的预览环境链接。触发词:"预览地址"、"验收地址"、"preview url"、"/preview"。
+description: 调 cdscli 生成当前分支的 CDS v3 预览验收地址。零参数，自动从 git + /api/branches 拿真实 previewSlug。所有 slug 与 host 拼接都由 cdscli 一口井负责，AI / 任何 skill 一律不得自己 slugify。触发词:"预览地址"、"验收地址"、"preview url"、"/preview"。
 ---
 
-# Preview URL — 预览验收地址生成
+# Preview URL — 预览验收地址生成（统一走 cdscli）
 
-根据当前 Git **分支名（拆 prefix/tail）** 和 **仓库根目录名（项目 slug）**,自动生成 CDS v3 预览环境的访问地址,便于人工验收。
+唯一执行入口：
+
+```bash
+python3 .claude/skills/cds/cli/cdscli.py --human preview-url
+```
+
+零参数。自动检测 git 分支 + 仓库根 + （可选）CDS_HOST/AI_ACCESS_KEY。输出一行 URL 到 stdout，直接复制到给用户的回复里即可。
 
 ## 触发词
 
-- "预览地址"
-- "验收地址"
-- "preview url"
-- `/preview`
+- "预览地址" / "验收地址" / "preview url" / `/preview`
 
-## URL 生成规则（v3：tail-prefix-project，重要的靠前）
+## 为什么强制走 cdscli（不要自己 slugify）
 
-```
-https://${tail}-${prefix}-${projectSlug}.miduo.org/
-```
+**SSOT**：`cds/src/services/preview-slug.ts:computePreviewSlug`（v3 公式 = `${tail}-${prefix}-${projectSlug}.miduo.org`）。
 
-- `${tail}` = 分支名第一个 `/` 之后的部分（"在干啥"，最重要）
-- `${prefix}` = `/` 之前的 agent / 类型前缀（claude / cursor / feat / fix）
-- `${projectSlug}` = 仓库根目录名（项目身份信息，最不需要常看，所以放最后）
-- 所有片段全部 slugify：转小写 + 非 `[a-z0-9-]` 替换为 `-` + 合并连续 `-` + 去头尾 `-`
+`cdscli preview-url` 的内部决策：
 
-⚠ **历史 URL 公式演化**（CDS proxy 仍兼容旧链接，但**新生成**一律用 v3）：
-- v1（2026-04 之前）：`${branchSlug}.miduo.org`（无项目前缀）— legacy 项目
-- v2（2026-04-26 ceb2c01）：`${projectSlug}-${branchSlug}.miduo.org`（项目前缀型）
-- v3（2026-04-27 起）：`${tail}-${prefix}-${projectSlug}.miduo.org`（tail 靠前）
+1. **CDS API 优先**：有 `CDS_HOST` + `AI_ACCESS_KEY` → `GET /api/branches` 找 `branch == 当前 git 分支`，直接读后端算好的 `previewSlug` 字段（与 SSOT 永不漂）
+2. **本地 v3 fallback**：没 CDS 凭据 / 分支没在 CDS / API 异常 → 走 cdscli 内嵌的 `_compute_preview_slug()`（与 SSOT 同公式，目录名 slugify 当 project slug）
+3. **失败**：不在 git 仓库内 / detached HEAD → exit 1，提示切分支
 
-实现唯一来源：`cds/src/services/preview-slug.ts` 的 `computePreviewSlug(branch, projectSlug)`。本技能与 CDS 后端共享同一公式。
+**任何 skill / 文档 / commit message 都不得**：
+- 手写 `tr '/' '-'` / 在脑子里 slugify
+- 拼 `${BRANCH_ID}.miduo.org`（v1 老公式）
+- 拼 `${projectSlug}-${branchSlug}.miduo.org`（v2 老公式）
+- 写自己的 Python `slugify` 函数
 
-## 拆分规则
+## 历史公式（CDS proxy 兼容旧链接，但**新生成**一律 v3）
 
-按**第一个 `/`** 切一刀：
-- 有 `/`：`prefix = / 之前`，`tail = / 之后`（剩余 `/` 走 slugify 变 `-`）
-- 无 `/`：无 prefix，URL 中段省略，输出 `${tail}-${projectSlug}`
-- prefix 经 slugify 后为空（如分支以 `/` 开头）：fallback 到无 prefix 形式
+- v1（2026-04 之前）：`${branchSlug}.miduo.org` — legacy
+- v2（2026-04-26 ceb2c01）：`${projectSlug}-${branchSlug}.miduo.org`
+- **v3（2026-04-27 起，当前）**：`${tail}-${prefix}-${projectSlug}.miduo.org`（重要的靠前）
 
 ## 示例
 
-| 分支 | 项目目录 | 拆解 | URL |
-|------|---------|------|-----|
-| `claude/fix-refresh-error-handling-2Xayx` | `prd_agent` | tail=`fix-refresh-error-handling-2xayx`, prefix=`claude`, project=`prd-agent` | `https://fix-refresh-error-handling-2xayx-claude-prd-agent.miduo.org/` |
-| `claude/add-guided-tips-dp6pP` | `prd_agent` | tail=`add-guided-tips-dp6pp`, prefix=`claude`, project=`prd-agent` | `https://add-guided-tips-dp6pp-claude-prd-agent.miduo.org/` |
-| `feat/login` | `demo` | tail=`login`, prefix=`feat`, project=`demo` | `https://login-feat-demo.miduo.org/` |
-| `feat/auth/login` | `demo` | tail=`auth-login`（剩余 `/` 变 `-`）, prefix=`feat`, project=`demo` | `https://auth-login-feat-demo.miduo.org/` |
-| `main` | `prd_agent` | tail=`main`, **无 prefix**, project=`prd-agent` | `https://main-prd-agent.miduo.org/` |
+| 分支 | 项目目录 | `cdscli preview-url` 输出 |
+|------|---------|---------|
+| `claude/fix-refresh-error-handling-2Xayx` | `prd_agent` | `https://fix-refresh-error-handling-2xayx-claude-prd-agent.miduo.org/` |
+| `feat/auth/login` | `demo` | `https://auth-login-feat-demo.miduo.org/` |
+| `main` | `prd_agent` | `https://main-prd-agent.miduo.org/`（中段省略） |
 
-## 执行流程
-
-### Step 1: 必须执行脚本计算（禁止大模型手动推算）
-
-> **严禁**：AI 直接在脑子里把分支名转成 slug 然后写进回复。
-> 大小写转换极易出错（如 `bRUsO` 手算成 `brusso` 而非 `bruso`）。
-> 必须通过 Bash 工具执行下方脚本，把脚本输出的 URL 复制到回复。
-
-**优先路径（推荐）**：查 CDS `/api/branches` 拿后端真实的 `previewSlug`，跟服务器永不漂移：
-
-```bash
-# 需要 CDS_HOST + AI_ACCESS_KEY；查到就用 v3 SSOT，查不到再走 fallback
-if [ -n "$CDS_HOST" ] && [ -n "$AI_ACCESS_KEY" ]; then
-  HOST_NO_PROTO="${CDS_HOST#http://}"; HOST_NO_PROTO="${HOST_NO_PROTO#https://}"
-  GIT_BRANCH=$(git branch --show-current)
-  URL=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" "https://$HOST_NO_PROTO/api/branches" \
-    | GIT_BRANCH="$GIT_BRANCH" python3 -c "
-import json,sys,os
-host=os.environ.get('HOST_NO_PROTO','')
-root='miduo.org' if (not host or 'miduo' in host) else host
-target=os.environ['GIT_BRANCH']
-for b in json.load(sys.stdin).get('branches',[]):
-    if b.get('branch')==target and b.get('previewSlug'):
-        print(f\"https://{b['previewSlug']}.{root}/\"); break")
-  [ -n "$URL" ] && echo "$URL" && exit 0
-fi
-# 走到这里说明没拿到（CDS_HOST 没配 / 分支没在 CDS / API 异常），fallback 到本地计算
-```
-
-**Fallback（本地计算 v3 SSOT，目录名当 project slug）**：
-
-```bash
-python3 -c "
-import re, subprocess, os
-
-def slugify(s):
-    s = s.lower()
-    s = re.sub(r'[^a-z0-9-]', '-', s)
-    s = re.sub(r'-+', '-', s)
-    return s.strip('-')
-
-branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
-root   = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()
-project = slugify(os.path.basename(root))
-
-if '/' in branch:
-    prefix = slugify(branch.split('/')[0])
-    tail   = slugify(branch[len(branch.split('/')[0])+1:])
-    slug   = f'{tail}-{prefix}-{project}' if prefix and tail else f'{tail or prefix}-{project}'
-else:
-    slug = f'{slugify(branch)}-{project}'
-
-print(f'https://{slug}.miduo.org/')
-"
-```
-
-> ⚠ Fallback 依赖「目录名 slugify 后 == CDS 项目 slug」这个隐含约定。本仓库
-> `prd_agent` → `prd-agent` 恰好成立；外部 fork / 重命名目录会偏。
-> 真要严谨永远走优先路径。
-
-把脚本输出的 URL 直接用于回复，不得修改。
-
-### Step 2: 输出格式
+## 输出格式（回复里这样贴）
 
 ```markdown
-**预览验收地址**: https://{tail}-{prefix}-{project-slug}.miduo.org/
+**预览验收地址**: <cdscli 输出原文>
 
 > 项目: `{project-slug}` · 分支: `{branch-name}`
 ```
 
-如果涉及具体页面路径（从交接清单或上下文中获取），同时输出完整的验收路径：
+涉及具体页面路径时：
 
 ```markdown
-**预览验收地址**: https://{tail}-{prefix}-{project-slug}.miduo.org/
+**预览验收地址**: <cdscli 输出原文>
 
 **验收路径**:
-1. 打开 https://{tail}-{prefix}-{project-slug}.miduo.org/{page-path}
+1. 打开 <cdscli 输出原文>{page-path}
 2. {具体验收步骤}
 ```
 
 ## 注意事项
 
-1. 分支名为空时（detached HEAD），提示用户先切换到功能分支
-2. 项目 slug 必须从仓库根目录派生 — **禁止 hardcode `prd-agent`** 字面量，以免在多仓库共用本技能时失效
-3. 此技能可被 `/handoff` 自动调用，也可单独使用
-4. **CLAUDE.md 规则 #11 强制要求**：任何代码改动 push 后，最终交付消息必须包含【预览】行（调用本技能或内联拼接）。详见 `CLAUDE.md`。
-5. 如果 CDS 还在构建/部署中，URL 可能暂时返回 502/504/400，等 1-2 分钟即可。可在 PR 的 Checks 面板看 "CDS Deploy" check run 状态。
-6. **v1/v2 旧链接仍可解析**：用户外发的旧格式 URL（`${branchSlug}.miduo.org` / `${projectSlug}-${branchSlug}.miduo.org`）CDS proxy 兼容继续可用——但你**新生成**的链接一律用 v3。
+1. **CLAUDE.md 规则 #11 强制要求**：代码 push 后交付消息必须含【预览】行，统一调本技能
+2. CDS 还在构建/部署中时 URL 可能 502/504/400，等 1-2 分钟即可；在 PR Checks 面板看 "CDS Deploy" 状态
+3. 用户外发的 v1/v2 旧链接 CDS proxy 仍兼容；但你**新生成**的一律走 cdscli（=v3）

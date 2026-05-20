@@ -277,34 +277,30 @@ https://${tail}-${prefix}-${projectSlug}.miduo.org/
 
 实现唯一来源：`cds/src/services/preview-slug.ts` 的 `computePreviewSlug(branch, projectSlug)`。CDS 后端、PR 评论模板、check-run 摘要、Settings 预览全部过这一函——改公式只动一处。
 
-#### 强制行为
+#### 强制行为：永远只调一条命令（不许自己 slugify）
 
-每次 push 后必须调用 `/preview-url` 技能（或内联跑下方脚本拼接），在交付消息里独立成行输出：
-
-```
-【预览】https://{tail}-{prefix}-{project-slug}.miduo.org/{可选-具体页面路径}
-```
-
-#### 推荐写法
+每次 push 后**只跑这条**，把输出原文贴到交付消息里的【预览】行：
 
 ```bash
-slugify() {
-  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
-}
-PROJECT_SLUG=$(slugify "$(basename "$(git rev-parse --show-toplevel)")")
-BRANCH=$(git branch --show-current)
-case "$BRANCH" in
-  */*)
-    PREFIX=$(slugify "${BRANCH%%/*}")
-    TAIL=$(slugify "${BRANCH#*/}")
-    SLUG="${TAIL}-${PREFIX}-${PROJECT_SLUG}"
-    ;;
-  *)
-    SLUG="$(slugify "$BRANCH")-${PROJECT_SLUG}"
-    ;;
-esac
-echo "https://${SLUG}.miduo.org/"
+python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
+
+```
+【预览】<cdscli 输出原文>{可选-具体页面路径}
+```
+
+这条 CLI 是预览 URL 唯一的可执行 SSOT。它做三件事：
+
+1. 有 `CDS_HOST` + `AI_ACCESS_KEY` → `GET /api/branches` 拿后端 `previewSlug` 字段（与 `cds/src/services/preview-slug.ts:computePreviewSlug` 永不漂移）
+2. 没 CDS 凭据 → 用 cdscli 内嵌的 `_compute_preview_slug()` 推算（同 SSOT 公式，依赖目录名 ≈ CDS 项目 slug）
+3. 不在 git 仓库 / detached HEAD → exit 1 报错
+
+**禁止以下"绕开 cdscli"的行为**（都被 `cds/tests/services/preview-url-skill-drift.test.ts` 守卫扫，CI 会 fail）：
+
+- 在 bash / Python / 任何脚本里写自己的 `slugify()` 函数
+- 拼 `${X}.miduo.org` / `${BRANCH_ID}.miduo.org` 这种 v1 风格
+- `tr '/' '-'` 单步推 CDS branch id
+- 在 commit message / PR body / skill 模板里手写 URL
 
 #### 适用场景
 
