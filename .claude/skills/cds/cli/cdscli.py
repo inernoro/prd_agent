@@ -1130,8 +1130,9 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
             code=3, extra={"body": body if isinstance(body, str) else repr(body)})
         return
     project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    branches_list = body.get("branches") or []
     matches = _match_branches_for_project(
-        body.get("branches") or [], branch, project_slug_hint, project_scoped)
+        branches_list, branch, project_slug_hint, project_scoped)
     for b in matches:
         bid = b.get("id")
         if bid:
@@ -1139,6 +1140,22 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
                 print(bid)
             else:
                 ok({"branch": branch, "branchId": bid})
+            return
+    # 与 cmd_preview_url 行为对齐：raw 里**有**同名分支但本地 hint 排除掉，
+    # 不能误导用户去 "先 /cds-deploy"——99% 是 repo 目录名 ≠ CDS 项目 slug，
+    # 应该明确报错 + 提示设 CDS_PROJECT_ID（Bugbot Medium 抓出 cmd_branch_id
+    # 漏了这个分支，会卡 bridge / tagging 流程）
+    if not project_scoped:
+        raw_same_branch = [b for b in branches_list if b.get("branch") == branch]
+        if raw_same_branch:
+            die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 '{branch}' "
+                f"但都不属于本地项目 hint '{project_slug_hint}'。可能是仓库目录"
+                f"名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
+                f"或检查 /api/projects 列表。",
+                code=2, extra={
+                    "rawMatches": raw_same_branch,
+                    "projectHint": project_slug_hint,
+                })
             return
     die(f"CDS 里找不到 git 分支 '{branch}'，先跑 /cds-deploy 部署", code=2)
 
