@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
+import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
 import { type PhaseLogState, type InlineContainerLogControls } from './PhaseTree';
 
@@ -42,7 +43,8 @@ function HighlightedLogBlock({
   className?: string;
   autoScrollToBottom?: boolean;
 }): JSX.Element {
-  const text = maxLines ? lastLines(logs, maxLines) : logs;
+  const displayLogs = normalizeContainerLogsForDisplay(logs);
+  const text = maxLines ? lastLines(displayLogs, maxLines) : displayLogs;
   const lines = text.split(/\r?\n/);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const scrollToBottom = () => {

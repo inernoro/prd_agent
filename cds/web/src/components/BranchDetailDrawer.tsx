@@ -8,6 +8,7 @@ import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
+import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import type { PhaseLogState } from '@/components/deployment/PhaseTree';
 
 /*
@@ -2540,6 +2541,7 @@ function ServiceLogsPanel({
   const logs = state.status === 'ok' ? (state.logs || '') : '';
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
+  const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
 
   async function copyLogs(): Promise<void> {
     if (!service) return;
@@ -2548,7 +2550,7 @@ function ServiceLogsPanel({
       service.containerName,
       service.errorMessage ? `error: ${service.errorMessage}` : '',
       '',
-      displayLogs,
+      visibleLogs,
     ].filter(Boolean).join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -2606,7 +2608,7 @@ function ServiceLogsPanel({
             <pre className="max-h-[420px] min-h-[260px] overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
               {state.status === 'loading' && isCurrent
                 ? '正在读取 docker logs...'
-                : displayLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
+                : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
             </pre>
           )}
         </div>
