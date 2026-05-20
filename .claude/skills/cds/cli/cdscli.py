@@ -1126,10 +1126,12 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         return
     project_slug_hint = _slugify_for_preview(os.path.basename(repo_root))
 
-    body = _call("GET", _branches_path(), timeout=10, quiet=True)
-    # API 失败（401 / 5xx）必须明确暴露，不能被后面 "找不到分支" 的兜底 die 遮蔽。
-    # exit code 遵循 CLI 契约（与 _call(quiet=False) 一致）：4xx → 2（用户/认证类错误），
-    # 5xx → 3（服务端故障，retriable），这样自动化能区分 user error 和 server outage。
+    # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
+    # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
+    # 网络错误统一收口为 __error__ 包（网络错误 status=0），下面按 status 路由 exit。
+    body = _call_safe("GET", _branches_path(), timeout=10)
+    # API 失败（401 / 5xx / 网络）必须明确暴露，不能被后面 "找不到分支" 兜底 die 遮蔽。
+    # exit code 契约：4xx → 2（用户/认证错误），5xx + 网络错误 → 3（retriable）。
     if isinstance(body, dict) and body.get("__error__"):
         status = body.get("status")
         msg = body.get("body")
@@ -1139,7 +1141,8 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
             status_int = int(status) if status is not None else 0
         except (TypeError, ValueError):
             status_int = 0
-        exit_code = 3 if 500 <= status_int < 600 else 2
+        # 4xx → 2；其它（5xx / 0 网络错误 / 超时）→ 3（retriable）
+        exit_code = 2 if 400 <= status_int < 500 else 3
         die(f"调 /api/branches 失败 HTTP {status}: {msg}（检查 CDS_HOST / 认证密钥）",
             code=exit_code, extra={"status": status, "body": body.get("body")})
         return
@@ -5325,6 +5328,7 @@ def cmd_smoke(args: argparse.Namespace) -> None:
             # `body.get("branches", [])` 在 "branches": null 时返回 None；统一
             # `or []` 兜底，下面 for 迭代不再 TypeError。
             branches = (body.get("branches") or []) if isinstance(body, dict) else []
+            matched = False
             for b in branches:
                 if b.get("id") == branch_id:
                     slug = b.get("previewSlug")
@@ -5338,7 +5342,17 @@ def cmd_smoke(args: argparse.Namespace) -> None:
                             code=3, extra={"branch": b})
                         return
                     preview_slug = slug
+                    matched = True
                     break
+            if not matched:
+                # API 成功但未匹配到该 branch_id —— canonical id ≠ v3 previewSlug，
+                # 用裸 branch_id 拼预览域会指向 CDS proxy 不路由的 host，L1-L3 全
+                # 失败但用户被误导以为 smoke 自己有问题。与其它 fallback 路径对齐
+                # 显式 stderr warning，让用户能感知"被探测的 host 不是 v3 正解"。
+                print(f"[warn] /api/branches 没找到 branch id '{branch_id}'，"
+                      f"smoke 仍继续但用裸 id 拼预览域（探测结果可能误导；"
+                      f"先 /cds-deploy 或检查 id 是否正确）",
+                      file=sys.stderr)
     else:
         print(f"[warn] CDS_HOST 未设，smoke 跳过 API 查询，用裸 id 拼预览域",
               file=sys.stderr)
