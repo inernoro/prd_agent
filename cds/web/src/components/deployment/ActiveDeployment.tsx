@@ -100,6 +100,8 @@ function PrimaryContainerLogPanel({
   const hasTabs = !!(containerLogControls && containerLogControls.services.length > 1);
   const [maximized, setMaximized] = useState(false);
   const logs = state?.status === 'ok' ? (state.logs || '') : '';
+  const logViewportClass = 'h-[clamp(360px,55vh,560px)]';
+  const emptyLogStateClass = `${logViewportClass} flex items-center justify-center`;
 
   return (
     <section className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
@@ -147,24 +149,24 @@ function PrimaryContainerLogPanel({
       ) : null}
       <div className="min-h-0 flex-1 overflow-hidden p-2">
         {!state ? (
-          <div className="rounded border border-dashed border-[hsl(var(--hairline))] px-3 py-6 text-center text-xs text-muted-foreground">
+          <div className={`${emptyLogStateClass} rounded border border-dashed border-[hsl(var(--hairline))] px-3 text-center text-xs text-muted-foreground`}>
             还没有容器日志。容器进入 running 后这里会显示 docker logs 的最后若干行。
           </div>
         ) : state.status === 'loading' ? (
-          <div className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] px-3 py-3 text-xs text-muted-foreground">
+          <div className={`${emptyLogStateClass} gap-2 rounded border border-[hsl(var(--hairline))] px-3 text-xs text-muted-foreground`}>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             正在加载容器日志…
           </div>
         ) : state.status === 'error' ? (
-          <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className={`${emptyLogStateClass} rounded border border-destructive/30 bg-destructive/10 px-3 text-center text-xs text-destructive`}>
             {state.message || '容器日志加载失败'}
           </div>
         ) : !state.logs || !state.logs.trim() ? (
-          <div className="rounded border border-[hsl(var(--hairline))] px-3 py-3 text-xs text-muted-foreground">
+          <div className={`${emptyLogStateClass} rounded border border-[hsl(var(--hairline))] px-3 text-center text-xs text-muted-foreground`}>
             容器尚未输出任何日志（多半是进程在监听端口前就退出了）。
           </div>
         ) : (
-          <HighlightedLogBlock logs={state.logs} maxLines={220} className="max-h-[560px] min-h-[280px]" autoScrollToBottom />
+          <HighlightedLogBlock logs={state.logs} maxLines={220} className={logViewportClass} autoScrollToBottom />
         )}
       </div>
       {maximized ? (

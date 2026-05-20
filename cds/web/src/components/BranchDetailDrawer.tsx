@@ -2542,6 +2542,7 @@ function ServiceLogsPanel({
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
   const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
+  const serviceLogViewportClass = 'h-[clamp(300px,42vh,420px)]';
 
   async function copyLogs(): Promise<void> {
     if (!service) return;
@@ -2601,11 +2602,11 @@ function ServiceLogsPanel({
             {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
           </div>
           {state.status === 'error' && isCurrent ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+            <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
               {state.message}
             </div>
           ) : (
-            <pre className="max-h-[420px] min-h-[260px] overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground`}>
               {state.status === 'loading' && isCurrent
                 ? '正在读取 docker logs...'
                 : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
