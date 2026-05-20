@@ -837,6 +837,19 @@ def _has_cds_auth() -> bool:
                 or os.environ.get("AI_ACCESS_KEY", "").strip())
 
 
+def _branches_path() -> str:
+    """`/api/branches` 路径，自动追加 `?project=<id>`（取 CDS_PROJECT_ID）。
+
+    必要性：多项目 CDS 下同一 git 分支名可能在多个项目里都存在，不带项目过滤
+    取首条会拿到错误项目的 canonical id / previewSlug。所有按 git 分支查询的
+    入口都要走这条路径。
+    """
+    project = os.environ.get("CDS_PROJECT_ID", "").strip()
+    if project:
+        return f"/api/branches?project={urllib.parse.quote(project)}"
+    return "/api/branches"
+
+
 def _warn_quiet_call_error(body: Any, label: str) -> bool:
     """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
     调用方决定是否继续 / 退化。"""
@@ -879,7 +892,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
     # _auth_headers 同时支持 CDS_PROJECT_KEY 与 AI_ACCESS_KEY，这里两者满足其一即可）
     if os.environ.get("CDS_HOST", "").strip() and _has_cds_auth():
         try:
-            body = _call("GET", "/api/branches", timeout=10, quiet=True)
+            body = _call("GET", _branches_path(), timeout=10, quiet=True)
             if _warn_quiet_call_error(body, "调 /api/branches"):
                 # 401/5xx 之类——别静默退化让用户以为分支不存在；落到 fallback
                 # 时通过 stderr 警告告知，调用方能看到真实原因。
@@ -897,10 +910,13 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             # 走到这里说明 CDS 没这条分支，落到 fallback
             print(f"[info] /api/branches 没找到 git 分支 '{branch}'，回退本地 v3 推算",
                   file=sys.stderr)
-        except SystemExit:
-            # _request 在 URLError / TimeoutError 时 die()→SystemExit。
-            # preview-url 设计承诺"网络故障也能退化给本地 v3"，所以这里
-            # 也要拦下来回退，不能把 CLI 直接打死。
+        except SystemExit as se:
+            # 区分两种 SystemExit:
+            #  - code == 0: 成功路径 ok() 的正常退出，**必须**透传（否则会被吞掉
+            #    导致 JSON 模式下输出两份 payload，source 错位到 fallback）
+            #  - code != 0: _request 的 die() 网络错误 / 超时 — 拦下回退本地 v3
+            if se.code == 0:
+                raise
             print(f"[warn] CDS 不可达（网络错误 / 超时），回退本地 v3 推算",
                   file=sys.stderr)
         except Exception as ex:
@@ -944,7 +960,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
-    body = _call("GET", "/api/branches", timeout=10, quiet=True)
+    body = _call("GET", _branches_path(), timeout=10, quiet=True)
     # API 失败（401 / 5xx）必须明确暴露，不能被后面 "找不到分支" 的兜底 die 遮蔽
     if isinstance(body, dict) and body.get("__error__"):
         status = body.get("status")
@@ -5100,9 +5116,11 @@ def cmd_smoke(args: argparse.Namespace) -> None:
                     print(f"[warn] /api/branches 未返回 previewSlug，回退裸 id",
                           file=sys.stderr)
                 break
-    except SystemExit:
-        # _request 网络错误 / 超时 → die → SystemExit。smoke 不应被打死，
-        # 退化到裸 id 探测（这种情况大概率是 CDS 自身就不可达，下面 L1 也会报错）
+    except SystemExit as se:
+        # 同 cmd_preview_url：code==0 是 ok() 正常退出必须透传，
+        # 非零才是 _request die() 的网络错误/超时
+        if se.code == 0:
+            raise
         print(f"[warn] CDS 不可达（网络错误 / 超时），回退裸 id 拼预览域",
               file=sys.stderr)
     except Exception as ex:
