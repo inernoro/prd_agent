@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, Home, LogIn, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
+import { ExternalLink, GitBranch, Home, LogIn, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Section } from '@/pages/cds-settings/components';
+import { LoadingBlock, Section } from '@/pages/cds-settings/components';
 import { cn } from '@/lib/utils';
 
 type LoadingScenario = {
   id: string;
   label: string;
   status: string;
+  loadingLabel?: string;
 };
 
 type LoadingPage = {
@@ -30,6 +31,17 @@ const branchScenarios: LoadingScenario[] = [
   { id: 'error', label: '异常', status: 'error' },
 ];
 
+const commonLoadingScenarios: LoadingScenario[] = [
+  { id: 'branch-list', label: '分支列表', status: 'loading', loadingLabel: '加载项目与本地分支列表' },
+  { id: 'project-list', label: '项目列表', status: 'loading', loadingLabel: '加载项目列表' },
+  { id: 'branch-detail', label: '分支详情', status: 'loading', loadingLabel: '加载分支详情' },
+  { id: 'container-logs', label: '容器日志', status: 'loading', loadingLabel: '加载容器日志' },
+  { id: 'github-repos', label: 'GitHub 仓库', status: 'loading', loadingLabel: '加载 GitHub 仓库' },
+  { id: 'project-settings', label: '项目设置', status: 'loading', loadingLabel: '加载项目设置' },
+  { id: 'env-vars', label: '环境变量', status: 'loading', loadingLabel: '加载环境变量' },
+  { id: 'activity-log', label: '活动日志', status: 'loading', loadingLabel: '加载活动日志' },
+];
+
 const loadingPages: LoadingPage[] = [
   {
     id: 'cds-waiting-room',
@@ -46,6 +58,14 @@ const loadingPages: LoadingPage[] = [
     description: '右侧分支详情抽屉读取数据时展示，避免用户误判为空白。',
     icon: SplitSquareVertical,
     kind: 'local',
+  },
+  {
+    id: 'common-loading-block',
+    name: '通用内容加载态',
+    description: '复用 LoadingBlock 的列表、详情、日志与设置加载状态，统一纳入预览。',
+    icon: GitBranch,
+    kind: 'local',
+    scenarios: commonLoadingScenarios,
   },
   {
     id: 'github-login',
@@ -169,7 +189,7 @@ export function LoadingPagesTab(): JSX.Element {
         </div>
 
         <div className="overflow-hidden rounded-none bg-transparent">
-          <div className="relative aspect-[16/9] min-h-[520px] w-full overflow-hidden bg-[#08070d] text-white">
+          <div data-theme="dark" className="relative aspect-[16/9] min-h-[520px] w-full overflow-hidden bg-[#08070d] text-white">
             {page.kind === 'iframe' ? (
               <iframe
                 key={previewUrl}
@@ -179,6 +199,8 @@ export function LoadingPagesTab(): JSX.Element {
               />
             ) : page.id === 'cds-home-loading' ? (
               <CdsHomeLoadingPreview theme="dark" />
+            ) : page.id === 'common-loading-block' ? (
+              <CommonLoadingBlockPreview theme="dark" label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'} />
             ) : (
               <BranchDetailLoadingPreview theme="dark" />
             )}
@@ -186,6 +208,19 @@ export function LoadingPagesTab(): JSX.Element {
         </div>
       </div>
     </Section>
+  );
+}
+
+function CommonLoadingBlockPreview({ theme, label }: { theme: 'dark' | 'light'; label: string }): JSX.Element {
+  return (
+    <div className="relative h-full overflow-hidden bg-[hsl(var(--surface-base))] text-foreground">
+      <PreviewRings theme={theme} />
+      <div className="relative z-10 flex h-full items-start px-8 pt-14">
+        <div className="w-full">
+          <LoadingBlock label={label} />
+        </div>
+      </div>
+    </div>
   );
 }
 
