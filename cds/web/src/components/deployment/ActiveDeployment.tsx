@@ -146,14 +146,14 @@ function PrimaryContainerLogPanel({
       </div>
       {maximized ? (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6"
+          className="fixed inset-0 z-[80] flex items-stretch justify-stretch bg-black/70 p-3"
           role="dialog"
           aria-modal="true"
           aria-label="完整容器日志"
           onClick={() => setMaximized(false)}
         >
           <div
-            className="flex h-[min(86vh,920px)] w-[min(92vw,1280px)] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl"
+            className="flex h-full w-full flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">

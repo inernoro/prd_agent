@@ -1161,6 +1161,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const [profileId, svc] of services) {
       try {
         const raw = await containerService.getLogs(svc.containerName, tailLines);
+        const maskedLogs = maskSecretsText(raw, { mask: true });
+        stateService.appendContainerLogArchive(entry.id, {
+          projectId: entry.projectId,
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          source,
+          masked: true,
+          logs: maskedLogs,
+        });
         snapshots.push({
           profileId,
           containerName: svc.containerName,
@@ -1169,7 +1180,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           capturedAt: new Date().toISOString(),
           tailLines,
           source,
-          logs: maskSecretsText(raw, { mask: true }),
+          logs: maskedLogs,
         });
       } catch (err) {
         snapshots.push({
@@ -5110,11 +5121,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // appear in build logs (e.g. when a Dockerfile RUN step echoes env, or
       // when the app prints connection strings on boot). Default mask is on;
       // admin can override with ?unmask=1.
-      const masked = maskSecretsText(logs, { mask: shouldMask(req) });
+      const mask = shouldMask(req);
+      const masked = maskSecretsText(logs, { mask });
+      stateService.appendContainerLogArchive(id, {
+        projectId: entry.projectId,
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        hostPort: svc.hostPort,
+        status: svc.status,
+        source: 'container-logs-api',
+        masked: mask,
+        logs: masked,
+      });
+      stateService.save();
       res.json({ logs: masked });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  router.get('/branches/:id/container-log-archives', (req, res) => {
+    const { id } = req.params;
+    const includeLogs = req.query.includeLogs === '1';
+    const archives = stateService.getContainerLogArchives(id);
+    res.json({
+      branchId: id,
+      count: archives.length,
+      archives: archives.slice().reverse().map((entry) => includeLogs ? entry : {
+        id: entry.id,
+        branchId: entry.branchId,
+        projectId: entry.projectId,
+        profileId: entry.profileId,
+        containerName: entry.containerName,
+        hostPort: entry.hostPort,
+        status: entry.status,
+        capturedAt: entry.capturedAt,
+        source: entry.source,
+        sha256: entry.sha256,
+        byteLength: entry.byteLength,
+        lineCount: entry.lineCount,
+        masked: entry.masked,
+        message: entry.message,
+      }),
+    });
   });
 
   // ── Container log stream (SSE) — replaces polling ──
@@ -5129,10 +5178,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     initSSE(res);
 
+    const chunks: string[] = [];
     const ac = containerService.streamLogs(
       svc.containerName,
-      (chunk) => sendSSE(res, 'log', { chunk }),
-      () => { try { res.end(); } catch { /* already closed */ } },
+      (chunk) => {
+        chunks.push(chunk);
+        sendSSE(res, 'log', { chunk });
+      },
+      () => {
+        if (chunks.length > 0) {
+          const logs = maskSecretsText(chunks.join(''), { mask: shouldMask(req) });
+          stateService.appendContainerLogArchive(id, {
+            projectId: entry.projectId,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            hostPort: svc.hostPort,
+            status: svc.status,
+            source: 'container-logs-stream',
+            masked: shouldMask(req),
+            logs,
+          });
+          stateService.save();
+        }
+        try { res.end(); } catch { /* already closed */ }
+      },
     );
 
     // Client disconnect → stop docker logs -f

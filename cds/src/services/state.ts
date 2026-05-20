@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -88,6 +88,7 @@ function emptyState(): CdsState {
     branches: {},
     nextPortIndex: 0,
     logs: {},
+    containerLogArchives: {},
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
@@ -220,6 +221,7 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
@@ -904,6 +906,34 @@ export class StateService {
 
   getLogs(branchId: string): OperationLog[] {
     return this.state.logs[branchId] || [];
+  }
+
+  appendContainerLogArchive(branchId: string, entry: Omit<ContainerLogArchiveEntry, 'id' | 'branchId' | 'capturedAt' | 'sha256' | 'byteLength' | 'lineCount'> & {
+    capturedAt?: string;
+    logs: string;
+  }): ContainerLogArchiveEntry {
+    if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
+    if (!this.state.containerLogArchives[branchId]) {
+      this.state.containerLogArchives[branchId] = [];
+    }
+    const capturedAt = entry.capturedAt || new Date().toISOString();
+    const logs = entry.logs || '';
+    const archived: ContainerLogArchiveEntry = {
+      ...entry,
+      id: `${branchId}:${capturedAt}:${this.state.containerLogArchives[branchId].length + 1}`,
+      branchId,
+      capturedAt,
+      sha256: crypto.createHash('sha256').update(logs).digest('hex'),
+      byteLength: Buffer.byteLength(logs, 'utf8'),
+      lineCount: logs ? logs.split(/\r?\n/).length : 0,
+      logs,
+    };
+    this.state.containerLogArchives[branchId].push(archived);
+    return archived;
+  }
+
+  getContainerLogArchives(branchId: string): ContainerLogArchiveEntry[] {
+    return (this.state.containerLogArchives || {})[branchId] || [];
   }
 
   removeLogs(branchId: string): void {

@@ -619,6 +619,25 @@ export interface OperationLogContainerSnapshot {
   message?: string;
 }
 
+/** Append-only CDS-owned container log archive. */
+export interface ContainerLogArchiveEntry {
+  id: string;
+  branchId: string;
+  projectId?: string;
+  profileId: string;
+  containerName?: string;
+  hostPort?: number;
+  status?: ServiceState['status'] | string;
+  capturedAt: string;
+  source: 'deploy-finalize' | 'deploy-error' | 'container-logs-api' | 'container-logs-stream';
+  sha256: string;
+  byteLength: number;
+  lineCount: number;
+  masked: boolean;
+  logs: string;
+  message?: string;
+}
+
 /** A complete operation log */
 export interface OperationLog {
   type: 'build' | 'run' | 'auto-build';
@@ -663,6 +682,8 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** Per-branch append-only container log archives owned by CDS. */
+  containerLogArchives?: Record<string, ContainerLogArchiveEntry[]>;
   /**
    * Legacy 全局 default branch（PR_A 之后改为 per-project，存在
    * Project.defaultBranch 上）。本字段仍由 setProjectDefaultBranch 同步刷新，
