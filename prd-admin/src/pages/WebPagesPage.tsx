@@ -1422,11 +1422,38 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
 
 // ─── Share Dialog ───
 
-function genPassword(len = 6) {
+/**
+ * 长链场景密码 — 字母长链 token 已有 72 bits 熵，密码主要防顺手分享外泄。
+ * 字符集去 i/l/o/0/1 易混淆字符，便于口述/抄写。
+ */
+function genPassword(len = 8) {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   return Array.from(crypto.getRandomValues(new Uint8Array(len)))
     .map(b => chars[b % chars.length]).join('');
 }
+
+/**
+ * 短链场景密码 — 短链 URL `/s/{seq}` 可被遍历枚举，密码是唯一防线。
+ * 12 位含大小写+数字+符号，熵 ≈ 78 bits；后端配合失败锁防在线暴破。
+ */
+function genStrongPassword(len = 12) {
+  const lower = 'abcdefghjkmnpqrstuvwxyz';
+  const upper = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+  const digit = '23456789';
+  const symbol = '!@#$%^&*-_=+';
+  const all = lower + upper + digit + symbol;
+  const pick = (s: string) => s[crypto.getRandomValues(new Uint8Array(1))[0] % s.length];
+  // 保证四类各 ≥ 1，剩余位随机填充后整体洗牌
+  const arr = [pick(lower), pick(upper), pick(digit), pick(symbol),
+    ...Array.from(crypto.getRandomValues(new Uint8Array(len - 4))).map(b => all[b % all.length])];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint8Array(1))[0] % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.join('');
+}
+
+const STRONG_PWD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_=+]).{12,}$/;
 
 function ShareDialog({ siteId, siteIds, onClose }: {
   siteId: string | null;
@@ -1434,15 +1461,57 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   onClose: () => void;
 }) {
   const [creating, setCreating] = useState(false);
-  const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string } | null>(null);
+  const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string; linkType: 'long' | 'short' } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [usePassword, setUsePassword] = useState(false);
-  const [password, setPassword] = useState('');
-  const [expiresInDays, setExpiresInDays] = useState(0);
+  // 默认勾选密码保护：用户至少要主动取消才会裸链分享
+  const [usePassword, setUsePassword] = useState(true);
+  const [password, setPassword] = useState(() => genPassword());
+  const [expiresInDays, setExpiresInDays] = useState(7);
+  // 默认走字母长链 /s/wp/{token}（不可枚举）；短链 /s/{seq} 作为"高级选项"
+  const [linkType, setLinkType] = useState<'long' | 'short'>('long');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // 短链 + 取消密码场景的 10s 风险提示
+  const [showRiskGate, setShowRiskGate] = useState(false);
+  const [riskCountdown, setRiskCountdown] = useState(10);
 
   const isCollection = !siteId && siteIds && siteIds.length > 1;
+  const isShort = linkType === 'short';
+  const pwdInvalid = isShort && usePassword && !STRONG_PWD_RE.test(password);
 
-  const handleCreate = async () => {
+  // 切到短链：强制开启密码，且若现有密码不达强密码标准就自动重生成
+  useEffect(() => {
+    if (isShort) {
+      setUsePassword(true);
+      setPassword(prev => (STRONG_PWD_RE.test(prev) ? prev : genStrongPassword()));
+    }
+  }, [isShort]);
+
+  // 10s 倒计时
+  useEffect(() => {
+    if (!showRiskGate) return;
+    setRiskCountdown(10);
+    const t = setInterval(() => setRiskCountdown(v => (v <= 1 ? 0 : v - 1)), 1000);
+    return () => clearInterval(t);
+  }, [showRiskGate]);
+
+  const handleTogglePassword = (next: boolean) => {
+    if (!next && isShort) {
+      // 短链取消密码 = 高风险，强制看完 10s 警告再确认
+      setShowRiskGate(true);
+      return;
+    }
+    setUsePassword(next);
+    if (next && !password) setPassword(isShort ? genStrongPassword() : genPassword());
+    if (!next) setPassword('');
+  };
+
+  const handleRiskAccept = () => {
+    setShowRiskGate(false);
+    setUsePassword(false);
+    setPassword('');
+  };
+
+  const doCreate = async () => {
     setCreating(true);
     const pwd = usePassword ? (password.trim() || undefined) : undefined;
 
@@ -1460,7 +1529,9 @@ function ShareDialog({ siteId, siteIds, onClose }: {
       if (res.success) {
         // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准
         const effPwd = res.data.password ?? pwd;
-        const shareResult = { shareUrl: res.data.shareUrl, token: res.data.token, password: effPwd };
+        // 默认走 legacyShareUrl(/s/wp/{token}，不可枚举)；用户选短链才用 shareUrl(/s/{seq})
+        const chosenUrl = isShort ? res.data.shareUrl : (res.data.legacyShareUrl ?? res.data.shareUrl);
+        const shareResult = { shareUrl: chosenUrl, token: res.data.token, password: effPwd, linkType };
         setResult(shareResult);
         let text = `${window.location.origin}${shareResult.shareUrl}`;
         if (effPwd) text += `\n访问密码：${effPwd}`;
@@ -1476,6 +1547,14 @@ function ShareDialog({ siteId, siteIds, onClose }: {
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleCreate = () => {
+    if (pwdInvalid) {
+      toast.error('密码强度不足', '短链密码需 ≥12 位且含大小写、数字、符号');
+      return;
+    }
+    void doCreate();
   };
 
   const handleCopy = () => {
@@ -1550,21 +1629,16 @@ function ShareDialog({ siteId, siteIds, onClose }: {
 
             {/* 分享选项 */}
             <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
                 <input
                   type="checkbox"
                   checked={usePassword}
-                  onChange={e => {
-                    setUsePassword(e.target.checked);
-                    if (e.target.checked) {
-                      setPassword(genPassword());
-                    } else {
-                      setPassword('');
-                    }
-                  }}
+                  onChange={e => handleTogglePassword(e.target.checked)}
                 />
                 <Lock size={12} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>密码保护</span>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
+                </span>
               </label>
               {usePassword && (
                 <div className="flex flex-col gap-1.5">
@@ -1573,16 +1647,23 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                       type="text"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      placeholder="输入密码"
+                      placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
                       className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
-                      style={inputStyle}
+                      style={{
+                        ...inputStyle,
+                        border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border,
+                      }}
                     />
-                    <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="随机生成密码">
+                    <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
                       <RefreshCw size={12} />
                     </Button>
                   </div>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    可修改密码或点击右侧按钮重新生成
+                  <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
+                    {pwdInvalid
+                      ? '短链场景密码强度不足：需 ≥12 位，含大小写字母、数字、符号'
+                      : isShort
+                        ? '短链可被遍历枚举，密码是唯一防线，建议直接用随机生成的强密码'
+                        : '可修改密码或点击右侧按钮重新生成'}
                   </span>
                 </div>
               )}
@@ -1604,14 +1685,86 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                   <option value={90}>90 天</option>
                 </select>
               </label>
+
+              {/* 高级选项 — 链接类型 */}
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(v => !v)}
+                className="text-xs flex items-center gap-1 self-start"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <span style={{ display: 'inline-block', transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}>›</span>
+                高级选项
+              </button>
+              {showAdvanced && (
+                <div className="flex flex-col gap-1.5 pl-4" style={{ borderLeft: '2px solid var(--border-default)' }}>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接形式</span>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={linkType === 'long'} onChange={() => setLinkType('long')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: 'var(--text-secondary)' }}>字母长链 /s/wp/xxxxxxxxxxx（推荐）</span>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>72 bits 随机 token，不可枚举猜测；密码可选</span>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={linkType === 'short'} onChange={() => setLinkType('short')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: 'var(--text-secondary)' }}>超短数字链 /s/123（自用便捷）</span>
+                      <span className="text-xs" style={{ color: '#f97316' }}>可被遍历猜测，必须配强密码使用</span>
+                    </div>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 mt-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>
-              <Button onClick={handleCreate} disabled={creating}>
+              <Button onClick={handleCreate} disabled={creating || pwdInvalid}>
                 {creating ? '生成中...' : '一键分享'}
               </Button>
             </div>
+
+            {/* 10s 风险确认模态：短链取消密码必看 */}
+            {showRiskGate && (
+              <div
+                style={{
+                  position: 'fixed', inset: 0, zIndex: 200,
+                  background: 'rgba(0, 0, 0, 0.55)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: 16,
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                <div
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid #f97316',
+                    borderRadius: 12,
+                    padding: 24,
+                    maxWidth: 480,
+                    width: '100%',
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Lock size={20} style={{ color: '#f97316' }} />
+                    <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      风险确认：短链无密码 = 任何人可枚举访问
+                    </h3>
+                  </div>
+                  <ul className="text-sm flex flex-col gap-1.5 mb-4" style={{ color: 'var(--text-secondary)' }}>
+                    <li>· 数字短链 /s/123 是全局自增 ID，攻击者可从 1 起逐个尝试</li>
+                    <li>· 没有密码的短链意味着任何获得链接（甚至猜对数字）的人都能查看内容</li>
+                    <li>· 你即将分享的内容如果包含未公开信息，请改用字母长链或保留密码</li>
+                  </ul>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="ghost" onClick={() => setShowRiskGate(false)}>放弃，保留密码</Button>
+                    <Button onClick={handleRiskAccept} disabled={riskCountdown > 0}>
+                      {riskCountdown > 0 ? `我已知晓继续 (${riskCountdown}s)` : '我已知晓继续'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )
       }
