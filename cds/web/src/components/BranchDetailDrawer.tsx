@@ -424,6 +424,25 @@ function logFailureReason(log: OperationLog): string {
   return error ? eventText(error) : '';
 }
 
+function deriveRuntimeStartedAt(log: OperationLog): number | undefined {
+  if (log.runtimeStartedAt) {
+    const explicit = new Date(log.runtimeStartedAt).getTime();
+    if (Number.isFinite(explicit)) return explicit;
+  }
+  const readyEvents = (log.events || []).filter((event) => {
+    if (event.status !== 'done') return false;
+    const text = `${event.step || ''} ${event.title || ''}`;
+    return text.includes('runtime-ready')
+      || text.includes('运行于')
+      || text.includes('启动成功')
+      || text.includes('已通过就绪探测');
+  });
+  const lastReady = readyEvents[readyEvents.length - 1];
+  if (!lastReady?.timestamp) return undefined;
+  const derived = new Date(lastReady.timestamp).getTime();
+  return Number.isFinite(derived) ? derived : undefined;
+}
+
 function branchFailureReason(branch: BranchDetailData): string {
   if (branch.errorMessage) return branch.errorMessage;
   const failed = Object.values(branch.services || {}).filter((svc) => svc.status === 'error');
@@ -438,7 +457,7 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
   const lines = events.map(eventText);
   const finishedAt = log.finishedAt ? new Date(log.finishedAt).getTime() : undefined;
   const startedAt = log.startedAt ? new Date(log.startedAt).getTime() : Date.now();
-  const runtimeStartedAt = log.runtimeStartedAt ? new Date(log.runtimeStartedAt).getTime() : undefined;
+  const runtimeStartedAt = deriveRuntimeStartedAt(log);
   const status: BranchDeploymentItem['status'] = log.status === 'completed'
     ? 'success'
     : log.status === 'error'
