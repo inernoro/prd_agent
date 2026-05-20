@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -38,6 +39,11 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
+
+const PROJECT_DOCK_BASE_SIZE = 56;
+const PROJECT_DOCK_MAGNIFIED_SIZE = 82;
+const PROJECT_DOCK_DISTANCE = 150;
+const PROJECT_DOCK_SPRING = { mass: 0.12, stiffness: 180, damping: 16 };
 
 interface ProjectSummary {
   id: string;
@@ -1535,6 +1541,61 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   };
 }
 
+function ProjectDockNode({
+  mouseX,
+  className,
+  title,
+  ariaLabel,
+  children,
+}: {
+  mouseX: MotionValue<number>;
+  className: string;
+  title: string;
+  ariaLabel: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const distance = useTransform(mouseX, (value) => {
+    const bounds = ref.current?.getBoundingClientRect();
+    if (!bounds) return Infinity;
+    return value - bounds.x - bounds.width / 2;
+  });
+  const size = useSpring(
+    useTransform(
+      distance,
+      [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE],
+      [PROJECT_DOCK_BASE_SIZE, PROJECT_DOCK_MAGNIFIED_SIZE, PROJECT_DOCK_BASE_SIZE],
+    ),
+    PROJECT_DOCK_SPRING,
+  );
+  const y = useSpring(
+    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [0, -12, 0]),
+    PROJECT_DOCK_SPRING,
+  );
+  const iconSize = useSpring(
+    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [28, 40, 28]),
+    PROJECT_DOCK_SPRING,
+  );
+  const iconSizePx = useTransform(iconSize, (value) => `${value}px`);
+
+  return (
+    <motion.span
+      ref={ref}
+      className={className}
+      style={{
+        width: size,
+        height: size,
+        y,
+        '--project-node-icon-size': iconSizePx,
+      } as unknown as React.CSSProperties}
+      title={title}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </motion.span>
+  );
+}
+
 /*
  * ProjectCard — Railway-style "workspace tile".
  *
@@ -1581,6 +1642,7 @@ function ProjectCard({
   const visibleAppServices = appServices.slice(0, maxVisualNodes);
   const visibleInfraServices = infra.slice(0, Math.max(0, maxVisualNodes - visibleAppServices.length));
   const hiddenVisualNodes = Math.max(0, appServices.length + infra.length - visibleAppServices.length - visibleInfraServices.length);
+  const dockMouseX = useMotionValue(Infinity);
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
     : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
@@ -1620,26 +1682,31 @@ function ProjectCard({
           }}
         >
           <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
-            <div className="cds-project-node-row flex flex-wrap items-center justify-center">
+            <motion.div
+              className="cds-project-node-row flex flex-wrap items-center justify-center"
+              onMouseMove={(event) => dockMouseX.set(event.clientX)}
+              onMouseLeave={() => dockMouseX.set(Infinity)}
+            >
               {visibleAppServices.length > 0 ? (
                 visibleAppServices.map((service) => {
                   const brand = appIconFor(service, project);
                   return (
-                    <span
+                    <ProjectDockNode
                       key={`${service.branch}-${service.id}`}
+                      mouseX={dockMouseX}
                       className={`cds-project-node relative flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
                       title={
                         (service.runningCount || 0) > 1
                           ? `${brand.label} · ${service.id} · ${service.runningCount} 个运行分支${service.dockerImage ? ` · ${service.dockerImage}` : ''}`
                           : `${brand.label} · ${service.branch} · ${service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`
                       }
-                      aria-label={`${brand.label} ${service.id}`}
+                      ariaLabel={`${brand.label} ${service.id}`}
                     >
                       {brand.icon}
                       {(service.runningCount || 0) > 1 ? (
                         <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
                       ) : null}
-                    </span>
+                    </ProjectDockNode>
                   );
                 })
               ) : null}
@@ -1648,34 +1715,36 @@ function ProjectCard({
                   const online = service.status === 'running';
                   const brand = infraIconFor(service);
                   return (
-                    <span
+                    <ProjectDockNode
                       key={service.id}
+                      mouseX={dockMouseX}
                       className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${
                         online
                           ? brand.tileClassName
                           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
                       }`}
                       title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
-                      aria-label={brand.label}
+                      ariaLabel={brand.label}
                     >
                       {brand.icon}
-                    </span>
+                    </ProjectDockNode>
                   );
                 })
               ) : null}
               {visibleAppServices.length === 0 && visibleInfraServices.length === 0 ? (
-                <span
+                <ProjectDockNode
+                  mouseX={dockMouseX}
                   className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
                   title="应用服务"
-                  aria-label="应用服务"
+                  ariaLabel="应用服务"
                 >
                   <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
-                </span>
+                </ProjectDockNode>
               ) : null}
               {hiddenVisualNodes > 0 ? (
                 <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{hiddenVisualNodes}</span>
               ) : null}
-            </div>
+            </motion.div>
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
