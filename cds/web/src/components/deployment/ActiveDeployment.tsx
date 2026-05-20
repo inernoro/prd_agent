@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Clock, Copy, ExternalLink, Loader2, Maximize2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
@@ -10,6 +10,47 @@ function lastLines(text: string, n: number): string {
   const lines = text.split('\n');
   if (lines.length <= n) return text;
   return lines.slice(-n).join('\n');
+}
+
+function logLineClass(line: string): string {
+  if (/\b(error|failed|fatal|exception|panic|denied)\b|错误|失败|异常|拒绝/i.test(line)) {
+    return 'text-red-300';
+  }
+  if (/\b(warn|warning|deprecated)\b|警告/i.test(line)) {
+    return 'text-amber-300';
+  }
+  if (/\b(success|succeeded|done|ready|listening|started|completed)\b|成功|完成|就绪|启动/i.test(line)) {
+    return 'text-emerald-300';
+  }
+  if (/https?:\/\/|file:\/\/|\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/.test(line)) {
+    return 'text-sky-300';
+  }
+  if (/^\s*(at |\+|>|npm |pnpm |yarn |dotnet |node )/.test(line)) {
+    return 'text-slate-300';
+  }
+  return 'text-slate-400';
+}
+
+function HighlightedLogBlock({
+  logs,
+  maxLines,
+  className = '',
+}: {
+  logs: string;
+  maxLines?: number;
+  className?: string;
+}): JSX.Element {
+  const text = maxLines ? lastLines(logs, maxLines) : logs;
+  const lines = text.split(/\r?\n/);
+  return (
+    <div className={`overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 font-mono text-[11px] leading-5 ${className}`}>
+      {lines.map((line, index) => (
+        <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
+          {line || ' '}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -34,6 +75,8 @@ function PrimaryContainerLogPanel({
     );
   }, [containerLogsByPhase]);
   const hasTabs = !!(containerLogControls && containerLogControls.services.length > 1);
+  const [maximized, setMaximized] = useState(false);
+  const logs = state?.status === 'ok' ? (state.logs || '') : '';
 
   return (
     <section className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
@@ -43,8 +86,8 @@ function PrimaryContainerLogPanel({
           <button
             type="button"
             className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
-            onClick={containerLogControls.onMaximize}
-            title="跳转到「日志 → 容器日志」查看完整内容"
+            onClick={() => setMaximized(true)}
+            title="在弹窗中查看完整容器日志"
           >
             <Maximize2 className="h-3 w-3" />
             最大化
@@ -98,11 +141,93 @@ function PrimaryContainerLogPanel({
             容器尚未输出任何日志（多半是进程在监听端口前就退出了）。
           </div>
         ) : (
-          <pre className="max-h-[560px] min-h-[280px] overflow-auto rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] leading-5 text-foreground/85 whitespace-pre-wrap break-words">
-            {lastLines(state.logs, 220)}
-          </pre>
+          <HighlightedLogBlock logs={state.logs} maxLines={220} className="max-h-[560px] min-h-[280px]" />
         )}
       </div>
+      {maximized ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="完整容器日志"
+          onClick={() => setMaximized(false)}
+        >
+          <div
+            className="flex h-[min(86vh,920px)] w-[min(92vw,1280px)] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">完整容器日志</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">
+                  {containerLogControls?.selected || '当前服务'} · error/warn/success/path 已按终端风格标色
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void navigator.clipboard.writeText(logs)}
+                  disabled={!logs}
+                >
+                  <Copy />
+                  复制
+                </Button>
+                <Button type="button" size="icon" variant="ghost" onClick={() => setMaximized(false)} aria-label="关闭日志弹窗">
+                  <X />
+                </Button>
+              </div>
+            </header>
+            {hasTabs ? (
+              <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-[hsl(var(--hairline))] px-4 py-2">
+                {containerLogControls!.services.map((svc) => {
+                  const active = svc.profileId === containerLogControls!.selected;
+                  const dot = svc.status === 'running'
+                    ? 'bg-emerald-500'
+                    : svc.status === 'error'
+                      ? 'bg-destructive'
+                      : 'bg-muted-foreground/40';
+                  return (
+                    <button
+                      key={svc.profileId}
+                      type="button"
+                      onClick={() => containerLogControls!.onSelect(svc.profileId)}
+                      className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-xs transition-colors ${
+                        active
+                          ? 'border-primary bg-primary/10 text-foreground'
+                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+                      <span className="font-mono">{svc.profileId}</span>
+                      {svc.hostPort ? <span className="font-mono opacity-70">:{svc.hostPort}</span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 p-4">
+              {state?.status === 'loading' ? (
+                <div className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] px-3 py-3 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  正在加载容器日志…
+                </div>
+              ) : state?.status === 'error' ? (
+                <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {state.message || '容器日志加载失败'}
+                </div>
+              ) : logs.trim() ? (
+                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" />
+              ) : (
+                <div className="rounded border border-[hsl(var(--hairline))] px-3 py-6 text-center text-sm text-muted-foreground">
+                  暂无容器日志。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
