@@ -47,6 +47,8 @@ interface BranchDetailData {
   githubCommitSha?: string;
   githubPrNumber?: number;
   lastDeployAt?: string;
+  lastAccessedAt?: string;
+  lastReadyAt?: string;
   /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
   lastStoppedAt?: string;
   lastStopReason?: string;
@@ -1555,7 +1557,11 @@ export function BranchDetailDrawer({
                         <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
                       </div>
                       <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-                        <span>最近部署：{formatDeployTimestamp(branch.lastDeployAt)}</span>
+                        <span>
+                          最近部署：{formatDeployTimestamp(
+                            branch.lastDeployAt || (branch.status === 'running' ? branch.lastReadyAt || branch.lastAccessedAt : undefined),
+                          )}
+                        </span>
                         <span>部署次数：{branch.deployCount || 0}</span>
                         <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
