@@ -9695,6 +9695,16 @@ cdscli project list --human
     );
   });
 
+  router.get('/loading-pages/branch-gone/preview', (req, res) => {
+    const theme = String(req.query.theme || 'dark') === 'light' ? 'light' : 'dark';
+    const slug = String(req.query.branch || 'claude/removed-preview-branch');
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(buildLoadingPreviewBranchGoneHtml(slug, theme));
+  });
+
   // GET /api/self-status — CDS 自身的更新状态全景
   //
   // 2026-05-04(用户反馈"我不清楚是否有自动更新, 这里需要显示"):
@@ -11461,4 +11471,72 @@ cdscli project list --human
   });
 
   return router;
+}
+
+function escapeLoadingPreviewHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+}
+
+function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'): string {
+  const safeSlug = escapeLoadingPreviewHtml(slug);
+  const isLight = theme === 'light';
+  const bg = isLight ? '#f7f7f4' : '#050407';
+  const text = isLight ? '#18181b' : '#f7f5ff';
+  const muted = isLight ? 'rgba(24,24,27,.62)' : 'rgba(245,242,255,.62)';
+  const panel = isLight ? 'rgba(255,255,255,.58)' : 'rgba(255,255,255,.035)';
+  const line = isLight ? 'rgba(24,24,27,.12)' : 'rgba(255,255,255,.12)';
+  const danger = isLight ? '#b91c1c' : '#fca5a5';
+  const ring = isLight ? 'rgba(24,24,27,.18)' : 'rgba(255,255,255,.28)';
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览已下线 · ${safeSlug}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{color-scheme:${isLight ? 'light' : 'dark'};--bg:${bg};--text:${text};--muted:${muted};--panel:${panel};--line:${line};--danger:${danger};--ring:${ring}}
+html,body{min-height:100%}
+body{min-height:100vh;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(760px 560px at 54% 46%,rgba(255,255,255,${isLight ? '.52' : '.16'}),transparent 72%),linear-gradient(90deg,${isLight ? 'rgba(247,247,244,.88),rgba(247,247,244,.18),rgba(247,247,244,.74)' : 'rgba(5,4,7,.88),rgba(5,4,7,.12),rgba(5,4,7,.78)'});z-index:1;pointer-events:none}
+body::after{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;opacity:${isLight ? '.18' : '.28'};background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:84px 84px;mask-image:radial-gradient(circle at 52% 48%,#000 0%,transparent 72%)}
+.rings{position:fixed;inset:-16%;z-index:0;pointer-events:none;background:repeating-radial-gradient(circle at 58% 48%,transparent 0 84px,var(--ring) 86px 88px,transparent 90px 126px);animation:drift 12s ease-in-out infinite alternate}
+.rings::before{content:"";position:absolute;inset:0;background:conic-gradient(from 20deg at 58% 48%,transparent 0 22%,rgba(255,255,255,${isLight ? '.18' : '.32'}) 28%,transparent 42%,rgba(255,255,255,${isLight ? '.12' : '.22'}) 58%,transparent 74%);mix-blend-mode:${isLight ? 'multiply' : 'screen'};filter:blur(1px);animation:spin 18s linear infinite}
+.shell{position:relative;z-index:2;min-height:100vh;display:grid;align-items:center;padding:clamp(34px,7vw,96px)}
+.content{max-width:720px;text-shadow:0 20px 80px rgba(0,0,0,${isLight ? '.08' : '.72'})}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;color:var(--muted);font:600 11px/1 "JetBrains Mono","SFMono-Regular",monospace;letter-spacing:.28em;text-transform:uppercase}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 18px var(--danger);animation:pulse 1.7s ease-in-out infinite}
+h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:-.055em;margin-bottom:22px}
+.desc{max-width:600px;color:var(--muted);font-size:clamp(15px,1.35vw,20px);line-height:1.75;margin-bottom:28px}
+.chip{display:inline-flex;max-width:min(720px,88vw);align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--panel);backdrop-filter:blur(12px);padding:10px 15px;color:var(--danger);font:600 13px/1.5 "JetBrains Mono","SFMono-Regular",monospace;word-break:break-all}
+.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+.btn{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:10px 16px;text-decoration:none;font-size:13px;font-weight:700}
+.hint{margin-top:28px;color:var(--muted);font-size:12px}
+@keyframes drift{0%{transform:translate3d(-2%,0,0) scale(1)}100%{transform:translate3d(2%,-2%,0) scale(1.04)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{transform:scale(.76);opacity:.62}50%{transform:scale(1.24);opacity:1}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+</style></head><body>
+<div class="rings" aria-hidden="true"></div>
+<main class="shell">
+  <section class="content">
+    <div class="eyebrow">CDS Preview Offline</div>
+    <h1>预览已下线</h1>
+    <p class="desc">该分支已被删除、未部署，或当前 CDS 实例没有找到可路由的运行环境。请返回控制台检查分支状态和最近停止原因。</p>
+    <div class="chip">${safeSlug}</div>
+    <div class="actions">
+      <a class="btn" href="/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+    </div>
+    <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
+  </section>
+</main>
+</body></html>`;
 }

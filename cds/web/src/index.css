@@ -771,4 +771,27 @@
     @apply inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-xs text-muted-foreground;
     background-color: hsl(var(--surface-base) / 0.6);
   }
+
+  .cds-loading-preview-rings-dark {
+    background:
+      conic-gradient(from 20deg at 58% 48%, transparent 0 22%, rgba(255, 255, 255, 0.26) 28%, transparent 42%, rgba(255, 255, 255, 0.18) 58%, transparent 74%),
+      repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(255, 255, 255, 0.24) 76px 78px, transparent 80px 118px);
+    filter: blur(0.4px);
+  }
+
+  .cds-loading-preview-rings-light {
+    background:
+      conic-gradient(from 20deg at 58% 48%, transparent 0 22%, rgba(24, 24, 27, 0.14) 28%, transparent 42%, rgba(24, 24, 27, 0.1) 58%, transparent 74%),
+      repeating-radial-gradient(circle at 58% 48%, transparent 0 74px, rgba(24, 24, 27, 0.16) 76px 78px, transparent 80px 118px);
+    filter: blur(0.2px);
+  }
+}
+
+@keyframes cds-preview-ring-drift {
+  0% {
+    transform: translate3d(-2%, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(2%, -2%, 0) scale(1.04);
+  }
 }
