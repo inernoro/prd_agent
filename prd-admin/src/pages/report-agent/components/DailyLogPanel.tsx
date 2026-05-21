@@ -1344,36 +1344,33 @@ export function DailyLogPanel() {
               <div className="flex items-center gap-2.5 flex-wrap">
                 <div className="flex items-center gap-1.5 flex-wrap">
                 {orderedTagEntries.map((entry) => {
-                  if (entry.kind === 'system') {
-                    const cfg = CATEGORY_CONFIG[entry.key];
-                    if (!cfg) return null;
-                    const isActive = selectedSystemTags.includes(entry.key);
-                    const Icon = cfg.icon;
-                    return (
-                      <button
-                        key={`sys-${entry.key}`}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
-                        style={{
-                          background: isActive ? cfg.bg : 'transparent',
-                          color: isActive ? cfg.color : 'var(--text-muted)',
-                          border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
-                        }}
-                        onClick={() => handleSystemTagToggle(entry.key)}
-                      >
-                        <Icon size={11} />
-                        {cfg.label}
-                      </button>
-                    );
-                  }
-                  // custom tag
+                  const isSystem = entry.kind === 'system';
+                  const sysCfg = isSystem ? CATEGORY_CONFIG[entry.key] : null;
+                  if (isSystem && !sysCfg) return null;
+                  const customIdx = isSystem ? -1 : customTags.indexOf(entry.key);
                   const tag = entry.key;
-                  const idx = customTags.indexOf(tag);
-                  const isActive = selectedCustomTags.includes(tag);
-                  const isEditing = editingTagIdx === idx && editingTagSource === 'quick';
-                  if (isEditing) {
+                  const isActive = isSystem
+                    ? selectedSystemTags.includes(tag)
+                    : selectedCustomTags.includes(tag);
+                  const isInlineRenaming = !isSystem && editingTagIdx === customIdx && editingTagSource === 'quick';
+                  const isDefault = defaultTags.includes(tag);
+                  const Icon = isSystem ? sysCfg!.icon : Tag;
+                  // chip 视觉样式（系统：彩色 / 自定义：teal；激活：高亮；非激活：透明）
+                  const chipBg = isActive
+                    ? (isSystem ? sysCfg!.bg : 'rgba(20, 184, 166, 0.12)')
+                    : 'transparent';
+                  const chipColor = isActive
+                    ? (isSystem ? sysCfg!.color : 'rgba(20, 184, 166, 0.95)')
+                    : 'var(--text-muted)';
+                  const chipBorder = isActive
+                    ? (isSystem ? sysCfg!.color.replace('0.95', '0.3') : 'rgba(20, 184, 166, 0.3)')
+                    : 'transparent';
+
+                  // 内联重命名输入（仅自定义、quick source）
+                  if (isInlineRenaming) {
                     return (
                       <input
-                        key={`tag-edit-${idx}`}
+                        key={`tag-edit-${customIdx}`}
                         className="w-24 px-2 py-1 rounded-lg text-[11px] font-medium outline-none"
                         style={{
                           background: 'rgba(59, 130, 246, 0.08)',
@@ -1396,37 +1393,135 @@ export function DailyLogPanel() {
                       />
                     );
                   }
+
+                  // 编辑模式：chip 加 mini 默认勾选 + 右上角 ✕（仅自定义）+ draggable
+                  if (showTagManager) {
+                    return (
+                      <div
+                        key={`tag-edit-wrap-${entry.kind}-${tag}`}
+                        className="relative inline-flex items-center"
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', tag);
+                        }}
+                        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const fromKey = e.dataTransfer.getData('text/plain');
+                          if (fromKey && fromKey !== tag) void handleReorderTag(fromKey, tag);
+                        }}
+                        style={{ cursor: 'grab' }}
+                        onDoubleClick={(e) => {
+                          if (!isSystem && customIdx >= 0) {
+                            e.preventDefault();
+                            handleStartInlineEditTag(customIdx, 'quick');
+                          }
+                        }}
+                      >
+                        <div
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium"
+                          style={{
+                            background: chipBg,
+                            color: chipColor,
+                            border: `1px solid ${chipBorder === 'transparent' ? 'rgba(148, 163, 184, 0.25)' : chipBorder}`,
+                            borderStyle: 'dashed',
+                          }}
+                          title={!isSystem ? '双击重命名 · 拖动调整顺序' : '拖动调整顺序'}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isDefault}
+                            onChange={(e) => { e.stopPropagation(); void handleToggleDefaultTag(tag); }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="cursor-pointer"
+                            style={{ accentColor: 'rgba(16, 185, 129, 0.9)', width: 11, height: 11, marginRight: 2 }}
+                            title="设为默认（新建打点时自动选中）"
+                          />
+                          <Icon size={11} />
+                          {isSystem ? sysCfg!.label : tag}
+                        </div>
+                        {!isSystem && customIdx >= 0 && (
+                          <button
+                            type="button"
+                            className="absolute flex items-center justify-center rounded-full transition-colors"
+                            style={{
+                              top: -5,
+                              right: -5,
+                              width: 14,
+                              height: 14,
+                              background: 'rgba(239, 68, 68, 0.95)',
+                              color: 'white',
+                              border: '1.5px solid var(--bg-primary)',
+                              boxShadow: '0 0 0 1px rgba(239, 68, 68, 0.3)',
+                              cursor: 'pointer',
+                            }}
+                            onClick={(e) => { e.stopPropagation(); void handleDeleteCustomTag(customIdx); }}
+                            title="删除"
+                          >
+                            <X size={9} strokeWidth={3} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  // 正常模式：点击切换选中
                   return (
                     <button
-                      key={`tag-${tag}`}
+                      key={`tag-${entry.kind}-${tag}`}
                       className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
                       style={{
-                        background: isActive ? 'rgba(20, 184, 166, 0.12)' : 'transparent',
-                        color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
-                        border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
+                        background: chipBg,
+                        color: chipColor,
+                        border: `1px solid ${chipBorder}`,
                       }}
-                      title="双击重命名"
-                      onClick={() => handleCustomTagToggle(tag)}
-                      onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(idx, 'quick'); }}
+                      onClick={() => {
+                        if (isSystem) handleSystemTagToggle(tag);
+                        else handleCustomTagToggle(tag);
+                      }}
                     >
-                      <Tag size={10} />
-                      {tag}
+                      <Icon size={isSystem ? 11 : 10} />
+                      {isSystem ? sysCfg!.label : tag}
                     </button>
                   );
                 })}
+                {/* 编辑模式下，标签条末尾内联「新增自定义标签」输入框 */}
+                {showTagManager && (
+                  <input
+                    className="w-44 px-2 py-1 rounded-lg text-[11px] outline-none"
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: `1px dashed ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.55)' : 'rgba(148, 163, 184, 0.35)'}`,
+                    }}
+                    placeholder="新增自定义标签，回车添加"
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        if (canSubmitTagDraft && !savingTags) void handleAddCustomTag();
+                      }
+                    }}
+                    disabled={savingTags || tagLimitReached}
+                    title={tagLimitReached ? `已达上限 ${MAX_CUSTOM_TAG_COUNT} 个` : undefined}
+                  />
+                )}
                 </div>
                 <div className="h-4 w-px" style={{ background: 'var(--border-primary)' }} />
                 <div className="flex items-center">
                 <button
                   className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150 whitespace-nowrap"
                   style={{
-                    background: showTagManager ? 'rgba(148, 163, 184, 0.1)' : 'transparent',
-                    color: showTagManager ? 'var(--text-secondary)' : 'var(--text-muted)',
-                    border: `1px solid ${showTagManager ? 'rgba(148, 163, 184, 0.28)' : 'rgba(148, 163, 184, 0.14)'}`,
+                    background: showTagManager ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
+                    color: showTagManager ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)',
+                    border: `1px solid ${showTagManager ? 'rgba(16, 185, 129, 0.35)' : 'rgba(148, 163, 184, 0.14)'}`,
                   }}
                   onClick={() => setShowTagManager((v) => !v)}
+                  title={showTagManager ? '退出编辑并保存' : '进入编辑模式：拖动排序、勾默认、加 ✕ 删除'}
                 >
-                  管理标签
+                  {showTagManager ? '保存' : '管理标签'}
                 </button>
                 </div>
               </div>
@@ -1455,166 +1550,14 @@ export function DailyLogPanel() {
                   })}
                 </div>
               )}
+              {showTagManager && tagDraftTooLong && (
+                <span className="text-[10px]" style={{ color: 'rgba(239, 68, 68, 0.9)' }}>
+                  超出 {normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符
+                </span>
+              )}
               {showTagManager && (
-                <div
-                  className="mt-1 rounded-lg px-2.5 py-2 flex flex-col gap-1.5"
-                  style={{
-                    border: '1px solid rgba(148, 163, 184, 0.18)',
-                    background: 'rgba(148,163,184,0.04)',
-                  }}
-                >
-                  {/* 单行：新增 input + 添加按钮 + 统计 */}
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      className="flex-1 px-2 py-1 rounded text-[11px] outline-none transition-colors duration-150"
-                      style={{
-                        background: 'var(--bg-secondary)',
-                        color: 'var(--text-primary)',
-                        border: `1px solid ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.45)' : 'rgba(148, 163, 184, 0.22)'}`,
-                      }}
-                      placeholder="新增自定义标签，回车添加"
-                      value={tagDraft}
-                      onChange={(e) => setTagDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          void handleAddCustomTag();
-                        }
-                      }}
-                      disabled={savingTags}
-                    />
-                    <button
-                      className="px-2 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40"
-                      style={{
-                        background: canSubmitTagDraft && !savingTags ? 'rgba(20, 184, 166, 0.12)' : 'transparent',
-                        color: canSubmitTagDraft && !savingTags ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
-                        border: `1px solid ${canSubmitTagDraft && !savingTags ? 'rgba(20, 184, 166, 0.3)' : 'rgba(148, 163, 184, 0.18)'}`,
-                      }}
-                      onClick={() => void handleAddCustomTag()}
-                      disabled={!canSubmitTagDraft || savingTags}
-                    >
-                      添加
-                    </button>
-                    <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
-                      {customTags.length}/{MAX_CUSTOM_TAG_COUNT}
-                    </span>
-                  </div>
-                  {tagDraftTooLong && (
-                    <span className="text-[10px]" style={{ color: 'rgba(239, 68, 68, 0.9)' }}>
-                      超出 {normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符
-                    </span>
-                  )}
-
-                  {/* 2 列网格：拖动 + 默认 + 标签（行内紧凑） */}
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                    {orderedTagEntries.map((entry) => {
-                      const isSystem = entry.kind === 'system';
-                      const sysCfg = isSystem ? CATEGORY_CONFIG[entry.key] : null;
-                      const customIdx = isSystem ? -1 : customTags.indexOf(entry.key);
-                      const isEditing = !isSystem && editingTagIdx === customIdx && editingTagSource === 'manage';
-                      const isDefault = defaultTags.includes(entry.key);
-                      const SysIcon = sysCfg?.icon;
-                      return (
-                        <div
-                          key={`tag-row-${entry.kind}-${entry.key}`}
-                          className="group flex items-center gap-1.5 px-1 py-1 rounded transition-colors"
-                          draggable
-                          onDragStart={(e) => {
-                            e.dataTransfer.effectAllowed = 'move';
-                            e.dataTransfer.setData('text/plain', entry.key);
-                          }}
-                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            const fromKey = e.dataTransfer.getData('text/plain');
-                            if (fromKey && fromKey !== entry.key) void handleReorderTag(fromKey, entry.key);
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(148,163,184,0.06)'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <span
-                            className="select-none text-[11px] leading-none flex-shrink-0"
-                            style={{ color: 'var(--text-muted)', cursor: 'grab', opacity: 0.5 }}
-                            title="拖动调整顺序"
-                          >
-                            ⋮⋮
-                          </span>
-                          <input
-                            type="checkbox"
-                            checked={isDefault}
-                            onChange={() => void handleToggleDefaultTag(entry.key)}
-                            className="cursor-pointer flex-shrink-0"
-                            style={{ accentColor: 'rgba(16, 185, 129, 0.9)', width: 12, height: 12 }}
-                            title="设为默认（新建打点时自动选中）"
-                          />
-                          {isSystem ? (
-                            <span
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-                              style={{
-                                background: sysCfg!.bg,
-                                color: sysCfg!.color,
-                                border: `1px solid ${sysCfg!.color.replace('0.95', '0.3')}`,
-                              }}
-                            >
-                              {SysIcon && <SysIcon size={10} />}
-                              {sysCfg!.label}
-                            </span>
-                          ) : isEditing ? (
-                            <input
-                              className="px-1.5 py-0.5 rounded text-[10px] outline-none flex-1 min-w-0"
-                              style={{
-                                background: 'rgba(59, 130, 246, 0.08)',
-                                color: 'rgba(59, 130, 246, 0.92)',
-                                border: '1px solid rgba(59, 130, 246, 0.35)',
-                              }}
-                              value={editingTagDraft}
-                              autoFocus
-                              onChange={(e) => setEditingTagDraft(e.target.value)}
-                              onBlur={handleCancelInlineEditTag}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                                  e.preventDefault();
-                                  void handleConfirmEditCustomTag();
-                                } else if (e.key === 'Escape') {
-                                  handleCancelInlineEditTag();
-                                }
-                              }}
-                            />
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
-                              style={{
-                                background: 'rgba(20, 184, 166, 0.09)',
-                                color: 'rgba(20, 184, 166, 0.9)',
-                                border: '1px solid rgba(20, 184, 166, 0.18)',
-                              }}
-                            >
-                              <Tag size={9} />
-                              {entry.key}
-                            </span>
-                          )}
-                          {!isSystem && !isEditing && customIdx >= 0 && (
-                            <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-[rgba(148,163,184,0.14)]"
-                                onClick={() => handleStartInlineEditTag(customIdx, 'manage')}
-                                title="重命名"
-                              >
-                                <Pencil size={9} style={{ color: 'var(--text-muted)' }} />
-                              </button>
-                              <button
-                                className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-[rgba(239,68,68,0.12)]"
-                                onClick={() => void handleDeleteCustomTag(customIdx)}
-                                title="删除"
-                              >
-                                <Trash2 size={9} style={{ color: 'var(--text-muted)' }} />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  编辑中：勾选 ☑ = 设为默认；拖动 chip = 调整顺序；双击自定义标签 = 重命名；点 ✕ = 删除（仅自定义）。
                 </div>
               )}
             </div>
