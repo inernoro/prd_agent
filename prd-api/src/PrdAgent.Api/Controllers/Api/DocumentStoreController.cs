@@ -2277,8 +2277,11 @@ public class DocumentStoreController : ControllerBase
             link.StoreName,
             link.Title,
             link.ExpiresAt,
-            shareUrl = $"/s/{link.Token}",
+            // 默认带分类前缀长链：URL 有语义，利于分享总管理面板按类型分类
+            shareUrl = $"/public/share/{link.Token}",
             shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
+            // 字母统一长链（ShortLink 索引支持），保留作为高级选项
+            unifiedShareUrl = $"/s/{link.Token}",
         }));
     }
 

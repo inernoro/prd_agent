@@ -4944,11 +4944,11 @@ public class ReportAgentController : ControllerBase
             share.Token,
             share.AccessLevel,
             share.ExpiresAt,
-            // P1 统一：对外 URL 不再带 /report-team/ 分类前缀，全部走 /s/{token}
-            shareUrl = $"/s/{share.Token}",
+            // 默认带分类前缀长链：URL 有语义，利于分享总管理面板按类型分类
+            shareUrl = $"/s/report-team/{share.Token}",
             shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
-            // 旧前端可能还在读 legacyShareUrl，保留兼容
-            legacyShareUrl = $"/s/report-team/{share.Token}",
+            // 字母统一长链（ShortLink 索引支持），保留作为高级选项
+            unifiedShareUrl = $"/s/{share.Token}",
         }));
     }
 

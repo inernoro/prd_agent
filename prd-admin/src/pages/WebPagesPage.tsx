@@ -1529,11 +1529,11 @@ function ShareDialog({ siteId, siteIds, onClose }: {
       if (res.success) {
         // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准
         const effPwd = res.data.password ?? pwd;
-        // P1 URL 统一后：
-        //   shareUrl       = /s/{token}（字母长链，统一格式，不可枚举，推荐）
-        //   shortShareUrl  = /s/{seq}（数字超短链，可被遍历枚举，须配强密码）
-        //   legacyShareUrl = /s/wp/{token}（旧版带前缀长链，仅向后兼容，新链接不再使用）
-        // 默认走 shareUrl 字母长链；短链选项走 shortShareUrl；如后端分配 seq 失败则回退到长链
+        // P1 调整（2026-05-21 用户反馈）：
+        //   shareUrl        = /s/wp/{token}（带分类前缀长链，URL 有语义、利于总管理分类）
+        //   shortShareUrl   = /s/{seq}（数字超短链，须配强密码）
+        //   unifiedShareUrl = /s/{token}（字母统一长链，ShortLink 索引支持，高级用）
+        // 默认走 shareUrl 带前缀长链；短链选项走 shortShareUrl
         const chosenUrl = isShort
           ? (res.data.shortShareUrl ?? res.data.shareUrl)
           : res.data.shareUrl;

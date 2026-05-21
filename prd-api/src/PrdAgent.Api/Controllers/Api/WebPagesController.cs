@@ -478,9 +478,10 @@ public class WebPagesController : ControllerBase
                 req.Password, req.ExpiresInDays,
                 purpose: req.Purpose == "visit" ? "visit" : "share");
 
-            // P1 URL 统一：shareUrl 默认走字母长链 /s/{token}（不可枚举、统一格式）
-            // shortShareUrl 提供数字短链 /s/{seq}（可被前端做"复制超短链"次按钮）
-            // 旧 legacyShareUrl /s/wp/{token} 保留兼容（老前端 / 已分享出去的 URL 仍有效）
+            // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
+            //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
+            //   - 用户只在主动选「超短链」时才用纯数字 /s/{seq}
+            //   - 字母统一长链 /s/{token} 仍然可用（ShortLink 全局索引支持），但不主推
             return Ok(ApiResponse<object>.Ok(new
             {
                 share.Id,
@@ -490,9 +491,9 @@ public class WebPagesController : ControllerBase
                 share.Password,
                 share.ExpiresAt,
                 share.ShortSeq,
-                shareUrl = $"/s/{share.Token}",
+                shareUrl = $"/s/wp/{share.Token}",
                 shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
-                legacyShareUrl = $"/s/wp/{share.Token}",
+                unifiedShareUrl = $"/s/{share.Token}",
             }));
         }
         catch (ArgumentException ex)
