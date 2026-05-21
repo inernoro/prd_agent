@@ -333,7 +333,7 @@ function ReportHistoryStrip({
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
 
-  // 摊平所有周报，最近的在最左
+  // 摊平所有周报，最近的在最前
   const flat = useMemo(() => {
     const all: ReportLite[] = [];
     for (const g of groupedReports) all.push(...g.items);
@@ -344,38 +344,26 @@ function ReportHistoryStrip({
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between px-1">
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          ← 左右滑动查看历史周报 · 共 {flat.length} 份
+          按周次倒序排列 · 共 {flat.length} 份
         </span>
       </div>
-      <div className="relative">
-        {/* 时间轴细线（横向，所有卡片底部对齐的水平线） */}
-        <div
-          className="absolute left-0 right-0 pointer-events-none"
-          style={{
-            bottom: 16,
-            height: 1,
-            background: isLight ? 'var(--hairline)' : 'rgba(148,163,184,0.18)',
-          }}
-        />
-        <div
-          className="flex gap-3 overflow-x-auto pb-5 pt-2"
-          style={{
-            scrollbarWidth: 'thin',
-            scrollSnapType: 'x proximity',
-            // 右侧渐隐遮罩提示"还有更多"
-            maskImage: 'linear-gradient(to right, black 0%, black 95%, transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to right, black 0%, black 95%, transparent 100%)',
-          }}
-        >
-          {flat.map((report) => (
-            <MiniReportCard
-              key={report.id}
-              report={report}
-              isLight={isLight}
-              onClick={() => onOpen(report.id)}
-            />
-          ))}
-        </div>
+      {/*
+        响应式网格：
+        - <640px (sm 以下)：1 列（手机）
+        - 640-1023px (sm-lg)：2 列（小平板）
+        - 1024-1279px (lg-xl)：3 列（笔记本/小窗口）
+        - ≥1280px (xl 及以上)：4 列（桌面）
+        卡片高度统一由内容撑开，flex 内部 mt-auto 让进度条/日期靠下对齐。
+      */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {flat.map((report) => (
+          <MiniReportCard
+            key={report.id}
+            report={report}
+            isLight={isLight}
+            onClick={() => onOpen(report.id)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -402,11 +390,8 @@ function MiniReportCard({
 
   return (
     <div
-      className="group relative flex flex-col rounded-xl cursor-pointer transition-all duration-200 hover:translate-y-[-2px]"
+      className="group relative flex flex-col rounded-xl cursor-pointer transition-all duration-200 hover:translate-y-[-2px] w-full min-w-0"
       style={{
-        flex: '0 0 auto',
-        width: 220,
-        scrollSnapAlign: 'start',
         background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
         backdropFilter: isLight ? undefined : 'blur(12px)',
         WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
