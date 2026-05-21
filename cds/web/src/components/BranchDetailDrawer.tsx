@@ -1853,9 +1853,9 @@ export function BranchDetailDrawer({
                       <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
-                        {services.length > 1 ? (
-                          <div className="flex gap-2 overflow-x-auto border-b border-[hsl(var(--hairline))] px-4 py-3">
-                            {services.map((svc) => (
+                        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+                          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                            {(services.length > 0 ? services : []).map((svc) => (
                               <button
                                 key={svc.profileId}
                                 type="button"
@@ -1872,7 +1872,8 @@ export function BranchDetailDrawer({
                               </button>
                             ))}
                           </div>
-                        ) : null}
+                          <CopyServiceLogsButton service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                        </div>
                         <ServiceLogsPanel service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
                       </>
                     )}
@@ -2565,70 +2566,29 @@ function ServiceLogsPanel({
   service: ServiceState | null;
   state: ServiceLogsState;
 }): JSX.Element {
-  const [copied, setCopied] = useState(false);
   const logs = state.status === 'ok' ? (state.logs || '') : '';
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
   const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
   const serviceLogViewportClass = 'min-h-0 flex-1 overflow-auto';
 
-  async function copyLogs(): Promise<void> {
-    if (!service) return;
-    const text = [
-      `${service.profileId} ${statusLabel(service.status)} :${service.hostPort || '?'}`,
-      service.containerName,
-      service.errorMessage ? `error: ${service.errorMessage}` : '',
-      '',
-      visibleLogs,
-    ].filter(Boolean).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    } catch {
-      setCopied(false);
-    }
-  }
-
   if (!service) {
     return <div className={DETAIL_LOG_EMPTY_CLASS}>选择一个服务查看容器日志。</div>;
   }
 
   return (
-    <div className="h-[424px] min-w-0 overflow-hidden p-4">
+    <div className="h-[424px] min-w-0 overflow-hidden p-4 pt-3">
       <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
-        <div className="shrink-0 border-b border-[hsl(var(--hairline))] px-4 py-3">
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold">{service.profileId}</span>
-                <span className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${statusClass(service.status)}`}>{statusLabel(service.status)}</span>
-              </div>
-              <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
-                <span>:{service.hostPort || '?'}</span>
-                <span className="min-w-0 truncate">{service.containerName}</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => void copyLogs()}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copied ? '已复制' : '复制'}
-            </button>
-          </div>
-          {service.errorMessage ? (
-            <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-              {service.errorMessage}
-            </div>
-          ) : null}
-        </div>
         <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
           <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-muted-foreground">
             <span>容器详情日志</span>
             {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
           </div>
+          {service.errorMessage ? (
+            <div className="mb-2 shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+              {service.errorMessage}
+            </div>
+          ) : null}
           {state.status === 'error' && isCurrent ? (
             <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
               {state.message}
@@ -2643,6 +2603,48 @@ function ServiceLogsPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function CopyServiceLogsButton({
+  service,
+  state,
+}: {
+  service: ServiceState | null;
+  state: ServiceLogsState;
+}): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const isCurrent = service && state.profileId === service.profileId;
+  const logs = state.status === 'ok' && isCurrent ? normalizeContainerLogsForDisplay(state.logs || '') : '';
+
+  async function copyLogs(): Promise<void> {
+    if (!service) return;
+    const text = [
+      `${service.profileId} ${statusLabel(service.status)} :${service.hostPort || '?'}`,
+      service.containerName,
+      service.errorMessage ? `error: ${service.errorMessage}` : '',
+      '',
+      logs,
+    ].filter(Boolean).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+      onClick={() => void copyLogs()}
+      disabled={!service}
+    >
+      <Copy className="h-3.5 w-3.5" />
+      {copied ? '已复制' : '复制'}
+    </button>
   );
 }
 
