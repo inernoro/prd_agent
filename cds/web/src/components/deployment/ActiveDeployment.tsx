@@ -54,8 +54,9 @@ function HighlightedLogBlock({
   useEffect(() => {
     if (autoScrollToBottom) scrollToBottom();
   }, [autoScrollToBottom, text]);
+  const hasHeightClass = /\bh-(?:full|\[|[0-9])/.test(className);
   return (
-    <div className="relative h-full min-h-0">
+    <div className={`relative min-h-0 ${hasHeightClass ? className : `h-full ${className}`}`}>
       <button
         type="button"
         className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[11px] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
@@ -65,7 +66,7 @@ function HighlightedLogBlock({
         <ArrowDownToLine className="h-3 w-3" />
         底部
       </button>
-      <div ref={viewportRef} className={`h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[11px] leading-5 ${className}`}>
+      <div ref={viewportRef} className="h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[11px] leading-5">
         {lines.map((line, index) => (
           <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
             {line || ' '}

@@ -2570,7 +2570,7 @@ function ServiceLogsPanel({
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
   const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
-  const serviceLogViewportClass = 'h-[424px]';
+  const serviceLogViewportClass = 'min-h-0 flex-1 overflow-auto';
 
   async function copyLogs(): Promise<void> {
     if (!service) return;
@@ -2591,13 +2591,13 @@ function ServiceLogsPanel({
   }
 
   if (!service) {
-    return <div className="p-5 text-sm text-muted-foreground">选择一个服务查看容器日志。</div>;
+    return <div className={DETAIL_LOG_EMPTY_CLASS}>选择一个服务查看容器日志。</div>;
   }
 
   return (
-    <div className="min-w-0 p-4">
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
-        <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
+    <div className="h-[424px] min-w-0 overflow-hidden p-4">
+      <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
+        <div className="shrink-0 border-b border-[hsl(var(--hairline))] px-4 py-3">
           <div className="flex min-w-0 items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
@@ -2624,8 +2624,8 @@ function ServiceLogsPanel({
             </div>
           ) : null}
         </div>
-        <div className="px-4 py-3">
-          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+          <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-muted-foreground">
             <span>容器详情日志</span>
             {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
           </div>
