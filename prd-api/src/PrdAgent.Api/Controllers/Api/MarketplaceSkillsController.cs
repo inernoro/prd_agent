@@ -48,6 +48,7 @@ public class MarketplaceSkillsController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly SkillZipMetadataExtractor _zipExtractor;
     private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<MarketplaceSkillsController> _logger;
 
     public MarketplaceSkillsController(
@@ -57,6 +58,7 @@ public class MarketplaceSkillsController : ControllerBase
         IAssetStorage assetStorage,
         SkillZipMetadataExtractor zipExtractor,
         IConfiguration config,
+        IHttpClientFactory httpClientFactory,
         ILogger<MarketplaceSkillsController> logger)
     {
         _db = db;
@@ -65,6 +67,7 @@ public class MarketplaceSkillsController : ControllerBase
         _assetStorage = assetStorage;
         _zipExtractor = zipExtractor;
         _config = config;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -155,6 +158,78 @@ public class MarketplaceSkillsController : ControllerBase
             .ToList();
 
         return Ok(ApiResponse<object>.Ok(new { tags = distinct }));
+    }
+
+    // ======================================================================
+    // Zip 同源代理（详情弹窗在线预览）
+    // ======================================================================
+
+    /// <summary>
+    /// 通过后端代理转发技能 zip,让浏览器在同源下解压预览,避开 COS/R2 公链的 CORS 限制。
+    /// 直链 download 仍走 skill.zipUrl(用户点「下载」时浏览器自己跳转,不受 CORS 影响)。
+    /// 仅供预览场景的 JSZip 解压使用,不替代 zipUrl 字段。
+    /// </summary>
+    [HttpGet("{id}/zip-content")]
+    public async Task<IActionResult> ZipContent(string id, CancellationToken ct)
+    {
+        var skill = await _db.MarketplaceSkills
+            .Find(x => x.Id == id && x.IsPublic)
+            .FirstOrDefaultAsync(ct);
+        if (skill == null || string.IsNullOrEmpty(skill.ZipUrl))
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "技能不存在或已下架"));
+
+        return await ProxyZipAsync(skill.ZipUrl, skill.OriginalFileName, ct);
+    }
+
+    /// <summary>
+    /// 公开分享版本的 zip 代理:用 share token 鉴权,匹配 ViewShare 端点的 AllowAnonymous 语义。
+    /// </summary>
+    [HttpGet("public/skill-share/{token}/zip-content")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ZipContentByShareToken(string token, CancellationToken ct)
+    {
+        var link = await _db.MarketplaceSkillShareLinks.Find(l => l.Token == token).FirstOrDefaultAsync(ct);
+        if (link == null || link.IsRevoked)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "分享链接不存在或已撤销"));
+        if (link.ExpiresAt.HasValue && link.ExpiresAt.Value < DateTime.UtcNow)
+            return NotFound(ApiResponse<object>.Fail("EXPIRED", "分享链接已过期"));
+
+        var skill = await _db.MarketplaceSkills
+            .Find(x => x.Id == link.SkillId && x.IsPublic)
+            .FirstOrDefaultAsync(ct);
+        if (skill == null || string.IsNullOrEmpty(skill.ZipUrl))
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "关联技能已删除或下架"));
+
+        return await ProxyZipAsync(skill.ZipUrl, skill.OriginalFileName, ct);
+    }
+
+    private async Task<IActionResult> ProxyZipAsync(string sourceUrl, string? originalFileName, CancellationToken ct)
+    {
+        try
+        {
+            var http = _httpClientFactory.CreateClient();
+            http.Timeout = TimeSpan.FromSeconds(30);
+            var upstream = await http.GetAsync(sourceUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (!upstream.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[MarketplaceSkills] zip 代理失败 status={Status} url={Url}",
+                    upstream.StatusCode, sourceUrl);
+                return StatusCode(502, ApiResponse<object>.Fail("UPSTREAM_FETCH_FAILED",
+                    $"从存储下载 zip 失败 (HTTP {(int)upstream.StatusCode})"));
+            }
+            var stream = await upstream.Content.ReadAsStreamAsync(ct);
+            var fileName = string.IsNullOrWhiteSpace(originalFileName) ? "skill.zip" : originalFileName;
+            return File(stream, "application/zip", fileName, enableRangeProcessing: false);
+        }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MarketplaceSkills] zip 代理异常");
+            return StatusCode(502, ApiResponse<object>.Fail("UPSTREAM_FETCH_FAILED", "下载源 zip 时发生错误"));
+        }
     }
 
     // ======================================================================

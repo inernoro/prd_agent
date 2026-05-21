@@ -91,7 +91,10 @@ export function SkillDetailModal({
 
         {/* Body */}
         <div className="flex-1" style={{ minHeight: 0 }}>
-          <SkillContentBrowser zipUrl={skill.zipUrl} sizeBytes={skill.zipSizeBytes} />
+          <SkillContentBrowser
+            zipUrl={`/api/marketplace/skills/${skill.id}/zip-content`}
+            sizeBytes={skill.zipSizeBytes}
+          />
         </div>
       </div>
     </div>

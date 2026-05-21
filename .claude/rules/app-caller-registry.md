@@ -89,6 +89,7 @@ public static class Admin                    // 应用大类
 |------|------|
 | 2026-04-27 PR #504 | `ChangelogController` 硬编码 `"prd-admin.changelog.aiSummary::chat"` 但没注册到 Registry，导致点击"AI 总结"运行时报 `appCallerCode 未注册`。逾越守卫的双重原因：(a) 测试正则 `[a-z0-9-]` 段不允许大写，camelCase 被静默跳过 (b) `PrdAgent.Tests` 项目压根没在 `PrdAgent.sln` 里，CI 根本没跑这个测试 |
 | 2026-05-09 fix | 放宽正则到 `[a-zA-Z0-9-]` + 新增 kebab-case 强制测试 + `PrdAgent.Tests` 加入 sln，三层兜底 |
+| 2026-05-21 二次回归 | `MarketplaceSkillsController.GenerateSummaryAsync` 硬编码 `"marketplace-skill.summary::chat"` 没注册，运行时炸 `APP_CALLER_INVALID`。同代码族还有 `page-agent.generate::chat`（CapsuleExecutor 3 处）也未注册。**漏在哪**：CI 守卫的 `IsKnownPrefix` 是封闭式白名单（`prd-agent / visual-agent / ...`），新加的 `marketplace-skill / page-agent / prd-agent-web / document-store / open-platform-agent` 前缀都不在表里 —— 凡是 prefix 不在表里的 caller-code 字面量都被 `if (!IsKnownPrefix(code)) continue;` 静默跳过，CI 既没报错也没报警。**这次补哪**：（a）测试改为 default-deny —— 删掉 `AllowedPrefixes / IsKnownPrefix`，扫到的所有 `*::modelType` 字面量都必须在 Registry 找到；如确需豁免（虚构示例），写入 `KnownNonRegisteredLiterals` 显式 set 并加注释。（b）补登 `marketplace-skill.summary / draft-description` + `page-agent.generate` 三个注册项 |
 
 ## 排查清单
 
