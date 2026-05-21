@@ -1456,6 +1456,7 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
 }
 
 type ProjectBrand = {
+  key: string;
   label: string;
   tileClassName: string;
   icon: JSX.Element;
@@ -1463,20 +1464,18 @@ type ProjectBrand = {
   source: string;
 };
 
-function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number], project: ProjectSummary): ProjectBrand {
+function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number]): ProjectBrand {
   const raw = [
     service.id,
     service.name,
     service.dockerImage,
     service.command,
     service.workDir,
-    project.name,
-    project.slug,
-    project.description,
   ].filter(Boolean).join(' ').toLowerCase();
 
   if (raw.includes('dotnet') || raw.includes('aspnet') || raw.includes('.net') || raw.includes('csharp') || raw.includes('csproj')) {
     return {
+      key: 'dotnet',
       label: '.NET',
       tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
       icon: <DotnetIcon />,
@@ -1486,6 +1485,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('node') || raw.includes('pnpm') || raw.includes('npm ') || raw.includes('yarn') || raw.includes('vite') || raw.includes('next') || raw.includes('react')) {
     return {
+      key: 'node',
       label: 'Node.js',
       tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300',
       icon: <NodeIcon />,
@@ -1495,6 +1495,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('python') || raw.includes('pip ') || raw.includes('uvicorn') || raw.includes('fastapi') || raw.includes('django') || raw.includes('flask')) {
     return {
+      key: 'python',
       label: 'Python',
       tileClassName: 'border-blue-600/45 bg-blue-500/15 text-blue-700 dark:border-blue-500/35 dark:bg-blue-500/10 dark:text-blue-300',
       icon: <PythonIcon />,
@@ -1504,6 +1505,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('java') || raw.includes('maven') || raw.includes('gradle') || raw.includes('spring')) {
     return {
+      key: 'java',
       label: 'Java',
       tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-300',
       icon: <JavaIcon />,
@@ -1513,6 +1515,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (/\bgolang\b|\bgo[:\s-]/.test(raw) || raw.includes('go run') || raw.includes('go build')) {
     return {
+      key: 'go',
       label: 'Go',
       tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-300',
       icon: <GoIcon />,
@@ -1522,6 +1525,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('rust') || raw.includes('cargo')) {
     return {
+      key: 'rust',
       label: 'Rust',
       tileClassName: 'border-amber-700/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-300',
       icon: <RustIcon />,
@@ -1531,6 +1535,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('php') || raw.includes('composer')) {
     return {
+      key: 'php',
       label: 'PHP',
       tileClassName: 'border-indigo-600/45 bg-indigo-500/15 text-indigo-700 dark:border-indigo-500/35 dark:bg-indigo-500/10 dark:text-indigo-300',
       icon: <PhpIcon />,
@@ -1540,6 +1545,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('nginx') || raw.includes('caddy') || raw.includes('static')) {
     return {
+      key: 'static',
       label: 'Static',
       tileClassName: 'border-lime-600/45 bg-lime-500/15 text-lime-700 dark:border-lime-500/35 dark:bg-lime-500/10 dark:text-lime-300',
       icon: <Braces className="cds-project-node-icon" />,
@@ -1549,6 +1555,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
   }
   if (raw.includes('api') || raw.includes('server') || raw.includes('backend')) {
     return {
+      key: 'api',
       label: 'API Service',
       tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
       icon: <Code2 className="cds-project-node-icon" />,
@@ -1557,6 +1564,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
     };
   }
   return {
+    key: `app:${service.name || service.id}`,
     label: service.name || service.id,
     tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-700 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-200',
     icon: <Code2 className="cds-project-node-icon" />,
@@ -1568,6 +1576,18 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
 function primaryInfraBrand(service: NonNullable<ProjectSummary['infraServices']>[number]): ProjectBrand {
   const brand = infraIconFor(service);
   const raw = `${service.id} ${service.name || ''} ${service.dockerImage || ''}`.toLowerCase();
+  const key =
+    raw.includes('mysql') ? 'mysql'
+      : raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') ? 'postgres'
+        : raw.includes('mongo') ? 'mongo'
+          : raw.includes('redis') ? 'redis'
+            : raw.includes('rabbit') ? 'rabbit'
+              : raw.includes('minio') ? 'minio'
+                : raw.includes('milvus') ? 'milvus'
+                  : raw.includes('qdrant') ? 'qdrant'
+                    : raw.includes('weaviate') ? 'weaviate'
+                      : raw.includes('chroma') ? 'chroma'
+                        : `infra:${service.name || service.id}`;
   const score =
     raw.includes('mysql') ? 490
       : raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') ? 485
@@ -1579,22 +1599,30 @@ function primaryInfraBrand(service: NonNullable<ProjectSummary['infraServices']>
                   : 100;
   return {
     ...brand,
+    key,
     score: score + (service.status === 'running' ? 10 : 0),
     source: service.dockerImage || service.name || service.id,
   };
 }
 
-function primaryProjectBrand(project: ProjectSummary): ProjectBrand | null {
+function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
   const appBrands = (project.appServices || [])
-    .map((service) => appIconFor(service, project))
+    .map((service) => appIconFor(service))
     .filter((brand) => brand.score > 0)
     .sort((left, right) => right.score - left.score);
-  if (appBrands[0]) return appBrands[0];
-
   const infraBrands = (project.infraServices || [])
     .map(primaryInfraBrand)
     .sort((left, right) => right.score - left.score);
-  return infraBrands[0] || null;
+  const selected = new Map<string, ProjectBrand>();
+  for (const brand of [...appBrands, ...infraBrands]) {
+    const existing = selected.get(brand.key);
+    if (!existing || brand.score > existing.score) selected.set(brand.key, brand);
+  }
+  const brands = Array.from(selected.values()).sort((left, right) => right.score - left.score);
+  const hasSpecificBrand = brands.some((brand) => !brand.key.startsWith('app:') && !brand.key.startsWith('infra:') && brand.key !== 'api');
+  return hasSpecificBrand
+    ? brands.filter((brand) => !brand.key.startsWith('app:') && !brand.key.startsWith('infra:') && brand.key !== 'api')
+    : brands;
 }
 
 function ProjectDockNode({
@@ -1693,7 +1721,9 @@ function ProjectCard({
   const runningInfra = project.runningInfraServiceCount || 0;
   const totalOnline = running + runningInfra;
   const totalServices = appTotal + infraCount;
-  const primaryBrand = primaryProjectBrand(project);
+  const stackBrands = uniqueProjectBrands(project);
+  const visibleStackBrands = stackBrands.slice(0, 6);
+  const hiddenStackBrandCount = Math.max(0, stackBrands.length - visibleStackBrands.length);
   const dockMouseX = useMotionValue(Infinity);
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
@@ -1739,15 +1769,18 @@ function ProjectCard({
               onMouseMove={(event) => dockMouseX.set(event.clientX)}
               onMouseLeave={() => dockMouseX.set(Infinity)}
             >
-              {primaryBrand ? (
-                <ProjectDockNode
-                  mouseX={dockMouseX}
-                  className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${primaryBrand.tileClassName}`}
-                  title={`${primaryBrand.label}${primaryBrand.source ? ` · ${primaryBrand.source}` : ''}`}
-                  ariaLabel={`${primaryBrand.label} 项目类型`}
-                >
-                  {primaryBrand.icon}
-                </ProjectDockNode>
+              {visibleStackBrands.length > 0 ? (
+                visibleStackBrands.map((brand) => (
+                  <ProjectDockNode
+                    key={brand.key}
+                    mouseX={dockMouseX}
+                    className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
+                    title={`${brand.label}${brand.source ? ` · ${brand.source}` : ''}`}
+                    ariaLabel={`${brand.label} 项目类型`}
+                  >
+                    {brand.icon}
+                  </ProjectDockNode>
+                ))
               ) : (
                 <ProjectDockNode
                   mouseX={dockMouseX}
@@ -1758,6 +1791,16 @@ function ProjectCard({
                   <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
                 </ProjectDockNode>
               )}
+              {hiddenStackBrandCount > 0 ? (
+                <ProjectDockNode
+                  mouseX={dockMouseX}
+                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[12px] font-semibold text-muted-foreground shadow-sm"
+                  title={`另有 ${hiddenStackBrandCount} 个技术栈`}
+                  ariaLabel={`另有 ${hiddenStackBrandCount} 个技术栈`}
+                >
+                  +{hiddenStackBrandCount}
+                </ProjectDockNode>
+              ) : null}
             </motion.div>
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
