@@ -120,15 +120,19 @@ function renderTarget(targetType: ShortLinkTargetType, token: string) {
       // ShareViewPage 已支持 tokenOverride，直接 mount，URL bar 不变
       return <ShareViewPage tokenOverride={token} />;
     case 'report':
-      // TODO(P1.next): ReportTeamShareViewPage 加 tokenOverride prop 后改为直接 mount
-      // 当前 Navigate 到旧路径让访问者立即可用；URL bar 会变成 /s/report-team/...
+      // 周报历史专用路由存在且有效
       return <Navigate to={`/s/report-team/${token}`} replace />;
+    case 'skill':
+      // 技能分享历史专用路由
+      return <Navigate to={`/s/skill/${token}`} replace />;
     case 'document_store':
-      // TODO(P1.next): DocumentStoreShareViewPage 加 tokenOverride prop 后改为直接 mount
-      return <Navigate to={`/public/share/${token}`} replace />;
+      // 知识库历史用 /library/share/:token；当前 App.tsx 尚未注册该 Route（独立缺陷，下条 debt 项）
+      // 这里跳转保持与 DocumentStorePage 创建分享 URL 一致；至少不发明新地址造成多套破链
+      return <Navigate to={`/library/share/${token}`} replace />;
     case 'workflow':
-      // TODO(P1.next): WorkflowShareViewPage 接入后改为直接 mount
-      return <Navigate to={`/share/workflow/${token}`} replace />;
+      // 工作流没有专用 ViewPage SPA 路由，历史一直走 /s/{token} 走本 Router；
+      // 显示 Unsupported 让用户知道路径，避免跳转到不存在的地址造成静默 404
+      return <UnsupportedTargetError targetType={targetType} />;
     default:
       return <UnsupportedTargetError targetType={targetType} />;
   }

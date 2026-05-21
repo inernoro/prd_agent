@@ -22,6 +22,20 @@ last_review: 2026-05-20
 
 ## 已知边界 / 待补项
 
+### -1. 历史发现：知识库 / 工作流 分享前端展示路由缺失（非本次引入）
+
+**事实**（2026-05-21 curl 自查）：
+- 知识库分享：`DocumentStorePage.tsx:333` 创建分享生成 URL `/library/share/{token}`，但 `App.tsx` 没有 `/library/share/:token` Route，只有 `/library/:storeId`
+- 工作流分享：URL `/s/{token}` 走 ShortLinkRouter，但 ShortLinkRouter 没有 workflow 专用渲染分支
+- 后端 `WorkflowAgentController` 没有 `shares/view/{token}` 端点（只有 list 端点）
+
+**结论**：知识库 / 工作流分享的"分享出去给别人看"流程历史上就是不完整的，访客点击 URL 看到的是 SPA fallback（一般是 home 或 404 兜底）。
+
+**修复方向**（独立任务，本系列不做）：
+- 知识库：App.tsx 加 `/library/share/:token` Route → 新建 LibraryStoreShareViewPage 组件 → 调用 `GET /api/document-store/public/share/{token}` 渲染
+- 工作流：新建 `GET /api/workflow/shares/view/{token}` 后端端点 + `/s/workflow/:token` 前端 Route + WorkflowShareViewPage 组件
+- 或者：把这两类的"分享"实质改为站内导航链接（私有功能），不发对外 URL
+
 ### 0. P1.next：周报 / 知识库 / 工作流 ShareView 接 `tokenOverride` prop
 
 **位置**：`prd-admin/src/pages/ReportTeamShareViewPage.tsx`、`prd-admin/src/pages/DocumentStoreShareView*.tsx`、`prd-admin/src/pages/WorkflowShareView*.tsx`、`prd-admin/src/pages/ShortLinkRouter.tsx::renderTarget`

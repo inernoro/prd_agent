@@ -1587,7 +1587,16 @@ function ShareDialog({ siteId, siteIds, onClose }: {
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
               <Check size={16} style={{ color: '#22c55e' }} />
-              <span className="text-sm" style={{ color: '#22c55e' }}>分享链接已生成，已复制到剪贴板</span>
+              <span className="text-sm flex-1" style={{ color: '#22c55e' }}>分享链接已生成，已复制到剪贴板</span>
+              <a
+                href="/assets?tab=shares"
+                target="_blank"
+                rel="noopener"
+                className="text-xs underline whitespace-nowrap"
+                style={{ color: '#22c55e' }}
+              >
+                查看所有分享 →
+              </a>
             </div>
             <div className="flex items-center gap-2">
               <input

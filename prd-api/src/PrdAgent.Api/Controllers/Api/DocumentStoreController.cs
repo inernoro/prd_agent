@@ -2277,8 +2277,9 @@ public class DocumentStoreController : ControllerBase
             link.StoreName,
             link.Title,
             link.ExpiresAt,
-            // 默认带分类前缀长链：URL 有语义，利于分享总管理面板按类型分类
-            shareUrl = $"/public/share/{link.Token}",
+            // 恢复原前端期望的 URL：DocumentStorePage 历史一直用 /library/share/{token}
+            //（事实自查：App.tsx 没有 /public/share/:token 路由；强行改会破坏前端兼容）
+            shareUrl = $"/library/share/{link.Token}",
             shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
             // 字母统一长链（ShortLink 索引支持），保留作为高级选项
             unifiedShareUrl = $"/s/{link.Token}",
