@@ -303,8 +303,7 @@ public class StubOpenAIController : ControllerBase
             };
 
             var color = RandomColor();
-            var wm = BuildCenterWatermarkText(prompt, null, null);
-            var imgBytes = RenderSolidPng(w, h, color, watermarkText: wm);
+            var imgBytes = RenderSolidPng(w, h, color, watermarkText: null);
             var b64 = Convert.ToBase64String(imgBytes);
 
             var responsePayload = new
@@ -370,8 +369,7 @@ public class StubOpenAIController : ControllerBase
         for (var i = 0; i < n; i++)
         {
             var color = RandomColor();
-            var wm = BuildCenterWatermarkText(request?.Prompt, n <= 1 ? null : i + 1, n <= 1 ? null : n);
-            var bytes = RenderSolidPng(w, h, color, watermarkText: wm);
+            var bytes = RenderSolidPng(w, h, color, watermarkText: null);
             var id = PutImage(bytes);
             var url = BuildAssetUrl(id);
             data.Add(new { url });
@@ -409,13 +407,10 @@ public class StubOpenAIController : ControllerBase
         var nRaw = form["n"].ToString();
         var n = int.TryParse(nRaw, out var nn) ? nn : 1;
         n = Math.Clamp(n, 1, 20);
-        var prompt = form["prompt"].ToString();
-        var watermarkBase = string.IsNullOrWhiteSpace(prompt) ? "PRD STUB" : $"PRD STUB | {prompt}";
         var data = new List<object>(n);
         for (var i = 0; i < n; i++)
         {
-            var watermark = n <= 1 ? watermarkBase : $"{watermarkBase} | #{i + 1}";
-            var outBytes = TryRenderWatermarkedFromInput(inputBytes, w, h, watermark);
+            var outBytes = TryRenderWatermarkedFromInput(inputBytes, w, h, string.Empty);
             var id = PutImage(outBytes);
             var url = BuildAssetUrl(id);
             data.Add(new { url });
@@ -518,7 +513,8 @@ public class StubOpenAIController : ControllerBase
                 ctx.BackgroundColor(new Rgba32(0, 0, 0, 255));
                 ctx.DrawImage(input, new Point(dx, dy), 1f);
             });
-            DrawWatermark(canvas, watermarkText);
+            if (!string.IsNullOrWhiteSpace(watermarkText))
+                DrawWatermark(canvas, watermarkText);
             DrawInnerFrame(canvas, colorHint: null);
 
             using var ms = new MemoryStream();
@@ -528,12 +524,13 @@ public class StubOpenAIController : ControllerBase
         catch
         {
             var color = RandomColor();
-            return RenderSolidPng(w, h, color, watermarkText);
+            return RenderSolidPng(w, h, color, watermarkText: null);
         }
     }
 
     private void DrawWatermark(Image<Rgba32> img, string text)
     {
+        if (string.IsNullOrWhiteSpace(text)) return;
         // 右下角水印：半透明底 + 文本（用于 image edits，更"像真实服务"）
         var w = img.Width;
         var h = img.Height;
@@ -560,6 +557,7 @@ public class StubOpenAIController : ControllerBase
 
     private void DrawCenterWatermark(Image<Rgba32> img, string text)
     {
+        if (string.IsNullOrWhiteSpace(text)) return;
         // 中间水印：只写一块（不铺满），用于快速验证"prompt 是否透传 + 返回容器是否遮挡"
         var w = img.Width;
         var h = img.Height;
@@ -575,7 +573,7 @@ public class StubOpenAIController : ControllerBase
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Take(3)
             .ToList();
-        if (lines.Count == 0) lines.Add("PRD STUB");
+        if (lines.Count == 0) return;
 
         var options = new TextOptions(font);
         var sizes = lines.Select(x => TextMeasurer.MeasureSize(x, options)).ToList();

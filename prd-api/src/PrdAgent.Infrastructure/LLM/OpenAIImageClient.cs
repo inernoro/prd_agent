@@ -38,6 +38,12 @@ public class OpenAIImageClient
     private readonly WatermarkFontRegistry _fontRegistry;
     private readonly ILLMRequestContextAccessor? _ctxAccessor;
 
+    /// <summary>
+    /// false：生图成功后返回的展示 Url 使用已上传原图，不再按用户水印配置叠字并写入 watermark 域。
+    /// 恢复叠水印时改为 true，或后续改为读取配置项。
+    /// </summary>
+    private const bool ApplyServerSideUserWatermarkOnImageGenOutputs = false;
+
     public OpenAIImageClient(
         MongoDbContext db,
         ILlmGateway gateway,
@@ -723,7 +729,7 @@ public class OpenAIImageClient
                             domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                         var displayUrl = stored.Url;
 
-                        if (wmConfigGoogle != null)
+                        if (ApplyServerSideUserWatermarkOnImageGenOutputs && wmConfigGoogle != null)
                         {
                             try
                             {
@@ -827,7 +833,9 @@ public class OpenAIImageClient
             // 根据 appCallerCode 解析 appKey 查找水印配置（不传则不打水印）
             var appKeyForWatermark = TryResolveAppKeyFromAppCallerCode(appCallerCode);
             var watermarkConfig = string.IsNullOrWhiteSpace(appKeyForWatermark) ? null : await TryGetWatermarkConfigAsync(appKeyForWatermark, ct);
-            _logger.LogInformation("ImageGen watermark config resolved: {HasWatermark}", watermarkConfig != null);
+            _logger.LogInformation(
+                "ImageGen watermark config resolved: wouldApply={WouldApply}",
+                watermarkConfig != null && ApplyServerSideUserWatermarkOnImageGenOutputs);
             var cosInfos = new List<object>();
             for (var i = 0; i < images.Count; i++)
             {
@@ -864,7 +872,7 @@ public class OpenAIImageClient
                 var displayUrl = stored.Url;
 
                 // 3. 如果有水印配置，生成水印图保存到 watermark 目录（仅用于展示）
-                if (watermarkConfig != null)
+                if (ApplyServerSideUserWatermarkOnImageGenOutputs && watermarkConfig != null)
                 {
                     try
                     {
@@ -1140,7 +1148,7 @@ public class OpenAIImageClient
                         domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                     var displayUrl = stored.Url;
 
-                    if (wmConfig != null)
+                    if (ApplyServerSideUserWatermarkOnImageGenOutputs && wmConfig != null)
                     {
                         try
                         {
@@ -1284,7 +1292,7 @@ public class OpenAIImageClient
                         domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
                     var displayUrl = stored.Url;
 
-                    if (wmConfig != null)
+                    if (ApplyServerSideUserWatermarkOnImageGenOutputs && wmConfig != null)
                     {
                         try
                         {
@@ -1609,7 +1617,7 @@ public class OpenAIImageClient
                 var displayUrl = stored.Url;
 
                 // 3. 如果有水印配置，生成水印图
-                if (watermarkConfig != null)
+                if (ApplyServerSideUserWatermarkOnImageGenOutputs && watermarkConfig != null)
                 {
                     try
                     {
