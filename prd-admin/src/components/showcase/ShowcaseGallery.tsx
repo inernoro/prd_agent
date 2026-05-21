@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import { Eye, BookOpen, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
@@ -435,21 +436,33 @@ export function ShowcaseGallery() {
         </div>
       )}
 
-      {/* Waterfall layout — natural aspect ratio cards */}
+      {/* Waterfall layout — natural aspect ratio cards
+          入场动效参考 reactbits.dev/components/masonry：位移 + 缩放 + 模糊淡入 + 顺序 stagger */}
       {!loading && items.length > 0 && (
         <>
           <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
             {columns.map((col, colIdx) => (
               <div key={colIdx} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap }}>
-                {col.map((item) => (
-                  <ShowcaseCard
+                {col.map((item, rowIdx) => (
+                  <motion.div
                     key={item.id}
-                    item={item}
-                    onLikeToggle={handleLikeToggle}
-                    onClick={() => setSelectedId(item.id)}
-                    isAdmin={isAdmin}
-                    onAdminWithdraw={handleAdminWithdraw}
-                  />
+                    initial={{ opacity: 0, y: 80, scale: 0.86, filter: 'blur(12px)' }}
+                    whileInView={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+                    viewport={{ once: true, margin: '0px 0px -10% 0px' }}
+                    transition={{
+                      duration: 0.65,
+                      ease: [0.22, 1, 0.36, 1],
+                      delay: Math.min(rowIdx * 0.08 + colIdx * 0.04, 0.6),
+                    }}
+                  >
+                    <ShowcaseCard
+                      item={item}
+                      onLikeToggle={handleLikeToggle}
+                      onClick={() => setSelectedId(item.id)}
+                      isAdmin={isAdmin}
+                      onAdminWithdraw={handleAdminWithdraw}
+                    />
+                  </motion.div>
                 ))}
               </div>
             ))}
