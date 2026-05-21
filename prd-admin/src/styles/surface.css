@@ -2573,3 +2573,50 @@
 }
 
 .mkt-qc-copy-primary:hover { opacity: 0.85; }
+
+/* ─────────────────────────────────────────────────────────────
+ * marketplace card wrappers — 用 reactbits SpotlightCard / PixelCard
+ * 包裹原 mkt-card 时的尺寸/层级 fix。
+ * 历史背景：reactbits 给的默认尺寸是 300×400 (PixelCard) 和 p-8 (SpotlightCard)，
+ * 直接拿来当卡片会被默认值劫持，所以这里只负责"打掉 reactbits 默认 + 让内层
+ * mkt-card 正确填满"，本身不引入新的视觉。
+ * ───────────────────────────────────────────────────────────── */
+
+/* 通用：wrapper 在卡片网格里行为像 block，撑满列宽 */
+.mkt-card-spotlight-wrap,
+.mkt-card-pixel-wrap {
+  width: 100%;
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+
+/* SpotlightCard 包裹下：内部 mkt-card 完整继承原有样式（保留 height/bg/border-radius） */
+.mkt-card-spotlight-wrap > .mkt-card {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+/* PixelCard 内部 grid 单元里 mkt-card 需要 w-full h-full 才能完全覆盖
+ * (PixelCard 默认 grid place-items-center 会把没有显式尺寸的 child 居中收缩) */
+.mkt-card-pixel-wrap > .mkt-card.mkt-card-as-pixel-inner {
+  width: 100%;
+  height: 100%;
+  background-color: transparent;
+  border: none;
+  border-radius: inherit;
+  /* 让像素动效在卡片背景透出 —— 关掉 mkt-card 的渐变背景 */
+  background-image: none !important;
+  z-index: 1;
+}
+
+/* 官方卡：底部信息面板加深一点，提升像素背景上的文字可读性 */
+.mkt-card-pixel-wrap > .mkt-card-as-pixel-inner .mkt-card-glass {
+  background: rgba(6, 8, 16, 0.78);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+}
+[data-theme="light"] .mkt-card-pixel-wrap > .mkt-card-as-pixel-inner .mkt-card-glass {
+  background: rgba(248, 245, 255, 0.88);
+}

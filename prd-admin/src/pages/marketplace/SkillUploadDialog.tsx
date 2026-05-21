@@ -20,6 +20,7 @@ import { updateMarketplaceSkill, uploadMarketplaceSkill } from '@/services';
 import { listSites, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
+import { resizeCoverImage } from '@/lib/imageResize';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 
 /**
@@ -40,7 +41,8 @@ interface Props {
 }
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
-const MAX_COVER_BYTES = 5 * 1024 * 1024;
+// 客户端 resize 后通常 < 200KB，上限放 2MB 防 GIF/极大原图（resize 失败时兜底也仍允许上传）
+const MAX_COVER_BYTES = 2 * 1024 * 1024;
 const ALLOWED_COVER_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const ALLOWED_SINGLE_EXT = ['md', 'markdown', 'txt'];
 const FIELD_CLASS = 'prd-field h-9 w-full rounded-[10px] px-3 text-[13px] focus:outline-none';
@@ -268,18 +270,26 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
     }
   }
 
-  const handleCover = (f: File | null) => {
+  const handleCover = async (f: File | null) => {
     if (!f) return;
     setError('');
-    if (f.size > MAX_COVER_BYTES) {
-      setError(`封面图不能超过 ${MAX_COVER_BYTES / 1024 / 1024}MB`);
-      return;
-    }
     if (f.type && !ALLOWED_COVER_MIME.includes(f.type)) {
       setError('封面图仅支持 png / jpg / webp / gif');
       return;
     }
-    setCoverFile(f);
+    // 客户端缩到 ≤ 1280×720 + webp(0.82)，原图 4000×3000 也能瘦到 ~200KB
+    let final: File = f;
+    try {
+      const r = await resizeCoverImage(f);
+      final = r.file;
+    } catch {
+      // resize 失败（极少数浏览器/损坏文件）兜底用原图，下面尺寸校验把关
+    }
+    if (final.size > MAX_COVER_BYTES) {
+      setError(`封面图过大（${(final.size / 1024 / 1024).toFixed(1)}MB），请换一张小一些的`);
+      return;
+    }
+    setCoverFile(final);
     setRemoveExistingCover(false);
   };
 

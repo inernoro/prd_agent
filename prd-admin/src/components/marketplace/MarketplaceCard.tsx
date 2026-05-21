@@ -21,6 +21,9 @@ import {
   type MarketplaceSkill,
 } from '@/lib/marketplaceTypes';
 import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
+import SpotlightCard from '@/components/reactbits/SpotlightCard';
+import PixelCard from '@/components/reactbits/PixelCard';
+import { officialSkillPalette } from '@/lib/officialSkillPalette';
 import { SkillDetailModal } from './SkillDetailModal';
 import { useSkillShare } from './useSkillShare';
 
@@ -196,28 +199,20 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  return (
-    <div
-      ref={cardRef}
-      className={`mkt-card${coverUrl ? ' has-cover' : ''}`}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      onClick={() => {
-        if (item.type === 'skill' && !detailOpen) setDetailOpen(true);
-      }}
-      style={{
-        backgroundImage: cardGradient,
-        ['--glow' as string]: ra(color.bg, 0.45),
-        cursor: item.type === 'skill' ? 'pointer' : undefined,
-      }}
-    >
-      {/* Full-bleed cover image (when available) */}
-      {coverUrl && (
+  const handleCardClick = () => {
+    if (item.type === 'skill' && !detailOpen) setDetailOpen(true);
+  };
+
+  // 共享的卡片内部内容 —— 由不同 wrapper（SpotlightCard / PixelCard）外包
+  const cardBody = (
+    <>
+      {/* Full-bleed cover image (when available, non-official only) */}
+      {coverUrl && !isOfficial && (
         <img src={coverUrl} alt={displayName} className="mkt-card-bg-img" />
       )}
 
-      {/* Icon centred in the upper area (no cover) */}
-      {!coverUrl && (
+      {/* Icon centred in the upper area (no cover, non-official) */}
+      {!coverUrl && !isOfficial && (
         <div
           className="mkt-card-icon-zone"
           style={{
@@ -355,7 +350,52 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           onClose={() => setDetailOpen(false)}
         />
       )}
-    </div>
+    </>
+  );
+
+  // ── 官方技能 → PixelCard 包裹（像素动效自身就是 identity，不放封面图）
+  if (isOfficial) {
+    const skill = item.data as MarketplaceSkill;
+    return (
+      <PixelCard
+        className="mkt-card-pixel-wrap !w-full !h-[210px] !aspect-auto !rounded-[14px] !border-0"
+        colors={officialSkillPalette(skill.title || skill.id)}
+        gap={6}
+        speed={28}
+        noFocus
+      >
+        <div
+          className="mkt-card mkt-card-as-pixel-inner"
+          onClick={handleCardClick}
+          style={{ cursor: item.type === 'skill' ? 'pointer' : undefined }}
+        >
+          {cardBody}
+        </div>
+      </PixelCard>
+    );
+  }
+
+  // ── 普通技能 / 其他配置 → SpotlightCard 包裹（光晕跟手）
+  return (
+    <SpotlightCard
+      className="mkt-card-spotlight-wrap !p-0 !rounded-[14px] !border-0 !bg-transparent !h-[210px] !block"
+      spotlightColor="rgba(255, 255, 255, 0.18)"
+    >
+      <div
+        ref={cardRef}
+        className={`mkt-card${coverUrl ? ' has-cover' : ''}`}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleCardClick}
+        style={{
+          backgroundImage: cardGradient,
+          ['--glow' as string]: ra(color.bg, 0.45),
+          cursor: item.type === 'skill' ? 'pointer' : undefined,
+        }}
+      >
+        {cardBody}
+      </div>
+    </SpotlightCard>
   );
 };
 
