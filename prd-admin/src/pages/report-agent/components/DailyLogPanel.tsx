@@ -742,6 +742,7 @@ export function DailyLogPanel() {
   /**
    * 翻转某标签的"默认勾选"状态（key 可以是系统 key 或自定义标签名）。
    * 注意：系统 Todo 不能与其它系统默认共存，加 Todo 时清理其它系统默认；加其它系统默认时清掉 Todo。
+   * 同步效果：勾选「默认」立即把该标签加入当前选中状态；取消「默认」也立即从选中里移除（让用户在管理面板上的操作即时反映到上方标签条）。
    */
   const handleToggleDefaultTag = async (key: string) => {
     const hasIt = defaultTags.includes(key);
@@ -750,16 +751,39 @@ export function DailyLogPanel() {
       next = defaultTags.filter((t) => t !== key);
     } else {
       next = [...defaultTags, key];
-      const sysSet = new Set<string>(SYSTEM_TAG_ORDER as readonly string[]);
+      const sysSetForToggle = new Set<string>(SYSTEM_TAG_ORDER as readonly string[]);
       if (key === DailyLogCategory.Todo) {
-        // 加 Todo → 移除其它系统默认（自定义可共存）
-        next = next.filter((t) => !sysSet.has(t) || t === DailyLogCategory.Todo);
-      } else if (sysSet.has(key)) {
-        // 加其它系统标签 → 移除 Todo
+        next = next.filter((t) => !sysSetForToggle.has(t) || t === DailyLogCategory.Todo);
+      } else if (sysSetForToggle.has(key)) {
         next = next.filter((t) => t !== DailyLogCategory.Todo);
       }
     }
     setDefaultTags(next);
+
+    // 即时同步到当前选中状态
+    const sysSet = new Set<string>(SYSTEM_TAG_ORDER as readonly string[]);
+    const isSystem = sysSet.has(key);
+    if (hasIt) {
+      // 取消默认 → 同步从选中移除
+      if (isSystem) setSelectedSystemTags((prev) => prev.filter((t) => t !== key));
+      else setSelectedCustomTags((prev) => prev.filter((t) => t.toLowerCase() !== key.toLowerCase()));
+    } else {
+      // 设为默认 → 同步加入选中
+      if (isSystem) {
+        setSelectedSystemTags((prev) => {
+          if (prev.includes(key)) return prev;
+          // 应用 Todo 与其它系统标签互斥
+          if (key === DailyLogCategory.Todo) return [DailyLogCategory.Todo];
+          return [...prev.filter((t) => t !== DailyLogCategory.Todo), key];
+        });
+      } else {
+        setSelectedCustomTags((prev) => {
+          if (prev.some((t) => t.toLowerCase() === key.toLowerCase())) return prev;
+          return [...prev, key];
+        });
+      }
+    }
+
     await persistAllTagPrefs({ defaultTags: next });
   };
 
@@ -1433,28 +1457,22 @@ export function DailyLogPanel() {
               )}
               {showTagManager && (
                 <div
-                  className="mt-1 rounded-xl px-3 py-2.5 flex flex-col gap-2"
+                  className="mt-1 rounded-lg px-2.5 py-2 flex flex-col gap-1.5"
                   style={{
-                    border: '1px solid rgba(148, 163, 184, 0.2)',
-                    background: 'linear-gradient(180deg, rgba(148,163,184,0.06) 0%, rgba(148,163,184,0.03) 100%)',
+                    border: '1px solid rgba(148, 163, 184, 0.18)',
+                    background: 'rgba(148,163,184,0.04)',
                   }}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>管理标签</span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                      自定义 {customTags.length}/{MAX_CUSTOM_TAG_COUNT} · 默认 {defaultTags.length} 项
-                    </span>
-                  </div>
-                  {/* 新增自定义标签 */}
-                  <div className="flex items-center gap-2">
+                  {/* 单行：新增 input + 添加按钮 + 统计 */}
+                  <div className="flex items-center gap-1.5">
                     <input
-                      className="flex-1 px-3 py-1.5 rounded-lg text-[12px] outline-none transition-colors duration-150"
+                      className="flex-1 px-2 py-1 rounded text-[11px] outline-none transition-colors duration-150"
                       style={{
                         background: 'var(--bg-secondary)',
                         color: 'var(--text-primary)',
-                        border: `1px solid ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.45)' : 'rgba(148, 163, 184, 0.28)'}`,
+                        border: `1px solid ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.45)' : 'rgba(148, 163, 184, 0.22)'}`,
                       }}
-                      placeholder={`新增自定义标签（最多 ${MAX_CUSTOM_TAG_COUNT} 个）`}
+                      placeholder="新增自定义标签，回车添加"
                       value={tagDraft}
                       onChange={(e) => setTagDraft(e.target.value)}
                       onKeyDown={(e) => {
@@ -1465,29 +1483,30 @@ export function DailyLogPanel() {
                       }}
                       disabled={savingTags}
                     />
-                    <Button
-                      variant="secondary"
-                      size="sm"
+                    <button
+                      className="px-2 py-1 rounded text-[11px] font-medium transition-colors disabled:opacity-40"
+                      style={{
+                        background: canSubmitTagDraft && !savingTags ? 'rgba(20, 184, 166, 0.12)' : 'transparent',
+                        color: canSubmitTagDraft && !savingTags ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
+                        border: `1px solid ${canSubmitTagDraft && !savingTags ? 'rgba(20, 184, 166, 0.3)' : 'rgba(148, 163, 184, 0.18)'}`,
+                      }}
                       onClick={() => void handleAddCustomTag()}
                       disabled={!canSubmitTagDraft || savingTags}
                     >
                       添加
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between min-h-[16px]">
-                    <span
-                      className="text-[10px]"
-                      style={{ color: tagDraftTooLong ? 'rgba(239, 68, 68, 0.9)' : 'var(--text-muted)' }}
-                    >
-                      {tagDraftTooLong ? `超出 ${normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符` : '回车可快速添加；下方可拖动改变顺序、勾选默认'}
-                    </span>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                      {normalizedTagDraft.length}/{MAX_CUSTOM_TAG_LENGTH}
+                    </button>
+                    <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                      {customTags.length}/{MAX_CUSTOM_TAG_COUNT}
                     </span>
                   </div>
+                  {tagDraftTooLong && (
+                    <span className="text-[10px]" style={{ color: 'rgba(239, 68, 68, 0.9)' }}>
+                      超出 {normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符
+                    </span>
+                  )}
 
-                  {/* 排序 + 默认 + 删除 */}
-                  <div className="flex flex-col gap-1">
+                  {/* 2 列网格：拖动 + 默认 + 标签（行内紧凑） */}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
                     {orderedTagEntries.map((entry) => {
                       const isSystem = entry.kind === 'system';
                       const sysCfg = isSystem ? CATEGORY_CONFIG[entry.key] : null;
@@ -1498,7 +1517,7 @@ export function DailyLogPanel() {
                       return (
                         <div
                           key={`tag-row-${entry.kind}-${entry.key}`}
-                          className="group flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors"
+                          className="group flex items-center gap-1.5 px-1 py-1 rounded transition-colors"
                           draggable
                           onDragStart={(e) => {
                             e.dataTransfer.effectAllowed = 'move';
@@ -1510,57 +1529,43 @@ export function DailyLogPanel() {
                             const fromKey = e.dataTransfer.getData('text/plain');
                             if (fromKey && fromKey !== entry.key) void handleReorderTag(fromKey, entry.key);
                           }}
-                          style={{
-                            background: 'transparent',
-                            cursor: 'default',
-                          }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(148,163,184,0.06)'; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                         >
-                          {/* 拖动手柄 */}
                           <span
-                            className="select-none text-[14px] leading-none"
-                            style={{ color: 'var(--text-muted)', cursor: 'grab' }}
+                            className="select-none text-[11px] leading-none flex-shrink-0"
+                            style={{ color: 'var(--text-muted)', cursor: 'grab', opacity: 0.5 }}
                             title="拖动调整顺序"
                           >
                             ⋮⋮
                           </span>
-                          {/* 默认勾选 */}
-                          <label
-                            className="inline-flex items-center gap-1 text-[10px]"
-                            style={{ color: isDefault ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)', cursor: 'pointer' }}
-                            title="勾选则进入今日打点时自动选中此标签"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isDefault}
-                              onChange={() => void handleToggleDefaultTag(entry.key)}
-                              style={{ accentColor: 'rgba(16, 185, 129, 0.9)' }}
-                            />
-                            默认
-                          </label>
-                          {/* 标签 chip 或 重命名输入 */}
+                          <input
+                            type="checkbox"
+                            checked={isDefault}
+                            onChange={() => void handleToggleDefaultTag(entry.key)}
+                            className="cursor-pointer flex-shrink-0"
+                            style={{ accentColor: 'rgba(16, 185, 129, 0.9)', width: 12, height: 12 }}
+                            title="设为默认（新建打点时自动选中）"
+                          />
                           {isSystem ? (
                             <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
                               style={{
                                 background: sysCfg!.bg,
                                 color: sysCfg!.color,
                                 border: `1px solid ${sysCfg!.color.replace('0.95', '0.3')}`,
                               }}
                             >
-                              {SysIcon && <SysIcon size={11} />}
+                              {SysIcon && <SysIcon size={10} />}
                               {sysCfg!.label}
-                              <span className="text-[9px]" style={{ color: 'var(--text-muted)', marginLeft: 4 }}>系统</span>
                             </span>
                           ) : isEditing ? (
                             <input
-                              className="px-2 py-0.5 rounded-lg text-[11px] outline-none"
+                              className="px-1.5 py-0.5 rounded text-[10px] outline-none flex-1 min-w-0"
                               style={{
                                 background: 'rgba(59, 130, 246, 0.08)',
                                 color: 'rgba(59, 130, 246, 0.92)',
                                 border: '1px solid rgba(59, 130, 246, 0.35)',
-                                minWidth: 80,
                               }}
                               value={editingTagDraft}
                               autoFocus
@@ -1577,7 +1582,7 @@ export function DailyLogPanel() {
                             />
                           ) : (
                             <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px]"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]"
                               style={{
                                 background: 'rgba(20, 184, 166, 0.09)',
                                 color: 'rgba(20, 184, 166, 0.9)',
@@ -1588,36 +1593,27 @@ export function DailyLogPanel() {
                               {entry.key}
                             </span>
                           )}
-                          {/* 操作按钮：仅自定义可重命名/删除 */}
                           {!isSystem && !isEditing && customIdx >= 0 && (
                             <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
-                                className="inline-flex items-center justify-center w-5 h-5 rounded transition-colors hover:bg-[rgba(148,163,184,0.14)]"
+                                className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-[rgba(148,163,184,0.14)]"
                                 onClick={() => handleStartInlineEditTag(customIdx, 'manage')}
                                 title="重命名"
-                                aria-label="重命名标签"
                               >
-                                <Pencil size={10} style={{ color: 'var(--text-muted)' }} />
+                                <Pencil size={9} style={{ color: 'var(--text-muted)' }} />
                               </button>
                               <button
-                                className="inline-flex items-center justify-center w-5 h-5 rounded transition-colors hover:bg-[rgba(239,68,68,0.12)]"
+                                className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-[rgba(239,68,68,0.12)]"
                                 onClick={() => void handleDeleteCustomTag(customIdx)}
                                 title="删除"
-                                aria-label="删除标签"
                               >
-                                <Trash2 size={10} style={{ color: 'var(--text-muted)' }} />
+                                <Trash2 size={9} style={{ color: 'var(--text-muted)' }} />
                               </button>
                             </div>
-                          )}
-                          {isSystem && (
-                            <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>不可删除</span>
                           )}
                         </div>
                       );
                     })}
-                  </div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    拖动 ⋮⋮ 调整顺序；勾选「默认」会在新建打点时自动选中此标签；系统标签不可删，自定义标签可重命名/删除。
                   </div>
                 </div>
               )}
@@ -1627,21 +1623,16 @@ export function DailyLogPanel() {
           {/* ── 本周待办（置顶，跨日聚合）── */}
           {currentWeekPendingTodos.length > 0 && (
             <GlassCard variant="subtle" className="p-4 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Check size={14} style={{ color: 'rgba(16, 185, 129, 0.9)' }} />
-                  <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    本周待办
-                  </span>
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'rgba(16, 185, 129, 0.9)' }}
-                  >
-                    {currentWeekPendingTodos.length} 项未完成
-                  </span>
-                </div>
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                  完成或删除前会一直流转到下一天
+              <div className="flex items-center gap-2">
+                <Check size={14} style={{ color: 'rgba(16, 185, 129, 0.9)' }} />
+                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  本周待办
+                </span>
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded"
+                  style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'rgba(16, 185, 129, 0.9)' }}
+                >
+                  {currentWeekPendingTodos.length} 项未完成
                 </span>
               </div>
               <div className="flex flex-col gap-1">
