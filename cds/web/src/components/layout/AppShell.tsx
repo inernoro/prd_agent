@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Atom, Check, ChevronDown, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Atom, Check, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -234,9 +234,7 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
         </div>
         <div className="min-w-0 flex-1">
           <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
-          <div className="cds-rail-brand-subtitle mt-0.5">Projects</div>
         </div>
-        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
       </div>
 
       <div className="cds-rail-section">
