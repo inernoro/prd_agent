@@ -130,7 +130,11 @@ function classifyNonContractHttpError(args: {
 function isApiResponseLike(x: unknown): x is { success: boolean; data: unknown; error: unknown } {
   if (!x || typeof x !== 'object') return false;
   const obj = x as Record<string, unknown>;
-  return typeof obj.success === 'boolean' && 'data' in obj && 'error' in obj;
+  if (typeof obj.success !== 'boolean') return false;
+  // 后端 System.Text.Json + WhenWritingNull：失败时 data 为 null 会整段省略 data 字段，
+  // 仅保留 success:false + error；此前要求 'data' in obj 会导致误判为非契约响应。
+  if (obj.success === false && 'error' in obj) return true;
+  return 'data' in obj;
 }
 
 type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };

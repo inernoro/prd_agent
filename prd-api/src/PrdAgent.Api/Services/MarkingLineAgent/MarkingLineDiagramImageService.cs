@@ -116,13 +116,18 @@ public sealed class MarkingLineDiagramImageService
                 {
                     Prompt = imagePrompt,
                     N = 1,
-                    Size = "1792x1024",
+                    // 与周报海报等场景对齐：1024 方图兼容性最好；非 DALL-E 池常不支持 1792x1024
+                    Size = "1024x1024",
                     ResponseFormat = fmt,
                 },
                 ct).ConfigureAwait(false);
 
             if (!gen.Success || gen.Images.Count == 0)
             {
+                _logger.LogWarning(
+                    "MarkingLine diagram image gen failed: {Code} {Message}",
+                    gen.ErrorCode ?? "(null)",
+                    gen.ErrorMessage ?? "(null)");
                 return MarkingLineDiagramImageResult.Fail(
                     gen.ErrorCode ?? "IMAGE_GEN_FAILED",
                     gen.ErrorMessage ?? "图片生成失败");

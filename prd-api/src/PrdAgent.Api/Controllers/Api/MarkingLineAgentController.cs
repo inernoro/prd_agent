@@ -68,41 +68,59 @@ public sealed class MarkingLineAgentController : ControllerBase
     /// 根据简述生成产线示意图位图（PNG 等，由上游模型决定）。先 Chat 整理英文提示词，再文生图；返回 url 或 base64。
     /// </summary>
     [HttpPost("diagram/image")]
+    [Produces("application/json")]
     public async Task<IActionResult> RenderDiagramImage([FromBody] MarkingLineDiagramImageHttpRequest? request)
     {
-        var userId = this.GetRequiredUserId();
-        var format = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "url" : request!.ResponseFormat!.Trim();
-
-        var result = await _diagramImageService.TryGenerateAsync(
-            userId,
-            request?.Brief ?? string.Empty,
-            format,
-            CancellationToken.None).ConfigureAwait(false);
-
-        if (!result.Success)
+        try
         {
-            var code = result.ErrorCode ?? ErrorCodes.LLM_ERROR;
-            var message = result.ErrorMessage ?? "图片生成失败";
-            if (string.Equals(code, ErrorCodes.CONTENT_EMPTY, StringComparison.Ordinal))
+            var userId = this.GetRequiredUserId();
+            var format = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "url" : request!.ResponseFormat!.Trim();
+
+            var result = await _diagramImageService.TryGenerateAsync(
+                userId,
+                request?.Brief ?? string.Empty,
+                format,
+                CancellationToken.None).ConfigureAwait(false);
+
+            if (!result.Success)
             {
-                return BadRequest(ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
+                var code = result.ErrorCode ?? ErrorCodes.LLM_ERROR;
+                var message = result.ErrorMessage ?? "图片生成失败";
+                if (string.Equals(code, ErrorCodes.CONTENT_EMPTY, StringComparison.Ordinal))
+                {
+                    return BadRequest(ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
+                }
+
+                if (string.Equals(code, ErrorCodes.INVALID_FORMAT, StringComparison.Ordinal))
+                {
+                    return BadRequest(ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
+                }
+
+                return StatusCode(502, ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
             }
 
-            return StatusCode(502, ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(code, message));
+            var dto = new MarkingLineDiagramImageHttpDto
+            {
+                ImageUrl = result.ImageUrl,
+                ImageBase64 = result.ImageBase64,
+                MimeType = result.MimeType,
+                ImagePromptUsed = result.ImagePromptUsed,
+                RevisedPrompt = result.RevisedPrompt,
+                PromptComposerModel = result.PromptComposerModel,
+                PromptComposerPlatform = result.PromptComposerPlatform,
+            };
+
+            return Ok(ApiResponse<MarkingLineDiagramImageHttpDto>.Ok(dto));
         }
-
-        var dto = new MarkingLineDiagramImageHttpDto
+        catch (Exception ex)
         {
-            ImageUrl = result.ImageUrl,
-            ImageBase64 = result.ImageBase64,
-            MimeType = result.MimeType,
-            ImagePromptUsed = result.ImagePromptUsed,
-            RevisedPrompt = result.RevisedPrompt,
-            PromptComposerModel = result.PromptComposerModel,
-            PromptComposerPlatform = result.PromptComposerPlatform,
-        };
-
-        return Ok(ApiResponse<MarkingLineDiagramImageHttpDto>.Ok(dto));
+            _logger.LogError(ex, "MarkingLine diagram image endpoint failed");
+            return StatusCode(
+                500,
+                ApiResponse<MarkingLineDiagramImageHttpDto>.Fail(
+                    ErrorCodes.LLM_ERROR,
+                    $"生图请求处理异常：{ex.Message}"));
+        }
     }
 }
 
