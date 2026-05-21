@@ -666,7 +666,7 @@
       border-color 180ms ease,
       background-color 180ms ease,
       filter 180ms ease;
-    will-change: transform, width, height;
+    will-change: transform;
   }
 
   .cds-project-node-icon {

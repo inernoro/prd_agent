@@ -41,7 +41,7 @@ import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
-const PROJECT_DOCK_MAGNIFIED_SIZE = 82;
+const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
 const PROJECT_DOCK_DISTANCE = 150;
 const PROJECT_DOCK_SPRING = { mass: 0.12, stiffness: 180, damping: 16 };
 
@@ -1644,20 +1644,20 @@ function ProjectDockNode({
     if (!bounds) return Infinity;
     return value - bounds.x - bounds.width / 2;
   });
-  const size = useSpring(
+  const scale = useSpring(
     useTransform(
       distance,
       [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE],
-      [PROJECT_DOCK_BASE_SIZE, PROJECT_DOCK_MAGNIFIED_SIZE, PROJECT_DOCK_BASE_SIZE],
+      [1, PROJECT_DOCK_MAGNIFIED_SIZE / PROJECT_DOCK_BASE_SIZE, 1],
     ),
     PROJECT_DOCK_SPRING,
   );
   const y = useSpring(
-    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [0, -12, 0]),
+    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [0, -8, 0]),
     PROJECT_DOCK_SPRING,
   );
   const iconSize = useSpring(
-    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [28, 40, 28]),
+    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [28, 32, 28]),
     PROJECT_DOCK_SPRING,
   );
   const iconSizePx = useTransform(iconSize, (value) => `${value}px`);
@@ -1667,9 +1667,8 @@ function ProjectDockNode({
       ref={ref}
       className={className}
       style={{
-        width: size,
-        height: size,
         y,
+        scale,
         '--project-node-icon-size': iconSizePx,
       } as unknown as React.CSSProperties}
       title={title}
@@ -1765,7 +1764,7 @@ function ProjectCard({
         >
           <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
             <motion.div
-              className="cds-project-node-row flex flex-wrap items-center justify-center"
+              className="cds-project-node-row flex flex-nowrap items-center justify-center"
               onMouseMove={(event) => dockMouseX.set(event.clientX)}
               onMouseLeave={() => dockMouseX.set(Infinity)}
             >
