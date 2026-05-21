@@ -1515,19 +1515,41 @@ export function BranchDetailDrawer({
           </div>
           <div className="flex items-center gap-1">
             {githubPrHref ? (
-              <Button asChild variant="ghost" size="icon" title={`打开 GitHub PR #${branch?.githubPrNumber}`} aria-label="打开 GitHub PR">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="text-violet-600 hover:bg-violet-500/10 hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200"
+                title={`打开 GitHub PR #${branch?.githubPrNumber}`}
+                aria-label="打开 GitHub PR"
+              >
                 <a href={githubPrHref} target="_blank" rel="noreferrer">
                   <GitPullRequest />
                 </a>
               </Button>
-            ) : null}
+            ) : (
+              <Button variant="ghost" size="icon" disabled title="没有关联 GitHub PR" aria-label="没有关联 GitHub PR">
+                <GitPullRequest />
+              </Button>
+            )}
             {githubBranchHref ? (
-              <Button asChild variant="ghost" size="icon" title="打开 GitHub 分支" aria-label="打开 GitHub 分支">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                title="打开 GitHub 分支"
+                aria-label="打开 GitHub 分支"
+              >
                 <a href={githubBranchHref} target="_blank" rel="noreferrer">
                   <GitBranch />
                 </a>
               </Button>
-            ) : null}
+            ) : (
+              <Button variant="ghost" size="icon" disabled title="没有关联 GitHub 分支" aria-label="没有关联 GitHub 分支">
+                <GitBranch />
+              </Button>
+            )}
             <Button asChild variant="ghost" size="sm" title="完整页面">
               <a href={fullPageHref}>
                 <ExternalLink />
