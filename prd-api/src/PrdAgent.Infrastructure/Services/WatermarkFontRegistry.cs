@@ -109,7 +109,68 @@ public class WatermarkFontRegistry
             return fallback with { FallbackUsed = true, FallbackReason = $"font file missing for {def.FontKey}" };
         }
 
+        var systemFont = TryCreateSystemInstalledFont((float)fontSizePx);
+        if (systemFont != null)
+        {
+            _logger.LogWarning(
+                "Watermark bundled font {FileName} missing and remote fetch unavailable; using system font {Family}.",
+                def.FileName,
+                systemFont.Value.FamilyName);
+            return new WatermarkResolvedFont(
+                systemFont.Value.Font,
+                true,
+                "system font (bundled default.ttf unavailable)",
+                def.FontKey,
+                systemFont.Value.FamilyName);
+        }
+
         throw new FileNotFoundException($"Watermark font file missing: {def.FileName}");
+    }
+
+    /// <summary>
+    /// 当 <c>Assets/Fonts/default.ttf</c> 与 CDN 均不可用时，使用本机已安装字体，避免 Stub/CI 直接失败。
+    /// </summary>
+    private static (Font Font, string FamilyName)? TryCreateSystemInstalledFont(float fontSizePx)
+    {
+        static IEnumerable<FontFamily> NonEmojiFamilies() =>
+            SystemFonts.Collection.Families.Where(f => !f.Name.Contains("Emoji", StringComparison.OrdinalIgnoreCase));
+
+        string[] preferred =
+        {
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Noto Sans",
+            "Arial",
+            "Verdana"
+        };
+
+        foreach (var name in preferred)
+        {
+            try
+            {
+                var font = SystemFonts.CreateFont(name, fontSizePx, FontStyle.Regular);
+                return (font, name);
+            }
+            catch (FontFamilyNotFoundException)
+            {
+                // try next
+            }
+        }
+
+        foreach (var family in NonEmojiFamilies())
+        {
+            try
+            {
+                var font = family.CreateFont(fontSizePx, FontStyle.Regular);
+                return (font, family.Name);
+            }
+            catch (Exception)
+            {
+                // try next family
+            }
+        }
+
+        return null;
     }
 
     public FontFamily? TryResolveFamily(string fontKey)
