@@ -5,11 +5,12 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
 import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
@@ -516,6 +517,7 @@ function TreeNode({
   folderPrimaryMap,
   expandedFolders,
   useContentTitle,
+  showUpdatedTime,
   contentFirstLines,
   contentMatchIds,
   onToggleFolder,
@@ -533,6 +535,7 @@ function TreeNode({
   folderPrimaryMap: Map<string, string>;
   expandedFolders: Set<string>;
   useContentTitle: boolean;
+  showUpdatedTime: boolean;
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
   onToggleFolder: (id: string) => void;
@@ -652,6 +655,15 @@ function TreeNode({
           </span>
         )}
 
+        {/* 更新时间副标题：由"显示设置 → 显示更新时间"开关控制，默认关 */}
+        {!isFolder && showUpdatedTime && (entry.lastChangedAt || entry.updatedAt) && (
+          <RelativeTime
+            value={entry.lastChangedAt ?? entry.updatedAt}
+            className="text-[9.5px] tabular-nums flex-shrink-0 text-token-muted"
+            title={`最后更新：${new Date((entry.lastChangedAt ?? entry.updatedAt) as string).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+          />
+        )}
+
         {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
         {!isFolder && contentMatchIds.has(entry.id) && (
           <span
@@ -747,6 +759,7 @@ function TreeNode({
           folderPrimaryMap={folderPrimaryMap}
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
+          showUpdatedTime={showUpdatedTime}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
           onToggleFolder={onToggleFolder}
@@ -841,6 +854,11 @@ export function DocBrowser({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [useContentTitle, setUseContentTitle] = useState(true);
+  const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(
+    () => sessionStorage.getItem('doc-browser-show-updated-time') === '1',
+  );
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -1004,6 +1022,16 @@ export function DocBrowser({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showAddMenu]);
+
+  // 显示设置菜单 click outside
+  useEffect(() => {
+    if (!showSettingsMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) setShowSettingsMenu(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showSettingsMenu]);
 
   // 搜索过滤（本地 title 搜索 + 可选后端内容搜索）
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
@@ -1224,7 +1252,7 @@ export function DocBrowser({
 
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
         <div className="surface-panel-header space-y-2.5 px-3 py-3">
-          {/* 标题模式切换（正文标题/文件名）— 保留 */}
+          {/* 标题模式切换（正文标题/文件名）+ 显示设置 */}
           <div className="flex items-center justify-between">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
@@ -1233,6 +1261,35 @@ export function DocBrowser({
               {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
               {useContentTitle ? '正文标题' : '文件名'}
             </button>
+            <div ref={settingsMenuRef} className="relative">
+              <button
+                onClick={() => setShowSettingsMenu(v => !v)}
+                className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
+                title="显示设置">
+                <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
+                显示
+              </button>
+              {showSettingsMenu && (
+                <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover:bg-white/6">
+                    <input
+                      type="checkbox"
+                      checked={showUpdatedTime}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setShowUpdatedTime(next);
+                        sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
+                      }}
+                      className="h-3 w-3 cursor-pointer accent-current"
+                    />
+                    显示更新时间
+                  </label>
+                  <div className="px-2 py-1 text-[10px] text-token-muted">
+                    显示每条目最后变更时间，鼠标悬停查看精确时间和作者。
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex gap-1.5">
@@ -1414,6 +1471,7 @@ export function DocBrowser({
               folderPrimaryMap={folderPrimaryMap}
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
+              showUpdatedTime={showUpdatedTime}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
               onToggleFolder={toggleFolder}
