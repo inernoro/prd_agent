@@ -38,6 +38,9 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
     private List<DynamicSidecarInstance> _dynamic = new();
     private DateTime? _lastRefreshedAt;
     private string? _lastRefreshError;
+    private int? _lastLoggedDiscoveryCount;
+    private string? _lastLoggedDiscoveryReason;
+    private bool? _lastLoggedDiscoveryFailed;
 
     public DynamicSidecarRegistry(
         IOptionsMonitor<ClaudeSidecarOptions> options,
@@ -115,12 +118,20 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
 
         if (errors.Count > 0 && next.Count == 0)
         {
+            var errorReason = string.Join("; ", errors);
             lock (_lock)
             {
                 _lastRefreshedAt = DateTime.UtcNow;
                 _lastRefreshError = string.Join("; ", errors.Concat(notes));
             }
-            _logger.LogWarning("[CdsDiscovery] refresh failed; keeping previous snapshot: {Error}", string.Join("; ", errors));
+            if (ShouldLogDiscoverySummary(count: 0, reason: errorReason, failed: true))
+            {
+                _logger.LogWarning("[CdsDiscovery] refresh failed; keeping previous snapshot: {Error}", errorReason);
+            }
+            else
+            {
+                _logger.LogDebug("[CdsDiscovery] refresh still failing; keeping previous snapshot: {Error}", errorReason);
+            }
             return;
         }
 
@@ -137,14 +148,50 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         }
         if (next.Count == 0)
         {
-            _logger.LogWarning(
-                "[CdsDiscovery] refreshed 0 sidecar instance(s) from CDS; reason={Reason}",
-                zeroInstanceReason ?? "no discovery source returned instances");
+            var reason = zeroInstanceReason ?? "no discovery source returned instances";
+            if (ShouldLogDiscoverySummary(count: 0, reason: reason, failed: false))
+            {
+                _logger.LogWarning(
+                    "[CdsDiscovery] refreshed 0 sidecar instance(s) from CDS; reason={Reason}",
+                    reason);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "[CdsDiscovery] refreshed 0 sidecar instance(s) from CDS; reason={Reason}",
+                    reason);
+            }
         }
         else
         {
-            _logger.LogInformation(
-                "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+            if (ShouldLogDiscoverySummary(count: next.Count, reason: null, failed: false))
+            {
+                _logger.LogInformation(
+                    "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+            }
+        }
+    }
+
+    private bool ShouldLogDiscoverySummary(int count, string? reason, bool failed)
+    {
+        lock (_lock)
+        {
+            if (_lastLoggedDiscoveryCount == count
+                && string.Equals(_lastLoggedDiscoveryReason, reason, StringComparison.Ordinal)
+                && _lastLoggedDiscoveryFailed == failed)
+            {
+                return false;
+            }
+
+            _lastLoggedDiscoveryCount = count;
+            _lastLoggedDiscoveryReason = reason;
+            _lastLoggedDiscoveryFailed = failed;
+            return true;
         }
     }
 
