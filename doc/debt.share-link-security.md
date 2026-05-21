@@ -22,7 +22,31 @@ last_review: 2026-05-20
 
 ## 已知边界 / 待补项
 
-### 1. 知识库分享尚未支持密码保护
+### 0. P1.next：周报 / 知识库 / 工作流 ShareView 接 `tokenOverride` prop
+
+**位置**：`prd-admin/src/pages/ReportTeamShareViewPage.tsx`、`prd-admin/src/pages/DocumentStoreShareView*.tsx`、`prd-admin/src/pages/WorkflowShareView*.tsx`、`prd-admin/src/pages/ShortLinkRouter.tsx::renderTarget`
+
+**现状**：P1 把 4 处分享 URL 统一到 `/s/{token}`，但只有 `ShareViewPage`（网页托管）支持通过 prop 接收 token；其它 3 个 ViewPage 还在用 `useParams().token`，因此 `ShortLinkRouter` 拿到 (type=report/docstore/workflow, token) 后只能 `<Navigate to="/s/report-team/..." />` 跳转到旧专用路径。结果：**用户从字母 URL `/s/{token}` 打开周报分享时，URL bar 会闪一下变成 `/s/report-team/{token}`**。
+
+**待办**：
+- 3 个 ViewPage 各加 `tokenOverride?: string` prop（参考 `ShareViewPage`），优先 prop 后 fallback `useParams`
+- `ShortLinkRouter.renderTarget` 把这 3 个 case 从 `<Navigate>` 改为直接 `<XxxShareViewPage tokenOverride={token} />`
+- 验证：用 `/s/{字母 token}` 打开周报分享时 URL bar 始终保持 `/s/{token}` 不变
+
+### 1. 分享链接体检 / 测试器实验室页
+
+**位置**：拟新增 `prd-admin/src/pages/labs/ShareLinkTesterPage.tsx`
+
+**现状**：用户希望"做成功能，然后在实验室点击测试"。目前测试分享链接只能去具体页面（网页托管/周报/知识库/工作流）创建，且无法对比 3 种 URL 形态（`/s/{token}` / `/s/{seq}` / 旧 `/s/wp/{token}`）的行为差异。
+
+**待办**：
+- 实验室新建页面"分享链接体检"
+- 输入：粘贴任意 slug（数字或字母）
+- 调 `/api/short-links/resolve/{slug}` 解析得 (targetType, token, seq)
+- 展示：3 种 URL（统一长链 / 超短链 / 旧版前缀链）+ 每条带"在新标签页打开测试"按钮
+- 额外：列出当前用户最近 N 条分享，每条都能一键三种 URL 互转测试
+
+### 2. 知识库分享尚未支持密码保护
 
 **位置**：`prd-api/src/PrdAgent.Core/Models/DocumentStoreShareLink.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs::AccessShareLink`
 

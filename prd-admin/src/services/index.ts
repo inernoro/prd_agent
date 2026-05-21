@@ -1687,6 +1687,7 @@ export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInf
 // ── 统一短链解析 + 管理 ──
 export {
   resolveShortLink,
+  resolveShortLinkSlug,
   listAdminShortLinks,
   revokeAdminShortLink,
   repairShortLinkCounter,

@@ -223,9 +223,11 @@ export async function createShareLink(data: {
   expiresAt?: string;
   /** 统一短链 Seq（>0 表示分配成功） */
   shortSeq?: number;
-  /** 推荐短链：/s/{seq}（分配失败时退回 /s/wp/{token}） */
+  /** P1 推荐：字母长链 /s/{token}（统一格式，不可枚举） */
   shareUrl: string;
-  /** 老版长链，永远可用，用于向后兼容 */
+  /** P1 可选超短链：/s/{seq}（数字可枚举，须配强密码；分配失败为 null） */
+  shortShareUrl?: string | null;
+  /** 旧版带前缀长链 /s/wp/{token}，仅向后兼容，新链接不使用 */
   legacyShareUrl: string;
 }>> {
   return apiRequest(api.webPages.share(), { method: 'POST', body: data });

@@ -4,6 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
@@ -99,6 +100,7 @@ public class ReportAgentController : ControllerBase
     private readonly ReportWebhookService _webhookService;
     private readonly DailyLogPolishService _polishService;
     private readonly ISharePasswordService _sharePwd;
+    private readonly IShortLinkService _shortLinks;
 
     public ReportAgentController(
         MongoDbContext db,
@@ -111,7 +113,8 @@ public class ReportAgentController : ControllerBase
         TeamSummaryService teamSummaryService,
         ReportWebhookService webhookService,
         DailyLogPolishService polishService,
-        ISharePasswordService sharePwd)
+        ISharePasswordService sharePwd,
+        IShortLinkService shortLinks)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -124,6 +127,7 @@ public class ReportAgentController : ControllerBase
         _webhookService = webhookService;
         _polishService = polishService;
         _sharePwd = sharePwd;
+        _shortLinks = shortLinks;
     }
 
     #region Helpers
@@ -4923,13 +4927,28 @@ public class ReportAgentController : ControllerBase
 
         await _db.ReportShareLinks.InsertOneAsync(share);
 
+        // P1 URL 统一：注册到全局 ShortLink 索引，让 /s/{token} 和 /s/{seq} 都能查到
+        long shortSeq = 0;
+        try
+        {
+            shortSeq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.Report, share.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为周报分享 {ShareId} 分配短链 seq 失败，仅返回长链", share.Id);
+        }
+
         return Ok(ApiResponse<object>.Ok(new
         {
             share.Id,
             share.Token,
             share.AccessLevel,
             share.ExpiresAt,
-            shareUrl = $"/s/report-team/{share.Token}",
+            // P1 统一：对外 URL 不再带 /report-team/ 分类前缀，全部走 /s/{token}
+            shareUrl = $"/s/{share.Token}",
+            shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
+            // 旧前端可能还在读 legacyShareUrl，保留兼容
+            legacyShareUrl = $"/s/report-team/{share.Token}",
         }));
     }
 

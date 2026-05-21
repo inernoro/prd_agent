@@ -30,6 +30,7 @@ public class DocumentStoreController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IShortLinkService _shortLinks;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -50,6 +51,7 @@ public class DocumentStoreController : ControllerBase
         IDocumentService documentService,
         IRunEventStore runEventStore,
         ISafeOutboundUrlValidator urlValidator,
+        IShortLinkService shortLinks,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -58,6 +60,7 @@ public class DocumentStoreController : ControllerBase
         _documentService = documentService;
         _runEventStore = runEventStore;
         _urlValidator = urlValidator;
+        _shortLinks = shortLinks;
         _logger = logger;
     }
 
@@ -2255,7 +2258,28 @@ public class DocumentStoreController : ControllerBase
         };
         await _db.DocumentStoreShareLinks.InsertOneAsync(link);
 
-        return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
+        // P1 URL 统一：注册到 ShortLink 让 /s/{token} 和 /s/{seq} 都能命中
+        long shortSeq = 0;
+        try
+        {
+            shortSeq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.DocumentStore, link.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为知识库分享 {LinkId} 分配短链 seq 失败", link.Id);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            link.Id,
+            link.Token,
+            link.StoreId,
+            link.StoreName,
+            link.Title,
+            link.ExpiresAt,
+            shareUrl = $"/s/{link.Token}",
+            shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
+        }));
     }
 
     /// <summary>列出某知识库的所有分享链接</summary>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Navigate } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
-import { resolveShortLink } from '@/services';
+import { resolveShortLinkSlug } from '@/services';
 import type { ShortLinkTargetType } from '@/services';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import ShareViewPage from './ShareViewPage';
@@ -9,10 +9,16 @@ import ShareViewPage from './ShareViewPage';
 /**
  * 统一短链入口 /s/:slug
  *
- * - 纯数字 slug → 调 /api/short-links/{seq} 拿到 (targetType, token) → 渲染对应分享视图组件
- * - 非数字 slug → 直接 404（老链接走 /s/wp/:token，不会落到这里）
+ * P1 URL 统一（2026-05-20）：放开了"slug 必须纯数字"的限制
+ * - 纯数字 slug (`/s/47`) → 后端按 Seq 解析
+ * - 字母 slug (`/s/Xa3kZpQ8mFvw`) → 后端按 Token 解析
+ * 两种 URL 都走同一调度组件、显示同样的 ShareView，URL bar 保持原始路径不变。
  *
- * URL 保持 /s/{seq} 不变（不做 navigate，符合"短链就是短"的初衷）。
+ * 渲染策略（按 targetType）：
+ * - web_page  → 直接 mount ShareViewPage（tokenOverride prop）—— URL 完全不变
+ * - report / document_store / workflow → 当前 ViewPage 还没接 tokenOverride，
+ *   先 Navigate 到旧专用路径 `/s/report-team/...` 等保证功能可用；
+ *   下一次 commit 把 ViewPage 改造完毕后即可改为直接 mount，彻底消除 URL 跳转
  */
 export default function ShortLinkRouter() {
   const { slug } = useParams<{ slug: string }>();
@@ -27,14 +33,10 @@ export default function ShortLinkRouter() {
       setState({ kind: 'error', title: '链接不存在' });
       return;
     }
-    if (!/^\d+$/.test(slug)) {
-      setState({ kind: 'error', title: '链接不存在', detail: '短链 ID 必须是数字' });
-      return;
-    }
 
     let cancelled = false;
     setState({ kind: 'loading' });
-    resolveShortLink(slug)
+    resolveShortLinkSlug(slug)
       .then(res => {
         if (cancelled) return;
         if (!res.success || !res.data) {
@@ -115,7 +117,18 @@ export default function ShortLinkRouter() {
 function renderTarget(targetType: ShortLinkTargetType, token: string) {
   switch (targetType) {
     case 'web_page':
+      // ShareViewPage 已支持 tokenOverride，直接 mount，URL bar 不变
       return <ShareViewPage tokenOverride={token} />;
+    case 'report':
+      // TODO(P1.next): ReportTeamShareViewPage 加 tokenOverride prop 后改为直接 mount
+      // 当前 Navigate 到旧路径让访问者立即可用；URL bar 会变成 /s/report-team/...
+      return <Navigate to={`/s/report-team/${token}`} replace />;
+    case 'document_store':
+      // TODO(P1.next): DocumentStoreShareViewPage 加 tokenOverride prop 后改为直接 mount
+      return <Navigate to={`/public/share/${token}`} replace />;
+    case 'workflow':
+      // TODO(P1.next): WorkflowShareViewPage 接入后改为直接 mount
+      return <Navigate to={`/share/workflow/${token}`} replace />;
     default:
       return <UnsupportedTargetError targetType={targetType} />;
   }

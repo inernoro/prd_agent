@@ -478,8 +478,9 @@ public class WebPagesController : ControllerBase
                 req.Password, req.ExpiresInDays,
                 purpose: req.Purpose == "visit" ? "visit" : "share");
 
-            // 优先返回新短链 /s/{seq}；如分配失败（ShortSeq=0），退回老链接 /s/wp/{token}
-            var hasShort = share.ShortSeq > 0;
+            // P1 URL 统一：shareUrl 默认走字母长链 /s/{token}（不可枚举、统一格式）
+            // shortShareUrl 提供数字短链 /s/{seq}（可被前端做"复制超短链"次按钮）
+            // 旧 legacyShareUrl /s/wp/{token} 保留兼容（老前端 / 已分享出去的 URL 仍有效）
             return Ok(ApiResponse<object>.Ok(new
             {
                 share.Id,
@@ -489,7 +490,8 @@ public class WebPagesController : ControllerBase
                 share.Password,
                 share.ExpiresAt,
                 share.ShortSeq,
-                shareUrl = hasShort ? $"/s/{share.ShortSeq}" : $"/s/wp/{share.Token}",
+                shareUrl = $"/s/{share.Token}",
+                shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
                 legacyShareUrl = $"/s/wp/{share.Token}",
             }));
         }
