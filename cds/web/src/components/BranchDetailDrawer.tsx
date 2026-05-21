@@ -711,6 +711,7 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [loading, setLoading] = useState(false);
+  const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
   // Phase A — Variables tab(2026-05-04)
@@ -1236,6 +1237,46 @@ export function BranchDetailDrawer({
     }
   }, [branchId]);
 
+  const refreshCurrentPanel = useCallback(async () => {
+    if (!branchId || headerRefreshing) return;
+    setHeaderRefreshing(true);
+    try {
+      await load();
+      if (activeTab === 'logs') {
+        if (logsMode === 'system') {
+          await loadSystemLogs();
+        } else if (logsMode === 'webhook') {
+          await loadTriggerLogs();
+        } else if (logsMode === 'container' && selectedServiceId) {
+          await loadServiceLogs(selectedServiceId);
+        }
+      } else if (activeTab === 'variables') {
+        await loadEnv();
+      } else if (activeTab === 'metrics') {
+        await loadMetrics();
+      }
+      onToast?.('已刷新当前分支面板');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`刷新失败:${message}`);
+    } finally {
+      setHeaderRefreshing(false);
+    }
+  }, [
+    activeTab,
+    branchId,
+    headerRefreshing,
+    load,
+    loadEnv,
+    loadMetrics,
+    loadServiceLogs,
+    loadSystemLogs,
+    loadTriggerLogs,
+    logsMode,
+    onToast,
+    selectedServiceId,
+  ]);
+
   const visibleDeployments = useMemo(() => {
     const scoped = deployments.filter((item) => item.branchId === branchId);
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
@@ -1556,8 +1597,16 @@ export function BranchDetailDrawer({
                 完整页面
               </a>
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => void load()} title="刷新" aria-label="刷新">
-              <RefreshCw />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void refreshCurrentPanel()}
+              disabled={headerRefreshing}
+              title={headerRefreshing ? '正在刷新当前面板' : '刷新当前面板'}
+              aria-label={headerRefreshing ? '正在刷新当前面板' : '刷新当前面板'}
+            >
+              <RefreshCw className={headerRefreshing ? 'animate-spin' : undefined} />
+              {headerRefreshing ? '刷新中' : '刷新'}
             </Button>
             <Button variant="ghost" size="icon" onClick={onClose} title="关闭" aria-label="关闭">
               <X />
