@@ -21,6 +21,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'defect-agent': '缺陷',
   'review-agent': '评审',
   'pr-review': 'PR审查',
+  'marking-line-agent': '赋码',
   'report-agent': '周报',
   'arena-agent': '竞技场',
   'arena': '竞技场',

@@ -35,6 +35,7 @@ const APP_NAME_ROUTES: readonly [prefix: string, appName: string][] = [
   ['/workflow-agent', 'workflow-agent'],
   ['/pr-review', 'pr-review'],
   ['/review-agent', 'review-agent'],
+  ['/marking-line-agent', 'marking-line-agent'],
   ['/prd-agent', 'prd-agent'],
   ['/ai-toolbox', 'ai-toolbox'],
   ['/arena', 'arena-agent'],
@@ -129,7 +130,11 @@ function classifyNonContractHttpError(args: {
 function isApiResponseLike(x: unknown): x is { success: boolean; data: unknown; error: unknown } {
   if (!x || typeof x !== 'object') return false;
   const obj = x as Record<string, unknown>;
-  return typeof obj.success === 'boolean' && 'data' in obj && 'error' in obj;
+  if (typeof obj.success !== 'boolean') return false;
+  // 后端 System.Text.Json + WhenWritingNull：失败时 data 为 null 会整段省略 data 字段，
+  // 仅保留 success:false + error；此前要求 'data' in obj 会导致误判为非契约响应。
+  if (obj.success === false && 'error' in obj) return true;
+  return 'data' in obj;
 }
 
 type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
@@ -234,6 +239,7 @@ export async function apiRequest<T>(
     auth?: boolean;
     emptyResponseData?: T;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }
 ): Promise<ApiResponse<T>> {
   return await apiRequestInner<T>(path, options, false);
@@ -247,6 +253,7 @@ async function apiRequestInner<T>(
     auth?: boolean;
     emptyResponseData?: T;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   } | undefined,
   didRefresh: boolean
 ): Promise<ApiResponse<T>> {
@@ -285,8 +292,11 @@ async function apiRequestInner<T>(
 
   let res: Response;
   try {
-    res = await fetch(url, { method, headers, body });
+    res = await fetch(url, { method, headers, body, signal: options?.signal });
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      return fail('ABORTED', '请求已中止') as unknown as ApiResponse<T>;
+    }
     if (isDisconnectedError(e)) {
       return fail('DISCONNECTED', '已断开连接或服务器不可达') as unknown as ApiResponse<T>;
     }

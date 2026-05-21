@@ -46,7 +46,7 @@ public class AppCallerCodeRegistryGuardTests
     {
         "prd-agent", "visual-agent", "literary-agent", "defect-agent", "video-agent",
         "report-agent", "review-agent", "transcript-agent", "workflow-agent",
-        "pr-review", "emergence-explorer", "skill-agent", "arena", "ai-toolbox",
+        "pr-review", "marking-line-agent", "emergence-explorer", "skill-agent", "arena", "ai-toolbox",
         "tutorial-email", "open-platform", "channel-adapter", "document-store-agent",
         "prd-admin", "prd-agent-desktop", "admin", "system",
     };

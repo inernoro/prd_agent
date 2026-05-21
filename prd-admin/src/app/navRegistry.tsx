@@ -33,6 +33,7 @@ const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
+const MarkingLineAgentPage = lazy(() => import('@/pages/marking-line-agent/MarkingLineAgentPage'));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -271,6 +272,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'pr-review',
       tags: ['PR', 'GitHub', '审查', 'OAuth'],
+    },
+  },
+  {
+    path: '/marking-line-agent',
+    permission: 'marking-line-agent.use',
+    element: shellGuarded('marking-line-agent.use', <MarkingLineAgentPage />),
+    nav: {
+      label: '赋码产线',
+      shortLabel: '赋码',
+      description: '瓶箱码采集关联与产线示意，流式生成工业培训风格说明',
+      icon: 'Factory',
+      section: 'toolbox',
+      appKey: 'marking-line-agent',
+      wip: true,
+      tags: ['赋码', '产线', '采集', '追溯', 'MES'],
     },
   },
   {

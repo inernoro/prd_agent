@@ -381,6 +381,33 @@ public static class DefectAgent
 }
 
 /// <summary>
+/// Marking Line Agent 赋码产线（采集关联示意）
+/// </summary>
+public static class MarkingLineAgent
+{
+    public const string AppName = "Marking Line Agent";
+
+    public static class Diagram
+    {
+        [AppCallerMetadata(
+            "赋码产线示意图-流式",
+            "根据用户简述生成工业示意风格的产线/采集关联 Markdown 说明",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Diagram"
+        )]
+        public const string Stream = "marking-line-agent.diagram.stream::chat";
+
+        [AppCallerMetadata(
+            "赋码产线示意图-文生图",
+            "根据用户简述生成工业培训用白底产线总览位图（PNG）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Diagram"
+        )]
+        public const string Image = "marking-line-agent.diagram.image::generation";
+    }
+}
+
+/// <summary>
 /// Tutorial Email 教程邮件
 /// </summary>
 public static class TutorialEmail
