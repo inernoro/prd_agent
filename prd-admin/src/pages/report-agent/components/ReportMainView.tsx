@@ -273,29 +273,10 @@ export function ReportMainView() {
       )}
 
       {hasReports ? (
-        <div className="flex flex-col gap-5">
-          {groupedReports.map((group) => (
-            <div key={getWeekKey(group.week)} className="flex flex-col gap-3">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
-                  {formatWeekLabel(group.week)}
-                </span>
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  {group.items.length} 份
-                </span>
-              </div>
-              <div className="grid grid-cols-1 gap-3">
-                {group.items.map((report) => (
-                  <ReportCard
-                    key={report.id}
-                    report={report}
-                    onClick={() => handleEditReport(report.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        <ReportHistoryStrip
+          groupedReports={groupedReports}
+          onOpen={handleEditReport}
+        />
       ) : hasTeam && hasTemplate ? (
         <div className="flex-1 flex items-center justify-center" style={{ minHeight: 240 }}>
           <div className="flex flex-col items-center gap-4 text-center max-w-sm">
@@ -327,23 +308,88 @@ export function ReportMainView() {
   );
 }
 
-// ────── Report Card ──────
+// ────── Report History Strip（左右滑动的历史栏）──────
 
-function ReportCard({ report, onClick }: {
-  report: {
-    id: string;
-    teamName?: string;
-    status: string;
-    sections: { templateSection?: { title?: string }; items: { content: string }[] }[];
-    returnReason?: string;
-    submittedAt?: string;
-    reviewedAt?: string;
-    updatedAt: string;
-  };
-  onClick: () => void;
+interface ReportLite {
+  id: string;
+  teamName?: string;
+  status: string;
+  sections: { templateSection?: { title?: string }; items: { content: string }[] }[];
+  returnReason?: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  updatedAt: string;
+  weekYear: number;
+  weekNumber: number;
+}
+
+function ReportHistoryStrip({
+  groupedReports,
+  onOpen,
+}: {
+  groupedReports: { week: WeekRef; items: ReportLite[] }[];
+  onOpen: (id: string) => void;
 }) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
+
+  // 摊平所有周报，最近的在最左
+  const flat = useMemo(() => {
+    const all: ReportLite[] = [];
+    for (const g of groupedReports) all.push(...g.items);
+    return all;
+  }, [groupedReports]);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          ← 左右滑动查看历史周报 · 共 {flat.length} 份
+        </span>
+      </div>
+      <div className="relative">
+        {/* 时间轴细线（横向，所有卡片底部对齐的水平线） */}
+        <div
+          className="absolute left-0 right-0 pointer-events-none"
+          style={{
+            bottom: 16,
+            height: 1,
+            background: isLight ? 'var(--hairline)' : 'rgba(148,163,184,0.18)',
+          }}
+        />
+        <div
+          className="flex gap-3 overflow-x-auto pb-5 pt-2"
+          style={{
+            scrollbarWidth: 'thin',
+            scrollSnapType: 'x proximity',
+            // 右侧渐隐遮罩提示"还有更多"
+            maskImage: 'linear-gradient(to right, black 0%, black 95%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to right, black 0%, black 95%, transparent 100%)',
+          }}
+        >
+          {flat.map((report) => (
+            <MiniReportCard
+              key={report.id}
+              report={report}
+              isLight={isLight}
+              onClick={() => onOpen(report.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniReportCard({
+  report,
+  isLight,
+  onClick,
+}: {
+  report: ReportLite;
+  isLight: boolean;
+  onClick: () => void;
+}) {
   const statusColors = useStatusChipConfig(isLight);
   const colors = statusColors[report.status] || statusColors[WeeklyReportStatus.Draft];
   const meta = STATUS_LABELS[report.status] || STATUS_LABELS[WeeklyReportStatus.Draft];
@@ -356,146 +402,113 @@ function ReportCard({ report, onClick }: {
 
   return (
     <div
-      className="group rounded-xl transition-all duration-200 cursor-pointer hover:translate-y-[-1px]"
+      className="group relative flex flex-col rounded-xl cursor-pointer transition-all duration-200 hover:translate-y-[-2px]"
       style={{
+        flex: '0 0 auto',
+        width: 220,
+        scrollSnapAlign: 'start',
         background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
         backdropFilter: isLight ? undefined : 'blur(12px)',
         WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
-        borderLeft: `3px solid ${colors.border}`,
+        borderTop: `3px solid ${colors.border}`,
         boxShadow: isLight ? 'var(--shadow-card-sm)' : 'var(--shadow-card)',
       }}
       onClick={onClick}
+      title={report.teamName ? `${report.teamName} · 第 ${report.weekNumber} 周` : `第 ${report.weekNumber} 周`}
     >
-      <div className="p-5">
-        {/* Header — editorial 风: eyebrow status + 大字号 serif 团队名 */}
-        <div className="mb-3">
-          {/* Eyebrow status tag — Editorial small-caps:9px + tracking 0.08em + 仅 bg(无 border) */}
-          <div className="flex items-center gap-2 mb-1.5">
-            <span
-              className="inline-flex items-center gap-1 text-[9px] px-2 py-[3px] rounded-full font-semibold uppercase"
-              style={{
-                color: colors.color,
-                backgroundColor: colors.bg,
-                letterSpacing: '0.08em',
-              }}
-            >
-              <StatusIcon size={10} />
-              {meta.label}
+      <div className="p-3 flex flex-col gap-2 flex-1">
+        {/* 周次标签（最显眼） */}
+        <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline gap-1">
+            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              {report.weekYear}
+            </span>
+            <span className="text-[15px] font-semibold leading-none" style={{ color: 'var(--text-primary)' }}>
+              W{String(report.weekNumber).padStart(2, '0')}
             </span>
           </div>
-          <div
-            className="text-[20px] font-semibold leading-tight truncate"
+          <span
+            className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[2px] rounded-full font-semibold"
             style={{
-              color: 'var(--text-primary)',
-              fontFamily: isLight ? 'var(--font-serif)' : undefined,
-              letterSpacing: isLight ? '-0.015em' : undefined,
+              color: colors.color,
+              backgroundColor: colors.bg,
             }}
           >
-            {report.teamName || '未知团队'}
-          </div>
+            <StatusIcon size={8} />
+            {meta.label}
+          </span>
         </div>
 
-        {/* Section previews — 按完成率三色分级: 完成=moss / 进行=amber / 未填=slate */}
-        <div className="flex flex-wrap gap-2 mb-3">
+        {/* 团队名 */}
+        <div
+          className="text-[12px] font-medium truncate leading-snug"
+          style={{
+            color: 'var(--text-secondary)',
+            fontFamily: isLight ? 'var(--font-serif)' : undefined,
+          }}
+        >
+          {report.teamName || '未知团队'}
+        </div>
+
+        {/* 章节进度迷你点阵 */}
+        <div className="flex flex-wrap gap-1 mt-auto">
           {report.sections.map((s, i) => {
             const filled = s.items.filter(it => it.content.trim()).length;
             const total = s.items.length;
             const isComplete = filled === total && total > 0;
             const isGoing = filled > 0 && !isComplete;
-
-            // 浅色下三色分级
-            const chipColor = isLight
-              ? (isComplete ? 'var(--status-done)' : isGoing ? 'var(--status-going)' : 'var(--status-idle)')
-              : 'var(--text-muted)';
-            const chipBg = isLight
-              ? (isComplete ? 'var(--status-done-soft)' : isGoing ? 'var(--status-going-soft)' : 'var(--status-idle-soft)')
-              : 'var(--bg-tertiary)';
-            const chipBorder = isLight
-              ? (isComplete ? 'var(--status-done-border)' : isGoing ? 'var(--status-going-border)' : 'var(--status-idle-border)')
-              : 'transparent';
-            // 暗色保持原来逻辑
-            if (!isLight) {
-              const filledDot = 'rgba(34, 197, 94, 0.6)';
-              const emptyDot  = 'rgba(156, 163, 175, 0.3)';
-              const completeBg = 'rgba(34, 197, 94, 0.06)';
-              const completeText = 'rgba(34, 197, 94, 0.8)';
-              return (
-                <div
-                  key={i}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px]"
-                  style={{
-                    background: isComplete ? completeBg : 'var(--bg-tertiary)',
-                    color: isComplete ? completeText : 'var(--text-muted)',
-                  }}
-                >
-                  <div
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{ background: filled > 0 ? filledDot : emptyDot }}
-                  />
-                  {s.templateSection?.title || `章节 ${i + 1}`}
-                  <span style={{ opacity: 0.6 }}>{filled}/{total}</span>
-                </div>
-              );
-            }
+            const dotColor = isComplete
+              ? 'rgba(34, 197, 94, 0.8)'
+              : isGoing
+                ? 'rgba(249, 115, 22, 0.7)'
+                : 'rgba(148, 163, 184, 0.35)';
             return (
-              <div
+              <span
                 key={i}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
-                style={{
-                  background: chipBg,
-                  color: chipColor,
-                  border: `1px solid ${chipBorder}`,
-                }}
-              >
-                <div
-                  className="w-1.5 h-1.5 rounded-full"
-                  style={{ background: chipColor }}
-                />
-                {s.templateSection?.title || `章节 ${i + 1}`}
-                <span className="font-mono" style={{ opacity: 0.7 }}>{filled}/{total}</span>
-              </div>
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: dotColor }}
+                title={`${s.templateSection?.title || `章节 ${i + 1}`}: ${filled}/${total}`}
+              />
             );
           })}
         </div>
 
-        {/* Progress bar — 浅色下 100% 柔和墨绿, 进行中走 Claude 橙;暗色保持原色 */}
+        {/* 进度条 */}
         {totalItems > 0 && (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <div
-              className="flex-1 h-1 rounded-full overflow-hidden"
+              className="flex-1 h-[3px] rounded-full overflow-hidden"
               style={{ background: isLight ? 'var(--hairline)' : 'var(--bg-tertiary)' }}
             >
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${progress}%`,
-                  // 进行中克制 slate hairline,只有 100% 时才上 sage 完成色 — 避免"未完成 = 警告"误读
                   background: progress === 100
                     ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
-                    : (isLight
-                        ? 'rgba(15, 23, 42, 0.32)'
-                        : `linear-gradient(90deg, ${colors.border}, ${colors.border.replace(/[\d.]+\)$/, '0.3)')})`),
+                    : (isLight ? 'rgba(15, 23, 42, 0.32)' : colors.border),
                 }}
               />
             </div>
-            <span className="text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[9px] font-mono flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
               {progress}%
             </span>
           </div>
         )}
 
-        {/* Return reason */}
-        {report.returnReason && (
-          <div
-            className="text-[11px] px-3 py-2 rounded-lg leading-relaxed mt-3"
-            style={{ color: 'rgba(239, 68, 68, 0.85)', backgroundColor: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}
-          >
-            {report.returnReason}
-          </div>
-        )}
-        <div className="text-[10px] mt-3" style={{ color: 'var(--text-muted)' }}>
-          更新于 {new Date(report.updatedAt).toLocaleDateString('zh-CN')}
+        {/* 时间轴锚点 + 更新日期 */}
+        <div className="flex items-center gap-1.5">
+          <span
+            className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{
+              background: colors.border,
+              boxShadow: `0 0 0 2px ${isLight ? '#FFFFFF' : 'var(--surface-glass)'}`,
+            }}
+          />
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            {new Date(report.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
+          </span>
         </div>
       </div>
     </div>
