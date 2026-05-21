@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronsRight, ChevronsLeft, GripVertical, UploadCloud } from 'lucide-react';
 import { DOCK_EVENTS, type DockStartDetail, type DockDropDetail } from './useDockDrag';
 import { LiquidGlassSurface } from '../effects/LiquidGlassSurface';
@@ -110,12 +110,6 @@ export function ShareDock({
   const [movingDock, setMovingDock] = useState(false);   // 正在拖 Dock 自己
   const [fileOver, setFileOver] = useState(false);       // 外部文件拖入 dropzone
   const dockRef = useRef<HTMLDivElement>(null);
-
-  // 真液态玻璃:Reduce Motion 用户关掉 blob 漂移(canvas 仍然渲染,只是静止)
-  const liquidAnimated = useMemo(() => {
-    if (typeof window === 'undefined') return true;
-    return !(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
-  }, []);
 
   // 监听拖拽生命周期，激活 Dock
   useEffect(() => {
@@ -246,17 +240,18 @@ export function ShareDock({
       <div
         className={[
           'relative w-full overflow-hidden rounded-2xl border border-white/15',
-          // 底色仅作为 WebGL canvas 渲染失败时的兜底（深色基底）;
-          // 真液态玻璃（LiquidGlassSurface）叠在底色上面渲染真折射。
-          'bg-black/40 shadow-2xl shadow-black/40 transition-all duration-200',
+          // 透明底:让 LiquidGlassSurface 的 backdrop-filter 能采到真正的 DOM 内容,
+          // 不能再用 bg-black/30 这类不透明色,否则玻璃后面只有黑色,失去"透"的意义
+          'shadow-2xl shadow-black/40 transition-all duration-200',
           dragging ? 'scale-[1.03] border-white/30 shadow-[0_0_32px_rgba(56,189,248,0.3)]' : '',
           movingDock ? 'opacity-85' : '',
         ].join(' ')}
       >
-        {/* 真液态大玻璃背板:WebGL MeshTransmissionMaterial 真折射,替代之前的 backdrop-blur 假玻璃 */}
-        <LiquidGlassSurface tone="cool" animated={liquidAnimated && !movingDock} />
+        {/* 真液态大玻璃背板:SVG feDisplacementMap + backdrop-filter,
+            折射真 DOM,不挡内容。distortion=6 给一点液体感,>12 会糊到看不清 */}
+        <LiquidGlassSurface blur={18} saturation={185} distortion={6} />
 
-        {/* 内容层:relative + z-[1] 确保盖在 canvas 之上 */}
+        {/* 内容层:relative + z-[1] 确保盖在玻璃面之上 */}
         <div className="relative z-[1]">
         {/* 头部（拖拽手柄） */}
         <div
