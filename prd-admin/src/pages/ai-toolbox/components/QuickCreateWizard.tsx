@@ -5,6 +5,7 @@ import { StreamingText } from '@/components/streaming';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { cn } from '@/lib/cn';
 import { streamDirectChat, getModelGroups, listWorkflows } from '@/services';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 import type { DirectChatMessage } from '@/services';
 import type { ModelGroup } from '@/types/modelGroup';
 import type { Workflow } from '@/services/contracts/workflowAgent';
@@ -40,6 +41,7 @@ import {
   RotateCcw,
   Upload,
   BookOpen,
+  File,
   Cpu,
   ChevronDown,
   Play,
@@ -609,6 +611,55 @@ export function QuickCreateWizard() {
     workflowId: '',
   });
 
+  // 知识库文件（上传到 Attachment，attachmentId 写入 ToolboxItem.knowledgeBaseIds）
+  const [knowledgeFiles, setKnowledgeFiles] = useState<Array<{
+    id: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+    attachmentId?: string;
+    status: 'uploading' | 'done' | 'error';
+  }>>([]);
+  const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleKnowledgeFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    e.target.value = '';
+
+    for (const file of Array.from(files)) {
+      const tempId = Math.random().toString(36).slice(2, 11);
+      setKnowledgeFiles(prev => [...prev, {
+        id: tempId,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+        status: 'uploading' as const,
+      }]);
+
+      try {
+        const result = await uploadAttachment(file);
+        if (result.success && result.data?.attachmentId) {
+          setKnowledgeFiles(prev => prev.map(f =>
+            f.id === tempId ? { ...f, attachmentId: result.data!.attachmentId, status: 'done' as const } : f
+          ));
+        } else {
+          setKnowledgeFiles(prev => prev.map(f =>
+            f.id === tempId ? { ...f, status: 'error' as const } : f
+          ));
+        }
+      } catch {
+        setKnowledgeFiles(prev => prev.map(f =>
+          f.id === tempId ? { ...f, status: 'error' as const } : f
+        ));
+      }
+    }
+  };
+
+  const removeKnowledgeFile = (id: string) => {
+    setKnowledgeFiles(prev => prev.filter(f => f.id !== id));
+  };
+
   // 工作流列表
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
@@ -865,6 +916,9 @@ export function QuickCreateWizard() {
   const handleSave = async () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
     setSaving(true);
+    const knowledgeBaseIds = knowledgeFiles
+      .filter(f => f.status === 'done' && f.attachmentId)
+      .map(f => f.attachmentId!);
     const success = await saveItem({
       name: form.name.trim(),
       description: form.description.trim(),
@@ -873,6 +927,7 @@ export function QuickCreateWizard() {
       tags: parsedTags,
       enabledTools: form.enabledTools,
       workflowId: isWorkflowEnabled ? form.workflowId : undefined,
+      knowledgeBaseIds,
       type: 'custom',
       category: 'custom',
     });
@@ -1462,13 +1517,66 @@ export function QuickCreateWizard() {
           <div className="flex items-center gap-2 mb-2">
             <BookOpen size={13} className="text-token-success" />
             <span className="text-token-primary text-[12px] font-semibold">知识库</span>
-            <span className="surface-state-warning text-[9px] px-1.5 py-0.5 rounded">即将上线</span>
+            {knowledgeFiles.length > 0 && (
+              <span className="surface-state-success text-[10px] px-1.5 py-0.5 rounded">
+                {knowledgeFiles.filter(f => f.status === 'done').length} 个文件
+              </span>
+            )}
           </div>
-          <div className="surface-inset p-3 rounded-lg text-center cursor-not-allowed opacity-60 border-dashed">
-            <Upload size={16} className="text-token-success mx-auto mb-1.5" />
-            <div className="text-token-muted text-[10px]">上传文档作为知识库</div>
-            <div className="text-token-muted-faint text-[9px] mt-0.5">支持 PDF、Word、TXT</div>
-          </div>
+
+          {knowledgeFiles.length > 0 && (
+            <div className="space-y-1.5 mb-2">
+              {knowledgeFiles.map((file) => (
+                <Surface
+                  variant="inset"
+                  key={file.id}
+                  className={cn(
+                    'flex items-center gap-2 px-2.5 py-1.5 rounded-lg',
+                    file.status === 'error' && 'border-[var(--status-error)]'
+                  )}
+                >
+                  <File size={12} style={{
+                    color: file.status === 'error' ? 'rgb(239, 68, 68)'
+                      : file.status === 'uploading' ? 'var(--text-muted)'
+                      : 'rgb(74, 222, 128)',
+                  }} />
+                  <span className="text-token-secondary flex-1 text-[10px] truncate">{file.fileName}</span>
+                  <span className="text-token-muted text-[9px] flex-shrink-0">
+                    {(file.size / 1024).toFixed(0)} KB
+                  </span>
+                  {file.status === 'uploading' && <MapSpinner size={10} className="flex-shrink-0" />}
+                  {file.status === 'error' && (
+                    <span className="text-token-error text-[9px] flex-shrink-0">失败</span>
+                  )}
+                  <button
+                    onClick={() => removeKnowledgeFile(file.id)}
+                    className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+                    aria-label="移除文件"
+                  >
+                    <X size={10} className="text-token-muted" />
+                  </button>
+                </Surface>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => knowledgeFileInputRef.current?.click()}
+            className="surface-inset w-full p-3 rounded-lg text-center cursor-pointer transition-all border-dashed hover:border-[var(--status-done)] group"
+          >
+            <Upload size={16} className="text-token-success mx-auto mb-1 transition-transform group-hover:scale-110" />
+            <div className="text-token-secondary text-[10px] font-medium">上传文档作为知识库</div>
+            <div className="text-token-muted-faint text-[9px] mt-0.5">支持 PDF、Word、Excel、PPT、TXT</div>
+          </button>
+          <input
+            ref={knowledgeFileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls,.ppt,.pptx"
+            onChange={handleKnowledgeFileSelect}
+          />
         </Surface>
 
         {/* 温度调节 */}

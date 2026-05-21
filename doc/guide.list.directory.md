@@ -656,6 +656,9 @@
 - [CDS compose 模板 TODO secrets · 债务台账](debt.cds-compose-secrets) `debt.cds-compose-secrets`
   > 2 条 open：x-cds-env TODO secrets 致全量 import 必被拒 / admin static 每次冷 vite build 就绪窗口紧绷
 
+- [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
+  > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
+
 ### 七、周报
 
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
