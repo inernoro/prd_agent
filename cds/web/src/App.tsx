@@ -5,6 +5,8 @@ import { BranchListPage } from '@/pages/BranchListPage';
 import { BranchTopologyPage } from '@/pages/BranchTopologyPage';
 import { CdsSettingsPage } from '@/pages/CdsSettingsPage';
 import { HelloPage } from '@/pages/HelloPage';
+import { HomePage } from '@/pages/HomePage';
+import { LoginPage } from '@/pages/LoginPage';
 import { ProjectListPage } from '@/pages/ProjectListPage';
 import { ProjectSettingsPage } from '@/pages/ProjectSettingsPage';
 
@@ -55,6 +57,8 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
  * single addition to MIGRATED_REACT_ROUTES + a new <Route> here.
  *
  * Currently migrated:
+ *   /                       CDS marketing/control-plane home
+ *   /login                  React basic-auth login page
  *   /hello                  Foundation demo page (Tailwind / theme / API / Dialog)
  *   /cds-settings           CDS system settings
  *   /project-list           Project list
@@ -69,6 +73,8 @@ export function App(): JSX.Element {
     <DashboardErrorBoundary>
       <BrowserRouter>
         <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/login" element={<LoginPage />} />
           <Route path="/hello" element={<HelloPage />} />
           <Route path="/cds-settings" element={<CdsSettingsPage />} />
           <Route path="/project-list" element={<ProjectListPage />} />

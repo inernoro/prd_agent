@@ -1109,7 +1109,7 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.use((req, res, next) => {
-      if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
+      if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
@@ -2484,6 +2484,8 @@ export function auditApiLabels(app: express.Express): string[] {
  * cds/web-legacy/, so an unmigrated link keeps working unchanged.
  */
 const MIGRATED_REACT_ROUTES: readonly string[] = [
+  '/',
+  '/login',
   '/hello',
   '/cds-settings',
   '/project-list',
