@@ -229,6 +229,8 @@ type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' 
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+const DETAIL_LOG_VIEWPORT_CLASS = 'h-[424px] overflow-auto';
+const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading-6 text-muted-foreground';
 
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
@@ -2183,11 +2185,11 @@ function systemLogTypeMeta(type: string): { label: string; cls: string } {
 }
 
 function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
-  if (state.status === 'loading') return <div className="px-4 py-6 text-sm text-muted-foreground">加载系统日志…</div>;
+  if (state.status === 'loading') return <div className={DETAIL_LOG_EMPTY_CLASS}>加载系统日志…</div>;
   if (state.status === 'error') {
-    return <div className="px-4 py-6 text-sm text-destructive">加载失败：{state.message}</div>;
+    return <div className={`${DETAIL_LOG_EMPTY_CLASS} text-destructive`}>加载失败：{state.message}</div>;
   }
-  if (state.status === 'idle') return <div className="px-4 py-6 text-sm text-muted-foreground">切换到此页签后加载。</div>;
+  if (state.status === 'idle') return <div className={DETAIL_LOG_EMPTY_CLASS}>切换到此页签后加载。</div>;
   const q = query.trim().toLowerCase();
   const rows = (q
     ? state.logs.filter((e) =>
@@ -2197,13 +2199,13 @@ function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: stri
     : state.logs);
   if (rows.length === 0) {
     return (
-      <div className="px-4 py-6 text-sm text-muted-foreground">
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
         {q ? '没有匹配的系统日志。' : '本分支还没有生命周期事件记录。部署 / 停止 / 崩溃 / 回收发生后会在这里显示。'}
       </div>
     );
   }
   return (
-    <div className="divide-y divide-[hsl(var(--hairline))]">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} divide-y divide-[hsl(var(--hairline))]`}>
       {rows.map((e) => {
         const meta = systemLogTypeMeta(e.type);
         return (
@@ -2319,17 +2321,21 @@ function TriggerLogsPanel({
   onLoadMore?: () => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return <LoadingBlock label="加载 Webhook 日志" />;
+    return (
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
+        <LoadingBlock label="加载 Webhook 日志" />
+      </div>
+    );
   }
   if (state.status === 'error') {
-    return <div className="p-5"><ErrorBlock message={state.message} /></div>;
+    return <div className={`${DETAIL_LOG_EMPTY_CLASS} items-start py-5`}><ErrorBlock message={state.message} /></div>;
   }
 
   const rows = state.deliveries.filter((item) => textMatchesQuery(triggerLogSearchText(item), query));
   if (rows.length === 0) {
     const origin = branchOriginInsight(branch);
     return (
-      <div className="space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground">
+      <div className={`${DETAIL_LOG_VIEWPORT_CLASS} space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground`}>
         <div>
           {query
             ? '没有匹配的 Webhook 日志。'
@@ -2350,7 +2356,7 @@ function TriggerLogsPanel({
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="mb-3 flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
         <span>匹配 {state.filteredTotal}</span>
         <span>全量 {state.total}</span>
@@ -2469,13 +2475,13 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
             {selection.message ? <span className="min-w-0 truncate">{selection.message}</span> : null}
           </div>
         </div>
-        <div className="max-h-[560px] overflow-auto">
+        <div className={DETAIL_LOG_VIEWPORT_CLASS}>
           <div className="grid grid-cols-[150px_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
             <span>Time</span>
             <span>Message</span>
           </div>
           {rows.length === 0 ? (
-            <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的构建日志。' : '这条部署还没有日志。'}</div>
+            <div className={DETAIL_LOG_EMPTY_CLASS}>{query ? '没有匹配的构建日志。' : '这条部署还没有日志。'}</div>
           ) : (
             <div className="divide-y divide-[hsl(var(--hairline))]">
               {rows.map((row) => (
@@ -2510,11 +2516,11 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
     });
 
   if (rows.length === 0) {
-    return <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的构建日志。' : '还没有构建记录。'}</div>;
+    return <div className={DETAIL_LOG_EMPTY_CLASS}>{query ? '没有匹配的构建日志。' : '还没有构建记录。'}</div>;
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="space-y-2">
         {rows.map((row) => (
           <div key={row.key} className={`rounded-md border px-3 py-2 ${row.status === 'error' ? 'border-destructive/35 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'}`}>
@@ -2542,7 +2548,7 @@ function ServiceLogsPanel({
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
   const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
-  const serviceLogViewportClass = 'h-[clamp(300px,42vh,420px)]';
+  const serviceLogViewportClass = 'h-[424px]';
 
   async function copyLogs(): Promise<void> {
     if (!service) return;
@@ -2629,14 +2635,14 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
 
   if (rows.length === 0) {
     return (
-      <div className="px-5 py-8 text-sm leading-6 text-muted-foreground">
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
         {query ? '没有匹配的 HTTP 访问日志。' : '还没有捕获到这个分支的 HTTP 请求。打开预览后，请求会出现在这里。'}
       </div>
     );
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="space-y-2">
         {rows.map((event, index) => {
           const ok = (event.status || 0) < 400;
