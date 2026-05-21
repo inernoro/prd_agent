@@ -100,7 +100,12 @@ function PrimaryContainerLogPanel({
   const hasTabs = !!(containerLogControls && containerLogControls.services.length > 1);
   const [maximized, setMaximized] = useState(false);
   const logs = state?.status === 'ok' ? (state.logs || '') : '';
-  const logViewportClass = 'h-[clamp(360px,55vh,560px)]';
+  /*
+   * Inline logs are a preview, not the full terminal. Keep roughly 20 readable
+   * rows so the deployment history below remains visible; the modal keeps the
+   * complete scrollable log.
+   */
+  const logViewportClass = 'h-[424px]';
   const emptyLogStateClass = `${logViewportClass} flex items-center justify-center`;
 
   return (
@@ -367,7 +372,7 @@ export function ActiveDeployment({
         </span>
       </header>
 
-      <div className="px-5 py-4" style={{ minHeight: 360 }}>
+      <div className="px-5 py-4">
         <PrimaryContainerLogPanel
           containerLogsByPhase={containerLogsByPhase}
           containerLogControls={containerLogControls}
