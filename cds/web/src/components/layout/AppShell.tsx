@@ -86,15 +86,28 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
 function FloatingThemeToggle(): JSX.Element {
   const { theme, mode, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const [toast, setToast] = useState('');
   // 2026-05-07 用户反馈"右上角按钮被皮肤挡住":悬浮按钮 z-[70] 盖在 TopBar
   // nav buttons(z 默认)上,导致"运维"等按钮被遮挡。降到 z-[5] 让 nav 按钮
   // 在上层;同时挪到右下角避开 TopBar 区域,跟 GlobalUpdateBadge(也在底部)
   // 不重叠靠水平错开(theme 在 right-3,update badge 在 left)。
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const modeLabel = (next: 'light' | 'dark' | 'system'): string => {
+    if (next === 'system') return `自动/${theme === 'dark' ? '黑天' : '白天'}`;
+    return next === 'dark' ? '黑天' : '白天';
+  };
+
   const changeTheme = (
     next: 'light' | 'dark' | 'system',
     event: React.MouseEvent<HTMLButtonElement> | React.PointerEvent<HTMLButtonElement>,
   ): void => {
     setOpen(false);
+    setToast(modeLabel(next));
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!document.startViewTransition || prefersReduced) {
       applyThemeMode(next);
@@ -125,6 +138,10 @@ function FloatingThemeToggle(): JSX.Element {
     }).catch(() => { /* best-effort effect */ });
   };
 
+  const toggleLightDark = (event: React.MouseEvent<HTMLButtonElement>): void => {
+    changeTheme(theme === 'dark' ? 'light' : 'dark', event);
+  };
+
   const items = [
     { mode: 'light' as const, label: '白天', icon: Sun },
     { mode: 'dark' as const, label: '黑天', icon: Moon },
@@ -132,7 +149,20 @@ function FloatingThemeToggle(): JSX.Element {
   ];
 
   return (
-    <div className="fixed bottom-3 right-3 z-[60]">
+    <div
+      className="fixed bottom-3 right-3 z-[60]"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      {toast ? (
+        <div className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 py-1 text-xs font-medium text-foreground shadow-lg">
+          {toast}
+        </div>
+      ) : null}
       {open ? (
         <div className="absolute bottom-full right-0 mb-2 w-32 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-1 shadow-2xl">
           {items.map((item) => {
@@ -143,14 +173,6 @@ function FloatingThemeToggle(): JSX.Element {
                 key={item.mode}
                 type="button"
                 className={`flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground'}`}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  changeTheme(item.mode, event);
-                }}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  changeTheme(item.mode, event);
-                }}
                 onClick={(event) => {
                   event.preventDefault();
                   changeTheme(item.mode, event);
@@ -167,7 +189,7 @@ function FloatingThemeToggle(): JSX.Element {
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleLightDark}
         aria-label="切换主题"
         title={`切换主题(当前: ${mode === 'system' ? `自动/${theme === 'dark' ? '黑天' : '白天'}` : theme === 'dark' ? '黑天' : '白天'})`}
         className="h-9 w-9 rounded-full bg-[hsl(var(--surface-raised))]/80 backdrop-blur shadow-md hover:bg-[hsl(var(--surface-raised))]"
