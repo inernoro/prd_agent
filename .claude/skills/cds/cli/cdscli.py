@@ -1800,7 +1800,11 @@ def cmd_self_update(args: argparse.Namespace) -> None:
         # Poll healthz until CDS is back (max 60s)
         for _ in range(12):
             time.sleep(5)
-            status, _b, _h = _request("GET", "/healthz", timeout=5)
+            # Use the lightweight probe for post-restart readiness. The full
+            # /healthz intentionally checks Docker and can exceed 5s while CDS
+            # is building containers, which makes self-update report a false
+            # outage even when the control plane is already serving traffic.
+            status, _b, _h = _request("GET", "/healthz?lightweight=1", timeout=10)
             if status == 200:
                 break
         else:
