@@ -1455,11 +1455,15 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   };
 }
 
-function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number], project: ProjectSummary): {
+type ProjectBrand = {
   label: string;
   tileClassName: string;
   icon: JSX.Element;
-} {
+  score: number;
+  source: string;
+};
+
+function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number], project: ProjectSummary): ProjectBrand {
   const raw = [
     service.id,
     service.name,
@@ -1476,13 +1480,17 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: '.NET',
       tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
       icon: <DotnetIcon />,
+      score: 900 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('node') || raw.includes('pnpm') || raw.includes('npm ') || raw.includes('yarn') || raw.includes('vite') || raw.includes('next') || raw.includes('react')) {
     return {
-      label: raw.includes('vite') ? 'Vite / Node' : 'Node.js',
+      label: 'Node.js',
       tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300',
       icon: <NodeIcon />,
+      score: 800 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('python') || raw.includes('pip ') || raw.includes('uvicorn') || raw.includes('fastapi') || raw.includes('django') || raw.includes('flask')) {
@@ -1490,6 +1498,8 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'Python',
       tileClassName: 'border-blue-600/45 bg-blue-500/15 text-blue-700 dark:border-blue-500/35 dark:bg-blue-500/10 dark:text-blue-300',
       icon: <PythonIcon />,
+      score: 700 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('java') || raw.includes('maven') || raw.includes('gradle') || raw.includes('spring')) {
@@ -1497,6 +1507,8 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'Java',
       tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-300',
       icon: <JavaIcon />,
+      score: 650 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (/\bgolang\b|\bgo[:\s-]/.test(raw) || raw.includes('go run') || raw.includes('go build')) {
@@ -1504,6 +1516,8 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'Go',
       tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-300',
       icon: <GoIcon />,
+      score: 640 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('rust') || raw.includes('cargo')) {
@@ -1511,6 +1525,8 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'Rust',
       tileClassName: 'border-amber-700/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-300',
       icon: <RustIcon />,
+      score: 630 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('php') || raw.includes('composer')) {
@@ -1518,6 +1534,8 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'PHP',
       tileClassName: 'border-indigo-600/45 bg-indigo-500/15 text-indigo-700 dark:border-indigo-500/35 dark:bg-indigo-500/10 dark:text-indigo-300',
       icon: <PhpIcon />,
+      score: 620 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('nginx') || raw.includes('caddy') || raw.includes('static')) {
@@ -1525,6 +1543,8 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'Static',
       tileClassName: 'border-lime-600/45 bg-lime-500/15 text-lime-700 dark:border-lime-500/35 dark:bg-lime-500/10 dark:text-lime-300',
       icon: <Braces className="cds-project-node-icon" />,
+      score: 500 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   if (raw.includes('api') || raw.includes('server') || raw.includes('backend')) {
@@ -1532,13 +1552,49 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number],
       label: 'API Service',
       tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
       icon: <Code2 className="cds-project-node-icon" />,
+      score: 100 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
     };
   }
   return {
     label: service.name || service.id,
     tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-700 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-200',
     icon: <Code2 className="cds-project-node-icon" />,
+    score: 0 + (service.runningCount || 0),
+    source: service.dockerImage || service.command || service.id,
   };
+}
+
+function primaryInfraBrand(service: NonNullable<ProjectSummary['infraServices']>[number]): ProjectBrand {
+  const brand = infraIconFor(service);
+  const raw = `${service.id} ${service.name || ''} ${service.dockerImage || ''}`.toLowerCase();
+  const score =
+    raw.includes('mysql') ? 490
+      : raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') ? 485
+        : raw.includes('mongo') ? 480
+          : raw.includes('redis') ? 470
+            : raw.includes('rabbit') ? 460
+              : raw.includes('minio') ? 450
+                : raw.includes('milvus') || raw.includes('qdrant') || raw.includes('weaviate') || raw.includes('chroma') ? 440
+                  : 100;
+  return {
+    ...brand,
+    score: score + (service.status === 'running' ? 10 : 0),
+    source: service.dockerImage || service.name || service.id,
+  };
+}
+
+function primaryProjectBrand(project: ProjectSummary): ProjectBrand | null {
+  const appBrands = (project.appServices || [])
+    .map((service) => appIconFor(service, project))
+    .filter((brand) => brand.score > 0)
+    .sort((left, right) => right.score - left.score);
+  if (appBrands[0]) return appBrands[0];
+
+  const infraBrands = (project.infraServices || [])
+    .map(primaryInfraBrand)
+    .sort((left, right) => right.score - left.score);
+  return infraBrands[0] || null;
 }
 
 function ProjectDockNode({
@@ -1632,16 +1688,12 @@ function ProjectCard({
   const running = project.runningServiceCount || 0;
   const branches = project.branchCount || 0;
   const appTotal = project.appServiceCount || Math.max(branches, running);
-  const appServices = project.appServices || [];
   const infra = project.infraServices || [];
   const infraCount = project.infraServiceCount ?? infra.length;
   const runningInfra = project.runningInfraServiceCount || 0;
   const totalOnline = running + runningInfra;
   const totalServices = appTotal + infraCount;
-  const maxVisualNodes = 6;
-  const visibleAppServices = appServices.slice(0, maxVisualNodes);
-  const visibleInfraServices = infra.slice(0, Math.max(0, maxVisualNodes - visibleAppServices.length));
-  const hiddenVisualNodes = Math.max(0, appServices.length + infra.length - visibleAppServices.length - visibleInfraServices.length);
+  const primaryBrand = primaryProjectBrand(project);
   const dockMouseX = useMotionValue(Infinity);
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
@@ -1687,51 +1739,16 @@ function ProjectCard({
               onMouseMove={(event) => dockMouseX.set(event.clientX)}
               onMouseLeave={() => dockMouseX.set(Infinity)}
             >
-              {visibleAppServices.length > 0 ? (
-                visibleAppServices.map((service) => {
-                  const brand = appIconFor(service, project);
-                  return (
-                    <ProjectDockNode
-                      key={`${service.branch}-${service.id}`}
-                      mouseX={dockMouseX}
-                      className={`cds-project-node relative flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
-                      title={
-                        (service.runningCount || 0) > 1
-                          ? `${brand.label} · ${service.id} · ${service.runningCount} 个运行分支${service.dockerImage ? ` · ${service.dockerImage}` : ''}`
-                          : `${brand.label} · ${service.branch} · ${service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`
-                      }
-                      ariaLabel={`${brand.label} ${service.id}`}
-                    >
-                      {brand.icon}
-                      {(service.runningCount || 0) > 1 ? (
-                        <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
-                      ) : null}
-                    </ProjectDockNode>
-                  );
-                })
-              ) : null}
-              {visibleInfraServices.length > 0 ? (
-                visibleInfraServices.map((service) => {
-                  const online = service.status === 'running';
-                  const brand = infraIconFor(service);
-                  return (
-                    <ProjectDockNode
-                      key={service.id}
-                      mouseX={dockMouseX}
-                      className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${
-                        online
-                          ? brand.tileClassName
-                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
-                      }`}
-                      title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
-                      ariaLabel={brand.label}
-                    >
-                      {brand.icon}
-                    </ProjectDockNode>
-                  );
-                })
-              ) : null}
-              {visibleAppServices.length === 0 && visibleInfraServices.length === 0 ? (
+              {primaryBrand ? (
+                <ProjectDockNode
+                  mouseX={dockMouseX}
+                  className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${primaryBrand.tileClassName}`}
+                  title={`${primaryBrand.label}${primaryBrand.source ? ` · ${primaryBrand.source}` : ''}`}
+                  ariaLabel={`${primaryBrand.label} 项目类型`}
+                >
+                  {primaryBrand.icon}
+                </ProjectDockNode>
+              ) : (
                 <ProjectDockNode
                   mouseX={dockMouseX}
                   className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
@@ -1740,10 +1757,7 @@ function ProjectCard({
                 >
                   <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
                 </ProjectDockNode>
-              ) : null}
-              {hiddenVisualNodes > 0 ? (
-                <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{hiddenVisualNodes}</span>
-              ) : null}
+              )}
             </motion.div>
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
