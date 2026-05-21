@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
+import { FileText, Users, Settings, RefreshCw, CalendarCheck } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -10,8 +10,11 @@ import { useAuthStore } from '@/stores/authStore';
 import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
+import { DailyLogInline } from './components/DailyLogInline';
 import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
 import { ThemeControl, type ColorScheme } from './components/ThemeControl';
+import { getMyDefaultTab } from '@/services';
+import type { DefaultTabKey } from '@/services/contracts/reportAgent';
 
 const ZOOM_STORAGE_KEY = 'report-agent:zoom';
 const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
@@ -90,27 +93,42 @@ export default function ReportAgentPage() {
     void loadAll();
   }, [loadAll]);
 
-  // 每次"从外部进入"本页面都强制按团队成员关系校准默认 Tab:
-  // - 有任意团队成员关系(Leader 或成员)→ 落在「团队」Tab
-  // - 没有任何团队关系 → 落在「周报」Tab
+  // 每次"从外部进入"本页面都校准默认 Tab：
+  //   1) 优先读用户偏好 ReportAgentPreferences.DefaultTab（设置页可改，dailyLog/report/team/settings 之一）
+  //   2) 偏好为空时按团队成员关系兜底：有团队 → team，无团队 → report
   // 用 location.key 跟踪路由进入事件 — 同一组件实例内的 setActiveTab 不改 key,
   // 因此用户在会话内主动切换 Tab 不会被反复拉回。
   const location = useLocation();
   const lastLandedKeyRef = useRef<string | null>(null);
+  const [defaultTabPref, setDefaultTabPref] = useState<DefaultTabKey | null | undefined>(undefined);
   useEffect(() => {
-    // 必须等 teams 真正拉过才能判定 hasTeamWorkspace,不能看 loading
-    // (loading 在 loadReports 内部就被错误置 false,此时 teams 可能还没到位 — 旧逻辑漏判的根因)
+    // 拉一次用户偏好（不阻塞 teams 加载）
+    void (async () => {
+      const res = await getMyDefaultTab();
+      if (res.success && res.data) {
+        setDefaultTabPref(res.data.tab ?? null);
+      } else {
+        setDefaultTabPref(null);
+      }
+    })();
+  }, []);
+  useEffect(() => {
     if (!teamsLoaded) return;
+    if (defaultTabPref === undefined) return; // 等偏好拉完
     if (lastLandedKeyRef.current === location.key) return;
     lastLandedKeyRef.current = location.key;
-    setActiveTab(hasTeamWorkspace ? 'team' : 'report');
-  }, [location.key, teamsLoaded, hasTeamWorkspace, setActiveTab]);
+    if (defaultTabPref) {
+      setActiveTab(defaultTabPref);
+    } else {
+      setActiveTab(hasTeamWorkspace ? 'team' : 'report');
+    }
+  }, [location.key, teamsLoaded, hasTeamWorkspace, setActiveTab, defaultTabPref]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
     const oldToNew: Record<string, string> = {
       'my-reports': 'report',
-      'daily-log': 'report',
+      'daily-log': 'dailyLog',
       'my-sources': 'settings',
       'trends': 'report',
       'templates': 'settings',
@@ -132,6 +150,7 @@ export default function ReportAgentPage() {
 
   const tabItems = useMemo(() => {
     const items = [
+      { key: 'dailyLog', label: '日常记录', icon: <CalendarCheck size={14} /> },
       { key: 'report', label: '周报', icon: <FileText size={14} /> },
     ];
     if (hasTeamWorkspace) {
@@ -190,6 +209,7 @@ export default function ReportAgentPage() {
         className="flex-1 min-h-0"
         style={{ zoom: ZOOM_SCALE[zoom] }}
       >
+        {currentTab === 'dailyLog' && <DailyLogInline />}
         {currentTab === 'report' && <ReportMainView />}
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}

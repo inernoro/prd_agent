@@ -78,6 +78,9 @@ import type {
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
   DailyLogTagsState,
+  GetMyDefaultTabContract,
+  UpdateMyDefaultTabContract,
+  DefaultTabKey,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -906,6 +909,17 @@ export const resetTeamAiSummaryPromptReal: ResetTeamAiSummaryPromptContract = as
     api.reportAgent.teams.aiSummaryPromptReset(encodeURIComponent(input.teamId)),
     { method: 'POST' }
   );
+};
+
+export const getMyDefaultTabReal: GetMyDefaultTabContract = async () => {
+  return await apiRequest<{ tab: DefaultTabKey | null }>(api.reportAgent.defaultTab.get(), { method: 'GET' });
+};
+
+export const updateMyDefaultTabReal: UpdateMyDefaultTabContract = async (input) => {
+  return await apiRequest<{ tab: DefaultTabKey | null }>(api.reportAgent.defaultTab.update(), {
+    method: 'PUT',
+    body: { tab: input.tab },
+  });
 };
 
 export const getMyDailyLogTagsReal: GetMyDailyLogTagsContract = async () => {

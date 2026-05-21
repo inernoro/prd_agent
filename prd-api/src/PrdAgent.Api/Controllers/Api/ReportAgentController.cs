@@ -3029,6 +3029,51 @@ public class ReportAgentController : ControllerBase
         }));
     }
 
+    private static readonly HashSet<string> AllowedDefaultTabs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "dailyLog", "report", "team", "settings",
+    };
+
+    /// <summary>
+    /// 获取我的「登录后默认 Tab」偏好。返回 tab 字段（可能为 null，表示未设置走默认逻辑）。
+    /// </summary>
+    [HttpGet("my/default-tab")]
+    public async Task<IActionResult> GetMyDefaultTab(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var tab = prefs?.ReportAgentPreferences?.DefaultTab;
+        return Ok(ApiResponse<object>.Ok(new { tab }));
+    }
+
+    /// <summary>
+    /// 更新我的「登录后默认 Tab」偏好。tab 仅接受 dailyLog/report/team/settings；其它值（含 null）按未设置处理。
+    /// </summary>
+    [HttpPut("my/default-tab")]
+    public async Task<IActionResult> UpdateMyDefaultTab([FromBody] UpdateMyDefaultTabRequest req, CancellationToken ct)
+    {
+        string? normalized = null;
+        if (!string.IsNullOrWhiteSpace(req?.Tab) && AllowedDefaultTabs.Contains(req!.Tab!))
+        {
+            normalized = req.Tab;
+        }
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.DefaultTab, normalized)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new { tab = normalized }));
+    }
+
     private static List<string> NormalizeDailyLogCustomTags(IEnumerable<string>? tags)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -5209,6 +5254,12 @@ public class UpdateMyDailyLogTagsRequest
     public List<string>? TagOrder { get; set; }
     /// <summary>默认勾选的标签（系统 category key + 自定义标签名称）；选填，传 null 表示不改</summary>
     public List<string>? DefaultTags { get; set; }
+}
+
+public class UpdateMyDefaultTabRequest
+{
+    /// <summary>合法值：dailyLog / report / team / settings；其它值（含 null/空串）按未设置处理</summary>
+    public string? Tab { get; set; }
 }
 
 public class UpdateMyAiReportPromptRequest

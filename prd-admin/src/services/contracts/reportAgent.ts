@@ -1047,6 +1047,15 @@ export interface DailyLogTagsState {
   defaultTags: string[];
 }
 
+export type DefaultTabKey = 'dailyLog' | 'report' | 'team' | 'settings';
+
+export type GetMyDefaultTabContract = () => Promise<ApiResponse<{ tab: DefaultTabKey | null }>>;
+
+export type UpdateMyDefaultTabContract = (input: {
+  /** null/空 表示取消偏好，走默认逻辑 */
+  tab: DefaultTabKey | null;
+}) => Promise<ApiResponse<{ tab: DefaultTabKey | null }>>;
+
 export type GetMyDailyLogTagsContract = () => Promise<ApiResponse<DailyLogTagsState>>;
 
 export type UpdateMyDailyLogTagsContract = (input: {

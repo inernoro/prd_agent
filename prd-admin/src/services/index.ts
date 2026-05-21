@@ -647,6 +647,8 @@ import type {
   ResetTeamAiSummaryPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
+  GetMyDefaultTabContract,
+  UpdateMyDefaultTabContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -741,6 +743,8 @@ import {
   resetTeamAiSummaryPromptReal,
   getMyDailyLogTagsReal,
   updateMyDailyLogTagsReal,
+  getMyDefaultTabReal,
+  updateMyDefaultTabReal,
   listPersonalSourcesReal,
   createPersonalSourceReal,
   updatePersonalSourceReal,
@@ -1185,6 +1189,8 @@ export const updateTeamAiSummaryPrompt: UpdateTeamAiSummaryPromptContract = with
 export const resetTeamAiSummaryPrompt: ResetTeamAiSummaryPromptContract = withAuth(resetTeamAiSummaryPromptReal);
 export const getMyDailyLogTags: GetMyDailyLogTagsContract = withAuth(getMyDailyLogTagsReal);
 export const updateMyDailyLogTags: UpdateMyDailyLogTagsContract = withAuth(updateMyDailyLogTagsReal);
+export const getMyDefaultTab: GetMyDefaultTabContract = withAuth(getMyDefaultTabReal);
+export const updateMyDefaultTab: UpdateMyDefaultTabContract = withAuth(updateMyDefaultTabReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
 export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
 export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);

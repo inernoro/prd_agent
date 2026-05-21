@@ -17,7 +17,7 @@ import type {
 } from '@/services/contracts/reportAgent';
 
 type TabKey = 'my-reports' | 'daily-log' | 'my-sources' | 'team-dashboard' | 'templates' | 'teams' | 'data-sources' | 'trends'
-  | 'report' | 'team' | 'settings'; // v3.0 simplified tabs
+  | 'dailyLog' | 'report' | 'team' | 'settings'; // v3.1 simplified tabs (dailyLog 独立)
 
 /**
  * 周报状态变更事件 — 用于 Detail 页审阅/退回后通知 TeamDashboard 局部刷新成员卡片，

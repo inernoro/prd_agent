@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
-  CalendarCheck, ArrowRight,
+  ArrowRight,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -10,7 +10,6 @@ import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
-import { DailyLogInline } from './DailyLogInline';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
 
@@ -70,6 +69,7 @@ export function ReportMainView() {
     reports, teams, templates,
     showReportEditor, setShowReportEditor,
     setSelectedReportId, loadReports,
+    setActiveTab,
   } = useReportAgentStore();
 
   const dataTheme = useDataTheme();
@@ -80,7 +80,6 @@ export function ReportMainView() {
   const [weekFilterMode, setWeekFilterMode] = useState<'all' | 'specific'>('all');
   const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
-  const [showDailyLog, setShowDailyLog] = useState(false);
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
@@ -141,15 +140,16 @@ export function ReportMainView() {
     setShowReportEditor(true);
   }, [setSelectedReportId, setShowReportEditor]);
 
+  // 兼容旧入口：外部派发的 'report-agent:open-daily-log' 事件改为切到顶级「日常记录」Tab
   useEffect(() => {
     const onOpenDailyLog = () => {
-      setShowDailyLog(true);
+      setActiveTab('dailyLog');
     };
     window.addEventListener('report-agent:open-daily-log', onOpenDailyLog);
     return () => {
       window.removeEventListener('report-agent:open-daily-log', onOpenDailyLog);
     };
-  }, []);
+  }, [setActiveTab]);
 
   // ── Editor view ──
   if (showReportEditor) {
@@ -164,13 +164,6 @@ export function ReportMainView() {
           void loadReports();
         }}
       />
-    );
-  }
-
-  // ── Inline daily log view ──
-  if (showDailyLog) {
-    return (
-      <DailyLogInline onClose={() => setShowDailyLog(false)} />
     );
   }
 
@@ -250,14 +243,6 @@ export function ReportMainView() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowDailyLog(true)}
-              className="whitespace-nowrap"
-            >
-              <CalendarCheck size={13} /> 日常记录
-            </Button>
             {/* "写周报" 常驻显示,无模板时禁用 + 可见提示文字(title 在移动端不可达),避免普通成员看不到入口 */}
             {hasTeam && (
               <div className="flex flex-col items-end gap-1">

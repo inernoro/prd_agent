@@ -157,6 +157,13 @@ public class ReportAgentPreferences
     /// AI 生成周报草稿的自定义 Prompt（为空时使用系统默认 Prompt）
     /// </summary>
     public string? WeeklyReportPrompt { get; set; }
+
+    /// <summary>
+    /// 周报 Agent 登录后默认打开的 Tab。
+    /// 合法值：dailyLog / report / team / settings。
+    /// 为空时走默认逻辑：有团队成员关系 → team，否则 → report。
+    /// </summary>
+    public string? DefaultTab { get; set; }
 }
 
 /// <summary>
