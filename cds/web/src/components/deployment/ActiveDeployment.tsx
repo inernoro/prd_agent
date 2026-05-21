@@ -331,6 +331,14 @@ function formatDuration(ms: number): string {
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
+function formatRuntimeDuration(deployment: BranchDeploymentItem, now: number): string {
+  if (!deployment.runtimeStartedAt) {
+    return deployment.status === 'running' ? '未就绪' : '未记录';
+  }
+  const end = deployment.runtimeEndedAt || now;
+  return formatDuration(end - deployment.runtimeStartedAt);
+}
+
 export function ActiveDeployment({
   deployment,
   branchErrorMessage,
@@ -342,7 +350,8 @@ export function ActiveDeployment({
 }: ActiveDeploymentProps): JSX.Element {
   const displayStatus = effectiveDeploymentStatus(deployment, branchErrorMessage);
 
-  const duration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
+  const deployDuration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
+  const runtimeDuration = formatRuntimeDuration(deployment, now);
   const isError = displayStatus === 'error';
 
   return (
@@ -359,17 +368,26 @@ export function ActiveDeployment({
         {deployment.commitSha ? (
           <span className="font-mono text-xs text-muted-foreground">{deployment.commitSha.slice(0, 7)}</span>
         ) : null}
-        <span
-          className={`ml-auto inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
-            displayStatus === 'running'
-              ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
-              : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
-          }`}
-          title={displayStatus === 'running' ? '本次部署已持续时间' : '本次部署耗时'}
-        >
-          <Clock className="h-3.5 w-3.5" />
-          {displayStatus === 'running' ? '已用' : '耗时'} {duration}
-        </span>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
+              displayStatus === 'running'
+                ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+            }`}
+            title="从开始部署到部署动作完成的耗时；运行中时显示当前已用时间"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            部署耗时 {deployDuration}
+          </span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 font-mono text-xs font-semibold text-muted-foreground"
+            title="从容器通过启动/就绪判断后开始计算；没有就绪事件时显示未就绪或未记录"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            运行时间 {runtimeDuration}
+          </span>
+        </div>
       </header>
 
       <div className="px-5 py-4">
