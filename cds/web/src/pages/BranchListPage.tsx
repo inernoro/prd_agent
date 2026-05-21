@@ -539,22 +539,72 @@ function formatElapsedSecondsFrom(since: string | undefined | null, now: number)
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function aiOperationState(branch: BranchSummary, now: number): { active: boolean; history: boolean; label: string; title: string } {
+type AiOperationStatus = 'none' | 'active' | 'timeout' | 'released';
+
+function formatLocalDateTime(value?: string | null): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '-';
+  return date.toLocaleString();
+}
+
+function aiOperationState(branch: BranchSummary, now: number): {
+  active: boolean;
+  history: boolean;
+  status: AiOperationStatus;
+  label: string;
+  title: string;
+  lastAt?: string;
+  timeoutAt?: string;
+  relative: string;
+} {
   const lastAt = branch.lastAiOccupantAt || null;
   const lastAtMs = lastAt ? new Date(lastAt).getTime() : Number.NaN;
   const hasValidLastAt = Number.isFinite(lastAtMs);
   const active = hasValidLastAt && now - lastAtMs <= AI_ACTIVE_TTL_MS;
   const history = active || (branch.aiOpCount || 0) > 0 || hasValidLastAt;
+  const timeoutAt = hasValidLastAt ? new Date(lastAtMs + AI_ACTIVE_TTL_MS).toISOString() : undefined;
   const relative = hasValidLastAt ? formatRelativeTime(lastAt, '未知时间') : '';
+  const status: AiOperationStatus = !history
+    ? 'none'
+    : active
+      ? 'active'
+      : branch.status === 'idle'
+        ? 'released'
+        : 'timeout';
+  const label = status === 'active'
+    ? 'AI 正在操作'
+    : status === 'timeout'
+      ? 'AI 已超时'
+      : status === 'released'
+        ? 'AI 已释放'
+        : '无 AI 操作';
   const count = branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : '';
   return {
     active,
     history,
-    label: active ? 'AI 正在操作' : 'AI 操作过',
+    status,
+    label,
     title: history
-      ? `${active ? 'AI 正在操作' : 'AI 操作过'}${relative ? ` · 最近 ${relative}` : ''}${count}`
+      ? `${label}${relative ? ` · 最近 ${relative}` : ''}${count}`
       : '无 AI 操作记录',
+    lastAt: lastAt || undefined,
+    timeoutAt,
+    relative,
   };
+}
+
+function aiBadgeClass(status: AiOperationStatus): string {
+  switch (status) {
+    case 'active':
+      return 'border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15';
+    case 'timeout':
+      return 'border-amber-400/45 bg-amber-400/10 text-amber-300 hover:bg-amber-400/15';
+    case 'released':
+      return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground hover:text-foreground';
+    default:
+      return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+  }
 }
 
 function branchBusySince(branch: BranchSummary, action?: BranchAction): string | undefined {
@@ -2558,6 +2608,9 @@ export function BranchListPage(): JSX.Element {
                     projectId={projectId}
                     highlighted={highlightedBranchId === branch.id}
                     highlightPulse={highlightPulseBranchId === branch.id}
+                    activityEvents={activityEvents
+                      .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
+                      .slice(0, 5)}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
                     onPreview={() => void openPreview(branch, true)}
@@ -3448,6 +3501,7 @@ function BranchCard({
   capacityWarning,
   highlighted,
   highlightPulse,
+  activityEvents = [],
   activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -3471,6 +3525,7 @@ function BranchCard({
   action?: BranchAction;
   now: number;
   capacityWarning?: string;
+  activityEvents?: ActivityEvent[];
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
@@ -3536,6 +3591,7 @@ function BranchCard({
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
   const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
@@ -3565,7 +3621,7 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueLabel(branch) === 'CDS 环境异常'
             ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
@@ -3615,13 +3671,21 @@ function BranchCard({
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
               {isAiOperated ? (
-                <span
-                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border border-sky-400/45 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-300 ${isAiActive ? '' : 'opacity-75'}`}
+                <button
+                  type="button"
+                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-semibold transition-colors ${aiBadgeClass(aiState.status)}`}
                   title={aiState.title}
+                  aria-expanded={aiPanelOpen}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setTagEditorOpen(false);
+                    setTagDeleteTarget(null);
+                    setAiPanelOpen((current) => !current);
+                  }}
                 >
                   <Bot className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-1 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   AI
-                </span>
+                </button>
               ) : null}
               {/*
                 2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
@@ -3664,6 +3728,116 @@ function BranchCard({
           />
         </div>
       </header>
+
+      {aiPanelOpen && isAiOperated ? (
+        <div
+          className="absolute right-4 top-14 z-[130] w-[min(340px,calc(100%-32px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
+          role="dialog"
+          aria-label={`${branch.branch} AI 操作记录`}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === 'Escape') setAiPanelOpen(false);
+          }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 font-semibold">
+              <Bot className={`h-4 w-4 ${isAiActive ? 'text-sky-300' : aiState.status === 'timeout' ? 'text-amber-300' : 'text-muted-foreground'}`} />
+              <span className="truncate">{aiState.label}</span>
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+              onClick={() => setAiPanelOpen(false)}
+              aria-label="关闭 AI 操作面板"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="grid gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2 text-muted-foreground">
+            <div className="flex justify-between gap-3">
+              <span>最近操作</span>
+              <span className="text-foreground">{aiState.relative || '-'}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>最后时间</span>
+              <span className="font-mono">{formatLocalDateTime(aiState.lastAt)}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>租约超时</span>
+              <span className="font-mono">{formatLocalDateTime(aiState.timeoutAt)}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>结束判定</span>
+              <span className="text-foreground">
+                {aiState.status === 'active' ? '租约内' : aiState.status === 'timeout' ? '租约超时' : '已释放'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>记录次数</span>
+              <span className="text-foreground">{branch.aiOpCount || activityEvents.length || 1}</span>
+            </div>
+          </div>
+          <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2 leading-5 text-muted-foreground">
+            {aiState.status === 'active'
+              ? '当前仍在 AI 租约窗口内；如果超时前没有续租，会自动降级为已超时。'
+              : aiState.status === 'timeout'
+                ? '超过租约窗口后没有新的 AI 续租记录，按已超时处理。'
+                : '当前分支未处于 AI 活跃窗口，视为 AI 已释放。'}
+          </div>
+          <div className="mt-3">
+            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">最近 AI 记录</div>
+            {activityEvents.length > 0 ? (
+              <div className="max-h-32 space-y-1 overflow-auto pr-1">
+                {activityEvents.map((event) => (
+                  <div key={event.id} className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded border px-1 py-0.5 font-mono ${activityStatusClass(event.status)}`}>{event.status}</span>
+                      <span className="min-w-0 flex-1 truncate text-foreground">{activityLabel(event)}</span>
+                      <span className="font-mono text-muted-foreground">{formatDuration(event.duration)}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{activitySourceLabel(event)}</span>
+                      <span>{formatShortTime(event.ts)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded border border-dashed border-[hsl(var(--hairline))] px-2 py-2 text-muted-foreground">
+                暂无细分活动；当前只拿到分支级 AI 占用时间与次数。
+              </div>
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setAiPanelOpen(false);
+                onDetail();
+              }}
+            >
+              打开详情
+            </Button>
+            {isRunning ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setAiPanelOpen(false);
+                  onPreview();
+                }}
+              >
+                <ExternalLink />
+                人工预览
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
           用户反馈 2026-05-06:
@@ -3918,8 +4092,8 @@ function BranchCard({
                     : isAiOperated
                       ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                     : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                  title={isAiOperated ? `${aiState.label} · 预览` : '预览'}
-                  aria-label={isAiOperated ? `${aiState.label}，预览` : '预览'}
+                  title={isAiOperated ? `${aiState.label} · 打开 AI 操作面板` : '预览'}
+                  aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
                 >
                   {isAiOperated ? <Bot /> : <Eye />}
                 </Button>
@@ -3934,10 +4108,15 @@ function BranchCard({
                 : isAiOperated
                   ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                 : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-              onClick={onPreview}
+              onClick={isAiOperated
+                ? (event) => {
+                  event.stopPropagation();
+                  setAiPanelOpen((current) => !current);
+                }
+                : onPreview}
               disabled={busy}
-              title={isAiOperated ? `${aiState.label} · 预览` : '预览'}
-              aria-label={isAiOperated ? `${aiState.label}，预览` : '预览'}
+              title={isAiOperated ? `${aiState.label} · 打开 AI 操作面板` : '预览'}
+              aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
             >
               {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
             </Button>
