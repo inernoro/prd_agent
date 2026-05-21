@@ -32,5 +32,9 @@
     <ProjectReference Include="..\PrdAgent.Core\PrdAgent.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PrdAgent.Tests" />
+  </ItemGroup>
+
 </Project>
 

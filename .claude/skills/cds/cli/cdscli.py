@@ -32,8 +32,10 @@ import argparse
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
 import os
+import re
 import secrets
 import socket
+import subprocess
 import sys
 import time
 import urllib.error
@@ -851,6 +853,451 @@ def cmd_branch_history(args: argparse.Namespace) -> None:
     # Only emit last operation by default to avoid swamping context
     recent = body[-args.limit:] if isinstance(body, list) and args.limit > 0 else body
     ok(recent)
+
+
+def cmd_branch_preview_url(args: argparse.Namespace) -> None:
+    """打印分支的 v3 预览域名（来自 `/api/branches` 的 previewSlug 字段，
+    后端唯一来源 `cds/src/services/preview-slug.ts:computePreviewSlug`）。
+
+    `BRANCH_ID` 是 CDS 内部 canonical id（如 `prd-agent-claude-foo-bar`），
+    不是裸 git 分支名。可先调 `branch list` 看。
+
+    退化路径：API 没返回 previewSlug 时（旧版本 CDS / 临时故障）回退到
+    `id.host` 形式并打 stderr 警告。
+    """
+    branch_id = args.id
+    body = _call("GET", "/api/branches", timeout=30)
+    root = _preview_root_from_host()
+    # 2xx 非 JSON 响应（如代理 / WAF 返回 HTML 错误页 200）时 _call 透传 str；
+    # 直接 body.get(...) AttributeError。与 cmd_branch_id 对齐守护。
+    if not isinstance(body, dict):
+        die(f"/api/branches 返回非 JSON 响应（type={type(body).__name__}），"
+            f"无法解析 — 检查 CDS proxy 是否健康，或 CDS_HOST 是否正确",
+            code=3, extra={"body": body if isinstance(body, str) else repr(body)})
+        return
+    # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值只在 key
+    # 缺失时生效），下面 for 迭代会 TypeError。统一 `or []` 兜底；同时过滤非 dict
+    # 元素，防 `[null]` / 混合类型 payload 让 .get() AttributeError 给 traceback。
+    for b in [x for x in (body.get("branches") or []) if isinstance(x, dict)]:
+        if b.get("id") == branch_id:
+            slug = b.get("previewSlug")
+            if not slug:
+                # canonical id（带 project 前缀）≠ v3 previewSlug，吃下去会输出
+                # 错的 host。明确报错而不是静默退化。后端应永远返回 previewSlug。
+                die(f"/api/branches 响应缺 previewSlug 字段（分支={branch_id}）。"
+                    f"CDS 版本过旧或后端 bug，请升级 CDS 或检查 cds/src/routes/branches.ts",
+                    code=3, extra={"branch": b})
+                return
+            # trailing `/` 与 `preview-url` 顶层命令对齐，避免下游脚本因 URL
+            # 形态不一致而需要 sed 归一
+            url = f"https://{slug}.{root}/"
+            if _HUMAN:
+                print(url)
+            else:
+                ok({"branchId": branch_id, "previewSlug": slug, "url": url})
+            return
+    die(f"分支不存在: {branch_id}", code=2)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# 预览 URL 顶层入口（零参数，AI / handoff / smoke 全部走这里）
+#
+# 设计哲学：所有 skill / 文档 / commit message **不得自己 slugify / 拼 URL**，
+# 统一调 `cdscli preview-url`。这是预览 URL 唯一的可执行 SSOT。
+#
+# 决策顺序（从最准 → 最 fallback）：
+#   1. CDS API：有 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) → 查
+#      /api/branches 匹配 git 分支，拿后端 `previewSlug` 字段（永远与
+#      cds/src/services/preview-slug.ts 对齐）
+#   2. 本地 v3 公式：没 CDS context → 用 git 分支名 + 仓库根目录名 slugify 推算
+#      （依赖「目录名 slugify 后 == CDS 项目 slug」的隐含约定）
+#   3. 失败：未在 git 仓库里 / 没分支 → exit 1
+# ──────────────────────────────────────────────────────────────────────────
+def _slugify_for_preview(s: str) -> str:
+    """与 cds/src/services/preview-slug.ts:slugifyForPreview 完全一致。"""
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9-]+', '-', s)
+    s = re.sub(r'-+', '-', s)
+    return s.strip('-')
+
+
+def _compute_preview_slug(branch: str, project_slug: str) -> str:
+    """与 cds/src/services/preview-slug.ts:computePreviewSlug 完全一致（v3）。
+
+    本仓库其它任何 Python 脚本都不应再自己实现这套逻辑——import 这里。
+    """
+    project = _slugify_for_preview(project_slug)
+    if not branch:
+        return project
+    cut_at = branch.find('/')
+    if cut_at < 0:
+        tail = _slugify_for_preview(branch)
+        return f"{tail}-{project}" if tail else project
+    prefix = _slugify_for_preview(branch[:cut_at])
+    tail = _slugify_for_preview(branch[cut_at + 1:])
+    if not prefix:
+        return f"{tail}-{project}" if tail else project
+    if not tail:
+        return f"{prefix}-{project}"
+    return f"{tail}-{prefix}-{project}"
+
+
+def _preview_root_from_host() -> str:
+    """从 CDS_HOST 推预览域根（共享给所有 preview-url 相关函数，无 CDS_HOST 时
+    回退 `miduo.org`，避免 fallback 写死单一 root）。"""
+    host = os.environ.get("CDS_HOST", "").strip().rstrip("/")
+    if host.startswith("http://") or host.startswith("https://"):
+        host = host.split("://", 1)[1]
+    # 拆出 port-less 部分用于后缀匹配（IPv6 bracket-aware；普通 host split `:`）。
+    # 注意：port-less 仅用于"是否走 miduo.org 预览根"的判断，**不能**直接当返回值——
+    # 非 miduo 部署（如 `localhost:9900`）必须保留 port，否则下游拼出 `slug.localhost/`
+    # 而非 `slug.localhost:9900/`，整个 preview URL 走错端口（Codex P2 抓出）。
+    if host.startswith("["):
+        end = host.find("]")
+        host_no_port = host[: end + 1] if end >= 0 else host
+    else:
+        host_no_port = host.split(":", 1)[0]
+    if not host_no_port:
+        return "miduo.org"
+    # `cds.miduo.org` / 普通 miduo 子域 → 预览根仍走 miduo.org（无 port，由 cds
+    # proxy 接管 80/443）；非 miduo 部署返回原始 host 保留 port 信息。
+    if host_no_port == "miduo.org" or host_no_port.endswith(".miduo.org"):
+        return "miduo.org"
+    return host
+
+
+def _has_cds_auth() -> bool:
+    """与 _auth_headers() 的逻辑保持一致：项目级 cdsp_* 或全局 AI_ACCESS_KEY 任一。"""
+    return bool(os.environ.get("CDS_PROJECT_KEY", "").strip()
+                or os.environ.get("AI_ACCESS_KEY", "").strip())
+
+
+def _call_safe(method: str, path: str, timeout: int = 10) -> Any:
+    """像 _call(quiet=True) 但**网络错误也走 __error__ 包**而不是 _request.die()。
+
+    背景：_request 在 URLError / TimeoutError 时调 die() —— die() 先 print
+    一份错误 JSON 到 stdout，再 sys.exit。如果调用方用 `except SystemExit:`
+    拦下走 fallback 再 print 成功 JSON，**JSON 模式下会输出两份 payload**，
+    机器解析当场崩。
+
+    为了让 preview-url / smoke 这类"网络故障静默退化"的命令真正干净，
+    必须从一开始就不让 die() 写 stdout。本函数直接调 urllib，把所有失败
+    收口为 `{"__error__": True, "status": N, "body": ...}` 包返回。
+    """
+    url = _cds_base() + path
+    headers = {
+        "Accept": "application/json",
+        "X-CdsCli-Version": VERSION,
+        **_auth_headers(),
+    }
+    req = urllib.request.Request(url, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                return raw
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            parsed = raw
+        return {"__error__": True, "status": e.code, "body": parsed}
+    except urllib.error.URLError as e:
+        return {"__error__": True, "status": 0, "body": f"网络错误: {e.reason}"}
+    except TimeoutError:
+        return {"__error__": True, "status": 0,
+                "body": f"请求超时 (timeout={timeout}s)"}
+
+
+def _branches_path() -> str:
+    """`/api/branches` 路径，自动追加 `?project=<id>`（取 CDS_PROJECT_ID）。
+
+    必要性：多项目 CDS 下同一 git 分支名可能在多个项目里都存在，不带项目过滤
+    取首条会拿到错误项目的 canonical id / previewSlug。所有按 git 分支查询的
+    入口都要走这条路径。
+    """
+    project = os.environ.get("CDS_PROJECT_ID", "").strip()
+    if project:
+        return f"/api/branches?project={urllib.parse.quote(project)}"
+    return "/api/branches"
+
+
+def _match_branches_for_project(branches: list, git_branch: str,
+                                project_slug_hint: str,
+                                already_scoped: bool) -> list:
+    """从 `/api/branches` 结果里筛选属于当前项目的、且 git branch 字段匹配的条目。
+
+    多项目 CDS 同一 git 分支名可能在不同项目都存在；如果没 CDS_PROJECT_ID
+    走 server-side `?project=` 过滤，就要在客户端用本地仓库名 slugify 出来
+    的 hint 做二次过滤——canonical id 形式是 `${projectSlug}-${slugify(branch)}`，
+    且新版后端会返回 `projectSlug` / `projectId` 字段。
+
+    - already_scoped=True 时（CDS_PROJECT_ID 已传给后端）跳过二次过滤
+    - 否则永远按 project hint 校验——**即使只有一条匹配也要过滤**，否则别项目
+      的同名分支会被误当成本项目的（用户无该分支但 CDS 上有他人同名）
+    """
+    # `body.get("branches", [])` 在 `"branches": null` 时返回 None（默认值只在
+    # key 缺失时生效），传到这里迭代会 TypeError。在入口统一兜底为空 list。
+    # 同时过滤非 dict 元素（API 可能返回 `[null]` / 混合类型 / 字符串等异常 payload），
+    # 避免下面 `.get()` AttributeError 把畸形数据问题伪装成 traceback。
+    branches = [b for b in (branches or []) if isinstance(b, dict)]
+    matches = [b for b in branches if b.get("branch") == git_branch]
+    if already_scoped:
+        return matches
+    # 不论几条都按 project hint 筛——单条来自别项目的同样要过滤掉
+    legacy_bare_slug = _slugify_for_preview(git_branch)
+    # 探测 CDS 实例是否已多项目化：只要 branches 列表里有**任何** entry
+    # 带 projectId / projectSlug 字段，就说明后端是新版多项目格式，此时
+    # legacy 兜底（裸 slug id）会跨项目误匹配（Bugbot High：另一项目的
+    # legacy entry 会污染本项目结果）—— 必须禁用 legacy 启发式。
+    multi_project_cds = any(b.get("projectId") or b.get("projectSlug")
+                            for b in branches)
+
+    def _belongs(b: dict) -> bool:
+        if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
+            return True
+        if b.get("projectId") and b["projectId"] == project_slug_hint:
+            return True
+        # canonical id 前缀启发式（兼容老版 API 没 projectSlug 字段）
+        bid = b.get("id", "")
+        if bid.startswith(f"{project_slug_hint}-"):
+            return True
+        # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。仅在
+        # **整个 CDS 实例都还是 legacy 单项目格式**时放行——避免多项目
+        # CDS 下别人的 legacy entry 被误判成本项目。
+        # 后端显式 `b.legacy=true` 也算（新版后端可能加这个字段）。
+        if bid == legacy_bare_slug and (b.get("legacy") or not multi_project_cds):
+            return True
+        return False
+    scoped = [b for b in matches if _belongs(b)]
+    if matches and not scoped:
+        # 仅当后端确实返回了 N 条同名分支但都不属于本项目时才提示。
+        # branches 列表本就为空（API 失败被空集替代）时不打这条噪音 warn。
+        print(f"[warn] /api/branches 有 {len(matches)} 条同名分支但无一匹配项目"
+              f" hint '{project_slug_hint}'，可能是目录名 ≠ CDS 项目 slug；"
+              f"设 CDS_PROJECT_ID 走 server-side 过滤更稳",
+              file=sys.stderr)
+    return scoped
+
+
+def _warn_quiet_call_error(body: Any, label: str) -> bool:
+    """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
+    调用方决定是否继续 / 退化。"""
+    if isinstance(body, dict) and body.get("__error__"):
+        status = body.get("status")
+        msg = body.get("body")
+        if isinstance(msg, dict):
+            msg = msg.get("message") or msg.get("error") or msg
+        print(f"[warn] {label}: HTTP {status} — {msg}", file=sys.stderr)
+        return True
+    return False
+
+
+def cmd_preview_url(args: argparse.Namespace) -> None:
+    """打印当前分支的 v3 预览 URL（自动检测 git 分支 + 项目，无需参数）。
+
+    所有 skill / 文档 / handoff message **必须**走这条命令，禁止自己 slugify。
+    SSOT：cds/src/services/preview-slug.ts:computePreviewSlug（v3）。
+    """
+    # Step 0: 取 git 分支 + 仓库根
+    try:
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内", code=1)
+        return
+    if not branch:
+        die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
+        return
+
+    project_basename = os.path.basename(repo_root)
+    fallback_project_slug = _slugify_for_preview(project_basename)
+    root = _preview_root_from_host()
+
+    # Step 1: 优先走 CDS API（有 CDS_HOST + 任一认证密钥时；
+    # _auth_headers 同时支持 CDS_PROJECT_KEY 与 AI_ACCESS_KEY，这里两者满足其一即可）
+    cds_host_set = bool(os.environ.get("CDS_HOST", "").strip())
+    if cds_host_set and _has_cds_auth():
+        # 用 _call_safe 而不是 _call(quiet=True)：后者在网络错误时会让
+        # _request.die() 往 stdout 写一份错误 JSON，再被 except SystemExit
+        # 拦下走 fallback 又输出一份 ok JSON —— JSON 模式下双份 payload
+        # 让机器解析崩。_call_safe 把所有失败收口为 __error__ 包，单一路径。
+        body = _call_safe("GET", _branches_path(), timeout=10)
+        api_failed = _warn_quiet_call_error(body, "调 /api/branches")
+        # 2xx 非 JSON 响应（代理 / WAF 返回 HTML 错误页 200 等）时 _call_safe
+        # 透传原始 str。不能静默退化到 fallback URL，否则会掩盖 proxy 故障 +
+        # 给可能错的 URL。stderr 警告告知用户，再走本地 fallback（与 API 错误
+        # 路径一致：用户已被警告，结果仍可用最稳妥的本地推算）。
+        if not api_failed and not isinstance(body, dict):
+            print(f"[warn] /api/branches 返回非 JSON 响应"
+                  f"（type={type(body).__name__}），可能 CDS proxy 异常；"
+                  f"回退本地 v3 推算（结果可能与 CDS 实际不符）",
+                  file=sys.stderr)
+            api_failed = True
+        # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
+        # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
+        # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
+        project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+        # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值
+        # 只在 key 缺失时生效）；用 `or []` 兜底。
+        branches_list = ((body.get("branches") or [])
+                         if isinstance(body, dict) and not api_failed else [])
+        scoped = _match_branches_for_project(
+            branches_list, branch, fallback_project_slug, project_scoped)
+        # 区分两种 scoped 为空的情况，避免静默给错 URL：
+        #   1. raw 本就无该 git 分支 → fallback 合理（用户没部署过）
+        #   2. raw 里**有**但本地项目 hint 过滤排除掉 → 错配，必须 die 否则
+        #      用户拿到的 fallback URL 与后端 previewSlug 不一致（Bugbot Medium）
+        if not scoped and not project_scoped:
+            raw_same_branch = [b for b in branches_list
+                               if b.get("branch") == branch]
+            if raw_same_branch:
+                die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 "
+                    f"'{branch}' 但都不属于本地项目 hint "
+                    f"'{fallback_project_slug}'。可能是仓库目录名 ≠ CDS 项目 "
+                    f"slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
+                    f"或检查 /api/projects 列表。",
+                    code=2, extra={
+                        "rawMatches": raw_same_branch,
+                        "projectHint": fallback_project_slug,
+                    })
+                return
+        for b in scoped:
+            slug = b.get("previewSlug")
+            if slug:
+                url = f"https://{slug}.{root}/"
+                if _HUMAN:
+                    print(url)
+                else:
+                    ok({"source": "cds-api", "branch": branch,
+                        "branchId": b.get("id"),
+                        "previewSlug": slug, "url": url})
+                return
+            # 匹配到本项目分支但缺 previewSlug 字段 — 与 `branch preview-url`
+            # 行为一致：服务端返回不完整，明确 die 而不是静默退化到 fallback
+            # （fallback URL 与 CDS 实际不一致，会让用户访问到错的 host）。
+            die(f"/api/branches 匹配到分支 '{branch}'（id={b.get('id')}）"
+                f"但缺 previewSlug 字段。CDS 版本过旧或后端 bug，请升级 CDS "
+                f"或检查 cds/src/routes/branches.ts",
+                code=3, extra={"branch": b})
+            return
+        # 走到这里说明 CDS 没这条分支，落到 fallback（api_failed 时上面 warn 过了，
+        # 不再打 "没找到分支" 的 info 避免双重消息）
+        if not api_failed:
+            print(f"[info] /api/branches 没找到 git 分支 '{branch}'，回退本地 v3 推算",
+                  file=sys.stderr)
+    elif cds_host_set:
+        # CDS_HOST 设了但没 auth — 给用户明确提示，否则会困惑"为啥不走 API"
+        print(f"[warn] CDS_HOST 已设但缺 AI_ACCESS_KEY / CDS_PROJECT_KEY，"
+              f"跳过 API 走本地 v3 推算（可能与后端 previewSlug 不一致）",
+              file=sys.stderr)
+
+    # Step 2: 本地 v3 公式（fallback）— root 仍走 _preview_root_from_host 不写死 miduo.org
+    slug = _compute_preview_slug(branch, fallback_project_slug)
+    url = f"https://{slug}.{root}/"
+    if _HUMAN:
+        print(url)
+    else:
+        ok({
+            "source": "local-v3-fallback",
+            "branch": branch,
+            "projectSlug": fallback_project_slug,
+            "previewSlug": slug,
+            "url": url,
+            "note": "本地推算依赖「目录名 slugify 后 == CDS 项目 slug」。"
+                    "设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) 走 API 模式更准。",
+        })
+
+
+def cmd_branch_id(args: argparse.Namespace) -> None:
+    """打印当前 git 分支对应的 CDS canonical branch id（零参数）。
+
+    多项目 CDS 下，canonical id = `${projectSlug}-${slugify(branch)}`，
+    不是裸 `tr '/' '-'`。所有需要往 `/api/branches/:id` 发请求的 skill
+    （bridge / agent-guide / 任何 cdscli 子命令）都应通过这条命令拿 id，
+    禁止手算。
+
+    依赖：CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY)，否则 exit 1。
+    """
+    try:
+        branch = subprocess.check_output(
+            ["git", "branch", "--show-current"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内", code=1)
+        return
+    if not branch:
+        die("当前没有分支（detached HEAD？）", code=1)
+        return
+    project_slug_hint = _slugify_for_preview(os.path.basename(repo_root))
+
+    # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
+    # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
+    # 网络错误统一收口为 __error__ 包（网络错误 status=0），下面按 status 路由 exit。
+    body = _call_safe("GET", _branches_path(), timeout=10)
+    # API 失败（401 / 5xx / 网络）必须明确暴露，不能被后面 "找不到分支" 兜底 die 遮蔽。
+    # exit code 契约：4xx → 2（用户/认证错误），5xx + 网络错误 → 3（retriable）。
+    if isinstance(body, dict) and body.get("__error__"):
+        status = body.get("status")
+        msg = body.get("body")
+        if isinstance(msg, dict):
+            msg = msg.get("message") or msg.get("error") or msg
+        try:
+            status_int = int(status) if status is not None else 0
+        except (TypeError, ValueError):
+            status_int = 0
+        # 4xx → 2；其它（5xx / 0 网络错误 / 超时）→ 3（retriable）
+        exit_code = 2 if 400 <= status_int < 500 else 3
+        die(f"调 /api/branches 失败 HTTP {status}: {msg}（检查 CDS_HOST / 认证密钥）",
+            code=exit_code, extra={"status": status, "body": body.get("body")})
+        return
+    # _call(quiet=True) 在 2xx 但响应非 JSON 时透传原始 str（如代理返回 HTML
+    # 错误页 200）。直接 body.get(...) 会 AttributeError，给用户 traceback
+    # 而不是结构化错误。
+    if not isinstance(body, dict):
+        die(f"/api/branches 返回非 JSON 响应（type={type(body).__name__}），"
+            f"无法解析 — 检查 CDS proxy 是否健康，或 CDS_HOST 是否正确",
+            code=3, extra={"body": body if isinstance(body, str) else repr(body)})
+        return
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    branches_list = body.get("branches") or []
+    matches = _match_branches_for_project(
+        branches_list, branch, project_slug_hint, project_scoped)
+    for b in matches:
+        bid = b.get("id")
+        if bid:
+            if _HUMAN:
+                print(bid)
+            else:
+                ok({"branch": branch, "branchId": bid})
+            return
+    # 与 cmd_preview_url 行为对齐：raw 里**有**同名分支但本地 hint 排除掉，
+    # 不能误导用户去 "先 /cds-deploy"——99% 是 repo 目录名 ≠ CDS 项目 slug，
+    # 应该明确报错 + 提示设 CDS_PROJECT_ID（Bugbot Medium 抓出 cmd_branch_id
+    # 漏了这个分支，会卡 bridge / tagging 流程）
+    if not project_scoped:
+        raw_same_branch = [b for b in branches_list if b.get("branch") == branch]
+        if raw_same_branch:
+            die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 '{branch}' "
+                f"但都不属于本地项目 hint '{project_slug_hint}'。可能是仓库目录"
+                f"名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
+                f"或检查 /api/projects 列表。",
+                code=2, extra={
+                    "rawMatches": raw_same_branch,
+                    "projectHint": project_slug_hint,
+                })
+            return
+    die(f"CDS 里找不到 git 分支 '{branch}'，先跑 /cds-deploy 部署", code=2)
 
 
 def cmd_branch_create(args: argparse.Namespace) -> None:
@@ -4964,10 +5411,69 @@ def _walk(root: str, depth: int = 2) -> list[str]:
 
 
 def cmd_smoke(args: argparse.Namespace) -> None:
-    """分层冒烟：L1 预览域根路径 / L2 version-check / L3 认证 API。"""
+    """分层冒烟：L1 预览域根路径 / L2 version-check / L3 认证 API。
+
+    预览域名走 `/api/branches` 的 previewSlug 字段（v3 SSOT，由后端
+    `cds/src/services/preview-slug.ts:computePreviewSlug` 唯一生成）。
+    历史踩坑：曾用 `f"https://{branch_id}.miduo.org"` v1 公式，在多项目
+    CDS 下不可用——此处永久废弃该写法。
+    """
     branch_id = args.id
-    host = os.environ.get("CDS_HOST", "")
-    preview = f"https://{branch_id}.miduo.org" if host.endswith(".miduo.org") or "miduo" in host else f"https://{branch_id}.{host}"
+    root = _preview_root_from_host()
+    # 优先查 API 拿 v3 previewSlug；查不到才回退裸 id 模式（伴随 stderr 警告）。
+    # 用 _call_safe 收口所有失败（含网络错误），避免 _request.die() 污染 stdout。
+    # `_call_safe → _cds_base()` 在 CDS_HOST 未设时也会 die；smoke 本意是即使
+    # 没 CDS API 凭据也能跑分层探测，所以前置检查跳过 API 查询，preview_slug
+    # 保持 branch_id（裸 id fallback，与 "未返回 previewSlug" 行为一致）。
+    preview_slug = branch_id
+    if os.environ.get("CDS_HOST", "").strip():
+        body = _call_safe("GET", "/api/branches", timeout=30)
+        api_failed = _warn_quiet_call_error(body, "拉 /api/branches")
+        # 2xx 非 JSON 响应（代理 / WAF 返回 HTML 错误页 200 等）必须显式警告，
+        # 不能静默把 body 当空 branches 走 canonical-id-as-host 探测——CDS proxy
+        # 不按 canonical id 路由，L1-L3 全失败但误导成 smoke 自己的问题，
+        # 掩盖真正的 proxy 故障。与 cmd_preview_url 对齐。
+        if not api_failed and not isinstance(body, dict):
+            print(f"[warn] /api/branches 返回非 JSON 响应"
+                  f"（type={type(body).__name__}），可能 CDS proxy 异常；"
+                  f"smoke 仍继续但用裸 id 拼预览域（探测结果可能误导）",
+                  file=sys.stderr)
+            api_failed = True
+        if not api_failed:
+            # `body.get("branches", [])` 在 "branches": null 时返回 None；统一
+            # `or []` 兜底，下面 for 迭代不再 TypeError。同时过滤非 dict 元素，
+            # 防 `[null]` / 混合类型让 .get() AttributeError 给 traceback。
+            raw = (body.get("branches") or []) if isinstance(body, dict) else []
+            branches = [x for x in raw if isinstance(x, dict)]
+            matched = False
+            for b in branches:
+                if b.get("id") == branch_id:
+                    slug = b.get("previewSlug")
+                    if not slug:
+                        # canonical id ≠ v3 previewSlug，拼出来的 host CDS proxy
+                        # 不会响应，L1-L3 全失败且无意义。与 cmd_branch_preview_url
+                        # 行为对齐：服务端返回不完整 → 明确 die，不静默退化。
+                        die(f"/api/branches 匹配到 '{branch_id}' 但缺 previewSlug "
+                            f"字段。CDS 版本过旧或后端 bug，请升级 CDS 或检查 "
+                            f"cds/src/routes/branches.ts",
+                            code=3, extra={"branch": b})
+                        return
+                    preview_slug = slug
+                    matched = True
+                    break
+            if not matched:
+                # API 成功但未匹配到该 branch_id —— canonical id ≠ v3 previewSlug，
+                # 用裸 branch_id 拼预览域会指向 CDS proxy 不路由的 host，L1-L3 全
+                # 失败但用户被误导以为 smoke 自己有问题。与其它 fallback 路径对齐
+                # 显式 stderr warning，让用户能感知"被探测的 host 不是 v3 正解"。
+                print(f"[warn] /api/branches 没找到 branch id '{branch_id}'，"
+                      f"smoke 仍继续但用裸 id 拼预览域（探测结果可能误导；"
+                      f"先 /cds-deploy 或检查 id 是否正确）",
+                      file=sys.stderr)
+    else:
+        print(f"[warn] CDS_HOST 未设，smoke 跳过 API 查询，用裸 id 拼预览域",
+              file=sys.stderr)
+    preview = f"https://{preview_slug}.{root}"
     results: list[dict[str, Any]] = []
 
     def probe(name: str, url: str, headers: dict[str, str] | None = None,
@@ -5557,6 +6063,10 @@ def _build_parser() -> argparse.ArgumentParser:
     be.set_defaults(func=cmd_branch_exec)
     bh = br.add_parser("history"); bh.add_argument("id"); bh.add_argument("--limit", type=int, default=1)
     bh.set_defaults(func=cmd_branch_history)
+    bp = br.add_parser("preview-url",
+                       help="打印分支 v3 预览域名(来自 /api/branches 的 previewSlug)")
+    bp.add_argument("id", help="CDS canonical branch id (非裸 git 分支名)")
+    bp.set_defaults(func=cmd_branch_preview_url)
     bc = br.add_parser("create",
                        help="显式创建分支(--project + --branch)。"
                             "API body 字段是 projectId,这里用 --project 抹平。")
@@ -5655,6 +6165,19 @@ def _build_parser() -> argparse.ArgumentParser:
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")
     sm.add_argument("id", help="branchId")
     sm.set_defaults(func=cmd_smoke)
+
+    pu = sub.add_parser(
+        "preview-url",
+        help="打印当前分支的 v3 预览 URL（零参数，自动从 git + /api/branches 检测，"
+             "SSOT: cds/src/services/preview-slug.ts）",
+    )
+    pu.set_defaults(func=cmd_preview_url)
+
+    bid = sub.add_parser(
+        "branch-id",
+        help="打印当前 git 分支对应的 CDS canonical id（零参数，多项目 CDS 必备）",
+    )
+    bid.set_defaults(func=cmd_branch_id)
 
     hc = sub.add_parser("help-me-check", help="diagnose + 根因分析 + 修复建议")
     hc.add_argument("id", help="branchId")
