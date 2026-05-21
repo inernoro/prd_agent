@@ -70,7 +70,9 @@ function getIsoWeekInfo(date: Date): { weekYear: number; weekNumber: number } {
   return { weekYear, weekNumber };
 }
 
-function getTodoPlanWeekOptions(baseDateStr: string): { key: 'next' | 'afterNext'; label: string; weekYear: number; weekNumber: number }[] {
+type TodoPlanWeekKey = 'current' | 'next' | 'afterNext';
+
+function getTodoPlanWeekOptions(baseDateStr: string): { key: TodoPlanWeekKey; label: string; weekYear: number; weekNumber: number }[] {
   const baseDate = parseDate(baseDateStr);
   const day = baseDate.getDay() || 7;
   const monday = new Date(baseDate);
@@ -79,9 +81,11 @@ function getTodoPlanWeekOptions(baseDateStr: string): { key: 'next' | 'afterNext
   nextWeekMonday.setDate(monday.getDate() + 7);
   const afterNextWeekMonday = new Date(monday);
   afterNextWeekMonday.setDate(monday.getDate() + 14);
+  const currentInfo = getIsoWeekInfo(monday);
   const nextInfo = getIsoWeekInfo(nextWeekMonday);
   const afterNextInfo = getIsoWeekInfo(afterNextWeekMonday);
   return [
+    { key: 'current', label: '本周', weekYear: currentInfo.weekYear, weekNumber: currentInfo.weekNumber },
     { key: 'next', label: '下周', weekYear: nextInfo.weekYear, weekNumber: nextInfo.weekNumber },
     { key: 'afterNext', label: '下下周', weekYear: afterNextInfo.weekYear, weekNumber: afterNextInfo.weekNumber },
   ];
@@ -133,7 +137,7 @@ const SYSTEM_TAG_ORDER = [
   DailyLogCategory.Other,
 ] as const;
 
-type TodoPlanTargetKey = 'next' | 'afterNext';
+type TodoPlanTargetKey = TodoPlanWeekKey;
 
 function normalizeCustomTag(tag: string): string {
   return tag.trim().replace(/\s+/g, ' ');
@@ -206,6 +210,9 @@ export function DailyLogPanel() {
   const [dataSources, setDataSources] = useState<PersonalSource[]>([]);
   const [dayCommits, setDayCommits] = useState<ReportCommit[]>([]);
   const [commitsLoading, setCommitsLoading] = useState(false);
+
+  // Todo 计划面板：跨日聚合所有 Todo 条目，按周分组（本周/下周/下下周）
+  const [todoSummaryLogs, setTodoSummaryLogs] = useState<DailyLog[]>([]);
 
   const isToday = selectedDate === formatDate(new Date());
   const todoPlanOptions = useMemo(() => getTodoPlanWeekOptions(selectedDate), [selectedDate]);
@@ -334,6 +341,18 @@ export function DailyLogPanel() {
     void loadDayCommits();
   }, [loadDayCommits]);
 
+  // 加载所有 Todo 条目（用于右栏"待办计划"面板按周分组）
+  const loadTodoSummary = useCallback(async () => {
+    const res = await listDailyLogs({ categories: [DailyLogCategory.Todo], pageSize: 100 });
+    if (res.success && res.data) {
+      setTodoSummaryLogs(res.data.items);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTodoSummary();
+  }, [loadTodoSummary]);
+
   // ── Actions ──
 
   const resolveTodoPlanWeek = (targetKey: TodoPlanTargetKey) => (
@@ -361,6 +380,7 @@ export function DailyLogPanel() {
       toast.success('已保存');
       setExistingLog(res.data ?? null);
       void loadWeekLogs();
+      void loadTodoSummary();
     } else {
       toast.error(res.error?.message || '保存失败');
     }
@@ -640,6 +660,7 @@ export function DailyLogPanel() {
         if (res.success) {
           setExistingLog(null);
           void loadWeekLogs();
+          void loadTodoSummary();
         }
       }
     } else {
@@ -656,6 +677,7 @@ export function DailyLogPanel() {
       setExistingLog(null);
       setItems([]);
       void loadWeekLogs();
+      void loadTodoSummary();
     } else {
       toast.error(res.error?.message || '删除失败');
     }
@@ -784,16 +806,39 @@ export function DailyLogPanel() {
     });
   }, [selectedDate, weekLogs, loggedDates]);
 
-  // Category stats for current items
-  const categoryStats = useMemo(() => {
-    const map: Record<string, { count: number; minutes: number }> = {};
-    for (const item of items) {
-      if (!map[item.category]) map[item.category] = { count: 0, minutes: 0 };
-      map[item.category].count++;
-      map[item.category].minutes += item.durationMinutes || 0;
+  // 待办计划面板：按本周/下周/下下周分组聚合所有 Todo（基于今天计算）
+  const todoSummaryGroups = useMemo(() => {
+    const todayStr = formatDate(new Date());
+    const weekOptions = getTodoPlanWeekOptions(todayStr);
+    const groups = weekOptions.map((opt) => ({
+      key: opt.key,
+      label: opt.label,
+      weekYear: opt.weekYear,
+      weekNumber: opt.weekNumber,
+      items: [] as { content: string; date: string; createdAt?: string }[],
+    }));
+    for (const log of todoSummaryLogs) {
+      for (const it of log.items) {
+        if (it.category !== DailyLogCategory.Todo) continue;
+        if (it.planWeekYear == null || it.planWeekNumber == null) continue;
+        const group = groups.find(
+          (g) => g.weekYear === it.planWeekYear && g.weekNumber === it.planWeekNumber
+        );
+        if (group) {
+          group.items.push({ content: it.content, date: log.date, createdAt: it.createdAt });
+        }
+      }
     }
-    return Object.entries(map).sort((a, b) => b[1].count - a[1].count);
-  }, [items]);
+    // 每组内按打点时间倒序
+    for (const g of groups) {
+      g.items.sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : new Date(a.date).getTime();
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : new Date(b.date).getTime();
+        return tb - ta;
+      });
+    }
+    return groups;
+  }, [todoSummaryLogs]);
 
   // Streak count
   const streakCount = useMemo(() => {
@@ -1778,36 +1823,43 @@ export function DailyLogPanel() {
             )}
           </GlassCard>
 
-          {/* Category breakdown */}
-          {categoryStats.length > 0 && (
-            <GlassCard variant="subtle" className="px-3 py-3">
-              <div className="text-[12px] font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>
-                快捷分类
-              </div>
-              <div className="flex flex-col gap-2">
-                {categoryStats.map(([cat, stat]) => {
-                  const cfg = CATEGORY_CONFIG[cat] || CATEGORY_CONFIG.other;
-                  const Icon = cfg.icon;
-                  return (
-                    <div key={cat} className="flex items-center gap-2">
-                      <div
-                        className="w-5 h-5 rounded flex items-center justify-center"
-                        style={{ background: cfg.bg }}
-                      >
-                        <Icon size={10} style={{ color: cfg.color }} />
-                      </div>
-                      <span className="flex-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                        {cfg.label}
-                      </span>
-                      <span className="text-[11px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                        {stat.minutes > 0 ? formatMinutes(stat.minutes) : `${stat.count}条`}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </GlassCard>
-          )}
+          {/* 待办计划：按本周/下周/下下周分组 */}
+          <GlassCard variant="subtle" className="px-3 py-3">
+            <div className="text-[12px] font-medium mb-3" style={{ color: 'var(--text-secondary)' }}>
+              待办计划
+            </div>
+            <div className="flex flex-col gap-3">
+              {todoSummaryGroups.map((group) => (
+                <div key={group.key} className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{group.label}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{group.items.length} 项</span>
+                  </div>
+                  {group.items.length === 0 ? (
+                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>暂无</div>
+                  ) : (
+                    <>
+                      {group.items.slice(0, 5).map((todo, ti) => (
+                        <div
+                          key={`${group.key}-${ti}`}
+                          className="text-[11px] truncate leading-snug"
+                          style={{ color: 'var(--text-primary)' }}
+                          title={todo.content}
+                        >
+                          · {todo.content}
+                        </div>
+                      ))}
+                      {group.items.length > 5 && (
+                        <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          还有 {group.items.length - 5} 项
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </GlassCard>
 
           {/* ── AI 建议 ── */}
           {unrecordedCommits.length > 0 && (

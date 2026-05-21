@@ -876,7 +876,7 @@ export function TeamDashboard() {
       )}
 
       {hasScopedTeams && selectedTeamId && (viewMode === 'report_list' || viewMode === 'issues') && (
-        <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
+        <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden flex-1 min-h-0 flex flex-col">
           <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
@@ -960,7 +960,10 @@ export function TeamDashboard() {
               )}
             </div>
           </div>
-          <div className="px-5 py-4 max-h-[540px] overflow-auto">
+          <div
+            className="px-5 py-4 flex-1 min-h-0 overflow-y-auto"
+            style={{ overscrollBehavior: 'contain' }}
+          >
             {viewMode === 'issues' ? (
               <TeamIssuesPanel teamId={selectedTeamId} weekYear={weekYear} weekNumber={weekNumber} />
             ) : reportsLoading ? (
