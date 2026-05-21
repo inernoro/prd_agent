@@ -50,6 +50,7 @@ const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
+const MySharesPage = lazy(() => import('@/pages/labs/MySharesPage'));
 const SkillShareViewPage = lazy(() => import('@/pages/SkillShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
@@ -300,6 +301,7 @@ export default function App() {
         {/* 后端 menuCatalog 注册的路由（admin / 特殊权限页，前端不进 launcher） */}
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="labs/share-link-tester" element={<ShareLinkTesterPage />} />
+        <Route path="my/shares" element={<MySharesPage />} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
