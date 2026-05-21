@@ -550,6 +550,7 @@ function formatLocalDateTime(value?: string | null): string {
 
 function aiOperationState(branch: BranchSummary, now: number): {
   active: boolean;
+  visible: boolean;
   history: boolean;
   status: AiOperationStatus;
   label: string;
@@ -562,6 +563,7 @@ function aiOperationState(branch: BranchSummary, now: number): {
   const lastAtMs = lastAt ? new Date(lastAt).getTime() : Number.NaN;
   const hasValidLastAt = Number.isFinite(lastAtMs);
   const active = hasValidLastAt && now - lastAtMs <= AI_ACTIVE_TTL_MS;
+  const visible = active;
   const history = active || (branch.aiOpCount || 0) > 0 || hasValidLastAt;
   const timeoutAt = hasValidLastAt ? new Date(lastAtMs + AI_ACTIVE_TTL_MS).toISOString() : undefined;
   const relative = hasValidLastAt ? formatRelativeTime(lastAt, '未知时间') : '';
@@ -582,6 +584,7 @@ function aiOperationState(branch: BranchSummary, now: number): {
   const count = branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : '';
   return {
     active,
+    visible,
     history,
     status,
     label,
@@ -868,16 +871,7 @@ function openPreviewPlaceholder(): PreviewTarget {
   try {
     target.opener = null;
 
-    // Detect theme from the parent document so the pre-load page matches
-    // the user's current CDS dashboard look. Default to dark when unknown.
-    const parentTheme = document.documentElement.getAttribute('data-theme');
-    const isLight = parentTheme === 'light';
-
-    const palette = isLight
-      ? { bg: '#f8f2ed', surface: '#ffffff', primary: '#2a1f19', muted: '#7c6f64', accent: '#d97706' }
-      : { bg: '#0f1014', surface: '#131314', primary: '#e8e8ec', muted: '#9ca3af', accent: '#fbbf24' };
-
-    target.document.title = 'CDS · 正在准备预览';
+    target.document.title = 'CDS · 预览环境准备中';
 
     // Replace the entire <head> + <body> in one shot — we own this document
     // for the time between window.open() and target.location.href = url.
@@ -885,139 +879,192 @@ function openPreviewPlaceholder(): PreviewTarget {
     target.document.head.innerHTML = `
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>CDS · 正在准备预览</title>
+      <title>CDS · 预览环境准备中</title>
       <style>
+        * { box-sizing: border-box; }
         html, body {
           margin: 0;
           padding: 0;
           height: 100%;
-          background: ${palette.bg};
-          color: ${palette.primary};
+          background: #090a0f;
+          color: #f8fafc;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
           overflow: hidden;
         }
-        .stage {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          min-height: 100vh;
-          gap: 32px;
-        }
-        .logo {
-          width: 96px;
-          height: 96px;
-          position: relative;
-        }
-        .logo svg {
+        #shape-grid {
+          position: fixed;
+          inset: 0;
           width: 100%;
           height: 100%;
-          display: block;
+          opacity: .58;
         }
-        .ring-outer {
-          fill: none;
-          stroke: ${palette.accent};
-          stroke-width: 3;
-          stroke-linecap: round;
-          stroke-dasharray: 60 220;
-          transform-origin: center;
-          animation: rotateRing 1.6s linear infinite;
+        .veil {
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          background:
+            radial-gradient(circle at 55% 44%, rgba(255,255,255,.035), transparent 36%),
+            linear-gradient(90deg, rgba(9,10,15,.96), rgba(9,10,15,.62) 48%, rgba(9,10,15,.93));
         }
-        .ring-inner {
-          fill: none;
-          stroke: ${palette.accent};
-          stroke-width: 2;
-          stroke-linecap: round;
-          stroke-dasharray: 40 140;
-          transform-origin: center;
-          animation: rotateRing 2.4s linear infinite reverse;
-          opacity: 0.55;
-        }
-        .wordmark {
-          fill: ${palette.primary};
-          font-size: 28px;
-          font-weight: 700;
-          font-family: "SF Mono", Menlo, ui-monospace, monospace;
-          letter-spacing: 1px;
-          dominant-baseline: central;
-          text-anchor: middle;
-        }
-        @keyframes rotateRing {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .meta {
+        .stage {
+          position: relative;
+          z-index: 1;
           display: flex;
           flex-direction: column;
-          align-items: center;
-          gap: 6px;
+          min-height: 100vh;
+          padding: clamp(28px, 4.2vw, 64px);
         }
-        .title {
-          font-size: 15px;
-          font-weight: 500;
-          color: ${palette.primary};
-          letter-spacing: 2px;
+        .top {
+          display: flex;
+          gap: 20px;
+          flex-wrap: wrap;
         }
-        .subtitle {
-          font-size: 12px;
-          color: ${palette.muted};
-          letter-spacing: 0.5px;
-        }
-        .progress-track {
-          width: 240px;
-          height: 3px;
-          border-radius: 999px;
-          background: ${isLight ? '#efe7df' : 'rgba(255,255,255,0.08)'};
-          overflow: hidden;
+        .block {
           position: relative;
+          overflow: hidden;
+          border: 1px solid rgba(255,255,255,.045);
+          background:
+            linear-gradient(90deg, transparent, rgba(255,255,255,.035), transparent),
+            rgba(31,35,42,.74);
+          background-size: 220% 100%, 100% 100%;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+          animation: shimmer 2.4s ease-in-out infinite;
         }
-        .progress-fill {
+        .top .block {
+          width: 194px;
+          height: 74px;
+          border-radius: 20px;
+        }
+        .hero {
+          width: 100%;
+          height: min(64vh, 760px);
+          min-height: 430px;
+          margin-top: 48px;
+          border-radius: 28px;
+        }
+        .center {
           position: absolute;
           inset: 0;
-          width: 30%;
-          background: linear-gradient(90deg, transparent, ${palette.accent}, transparent);
-          animation: slideTrack 1.8s ease-in-out infinite;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
-        @keyframes slideTrack {
-          0%   { transform: translateX(-110%); }
-          100% { transform: translateX(380%); }
+        .label {
+          display: inline-flex;
+          align-items: center;
+          gap: 12px;
+          border: 1px solid rgba(255,255,255,.08);
+          border-radius: 12px;
+          background: rgba(0,0,0,.12);
+          padding: 12px 20px;
+          color: rgba(255,255,255,.46);
+          font-size: clamp(15px, 1.6vw, 22px);
+          backdrop-filter: blur(8px);
         }
-        .footer {
-          position: fixed;
-          bottom: 24px;
-          left: 0; right: 0;
-          text-align: center;
-          font-size: 11px;
-          color: ${palette.muted};
-          letter-spacing: 1px;
-          opacity: 0.7;
+        .spinner {
+          width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          border: 2px solid rgba(255,255,255,.22);
+          border-top-color: rgba(255,255,255,.58);
+          animation: spin .8s linear infinite;
         }
+        .lines {
+          margin-top: 48px;
+          display: grid;
+          gap: 28px;
+        }
+        .lines .block {
+          height: 44px;
+          border-radius: 18px;
+        }
+        .lines .block:nth-child(1) { width: min(360px, 28vw); }
+        .lines .block:nth-child(2) { width: min(520px, 38vw); opacity: .88; }
+        .lines .block:nth-child(3) { width: min(410px, 30vw); opacity: .74; }
+        @keyframes shimmer {
+          0%, 100% { background-position: 160% 0, 0 0; }
+          50% { background-position: -60% 0, 0 0; }
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
       </style>
     `;
 
-    // Body: spinning ring + CDS wordmark + status row + branded footer.
-    // Why all-SVG instead of <img>: avoids any external network request
-    // racing the navigation that's about to happen on the next tick.
     const stage = target.document.createElement('div');
     stage.className = 'stage';
     stage.innerHTML = `
-      <div class="logo" role="img" aria-label="CDS preparing preview">
-        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-          <circle class="ring-outer" cx="50" cy="50" r="46" />
-          <circle class="ring-inner" cx="50" cy="50" r="34" />
-          <text class="wordmark" x="50" y="51">CDS</text>
-        </svg>
+      <canvas id="shape-grid" aria-hidden="true"></canvas>
+      <div class="veil" aria-hidden="true"></div>
+      <div class="top" aria-hidden="true">
+        <div class="block"></div>
+        <div class="block"></div>
+        <div class="block"></div>
       </div>
-      <div class="meta">
-        <div class="title">正在准备预览</div>
-        <div class="subtitle">Cloud Dev Suite · preparing preview</div>
+      <div class="block hero" role="status" aria-live="polite">
+        <div class="center">
+          <div class="label"><span class="spinner"></span>预览环境准备中</div>
+        </div>
       </div>
-      <div class="progress-track" aria-hidden="true">
-        <div class="progress-fill"></div>
+      <div class="lines" aria-hidden="true">
+        <div class="block"></div>
+        <div class="block"></div>
+        <div class="block"></div>
       </div>
-      <div class="footer">CDS · cds.miduo.org</div>
     `;
     target.document.body.appendChild(stage);
+
+    const script = target.document.createElement('script');
+    script.textContent = `
+      (function(){
+        var canvas = document.getElementById('shape-grid');
+        var ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
+        if (!ctx) return;
+        var speed = 0.39, size = 34, hexHoriz = size * 1.5, hexVert = size * Math.sqrt(3);
+        var offset = { x: 0, y: 0 };
+        function resize(){
+          var dpr = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = Math.max(1, Math.floor(canvas.offsetWidth * dpr));
+          canvas.height = Math.max(1, Math.floor(canvas.offsetHeight * dpr));
+          ctx.setTransform(dpr,0,0,dpr,0,0);
+        }
+        function drawHex(cx, cy){
+          ctx.beginPath();
+          for (var i=0;i<6;i++){
+            var angle = Math.PI / 3 * i;
+            var x = cx + size * Math.cos(angle);
+            var y = cy + size * Math.sin(angle);
+            if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+          }
+          ctx.closePath();
+        }
+        function frame(){
+          var w = canvas.offsetWidth, h = canvas.offsetHeight;
+          ctx.clearRect(0,0,w,h);
+          var wrapX = hexHoriz * 2, wrapY = hexVert;
+          offset.x = (offset.x - speed + wrapX) % wrapX;
+          offset.y = (offset.y - speed + wrapY) % wrapY;
+          var colShift = Math.floor(offset.x / hexHoriz);
+          var ox = ((offset.x % hexHoriz) + hexHoriz) % hexHoriz;
+          var oy = ((offset.y % hexVert) + hexVert) % hexVert;
+          var cols = Math.ceil(w / hexHoriz) + 3;
+          var rows = Math.ceil(h / hexVert) + 3;
+          ctx.strokeStyle = 'rgba(255,255,255,0.052)';
+          for (var col=-2; col<cols; col++){
+            for (var row=-2; row<rows; row++){
+              var cx = col * hexHoriz + ox;
+              var cy = row * hexVert + (((col + colShift) % 2) !== 0 ? hexVert / 2 : 0) + oy;
+              drawHex(cx, cy);
+              ctx.stroke();
+            }
+          }
+          requestAnimationFrame(frame);
+        }
+        resize();
+        window.addEventListener('resize', resize);
+        frame();
+      })();
+    `;
+    target.document.body.appendChild(script);
   } catch {
     // The window still exists; navigation below can continue. Fall back to
     // the cheap text placeholder so something is on screen during the
@@ -3585,7 +3632,7 @@ function BranchCard({
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
   const aiState = aiOperationState(branch, now);
-  const isAiOperated = aiState.history;
+  const isAiOperated = aiState.visible;
   const isAiActive = aiState.active;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
@@ -3601,6 +3648,11 @@ function BranchCard({
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [tagEditorOpen]);
+  useEffect(() => {
+    if (!isAiOperated && aiPanelOpen) {
+      setAiPanelOpen(false);
+    }
+  }, [aiPanelOpen, isAiOperated]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {

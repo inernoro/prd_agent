@@ -226,8 +226,8 @@
   /*
    * AI-operated branch preview beacon.
    * React Bits-inspired glow/shimmer treatment: a rotating soft rim, an
-   * outer breathing halo, and a tiny icon flash. It marks AI-touched
-   * branches without changing button dimensions or layout.
+   * outer breathing halo, and a tiny icon flash. It marks only currently
+   * AI-operated branches without changing button dimensions or layout.
    */
   .cds-ai-preview-beacon {
     position: relative;
@@ -665,6 +665,12 @@
     transition: width 120ms ease, height 120ms ease, filter 160ms ease;
   }
 
+  .cds-project-node-devicon {
+    display: block;
+    object-fit: contain;
+    line-height: 1;
+  }
+
   @media (hover: hover) and (pointer: fine) {
     .cds-project-node-row .cds-project-node:hover {
       z-index: 3;
@@ -872,6 +878,42 @@
   }
   50% {
     background-position: -60% 0, 0 0, 0 0;
+  }
+}
+
+@keyframes shiny-text {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes svc-pulse {
+  0%, 100% {
+    transform: scale(0.78);
+    opacity: 0.58;
+    filter: saturate(0.9);
+  }
+  50% {
+    transform: scale(1.28);
+    opacity: 1;
+    filter: saturate(1.4);
+  }
+}
+
+@keyframes svc-glint {
+  0%, 32% {
+    transform: translateX(0) skewX(-18deg);
+    opacity: 0;
+  }
+  48% {
+    opacity: 1;
+  }
+  72%, 100% {
+    transform: translateX(420%) skewX(-18deg);
+    opacity: 0;
   }
 }
 
