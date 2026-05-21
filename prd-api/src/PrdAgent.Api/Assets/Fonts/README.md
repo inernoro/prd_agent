@@ -1,8 +1,14 @@
 # Watermark font assets
 
-Download the DejaVu Sans TTF font and save it as:
+Runtime expects the bundled default file at:
 
-`Assets/Fonts/DejaVuSans.ttf`
+`Assets/Fonts/default.ttf`
+
+You may download DejaVu Sans and place a copy named `default.ttf` (same bytes as `DejaVuSans.ttf` from the DejaVu distribution). If this file is missing and no public CDN base is configured (`TENCENT_COS_PUBLIC_BASE_URL` / `R2_PUBLIC_BASE_URL`), the API falls back to an installed system font (best-effort) so Stub image generation still works in dev/CI.
+
+Alternative filename used in older docs only:
+
+`Assets/Fonts/DejaVuSans.ttf` (not read by code unless you rename or symlink to `default.ttf`)
 
 Recommended source:
 - https://dejavu-fonts.github.io/ (Download the DejaVu Sans TTF file)
