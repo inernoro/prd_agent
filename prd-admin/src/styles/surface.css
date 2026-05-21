@@ -2598,11 +2598,14 @@
   border-radius: inherit;
 }
 
-/* PixelCard 内部 grid 单元里 mkt-card 需要 w-full h-full 才能完全覆盖
- * (PixelCard 默认 grid place-items-center 会把没有显式尺寸的 child 居中收缩) */
+/* PixelCard 上游用 `grid place-items-center` 但没定义 grid-template-rows，
+ * canvas + mkt-card 会被自动放进两行 → mkt-card 被挤到 0 高度，glass 被
+ * overflow:hidden 切掉。fix：把 mkt-card 拉出 grid 流，绝对定位覆盖 canvas。 */
 .mkt-card-pixel-wrap > .mkt-card.mkt-card-as-pixel-inner {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
   background-color: transparent;
   border: none;
   border-radius: inherit;
