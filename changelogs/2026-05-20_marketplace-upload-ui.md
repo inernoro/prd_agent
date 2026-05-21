@@ -13,3 +13,4 @@
 | feat | prd-admin | 海鲜市场卡片用 reactbits SpotlightCard（普通）/ PixelCard（官方）双形态；官方卡像素动效色种子来自标题哈希，无封面图 |
 | feat | prd-admin | 封面图上传前客户端 resize（1280×720 上限 + webp/0.82），上传上限从 5MB 降至 2MB |
 | chore | prd-admin | 新增 reactbits/ 目录 + LICENSE.md（MIT + Commons Clause 归属），eslint 对该目录关 ban-ts-comment / exhaustive-deps，保持上游原样可 diff |
+| fix | prd-admin | 官方技能卡 PixelCard 改为挂载后程式 focus 自动触发 appear（不再 hover-only）+ IntersectionObserver 滚回视口再 focus + CSS 关 focus 轮廓 + 底色压暗让像素更显眼 |

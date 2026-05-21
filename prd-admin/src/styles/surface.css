@@ -2620,3 +2620,20 @@
 [data-theme="light"] .mkt-card-pixel-wrap > .mkt-card-as-pixel-inner .mkt-card-glass {
   background: rgba(248, 245, 255, 0.88);
 }
+
+/* 官方卡 PixelCard 被程式 focus 后默认会有蓝色 outline —— 关掉，体验干净
+ * （focus 仅用于触发 reactbits 的 appear 动画，不是给用户看的） */
+.mkt-card-pixel-wrap:focus,
+.mkt-card-pixel-wrap:focus-visible {
+  outline: none !important;
+  box-shadow: none;
+}
+
+/* PixelCard 底色：reactbits 默认 grid place-items-center + 透明，但当 mkt-card
+ * 完全透明时，背景就是 body 的 #0a0a0f。给一层极淡的暗色底，让像素从黑里浮出来更显眼 */
+.mkt-card-pixel-wrap {
+  background-color: rgba(8, 10, 18, 0.55);
+}
+[data-theme="light"] .mkt-card-pixel-wrap {
+  background-color: rgba(248, 245, 255, 0.35);
+}
