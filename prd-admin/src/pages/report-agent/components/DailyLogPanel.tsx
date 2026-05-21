@@ -151,6 +151,43 @@ interface LogItemInput {
   planWeekYear?: number;
   planWeekNumber?: number;
   createdAt?: string;
+  completedAt?: string;
+}
+
+interface TagEntry {
+  /** 系统 category key 或 自定义标签名称 */
+  key: string;
+  kind: 'system' | 'custom';
+}
+
+/**
+ * 合并系统标签 + 自定义标签到一个有序列表。
+ * - 如有用户偏好 tagOrder 则按其顺序，并把不在 tagOrder 中的标签按 系统默认序 + 自定义新增序 追加在尾部。
+ * - 系统 / 自定义的区分仅看 key 是否落在 SYSTEM_TAG_ORDER 内。
+ */
+function buildOrderedTagEntries(tagOrder: string[], customTags: string[]): TagEntry[] {
+  const customSet = new Set(customTags);
+  const isSystem = (k: string) => (SYSTEM_TAG_ORDER as readonly string[]).includes(k);
+  const isValid = (k: string) => isSystem(k) || customSet.has(k);
+
+  const result: TagEntry[] = [];
+  const seen = new Set<string>();
+  for (const k of tagOrder) {
+    if (!isValid(k) || seen.has(k)) continue;
+    result.push({ key: k, kind: isSystem(k) ? 'system' : 'custom' });
+    seen.add(k);
+  }
+  for (const k of SYSTEM_TAG_ORDER) {
+    if (seen.has(k)) continue;
+    result.push({ key: k, kind: 'system' });
+    seen.add(k);
+  }
+  for (const k of customTags) {
+    if (seen.has(k)) continue;
+    result.push({ key: k, kind: 'custom' });
+    seen.add(k);
+  }
+  return result;
 }
 
 function dedupePreserveOrder(tags: string[]): string[] {
@@ -182,9 +219,13 @@ export function DailyLogPanel() {
 
   // Quick input state
   const [quickInput, setQuickInput] = useState('');
-  const [selectedSystemTags, setSelectedSystemTags] = useState<string[]>([DailyLogCategory.Development]);
+  // 默认空选，用户在「管理标签」勾选「默认」的标签会在 prefs 加载后注入
+  const [selectedSystemTags, setSelectedSystemTags] = useState<string[]>([]);
   const [selectedCustomTags, setSelectedCustomTags] = useState<string[]>([]);
   const [customTags, setCustomTags] = useState<string[]>([]);
+  const [tagOrder, setTagOrder] = useState<string[]>([]);
+  const [defaultTags, setDefaultTags] = useState<string[]>([]);
+  const [tagPrefsLoaded, setTagPrefsLoaded] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [savingTags, setSavingTags] = useState(false);
@@ -259,6 +300,7 @@ export function DailyLogPanel() {
           planWeekYear: i.planWeekYear,
           planWeekNumber: i.planWeekNumber,
           createdAt: i.createdAt,
+          completedAt: i.completedAt,
         }))
       );
     } else {
@@ -268,12 +310,22 @@ export function DailyLogPanel() {
     setLoaded(true);
   }, [selectedDate]);
 
-  const saveCustomTags = useCallback(async (nextTags: string[], successMessage?: string) => {
+  const saveCustomTags = useCallback(async (
+    nextTags: string[],
+    successMessage?: string,
+    extra?: { tagOrder?: string[] | null; defaultTags?: string[] | null }
+  ) => {
     setSavingTags(true);
-    const res = await updateMyDailyLogTags({ items: nextTags });
+    const res = await updateMyDailyLogTags({
+      items: nextTags,
+      tagOrder: extra?.tagOrder,
+      defaultTags: extra?.defaultTags,
+    });
     setSavingTags(false);
     if (res.success && res.data) {
       setCustomTags(res.data.items);
+      setTagOrder(res.data.tagOrder ?? []);
+      setDefaultTags(res.data.defaultTags ?? []);
       if (successMessage) toast.success(successMessage);
       return true;
     }
@@ -281,7 +333,7 @@ export function DailyLogPanel() {
     return false;
   }, []);
 
-  // Load personal data sources + custom tags once
+  // Load personal data sources + tag preferences once
   useEffect(() => {
     void (async () => {
       const [sourceRes, tagRes] = await Promise.all([
@@ -293,9 +345,38 @@ export function DailyLogPanel() {
       }
       if (tagRes.success && tagRes.data) {
         setCustomTags(tagRes.data.items);
+        setTagOrder(tagRes.data.tagOrder ?? []);
+        setDefaultTags(tagRes.data.defaultTags ?? []);
       }
+      setTagPrefsLoaded(true);
     })();
   }, []);
+
+  // 用户偏好加载后注入默认勾选标签（仅在初始进入页面、未手动改过任何标签前一次性应用）
+  const defaultsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!tagPrefsLoaded || defaultsAppliedRef.current) return;
+    if (defaultTags.length === 0) {
+      defaultsAppliedRef.current = true;
+      return;
+    }
+    const sysSet = new Set<string>(SYSTEM_TAG_ORDER as readonly string[]);
+    const customSet = new Set(customTags);
+    const sysDefaults: string[] = [];
+    const customDefaults: string[] = [];
+    for (const t of defaultTags) {
+      if (sysSet.has(t)) sysDefaults.push(t);
+      else if (customSet.has(t)) customDefaults.push(t);
+    }
+    // 系统 Todo 标签不能与其它系统标签共存（后端校验），如果默认里同时存在则丢弃 Todo
+    if (sysDefaults.includes(DailyLogCategory.Todo) && sysDefaults.length > 1) {
+      const idx = sysDefaults.indexOf(DailyLogCategory.Todo);
+      sysDefaults.splice(idx, 1);
+    }
+    setSelectedSystemTags(sysDefaults);
+    setSelectedCustomTags(customDefaults);
+    defaultsAppliedRef.current = true;
+  }, [tagPrefsLoaded, defaultTags, customTags]);
 
   // Load commits for the selected date
   const loadDayCommits = useCallback(async () => {
@@ -359,21 +440,24 @@ export function DailyLogPanel() {
     todoPlanOptions.find((opt) => opt.key === targetKey) ?? null
   );
 
+  const buildSavePayload = (i: LogItemInput) => ({
+    content: i.content.trim(),
+    category: i.category,
+    tags: i.tags && i.tags.length > 0 ? i.tags : undefined,
+    durationMinutes: i.durationMinutes,
+    planWeekYear: i.planWeekYear,
+    planWeekNumber: i.planWeekNumber,
+    createdAt: i.createdAt,
+    completedAt: i.completedAt,
+  });
+
   const doSave = async (newItems: LogItemInput[]) => {
     const validItems = newItems.filter((i) => i.content.trim());
     if (validItems.length === 0) return;
     setSaving(true);
     const res = await saveDailyLog({
       date: selectedDate,
-      items: validItems.map((i) => ({
-        content: i.content.trim(),
-        category: i.category,
-        tags: i.tags && i.tags.length > 0 ? i.tags : undefined,
-        durationMinutes: i.durationMinutes,
-        planWeekYear: i.planWeekYear,
-        planWeekNumber: i.planWeekNumber,
-        createdAt: i.createdAt,
-      })),
+      items: validItems.map(buildSavePayload),
     });
     setSaving(false);
     if (res.success) {
@@ -383,6 +467,41 @@ export function DailyLogPanel() {
       void loadTodoSummary();
     } else {
       toast.error(res.error?.message || '保存失败');
+    }
+  };
+
+  /**
+   * 跨日保存：用于"本周待办"卡片直接操作其它日期的 todo（如标记完成、删除）。
+   * 不动 selectedDate / items / existingLog。
+   */
+  const doSaveForDate = async (date: string, newItems: LogItemInput[]) => {
+    const validItems = newItems.filter((i) => i.content.trim());
+    setSaving(true);
+    try {
+      if (validItems.length === 0) {
+        // 全删完则调 delete
+        const delRes = await deleteDailyLog({ date });
+        if (!delRes.success) {
+          toast.error(delRes.error?.message || '删除失败');
+          return false;
+        }
+      } else {
+        const res = await saveDailyLog({
+          date,
+          items: validItems.map(buildSavePayload),
+        });
+        if (!res.success) {
+          toast.error(res.error?.message || '保存失败');
+          return false;
+        }
+      }
+      // 如果改的就是当前选中日期，刷新主列表
+      if (date === selectedDate) await loadLog();
+      void loadWeekLogs();
+      void loadTodoSummary();
+      return true;
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -581,20 +700,86 @@ export function DailyLogPanel() {
   const handleDeleteCustomTag = async (idx: number) => {
     const removedTag = customTags[idx];
     if (!removedTag) return;
+    const lower = removedTag.toLowerCase();
     const prevTags = customTags;
     const prevSelectedCustomTags = selectedCustomTags;
+    const prevTagOrder = tagOrder;
+    const prevDefaults = defaultTags;
     const updatedTags = customTags.filter((_, i) => i !== idx);
+    const updatedOrder = tagOrder.filter((t) => t.toLowerCase() !== lower);
+    const updatedDefaults = defaultTags.filter((t) => t.toLowerCase() !== lower);
     setCustomTags(updatedTags);
-    setSelectedCustomTags((prev) => prev.filter((x) => x.toLowerCase() !== removedTag.toLowerCase()));
+    setTagOrder(updatedOrder);
+    setDefaultTags(updatedDefaults);
+    setSelectedCustomTags((prev) => prev.filter((x) => x.toLowerCase() !== lower));
     if (editingTagIdx === idx) {
       handleCancelInlineEditTag();
     }
 
-    const ok = await saveCustomTags(updatedTags, '标签已删除');
+    const ok = await saveCustomTags(updatedTags, '标签已删除', { tagOrder: updatedOrder, defaultTags: updatedDefaults });
     if (!ok) {
       setCustomTags(prevTags);
+      setTagOrder(prevTagOrder);
+      setDefaultTags(prevDefaults);
       setSelectedCustomTags(prevSelectedCustomTags);
     }
+  };
+
+  /**
+   * 统一持久化标签三件套（自定义列表 + 排序 + 默认勾选）。
+   * 调用方传 partial，未传字段沿用当前 state。
+   */
+  const persistAllTagPrefs = useCallback(async (
+    next: { customTags?: string[]; tagOrder?: string[]; defaultTags?: string[] },
+    successMessage?: string
+  ) => {
+    const items = next.customTags ?? customTags;
+    const order = next.tagOrder ?? tagOrder;
+    const defaults = next.defaultTags ?? defaultTags;
+    return await saveCustomTags(items, successMessage, { tagOrder: order, defaultTags: defaults });
+  }, [customTags, tagOrder, defaultTags, saveCustomTags]);
+
+  /**
+   * 翻转某标签的"默认勾选"状态（key 可以是系统 key 或自定义标签名）。
+   * 注意：系统 Todo 不能与其它系统默认共存，加 Todo 时清理其它系统默认；加其它系统默认时清掉 Todo。
+   */
+  const handleToggleDefaultTag = async (key: string) => {
+    const hasIt = defaultTags.includes(key);
+    let next: string[];
+    if (hasIt) {
+      next = defaultTags.filter((t) => t !== key);
+    } else {
+      next = [...defaultTags, key];
+      const sysSet = new Set<string>(SYSTEM_TAG_ORDER as readonly string[]);
+      if (key === DailyLogCategory.Todo) {
+        // 加 Todo → 移除其它系统默认（自定义可共存）
+        next = next.filter((t) => !sysSet.has(t) || t === DailyLogCategory.Todo);
+      } else if (sysSet.has(key)) {
+        // 加其它系统标签 → 移除 Todo
+        next = next.filter((t) => t !== DailyLogCategory.Todo);
+      }
+    }
+    setDefaultTags(next);
+    await persistAllTagPrefs({ defaultTags: next });
+  };
+
+  /**
+   * 把 fromKey 移动到 toKey 之前（拖拽排序）。
+   * tagOrder 内不存在的合法 key 会先按当前 orderedTagEntries 顺序补齐再做位移。
+   */
+  const handleReorderTag = async (fromKey: string, toKey: string) => {
+    if (fromKey === toKey) return;
+    // 取当前完整顺序（含未在 tagOrder 中的标签，按 SYSTEM 默认 + custom 补齐）
+    const fullOrder = orderedTagEntries.map((e) => e.key);
+    const fromIdx = fullOrder.indexOf(fromKey);
+    const toIdx = fullOrder.indexOf(toKey);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const next = [...fullOrder];
+    next.splice(fromIdx, 1);
+    const insertIdx = next.indexOf(toKey);
+    next.splice(insertIdx, 0, fromKey);
+    setTagOrder(next);
+    await persistAllTagPrefs({ tagOrder: next });
   };
 
   const handleStartInlineEditTag = (idx: number, source: 'manage' | 'quick' | 'editMode') => {
@@ -637,16 +822,25 @@ export function DailyLogPanel() {
       return;
     }
 
+    const lower = target.toLowerCase();
     const prevTags = customTags;
     const prevSelectedCustomTags = selectedCustomTags;
+    const prevTagOrder = tagOrder;
+    const prevDefaults = defaultTags;
     const updatedTags = customTags.map((tag, idx) => (idx === editingTagIdx ? nextTag : tag));
+    const updatedOrder = tagOrder.map((t) => (t.toLowerCase() === lower ? nextTag : t));
+    const updatedDefaults = defaultTags.map((t) => (t.toLowerCase() === lower ? nextTag : t));
     setCustomTags(updatedTags);
-    setSelectedCustomTags((prev) => prev.map((x) => (x.toLowerCase() === target.toLowerCase() ? nextTag : x)));
+    setTagOrder(updatedOrder);
+    setDefaultTags(updatedDefaults);
+    setSelectedCustomTags((prev) => prev.map((x) => (x.toLowerCase() === lower ? nextTag : x)));
     handleCancelInlineEditTag();
 
-    const ok = await saveCustomTags(updatedTags, '标签已更新');
+    const ok = await saveCustomTags(updatedTags, '标签已更新', { tagOrder: updatedOrder, defaultTags: updatedDefaults });
     if (!ok) {
       setCustomTags(prevTags);
+      setTagOrder(prevTagOrder);
+      setDefaultTags(prevDefaults);
       setSelectedCustomTags(prevSelectedCustomTags);
     }
   };
@@ -778,9 +972,11 @@ export function DailyLogPanel() {
   const tagLimitReached = customTags.length >= MAX_CUSTOM_TAG_COUNT;
   const canSubmitTagDraft = normalizedTagDraft.length > 0 && !tagDraftTooLong && !tagLimitReached;
   const totalSelectedTagCount = selectedSystemTags.length + selectedCustomTags.length;
-  const systemCategoryKeys = useMemo(
-    () => SYSTEM_TAG_ORDER.filter((key) => key !== DailyLogCategory.Other),
-    []
+
+  // 统一的标签呈现顺序（系统 + 自定义合并，按用户偏好 tagOrder 排序）
+  const orderedTagEntries = useMemo(
+    () => buildOrderedTagEntries(tagOrder, customTags),
+    [tagOrder, customTags]
   );
 
   const todayMinutes = items.reduce((sum, i) => sum + (i.durationMinutes || 0), 0);
@@ -806,7 +1002,7 @@ export function DailyLogPanel() {
     });
   }, [selectedDate, weekLogs, loggedDates]);
 
-  // 待办计划面板：按本周/下周/下下周分组聚合所有 Todo（基于今天计算）
+  // 待办计划面板：按本周/下周/下下周分组聚合所有「未完成」Todo（基于今天计算）
   const todoSummaryGroups = useMemo(() => {
     const todayStr = formatDate(new Date());
     const weekOptions = getTodoPlanWeekOptions(todayStr);
@@ -820,6 +1016,7 @@ export function DailyLogPanel() {
     for (const log of todoSummaryLogs) {
       for (const it of log.items) {
         if (it.category !== DailyLogCategory.Todo) continue;
+        if (it.completedAt != null) continue; // 已完成不进入"待办"
         if (it.planWeekYear == null || it.planWeekNumber == null) continue;
         const group = groups.find(
           (g) => g.weekYear === it.planWeekYear && g.weekNumber === it.planWeekNumber
@@ -829,7 +1026,6 @@ export function DailyLogPanel() {
         }
       }
     }
-    // 每组内按打点时间倒序
     for (const g of groups) {
       g.items.sort((a, b) => {
         const ta = a.createdAt ? new Date(a.createdAt).getTime() : new Date(a.date).getTime();
@@ -839,6 +1035,95 @@ export function DailyLogPanel() {
     }
     return groups;
   }, [todoSummaryLogs]);
+
+  // 本周未完成待办（用于中央列表上方的「本周待办」置顶卡片）
+  interface PendingTodo {
+    logDate: string;        // 该 todo 所属的 daily log 日期（用于回写）
+    itemIndex: number;      // 该 todo 在 log.items 中的下标
+    content: string;
+    createdAt?: string;
+    planLabel: string;      // "本周" 等显示文本
+  }
+  const currentWeekPendingTodos = useMemo<PendingTodo[]>(() => {
+    const todayStr = formatDate(new Date());
+    const weekOptions = getTodoPlanWeekOptions(todayStr);
+    const cur = weekOptions.find((o) => o.key === 'current');
+    if (!cur) return [];
+    const result: PendingTodo[] = [];
+    for (const log of todoSummaryLogs) {
+      log.items.forEach((it, idx) => {
+        if (it.category !== DailyLogCategory.Todo) return;
+        if (it.completedAt != null) return;
+        if (it.planWeekYear !== cur.weekYear || it.planWeekNumber !== cur.weekNumber) return;
+        result.push({
+          logDate: log.date.substring(0, 10),
+          itemIndex: idx,
+          content: it.content,
+          createdAt: it.createdAt,
+          planLabel: '本周',
+        });
+      });
+    }
+    // 按创建时间倒序（新加的在前）
+    result.sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+    return result;
+  }, [todoSummaryLogs]);
+
+  /**
+   * 标记某条本周待办完成：根据 logDate + itemIndex 找到原 log，把 completedAt 设为现在再回写。
+   * 复用 doSaveForDate，因 todo 可能不在当前 selectedDate。
+   */
+  const handleCompletePendingTodo = async (todo: PendingTodo) => {
+    const log = todoSummaryLogs.find((l) => l.date.substring(0, 10) === todo.logDate);
+    if (!log) return;
+    const nowIso = new Date().toISOString();
+    const newItems: LogItemInput[] = log.items.map((it, idx) => ({
+      content: it.content,
+      category: it.category,
+      tags: it.tags,
+      durationMinutes: it.durationMinutes,
+      planWeekYear: it.planWeekYear,
+      planWeekNumber: it.planWeekNumber,
+      createdAt: it.createdAt,
+      completedAt: idx === todo.itemIndex ? nowIso : it.completedAt,
+    }));
+    await doSaveForDate(todo.logDate, newItems);
+  };
+
+  /**
+   * 从本周待办里删除某条 todo：从原 log 移除该 item 再回写（若清空则 deleteDailyLog）。
+   */
+  const handleDeletePendingTodo = async (todo: PendingTodo) => {
+    const log = todoSummaryLogs.find((l) => l.date.substring(0, 10) === todo.logDate);
+    if (!log) return;
+    const newItems: LogItemInput[] = log.items
+      .filter((_, idx) => idx !== todo.itemIndex)
+      .map((it) => ({
+        content: it.content,
+        category: it.category,
+        tags: it.tags,
+        durationMinutes: it.durationMinutes,
+        planWeekYear: it.planWeekYear,
+        planWeekNumber: it.planWeekNumber,
+        createdAt: it.createdAt,
+        completedAt: it.completedAt,
+      }));
+    await doSaveForDate(todo.logDate, newItems);
+  };
+
+  /** 当日列表里标记本日某条 todo 完成（直接走 doSave） */
+  const handleCompleteCurrentDayTodo = async (idx: number) => {
+    const target = items[idx];
+    if (!target || target.category !== DailyLogCategory.Todo) return;
+    const nowIso = new Date().toISOString();
+    const newItems = items.map((it, i) => (i === idx ? { ...it, completedAt: nowIso } : it));
+    setItems(newItems);
+    await doSave(newItems);
+  };
 
   // Streak count
   const streakCount = useMemo(() => {
@@ -1031,30 +1316,34 @@ export function DailyLogPanel() {
                   </Button>
                 </div>
               </div>
-              {/* Category quick-pick tags */}
+              {/* Category quick-pick tags（系统 + 自定义统一按 tagOrder 顺序渲染） */}
               <div className="flex items-center gap-2.5 flex-wrap">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                {systemCategoryKeys.map((key) => {
-                  const cfg = CATEGORY_CONFIG[key];
-                  const isActive = selectedSystemTags.includes(key);
-                  const Icon = cfg.icon;
-                  return (
-                    <button
-                      key={key}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
-                      style={{
-                        background: isActive ? cfg.bg : 'transparent',
-                        color: isActive ? cfg.color : 'var(--text-muted)',
-                        border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
-                      }}
-                      onClick={() => handleSystemTagToggle(key)}
-                    >
-                      <Icon size={11} />
-                      {cfg.label}
-                    </button>
-                  );
-                })}
-                {customTags.map((tag, idx) => {
+                {orderedTagEntries.map((entry) => {
+                  if (entry.kind === 'system') {
+                    const cfg = CATEGORY_CONFIG[entry.key];
+                    if (!cfg) return null;
+                    const isActive = selectedSystemTags.includes(entry.key);
+                    const Icon = cfg.icon;
+                    return (
+                      <button
+                        key={`sys-${entry.key}`}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
+                        style={{
+                          background: isActive ? cfg.bg : 'transparent',
+                          color: isActive ? cfg.color : 'var(--text-muted)',
+                          border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
+                        }}
+                        onClick={() => handleSystemTagToggle(entry.key)}
+                      >
+                        <Icon size={11} />
+                        {cfg.label}
+                      </button>
+                    );
+                  }
+                  // custom tag
+                  const tag = entry.key;
+                  const idx = customTags.indexOf(tag);
                   const isActive = selectedCustomTags.includes(tag);
                   const isEditing = editingTagIdx === idx && editingTagSource === 'quick';
                   if (isEditing) {
@@ -1101,27 +1390,6 @@ export function DailyLogPanel() {
                     </button>
                   );
                 })}
-                {(() => {
-                  const key = DailyLogCategory.Other;
-                  const cfg = CATEGORY_CONFIG[key];
-                  const isActive = selectedSystemTags.includes(key);
-                  const Icon = cfg.icon;
-                  return (
-                    <button
-                      key={key}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
-                      style={{
-                        background: isActive ? cfg.bg : 'transparent',
-                        color: isActive ? cfg.color : 'var(--text-muted)',
-                        border: `1px solid ${isActive ? cfg.color.replace('0.95', '0.3') : 'transparent'}`,
-                      }}
-                      onClick={() => handleSystemTagToggle(key)}
-                    >
-                      <Icon size={11} />
-                      {cfg.label}
-                    </button>
-                  );
-                })()}
                 </div>
                 <div className="h-4 w-px" style={{ background: 'var(--border-primary)' }} />
                 <div className="flex items-center">
@@ -1172,11 +1440,12 @@ export function DailyLogPanel() {
                   }}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>自定义标签</span>
+                    <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>管理标签</span>
                     <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                      {customTags.length}/{MAX_CUSTOM_TAG_COUNT}
+                      自定义 {customTags.length}/{MAX_CUSTOM_TAG_COUNT} · 默认 {defaultTags.length} 项
                     </span>
                   </div>
+                  {/* 新增自定义标签 */}
                   <div className="flex items-center gap-2">
                     <input
                       className="flex-1 px-3 py-1.5 rounded-lg text-[12px] outline-none transition-colors duration-150"
@@ -1185,7 +1454,7 @@ export function DailyLogPanel() {
                         color: 'var(--text-primary)',
                         border: `1px solid ${tagDraftTooLong ? 'rgba(239, 68, 68, 0.45)' : 'rgba(148, 163, 184, 0.28)'}`,
                       }}
-                      placeholder={`新增标签（最多 ${MAX_CUSTOM_TAG_COUNT} 个）`}
+                      placeholder={`新增自定义标签（最多 ${MAX_CUSTOM_TAG_COUNT} 个）`}
                       value={tagDraft}
                       onChange={(e) => setTagDraft(e.target.value)}
                       onKeyDown={(e) => {
@@ -1210,99 +1479,221 @@ export function DailyLogPanel() {
                       className="text-[10px]"
                       style={{ color: tagDraftTooLong ? 'rgba(239, 68, 68, 0.9)' : 'var(--text-muted)' }}
                     >
-                      {tagDraftTooLong ? `超出 ${normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符` : '回车可快速添加'}
+                      {tagDraftTooLong ? `超出 ${normalizedTagDraft.length - MAX_CUSTOM_TAG_LENGTH} 个字符` : '回车可快速添加；下方可拖动改变顺序、勾选默认'}
                     </span>
                     <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                       {normalizedTagDraft.length}/{MAX_CUSTOM_TAG_LENGTH}
                     </span>
                   </div>
 
-                  <div className="flex flex-wrap gap-1.5">
-                    {customTags.length === 0 ? (
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        暂无自定义标签
-                      </span>
-                    ) : (
-                      customTags.map((tag, idx) => {
-                        const isEditing = editingTagIdx === idx && editingTagSource === 'manage';
-                        return (
+                  {/* 排序 + 默认 + 删除 */}
+                  <div className="flex flex-col gap-1">
+                    {orderedTagEntries.map((entry) => {
+                      const isSystem = entry.kind === 'system';
+                      const sysCfg = isSystem ? CATEGORY_CONFIG[entry.key] : null;
+                      const customIdx = isSystem ? -1 : customTags.indexOf(entry.key);
+                      const isEditing = !isSystem && editingTagIdx === customIdx && editingTagSource === 'manage';
+                      const isDefault = defaultTags.includes(entry.key);
+                      const SysIcon = sysCfg?.icon;
+                      return (
+                        <div
+                          key={`tag-row-${entry.kind}-${entry.key}`}
+                          className="group flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors"
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', entry.key);
+                          }}
+                          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const fromKey = e.dataTransfer.getData('text/plain');
+                            if (fromKey && fromKey !== entry.key) void handleReorderTag(fromKey, entry.key);
+                          }}
+                          style={{
+                            background: 'transparent',
+                            cursor: 'default',
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(148,163,184,0.06)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          {/* 拖动手柄 */}
                           <span
-                            key={`custom-tag-${tag}-${idx}`}
-                            className="group inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] transition-colors duration-150"
-                            style={{
-                              background: isEditing ? 'rgba(59, 130, 246, 0.08)' : 'rgba(20, 184, 166, 0.09)',
-                              color: isEditing ? 'rgba(59, 130, 246, 0.92)' : 'rgba(20, 184, 166, 0.9)',
-                              border: `1px solid ${isEditing ? 'rgba(59, 130, 246, 0.25)' : 'rgba(20, 184, 166, 0.18)'}`,
-                            }}
+                            className="select-none text-[14px] leading-none"
+                            style={{ color: 'var(--text-muted)', cursor: 'grab' }}
+                            title="拖动调整顺序"
                           >
-                            {isEditing ? (
-                              <>
-                                <input
-                                  className="w-20 bg-transparent outline-none text-[11px]"
-                                  value={editingTagDraft}
-                                  onChange={(e) => setEditingTagDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      void handleConfirmEditCustomTag();
-                                    }
-                                    if (e.key === 'Escape') {
-                                      handleCancelInlineEditTag();
-                                    }
-                                  }}
-                                  autoFocus
-                                />
-                                <button
-                                  className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(59,130,246,0.12)]"
-                                  onClick={() => void handleConfirmEditCustomTag()}
-                                  title="确认修改"
-                                  aria-label="确认修改标签"
-                                >
-                                  <Check size={9} />
-                                </button>
-                                <button
-                                  className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(148,163,184,0.14)]"
-                                  onClick={handleCancelInlineEditTag}
-                                  title="取消"
-                                  aria-label="取消修改标签"
-                                >
-                                  <X size={9} />
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <Tag size={9} />
-                                {tag}
-                                <button
-                                  className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(148,163,184,0.14)]"
-                                  onClick={() => handleStartInlineEditTag(idx, 'manage')}
-                                  title="修改"
-                                  aria-label="修改标签"
-                                >
-                                  <Pencil size={9} />
-                                </button>
-                                <button
-                                  className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(239,68,68,0.12)]"
-                                  onClick={() => void handleDeleteCustomTag(idx)}
-                                  title="删除"
-                                  aria-label="删除标签"
-                                >
-                                  <Trash2 size={9} />
-                                </button>
-                              </>
-                            )}
+                            ⋮⋮
                           </span>
-                        );
-                      })
-                    )}
+                          {/* 默认勾选 */}
+                          <label
+                            className="inline-flex items-center gap-1 text-[10px]"
+                            style={{ color: isDefault ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)', cursor: 'pointer' }}
+                            title="勾选则进入今日打点时自动选中此标签"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isDefault}
+                              onChange={() => void handleToggleDefaultTag(entry.key)}
+                              style={{ accentColor: 'rgba(16, 185, 129, 0.9)' }}
+                            />
+                            默认
+                          </label>
+                          {/* 标签 chip 或 重命名输入 */}
+                          {isSystem ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium"
+                              style={{
+                                background: sysCfg!.bg,
+                                color: sysCfg!.color,
+                                border: `1px solid ${sysCfg!.color.replace('0.95', '0.3')}`,
+                              }}
+                            >
+                              {SysIcon && <SysIcon size={11} />}
+                              {sysCfg!.label}
+                              <span className="text-[9px]" style={{ color: 'var(--text-muted)', marginLeft: 4 }}>系统</span>
+                            </span>
+                          ) : isEditing ? (
+                            <input
+                              className="px-2 py-0.5 rounded-lg text-[11px] outline-none"
+                              style={{
+                                background: 'rgba(59, 130, 246, 0.08)',
+                                color: 'rgba(59, 130, 246, 0.92)',
+                                border: '1px solid rgba(59, 130, 246, 0.35)',
+                                minWidth: 80,
+                              }}
+                              value={editingTagDraft}
+                              autoFocus
+                              onChange={(e) => setEditingTagDraft(e.target.value)}
+                              onBlur={handleCancelInlineEditTag}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                                  e.preventDefault();
+                                  void handleConfirmEditCustomTag();
+                                } else if (e.key === 'Escape') {
+                                  handleCancelInlineEditTag();
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px]"
+                              style={{
+                                background: 'rgba(20, 184, 166, 0.09)',
+                                color: 'rgba(20, 184, 166, 0.9)',
+                                border: '1px solid rgba(20, 184, 166, 0.18)',
+                              }}
+                            >
+                              <Tag size={9} />
+                              {entry.key}
+                            </span>
+                          )}
+                          {/* 操作按钮：仅自定义可重命名/删除 */}
+                          {!isSystem && !isEditing && customIdx >= 0 && (
+                            <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                className="inline-flex items-center justify-center w-5 h-5 rounded transition-colors hover:bg-[rgba(148,163,184,0.14)]"
+                                onClick={() => handleStartInlineEditTag(customIdx, 'manage')}
+                                title="重命名"
+                                aria-label="重命名标签"
+                              >
+                                <Pencil size={10} style={{ color: 'var(--text-muted)' }} />
+                              </button>
+                              <button
+                                className="inline-flex items-center justify-center w-5 h-5 rounded transition-colors hover:bg-[rgba(239,68,68,0.12)]"
+                                onClick={() => void handleDeleteCustomTag(customIdx)}
+                                title="删除"
+                                aria-label="删除标签"
+                              >
+                                <Trash2 size={10} style={{ color: 'var(--text-muted)' }} />
+                              </button>
+                            </div>
+                          )}
+                          {isSystem && (
+                            <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>不可删除</span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    自定义标签仅影响你的日常记录快捷标签，不会改变系统默认分类。
+                    拖动 ⋮⋮ 调整顺序；勾选「默认」会在新建打点时自动选中此标签；系统标签不可删，自定义标签可重命名/删除。
                   </div>
                 </div>
               )}
             </div>
           </GlassCard>
+
+          {/* ── 本周待办（置顶，跨日聚合）── */}
+          {currentWeekPendingTodos.length > 0 && (
+            <GlassCard variant="subtle" className="p-4 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Check size={14} style={{ color: 'rgba(16, 185, 129, 0.9)' }} />
+                  <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    本周待办
+                  </span>
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded"
+                    style={{ background: 'rgba(16, 185, 129, 0.12)', color: 'rgba(16, 185, 129, 0.9)' }}
+                  >
+                    {currentWeekPendingTodos.length} 项未完成
+                  </span>
+                </div>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  完成或删除前会一直流转到下一天
+                </span>
+              </div>
+              <div className="flex flex-col gap-1">
+                {currentWeekPendingTodos.map((todo) => (
+                  <div
+                    key={`${todo.logDate}-${todo.itemIndex}`}
+                    className="group flex items-start gap-3 py-2 px-3 rounded-xl transition-colors duration-150 hover:bg-[var(--bg-tertiary)]"
+                  >
+                    <div
+                      className="w-5 h-5 mt-0.5 rounded flex items-center justify-center flex-shrink-0"
+                      style={{
+                        background: 'rgba(16, 185, 129, 0.12)',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                      }}
+                    >
+                      <Check size={10} style={{ color: 'rgba(16, 185, 129, 0.9)' }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                        {todo.content}
+                      </div>
+                      <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        来自 {todo.logDate}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        className="p-1 rounded transition-colors"
+                        title="标记完成"
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(16, 185, 129, 0.12)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        onClick={() => void handleCompletePendingTodo(todo)}
+                        disabled={saving}
+                      >
+                        <Check size={12} style={{ color: 'rgba(16, 185, 129, 0.95)' }} />
+                      </button>
+                      <button
+                        className="p-1 rounded transition-colors"
+                        title="删除"
+                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        onClick={() => void handleDeletePendingTodo(todo)}
+                        disabled={saving}
+                      >
+                        <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </GlassCard>
+          )}
 
           {/* Timeline / Items */}
           {!loaded ? (
@@ -1433,27 +1824,30 @@ export function DailyLogPanel() {
                               )}
                               <div className="flex items-center gap-2 flex-wrap">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  {systemCategoryKeys.map((key) => {
-                                    const c = CATEGORY_CONFIG[key];
-                                    const CIcon = c.icon;
-                                    const isActive = editSystemTags.includes(key);
-                                    return (
-                                      <button
-                                        key={`edit-system-${key}`}
-                                        className="px-2 py-0.5 rounded text-[10px] transition-colors"
-                                        style={{
-                                          background: isActive ? c.bg : 'transparent',
-                                          color: isActive ? c.color : 'var(--text-muted)',
-                                          border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
-                                        }}
-                                        onClick={() => handleEditSystemTagToggle(key)}
-                                      >
-                                        <CIcon size={10} className="inline mr-0.5" />
-                                        {c.label}
-                                      </button>
-                                    );
-                                  })}
-                                  {customTags.map((tag, tIdx) => {
+                                  {orderedTagEntries.map((entry) => {
+                                    if (entry.kind === 'system') {
+                                      const c = CATEGORY_CONFIG[entry.key];
+                                      if (!c) return null;
+                                      const CIcon = c.icon;
+                                      const isActive = editSystemTags.includes(entry.key);
+                                      return (
+                                        <button
+                                          key={`edit-system-${entry.key}`}
+                                          className="px-2 py-0.5 rounded text-[10px] transition-colors"
+                                          style={{
+                                            background: isActive ? c.bg : 'transparent',
+                                            color: isActive ? c.color : 'var(--text-muted)',
+                                            border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
+                                          }}
+                                          onClick={() => handleEditSystemTagToggle(entry.key)}
+                                        >
+                                          <CIcon size={10} className="inline mr-0.5" />
+                                          {c.label}
+                                        </button>
+                                      );
+                                    }
+                                    const tag = entry.key;
+                                    const tIdx = customTags.indexOf(tag);
                                     const isActive = editCustomTags.includes(tag);
                                     const isEditing = editingTagIdx === tIdx && editingTagSource === 'editMode';
                                     if (isEditing) {
@@ -1500,27 +1894,6 @@ export function DailyLogPanel() {
                                       </button>
                                     );
                                   })}
-                                  {(() => {
-                                    const key = DailyLogCategory.Other;
-                                    const c = CATEGORY_CONFIG[key];
-                                    const CIcon = c.icon;
-                                    const isActive = editSystemTags.includes(key);
-                                    return (
-                                      <button
-                                        key="edit-system-other"
-                                        className="px-2 py-0.5 rounded text-[10px] transition-colors"
-                                        style={{
-                                          background: isActive ? c.bg : 'transparent',
-                                          color: isActive ? c.color : 'var(--text-muted)',
-                                          border: `1px solid ${isActive ? c.color.replace('0.95', '0.3') : 'transparent'}`,
-                                        }}
-                                        onClick={() => handleEditSystemTagToggle(key)}
-                                      >
-                                        <CIcon size={10} className="inline mr-0.5" />
-                                        {c.label}
-                                      </button>
-                                    );
-                                  })()}
                                 </div>
                                 {hasEditTodoSelected && (
                                   <div className="flex items-center gap-1 ml-2">
@@ -1634,6 +2007,14 @@ export function DailyLogPanel() {
                                       计划周：{item.planWeekYear}-W{item.planWeekNumber}
                                     </span>
                                 )}
+                                {item.category === DailyLogCategory.Todo && item.completedAt && (
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                                    style={{ background: 'rgba(16, 185, 129, 0.16)', color: 'rgba(16, 185, 129, 0.95)' }}
+                                  >
+                                    <Check size={9} /> 已完成
+                                  </span>
+                                )}
                                 {item.durationMinutes != null && item.durationMinutes > 0 && (
                                   <span className="text-[10px] flex items-center gap-0.5" style={{ color: 'var(--text-muted)' }}>
                                     <Clock size={9} />
@@ -1648,16 +2029,33 @@ export function DailyLogPanel() {
                         {/* Actions (visible on hover) */}
                         {!isEditing && (
                           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              className="p-1 rounded transition-colors"
-                              style={{ background: 'transparent' }}
-                              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                              onClick={() => startEdit(idx)}
-                              title="编辑"
-                            >
-                              <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
-                            </button>
+                            {/* Todo 未完成：显示「标记完成」；已完成：不显示完成按钮；非 todo：显示「编辑」 */}
+                            {item.category === DailyLogCategory.Todo ? (
+                              !item.completedAt && (
+                                <button
+                                  className="p-1 rounded transition-colors"
+                                  style={{ background: 'transparent' }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(16, 185, 129, 0.12)'; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                                  onClick={() => void handleCompleteCurrentDayTodo(idx)}
+                                  title="标记完成"
+                                  disabled={saving}
+                                >
+                                  <Check size={12} style={{ color: 'rgba(16, 185, 129, 0.95)' }} />
+                                </button>
+                              )
+                            ) : (
+                              <button
+                                className="p-1 rounded transition-colors"
+                                style={{ background: 'transparent' }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                                onClick={() => startEdit(idx)}
+                                title="编辑"
+                              >
+                                <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
+                              </button>
+                            )}
                             <button
                               className="p-1 rounded hover:bg-[rgba(239,68,68,0.1)] transition-colors"
                               onClick={() => void handleDeleteItem(idx)}

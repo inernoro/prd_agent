@@ -2314,6 +2314,8 @@ public class ReportAgentController : ControllerBase
         /// <summary>计划目标 ISO 周（1-53，仅 Todo 有效）</summary>
         public int? PlanWeekNumber { get; set; }
         public DateTime? CreatedAt { get; set; }
+        /// <summary>Todo 完成时间（仅 Todo 有效；非空表示已完成）</summary>
+        public DateTime? CompletedAt { get; set; }
     }
 
     public class CreateDataSourceRequest
@@ -2399,7 +2401,8 @@ public class ReportAgentController : ControllerBase
                 DurationMinutes = i.DurationMinutes,
                 PlanWeekYear = planWeekYear,
                 PlanWeekNumber = planWeekNumber,
-                CreatedAt = i.CreatedAt ?? now
+                CreatedAt = i.CreatedAt ?? now,
+                CompletedAt = isTodo ? i.CompletedAt : null
             });
         }
 
@@ -2959,7 +2962,7 @@ public class ReportAgentController : ControllerBase
     #region My Daily Log Tags
 
     /// <summary>
-    /// 获取我的日常记录自定义标签
+    /// 获取我的日常记录标签偏好（自定义标签 + 标签排序 + 默认勾选）
     /// </summary>
     [HttpGet("my/daily-log-tags")]
     public async Task<IActionResult> GetMyDailyLogTags(CancellationToken ct)
@@ -2970,11 +2973,19 @@ public class ReportAgentController : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         var tags = NormalizeDailyLogCustomTags(prefs?.ReportAgentPreferences?.DailyLogCustomTags);
-        return Ok(ApiResponse<object>.Ok(new { items = tags }));
+        var tagOrder = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogTagOrder);
+        var defaultTags = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogDefaultTags);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = tags,
+            tagOrder,
+            defaultTags,
+        }));
     }
 
     /// <summary>
-    /// 更新我的日常记录自定义标签
+    /// 更新我的日常记录标签偏好（自定义标签 + 标签排序 + 默认勾选）。
+    /// items 必传；tagOrder / defaultTags 传 null 表示不改，传 [] 表示清空。
     /// </summary>
     [HttpPut("my/daily-log-tags")]
     public async Task<IActionResult> UpdateMyDailyLogTags([FromBody] UpdateMyDailyLogTagsRequest req, CancellationToken ct)
@@ -2991,13 +3002,31 @@ public class ReportAgentController : ControllerBase
             .Set(x => x.ReportAgentPreferences!.DailyLogCustomTags, normalizedTags)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
+        if (req?.TagOrder != null)
+        {
+            var normalizedOrder = NormalizeDailyLogTagList(req.TagOrder);
+            update = update.Set(x => x.ReportAgentPreferences!.DailyLogTagOrder, normalizedOrder);
+        }
+
+        if (req?.DefaultTags != null)
+        {
+            var normalizedDefaults = NormalizeDailyLogTagList(req.DefaultTags);
+            update = update.Set(x => x.ReportAgentPreferences!.DailyLogDefaultTags, normalizedDefaults);
+        }
+
         await _db.UserPreferences.UpdateOneAsync(
             x => x.UserId == userId,
             update,
             new UpdateOptions { IsUpsert = true },
             ct);
 
-        return Ok(ApiResponse<object>.Ok(new { items = normalizedTags }));
+        var prefs = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = normalizedTags,
+            tagOrder = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogTagOrder),
+            defaultTags = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogDefaultTags),
+        }));
     }
 
     private static List<string> NormalizeDailyLogCustomTags(IEnumerable<string>? tags)
@@ -3008,6 +3037,26 @@ public class ReportAgentController : ControllerBase
         {
             var tag = (raw ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (seen.Add(tag))
+                result.Add(tag);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 规范化标签 key 列表（用于 tagOrder / defaultTags 字段）：去空白、去重（保序）、单 key 长度受 MaxDailyLogCustomTagLength 限制。
+    /// </summary>
+    private static List<string> NormalizeDailyLogTagList(IEnumerable<string>? tags)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var raw in tags ?? Enumerable.Empty<string>())
+        {
+            var tag = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (tag.Length > MaxDailyLogCustomTagLength)
                 continue;
             if (seen.Add(tag))
                 result.Add(tag);
@@ -5156,6 +5205,10 @@ public class UpdateMyAiSourceRequest
 public class UpdateMyDailyLogTagsRequest
 {
     public List<string>? Items { get; set; }
+    /// <summary>标签呈现顺序（系统 category key + 自定义标签名称）；选填，传 null 表示不改</summary>
+    public List<string>? TagOrder { get; set; }
+    /// <summary>默认勾选的标签（系统 category key + 自定义标签名称）；选填，传 null 表示不改</summary>
+    public List<string>? DefaultTags { get; set; }
 }
 
 public class UpdateMyAiReportPromptRequest

@@ -141,6 +141,19 @@ public class ReportAgentPreferences
     public List<string>? DailyLogCustomTags { get; set; }
 
     /// <summary>
+    /// 日常记录页的标签呈现顺序（系统 category key + 自定义标签名称的有序列表）。
+    /// 为空时走系统默认序：development → meeting → communication → documentation → testing → todo → other。
+    /// 列表里不存在的标签按系统默认序追加在尾部。
+    /// </summary>
+    public List<string>? DailyLogTagOrder { get; set; }
+
+    /// <summary>
+    /// 日常记录页默认勾选的标签（系统 category key + 自定义标签名称）。
+    /// 为空时新建打点不预选任何标签。
+    /// </summary>
+    public List<string>? DailyLogDefaultTags { get; set; }
+
+    /// <summary>
     /// AI 生成周报草稿的自定义 Prompt（为空时使用系统默认 Prompt）
     /// </summary>
     public string? WeeklyReportPrompt { get; set; }
