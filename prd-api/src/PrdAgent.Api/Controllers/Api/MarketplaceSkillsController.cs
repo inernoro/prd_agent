@@ -1,6 +1,8 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Text.Unicode;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -179,14 +181,18 @@ public class MarketplaceSkillsController : ControllerBase
         Response.Headers.Connection = "keep-alive";
         Response.Headers["X-Accel-Buffering"] = "no";
 
+        var jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            // 不要把中文转成 \uXXXX；UTF-8 原样输出，前端日志和用户提示都好读
+            Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+        };
+
         async Task WriteSseAsync(string ev, object data)
         {
             try
             {
-                var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                });
+                var json = JsonSerializer.Serialize(data, jsonOptions);
                 await Response.WriteAsync($"event: {ev}\n", ct);
                 await Response.WriteAsync($"data: {json}\n\n", ct);
                 await Response.Body.FlushAsync(ct);
@@ -218,7 +224,7 @@ public class MarketplaceSkillsController : ControllerBase
         if (content.Length > 2000) content = content[..2000];
 
         var userId = this.GetRequiredUserId();
-        const string appCallerCode = "marketplace-skill.summary::chat";
+        const string appCallerCode = AppCallerRegistry.MarketplaceSkill.DraftDescription;
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
@@ -829,7 +835,7 @@ public class MarketplaceSkillsController : ControllerBase
 
     private async Task<string> GenerateSummaryAsync(string userId, string skillMdContent, CancellationToken ct)
     {
-        const string appCallerCode = "marketplace-skill.summary::chat";
+        const string appCallerCode = AppCallerRegistry.MarketplaceSkill.Summary;
         var content = skillMdContent.Length > 2000 ? skillMdContent[..2000] : skillMdContent;
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(

@@ -1140,6 +1140,30 @@ public static class SkillAgent
         public const string GenerateReadme = "skill-agent.export.readme::chat";
     }
 }
+
+/// <summary>
+/// 海鲜市场技能
+/// </summary>
+public static class MarketplaceSkill
+{
+    public const string AppName = "海鲜市场技能";
+
+    [AppCallerMetadata(
+        "技能详情-摘要",
+        "上传时从 SKILL.md 生成 30 字详情摘要（同步）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Marketplace"
+    )]
+    public const string Summary = "marketplace-skill.summary::chat";
+
+    [AppCallerMetadata(
+        "技能详情-AI 起草",
+        "拖入文件后流式生成详情草稿，前端逐字渲染",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Marketplace"
+    )]
+    public const string DraftDescription = "marketplace-skill.draft-description::chat";
+}
 }
 
 /// <summary>

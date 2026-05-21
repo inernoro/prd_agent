@@ -228,19 +228,36 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
         const events = buffer.split('\n\n');
         buffer = events.pop() ?? '';
         for (const ev of events) {
-          // 用户在期间输入，立即让步
           if (descriptionUserTouched) {
             controller.abort();
             return;
           }
+          // 区分 event 类型：error / done 走错误/结束分支，default(=delta) 才拼接
+          let eventType = '';
+          const dataLines: string[] = [];
           for (const line of ev.split('\n')) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-              accumulated += data;
-              setDescription(accumulated.slice(0, 200));
-            }
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
           }
+          if (dataLines.length === 0) continue;
+          if (eventType === 'error') {
+            // 出错时不要把 JSON 报错塞进详情框；详情清空，错误另行提示
+            setDescription('');
+            try {
+              const obj = JSON.parse(dataLines.join('\n'));
+              setError(typeof obj?.message === 'string' ? `AI 起草失败：${obj.message}` : 'AI 起草失败');
+            } catch {
+              setError('AI 起草失败');
+            }
+            controller.abort();
+            return;
+          }
+          if (eventType === 'done') return;
+          // 默认事件 = 文本 delta；多行 data 按 SSE 规范以 \n 拼回
+          const text = dataLines.join('\n');
+          if (text === '[DONE]') return;
+          accumulated += text;
+          setDescription(accumulated.slice(0, 200));
         }
       }
     } catch {

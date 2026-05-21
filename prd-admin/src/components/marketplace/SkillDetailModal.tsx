@@ -45,16 +45,13 @@ export function SkillDetailModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col rounded-xl border"
+        className="surface-popover flex flex-col rounded-xl"
         style={{
           width: '82vw',
           maxWidth: '1400px',
           height: '85vh',
           maxHeight: '85vh',
-          background: 'var(--bg-card)',
-          borderColor: 'var(--border-subtle)',
           color: 'var(--text-primary)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
         }}
       >
         {/* Header */}
