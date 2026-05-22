@@ -692,7 +692,9 @@ function branchIssueCategory(branch: BranchSummary): BranchIssueCategory {
   }
 
   // 部署配置(端口冲突 / OOM / 资源不足)
-  if (/eaddrinuse|address already in use|端口被占用|端口.*(占用|冲突)|oomkilled|out of memory|cannot allocate memory|内存超限/.test(text)) {
+  // 端口冲突文案与后端 isPortConflictError(src/routes/branches.ts) 对齐:
+  // docker 报 'port is already allocated',内核报 'address already in use'/EADDRINUSE
+  if (/eaddrinuse|address already in use|port is already allocated|端口被占用|端口.*(占用|冲突)|oomkilled|out of memory|cannot allocate memory|内存超限/.test(text)) {
     return 'deploy-config';
   }
 
@@ -730,6 +732,31 @@ function branchIssueRailClass(branch: BranchSummary): string {
   if (category === 'app-code') return 'bg-amber-500';
   if (category === 'deploy-config') return 'bg-orange-500';
   return 'bg-muted-foreground/40';
+}
+
+// 错误卡片整体描边/底色/光晕 —— 必须与 badge/rail 同一 category 配色,
+// 否则胶囊显橙(deploy-config)/灰(unknown)而卡片边框还是琥珀,视觉割裂。
+function branchIssueCardClass(branch: BranchSummary): string {
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') {
+    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]';
+  }
+  if (category === 'app-code') {
+    return 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]';
+  }
+  if (category === 'deploy-config') {
+    return 'border-orange-500/55 bg-orange-500/5 ring-1 ring-orange-500/20 shadow-[0_4px_16px_-4px_rgba(249,115,22,0.32)]';
+  }
+  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_4px_16px_-4px_rgba(100,116,139,0.28)]';
+}
+
+// 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
+function branchIssueHintTextClass(branch: BranchSummary): string {
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') return 'text-destructive/80';
+  if (category === 'app-code') return 'text-amber-700/90 dark:text-amber-300/90';
+  if (category === 'deploy-config') return 'text-orange-700/90 dark:text-orange-300/90';
+  return 'text-muted-foreground';
 }
 
 function statusLabel(status: BranchSummary['status'] | ServiceState['status']): string {
@@ -3674,9 +3701,7 @@ function BranchCard({
       data-branch-card-id={branch.id}
       className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
-          ? branchIssueCategory(branch) === 'cds-runtime'
-            ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
-            : 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]'
+          ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
@@ -4293,11 +4318,7 @@ function BranchFailureHint({
   const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
     <div
-      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${
-        branchIssueCategory(branch) === 'cds-runtime'
-          ? 'text-destructive/80'
-          : 'text-amber-700/90 dark:text-amber-300/90'
-      }`}
+      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${branchIssueHintTextClass(branch)}`}
       title={message}
     >
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
