@@ -872,44 +872,44 @@ function TimelineReportItem({
 
   return (
     <article
-      className="rounded-xl flex flex-col gap-3 p-4 transition-colors"
+      className="rounded-xl flex flex-col gap-3 p-4 transition-all duration-150 cursor-pointer hover:translate-y-[-1px]"
       style={{
         background: isLight ? 'rgba(15, 23, 42, 0.025)' : 'rgba(255, 255, 255, 0.03)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
         borderLeft: `3px solid ${colors.border}`,
       }}
+      onClick={onOpen}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = isLight ? 'rgba(15, 23, 42, 0.04)' : 'rgba(255, 255, 255, 0.045)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = isLight ? 'rgba(15, 23, 42, 0.025)' : 'rgba(255, 255, 255, 0.03)';
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
     >
-      <div className="flex items-baseline justify-between gap-3 flex-wrap">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <span
-            className="inline-flex items-center gap-1 text-[10px] px-2 py-[2px] rounded-full font-semibold uppercase flex-shrink-0"
-            style={{
-              color: colors.color,
-              backgroundColor: colors.bg,
-              letterSpacing: '0.08em',
-            }}
-          >
-            <StatusIcon size={9} />
-            {meta.label}
-          </span>
-          <h3
-            className="text-[15px] font-semibold truncate"
-            style={{
-              color: 'var(--text-primary)',
-              fontFamily: isLight ? 'var(--font-serif)' : undefined,
-            }}
-          >
-            {report.teamName || '未知团队'}
-          </h3>
-        </div>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="text-[11px] underline-offset-2 hover:underline transition-colors"
-          style={{ color: 'var(--text-muted)' }}
+      <div className="flex items-baseline gap-2 min-w-0">
+        <span
+          className="inline-flex items-center gap-1 text-[10px] px-2 py-[2px] rounded-full font-semibold uppercase flex-shrink-0"
+          style={{
+            color: colors.color,
+            backgroundColor: colors.bg,
+            letterSpacing: '0.08em',
+          }}
         >
-          查看完整 →
-        </button>
+          <StatusIcon size={9} />
+          {meta.label}
+        </span>
+        <h3
+          className="text-[15px] font-semibold truncate"
+          style={{
+            color: 'var(--text-primary)',
+            fontFamily: isLight ? 'var(--font-serif)' : undefined,
+          }}
+        >
+          {report.teamName || '未知团队'}
+        </h3>
       </div>
 
       {/* 章节内容缩略 */}
