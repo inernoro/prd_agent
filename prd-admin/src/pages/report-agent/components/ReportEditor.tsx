@@ -454,6 +454,39 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     }
   }, [report, autosave]);
 
+  // 左侧大纲 scroll spy：根据 section 元素在滚动容器内的可见性更新 activeSectionIdx
+  useEffect(() => {
+    const sectionsCount = report?.sections?.length ?? 0;
+    if (sectionsCount < 3) return; // 大纲仅在 ≥3 章节时显示，少了就不跑 observer
+    const root = scrollContainerRef.current;
+    if (!root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting);
+        if (visible.length === 0) return;
+        // 取最靠顶部的那个可见 section
+        const topMost = visible.reduce((a, b) => (a.boundingClientRect.top < b.boundingClientRect.top ? a : b));
+        const idx = sectionRefs.current.findIndex((el) => el === topMost.target);
+        if (idx >= 0) setActiveSectionIdx(idx);
+      },
+      {
+        root,
+        // section 进入上 30% 视区时算激活，避免快速切换
+        rootMargin: '-20% 0px -60% 0px',
+        threshold: 0,
+      },
+    );
+    const els = sectionRefs.current.filter((el): el is HTMLElement => !!el);
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [report?.sections?.length]);
+
+  const scrollToSection = useCallback((idx: number) => {
+    const el = sectionRefs.current[idx];
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (!report) return;
     setSaving(true);
@@ -602,6 +635,10 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   };
 
   const bulletInputRefsRef = useRef<Record<string, HTMLInputElement | null>>({});
+  // 左侧大纲：章节 DOM refs + 当前激活章节 idx（scroll spy）
+  const sectionRefs = useRef<(HTMLElement | null)[]>([]);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [activeSectionIdx, setActiveSectionIdx] = useState(0);
 
   const focusBulletAt = useCallback((sectionIdx: number, itemIdx: number, caret: 'start' | 'end' = 'end') => {
     requestAnimationFrame(() => {
@@ -1043,9 +1080,76 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         </div>
       )}
 
-      {/* Sections（参考 Notion / Linear / Craft 重设计：清晰层级 + 可见 bullet + inline source + hover row） */}
-      <div className="flex-1 min-h-0 overflow-auto">
-        <div className="max-w-[860px] mx-auto px-2 pb-12 flex flex-col gap-6">
+      {/* Sections（参考 Notion / Linear / Craft：清晰层级 + 可见 bullet + inline source + hover row + 左侧 sticky 大纲） */}
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
+        <div className="max-w-[1200px] mx-auto px-2 pb-12 flex gap-8">
+          {/* 左侧大纲 - 仅桌面 lg+ 且章节数 ≥3 时显示 */}
+          {report.sections.length >= 3 && (
+            <aside className="hidden lg:block flex-shrink-0" style={{ width: 200 }}>
+              <div className="sticky top-2 flex flex-col gap-1 pt-1">
+                <div
+                  className="text-[10px] font-medium uppercase tracking-wider mb-2 px-2"
+                  style={{ color: 'var(--text-muted)', letterSpacing: '0.12em', opacity: 0.7 }}
+                >
+                  章节
+                </div>
+                {report.sections.map((section, sIdx) => {
+                  const isActive = activeSectionIdx === sIdx;
+                  const filled = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
+                  const total = (sections[sIdx]?.items || []).length;
+                  return (
+                    <button
+                      key={sIdx}
+                      type="button"
+                      onClick={() => scrollToSection(sIdx)}
+                      className="group flex items-baseline gap-2 px-2 py-1.5 rounded-md text-left transition-colors"
+                      style={{
+                        background: isActive
+                          ? (isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)')
+                          : 'transparent',
+                        color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.03)';
+                          e.currentTarget.style.color = 'var(--text-secondary)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = 'var(--text-muted)';
+                        }
+                      }}
+                    >
+                      <span
+                        className="font-mono tabular-nums flex-shrink-0"
+                        style={{
+                          fontSize: 10,
+                          opacity: isActive ? 0.8 : 0.55,
+                          letterSpacing: '0.05em',
+                          minWidth: 16,
+                        }}
+                      >
+                        {String(sIdx + 1).padStart(2, '0')}
+                      </span>
+                      <span className="text-[12.5px] flex-1 min-w-0 truncate" style={{ fontWeight: isActive ? 600 : 400 }}>
+                        {section.templateSection.title}
+                      </span>
+                      <span
+                        className="font-mono tabular-nums flex-shrink-0 ml-1"
+                        style={{ fontSize: 10, opacity: 0.55 }}
+                      >
+                        {filled}/{total}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          )}
+          {/* 内容主区：max-w 920 让长文阅读更舒展，仍居中（左侧大纲不影响 */}
+          <div className="flex-1 min-w-0 max-w-[920px] mx-auto flex flex-col gap-5">
           {report.sections.map((section, sIdx) => {
             const theme = sectionThemes[sIdx % sectionThemes.length];
             const filledCount = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
@@ -1054,7 +1158,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
             return (
               <section
                 key={sIdx}
-                className="relative rounded-2xl overflow-hidden"
+                ref={(el) => { sectionRefs.current[sIdx] = el; }}
+                className="relative rounded-2xl overflow-hidden scroll-mt-3"
                 style={{
                   // 提高卡片与主背景对比：暗色稍微亮一档，浅色保持纯白
                   background: isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.035)',
@@ -1330,6 +1435,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               </section>
             );
           })}
+          </div>
         </div>
       </div>
     </div>
