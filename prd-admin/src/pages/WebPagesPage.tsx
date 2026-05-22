@@ -312,12 +312,34 @@ export default function WebPagesPage() {
         dropzone={{
           hint: '拖文件到此上传',
           accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
-          onFiles: (files) => {
+          // 一步式：上传 → 自动生成分享码 → ShareDock 内联展示链接，用户无需再开弹窗
+          onFiles: async (files) => {
             const f = files[0];
             if (!f) return;
-            setEditItem(null);
-            setPendingExternalFile(f);
-            setShowUploadDialog(true);
+            const up = await uploadSite({ file: f });
+            if (!up.success || !up.data) {
+              toast.error('上传失败', up.error?.message || '请稍后重试');
+              return;
+            }
+            const site = up.data;
+            markSiteAsFresh(site.id);
+            load();
+            loadMeta();
+            try {
+              const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0 });
+              if (share.success && share.data) {
+                return {
+                  title: '上传成功',
+                  shareUrl: `${window.location.origin}${share.data.shareUrl}`,
+                  password: share.data.password,
+                };
+              }
+              toast.error('分享码生成失败', share.error?.message || '可在卡片上手动分享');
+              return { title: '已上传，分享码生成失败' };
+            } catch (e) {
+              toast.error('分享码生成失败', e instanceof Error ? e.message : '网络异常，请稍后重试');
+              return { title: '已上传，分享码生成失败' };
+            }
           },
         }}
         slots={[
