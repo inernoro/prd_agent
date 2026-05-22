@@ -64,7 +64,7 @@ export interface ShareDockProps {
  * 也让 hover 效果能组合多层 box-shadow + 发光。 */
 
 const DOCK_W_DEFAULT = 192;
-const DOCK_W_COMPACT = 288; // 配合 dropzone + 横排槽位时更宽，容纳 1:1 方形上传区
+const DOCK_W_COMPACT = 236; // 配合 dropzone + 横排槽位时稍宽，方形上传区适中不夸张
 const DOCK_MARGIN = 16;
 
 /**
@@ -304,8 +304,9 @@ export function ShareDock({
     >
       <div
         className={[
-          'w-full overflow-hidden rounded-2xl border border-white/15',
-          'bg-black/30 backdrop-blur-xl shadow-2xl shadow-black/40 transition-all duration-200',
+          'w-full overflow-hidden rounded-2xl border border-white/12',
+          // 底色加实（/85），不再太透；保留 blur 让悬浮在内容上时仍有层次
+          'bg-[#16181c]/90 backdrop-blur-xl shadow-2xl shadow-black/50 transition-all duration-200',
           dragging ? 'scale-[1.03] border-white/30 shadow-[0_0_32px_rgba(56,189,248,0.3)]' : '',
           movingDock ? 'opacity-85' : '',
         ].join(' ')}
@@ -364,7 +365,7 @@ export function ShareDock({
               tabIndex={uploadState === 'idle' ? 0 : undefined}
               aria-label={uploadState === 'idle' ? '点击或拖文件到此上传' : undefined}
               className={[
-                'flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-3 text-center transition-all',
+                'flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-2.5 text-center transition-all',
                 uploadState === 'idle' ? 'cursor-pointer' : 'cursor-default',
                 fileOver
                   ? 'border-sky-300/80 bg-sky-500/15 text-sky-50'
@@ -372,7 +373,8 @@ export function ShareDock({
                     ? 'border-emerald-300/50 bg-emerald-500/10 text-emerald-50'
                     : 'border-white/15 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]',
               ].join(' ')}
-              style={{ aspectRatio: '1 / 1' }}
+              // 1:1 方形，但限高避免太夸张；内容多时（done 态）可自然增高
+              style={{ aspectRatio: '1 / 1', maxHeight: 168 }}
               onClick={() => { if (uploadState === 'idle') fileInputRef.current?.click(); }}
               onKeyDown={(e) => {
                 if (uploadState === 'idle' && (e.key === 'Enter' || e.key === ' ')) {
@@ -458,15 +460,15 @@ export function ShareDock({
                 </>
               ) : (
                 <>
-                  <UploadCloud size={30} className="opacity-80" />
-                  <div className="text-[12.5px] font-medium leading-tight">
+                  <UploadCloud size={24} className="opacity-80" />
+                  <div className="text-[12px] font-medium leading-tight">
                     {dropzone.hint ?? '拖文件到此上传'}
                   </div>
-                  <div className="text-[10.5px] leading-tight text-white/50">
+                  <div className="text-[10px] leading-tight text-white/50">
                     点击选择，或拖文件到此
                   </div>
                   {dropzone.accept && dropzone.accept.length > 0 && (
-                    <div className="text-[10px] leading-tight text-white/40">
+                    <div className="text-[9.5px] leading-tight text-white/40">
                       {dropzone.accept.join(' / ')}
                     </div>
                   )}

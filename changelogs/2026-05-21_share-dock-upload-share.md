@@ -1,2 +1,3 @@
-| feat | prd-admin | ShareDock 投放面板上传区改为 1:1 方形大区域，支持「点击选择 / 拖拽」两种上传方式 |
+| feat | prd-admin | ShareDock 投放面板上传区改为 1:1 方形，支持「点击选择 / 拖拽」两种上传方式 |
 | feat | prd-admin | 网页托管：拖入或点击上传文件后一步式自动生成分享码，ShareDock 内联展示分享链接（自动复制到剪贴板）+ 访问密码，无需再开上传弹窗 |
+| fix | prd-admin | ShareDock 面板收窄（288→236）、上传区限高 168px、底色加实，修正「太大太透明」 |
