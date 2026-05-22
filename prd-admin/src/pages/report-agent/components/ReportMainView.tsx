@@ -12,6 +12,7 @@ import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { useStatusChipConfig } from '../hooks/useStatusChipConfig';
+import { formatWeekDateRange, formatWeekLabelWithRange } from '../utils/weekRange';
 
 // ────── helpers ──────
 
@@ -48,9 +49,8 @@ function parseWeekKey(weekKey: string): WeekRef {
   };
 }
 
-function formatWeekLabel(week: WeekRef): string {
-  return `${week.weekYear} 年第 ${week.weekNumber} 周`;
-}
+// formatWeekLabel/formatWeekDateRange 共享自 utils/weekRange.ts（用户反馈："第 X 周"看不出是哪几天）
+const formatWeekLabel = formatWeekLabelWithRange;
 
 // 颜色三元组(color/bg/border)统一走 useStatusChipConfig() — SSOT;
 // label / icon 各页面自管,因为不同页面 icon 风格略有差异。
@@ -400,21 +400,21 @@ function MiniReportCard({
         boxShadow: isLight ? 'var(--shadow-card-sm)' : 'var(--shadow-card)',
       }}
       onClick={onClick}
-      title={report.teamName ? `${report.teamName} · 第 ${report.weekNumber} 周` : `第 ${report.weekNumber} 周`}
+      title={report.teamName ? `${report.teamName} · ${formatWeekDateRange(report)} (W${report.weekNumber})` : `${formatWeekDateRange(report)} (W${report.weekNumber})`}
     >
       <div className="p-3 flex flex-col gap-2 flex-1">
-        {/* 周次标签（最显眼） */}
-        <div className="flex items-baseline justify-between">
-          <div className="flex items-baseline gap-1">
-            <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-              {report.weekYear}
+        {/* 周次标签（最显眼）：主显示日期范围，辅显示 W 周次 */}
+        <div className="flex items-baseline justify-between gap-2 min-w-0">
+          <div className="flex flex-col min-w-0">
+            <span className="text-[15px] font-semibold leading-none truncate" style={{ color: 'var(--text-primary)' }}>
+              {formatWeekDateRange(report)}
             </span>
-            <span className="text-[15px] font-semibold leading-none" style={{ color: 'var(--text-primary)' }}>
-              W{String(report.weekNumber).padStart(2, '0')}
+            <span className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {report.weekYear} · W{String(report.weekNumber).padStart(2, '0')}
             </span>
           </div>
           <span
-            className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[2px] rounded-full font-semibold"
+            className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-[2px] rounded-full font-semibold flex-shrink-0"
             style={{
               color: colors.color,
               backgroundColor: colors.bg,

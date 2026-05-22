@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type ClipboardEvent } from 'react';
 import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload } from 'lucide-react';
+import { formatWeekDateRange } from '../utils/weekRange';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -713,7 +714,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               创建周报
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              {weekYear} 年第 {weekNumber} 周
+              {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
             </div>
           </div>
         </div>
@@ -916,7 +917,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   className="text-[11px] px-2 py-0.5 rounded-full"
                   style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
                 >
-                  {report.weekYear} 年第 {report.weekNumber} 周
+                  {formatWeekDateRange({ weekYear: report.weekYear, weekNumber: report.weekNumber })} · W{String(report.weekNumber).padStart(2, '0')}
                 </span>
               </div>
               {/* Mini progress bar — 浅色下走 Claude 橙 */}

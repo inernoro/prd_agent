@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, Clock, Copy, Lock, RefreshCw } from 'lucide-react';
+import { formatWeekDateRange } from '../utils/weekRange';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -113,7 +114,7 @@ export function ShareTeamWeekDialog({
       description={
         result
           ? undefined
-          : `将「${teamName || '团队'}」${weekYear} 年第 ${weekNumber} 周的团队周报分享给他人`
+          : `将「${teamName || '团队'}」${formatWeekDateRange({ weekYear, weekNumber })} (W${String(weekNumber).padStart(2, '0')}) 的团队周报分享给他人`
       }
       maxWidth={480}
       content={

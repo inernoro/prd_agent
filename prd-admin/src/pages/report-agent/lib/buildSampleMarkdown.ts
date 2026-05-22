@@ -1,4 +1,5 @@
 import type { ReportTemplate, ReportTemplateSection } from '@/services/contracts/reportAgent';
+import { formatWeekDateRange } from '../utils/weekRange';
 
 /**
  * 按 inputType 给 LLM + 用户一个"填什么"的示例片段。
@@ -69,7 +70,7 @@ export function buildSampleMarkdown(
   const sections = [...template.sections].sort((a, b) => a.sortOrder - b.sortOrder);
 
   const header = [
-    `# ${template.name} · ${weekYear} 年第 ${weekNumber} 周`,
+    `# ${template.name} · ${formatWeekDateRange({ weekYear, weekNumber })} (W${String(weekNumber).padStart(2, '0')})`,
     '',
     '> 使用说明：',
     '> 1. 每个二级标题 (##) 对应模板一个章节，标题保持不变能提高 AI 映射命中率；',

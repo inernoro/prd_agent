@@ -39,6 +39,7 @@ import { WeekNavRail } from './WeekNavRail';
 import { MemberReportInlineView } from './MemberReportInlineView';
 import { TeamIssuesPanel } from './TeamIssuesPanel';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { formatWeekDateRange } from '../utils/weekRange';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -814,7 +815,7 @@ export function TeamDashboard() {
                 : <option value="">暂无团队</option>}
             </select>
             <span className="text-[13px] font-semibold whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
-              {weekYear} 年第 {weekNumber} 周
+              {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
             </span>
             {selectedTeamId && (
               <Button variant="secondary" size="sm" onClick={openMemberDrawer}>
@@ -1031,7 +1032,7 @@ export function TeamDashboard() {
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
-                  {weekYear} 年第 {weekNumber} 周
+                  {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
                 </span>
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
                   {summaryView?.visibilityScope === 'self_only' ? '个人汇总视图' : '团队汇总视图'}

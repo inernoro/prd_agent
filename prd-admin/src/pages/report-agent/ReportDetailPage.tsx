@@ -1,4 +1,5 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { formatWeekDateRange } from './utils/weekRange';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
@@ -338,7 +339,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                 {report.userName} 的周报
               </div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                {report.teamName} · {report.weekYear} 年第 {report.weekNumber} 周
+                {report.teamName} · {formatWeekDateRange({ weekYear: report.weekYear, weekNumber: report.weekNumber })} · W{String(report.weekNumber).padStart(2, '0')}
               </div>
             </div>
           </div>
@@ -690,7 +691,7 @@ function SiblingReportsSidebar({
         </div>
         {weekYear && weekNumber && (
           <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {weekYear} 年第 {weekNumber} 周 · 共 {items.length} 份
+            {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')} · 共 {items.length} 份
           </div>
         )}
       </div>

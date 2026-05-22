@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, FileText, Download, AlertCircle, RefreshCw } from 'lucide-react';
+import { formatWeekDateRange } from '../utils/weekRange';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -223,7 +224,7 @@ export function MarkdownImportModal({
               从 Markdown 导入周报
             </div>
             <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-              {teamName} · {templateName} · {weekYear} 年第 {weekNumber} 周
+              {teamName} · {templateName} · {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
             </div>
           </div>
           <button
