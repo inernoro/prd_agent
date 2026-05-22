@@ -492,8 +492,10 @@ public class WebPagesController : ControllerBase
                 share.ExpiresAt,
                 share.ShortSeq,
                 shareUrl = $"/s/wp/{share.Token}",
+                // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
+                // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
                 shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
-                unifiedShareUrl = $"/s/{share.Token}",
+                unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
         }
         catch (ArgumentException ex)

@@ -4946,9 +4946,10 @@ public class ReportAgentController : ControllerBase
             share.ExpiresAt,
             // 默认带分类前缀长链：URL 有语义，利于分享总管理面板按类型分类
             shareUrl = $"/s/report-team/{share.Token}",
+            // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；shortSeq=0（未注册）时两者都
+            // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
             shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
-            // 字母统一长链（ShortLink 索引支持），保留作为高级选项
-            unifiedShareUrl = $"/s/{share.Token}",
+            unifiedShareUrl = shortSeq > 0 ? $"/s/{share.Token}" : null,
         }));
     }
 

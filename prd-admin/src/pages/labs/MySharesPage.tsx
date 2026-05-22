@@ -180,8 +180,11 @@ export default function MySharesPage() {
             const meta = getTypeMeta(s.targetType);
             const expired = isExpired(s.expiresAt);
             const primaryUrl = origin + s.primaryPath;
+            // /s/{seq} 和 /s/{token} 都依赖同一条 ShortLink 记录（ResolveByTokenAsync 查
+            // short_links.TargetId）。shortSeq=0 表示未注册到 ShortLink，两种形态都会 resolve
+            // missing，因此都置 null 不展示，只保留有效的 primaryUrl（带前缀长链）。
             const shortUrl = s.shortSeq > 0 ? `${origin}/s/${s.shortSeq}` : null;
-            const unifiedUrl = `${origin}/s/${s.token}`;
+            const unifiedUrl = s.shortSeq > 0 ? `${origin}/s/${s.token}` : null;
             const itemKey = `${s.targetType}-${s.token}`;
 
             return (
@@ -258,13 +261,15 @@ export default function MySharesPage() {
                         onCopy={(t) => handleCopy(t, `${itemKey}-short`)}
                       />
                     )}
-                    <UrlRow
-                      label="字母统一长链"
-                      url={unifiedUrl}
-                      copyKey={`${itemKey}-unified`}
-                      activeCopy={copiedKey}
-                      onCopy={(t) => handleCopy(t, `${itemKey}-unified`)}
-                    />
+                    {unifiedUrl && (
+                      <UrlRow
+                        label="字母统一长链"
+                        url={unifiedUrl}
+                        copyKey={`${itemKey}-unified`}
+                        activeCopy={copiedKey}
+                        onCopy={(t) => handleCopy(t, `${itemKey}-unified`)}
+                      />
+                    )}
                   </div>
                 ) : (
                   <div
