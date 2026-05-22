@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { ChevronsRight, ChevronsLeft, GripVertical, UploadCloud, Check, Copy, RotateCcw } from 'lucide-react';
+import { ChevronsRight, ChevronsLeft, GripVertical, UploadCloud, Check, Copy, RotateCcw, Lock, Link2 } from 'lucide-react';
 import { DOCK_EVENTS, type DockStartDetail, type DockDropDetail } from './useDockDrag';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import './ShareDock.css';
+
+export type DockSlotTone = 'sky' | 'violet' | 'rose' | 'emerald' | 'amber' | 'indigo';
+
+/** 拖拽进行中按被拖对象动态覆盖槽位外观/落点（"读心"）。返回字段缺省则沿用静态配置。 */
+export interface DockSlotOverride {
+  label?: string;
+  icon?: React.ReactNode;
+  hint?: string;
+  tone?: DockSlotTone;
+  onDrop?: (id: string) => void;
+}
 
 export interface ShareDockSlot {
   key: string;
@@ -10,9 +21,12 @@ export interface ShareDockSlot {
   label: string;
   hint: string;
   /** 主题色，决定 hover 时的光晕 */
-  tone: 'sky' | 'violet' | 'rose' | 'emerald' | 'amber' | 'indigo';
+  tone: DockSlotTone;
   /** 落点处理：收到被拖过来的对象 ID */
   onDrop: (id: string) => void;
+  /** 拖拽中按被拖对象 id 动态"读心"覆盖本槽（如已分享→取消分享）。
+   *  返回 null = 用静态配置；仅在拖拽进行时调用。 */
+  resolve?: (draggedId: string) => DockSlotOverride | null;
 }
 
 /** 上传成功后 dock 内联展示的分享结果（让用户一步拿到分享码） */
@@ -25,15 +39,24 @@ export interface ShareDockUploadResult {
   password?: string;
 }
 
+/** onFiles 上传成功后的产物：
+ * - 含 createShare → dock 进入"二选一"（无密码 / 有密码分享），用户点选后才创建分享
+ * - 仅含 shareUrl/title（无 createShare）→ 兼容旧的一步式直显结果 */
+export interface ShareDockUploadOutcome extends ShareDockUploadResult {
+  /** 由用户在 dock 内二选一触发创建分享，返回最终分享结果（含链接/密码）。
+   *  reject 时 dock 回到二选一态并提示错误。 */
+  createShare?: (mode: 'none' | 'password') => Promise<ShareDockUploadResult>;
+}
+
 export interface ShareDockDropzone {
   /** 提示文案，默认"拖文件到此上传" */
   hint?: string;
   /** 接受的扩展名列表（点开头），既用于显示也用于点击上传时的 input accept */
   accept?: string[];
   /** 接收到文件（拖入或点击选择）后回调。
-   * - 返回 Promise<ShareDockUploadResult>：dock 自动走「上传中 → 展示分享码」一步式流程
+   * - 返回 Promise<ShareDockUploadOutcome>：dock 走「上传中 → 二选一分享 → 展示分享码」流程
    * - 返回 void：维持旧行为（仅把文件交给外部处理，如打开弹窗） */
-  onFiles: (files: File[]) => Promise<ShareDockUploadResult | void> | void;
+  onFiles: (files: File[]) => Promise<ShareDockUploadOutcome | void> | void;
 }
 
 export interface ShareDockProps {
@@ -119,18 +142,31 @@ export function ShareDock({
   });
 
   const [dragging, setDragging] = useState(false);       // 被拖对象拖入状态
+  const [draggingId, setDraggingId] = useState<string | null>(null); // 当前被拖对象 id（供槽位 resolve 读心）
   const [movingDock, setMovingDock] = useState(false);   // 正在拖 Dock 自己
   const [fileOver, setFileOver] = useState(false);       // 外部文件拖入 dropzone
   const dockRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);   // 点击上传用的隐藏 input
 
-  // dropzone 上传状态机：idle（待上传）→ uploading（上传中）→ done（展示分享码）
-  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'done'>('idle');
+  // dropzone 上传状态机：idle（待上传）→ uploading（上传中）→ choosing（二选一分享）
+  //                      → sharing（创建分享中）→ done（展示分享码）
+  const [uploadState, setUploadState] = useState<'idle' | 'uploading' | 'choosing' | 'sharing' | 'done'>('idle');
   const [uploadResult, setUploadResult] = useState<ShareDockUploadResult | null>(null);
   const [resultCopied, setResultCopied] = useState(false);
+  // 上传成功后待用户二选一的分享创建器（choosing 态使用）
+  const [pendingShare, setPendingShare] = useState<{ title?: string; createShare: (mode: 'none' | 'password') => Promise<ShareDockUploadResult> } | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+
+  const copyToClipboard = useCallback((text: string) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setResultCopied(true);
+      window.setTimeout(() => setResultCopied(false), 2000);
+    } catch { /* 剪贴板不可用时静默，用户仍可手动复制 */ }
+  }, []);
 
   // 统一处理「拖入 / 点击选择」拿到的文件：
-  // onFiles 返回 Promise 时走一步式（上传中 → 分享码），返回 void 时维持旧行为
+  // onFiles 返回 Promise 时走「上传 → 二选一分享」，返回 void 时维持旧行为
   const handleDropzoneFiles = useCallback(
     (files: File[]) => {
       if (!dropzone || files.length === 0) return;
@@ -138,18 +174,19 @@ export function ShareDock({
       if (ret && typeof (ret as Promise<unknown>).then === 'function') {
         setUploadState('uploading');
         setUploadResult(null);
-        (ret as Promise<ShareDockUploadResult | void>)
-          .then((result) => {
-            if (result && (result.shareUrl || result.title)) {
-              setUploadResult(result);
+        setPendingShare(null);
+        setShareError(null);
+        (ret as Promise<ShareDockUploadOutcome | void>)
+          .then((outcome) => {
+            if (outcome && outcome.createShare) {
+              // 上传成功 → 进入二选一，由用户点选分享方式后才真正创建分享
+              setPendingShare({ title: outcome.title, createShare: outcome.createShare });
+              setUploadState('choosing');
+            } else if (outcome && (outcome.shareUrl || outcome.title)) {
+              // 兼容旧一步式：onFiles 直接返回了分享结果
+              setUploadResult(outcome);
               setUploadState('done');
-              if (result.shareUrl) {
-                try {
-                  navigator.clipboard.writeText(result.shareUrl);
-                  setResultCopied(true);
-                  window.setTimeout(() => setResultCopied(false), 2000);
-                } catch { /* 剪贴板不可用时静默，用户仍可手动复制 */ }
-              }
+              if (outcome.shareUrl) copyToClipboard(outcome.shareUrl);
             } else {
               setUploadState('idle');
             }
@@ -158,39 +195,55 @@ export function ShareDock({
       }
       // void：外部自行处理（如打开弹窗），dock 维持 idle
     },
-    [dropzone],
+    [dropzone, copyToClipboard],
   );
+
+  // 用户在二选一里点了「无密码 / 有密码」→ 创建分享，成功后展示链接 + 自动复制
+  const chooseShare = useCallback(async (mode: 'none' | 'password') => {
+    if (!pendingShare) return;
+    setUploadState('sharing');
+    setShareError(null);
+    try {
+      const result = await pendingShare.createShare(mode);
+      setUploadResult(result);
+      setUploadState('done');
+      if (result.shareUrl) copyToClipboard(result.shareUrl);
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : '分享创建失败，请重试');
+      setUploadState('choosing');
+    }
+  }, [pendingShare, copyToClipboard]);
 
   const resetUpload = useCallback(() => {
     setUploadState('idle');
     setUploadResult(null);
     setResultCopied(false);
+    setPendingShare(null);
+    setShareError(null);
   }, []);
 
   const copyResult = useCallback(() => {
-    if (!uploadResult?.shareUrl) return;
-    try {
-      navigator.clipboard.writeText(uploadResult.shareUrl);
-      setResultCopied(true);
-      window.setTimeout(() => setResultCopied(false), 2000);
-    } catch { /* ignore */ }
-  }, [uploadResult]);
+    if (uploadResult?.shareUrl) copyToClipboard(uploadResult.shareUrl);
+  }, [uploadResult, copyToClipboard]);
 
   // 监听拖拽生命周期，激活 Dock
   useEffect(() => {
     const onStart = (e: Event) => {
       const ev = e as CustomEvent<DockStartDetail>;
-      if (ev.detail?.mime === mime) setDragging(true);
+      if (ev.detail?.mime === mime) { setDragging(true); setDraggingId(ev.detail.id); }
     };
     const onEnd = (e: Event) => {
       const ev = e as CustomEvent<DockStartDetail>;
-      if (ev.detail?.mime === mime) setDragging(false);
+      if (ev.detail?.mime === mime) { setDragging(false); setDraggingId(null); }
     };
     const onDrop = (e: Event) => {
       const ev = e as CustomEvent<DockDropDetail>;
       if (ev.detail?.mime !== mime) return;
       const slot = slots.find((s) => s.key === ev.detail.slotKey);
-      if (slot) slot.onDrop(ev.detail.id);
+      if (!slot) return;
+      // 落点行为也走"读心"：已分享对象落到分享槽时执行取消分享而非再次分享
+      const ov = slot.resolve ? slot.resolve(ev.detail.id) : null;
+      (ov?.onDrop ?? slot.onDrop)(ev.detail.id);
     };
     window.addEventListener(DOCK_EVENTS.START, onStart);
     window.addEventListener(DOCK_EVENTS.END, onEnd);
@@ -369,7 +422,7 @@ export function ShareDock({
                 uploadState === 'idle' ? 'cursor-pointer' : 'cursor-default',
                 fileOver
                   ? 'border-sky-300/80 bg-sky-500/15 text-sky-50'
-                  : uploadState === 'done'
+                  : (uploadState === 'done' || uploadState === 'choosing')
                     ? 'border-emerald-300/50 bg-emerald-500/10 text-emerald-50'
                     : 'border-white/15 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]',
               ].join(' ')}
@@ -414,7 +467,44 @@ export function ShareDock({
               {uploadState === 'uploading' ? (
                 <>
                   <MapSpinner size={28} />
-                  <div className="text-[12px] font-medium">正在上传并生成分享码…</div>
+                  <div className="text-[12px] font-medium">正在上传…</div>
+                </>
+              ) : uploadState === 'sharing' ? (
+                <>
+                  <MapSpinner size={28} />
+                  <div className="text-[12px] font-medium">正在创建分享…</div>
+                </>
+              ) : uploadState === 'choosing' ? (
+                <>
+                  <div className="flex items-center gap-1.5 text-emerald-200">
+                    <Check size={18} />
+                    <span className="text-[12.5px] font-semibold">{pendingShare?.title ?? '上传成功'}</span>
+                  </div>
+                  <div className="text-[10.5px] text-white/55">选择分享方式</div>
+                  <div className="flex w-full flex-col gap-1.5">
+                    <button
+                      data-no-drag
+                      onClick={(e) => { e.stopPropagation(); chooseShare('none'); }}
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1.5 text-[12px] font-medium text-sky-50 transition-colors hover:bg-sky-500/25"
+                    >
+                      <Link2 size={13} /> 无密码分享
+                    </button>
+                    <button
+                      data-no-drag
+                      onClick={(e) => { e.stopPropagation(); chooseShare('password'); }}
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1.5 text-[12px] font-medium text-amber-50 transition-colors hover:bg-amber-500/25"
+                    >
+                      <Lock size={13} /> 有密码分享
+                    </button>
+                  </div>
+                  {shareError && <div className="text-[10px] text-rose-300">{shareError}</div>}
+                  <button
+                    data-no-drag
+                    onClick={(e) => { e.stopPropagation(); resetUpload(); }}
+                    className="mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/55 hover:bg-white/10 hover:text-white"
+                  >
+                    <RotateCcw size={12} /> 再传一个
+                  </button>
                 </>
               ) : uploadState === 'done' && uploadResult ? (
                 <>
@@ -486,38 +576,46 @@ export function ShareDock({
             dragging ? 'dock-active' : '',
           ].join(' ')}
         >
-          {slots.map((s) => (
-            <div
-              key={s.key}
-              data-dock-slot={s.key}
-              data-dock-mime={mime}
-              className={[
-                'dock-slot',
-                `dock-slot--${s.tone}`,
-                horizontalSlots ? 'dock-slot--compact' : '',
-              ].join(' ')}
-              role="button"
-              aria-label={`拖到此处以${s.label}`}
-              title={s.hint}
-            >
-              {horizontalSlots ? (
-                <div className="flex flex-col items-center gap-1 py-1">
-                  <span className="text-current">{s.icon}</span>
-                  <span className="text-[11px] font-medium leading-none">{s.label}</span>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-center gap-2">
-                    {s.icon}
-                    <span className="text-sm font-medium">{s.label}</span>
+          {slots.map((s) => {
+            // 拖拽中按被拖对象"读心"：已分享对象 → 分享槽显示"取消分享"等
+            const ov = (draggingId && s.resolve) ? s.resolve(draggingId) : null;
+            const label = ov?.label ?? s.label;
+            const icon = ov?.icon ?? s.icon;
+            const hint = ov?.hint ?? s.hint;
+            const tone = ov?.tone ?? s.tone;
+            return (
+              <div
+                key={s.key}
+                data-dock-slot={s.key}
+                data-dock-mime={mime}
+                className={[
+                  'dock-slot',
+                  `dock-slot--${tone}`,
+                  horizontalSlots ? 'dock-slot--compact' : '',
+                ].join(' ')}
+                role="button"
+                aria-label={`拖到此处以${label}`}
+                title={hint}
+              >
+                {horizontalSlots ? (
+                  <div className="flex flex-col items-center gap-1 py-1">
+                    <span className="text-current">{icon}</span>
+                    <span className="text-[11px] font-medium leading-none">{label}</span>
                   </div>
-                  <div className="dock-slot__hint mt-0.5 text-[10.5px] leading-snug text-white/55">
-                    {s.hint}
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
+                ) : (
+                  <>
+                    <div className="flex items-center gap-2">
+                      {icon}
+                      <span className="text-sm font-medium">{label}</span>
+                    </div>
+                    <div className="dock-slot__hint mt-0.5 text-[10.5px] leading-snug text-white/55">
+                      {hint}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* 底部链接 */}

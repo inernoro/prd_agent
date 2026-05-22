@@ -50,6 +50,7 @@ import {
   Clock,
   RefreshCw,
   Link2,
+  Link2Off,
   FileCode2,
   FileArchive,
   HardDrive,
@@ -90,6 +91,18 @@ function fmtSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 从分享列表（后端已过滤掉 visit 便捷链 + 已撤销）构建「已分享站点」集合。
+ * 仅把"单站点分享"（siteId 或 siteIds 仅含一个）计入，使卡片标记与「只撤单站点」的取消语义一致；
+ * 多站点合集分享不标记单卡。 */
+function buildSharedSiteIds(items: ShareLinkItem[]): Set<string> {
+  const set = new Set<string>();
+  for (const it of items) {
+    const sid = it.siteId ?? (it.siteIds?.length === 1 ? it.siteIds[0] : undefined);
+    if (sid) set.add(sid);
+  }
+  return set;
 }
 
 const sourceTypeLabels: Record<string, string> = {
@@ -197,6 +210,8 @@ export default function WebPagesPage() {
     return saved === 'folder' ? 'folder' : 'time';
   });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
+  const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
 
   const [folders, setFolders] = useState<string[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
@@ -243,8 +258,15 @@ export default function WebPagesPage() {
     if (tRes.success) setTags(tRes.data.tags);
   }, []);
 
+  // 拉真实分享列表（后端已排除 visit 便捷链 + 已撤销），刷新「已分享」标记
+  const loadShares = useCallback(async () => {
+    const res = await listSiteShares();
+    if (res.success) setSharedSiteIds(buildSharedSiteIds(res.data.items));
+  }, []);
+
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadMeta(); }, [loadMeta]);
+  useEffect(() => { loadShares(); }, [loadShares]);
 
   // 把刚上传成功的站点 ID 加入 freshIds，1.3s 后自动移除（与 CSS 动画时长匹配）。
   // 仅在用户主动创建时触发；筛选/排序导致的 sites 重组不动它。
@@ -324,6 +346,30 @@ export default function WebPagesPage() {
     }
   }, [loadMeta]);
 
+  // 取消分享：撤销所有"仅指向该站点"的分享链接（单站点分享），多站点合集分享不动。
+  const cancelShareForSite = useCallback(async (id: string) => {
+    const res = await listSiteShares();
+    if (!res.success) {
+      toast.error('取消分享失败', res.error?.message || '请稍后重试');
+      return;
+    }
+    const targets = res.data.items.filter((it) => {
+      const sid = it.siteId ?? (it.siteIds?.length === 1 ? it.siteIds[0] : undefined);
+      return sid === id;
+    });
+    if (targets.length === 0) { await loadShares(); return; }
+    let ok = 0;
+    for (const t of targets) {
+      const r = await revokeSiteShare(t.id);
+      if (r.success) ok++;
+    }
+    if (ok > 0) {
+      const title = sites.find((s) => s.id === id)?.title ?? '站点';
+      toast.success('已取消分享', `「${title}」的分享链接已撤销`);
+    }
+    await loadShares();
+  }, [loadShares, sites]);
+
   const handleConfirmReplace = useCallback(async () => {
     if (!replaceTarget || replacing) return;
     setReplacing(true);
@@ -379,11 +425,13 @@ export default function WebPagesPage() {
             site={site}
             selected={selectedIds.has(site.id)}
             fresh={freshIds.has(site.id)}
+            shared={sharedSiteIds.has(site.id)}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
             onShare={() => handleShare(site.id)}
+            onCancelShare={() => cancelShareForSite(site.id)}
             onQrCode={() => setQrSite(site)}
             onTransferToLibrary={() => setLibraryTargetSite(site)}
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
@@ -397,10 +445,12 @@ export default function WebPagesPage() {
             key={site.id}
             site={site}
             selected={selectedIds.has(site.id)}
+            shared={sharedSiteIds.has(site.id)}
             onSelect={() => toggleSelect(site.id)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
             onShare={() => handleShare(site.id)}
+            onCancelShare={() => cancelShareForSite(site.id)}
             onQrCode={() => setQrSite(site)}
           />
         ))}
@@ -425,7 +475,7 @@ export default function WebPagesPage() {
         dropzone={{
           hint: '拖文件到此上传',
           accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
-          // 一步式：上传 → 自动生成分享码 → ShareDock 内联展示链接，用户无需再开弹窗
+          // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
           onFiles: async (files) => {
             const f = files[0];
             if (!f) return;
@@ -438,21 +488,24 @@ export default function WebPagesPage() {
             markSiteAsFresh(site.id);
             load();
             loadMeta();
-            try {
-              const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0 });
-              if (share.success && share.data) {
-                return {
-                  title: '上传成功',
-                  shareUrl: `${window.location.origin}${share.data.shareUrl}`,
-                  password: share.data.password,
-                };
-              }
-              toast.error('分享码生成失败', share.error?.message || '可在卡片上手动分享');
-              return { title: '已上传，分享码生成失败' };
-            } catch (e) {
-              toast.error('分享码生成失败', e instanceof Error ? e.message : '网络异常，请稍后重试');
-              return { title: '已上传，分享码生成失败' };
-            }
+            return {
+              title: '上传成功',
+              createShare: async (mode) => {
+                const pwd = mode === 'password' ? genPassword() : undefined;
+                const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd });
+                if (share.success && share.data) {
+                  loadShares();
+                  return {
+                    title: '已生成分享',
+                    shareUrl: `${window.location.origin}${share.data.shareUrl}`,
+                    password: share.data.password,
+                  };
+                }
+                const msg = share.error?.message || '分享码生成失败';
+                toast.error('分享码生成失败', `${msg}，可在卡片上手动分享`);
+                throw new Error(msg);
+              },
+            };
           },
         }}
         slots={[
@@ -466,6 +519,13 @@ export default function WebPagesPage() {
               const site = sites.find(s => s.id === id);
               if (site) handleMakePublic(site);
             },
+            // 读心：拖已公开的站点过来 → 槽位提示「取消公开」（onDrop 仍走 handleMakePublic，内部按当前状态翻转）
+            resolve: (id) => {
+              const site = sites.find(s => s.id === id);
+              return site?.visibility === 'public'
+                ? { label: '取消公开', icon: <Lock size={18} />, hint: '改回私有', tone: 'rose' }
+                : null;
+            },
           },
           {
             key: 'share',
@@ -477,6 +537,10 @@ export default function WebPagesPage() {
               const site = sites.find(s => s.id === id);
               if (site) handleDropShare(site);
             },
+            // 读心：拖已分享的站点过来 → 槽位变「取消分享」，落点撤销该站点的单站点分享
+            resolve: (id) => sharedSiteIds.has(id)
+              ? { label: '取消分享', icon: <Link2Off size={18} />, hint: '撤销该站点的分享链接', tone: 'amber', onDrop: (sid) => cancelShareForSite(sid) }
+              : null,
           },
           {
             key: 'delete',
@@ -769,7 +833,7 @@ export default function WebPagesPage() {
         <ShareDialog
           siteId={shareTargetId}
           siteIds={shareTargetId ? undefined : [...selectedIds]}
-          onClose={() => { setShowShareDialog(false); setShareTargetId(null); }}
+          onClose={() => { setShowShareDialog(false); setShareTargetId(null); loadShares(); }}
         />
       )}
 
@@ -994,21 +1058,25 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
+function SiteCard({ site, selected, fresh, shared, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
+  shared?: boolean;
   onSelect: () => void;
   onTogglePublic: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
+  onCancelShare: () => void;
   onQrCode: () => void;
   onTransferToLibrary: () => void;
   onReplaceFile: (file: File) => void;
 }) {
   const isPublic = site.visibility === 'public';
   const [fileDragOver, setFileDragOver] = useState(false);
+  // 取消分享 inline 轻确认：点一下转「确认 / 保留」两个小按钮，避免误触
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
     id: site.id,
@@ -1159,7 +1227,18 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
           )}
 
           <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-            <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
+            {shared ? (
+              confirmCancel ? (
+                <>
+                  <IconAction icon={<Check size={12} />} label="确认取消分享" color="#6ee7b7" onClick={() => { setConfirmCancel(false); onCancelShare(); }} />
+                  <IconAction icon={<X size={12} />} label="保留分享" onClick={() => setConfirmCancel(false)} />
+                </>
+              ) : (
+                <IconAction icon={<Link2Off size={12} />} label="取消分享" color="#fcd34d" onClick={() => setConfirmCancel(true)} />
+              )
+            ) : (
+              <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
+            )}
             <IconAction icon={<QrCode size={12} />} label="二维码" onClick={onQrCode} />
             {isPublic && (
               <IconAction
@@ -1175,14 +1254,21 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
 
         <div className="flex min-h-[92px] flex-col gap-1.5 px-3 py-2.5">
           <div className="min-w-0">
-            <h3
-              className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
-              style={{ color: 'var(--text-primary)' }}
-              onClick={handleVisit}
-              title={site.title}
-            >
-              {site.title}
-            </h3>
+            <div className="flex min-w-0 items-center gap-1">
+              {shared && (
+                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                  <Link2 size={9} /> 已分享
+                </span>
+              )}
+              <h3
+                className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
+                style={{ color: shared ? '#fbbf24' : 'var(--text-primary)' }}
+                onClick={handleVisit}
+                title={site.title}
+              >
+                {site.title}
+              </h3>
+            </div>
             {/* 描述行始终保留高度，无描述时显示浅色占位，让所有卡片底部对齐 */}
             <p
               className="mt-0.5 line-clamp-1 text-[11px] leading-snug"
@@ -1229,12 +1315,16 @@ function IconAction({
   label,
   onClick,
   danger,
+  color,
 }: {
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
   danger?: boolean;
+  /** 自定义图标色（优先于 danger） */
+  color?: string;
 }) {
+  const c = color ?? (danger ? '#fecaca' : undefined);
   return (
     <button
       type="button"
@@ -1242,7 +1332,7 @@ function IconAction({
       className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
       title={label}
       aria-label={label}
-      style={danger ? { color: '#fecaca' } : undefined}
+      style={c ? { color: c } : undefined}
     >
       {icon}
     </button>
@@ -1251,13 +1341,15 @@ function IconAction({
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCode }: {
+function SiteListItem({ site, selected, shared, onSelect, onEdit, onDelete, onShare, onCancelShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
+  shared?: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
+  onCancelShare: () => void;
   onQrCode: () => void;
 }) {
   const isPublic = site.visibility === 'public';
@@ -1298,9 +1390,17 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
+          {shared && (
+            <span
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+              title="已分享"
+            >
+              <Link2 size={10} /> 已分享
+            </span>
+          )}
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
-            style={{ color: 'var(--text-primary)' }}
+            style={{ color: shared ? '#fbbf24' : 'var(--text-primary)' }}
             onClick={handleVisit}
           >
             {site.title}
@@ -1336,9 +1436,15 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
-        <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]">
-          <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
-        </button>
+        {shared ? (
+          <button onClick={onCancelShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="取消分享">
+            <Link2Off size={14} style={{ color: '#fcd34d' }} />
+          </button>
+        ) : (
+          <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">
+            <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
+          </button>
+        )}
         <button onClick={onQrCode} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="二维码">
           <QrCode size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
