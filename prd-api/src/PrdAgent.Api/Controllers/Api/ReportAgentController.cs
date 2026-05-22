@@ -4,10 +4,12 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Globalization;
 using System.Security.Claims;
@@ -97,6 +99,8 @@ public class ReportAgentController : ControllerBase
     private readonly TeamSummaryService _teamSummaryService;
     private readonly ReportWebhookService _webhookService;
     private readonly DailyLogPolishService _polishService;
+    private readonly ISharePasswordService _sharePwd;
+    private readonly IShortLinkService _shortLinks;
 
     public ReportAgentController(
         MongoDbContext db,
@@ -108,7 +112,9 @@ public class ReportAgentController : ControllerBase
         ReportNotificationService notificationService,
         TeamSummaryService teamSummaryService,
         ReportWebhookService webhookService,
-        DailyLogPolishService polishService)
+        DailyLogPolishService polishService,
+        ISharePasswordService sharePwd,
+        IShortLinkService shortLinks)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -120,6 +126,8 @@ public class ReportAgentController : ControllerBase
         _teamSummaryService = teamSummaryService;
         _webhookService = webhookService;
         _polishService = polishService;
+        _sharePwd = sharePwd;
+        _shortLinks = shortLinks;
     }
 
     #region Helpers
@@ -4900,6 +4908,8 @@ public class ReportAgentController : ControllerBase
         var wn = req.WeekNumber > 0 ? req.WeekNumber : ISOWeek.GetWeekOfYear(now);
 
         var trimmedPwd = string.IsNullOrWhiteSpace(req.Password) ? null : req.Password.Trim();
+        // 新分享同时写明文（展示给分享者）+ Hash/Salt（校验主路径，旧分享 fallback 走明文）
+        var pwdHash = trimmedPwd != null ? (SharePasswordHash?)_sharePwd.Hash(trimmedPwd) : null;
         var share = new ReportShareLink
         {
             TeamId = id,
@@ -4908,6 +4918,8 @@ public class ReportAgentController : ControllerBase
             WeekNumber = wn,
             AccessLevel = string.IsNullOrEmpty(trimmedPwd) ? ReportShareAccessLevel.Public : ReportShareAccessLevel.Password,
             Password = trimmedPwd,
+            PasswordHash = pwdHash?.Hash,
+            PasswordSalt = pwdHash?.Salt,
             ExpiresAt = req.ExpiresInDays > 0 ? now.AddDays(req.ExpiresInDays) : null,
             CreatedBy = userId,
             CreatedByName = username,
@@ -4915,13 +4927,29 @@ public class ReportAgentController : ControllerBase
 
         await _db.ReportShareLinks.InsertOneAsync(share);
 
+        // P1 URL 统一：注册到全局 ShortLink 索引，让 /s/{token} 和 /s/{seq} 都能查到
+        long shortSeq = 0;
+        try
+        {
+            shortSeq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.Report, share.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为周报分享 {ShareId} 分配短链 seq 失败，仅返回长链", share.Id);
+        }
+
         return Ok(ApiResponse<object>.Ok(new
         {
             share.Id,
             share.Token,
             share.AccessLevel,
             share.ExpiresAt,
+            // 默认带分类前缀长链：URL 有语义，利于分享总管理面板按类型分类
             shareUrl = $"/s/report-team/{share.Token}",
+            // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；shortSeq=0（未注册）时两者都
+            // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
+            shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
+            unifiedShareUrl = shortSeq > 0 ? $"/s/{share.Token}" : null,
         }));
     }
 
@@ -4989,9 +5017,38 @@ public class ReportAgentController : ControllerBase
 
         if (!isTeamMember && share.AccessLevel == ReportShareAccessLevel.Password)
         {
+            // 速率限制：per-shareLink 滑动窗口，1 分钟 ≥ 10 次拒绝（不绑 IP，容器/NAT 友好）
+            var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
+            if (!rl.Allowed)
+            {
+                await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id,
+                    Builders<ReportShareLink>.Update.Set(s => s.RecentAttempts, rl.PrunedAttempts));
+                var sec = (int)Math.Ceiling(rl.RetryAfter.TotalSeconds);
+                Response.Headers["Retry-After"] = sec.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", $"尝试过于频繁，请 {sec} 秒后再试"));
+            }
+            // 无论对错都记录尝试时间戳
+            await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id,
+                Builders<ReportShareLink>.Update.Set(s => s.RecentAttempts, rl.PrunedAttempts));
+
             var providedPwd = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
-            if (string.IsNullOrEmpty(providedPwd) || providedPwd != share.Password)
+            if (string.IsNullOrEmpty(providedPwd))
                 return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "需要访问密码"));
+
+            bool ok;
+            if (!string.IsNullOrEmpty(share.PasswordHash) && !string.IsNullOrEmpty(share.PasswordSalt))
+                ok = _sharePwd.Verify(providedPwd, share.PasswordHash, share.PasswordSalt);
+            else
+                // 旧分享回退：明文恒时比对，避免按字符短路泄露前缀
+                ok = _sharePwd.ConstantTimeStringEquals(providedPwd, share.Password ?? string.Empty);
+
+            if (!ok)
+                return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "需要访问密码"));
+
+            // 密码正确清空窗口，合法用户不被自己的历史失败拖累
+            if (rl.PrunedAttempts.Count > 0)
+                await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id,
+                    Builders<ReportShareLink>.Update.Set(s => s.RecentAttempts, new List<DateTime>()));
         }
 
         // 记录访问

@@ -30,8 +30,25 @@ public class ReportShareLink
     /// <summary>访问级别：public = 任何已登录用户可看 | password = 非团队成员需密码</summary>
     public string AccessLevel { get; set; } = "public";
 
-    /// <summary>访问密码（AccessLevel = password 时有效，明文存储以便展示给分享者）</summary>
+    /// <summary>
+    /// 明文密码 —— 仅旧分享和"创建时按密码去重展示给分享者"使用。
+    /// 新分享统一以 PasswordHash + PasswordSalt 存储；校验路径优先 Hash，
+    /// 仅在 PasswordHash 为空时回退到本字段（向后兼容存量数据）。
+    /// </summary>
     public string? Password { get; set; }
+
+    /// <summary>密码 Hash (PBKDF2-SHA256, base64)。新分享必填；旧分享为空时走明文回退路径</summary>
+    public string? PasswordHash { get; set; }
+
+    /// <summary>密码盐 (16 bytes base64)。与 PasswordHash 配对，缺一个就视为旧分享</summary>
+    public string? PasswordSalt { get; set; }
+
+    /// <summary>
+    /// 最近 N 次尝试时间戳（滑动窗口速率限制，单位 UTC）。
+    /// 不按 IP 锁定 —— 容器/反向代理下 IP 不可靠，且 NAT 局域网下一人输错全部门遭殃。
+    /// 改用 per-shareLink 滑动窗口：1 分钟内 ≥ 10 次尝试就拒绝。窗口自然滚动过期。
+    /// </summary>
+    public List<DateTime> RecentAttempts { get; set; } = new();
 
     /// <summary>过期时间（null 表示永不过期）</summary>
     public DateTime? ExpiresAt { get; set; }

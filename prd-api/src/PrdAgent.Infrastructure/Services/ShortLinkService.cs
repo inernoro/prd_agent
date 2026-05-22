@@ -188,4 +188,10 @@ public class ShortLinkService : IShortLinkService
         if (seq <= 0) return null;
         return await _links.Find(x => x.Seq == seq).FirstOrDefaultAsync(ct);
     }
+
+    public async Task<ShortLink?> ResolveByTokenAsync(string token, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        return await _links.Find(x => x.TargetId == token.Trim()).FirstOrDefaultAsync(ct);
+    }
 }

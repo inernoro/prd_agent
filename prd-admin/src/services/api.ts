@@ -1092,6 +1092,8 @@ export const api = {
   // ============ 统一短链解析 ============
   shortLinks: {
     resolve: (seq: string | number) => `/api/short-links/${seq}`,
+    // P1 URL 统一：接受任意 slug（纯数字 → Seq，其它 → Token）走同一端点
+    resolveSlug: (slug: string) => `/api/short-links/resolve/${encodeURIComponent(slug)}`,
   },
   // ============ 快捷指令 ============
   shortcuts: {

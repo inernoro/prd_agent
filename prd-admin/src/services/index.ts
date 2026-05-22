@@ -1690,6 +1690,7 @@ export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInf
 // ── 统一短链解析 + 管理 ──
 export {
   resolveShortLink,
+  resolveShortLinkSlug,
   listAdminShortLinks,
   revokeAdminShortLink,
   repairShortLinkCounter,
@@ -1700,6 +1701,10 @@ export type {
   AdminShortLinkItem,
   AdminShortLinkShareMeta,
 } from '@/services/real/shortLinks';
+
+// ── 我的分享总管理 ──
+export { listMyShares } from '@/services/real/myShares';
+export type { MyShareItem, MyShareTargetType, MySharesResponse } from '@/services/real/myShares';
 
 // ── Public Profile 个人公开主页 ──
 export {

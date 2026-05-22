@@ -5,7 +5,8 @@ import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { createTeamWeekShare } from '@/services';
 
-function genPassword(len = 6) {
+function genPassword(len = 8) {
+  // 长链 token 已有 72 bits 熵；密码主要防顺手分享外泄，去掉 i/l/o/0/1 易混淆字符
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   return Array.from(crypto.getRandomValues(new Uint8Array(len)))
     .map((b) => chars[b % chars.length])
@@ -44,8 +45,9 @@ export function ShareTeamWeekDialog({
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [usePassword, setUsePassword] = useState(false);
-  const [password, setPassword] = useState('');
+  // 默认勾选密码保护；非团队成员才会被强制输入，团队成员仍免密
+  const [usePassword, setUsePassword] = useState(true);
+  const [password, setPassword] = useState(() => genPassword());
   const [expiresInDays, setExpiresInDays] = useState(7);
 
   const inputStyle: React.CSSProperties = {
@@ -97,8 +99,10 @@ export function ShareTeamWeekDialog({
 
   const handleClose = () => {
     setResult(null);
-    setPassword('');
-    setUsePassword(false);
+    // 恢复到初始安全默认（密码保护默认开 + 重新生成强密码），
+    // 而不是把 usePassword 重置为 false 撤销安全默认（dialog 复用、保持挂载）
+    setUsePassword(true);
+    setPassword(genPassword());
     setCopied(false);
     onClose();
   };

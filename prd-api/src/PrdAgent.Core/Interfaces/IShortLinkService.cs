@@ -18,6 +18,13 @@ public interface IShortLinkService
     Task<ShortLink?> ResolveAsync(long seq, CancellationToken ct = default);
 
     /// <summary>
+    /// 按 Token（TargetId）反查 ShortLink 路由记录。
+    /// 用于 P1 URL 统一：/s/{token} 字母路径也需要解析到 (targetType, token) 给前端调度组件。
+    /// base64 token 72 bits 熵下不同 TargetType 撞 TargetId 概率几乎为零，命中多条时取第一条。
+    /// </summary>
+    Task<ShortLink?> ResolveByTokenAsync(string token, CancellationToken ct = default);
+
+    /// <summary>
     /// 管理员视角：分页列出所有短链。targetType / search 可选。
     /// search 是纯数字时按 Seq 精确匹配，否则按 TargetId 包含匹配。
     /// </summary>
