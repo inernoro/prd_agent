@@ -1043,28 +1043,48 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         </div>
       )}
 
-      {/* Sections（激进档：去色块、去框、long-form 编辑器风格） */}
+      {/* Sections（激进档 v2：恢复 surface 容器层次，避免被背景融化；前景灰阶但有边界与阴影） */}
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className="max-w-[880px] mx-auto px-2 pb-12">
+        <div className="max-w-[880px] mx-auto px-2 pb-12 flex flex-col gap-5">
           {report.sections.map((section, sIdx) => {
             const theme = sectionThemes[sIdx % sectionThemes.length];
             const filledCount = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
             const totalCount = (sections[sIdx]?.items || []).length;
             return (
-              <section key={sIdx}>
-                {/* 章节间 hairline 分隔（首段无） */}
-                {sIdx > 0 && (
-                  <div
-                    className="mt-10"
-                    style={{ borderTop: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.12)'}` }}
-                  />
-                )}
+              <section
+                key={sIdx}
+                className="relative rounded-2xl"
+                style={{
+                  // 前景层 surface：浅色纯白、暗色极淡填充，营造与主背景的层次
+                  background: isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.025)',
+                  border: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.12)'}`,
+                  boxShadow: isLight
+                    ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px -8px rgba(15, 23, 42, 0.06)'
+                    : '0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -16px rgba(0, 0, 0, 0.4)',
+                  backdropFilter: isLight ? undefined : 'blur(8px)',
+                  WebkitBackdropFilter: isLight ? undefined : 'blur(8px)',
+                }}
+              >
+                {/* mono 编号悬浮在卡片外左侧（页边码风），桌面显示，窄屏由 left-4 兜底 */}
+                <span
+                  className="absolute font-mono tabular-nums hidden lg:block select-none"
+                  style={{
+                    top: 22,
+                    left: -42,
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                    opacity: 0.55,
+                    letterSpacing: '0.05em',
+                  }}
+                >
+                  {String(sIdx + 1).padStart(2, '0')}
+                </span>
 
-                {/* Section header — mono 编号 + 标题 + 必填灰 chip + 右侧 mono 计数 */}
-                <header className="mt-8 mb-3 flex items-baseline gap-3">
+                {/* Section header — mono 编号(窄屏内联) + 标题 + 必填灰 chip + 右侧 mono 计数 */}
+                <header className="px-6 pt-5 pb-3 flex items-baseline gap-3">
                   <span
-                    className="text-[12px] font-mono flex-shrink-0 tabular-nums"
-                    style={{ color: 'var(--text-muted)', minWidth: 22 }}
+                    className="text-[11px] font-mono flex-shrink-0 tabular-nums lg:hidden"
+                    style={{ color: 'var(--text-muted)', opacity: 0.55 }}
                   >
                     {String(sIdx + 1).padStart(2, '0')}
                   </span>
@@ -1085,7 +1105,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           className="text-[10px] px-1.5 py-0.5 rounded font-normal"
                           style={{
                             color: 'var(--text-muted)',
-                            background: 'var(--bg-tertiary)',
+                            background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.06)',
                           }}
                           aria-label="必填"
                           title="必填章节"
@@ -1108,8 +1128,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   </div>
                 </header>
 
+                {/* 章节 header 与 items 间的细分隔线 */}
+                <div
+                  className="mx-6"
+                  style={{ borderTop: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.08)'}` }}
+                />
+
                 {/* Items */}
-                <div className="flex flex-col gap-0.5">
+                <div className="px-5 py-3 pb-4 flex flex-col gap-0.5">
                   {(sections[sIdx]?.items || []).map((item, iIdx) => {
                     const itemsLen = sections[sIdx]?.items?.length ?? 0;
                     const dragKey = `${sIdx}:${iIdx}`;
@@ -1155,31 +1181,39 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           style={{ top: -6, height: 2, background: 'rgba(99, 102, 241, 0.9)', borderRadius: 1 }}
                         />
                       )}
-                      {/* 拖动手柄：hover 显示，仅当可编辑且本章节 ≥2 条时出现 */}
+                      {/* 拖动手柄：hover 显示，仅当可编辑且本章节 ≥2 条时出现
+                          外层固定 36px 高对齐第一行文字中心（textarea 多行时仍对齐首行，与 bullet 一致） */}
                       {canEdit && itemsLen > 1 && (
-                        <button
-                          type="button"
-                          draggable
-                          className="opacity-0 group-hover:opacity-100 transition-opacity self-center p-1 rounded flex-shrink-0"
-                          style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
-                          title="拖动调整该章节内顺序"
-                          aria-label="拖动调整顺序"
-                          onDragStart={(e) => {
-                            e.dataTransfer.effectAllowed = 'move';
-                            e.dataTransfer.setData('application/x-report-item-section', String(sIdx));
-                            e.dataTransfer.setData('application/x-report-item-index', String(iIdx));
-                            setDraggingKey(dragKey);
-                          }}
-                          onDragEnd={() => { setDraggingKey(null); setDragOverIdx(null); }}
-                        >
-                          <GripVertical size={14} style={{ color: 'var(--text-muted)' }} />
-                        </button>
+                        <div className="flex-shrink-0 flex items-center" style={{ height: 36 }}>
+                          <button
+                            type="button"
+                            draggable
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded"
+                            style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+                            title="拖动调整该章节内顺序"
+                            aria-label="拖动调整顺序"
+                            onDragStart={(e) => {
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('application/x-report-item-section', String(sIdx));
+                              e.dataTransfer.setData('application/x-report-item-index', String(iIdx));
+                              setDraggingKey(dragKey);
+                            }}
+                            onDragEnd={() => { setDraggingKey(null); setDragOverIdx(null); }}
+                          >
+                            <GripVertical size={14} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        </div>
                       )}
                       {section.templateSection.inputType === ReportInputType.BulletList && (
                         <div
-                          className="w-1 h-1 rounded-full mt-3 flex-shrink-0"
-                          style={{ background: 'var(--text-muted)', opacity: 0.6 }}
-                        />
+                          className="flex-shrink-0 flex items-center justify-center"
+                          style={{ height: 36, width: 8 }}
+                        >
+                          <div
+                            className="w-1 h-1 rounded-full"
+                            style={{ background: 'var(--text-muted)', opacity: 0.6 }}
+                          />
+                        </div>
                       )}
                       {section.templateSection.inputType === ReportInputType.IssueList ? (
                         <IssueItemCard
