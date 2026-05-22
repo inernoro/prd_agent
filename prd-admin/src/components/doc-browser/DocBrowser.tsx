@@ -1571,22 +1571,25 @@ export function DocBrowser({
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder) return null;
+                const updatedTs = sel.lastChangedAt ?? sel.updatedAt;
                 return (
                   <div className="ml-auto flex items-center gap-3 min-w-0">
                     <span
                       className="text-[10px] whitespace-nowrap"
                       style={{ color: 'var(--text-muted)' }}
-                      title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`}
                     >
-                      更新于 {formatMetaTime(sel.updatedAt)}
+                      更新于 <RelativeTime value={updatedTs} fallback="未知时间" title={`最后更新时间：${formatMetaTime(updatedTs)}`} />
                     </span>
-                    <span
-                      className="text-[10px] truncate max-w-[160px]"
-                      style={{ color: 'var(--text-muted)' }}
-                      title={`更新者：${sel.updatedByName || '未知用户'}`}
-                    >
-                      更新者 {sel.updatedByName || '未知用户'}
-                    </span>
+                    {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
+                    {sel.updatedByName && (
+                      <span
+                        className="text-[10px] truncate max-w-[160px]"
+                        style={{ color: 'var(--text-muted)' }}
+                        title={`更新者：${sel.updatedByName}`}
+                      >
+                        更新者 {sel.updatedByName}
+                      </span>
+                    )}
                   </div>
                 );
               })()}
