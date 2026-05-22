@@ -23,6 +23,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'video-agent': '视频',
   'defect-agent': '缺陷',
   'review-agent': '评审',
+  'ccas-agent': '赋码',
   'pr-review': 'PR审查',
   'report-agent': '周报',
   'arena-agent': '竞技场',

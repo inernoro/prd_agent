@@ -333,6 +333,8 @@ public static class AdminPermissionCatalog
 
         new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
 
+        new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
+
         new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
 
