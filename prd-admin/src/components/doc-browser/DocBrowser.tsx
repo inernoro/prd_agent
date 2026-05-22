@@ -656,11 +656,12 @@ function TreeNode({
         )}
 
         {/* 更新时间副标题：由"显示设置 → 显示更新时间"开关控制，默认关 */}
-        {!isFolder && showUpdatedTime && (entry.lastChangedAt || entry.updatedAt) && (
+        {!isFolder && showUpdatedTime && entry.updatedAt && (
           <RelativeTime
-            value={entry.lastChangedAt ?? entry.updatedAt}
+            value={entry.updatedAt}
+            refreshIntervalMs={0}
             className="text-[9.5px] tabular-nums flex-shrink-0 text-token-muted"
-            title={`最后更新：${new Date((entry.lastChangedAt ?? entry.updatedAt) as string).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+            title={`最后更新：${new Date(entry.updatedAt).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
           />
         )}
 
@@ -1581,14 +1582,15 @@ export function DocBrowser({
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder) return null;
-                const updatedTs = sel.lastChangedAt ?? sel.updatedAt;
+                // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
+                // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
                 return (
                   <div className="ml-auto flex items-center gap-3 min-w-0">
                     <span
                       className="text-[10px] whitespace-nowrap"
                       style={{ color: 'var(--text-muted)' }}
                     >
-                      更新于 <RelativeTime value={updatedTs} fallback="未知时间" title={`最后更新时间：${formatMetaTime(updatedTs)}`} />
+                      更新于 <RelativeTime value={sel.updatedAt} fallback="未知时间" title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`} />
                     </span>
                     {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
                     {sel.updatedByName && (
