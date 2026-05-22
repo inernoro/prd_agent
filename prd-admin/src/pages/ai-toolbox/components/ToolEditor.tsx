@@ -126,7 +126,6 @@ interface FormState {
 export function ToolEditor() {
   const { view, editingItem, saveItem, backToGrid } = useToolboxStore();
 
-  const isEditing = view === 'edit' && !!editingItem?.id;
   const [form, setForm] = useState<FormState>({
     name: editingItem?.name || '',
     description: editingItem?.description || '',
@@ -213,10 +212,10 @@ export function ToolEditor() {
     const knowledgeBaseIds = knowledgeFiles
       .filter(f => f.status === 'done' && f.attachmentId)
       .map(f => f.attachmentId!);
-    // If editing and no new files were added, keep existing knowledgeBaseIds
+    // 本编辑器无新上传文件时，保留预填的知识库（编辑已有项 或 从快速向导切过来均适用）
     const finalKnowledgeBaseIds = knowledgeBaseIds.length > 0
       ? knowledgeBaseIds
-      : (isEditing ? form.knowledgeBase : []);
+      : form.knowledgeBase;
 
     const success = await saveItem({
       ...(editingItem?.id ? { id: editingItem.id } : {}),

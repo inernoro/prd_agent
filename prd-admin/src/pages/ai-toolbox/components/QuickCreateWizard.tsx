@@ -900,6 +900,13 @@ export function QuickCreateWizard() {
     setStep(1);
   };
 
+  // 已上传完成的知识库 attachmentId（done 状态才算数）
+  const doneKnowledgeBaseIds = knowledgeFiles
+    .filter(f => f.status === 'done' && f.attachmentId)
+    .map(f => f.attachmentId!);
+  // 是否还有文件在上传中——上传未完成时禁止保存/切换，避免静默丢弃
+  const isUploadingKb = knowledgeFiles.some(f => f.status === 'uploading');
+
   const handleSwitchToFullMode = () => {
     setEditingItem({
       name: form.name,
@@ -907,6 +914,7 @@ export function QuickCreateWizard() {
       icon: form.icon,
       prompt: form.prompt,
       tags: parsedTags,
+      knowledgeBaseIds: doneKnowledgeBaseIds,
       type: 'custom',
       category: 'custom',
     });
@@ -915,10 +923,8 @@ export function QuickCreateWizard() {
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
+    if (isUploadingKb) return;
     setSaving(true);
-    const knowledgeBaseIds = knowledgeFiles
-      .filter(f => f.status === 'done' && f.attachmentId)
-      .map(f => f.attachmentId!);
     const success = await saveItem({
       name: form.name.trim(),
       description: form.description.trim(),
@@ -927,7 +933,7 @@ export function QuickCreateWizard() {
       tags: parsedTags,
       enabledTools: form.enabledTools,
       workflowId: isWorkflowEnabled ? form.workflowId : undefined,
-      knowledgeBaseIds,
+      knowledgeBaseIds: doneKnowledgeBaseIds,
       type: 'custom',
       category: 'custom',
     });
@@ -1637,7 +1643,14 @@ export function QuickCreateWizard() {
             <span className="text-[14px] font-semibold text-token-primary">快速创建智能体</span>
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleSwitchToFullMode} className="text-[11px] gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleSwitchToFullMode}
+          disabled={isUploadingKb}
+          title={isUploadingKb ? '知识库文件上传中，请稍候' : undefined}
+          className="text-[11px] gap-1.5"
+        >
           <Settings2 size={12} />
           完整模式
         </Button>
@@ -1692,9 +1705,15 @@ export function QuickCreateWizard() {
               </Button>
             )}
             {step === 2 && (
-              <Button variant="primary" size="sm" onClick={handleSave} disabled={saving || !form.name.trim() || !form.prompt.trim()}>
-                {saving ? <MapSpinner size={13} /> : <Save size={13} />}
-                创建智能体
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSave}
+                disabled={saving || isUploadingKb || !form.name.trim() || !form.prompt.trim()}
+                title={isUploadingKb ? '知识库文件上传中，请稍候' : undefined}
+              >
+                {saving || isUploadingKb ? <MapSpinner size={13} /> : <Save size={13} />}
+                {isUploadingKb ? '上传中…' : '创建智能体'}
               </Button>
             )}
           </div>
