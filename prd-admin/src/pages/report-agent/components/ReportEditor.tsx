@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ClipboardEvent } from 'react';
-import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload } from 'lucide-react';
+import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload, GripVertical } from 'lucide-react';
 import { formatWeekDateRange } from '../utils/weekRange';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -227,6 +227,9 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [deleting, setDeleting] = useState(false);
   const [createModeLoading, setCreateModeLoading] = useState<ReportCreationMode | null>(null);
   const [pastingImageKey, setPastingImageKey] = useState<string | null>(null);
+  // items 拖动排序状态：draggingKey = "sIdx:iIdx" 被拖元素；dragOverIdx = 当前 drop target
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<{ sIdx: number; iIdx: number } | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
   const [myDefaultTemplateId, setMyDefaultTemplateId] = useState<string | null>(null);
@@ -580,6 +583,20 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         ...next[sectionIdx],
         items: next[sectionIdx].items.filter((_, i) => i !== itemIdx),
       };
+      return next;
+    });
+  };
+
+  // 同一章节内 items 拖动排序（用户需求：编辑状态下 hover item 出现拖动手柄）
+  const reorderItem = (sectionIdx: number, fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
+    setSections((prev) => {
+      const next = [...prev];
+      const arr = [...next[sectionIdx].items];
+      if (fromIdx < 0 || fromIdx >= arr.length || toIdx < 0 || toIdx >= arr.length) return prev;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      next[sectionIdx] = { ...next[sectionIdx], items: arr };
       return next;
     });
   };
@@ -1107,8 +1124,71 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
 
                 {/* Items */}
                 <div className="px-5 py-4 flex flex-col gap-3">
-                  {(sections[sIdx]?.items || []).map((item, iIdx) => (
-                    <div key={iIdx} className="flex items-start gap-3 group">
+                  {(sections[sIdx]?.items || []).map((item, iIdx) => {
+                    const itemsLen = sections[sIdx]?.items?.length ?? 0;
+                    const dragKey = `${sIdx}:${iIdx}`;
+                    const isDragging = draggingKey === dragKey;
+                    const isDropTarget = dragOverIdx?.sIdx === sIdx && dragOverIdx?.iIdx === iIdx;
+                    return (
+                    <div
+                      key={iIdx}
+                      className="flex items-start gap-3 group relative"
+                      style={{
+                        opacity: isDragging ? 0.4 : 1,
+                        transition: 'opacity 120ms',
+                      }}
+                      onDragOver={(e) => {
+                        if (!canEdit) return;
+                        // 仅同一章节内允许：通过 dataTransfer.types 判断是否带本类 payload + 校验 sIdx
+                        if (!e.dataTransfer.types.includes('application/x-report-item-section')) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (!isDropTarget) setDragOverIdx({ sIdx, iIdx });
+                      }}
+                      onDragLeave={(e) => {
+                        // 仅当鼠标真正离开当前 row（非 enter 子元素）才清除
+                        const related = e.relatedTarget as Node | null;
+                        if (related && e.currentTarget.contains(related)) return;
+                        if (isDropTarget) setDragOverIdx(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (!canEdit) return;
+                        const fromSection = Number(e.dataTransfer.getData('application/x-report-item-section') || '-1');
+                        const fromIdx = Number(e.dataTransfer.getData('application/x-report-item-index') || '-1');
+                        setDragOverIdx(null);
+                        setDraggingKey(null);
+                        if (fromSection !== sIdx || fromIdx < 0 || fromIdx === iIdx) return;
+                        reorderItem(sIdx, fromIdx, iIdx);
+                      }}
+                    >
+                      {/* drop indicator：顶部 2px indigo 横线 */}
+                      {isDropTarget && (
+                        <div
+                          className="absolute left-0 right-0 pointer-events-none"
+                          style={{ top: -6, height: 2, background: 'rgba(99, 102, 241, 0.9)', borderRadius: 1 }}
+                        />
+                      )}
+                      {/* 拖动手柄：hover 显示，仅当可编辑且本章节 ≥2 条时出现 */}
+                      {canEdit && itemsLen > 1 && (
+                        <button
+                          type="button"
+                          draggable
+                          className="opacity-0 group-hover:opacity-100 transition-opacity self-start mt-2 p-1 rounded hover:bg-[var(--bg-tertiary)] flex-shrink-0"
+                          style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+                          title="拖动调整该章节内顺序"
+                          aria-label="拖动调整顺序"
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('application/x-report-item-section', String(sIdx));
+                            e.dataTransfer.setData('application/x-report-item-index', String(iIdx));
+                            setDraggingKey(dragKey);
+                          }}
+                          onDragEnd={() => { setDraggingKey(null); setDragOverIdx(null); }}
+                        >
+                          <GripVertical size={14} style={{ color: 'var(--text-muted)' }} />
+                        </button>
+                      )}
                       {section.templateSection.inputType === ReportInputType.BulletList && (
                         <div
                           className="w-2 h-2 rounded-full mt-3 flex-shrink-0"
@@ -1184,7 +1264,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         </button>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                   {canEdit && (
                     <button
                       className="self-start flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-lg transition-all duration-150"
