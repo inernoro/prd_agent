@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MongoStateBackingStore, STATE_DOC_ID } from '../../src/infra/state-store/mongo-backing-store.js';
-import type { IMongoHandle, IMongoCollection } from '../../src/infra/state-store/mongo-backing-store.js';
+import type { IMongoHandle, IMongoCollection, StateFragmentDoc } from '../../src/infra/state-store/mongo-backing-store.js';
 import type { CdsState } from '../../src/types.js';
 
 function emptyState(): CdsState {
@@ -28,24 +28,48 @@ function emptyState(): CdsState {
  * Supports findOne / replaceOne / countDocuments, which is the
  * minimal surface the backing store uses.
  */
-class FakeMongoCollection implements IMongoCollection {
+class FakeMongoCollection<TDoc extends { _id: string } = any> implements IMongoCollection<TDoc> {
   public readonly docs = new Map<string, any>();
   public readonly writeLog: any[] = [];
   /** When set, the next replaceOne rejects to simulate a write failure. */
   public failNextWrite = false;
 
-  async findOne(filter: { _id: string }) {
-    const doc = this.docs.get(filter._id);
-    return doc ? { _id: doc._id, state: doc.state } : null;
+  private matches(doc: any, filter?: Record<string, unknown>): boolean {
+    if (!filter || Object.keys(filter).length === 0) return true;
+    return Object.entries(filter).every(([key, expected]) => {
+      const actual = doc[key];
+      if (expected && typeof expected === 'object' && '$ne' in (expected as Record<string, unknown>)) {
+        return actual !== (expected as Record<string, unknown>).$ne;
+      }
+      return actual === expected;
+    });
   }
 
-  async replaceOne(filter: { _id: string }, doc: any) {
+  async findOne(filter: Record<string, unknown>) {
+    const id = filter._id;
+    if (id !== undefined) {
+      return this.docs.get(String(id)) || null;
+    }
+    return [...this.docs.values()].find(doc => this.matches(doc, filter)) || null;
+  }
+
+  async find(filter?: Record<string, unknown>) {
+    return [...this.docs.values()].filter(doc => this.matches(doc, filter));
+  }
+
+  async replaceOne(filter: Record<string, unknown>, doc: TDoc) {
     if (this.failNextWrite) {
       this.failNextWrite = false;
       throw new Error('simulated mongo write failure');
     }
     this.docs.set(filter._id, doc);
     this.writeLog.push(doc);
+  }
+
+  async deleteMany(filter?: Record<string, unknown>) {
+    for (const [id, doc] of [...this.docs.entries()]) {
+      if (this.matches(doc, filter)) this.docs.delete(id);
+    }
   }
 
   async countDocuments(filter?: Record<string, unknown>) {
@@ -62,12 +86,14 @@ class FakeMongoHandle implements IMongoHandle {
   public pingResult = true;
   public connectCallCount = 0;
   public readonly collection = new FakeMongoCollection();
+  public readonly fragments = new FakeMongoCollection<StateFragmentDoc>();
 
   async connect() {
     this.connectCallCount++;
     this.connected = true;
   }
   stateCollection() { return this.collection; }
+  stateFragmentCollection() { return this.fragments; }
   async close() {
     this.closed = true;
   }
@@ -157,6 +183,118 @@ describe('MongoStateBackingStore', () => {
 
       // Final state in mongo matches the last save
       expect(handle.collection.docs.get(STATE_DOC_ID)!.state.defaultBranch).toBe('c');
+    });
+
+    it('stores log-like state outside the main mongo document', async () => {
+      await store.init();
+      const state = emptyState();
+      state.logs = {
+        'feat-x': [{
+          type: 'run',
+          startedAt: '2026-05-22T00:00:00.000Z',
+          status: 'completed',
+          events: [{ step: 'deploy', status: 'done', timestamp: '2026-05-22T00:00:01.000Z', log: 'ok' }],
+        }],
+      };
+      state.containerLogArchives = {
+        'feat-x': [{
+          id: 'archive-1',
+          branchId: 'feat-x',
+          profileId: 'api',
+          capturedAt: '2026-05-22T00:00:02.000Z',
+          source: 'deploy-finalize',
+          sha256: 'abc',
+          byteLength: 2,
+          lineCount: 1,
+          masked: true,
+          logs: 'up',
+        }],
+      };
+      state.activityLogs = {
+        'prd-agent': [{ id: 'a1', at: '2026-05-22T00:00:03.000Z', type: 'deploy' }],
+      };
+      state.githubWebhookDeliveries = [{
+        id: 'delivery-1',
+        receivedAt: '2026-05-22T00:00:04.000Z',
+        durationMs: 42,
+        event: 'push',
+        action: 'push',
+        ok: true,
+      }];
+
+      store.save(state);
+      await store.flush();
+
+      const mainDoc = handle.collection.docs.get(STATE_DOC_ID)!;
+      expect(mainDoc.state.logs).toBeUndefined();
+      expect(mainDoc.state.containerLogArchives).toBeUndefined();
+      expect(mainDoc.state.activityLogs).toBeUndefined();
+      expect(mainDoc.state.githubWebhookDeliveries).toBeUndefined();
+      expect(handle.fragments.docs.get('state:logs:feat-x')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.get('state:containerLogArchives:feat-x')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.get('state:activityLogs:prd-agent')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.get('state:githubWebhookDeliveries')!.value).toHaveLength(1);
+    });
+
+    it('loads detached state fragments back into the in-memory snapshot', async () => {
+      const persisted = emptyState();
+      persisted.defaultBranch = 'main';
+      delete (persisted as Partial<CdsState>).logs;
+      handle.collection.docs.set(STATE_DOC_ID, { _id: STATE_DOC_ID, state: persisted });
+      handle.fragments.docs.set('state:logs:feat-x', {
+        _id: 'state:logs:feat-x',
+        scope: 'cds-state-detached',
+        kind: 'logs',
+        ownerId: 'feat-x',
+        value: [{
+          type: 'build',
+          startedAt: '2026-05-22T00:00:00.000Z',
+          status: 'completed',
+          events: [],
+        }],
+        updatedAt: '2026-05-22T00:00:00.000Z',
+      });
+
+      await store.init();
+      expect(store.load()!.defaultBranch).toBe('main');
+      expect(store.load()!.logs['feat-x']).toHaveLength(1);
+    });
+
+    it('trims oversized detached logs before writing mongo fragments', async () => {
+      await store.init();
+      const state = emptyState();
+      state.logs = {
+        'feat-x': Array.from({ length: 12 }, (_, i) => ({
+          type: 'run',
+          startedAt: `2026-05-22T00:${String(i).padStart(2, '0')}:00.000Z`,
+          status: 'completed',
+          events: [{ step: 'log', status: 'done', timestamp: '2026-05-22T00:00:00.000Z', log: 'x'.repeat(25_000) }],
+        })),
+      };
+      state.containerLogArchives = {
+        'feat-x': Array.from({ length: 12 }, (_, i) => ({
+          id: `archive-${i}`,
+          branchId: 'feat-x',
+          profileId: 'api',
+          capturedAt: '2026-05-22T00:00:00.000Z',
+          source: 'deploy-finalize',
+          sha256: 'abc',
+          byteLength: 250_000,
+          lineCount: 1,
+          masked: true,
+          logs: 'y'.repeat(250_000),
+        })),
+      };
+
+      store.save(state);
+      await store.flush();
+
+      const logs = handle.fragments.docs.get('state:logs:feat-x')!.value;
+      const archives = handle.fragments.docs.get('state:containerLogArchives:feat-x')!.value;
+      expect(logs).toHaveLength(10);
+      expect(logs[0].events[0].log.length).toBeLessThan(21_000);
+      expect(archives).toHaveLength(10);
+      expect(archives[0].logs.length).toBeLessThan(201_000);
     });
 
     it('a write failure does not break subsequent saves', async () => {

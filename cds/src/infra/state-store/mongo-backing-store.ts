@@ -35,15 +35,22 @@
  * ── Data layout ─────────────────────────────────────────────────────
  *
  * Collection: `cds_state`
- *   document: { _id: 'state', state: <CdsState>, updatedAt: ISO }
+ *   document: { _id: 'state', state: <lightweight CdsState>, updatedAt: ISO }
+ *
+ * Collection: `cds_state_fragments`
+ *   documents:
+ *     { _id: 'state:logs:<branchId>', kind: 'logs', ownerId, value, updatedAt }
+ *     { _id: 'state:containerLogArchives:<branchId>', kind: 'containerLogArchives', ownerId, value, updatedAt }
+ *     { _id: 'state:activityLogs:<projectId>', kind: 'activityLogs', ownerId, value, updatedAt }
+ *     { _id: 'state:githubWebhookDeliveries', kind: 'githubWebhookDeliveries', value, updatedAt }
  *
  * System config (future): `cds_system`
  * User config    (future): `cds_users`
  *
- * For Phase D we only use `cds_state` as a single-document KV store,
- * mirroring JsonBackingStore's state.json file. Splitting into per-
- * collection shapes is a follow-up optimization when state.json
- * gets large enough to matter.
+ * The log-like fields are intentionally detached from the main state
+ * document. MongoDB rejects any command/document larger than 16MB; keeping
+ * container log archives, operation logs, activity logs, and webhook
+ * deliveries in the same document can take CDS down during normal use.
  *
  * ── No-DB mode ──────────────────────────────────────────────────────
  *
@@ -54,7 +61,14 @@
  * process can still boot. See index.ts for the fallback wiring.
  */
 
-import type { CdsState } from '../../types.js';
+import type {
+  CdsState,
+  ContainerLogArchiveEntry,
+  OperationLog,
+  OperationLogContainerSnapshot,
+  OperationLogEvent,
+  ProjectActivityLog,
+} from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
 
 /**
@@ -62,13 +76,11 @@ import type { StateBackingStore } from './backing-store.js';
  * small makes it easy to mock in unit tests and lets us avoid
  * importing the real mongo driver at all in a no-db build.
  */
-export interface IMongoCollection {
-  findOne(filter: { _id: string }): Promise<{ _id: string; state: CdsState } | null>;
-  replaceOne(
-    filter: { _id: string },
-    doc: { _id: string; state: CdsState; updatedAt: string },
-    options?: { upsert: boolean },
-  ): Promise<unknown>;
+export interface IMongoCollection<TDoc extends { _id: string } = { _id: string; [key: string]: unknown }> {
+  findOne(filter: Record<string, unknown>): Promise<TDoc | null>;
+  find?(filter?: Record<string, unknown>): Promise<TDoc[]>;
+  replaceOne(filter: Record<string, unknown>, doc: TDoc, options?: { upsert: boolean }): Promise<unknown>;
+  deleteMany?(filter?: Record<string, unknown>): Promise<unknown>;
   countDocuments(filter?: Record<string, unknown>): Promise<number>;
 }
 
@@ -76,7 +88,9 @@ export interface IMongoHandle {
   /** Connect + ensure DB exists. Called once from init(). */
   connect(): Promise<void>;
   /** Get the state collection (after connect). */
-  stateCollection(): IMongoCollection;
+  stateCollection(): IMongoCollection<StateDoc>;
+  /** Get detached state-fragment collection (after connect). */
+  stateFragmentCollection(): IMongoCollection<StateFragmentDoc>;
   /** Graceful shutdown. */
   close(): Promise<void>;
   /** For health-check UIs. */
@@ -85,6 +99,183 @@ export interface IMongoHandle {
 
 /** The single state document id in the collection. */
 export const STATE_DOC_ID = 'state';
+
+type DetachedStateKey = 'logs' | 'containerLogArchives' | 'activityLogs' | 'githubWebhookDeliveries';
+
+interface StateDoc {
+  _id: string;
+  state: Partial<CdsState>;
+  updatedAt?: string;
+}
+
+export interface StateFragmentDoc {
+  _id: string;
+  scope: 'cds-state-detached';
+  kind: DetachedStateKey;
+  ownerId?: string;
+  value: unknown;
+  updatedAt: string;
+}
+
+const DETACHED_SCOPE = 'cds-state-detached';
+const MAX_WEBHOOK_DELIVERIES = 1000;
+const MAX_LOGS_PER_BRANCH = 10;
+const MAX_EVENTS_PER_OPERATION_LOG = 250;
+const MAX_EVENT_TEXT_CHARS = 20_000;
+const MAX_CONTAINER_SNAPSHOT_LOG_CHARS = 80_000;
+const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 10;
+const MAX_CONTAINER_ARCHIVE_LOG_CHARS = 200_000;
+
+function truncateTail(value: string | undefined, maxChars: number): string | undefined {
+  if (!value || value.length <= maxChars) return value;
+  return `[cds persisted tail: original ${value.length} chars]\n${value.slice(-maxChars)}`;
+}
+
+function sanitizeEvent(event: OperationLogEvent): OperationLogEvent {
+  return {
+    ...event,
+    log: truncateTail(event.log, MAX_EVENT_TEXT_CHARS),
+    chunk: truncateTail(event.chunk, MAX_EVENT_TEXT_CHARS),
+  };
+}
+
+function sanitizeContainerSnapshot(snapshot: OperationLogContainerSnapshot): OperationLogContainerSnapshot {
+  return {
+    ...snapshot,
+    logs: truncateTail(snapshot.logs, MAX_CONTAINER_SNAPSHOT_LOG_CHARS) || '',
+  };
+}
+
+function sanitizeOperationLog(log: OperationLog): OperationLog {
+  return {
+    ...log,
+    events: (log.events || []).slice(-MAX_EVENTS_PER_OPERATION_LOG).map(sanitizeEvent),
+    containerLogSnapshots: (log.containerLogSnapshots || []).map(sanitizeContainerSnapshot),
+  };
+}
+
+function sanitizeContainerArchive(entry: ContainerLogArchiveEntry): ContainerLogArchiveEntry {
+  return {
+    ...entry,
+    logs: truncateTail(entry.logs, MAX_CONTAINER_ARCHIVE_LOG_CHARS) || '',
+  };
+}
+
+function sanitizeStateForPersistence(state: CdsState): CdsState {
+  const snapshot = structuredClone(state);
+  snapshot.logs = Object.fromEntries(
+    Object.entries(snapshot.logs || {}).map(([branchId, logs]) => [
+      branchId,
+      (logs || []).slice(-MAX_LOGS_PER_BRANCH).map(sanitizeOperationLog),
+    ]),
+  );
+  snapshot.containerLogArchives = Object.fromEntries(
+    Object.entries(snapshot.containerLogArchives || {}).map(([branchId, archives]) => [
+      branchId,
+      (archives || []).slice(-MAX_CONTAINER_ARCHIVES_PER_BRANCH).map(sanitizeContainerArchive),
+    ]),
+  );
+  snapshot.activityLogs = Object.fromEntries(
+    Object.entries(snapshot.activityLogs || {}).map(([projectId, logs]) => [
+      projectId,
+      logs || [],
+    ]),
+  );
+  snapshot.githubWebhookDeliveries = (snapshot.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
+  return snapshot;
+}
+
+function withoutDetachedState(state: CdsState): Partial<CdsState> {
+  const mainState = structuredClone(state) as Partial<CdsState>;
+  delete mainState.logs;
+  delete mainState.containerLogArchives;
+  delete mainState.activityLogs;
+  delete mainState.githubWebhookDeliveries;
+  return mainState;
+}
+
+function fragmentId(kind: DetachedStateKey, ownerId?: string): string {
+  return ownerId
+    ? `${STATE_DOC_ID}:${kind}:${encodeURIComponent(ownerId)}`
+    : `${STATE_DOC_ID}:${kind}`;
+}
+
+function stateToFragments(state: CdsState, updatedAt: string): StateFragmentDoc[] {
+  const docs: StateFragmentDoc[] = [];
+  for (const [branchId, logs] of Object.entries(state.logs || {})) {
+    docs.push({
+      _id: fragmentId('logs', branchId),
+      scope: DETACHED_SCOPE,
+      kind: 'logs',
+      ownerId: branchId,
+      value: logs || [],
+      updatedAt,
+    });
+  }
+  for (const [branchId, archives] of Object.entries(state.containerLogArchives || {})) {
+    docs.push({
+      _id: fragmentId('containerLogArchives', branchId),
+      scope: DETACHED_SCOPE,
+      kind: 'containerLogArchives',
+      ownerId: branchId,
+      value: archives || [],
+      updatedAt,
+    });
+  }
+  for (const [projectId, logs] of Object.entries(state.activityLogs || {})) {
+    docs.push({
+      _id: fragmentId('activityLogs', projectId),
+      scope: DETACHED_SCOPE,
+      kind: 'activityLogs',
+      ownerId: projectId,
+      value: logs || [],
+      updatedAt,
+    });
+  }
+  docs.push({
+    _id: fragmentId('githubWebhookDeliveries'),
+    scope: DETACHED_SCOPE,
+    kind: 'githubWebhookDeliveries',
+    value: state.githubWebhookDeliveries || [],
+    updatedAt,
+  });
+  return docs;
+}
+
+function mergeFragmentsIntoState(base: Partial<CdsState>, fragments: StateFragmentDoc[]): CdsState {
+  const state = base as CdsState;
+  if (fragments.length === 0) {
+    state.logs = state.logs || {};
+    state.containerLogArchives = state.containerLogArchives || {};
+    state.activityLogs = state.activityLogs || {};
+    state.githubWebhookDeliveries = state.githubWebhookDeliveries || [];
+    return state;
+  }
+
+  state.logs = {};
+  state.containerLogArchives = {};
+  state.activityLogs = {};
+  state.githubWebhookDeliveries = [];
+
+  for (const fragment of fragments) {
+    if (fragment.kind === 'logs' && fragment.ownerId) {
+      state.logs[fragment.ownerId] = Array.isArray(fragment.value) ? fragment.value as OperationLog[] : [];
+    } else if (fragment.kind === 'containerLogArchives' && fragment.ownerId) {
+      state.containerLogArchives[fragment.ownerId] = Array.isArray(fragment.value)
+        ? fragment.value as ContainerLogArchiveEntry[]
+        : [];
+    } else if (fragment.kind === 'activityLogs' && fragment.ownerId) {
+      state.activityLogs[fragment.ownerId] = Array.isArray(fragment.value)
+        ? fragment.value as ProjectActivityLog[]
+        : [];
+    } else if (fragment.kind === 'githubWebhookDeliveries') {
+      state.githubWebhookDeliveries = Array.isArray(fragment.value)
+        ? fragment.value as CdsState['githubWebhookDeliveries']
+        : [];
+    }
+  }
+  return state;
+}
 
 export class MongoStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo' as const;
@@ -104,8 +295,10 @@ export class MongoStateBackingStore implements StateBackingStore {
     if (this.initialized) return;
     await this.handle.connect();
     const col = this.handle.stateCollection();
+    const fragmentCol = this.handle.stateFragmentCollection();
     const doc = await col.findOne({ _id: STATE_DOC_ID });
-    this.cache = doc ? doc.state : null;
+    const fragments = await fragmentCol.find?.({ scope: DETACHED_SCOPE }) || [];
+    this.cache = doc ? mergeFragmentsIntoState(structuredClone(doc.state), fragments) : null;
     this.initialized = true;
   }
 
@@ -131,26 +324,33 @@ export class MongoStateBackingStore implements StateBackingStore {
     // Deep clone to protect the cache from subsequent in-place
     // mutations by the caller (StateService tends to mutate state
     // members then call save()).
-    this.cache = structuredClone(state);
+    this.cache = sanitizeStateForPersistence(state);
 
     const snapshot = this.cache;
     const col = this.handle.stateCollection();
+    const fragmentCol = this.handle.stateFragmentCollection();
     // Chain the next write onto the previous so upserts land in the
     // same order they were issued. A Promise.all'd fan-out would be
     // racy — newer writes could land before older ones.
     this.flushChain = this.flushChain
       .catch(() => { /* swallow previous errors so the chain keeps moving */ })
-      .then(() =>
-        col.replaceOne(
+      .then(async () => {
+        const updatedAt = new Date().toISOString();
+        await col.replaceOne(
           { _id: STATE_DOC_ID },
           {
             _id: STATE_DOC_ID,
-            state: snapshot,
-            updatedAt: new Date().toISOString(),
+            state: withoutDetachedState(snapshot),
+            updatedAt,
           },
           { upsert: true },
-        ),
-      )
+        );
+        const fragments = stateToFragments(snapshot, updatedAt);
+        for (const fragment of fragments) {
+          await fragmentCol.replaceOne({ _id: fragment._id }, fragment, { upsert: true });
+        }
+        await fragmentCol.deleteMany?.({ scope: DETACHED_SCOPE, updatedAt: { $ne: updatedAt } });
+      })
       .then(() => undefined);
   }
 
@@ -198,16 +398,23 @@ export class MongoStateBackingStore implements StateBackingStore {
     const col = this.handle.stateCollection();
     const count = await col.countDocuments({ _id: STATE_DOC_ID });
     if (count > 0) return false;
+    const snapshot = sanitizeStateForPersistence(state);
+    const updatedAt = new Date().toISOString();
     await col.replaceOne(
       { _id: STATE_DOC_ID },
       {
         _id: STATE_DOC_ID,
-        state,
-        updatedAt: new Date().toISOString(),
+        state: withoutDetachedState(snapshot),
+        updatedAt,
       },
       { upsert: true },
     );
-    this.cache = structuredClone(state);
+    const fragmentCol = this.handle.stateFragmentCollection();
+    for (const fragment of stateToFragments(snapshot, updatedAt)) {
+      await fragmentCol.replaceOne({ _id: fragment._id }, fragment, { upsert: true });
+    }
+    await fragmentCol.deleteMany?.({ scope: DETACHED_SCOPE, updatedAt: { $ne: updatedAt } });
+    this.cache = structuredClone(snapshot);
     return true;
   }
 }
