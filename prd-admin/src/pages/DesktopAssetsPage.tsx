@@ -763,6 +763,14 @@ export default function DesktopAssetsPage() {
     if (t === 'all') next.delete('tab'); else next.set('tab', t);
     setSearchParams(next, { replace: true });
   };
+  // 深链：URL ?tab= 变化（页面不 remount）时同步 activeTab，
+  // 否则从其它页跳 /my-assets?tab=shares 不会切到分享 tab
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    const valid: AssetTab[] = ['all', 'image', 'document', 'attachment', 'webpage', 'shares'];
+    const next = (valid as string[]).includes(t ?? '') ? (t as AssetTab) : 'all';
+    setActiveTabRaw((prev) => (prev === next ? prev : next));
+  }, [searchParams]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [assets, setAssets] = useState<MobileAssetItem[]>([]);

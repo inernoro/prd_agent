@@ -50,7 +50,10 @@ public class MySharesController : ControllerBase
         var userId = this.GetRequiredUserId();
         var rows = new List<MyShareItem>();
 
-        bool wantType(string t) => string.IsNullOrEmpty(targetType) || targetType == t;
+        // 故意查询全部 4 类（不在查询阶段按 targetType 短路），这样下面的 byType 统计
+        // 始终反映用户全量分享清单；targetType 仅用于过滤最终返回的 items（见末尾），
+        // 不影响 chip 计数 —— 否则切了某类型 filter 后其它 chip 会消失、"全部"总数变错。
+        bool wantType(string _) => true;
 
         // ── 1. 网页托管 ──
         if (wantType(ShortLinkTargetTypes.WebPage))
@@ -172,13 +175,19 @@ public class MySharesController : ControllerBase
         }
 
         // ── 6. 倒序 + 返回 ──
-        var sorted = rows.OrderByDescending(r => r.CreatedAt).ToList();
+        // byType 基于全量 allSorted（chip 计数恒为全量）；items 才按 targetType 过滤。
+        var allSorted = rows.OrderByDescending(r => r.CreatedAt).ToList();
+        var byType = allSorted.GroupBy(r => r.TargetType)
+            .Select(g => new { targetType = g.Key, count = g.Count() })
+            .ToList();
+        var items = string.IsNullOrEmpty(targetType)
+            ? allSorted
+            : allSorted.Where(r => r.TargetType == targetType).ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = sorted,
-            total = sorted.Count,
-            byType = sorted.GroupBy(r => r.TargetType)
-                .Select(g => new { targetType = g.Key, count = g.Count() }),
+            items,
+            total = items.Count,
+            byType,
         }));
     }
 }

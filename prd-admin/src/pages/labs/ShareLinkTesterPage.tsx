@@ -36,7 +36,7 @@ const LEGACY_PATH: Record<string, (t: string) => string | null> = {
   web_page: (t) => `/s/wp/${t}`,
   report: (t) => `/s/report-team/${t}`,
   skill: (t) => `/s/skill/${t}`,
-  document_store: (t) => `/library/share/${t}`, // App.tsx 无 /public/share/:token，有效路径是 /library/share/
+  document_store: () => null, // /library/share/:token SPA 路由历史缺失，无可用旧版链（debt -1）
   workflow: () => null, // 工作流没有旧版独立路径，新旧都走 /s/{token}
 };
 
@@ -56,13 +56,18 @@ export default function ShareLinkTesterPage() {
     setLoading(true);
     setError(null);
     setResult(null);
-    const res = await resolveShortLinkSlug(slug);
-    setLoading(false);
-    if (!res.success || !res.data) {
-      setError(res.error?.message || '解析失败');
-      return;
+    try {
+      const res = await resolveShortLinkSlug(slug);
+      if (!res.success || !res.data) {
+        setError(res.error?.message || '解析失败');
+        return;
+      }
+      setResult(res.data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '网络异常');
+    } finally {
+      setLoading(false);
     }
-    setResult(res.data);
   };
 
   const handleCopy = (text: string, key: string) => {

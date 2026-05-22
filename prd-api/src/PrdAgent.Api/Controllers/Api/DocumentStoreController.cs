@@ -30,7 +30,6 @@ public class DocumentStoreController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
     private readonly ISafeOutboundUrlValidator _urlValidator;
-    private readonly IShortLinkService _shortLinks;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -51,7 +50,6 @@ public class DocumentStoreController : ControllerBase
         IDocumentService documentService,
         IRunEventStore runEventStore,
         ISafeOutboundUrlValidator urlValidator,
-        IShortLinkService shortLinks,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -60,7 +58,6 @@ public class DocumentStoreController : ControllerBase
         _documentService = documentService;
         _runEventStore = runEventStore;
         _urlValidator = urlValidator;
-        _shortLinks = shortLinks;
         _logger = logger;
     }
 
@@ -2258,15 +2255,11 @@ public class DocumentStoreController : ControllerBase
         };
         await _db.DocumentStoreShareLinks.InsertOneAsync(link);
 
-        // 注册到 ShortLink 全局索引（让 /s/{seq} 数字短链 + 分享总管理能查到）
-        try
-        {
-            await _shortLinks.AllocateAsync(ShortLinkTargetTypes.DocumentStore, link.Token);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "为知识库分享 {LinkId} 分配短链 seq 失败", link.Id);
-        }
+        // 注意：知识库分享目前没有可用的前端展示页（App.tsx 无 /library/share/:token 路由，
+        // ShortLinkRouter 对 document_store 走 UnsupportedTargetError）。因此暂不注册 ShortLink
+        // 数字短链，避免对外暴露打不开的 /s/{seq} 链接。待补齐 /library/share/:token 视图后
+        // 再纳入短链体系（详见 doc/debt.share-link-security.md）。
+        // 前端 DocumentStorePage 历史用 /library/share/{token}（自己拼），此处不返回 url 字段。
 
         // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变
         //（前端 DocumentStorePage prepend 到 list 后会渲染 viewCount/createdAt/isRevoked，

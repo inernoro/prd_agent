@@ -56,19 +56,26 @@ export default function MySharesPage() {
     const fetchId = ++fetchIdRef.current;
     setLoading(true);
     setError(null);
-    const res = await listMyShares({
-      targetType: filter || undefined,
-      includeRevoked: showRevoked,
-    });
-    // 已有更新的请求发出 → 丢弃本次过期回包
-    if (fetchId !== fetchIdRef.current) return;
-    setLoading(false);
-    if (!res.success || !res.data) {
-      setError(res.error?.message || '加载失败');
-      return;
+    try {
+      const res = await listMyShares({
+        targetType: filter || undefined,
+        includeRevoked: showRevoked,
+      });
+      // 已有更新的请求发出 → 丢弃本次过期回包（loading 由最新请求负责清理）
+      if (fetchId !== fetchIdRef.current) return;
+      if (!res.success || !res.data) {
+        setError(res.error?.message || '加载失败');
+        return;
+      }
+      setItems(res.data.items);
+      setByType(res.data.byType);
+    } catch (e) {
+      if (fetchId !== fetchIdRef.current) return;
+      setError(e instanceof Error ? e.message : '网络异常');
+    } finally {
+      // 仅最新请求负责关 loading，避免过期请求提前关掉新请求的 spinner
+      if (fetchId === fetchIdRef.current) setLoading(false);
     }
-    setItems(res.data.items);
-    setByType(res.data.byType);
   };
 
   useEffect(() => {
