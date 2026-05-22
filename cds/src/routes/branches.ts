@@ -11553,7 +11553,7 @@ function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>预览已下线 · ${safeSlug}</title>
+<title>启动失败 · ${safeSlug}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{color-scheme:${isLight ? 'light' : 'dark'};--bg:${bg};--text:${text};--muted:${muted};--panel:${panel};--line:${line};--danger:${danger};--ring:${ring}}
@@ -11581,9 +11581,9 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:-.055em;margi
 <div class="rings" aria-hidden="true"></div>
 <main class="shell">
   <section class="content">
-    <div class="eyebrow">CDS Preview Offline</div>
-    <h1>预览已下线</h1>
-    <p class="desc">该分支已被删除、未部署，或当前 CDS 实例没有找到可路由的运行环境。请返回控制台检查分支状态和最近停止原因。</p>
+    <div class="eyebrow">CDS Preview Failed</div>
+    <h1>启动失败</h1>
+    <p class="desc">该分支已被删除、未部署，或当前 CDS 实例没有找到可路由的运行环境。这是不可自动恢复状态，请返回控制台检查分支状态和最近停止原因。</p>
     <div class="chip">${safeSlug}</div>
     <div class="actions">
       <a class="btn" href="/project-list">返回 CDS 控制台</a>

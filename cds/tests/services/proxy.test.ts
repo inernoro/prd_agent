@@ -445,7 +445,7 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(404);
       expect(written.headers['Content-Type']).toContain('text/html');
-      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('启动失败');
       expect(written.body).toContain('missing-branch');
     });
 
@@ -471,7 +471,7 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(404);
       expect(written.headers['Content-Type']).toContain('text/html');
-      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('启动失败');
     });
   });
 

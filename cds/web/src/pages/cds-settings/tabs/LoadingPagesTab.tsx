@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { ExternalLink, GitBranch, Home, LogIn, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { BranchDetailLoadingSkeleton, LoadingBlock, Section } from '@/pages/cds-settings/components';
+import ShapeGrid from '@/components/effects/ShapeGrid';
+import { BranchDetailLoadingSkeleton, Section } from '@/pages/cds-settings/components';
 import { cn } from '@/lib/utils';
 
 type LoadingScenario = {
@@ -27,8 +28,7 @@ const branchScenarios: LoadingScenario[] = [
   { id: 'building', label: '构建中', status: 'building' },
   { id: 'starting', label: '启动中', status: 'starting' },
   { id: 'restarting', label: '热重启', status: 'restarting' },
-  { id: 'stopping', label: '停止中', status: 'stopping' },
-  { id: 'error', label: '异常', status: 'error' },
+  { id: 'error', label: '启动失败', status: 'error' },
 ];
 
 const commonLoadingScenarios: LoadingScenario[] = [
@@ -58,8 +58,8 @@ const commonLoadingScenarios: LoadingScenario[] = [
 const loadingPages: LoadingPage[] = [
   {
     id: 'cds-waiting-room',
-    name: '分支等待页',
-    description: '预览域名访问到构建中、启动中、热重启或异常的分支时展示。',
+    name: '构建 / 启动等待页',
+    description: '预览域名访问到构建中、启动中、热重启或上游窗口期时展示。内部细节统一收敛到此页。',
     icon: Monitor,
     kind: 'iframe',
     endpoint: '/api/loading-pages/cds-waiting-room/preview',
@@ -70,6 +70,20 @@ const loadingPages: LoadingPage[] = [
     name: '分支详情加载态',
     description: '右侧分支详情抽屉读取数据时展示，避免用户误判为空白。',
     icon: SplitSquareVertical,
+    kind: 'local',
+  },
+  {
+    id: 'container-log-loading',
+    name: '容器日志加载态',
+    description: '部署页读取 docker logs 时展示，避免日志区域突然空白。',
+    icon: GitBranch,
+    kind: 'local',
+  },
+  {
+    id: 'preview-preparing',
+    name: '预览环境准备中',
+    description: '点击预览后新窗口短暂出现的 CDS 全屏准备页，和分支环境构建等待页使用同一视觉体系。',
+    icon: ExternalLink,
     kind: 'local',
   },
   {
@@ -97,8 +111,8 @@ const loadingPages: LoadingPage[] = [
   },
   {
     id: 'branch-gone',
-    name: '预览已下线页',
-    description: '访问已删除、未部署或不可路由的预览分支时展示。',
+    name: '启动失败页',
+    description: '访问已删除、未部署或不可路由的预览分支时展示，属于不可自动恢复状态。',
     icon: ServerCrash,
     kind: 'iframe',
     endpoint: '/api/loading-pages/branch-gone/preview',
@@ -106,7 +120,7 @@ const loadingPages: LoadingPage[] = [
 ];
 
 export function LoadingPagesTab(): JSX.Element {
-  const [pageId, setPageId] = useState(loadingPages[0].id);
+  const [pageId, setPageId] = useState('branch-detail-loading');
   const [scenarioId, setScenarioId] = useState(branchScenarios[0].id);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -210,12 +224,18 @@ export function LoadingPagesTab(): JSX.Element {
                 src={previewUrl}
                 className="block h-full w-full border-0 bg-transparent"
               />
+            ) : page.id === 'branch-detail-loading' ? (
+              <BranchDetailLoadingSkeleton className="h-full min-h-0" />
+            ) : page.id === 'preview-preparing' ? (
+              <ShapeGridSkeletonPreview tone="compact" label="预览环境准备中" />
+            ) : page.id === 'container-log-loading' ? (
+              <ShapeGridSkeletonPreview tone="log" label="正在加载容器日志" />
             ) : page.id === 'cds-home-loading' ? (
-              <CdsHomeLoadingPreview theme="dark" />
+              <ShapeGridSkeletonPreview tone="home" label="CDS 首页正在同步" />
             ) : page.id === 'common-loading-block' ? (
-              <CommonLoadingBlockPreview theme="dark" label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'} />
+              <ShapeGridSkeletonPreview label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'} />
             ) : (
-              <BranchDetailLoadingPreview theme="dark" />
+              <ShapeGridSkeletonPreview label="加载中" />
             )}
           </div>
         </div>
@@ -224,78 +244,63 @@ export function LoadingPagesTab(): JSX.Element {
   );
 }
 
-function CommonLoadingBlockPreview({ theme, label }: { theme: 'dark' | 'light'; label: string }): JSX.Element {
-  return (
-    <div className="relative h-full overflow-hidden bg-[hsl(var(--surface-base))] text-foreground">
-      <PreviewRings theme={theme} />
-      <div className="relative z-10 flex h-full items-start px-8 pt-14">
-        <div className="w-full">
-          <LoadingBlock label={label} />
-        </div>
-      </div>
-    </div>
-  );
-}
+function ShapeGridSkeletonPreview({
+  label,
+  tone = 'detail',
+}: {
+  label: string;
+  tone?: 'detail' | 'compact' | 'log' | 'home';
+}): JSX.Element {
+  const showCenterLabel = tone === 'compact' || tone === 'log';
 
-function PreviewRings({ theme }: { theme: 'dark' | 'light' }): JSX.Element {
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden">
-      <div
-        className={cn(
-          'absolute inset-[-16%] animate-[cds-preview-ring-drift_12s_ease-in-out_infinite_alternate] rounded-full opacity-80',
-          theme === 'light' ? 'cds-loading-preview-rings-light' : 'cds-loading-preview-rings-dark',
-        )}
+    <div className="relative h-full overflow-hidden bg-[#090a0f] text-white">
+      <ShapeGrid
+        className="absolute inset-0 h-full w-full"
+        direction="diagonal"
+        speed={0.39}
+        squareSize={34}
+        shape="hexagon"
+        borderColor="rgba(255,255,255,0.052)"
+        hoverFillColor="rgba(255,255,255,0.035)"
+        hoverTrailAmount={0}
       />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_54%_46%,transparent_0%,transparent_42%,hsl(var(--surface-base)/0.52)_100%)]" />
-    </div>
-  );
-}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_55%_44%,rgba(255,255,255,0.035),transparent_36%),linear-gradient(90deg,rgba(9,10,15,0.96),rgba(9,10,15,0.62)_48%,rgba(9,10,15,0.93))]" />
+      <div className="relative z-10 h-full px-[clamp(28px,4.2vw,64px)] py-[clamp(24px,3.6vw,52px)]">
+        <div className="flex flex-wrap items-center gap-5">
+          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px]" />
+          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px] opacity-90" />
+          <div className="cds-loading-skeleton-line h-[74px] w-[170px] rounded-[20px] opacity-80" />
+        </div>
 
-function BranchDetailLoadingPreview({ theme }: { theme: 'dark' | 'light' }): JSX.Element {
-  return (
-    <div className="relative h-full overflow-hidden bg-[hsl(var(--surface-base))] text-foreground">
-      <PreviewRings theme={theme} />
-      <div className="relative z-10 h-full">
-        <BranchDetailLoadingSkeleton className="h-full min-h-0 bg-transparent" />
-      </div>
-    </div>
-  );
-}
-
-function CdsHomeLoadingPreview({ theme }: { theme: 'dark' | 'light' }): JSX.Element {
-  return (
-    <div className="relative h-full overflow-hidden bg-[hsl(var(--surface-base))] text-foreground">
-      <PreviewRings theme={theme} />
-      <div className="relative z-10 grid h-full grid-cols-[220px_minmax(0,1fr)]">
-        <aside className="border-r border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/42 px-5 py-6 backdrop-blur">
-          <div className="mb-8 text-sm font-semibold">Cloud Dev Suite</div>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <div className="h-9 rounded bg-[hsl(var(--surface-sunken))]" />
-            <div className="h-9 rounded bg-[hsl(var(--surface-sunken))]/70" />
-            <div className="h-9 rounded bg-[hsl(var(--surface-sunken))]/70" />
-          </div>
-        </aside>
-        <main className="p-8">
-          <div className="mb-8 flex items-center justify-between">
-            <div>
-              <div className="mb-2 h-8 w-52 rounded bg-foreground/12" />
-              <div className="h-4 w-72 rounded bg-foreground/8" />
-            </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-4 py-2 text-sm text-muted-foreground">
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              同步项目状态
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            {Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="h-36 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/60 p-4 backdrop-blur">
-                <div className="mb-5 h-5 w-2/3 rounded bg-foreground/12" />
-                <div className="mb-3 h-4 w-1/2 rounded bg-foreground/8" />
-                <div className="h-4 w-3/4 rounded bg-foreground/8" />
+        <div
+          className={cn(
+            'cds-loading-skeleton-panel relative mt-12 rounded-[28px]',
+            tone === 'log' ? 'h-[58%]' : 'h-[64%]',
+            tone === 'home' ? 'max-w-[88%]' : 'w-full',
+          )}
+        >
+          {showCenterLabel ? (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="inline-flex items-center gap-3 rounded-xl border border-white/8 bg-black/12 px-5 py-3 text-[clamp(15px,1.6vw,22px)] text-white/42 backdrop-blur-sm">
+                <span className="h-5 w-5 rounded-full border-2 border-white/22 border-t-white/58 animate-spin" />
+                {label}
               </div>
-            ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-12 space-y-7 pb-4">
+          <div className="cds-loading-skeleton-line h-11 w-[28%] min-w-72 rounded-[18px]" />
+          <div className="cds-loading-skeleton-line h-11 w-[38%] min-w-96 rounded-[18px] opacity-88" />
+          <div className="cds-loading-skeleton-line h-11 w-[30%] min-w-80 rounded-[18px] opacity-74" />
+        </div>
+
+        {!showCenterLabel ? (
+          <div className="sr-only" aria-live="polite">
+            {label}
           </div>
-        </main>
+        ) : null}
       </div>
     </div>
   );

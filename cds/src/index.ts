@@ -1331,12 +1331,11 @@ function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; ma
   return `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>预览已下线 — ${escape(slug)}</title>
+<title>启动失败 — ${escape(slug)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
 .card{max-width:520px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-.emoji{font-size:40px;margin-bottom:12px}
 h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
 .branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
 .desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:20px}
@@ -1353,12 +1352,11 @@ h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
 </style>
 </head><body>
 <div class="card">
-  <div class="emoji">🪦</div>
-  <h2>预览已下线</h2>
+  <h2>启动失败</h2>
   <div class="branch">${escape(slug)}</div>
   <div class="desc">
-    该分支已被删除，或从未在 CDS 上部署过。<br>
-    如果分支仍在开发，请先运行部署流水线再来访问。
+    该分支已被删除、从未部署，或 CDS 没有找到可路由的运行环境。<br>
+    这是不可自动恢复状态，请回到控制台重新部署或选择可用分支。
   </div>
   ${liveHtml}
   ${dashHtml}

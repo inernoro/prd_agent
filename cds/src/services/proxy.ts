@@ -881,6 +881,8 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#9f5050);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
 .estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
 .estimate-meta span{display:inline-flex;align-items:center}
+.cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
+.cds-tip strong{color:rgba(245,242,255,.82);font-weight:700}
 .err{margin:0 0 22px;padding:0 0 14px;border-bottom:1px solid rgba(252,165,165,.28);color:var(--error);font-size:13px;line-height:1.7;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
 .hint{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted)}
 .hint strong{color:#f5f7fa;font-weight:600}
@@ -920,6 +922,7 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
         <span data-role="progress-reason">${safeProgressReason}</span>
       </div>
     </div>
+    <p class="cds-tip"><strong>CDS 小提示：</strong><span data-role="cds-tip-text">构建完成后还会等待服务健康检查稳定，再切入真实页面。</span></p>
     <div class="hint">
       <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
       <span class="note">CDS Live Sync</span>
@@ -997,6 +1000,17 @@ ${shouldAutoRefresh ? `;(function(){
   var labels={building:'构建中',starting:'启动中',restarting:'重启中',running:'已就绪',error:'失败',stopping:'停止中',stopped:'已停止',idle:'待命'};
   var colors={running:'#f8fafc',error:'#fca5a5',building:'#dbe4ee',starting:'#dbe4ee',restarting:'#dbe4ee',stopping:'#6b7280',stopped:'#6b7280',idle:'#6b7280'};
   var waitingProfile=${JSON.stringify(waitingProfileId || '')};
+  var tips=[
+    'CDS 会把拉代码、构建镜像、启动服务和健康检查归并为一个等待状态。',
+    '百分比是根据服务状态、构建日志关键词和运行时长估算，服务未 ready 前不会显示 100%。',
+    '内部 upstream 或 forwarder 窗口期不会直接暴露给用户，只会继续显示分支环境正在构建。',
+    '若进入失败页，CDS 会保留最近日志摘要，方便复制给大模型或重新部署。'
+  ];
+  var tipIndex=0;
+  function renderTip(){
+    var tip=document.querySelector('[data-role="cds-tip-text"]');
+    if(tip)tip.textContent=tips[tipIndex++%tips.length];
+  }
   function label(status){return labels[status]||'待命';}
   function serviceText(svc){
     var base=svc.profileId+' · '+label(svc.status);
@@ -1052,7 +1066,9 @@ ${shouldAutoRefresh ? `;(function(){
       .catch(function(){});
   }
   window.setInterval(poll,2000);
+  window.setInterval(renderTip,4200);
   window.setTimeout(poll,400);
+  renderTip();
 }())` : ''}
 </script>
 </body></html>`;
@@ -1076,21 +1092,19 @@ ${shouldAutoRefresh ? `;(function(){
     const html = `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>预览已下线 — ${safe}</title>
+<title>启动失败 — ${safe}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
 .card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-.emoji{font-size:40px;margin-bottom:12px}
 h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
 .branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
 .desc{font-size:13px;color:#8b949e;line-height:1.6}
 </style></head><body>
 <div class="card">
-  <div class="emoji">OFF</div>
-  <h2>预览已下线</h2>
+  <h2>启动失败</h2>
   <div class="branch">${safe}</div>
-  <div class="desc">该分支在此 CDS 实例上未注册。<br>请确认分支名称或联系管理员。</div>
+  <div class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。<br>请确认分支名称，或回到 CDS 控制台重新部署。</div>
 </div>
 </body></html>`;
     res.writeHead(404, {
