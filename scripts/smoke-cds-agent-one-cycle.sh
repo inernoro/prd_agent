@@ -189,11 +189,32 @@ cleanup_visual_session() {
     return 0
   fi
   printf 'Cleaning visual evidence session: %s\n' "$session_id"
-  local had_errexit=0
+  local had_errexit=0 timeout="${SMOKE_TIMEOUT:-20}"
   [[ "$-" == *e* ]] && had_errexit=1
   set +e
-  smoke_post "/api/infra-agent-sessions/${session_id}/stop" '{}' >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-stop-${session_id}.json" 2>/dev/null || true
-  smoke_post "/api/infra-agent-sessions/${session_id}/archive" '{}' >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-archive-${session_id}.json" 2>/dev/null || true
+  if [[ -n "${AI_ACCESS_KEY:-}" ]]; then
+    curl --max-time "$timeout" --show-error --silent --fail-with-body \
+      -X POST \
+      -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+      -H "X-AI-Impersonate: ${SMOKE_USER:-admin}" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -d '{}' \
+      "$SMOKE_TEST_HOST/api/infra-agent-sessions/${session_id}/stop" \
+      >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-stop-${session_id}.json" 2>/dev/null || true
+    curl --max-time "$timeout" --show-error --silent --fail-with-body \
+      -X POST \
+      -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+      -H "X-AI-Impersonate: ${SMOKE_USER:-admin}" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -d '{}' \
+      "$SMOKE_TEST_HOST/api/infra-agent-sessions/${session_id}/archive" \
+      >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-archive-${session_id}.json" 2>/dev/null || true
+  else
+    printf '{"success":false,"error":{"code":"missing_ai_access_key","message":"AI_ACCESS_KEY is required for cleanup"}}\n' \
+      >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-cleanup-skipped-${session_id}.json"
+  fi
   if (( had_errexit == 1 )); then
     set -e
   fi
