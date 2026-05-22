@@ -7,7 +7,7 @@
 
 import { MongoClient, type Db, type Collection } from 'mongodb';
 import type { CdsState } from '../../types.js';
-import type { IMongoHandle, IMongoCollection, StateFragmentDoc } from './mongo-backing-store.js';
+import type { IMongoHandle, IMongoCollection, StateFragmentDoc, StateLogRecordDoc } from './mongo-backing-store.js';
 
 export interface MongoHandleOptions {
   /** e.g. 'mongodb://localhost:27017' or a full SRV URL. */
@@ -36,9 +36,11 @@ export class RealMongoHandle implements IMongoHandle {
   private db: Db | null = null;
   private collection: Collection<StateDoc> | null = null;
   private fragmentCollectionRef: Collection<StateFragmentDoc> | null = null;
+  private logRecordCollectionRef: Collection<StateLogRecordDoc> | null = null;
   private readonly databaseName: string;
   private readonly collectionName: string;
   private readonly fragmentCollectionName: string;
+  private readonly logRecordCollectionName: string;
   private readonly connectTimeoutMs: number;
   private readonly uri: string;
 
@@ -47,6 +49,7 @@ export class RealMongoHandle implements IMongoHandle {
     this.databaseName = opts.databaseName || 'cds_state_db';
     this.collectionName = opts.collectionName || 'cds_state';
     this.fragmentCollectionName = `${this.collectionName}_fragments`;
+    this.logRecordCollectionName = `${this.collectionName}_log_records`;
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
   }
 
@@ -64,6 +67,7 @@ export class RealMongoHandle implements IMongoHandle {
     this.db = this.client.db(this.databaseName);
     this.collection = this.db.collection<StateDoc>(this.collectionName);
     this.fragmentCollectionRef = this.db.collection<StateFragmentDoc>(this.fragmentCollectionName);
+    this.logRecordCollectionRef = this.db.collection<StateLogRecordDoc>(this.logRecordCollectionName);
   }
 
   stateCollection(): IMongoCollection<StateDoc> {
@@ -113,6 +117,30 @@ export class RealMongoHandle implements IMongoHandle {
     };
   }
 
+  stateLogRecordCollection(): IMongoCollection<StateLogRecordDoc> {
+    if (!this.logRecordCollectionRef) {
+      throw new Error('MongoHandle not connected — call connect() first');
+    }
+    const col = this.logRecordCollectionRef;
+    return {
+      async findOne(filter) {
+        return await col.findOne(filter) as StateLogRecordDoc | null;
+      },
+      async find(filter) {
+        return await col.find(filter || {}).toArray() as StateLogRecordDoc[];
+      },
+      async replaceOne(filter, doc, options) {
+        await col.replaceOne(filter, doc, options);
+      },
+      async deleteMany(filter) {
+        await col.deleteMany(filter || {});
+      },
+      async countDocuments(filter) {
+        return await col.countDocuments(filter || {});
+      },
+    };
+  }
+
   async close(): Promise<void> {
     if (this.client) {
       await this.client.close();
@@ -120,6 +148,7 @@ export class RealMongoHandle implements IMongoHandle {
       this.db = null;
       this.collection = null;
       this.fragmentCollectionRef = null;
+      this.logRecordCollectionRef = null;
     }
   }
 

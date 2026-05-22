@@ -37,7 +37,17 @@
  * Collection: `cds_state`
  *   document: { _id: 'state', state: <lightweight CdsState>, updatedAt: ISO }
  *
- * Collection: `cds_state_fragments`
+ * Collection: `cds_state_log_records`
+ *   documents:
+ *     { _id: 'log:logs:<branchId>:<recordKey>', kind: 'logs', ownerId, value, updatedAt }
+ *     { _id: 'log:containerLogArchives:<branchId>:<archiveId>', kind: 'containerLogArchives', ownerId, value, updatedAt }
+ *     { _id: 'log:activityLogs:<projectId>:<activityId>', kind: 'activityLogs', ownerId, value, updatedAt }
+ *     { _id: 'log:serviceDeploymentLogs:<deploymentId>:<recordKey>', kind: 'serviceDeploymentLogs', ownerId, value, updatedAt }
+ *     { _id: 'log:selfUpdateHistory:<recordKey>', kind: 'selfUpdateHistory', value, updatedAt }
+ *     { _id: 'log:dataMigrations:<migrationId>', kind: 'dataMigrations', value, updatedAt }
+ *     { _id: 'log:githubWebhookDeliveries:<deliveryId>', kind: 'githubWebhookDeliveries', value, updatedAt }
+ *
+ * Collection: `cds_state_fragments` (legacy compatibility only)
  *   documents:
  *     { _id: 'state:logs:<branchId>', kind: 'logs', ownerId, value, updatedAt }
  *     { _id: 'state:containerLogArchives:<branchId>', kind: 'containerLogArchives', ownerId, value, updatedAt }
@@ -51,9 +61,10 @@
  * User config    (future): `cds_users`
  *
  * The log-like fields are intentionally detached from the main state
- * document. MongoDB rejects any command/document larger than 16MB; keeping
- * container log archives, operation logs, activity logs, and webhook
- * deliveries in the same document can take CDS down during normal use.
+ * document and persisted as one record per Mongo document. MongoDB rejects
+ * any command/document larger than 16MB; keeping container log archives,
+ * operation logs, activity logs, and webhook deliveries in the same document
+ * can take CDS down during normal use.
  *
  * ── No-DB mode ──────────────────────────────────────────────────────
  *
@@ -98,6 +109,8 @@ export interface IMongoHandle {
   stateCollection(): IMongoCollection<StateDoc>;
   /** Get detached state-fragment collection (after connect). */
   stateFragmentCollection(): IMongoCollection<StateFragmentDoc>;
+  /** Get per-record log collection (after connect). */
+  stateLogRecordCollection(): IMongoCollection<StateLogRecordDoc>;
   /** Graceful shutdown. */
   close(): Promise<void>;
   /** For health-check UIs. */
@@ -131,10 +144,21 @@ export interface StateFragmentDoc {
   updatedAt: string;
 }
 
+export interface StateLogRecordDoc {
+  _id: string;
+  scope: 'cds-state-log-record';
+  kind: DetachedStateKey;
+  ownerId?: string;
+  value: unknown;
+  orderKey: string;
+  updatedAt: string;
+}
+
 const DETACHED_SCOPE = 'cds-state-detached';
+const LOG_RECORD_SCOPE = 'cds-state-log-record';
 const MAX_WEBHOOK_DELIVERIES = 1000;
 const MAX_LOGS_PER_BRANCH = 10;
-const MAX_EVENTS_PER_OPERATION_LOG = 100;
+const MAX_EVENTS_PER_OPERATION_LOG = 10;
 const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 10;
 const MAX_SERVICE_DEPLOYMENT_LOGS = 500;
 const MAX_DATA_MIGRATIONS = 100;
@@ -292,68 +316,116 @@ function fragmentId(kind: DetachedStateKey, ownerId?: string): string {
     : `${STATE_DOC_ID}:${kind}`;
 }
 
+function safeIdPart(value: unknown): string {
+  const text = String(value ?? '').trim() || 'unknown';
+  return encodeURIComponent(text).slice(0, 160);
+}
+
+function indexedRecordKey(index: number, values: unknown[]): string {
+  return `${String(index).padStart(5, '0')}-${safeIdPart(values.filter(Boolean).join(':'))}`;
+}
+
+function logRecordId(kind: DetachedStateKey, ownerId: string | undefined, key: string): string {
+  return ownerId
+    ? `log:${kind}:${encodeURIComponent(ownerId)}:${safeIdPart(key)}`
+    : `log:${kind}:${safeIdPart(key)}`;
+}
+
 function stateToFragments(state: CdsState, updatedAt: string): StateFragmentDoc[] {
   const docs: StateFragmentDoc[] = [];
+  return docs;
+}
+
+function stateToLogRecords(state: CdsState, updatedAt: string): StateLogRecordDoc[] {
+  const docs: StateLogRecordDoc[] = [];
   for (const [branchId, logs] of Object.entries(state.logs || {})) {
-    docs.push({
-      _id: fragmentId('logs', branchId),
-      scope: DETACHED_SCOPE,
-      kind: 'logs',
-      ownerId: branchId,
-      value: logs || [],
-      updatedAt,
+    (logs || []).forEach((log, index) => {
+      const orderKey = log.startedAt || `${index}`;
+      docs.push({
+        _id: logRecordId('logs', branchId, indexedRecordKey(index, [log.startedAt, log.type])),
+        scope: LOG_RECORD_SCOPE,
+        kind: 'logs',
+        ownerId: branchId,
+        value: log,
+        orderKey,
+        updatedAt,
+      });
     });
   }
   for (const [branchId, archives] of Object.entries(state.containerLogArchives || {})) {
-    docs.push({
-      _id: fragmentId('containerLogArchives', branchId),
-      scope: DETACHED_SCOPE,
-      kind: 'containerLogArchives',
-      ownerId: branchId,
-      value: archives || [],
-      updatedAt,
+    (archives || []).forEach((archive, index) => {
+      const orderKey = archive.capturedAt || `${index}`;
+      docs.push({
+        _id: logRecordId('containerLogArchives', branchId, archive.id || indexedRecordKey(index, [archive.capturedAt, archive.profileId])),
+        scope: LOG_RECORD_SCOPE,
+        kind: 'containerLogArchives',
+        ownerId: branchId,
+        value: archive,
+        orderKey,
+        updatedAt,
+      });
     });
   }
   for (const [projectId, logs] of Object.entries(state.activityLogs || {})) {
-    docs.push({
-      _id: fragmentId('activityLogs', projectId),
-      scope: DETACHED_SCOPE,
-      kind: 'activityLogs',
-      ownerId: projectId,
-      value: logs || [],
-      updatedAt,
+    (logs || []).forEach((log, index) => {
+      const orderKey = log.at || `${index}`;
+      docs.push({
+        _id: logRecordId('activityLogs', projectId, log.id || indexedRecordKey(index, [log.at, log.type])),
+        scope: LOG_RECORD_SCOPE,
+        kind: 'activityLogs',
+        ownerId: projectId,
+        value: log,
+        orderKey,
+        updatedAt,
+      });
     });
   }
   for (const [deploymentId, deployment] of Object.entries(state.serviceDeployments || {})) {
-    docs.push({
-      _id: fragmentId('serviceDeploymentLogs', deploymentId),
-      scope: DETACHED_SCOPE,
-      kind: 'serviceDeploymentLogs',
-      ownerId: deploymentId,
-      value: deployment.logs || [],
-      updatedAt,
+    (deployment.logs || []).forEach((log, index) => {
+      const orderKey = log.at || `${index}`;
+      docs.push({
+        _id: logRecordId('serviceDeploymentLogs', deploymentId, indexedRecordKey(index, [log.at, log.level])),
+        scope: LOG_RECORD_SCOPE,
+        kind: 'serviceDeploymentLogs',
+        ownerId: deploymentId,
+        value: log,
+        orderKey,
+        updatedAt,
+      });
     });
   }
-  docs.push({
-    _id: fragmentId('selfUpdateHistory'),
-    scope: DETACHED_SCOPE,
-    kind: 'selfUpdateHistory',
-    value: state.selfUpdateHistory || [],
-    updatedAt,
+  (state.selfUpdateHistory || []).forEach((record, index) => {
+    const orderKey = record.ts || `${index}`;
+    docs.push({
+      _id: logRecordId('selfUpdateHistory', undefined, indexedRecordKey(index, [record.ts, record.branch, record.toSha])),
+      scope: LOG_RECORD_SCOPE,
+      kind: 'selfUpdateHistory',
+      value: record,
+      orderKey,
+      updatedAt,
+    });
   });
-  docs.push({
-    _id: fragmentId('dataMigrations'),
-    scope: DETACHED_SCOPE,
-    kind: 'dataMigrations',
-    value: state.dataMigrations || [],
-    updatedAt,
+  (state.dataMigrations || []).forEach((migration, index) => {
+    const orderKey = migration.createdAt || `${index}`;
+    docs.push({
+      _id: logRecordId('dataMigrations', undefined, migration.id || indexedRecordKey(index, [migration.createdAt, migration.name])),
+      scope: LOG_RECORD_SCOPE,
+      kind: 'dataMigrations',
+      value: migration,
+      orderKey,
+      updatedAt,
+    });
   });
-  docs.push({
-    _id: fragmentId('githubWebhookDeliveries'),
-    scope: DETACHED_SCOPE,
-    kind: 'githubWebhookDeliveries',
-    value: state.githubWebhookDeliveries || [],
-    updatedAt,
+  (state.githubWebhookDeliveries || []).forEach((delivery, index) => {
+    const orderKey = delivery.receivedAt || `${index}`;
+    docs.push({
+      _id: logRecordId('githubWebhookDeliveries', undefined, delivery.id || indexedRecordKey(index, [delivery.receivedAt, delivery.event])),
+      scope: LOG_RECORD_SCOPE,
+      kind: 'githubWebhookDeliveries',
+      value: delivery,
+      orderKey,
+      updatedAt,
+    });
   });
   return docs;
 }
@@ -412,6 +484,47 @@ function mergeFragmentsIntoState(base: Partial<CdsState>, fragments: StateFragme
   return state;
 }
 
+function mergeLogRecordsIntoState(base: CdsState, records: StateLogRecordDoc[]): CdsState {
+  if (records.length === 0) return base;
+  base.serviceDeployments = base.serviceDeployments || {};
+  const kinds = new Set(records.map(record => record.kind));
+  if (kinds.has('logs')) base.logs = {};
+  if (kinds.has('containerLogArchives')) base.containerLogArchives = {};
+  if (kinds.has('activityLogs')) base.activityLogs = {};
+  if (kinds.has('selfUpdateHistory')) base.selfUpdateHistory = [];
+  if (kinds.has('dataMigrations')) base.dataMigrations = [];
+  if (kinds.has('githubWebhookDeliveries')) base.githubWebhookDeliveries = [];
+
+  const sorted = [...records].sort((a, b) => a.orderKey.localeCompare(b.orderKey) || a._id.localeCompare(b._id));
+  for (const record of sorted) {
+    if (record.kind === 'logs' && record.ownerId) {
+      base.logs[record.ownerId] = base.logs[record.ownerId] || [];
+      base.logs[record.ownerId].push(record.value as OperationLog);
+    } else if (record.kind === 'containerLogArchives' && record.ownerId) {
+      const archives = base.containerLogArchives!;
+      archives[record.ownerId] = archives[record.ownerId] || [];
+      archives[record.ownerId].push(record.value as ContainerLogArchiveEntry);
+    } else if (record.kind === 'activityLogs' && record.ownerId) {
+      const activityLogs = base.activityLogs!;
+      activityLogs[record.ownerId] = activityLogs[record.ownerId] || [];
+      activityLogs[record.ownerId].push(record.value as ProjectActivityLog);
+    } else if (record.kind === 'serviceDeploymentLogs' && record.ownerId) {
+      const deployment = base.serviceDeployments?.[record.ownerId];
+      if (deployment) {
+        deployment.logs = deployment.logs || [];
+        deployment.logs.push(record.value as ServiceDeploymentLogEntry);
+      }
+    } else if (record.kind === 'selfUpdateHistory') {
+      base.selfUpdateHistory!.push(record.value as SelfUpdateRecord);
+    } else if (record.kind === 'dataMigrations') {
+      base.dataMigrations!.push(record.value as DataMigration);
+    } else if (record.kind === 'githubWebhookDeliveries') {
+      base.githubWebhookDeliveries!.push(record.value as NonNullable<CdsState['githubWebhookDeliveries']>[number]);
+    }
+  }
+  return base;
+}
+
 export class MongoStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo' as const;
   private cache: CdsState | null = null;
@@ -431,9 +544,11 @@ export class MongoStateBackingStore implements StateBackingStore {
     await this.handle.connect();
     const col = this.handle.stateCollection();
     const fragmentCol = this.handle.stateFragmentCollection();
+    const logRecordCol = this.handle.stateLogRecordCollection();
     const doc = await col.findOne({ _id: STATE_DOC_ID });
     const fragments = await fragmentCol.find?.({ scope: DETACHED_SCOPE }) || [];
-    this.cache = doc ? mergeFragmentsIntoState(structuredClone(doc.state), fragments) : null;
+    const records = await logRecordCol.find?.({ scope: LOG_RECORD_SCOPE }) || [];
+    this.cache = doc ? mergeLogRecordsIntoState(mergeFragmentsIntoState(structuredClone(doc.state), fragments), records) : null;
     this.initialized = true;
   }
 
@@ -464,6 +579,7 @@ export class MongoStateBackingStore implements StateBackingStore {
     const snapshot = this.cache;
     const col = this.handle.stateCollection();
     const fragmentCol = this.handle.stateFragmentCollection();
+    const logRecordCol = this.handle.stateLogRecordCollection();
     // Chain the next write onto the previous so upserts land in the
     // same order they were issued. A Promise.all'd fan-out would be
     // racy — newer writes could land before older ones.
@@ -485,6 +601,11 @@ export class MongoStateBackingStore implements StateBackingStore {
           await fragmentCol.replaceOne({ _id: fragment._id }, fragment, { upsert: true });
         }
         await fragmentCol.deleteMany?.({ scope: DETACHED_SCOPE, updatedAt: { $ne: updatedAt } });
+        const records = stateToLogRecords(snapshot, updatedAt);
+        for (const record of records) {
+          await logRecordCol.replaceOne({ _id: record._id }, record, { upsert: true });
+        }
+        await logRecordCol.deleteMany?.({ scope: LOG_RECORD_SCOPE, updatedAt: { $ne: updatedAt } });
       })
       .then(() => undefined);
   }
@@ -549,6 +670,11 @@ export class MongoStateBackingStore implements StateBackingStore {
       await fragmentCol.replaceOne({ _id: fragment._id }, fragment, { upsert: true });
     }
     await fragmentCol.deleteMany?.({ scope: DETACHED_SCOPE, updatedAt: { $ne: updatedAt } });
+    const logRecordCol = this.handle.stateLogRecordCollection();
+    for (const record of stateToLogRecords(snapshot, updatedAt)) {
+      await logRecordCol.replaceOne({ _id: record._id }, record, { upsert: true });
+    }
+    await logRecordCol.deleteMany?.({ scope: LOG_RECORD_SCOPE, updatedAt: { $ne: updatedAt } });
     this.cache = structuredClone(snapshot);
     return true;
   }

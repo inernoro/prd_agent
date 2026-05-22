@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MongoStateBackingStore, STATE_DOC_ID } from '../../src/infra/state-store/mongo-backing-store.js';
-import type { IMongoHandle, IMongoCollection, StateFragmentDoc } from '../../src/infra/state-store/mongo-backing-store.js';
+import type { IMongoHandle, IMongoCollection, StateFragmentDoc, StateLogRecordDoc } from '../../src/infra/state-store/mongo-backing-store.js';
 import type { CdsState } from '../../src/types.js';
 
 function emptyState(): CdsState {
@@ -87,6 +87,7 @@ class FakeMongoHandle implements IMongoHandle {
   public connectCallCount = 0;
   public readonly collection = new FakeMongoCollection();
   public readonly fragments = new FakeMongoCollection<StateFragmentDoc>();
+  public readonly logRecords = new FakeMongoCollection<StateLogRecordDoc>();
 
   async connect() {
     this.connectCallCount++;
@@ -94,6 +95,7 @@ class FakeMongoHandle implements IMongoHandle {
   }
   stateCollection() { return this.collection; }
   stateFragmentCollection() { return this.fragments; }
+  stateLogRecordCollection() { return this.logRecords; }
   async close() {
     this.closed = true;
   }
@@ -264,13 +266,14 @@ describe('MongoStateBackingStore', () => {
       expect(mainDoc.state.selfUpdateHistory).toBeUndefined();
       expect(mainDoc.state.dataMigrations).toBeUndefined();
       expect(mainDoc.state.serviceDeployments['deploy-1'].logs).toEqual([]);
-      expect(handle.fragments.docs.get('state:logs:feat-x')!.value).toHaveLength(1);
-      expect(handle.fragments.docs.get('state:containerLogArchives:feat-x')!.value).toHaveLength(1);
-      expect(handle.fragments.docs.get('state:activityLogs:prd-agent')!.value).toHaveLength(1);
-      expect(handle.fragments.docs.get('state:serviceDeploymentLogs:deploy-1')!.value).toHaveLength(1);
-      expect(handle.fragments.docs.get('state:selfUpdateHistory')!.value).toHaveLength(1);
-      expect(handle.fragments.docs.get('state:dataMigrations')!.value).toHaveLength(1);
-      expect(handle.fragments.docs.get('state:githubWebhookDeliveries')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.size).toBe(0);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'logs')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'containerLogArchives')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'activityLogs')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'serviceDeploymentLogs')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'selfUpdateHistory')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'dataMigrations')).toHaveLength(1);
+      expect([...handle.logRecords.docs.values()].filter(doc => doc.kind === 'githubWebhookDeliveries')).toHaveLength(1);
     });
 
     it('loads detached state fragments back into the in-memory snapshot', async () => {
@@ -302,12 +305,13 @@ describe('MongoStateBackingStore', () => {
         }],
         updatedAt: '2026-05-22T00:00:00.000Z',
       });
-      handle.fragments.docs.set('state:serviceDeploymentLogs:deploy-1', {
-        _id: 'state:serviceDeploymentLogs:deploy-1',
-        scope: 'cds-state-detached',
+      handle.logRecords.docs.set('log:serviceDeploymentLogs:deploy-1:00000-2026-05-22', {
+        _id: 'log:serviceDeploymentLogs:deploy-1:00000-2026-05-22',
+        scope: 'cds-state-log-record',
         kind: 'serviceDeploymentLogs',
         ownerId: 'deploy-1',
-        value: [{ at: '2026-05-22T00:00:01.000Z', level: 'info', message: 'hello' }],
+        value: { at: '2026-05-22T00:00:01.000Z', level: 'info', message: 'hello' },
+        orderKey: '2026-05-22T00:00:01.000Z',
         updatedAt: '2026-05-22T00:00:00.000Z',
       });
 
@@ -383,11 +387,12 @@ describe('MongoStateBackingStore', () => {
       store.save(state);
       await store.flush();
 
-      const logs = handle.fragments.docs.get('state:logs:feat-x')!.value;
-      const archives = handle.fragments.docs.get('state:containerLogArchives:feat-x')!.value;
-      const serviceLogs = handle.fragments.docs.get('state:serviceDeploymentLogs:deploy-1')!.value;
-      const selfUpdateHistory = handle.fragments.docs.get('state:selfUpdateHistory')!.value;
-      const dataMigrations = handle.fragments.docs.get('state:dataMigrations')!.value;
+      const records = [...handle.logRecords.docs.values()];
+      const logs = records.filter(doc => doc.kind === 'logs').map(doc => doc.value);
+      const archives = records.filter(doc => doc.kind === 'containerLogArchives').map(doc => doc.value);
+      const serviceLogs = records.filter(doc => doc.kind === 'serviceDeploymentLogs').map(doc => doc.value);
+      const selfUpdateHistory = records.filter(doc => doc.kind === 'selfUpdateHistory').map(doc => doc.value);
+      const dataMigrations = records.filter(doc => doc.kind === 'dataMigrations').map(doc => doc.value);
       expect(logs).toHaveLength(10);
       expect(Buffer.byteLength(logs[0].events[0].log, 'utf8')).toBeLessThanOrEqual(125 * 1024);
       expect(archives).toHaveLength(10);
@@ -398,6 +403,51 @@ describe('MongoStateBackingStore', () => {
       expect(Buffer.byteLength(selfUpdateHistory[0].steps[0].text, 'utf8')).toBeLessThanOrEqual(125 * 1024);
       expect(Buffer.byteLength(dataMigrations[0].errorMessage, 'utf8')).toBeLessThanOrEqual(125 * 1024);
       expect(Buffer.byteLength(dataMigrations[0].log, 'utf8')).toBeLessThanOrEqual(125 * 1024);
+    });
+
+    it('keeps per-record mongo log documents bounded as log volume grows', async () => {
+      await store.init();
+      const state = emptyState();
+      state.logs = Object.fromEntries(Array.from({ length: 20 }, (_, branchIndex) => [
+        `branch-${branchIndex}`,
+        Array.from({ length: 15 }, (_, logIndex) => ({
+          type: 'run',
+          startedAt: `2026-05-22T${String(branchIndex).padStart(2, '0')}:${String(logIndex).padStart(2, '0')}:00.000Z`,
+          status: 'completed',
+          events: Array.from({ length: 125 }, (_, eventIndex) => ({
+            step: `event-${eventIndex}`,
+            status: 'done',
+            timestamp: '2026-05-22T00:00:00.000Z',
+            log: 'x'.repeat(25_000),
+          })),
+        })),
+      ]));
+      state.containerLogArchives = Object.fromEntries(Array.from({ length: 20 }, (_, branchIndex) => [
+        `branch-${branchIndex}`,
+        Array.from({ length: 15 }, (_, archiveIndex) => ({
+          id: `archive-${branchIndex}-${archiveIndex}`,
+          branchId: `branch-${branchIndex}`,
+          profileId: 'api',
+          capturedAt: `2026-05-22T00:${String(archiveIndex).padStart(2, '0')}:00.000Z`,
+          source: 'deploy-finalize',
+          sha256: 'abc',
+          byteLength: 250_000,
+          lineCount: 1,
+          masked: true,
+          logs: 'y'.repeat(250_000),
+        })),
+      ]));
+
+      store.save(state);
+      await store.flush();
+
+      const mainDocBytes = Buffer.byteLength(JSON.stringify(handle.collection.docs.get(STATE_DOC_ID)), 'utf8');
+      const recordDocs = [...handle.logRecords.docs.values()];
+      const maxRecordBytes = Math.max(...recordDocs.map(doc => Buffer.byteLength(JSON.stringify(doc), 'utf8')));
+      expect(mainDocBytes).toBeLessThan(512 * 1024);
+      expect(recordDocs.filter(doc => doc.kind === 'logs')).toHaveLength(20 * 10);
+      expect(recordDocs.filter(doc => doc.kind === 'containerLogArchives')).toHaveLength(20 * 10);
+      expect(maxRecordBytes).toBeLessThan(160 * 1024);
     });
 
     it('a write failure does not break subsequent saves', async () => {
