@@ -382,11 +382,13 @@ function TestChatPanel({
   conversationStarters,
   iconHue,
   welcomeMessage,
+  knowledgeBaseIds,
 }: {
   systemPrompt: string;
   conversationStarters: string[];
   iconHue: number;
   welcomeMessage: string;
+  knowledgeBaseIds: string[];
 }) {
   const [messages, setMessages] = useState<DirectChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -424,6 +426,7 @@ function TestChatPanel({
     const unsubscribe = streamDirectChat({
       message: msg,
       history,
+      attachmentIds: knowledgeBaseIds.length > 0 ? knowledgeBaseIds : undefined,
       onText: (content) => {
         setStreamingText((prev) => prev + content);
       },
@@ -621,12 +624,15 @@ export function QuickCreateWizard() {
     status: 'uploading' | 'done' | 'error';
   }>>([]);
   const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
+  // 上传会话令牌：换模板/空白重建会自增，使在途上传的回调失效，避免旧文件回填到新状态
+  const kbUploadSessionRef = useRef(0);
 
   const handleKnowledgeFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
     e.target.value = '';
 
+    const session = kbUploadSessionRef.current;
     for (const file of Array.from(files)) {
       const tempId = Math.random().toString(36).slice(2, 11);
       setKnowledgeFiles(prev => [...prev, {
@@ -639,6 +645,7 @@ export function QuickCreateWizard() {
 
       try {
         const result = await uploadAttachment(file);
+        if (kbUploadSessionRef.current !== session) return; // 上下文已重置，丢弃这次结果
         if (result.success && result.data?.attachmentId) {
           setKnowledgeFiles(prev => prev.map(f =>
             f.id === tempId ? { ...f, attachmentId: result.data!.attachmentId, status: 'done' as const } : f
@@ -649,6 +656,7 @@ export function QuickCreateWizard() {
           ));
         }
       } catch {
+        if (kbUploadSessionRef.current !== session) return;
         setKnowledgeFiles(prev => prev.map(f =>
           f.id === tempId ? { ...f, status: 'error' as const } : f
         ));
@@ -870,6 +878,7 @@ export function QuickCreateWizard() {
 
   const handleSelectTemplate = (template: AgentTemplate) => {
     setSelectedTemplate(template);
+    kbUploadSessionRef.current += 1;
     setKnowledgeFiles([]);
     setForm((prev) => ({
       ...prev,
@@ -887,6 +896,7 @@ export function QuickCreateWizard() {
 
   const handleBlankCreate = () => {
     setSelectedTemplate(null);
+    kbUploadSessionRef.current += 1;
     setKnowledgeFiles([]);
     setForm((prev) => ({
       ...prev,
@@ -1394,6 +1404,7 @@ export function QuickCreateWizard() {
           conversationStarters={form.conversationStarters}
           iconHue={currentIconHue}
           welcomeMessage={form.welcomeMessage}
+          knowledgeBaseIds={doneKnowledgeBaseIds}
         />
       </Surface>
 
