@@ -20,6 +20,8 @@ export interface MyShareItem {
   expiresAt?: string | null;
   createdAt: string;
   primaryPath: string;
+  /** 该类型是否有可用前端展示页；false = 链接暂不可用（历史 debt），前端禁用打开/复制 */
+  viewable: boolean;
 }
 
 export interface MySharesResponse {

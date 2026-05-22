@@ -29,15 +29,12 @@ public class WorkflowAgentController : ControllerBase
     private readonly WorkflowAiFillService _aiFillService;
     private readonly ILogger<WorkflowAgentController> _logger;
 
-    private readonly IShortLinkService _shortLinks;
-
     public WorkflowAgentController(
         MongoDbContext db,
         IRunQueue runQueue,
         IRunEventStore eventStore,
         ILlmGateway gateway,
         WorkflowAiFillService aiFillService,
-        IShortLinkService shortLinks,
         ILogger<WorkflowAgentController> logger)
     {
         _db = db;
@@ -45,7 +42,6 @@ public class WorkflowAgentController : ControllerBase
         _eventStore = eventStore;
         _gateway = gateway;
         _aiFillService = aiFillService;
-        _shortLinks = shortLinks;
         _logger = logger;
     }
 
@@ -1120,22 +1116,15 @@ public class WorkflowAgentController : ControllerBase
         _logger.LogInformation("[{AppKey}] Share link created: {Token} for execution {ExecutionId}",
             AppKey, link.Token, executionId);
 
-        // P1 URL 统一：注册到 ShortLink 让 /s/{token} 和 /s/{seq} 双形态都能命中
-        long shortSeq = 0;
-        try
-        {
-            shortSeq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.Workflow, link.Token, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "为工作流分享 {LinkId} 分配短链 seq 失败", link.Id);
-        }
-
+        // 注意：工作流分享目前没有可用的前端展示页（ShortLinkRouter 对 workflow 走
+        // UnsupportedTargetError；App.tsx 无 workflow share view route）。
+        // 因此暂不注册 ShortLink 数字短链、也不返回 /s/{seq}，避免对外暴露打不开的链接。
+        // 待补齐 workflow share view 后再纳入短链体系（详见 doc/debt.share-link-security.md）。
+        // 历史行为 url = /s/{token} 保持不变（已是历史遗留 debt，不在本次扩大）。
         return Ok(ApiResponse<object>.Ok(new
         {
             shareLink = link,
             url = $"/s/{link.Token}",
-            shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
         }));
     }
 

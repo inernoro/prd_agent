@@ -231,33 +231,43 @@ export default function MySharesPage() {
                   </div>
                 </div>
 
-                {/* 3 种 URL 形态 */}
-                <div className="flex flex-col gap-2">
-                  <UrlRow
-                    label="主链接（带分类前缀）"
-                    url={primaryUrl}
-                    copyKey={`${itemKey}-primary`}
-                    activeCopy={copiedKey}
-                    onCopy={(t) => handleCopy(t, `${itemKey}-primary`)}
-                    recommended
-                  />
-                  {shortUrl && (
+                {/* URL 形态：viewable=false 的类型展示功能未实现，不给死链，改提示 */}
+                {s.viewable ? (
+                  <div className="flex flex-col gap-2">
                     <UrlRow
-                      label="超短链（数字，需配密码）"
-                      url={shortUrl}
-                      copyKey={`${itemKey}-short`}
+                      label="主链接（带分类前缀）"
+                      url={primaryUrl}
+                      copyKey={`${itemKey}-primary`}
                       activeCopy={copiedKey}
-                      onCopy={(t) => handleCopy(t, `${itemKey}-short`)}
+                      onCopy={(t) => handleCopy(t, `${itemKey}-primary`)}
+                      recommended
                     />
-                  )}
-                  <UrlRow
-                    label="字母统一长链"
-                    url={unifiedUrl}
-                    copyKey={`${itemKey}-unified`}
-                    activeCopy={copiedKey}
-                    onCopy={(t) => handleCopy(t, `${itemKey}-unified`)}
-                  />
-                </div>
+                    {shortUrl && (
+                      <UrlRow
+                        label="超短链（数字，需配密码）"
+                        url={shortUrl}
+                        copyKey={`${itemKey}-short`}
+                        activeCopy={copiedKey}
+                        onCopy={(t) => handleCopy(t, `${itemKey}-short`)}
+                      />
+                    )}
+                    <UrlRow
+                      label="字母统一长链"
+                      url={unifiedUrl}
+                      copyKey={`${itemKey}-unified`}
+                      activeCopy={copiedKey}
+                      onCopy={(t) => handleCopy(t, `${itemKey}-unified`)}
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+                    style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'rgba(245, 158, 11, 0.95)' }}
+                  >
+                    <AlertCircle size={14} />
+                    该类型分享的对外展示页尚在开发中，链接暂时无法打开（不影响已记录的分享数据）。
+                  </div>
+                )}
               </GlassCard>
             );
           })}

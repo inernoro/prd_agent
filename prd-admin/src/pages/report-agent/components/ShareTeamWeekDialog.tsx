@@ -99,8 +99,10 @@ export function ShareTeamWeekDialog({
 
   const handleClose = () => {
     setResult(null);
-    setPassword('');
-    setUsePassword(false);
+    // 恢复到初始安全默认（密码保护默认开 + 重新生成强密码），
+    // 而不是把 usePassword 重置为 false 撤销安全默认（dialog 复用、保持挂载）
+    setUsePassword(true);
+    setPassword(genPassword());
     setCopied(false);
     onClose();
   };

@@ -541,6 +541,12 @@ public class WebPagesController : ControllerBase
 
         if (result.Error != null)
         {
+            if (result.HttpStatus == 429)
+            {
+                if (result.RetryAfterSeconds is { } ra && ra > 0)
+                    Response.Headers["Retry-After"] = ra.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", result.Error));
+            }
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
@@ -577,6 +583,12 @@ public class WebPagesController : ControllerBase
 
         if (result.Error != null)
         {
+            if (result.HttpStatus == 429)
+            {
+                if (result.RetryAfterSeconds is { } ra && ra > 0)
+                    Response.Headers["Retry-After"] = ra.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", result.Error));
+            }
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),

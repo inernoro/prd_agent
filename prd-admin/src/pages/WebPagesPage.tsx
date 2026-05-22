@@ -1589,7 +1589,7 @@ function ShareDialog({ siteId, siteIds, onClose }: {
               <Check size={16} style={{ color: '#22c55e' }} />
               <span className="text-sm flex-1" style={{ color: '#22c55e' }}>分享链接已生成，已复制到剪贴板</span>
               <a
-                href="/assets?tab=shares"
+                href="/my-assets?tab=shares"
                 target="_blank"
                 rel="noopener"
                 className="text-xs underline whitespace-nowrap"

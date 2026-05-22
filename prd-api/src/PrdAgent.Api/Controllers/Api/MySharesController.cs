@@ -122,9 +122,10 @@ public class MySharesController : ControllerBase
                     IsRevoked = s.IsRevoked,
                     ExpiresAt = s.ExpiresAt,
                     CreatedAt = s.CreatedAt,
-                    // 知识库历史有效路径是 /library/share/{token}（与 DocumentStorePage 创建 URL +
-                    // ShortLinkRouter navigate 一致）；App.tsx 没有 /public/share/:token 路由
+                    // 知识库历史路径 /library/share/{token}，但 App.tsx 当前没有该 SPA 路由
+                    //（debt -1），访客打开看到 SPA fallback。标 Viewable=false 如实告知用户。
                     PrimaryPath = $"/library/share/{s.Token}",
+                    Viewable = false,
                 });
             }
         }
@@ -149,6 +150,9 @@ public class MySharesController : ControllerBase
                     ExpiresAt = s.ExpiresAt,
                     CreatedAt = s.CreatedAt,
                     PrimaryPath = $"/s/{s.Token}",
+                    // 工作流分享没有前端展示页（ShortLinkRouter 走 UnsupportedTargetError），
+                    // 标 Viewable=false 告知用户链接暂不可用（详见 debt）。
+                    Viewable = false,
                 });
             }
         }
@@ -195,4 +199,6 @@ public class MyShareItem
     public DateTime CreatedAt { get; set; }
     /// <summary>默认带分类前缀的主要 URL（前端拼 origin 后即为完整链接）</summary>
     public string PrimaryPath { get; set; } = string.Empty;
+    /// <summary>该类型是否有可用的前端展示页。false = 链接打开看不到内容（历史 debt），前端应禁用打开/复制并提示"展示功能开发中"。</summary>
+    public bool Viewable { get; set; } = true;
 }
