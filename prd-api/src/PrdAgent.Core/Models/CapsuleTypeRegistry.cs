@@ -1172,6 +1172,9 @@ public static class CapsuleTypeRegistry
         {
             new() { Key = "prompt", Label = "只读巡检任务", FieldType = "textarea", Required = true, Placeholder = "请只读巡检当前仓库代码，指出风险、证据和建议；不要写文件、不要提交 PR", HelpTip = "P1-4 仅支持只读代码巡检；支持 {{variable}} 变量替换，上游输入会追加到任务上下文中" },
             new() { Key = "sessionId", Label = "复用 Session", FieldType = "text", Required = false, HelpTip = "留空时创建新 CDS Agent session；填入已有 sessionId 时复用并继续发送任务" },
+            new() { Key = "gitRepository", Label = "仓库", FieldType = "text", Required = false, Placeholder = "inernoro/prd_agent 或 Git URL；留空使用默认 workspace", HelpTip = "只读代码巡检的目标仓库，留空时由 CDS runtime 使用默认 workspace" },
+            new() { Key = "gitRef", Label = "分支/Ref", FieldType = "text", Required = false, DefaultValue = "main", Placeholder = "main", HelpTip = "只读巡检目标分支或提交引用" },
+            new() { Key = "workspaceRoot", Label = "Workspace Root", FieldType = "text", Required = false, Placeholder = "/workspace", HelpTip = "高级选项；通常留空，由 CDS runtime 准备 workspace" },
             new() { Key = "connectionId", Label = "CDS 连接", FieldType = "text", Required = false, HelpTip = "留空时使用最近 active CDS 连接" },
             new() { Key = "runtimeProfileId", Label = "模型运行配置", FieldType = "text", Required = false, HelpTip = "留空时使用默认模型运行配置" },
             new() { Key = "runtime", Label = "Runtime", FieldType = "select", Required = false, DefaultValue = "claude-sdk", Options = new()

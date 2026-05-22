@@ -32,6 +32,10 @@ SMOKE_CDS_AGENT_REPO="${SMOKE_CDS_AGENT_REPO:-inernoro/prd_agent}"
 SMOKE_CDS_AGENT_REF="${SMOKE_CDS_AGENT_REF:-main}"
 SMOKE_CDS_AGENT_POLL_SECONDS="${SMOKE_CDS_AGENT_POLL_SECONDS:-120}"
 SMOKE_CDS_AGENT_CONTROLS_REPORT="${SMOKE_CDS_AGENT_CONTROLS_REPORT:-}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES:-3}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS:-3}"
+SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES="${SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES:-3}"
+SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS="${SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS:-3}"
 
 created_session_ids=()
 cleanup_sessions() {
@@ -68,10 +72,46 @@ write_controls_report() {
   printf 'Controls report: %s\n' "$SMOKE_CDS_AGENT_CONTROLS_REPORT"
 }
 
+post_with_retries() {
+  local path="$1"
+  local body="$2"
+  local label="$3"
+  local resp=""
+  local rc=0
+  for attempt in $(seq 1 "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES"); do
+    if resp=$(smoke_post "$path" "$body" 2>&1); then
+      printf '%s' "$resp"
+      return 0
+    else
+      rc=$?
+    fi
+    if (( attempt < SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES )); then
+      printf '%s failed (attempt %s/%s, rc=%s), retrying in %ss...\n' \
+        "$label" "$attempt" "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES" "$rc" "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS" >&2
+      sleep "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS"
+    fi
+  done
+  printf '%s' "$resp"
+  return "$rc"
+}
+
 smoke_init "CDS Agent Official SDK S2/S3 Controls"
 
 smoke_step "读取 runtime-status official SDK readiness"
-runtime_resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+runtime_resp=""
+for attempt in $(seq 1 "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES"); do
+  runtime_resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+  instance_count_probe=$(smoke_get_data "$runtime_resp" '.diagnostics.instanceCount // 0')
+  healthy_count_probe=$(smoke_get_data "$runtime_resp" '.diagnostics.healthyCount // 0')
+  if (( instance_count_probe > 0 && healthy_count_probe > 0 )); then
+    break
+  fi
+  if (( attempt < SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES )); then
+    printf 'runtime-status not ready yet (attempt %s/%s, instances=%s healthy=%s), retrying in %ss...\n' \
+      "$attempt" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES" "$instance_count_probe" "$healthy_count_probe" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+    sleep "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+  fi
+done
 smoke_verbose "$runtime_resp"
 smoke_assert_eq "$(printf '%s' "$runtime_resp" | jq -r '.success')" "true" "RuntimeStatus.success"
 desired_adapter=$(smoke_get_data "$runtime_resp" '.diagnostics.desiredRuntimeAdapter // ""')
@@ -172,7 +212,8 @@ create_session() {
       gitRef: $ref
     }')
   local resp
-  resp=$(smoke_post "/api/infra-agent-sessions" "$body")
+  resp=$(post_with_retries "/api/infra-agent-sessions" "$body" "CreateSession") \
+    || smoke_fail "CreateSession request failed after retries: ${resp}"
   smoke_verbose "$resp"
   smoke_assert_eq "$(printf '%s' "$resp" | jq -r '.success')" "true" "CreateSession.success"
   smoke_get_data "$resp" '.item.id // ""'
@@ -183,7 +224,8 @@ send_prompt() {
   local prompt="$2"
   local body resp
   body=$(jq -n --arg content "$prompt" '{content:$content}')
-  resp=$(smoke_post "/api/infra-agent-sessions/${session_id}/messages" "$body")
+  resp=$(post_with_retries "/api/infra-agent-sessions/${session_id}/messages" "$body" "SendMessage") \
+    || smoke_fail "SendMessage request failed after retries: ${resp}"
   smoke_verbose "$resp"
   smoke_assert_eq "$(printf '%s' "$resp" | jq -r '.success')" "true" "SendMessage.success"
 }
@@ -192,7 +234,8 @@ smoke_step "S2 创建审批会话并启动"
 s2_session_id=$(create_session "official-sdk-s2-$(date +%Y%m%d%H%M%S)" "official SDK S2 approval smoke")
 smoke_assert_nonempty "$s2_session_id" "S2 session id"
 created_session_ids+=("$s2_session_id")
-start_resp=$(smoke_post "/api/infra-agent-sessions/${s2_session_id}/start" '{}')
+start_resp=$(post_with_retries "/api/infra-agent-sessions/${s2_session_id}/start" '{}' "S2 StartSession") \
+  || smoke_fail "S2 StartSession request failed after retries: ${start_resp}"
 smoke_verbose "$start_resp"
 smoke_assert_eq "$(printf '%s' "$start_resp" | jq -r '.success')" "true" "S2 StartSession.success"
 smoke_ok "s2SessionId=$s2_session_id"
@@ -262,7 +305,8 @@ smoke_assert_nonempty "$s2_mode" "S2 mode"
 smoke_step "S2 验证审批或 hardened 只读结果"
 decision_count=0
 if [[ "$s2_mode" == "approval" ]]; then
-  deny_resp=$(smoke_post "/api/infra-agent-sessions/${s2_session_id}/tool-approvals/${approval_id}" '{"decision":"deny"}')
+  deny_resp=$(post_with_retries "/api/infra-agent-sessions/${s2_session_id}/tool-approvals/${approval_id}" '{"decision":"deny"}' "ApproveTool") \
+    || smoke_fail "ApproveTool request failed after retries: ${deny_resp}"
   smoke_verbose "$deny_resp"
   smoke_assert_eq "$(printf '%s' "$deny_resp" | jq -r '.success')" "true" "ApproveTool.success"
   events_resp=$(smoke_get "/api/infra-agent-sessions/${s2_session_id}/events?afterSeq=0&limit=500")
@@ -283,7 +327,8 @@ smoke_step "S3 创建长任务会话并发送 prompt"
 s3_session_id=$(create_session "official-sdk-s3-$(date +%Y%m%d%H%M%S)" "official SDK S3 stop smoke")
 smoke_assert_nonempty "$s3_session_id" "S3 session id"
 created_session_ids+=("$s3_session_id")
-start_resp=$(smoke_post "/api/infra-agent-sessions/${s3_session_id}/start" '{}')
+start_resp=$(post_with_retries "/api/infra-agent-sessions/${s3_session_id}/start" '{}' "S3 StartSession") \
+  || smoke_fail "S3 StartSession request failed after retries: ${start_resp}"
 smoke_verbose "$start_resp"
 smoke_assert_eq "$(printf '%s' "$start_resp" | jq -r '.success')" "true" "S3 StartSession.success"
 send_prompt "$s3_session_id" '请执行一个长时间只读任务：每 5 秒报告一次当前检查进度，持续 2 分钟。不要修改文件。'
@@ -291,7 +336,8 @@ smoke_ok "s3SessionId=$s3_session_id"
 
 smoke_step "S3 stop 必须能停止会话"
 sleep 10
-stop_resp=$(smoke_post "/api/infra-agent-sessions/${s3_session_id}/stop" '{}')
+stop_resp=$(post_with_retries "/api/infra-agent-sessions/${s3_session_id}/stop" '{}' "StopSession") \
+  || smoke_fail "StopSession request failed after retries: ${stop_resp}"
 smoke_verbose "$stop_resp"
 smoke_assert_eq "$(printf '%s' "$stop_resp" | jq -r '.success')" "true" "StopSession.success"
 final_status=$(printf '%s' "$stop_resp" | jq -r '.data.item.status // ""')

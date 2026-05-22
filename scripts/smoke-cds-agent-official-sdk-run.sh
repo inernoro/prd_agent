@@ -14,6 +14,7 @@
 #   SMOKE_CDS_AGENT_REF=main                目标 ref
 #   SMOKE_CDS_AGENT_POLL_SECONDS=120        等待 assistant 消息/失败状态秒数
 #   SMOKE_CDS_AGENT_S1_REPORT=/tmp/s1.json  可选: 输出 S1 证据 JSON
+#   SMOKE_CDS_AGENT_KEEP_SESSION=1          保留 session 给后续视觉验收
 # ============================================
 
 set -euo pipefail
@@ -29,10 +30,17 @@ SMOKE_CDS_AGENT_REPO="${SMOKE_CDS_AGENT_REPO:-inernoro/prd_agent}"
 SMOKE_CDS_AGENT_REF="${SMOKE_CDS_AGENT_REF:-main}"
 SMOKE_CDS_AGENT_POLL_SECONDS="${SMOKE_CDS_AGENT_POLL_SECONDS:-120}"
 SMOKE_CDS_AGENT_S1_REPORT="${SMOKE_CDS_AGENT_S1_REPORT:-}"
+SMOKE_CDS_AGENT_KEEP_SESSION="${SMOKE_CDS_AGENT_KEEP_SESSION:-}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES:-3}"
+SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS="${SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS:-3}"
+SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES="${SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES:-3}"
+SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS="${SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS:-3}"
 
 created_session_id=""
 cleanup_session() {
+  [[ "$SMOKE_CDS_AGENT_KEEP_SESSION" == "1" ]] && return
   if [[ -n "$created_session_id" ]]; then
+    smoke_post "/api/infra-agent-sessions/${created_session_id}/stop" '{}' >/dev/null 2>&1 || true
     smoke_post "/api/infra-agent-sessions/${created_session_id}/archive" '{}' >/dev/null 2>&1 || true
   fi
 }
@@ -66,10 +74,46 @@ write_s1_report() {
   printf 'S1 report: %s\n' "$SMOKE_CDS_AGENT_S1_REPORT"
 }
 
+post_with_retries() {
+  local path="$1"
+  local body="$2"
+  local label="$3"
+  local resp=""
+  local rc=0
+  for attempt in $(seq 1 "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES"); do
+    if resp=$(smoke_post "$path" "$body" 2>&1); then
+      printf '%s' "$resp"
+      return 0
+    else
+      rc=$?
+    fi
+    if (( attempt < SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES )); then
+      printf '%s failed (attempt %s/%s, rc=%s), retrying in %ss...\n' \
+        "$label" "$attempt" "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRIES" "$rc" "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS" >&2
+      sleep "$SMOKE_CDS_AGENT_PROVIDER_POST_RETRY_SECONDS"
+    fi
+  done
+  printf '%s' "$resp"
+  return "$rc"
+}
+
 smoke_init "CDS Agent Official SDK S1 Run"
 
 smoke_step "读取 runtime-status official SDK readiness"
-runtime_resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+runtime_resp=""
+for attempt in $(seq 1 "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES"); do
+  runtime_resp=$(smoke_get "/api/infra-agent-sessions/runtime-status?refreshDiscovery=true")
+  instance_count_probe=$(smoke_get_data "$runtime_resp" '.diagnostics.instanceCount // 0')
+  healthy_count_probe=$(smoke_get_data "$runtime_resp" '.diagnostics.healthyCount // 0')
+  if (( instance_count_probe > 0 && healthy_count_probe > 0 )); then
+    break
+  fi
+  if (( attempt < SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES )); then
+    printf 'runtime-status not ready yet (attempt %s/%s, instances=%s healthy=%s), retrying in %ss...\n' \
+      "$attempt" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRIES" "$instance_count_probe" "$healthy_count_probe" "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+    sleep "$SMOKE_CDS_AGENT_RUNTIME_STATUS_RETRY_SECONDS"
+  fi
+done
 smoke_verbose "$runtime_resp"
 smoke_assert_eq "$(printf '%s' "$runtime_resp" | jq -r '.success')" "true" "RuntimeStatus.success"
 desired_adapter=$(smoke_get_data "$runtime_resp" '.diagnostics.desiredRuntimeAdapter // ""')
@@ -180,7 +224,8 @@ create_body=$(jq -n \
     gitRepository: $repo,
     gitRef: $ref
   }')
-create_resp=$(smoke_post "/api/infra-agent-sessions" "$create_body")
+create_resp=$(post_with_retries "/api/infra-agent-sessions" "$create_body" "CreateSession") \
+  || smoke_fail "CreateSession request failed after retries: ${create_resp}"
 smoke_verbose "$create_resp"
 smoke_assert_eq "$(printf '%s' "$create_resp" | jq -r '.success')" "true" "CreateSession.success"
 created_session_id=$(smoke_get_data "$create_resp" '.item.id // ""')
@@ -188,7 +233,8 @@ smoke_assert_nonempty "$created_session_id" "created session id"
 smoke_ok "sessionId=$created_session_id trace=$trace"
 
 smoke_step "启动会话"
-start_resp=$(smoke_post "/api/infra-agent-sessions/${created_session_id}/start" '{}')
+start_resp=$(post_with_retries "/api/infra-agent-sessions/${created_session_id}/start" '{}' "StartSession") \
+  || smoke_fail "StartSession request failed after retries: ${start_resp}"
 smoke_verbose "$start_resp"
 smoke_assert_eq "$(printf '%s' "$start_resp" | jq -r '.success')" "true" "StartSession.success"
 smoke_ok "session started"
@@ -196,7 +242,8 @@ smoke_ok "session started"
 smoke_step "发送 S1 只读审查 prompt"
 prompt='只读审查当前仓库。不要修改文件，不要创建 PR。最多调用一次只读文件读取工具：优先读取 README.md；如果不存在，再读取 package.json 或项目根目录中最明显的说明文件。读到一个文件后必须立即最终回答，不要继续调用工具。用 5 条以内说明：1) 仓库/ref；2) 读取的文件；3) 是否发现高风险问题；4) 下一步建议。'
 send_body=$(jq -n --arg content "$prompt" '{content:$content}')
-send_resp=$(smoke_post "/api/infra-agent-sessions/${created_session_id}/messages" "$send_body")
+send_resp=$(post_with_retries "/api/infra-agent-sessions/${created_session_id}/messages" "$send_body" "SendMessage") \
+  || smoke_fail "SendMessage request failed after retries: ${send_resp}"
 smoke_verbose "$send_resp"
 smoke_assert_eq "$(printf '%s' "$send_resp" | jq -r '.success')" "true" "SendMessage.success"
 smoke_ok "S1 prompt sent"
@@ -288,7 +335,6 @@ while (( $(date +%s) < deadline )); do
         assistantPreview: $assistantPreview
       }')
     write_s1_report "pass" "$evidence_json"
-    created_session_id=""
     smoke_done
     exit 0
   fi

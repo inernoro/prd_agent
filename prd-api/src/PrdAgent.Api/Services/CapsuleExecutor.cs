@@ -4726,6 +4726,10 @@ function safeChart(canvasId, config) {
         var workflowApprovalMode = ReplaceVariables(GetConfigString(node, "workflowApprovalMode") ?? "none", variables).Trim();
         var approvalTimeoutSeconds = ClampInt(GetConfigString(node, "approvalTimeoutSeconds"), 3600, 60, 86400);
         var traceId = variables.GetValueOrDefault("__traceId");
+        var workspaceRoot = ReplaceVariables(GetConfigString(node, "workspaceRoot") ?? session?.WorkspaceRoot ?? "", variables).Trim();
+        var gitRepository = ReplaceVariables(GetConfigString(node, "gitRepository") ?? session?.GitRepository ?? "", variables).Trim();
+        var gitRef = ReplaceVariables(GetConfigString(node, "gitRef") ?? session?.GitRef ?? "main", variables).Trim();
+        if (string.IsNullOrWhiteSpace(gitRef)) gitRef = "main";
 
         var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables).Trim();
         var upstream = string.Join("\n\n", inputArtifacts
@@ -4750,11 +4754,17 @@ function safeChart(canvasId, config) {
                     toolPolicy,
                     string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
                     runtimeProfile!.Id,
-                    traceId),
+                    traceId,
+                    string.IsNullOrWhiteSpace(workspaceRoot) ? null : workspaceRoot,
+                    string.IsNullOrWhiteSpace(gitRepository) ? null : gitRepository,
+                    string.IsNullOrWhiteSpace(gitRef) ? null : gitRef),
                 CancellationToken.None);
         }
         sb.AppendLine($"会话: {session.Id}");
         sb.AppendLine($"TraceId: {session.TraceId}");
+        sb.AppendLine($"Workspace: {session.WorkspaceRoot ?? workspaceRoot}");
+        sb.AppendLine($"Repository: {session.GitRepository ?? gitRepository}");
+        sb.AppendLine($"Ref: {session.GitRef ?? gitRef}");
 
         if (!string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
         {
@@ -4858,6 +4868,10 @@ function safeChart(canvasId, config) {
             cdsSessionId = session.CdsSessionId,
             traceId = session.TraceId,
             status = session.Status,
+            workspaceRoot = session.WorkspaceRoot,
+            gitRepository = session.GitRepository,
+            gitRef = session.GitRef,
+            runtimeProfileId = session.RuntimeProfileId,
             finalText,
             artifacts = new[]
             {

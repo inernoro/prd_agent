@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using System.Diagnostics;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -18,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class InfraAgentSessionsController : ControllerBase
 {
     private const string DefaultRemoteSmokeHost = "https://cds.miduo.org";
+    private const string ControllerSource = "infra-agent-sessions-controller";
 
     private readonly IInfraAgentSessionService _service;
     private readonly IClaudeSidecarRouter? _sidecarRouter;
@@ -1176,6 +1178,7 @@ public class InfraAgentSessionsController : ControllerBase
     [HttpPost("{id}/start")]
     public async Task<IActionResult> Start(string id, [FromBody] StartInfraAgentSessionRequest? req, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         var userId = this.GetRequiredUserId();
         try
         {
@@ -1191,18 +1194,38 @@ public class InfraAgentSessionsController : ControllerBase
         }
         catch (InfraAgentSessionException ex)
         {
-            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(
+                ex.ErrorCode,
+                ex.Message,
+                traceId: await ResolveTraceIdSafeAsync(userId, id, ct),
+                requestId: HttpContext.TraceIdentifier,
+                source: $"{ControllerSource}.start",
+                elapsedMs: sw.ElapsedMilliseconds));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                ex.Message,
+                traceId: await ResolveTraceIdSafeAsync(userId, id, ct),
+                requestId: HttpContext.TraceIdentifier,
+                source: $"{ControllerSource}.start",
+                elapsedMs: sw.ElapsedMilliseconds));
         }
     }
 
     [HttpPost("{id}/messages")]
     public async Task<IActionResult> SendMessage(string id, [FromBody] SendInfraAgentMessageRequest req, CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         if (req == null)
         {
             return BadRequest(ApiResponse<object>.Fail(
                 InfraAgentSessionErrorCodes.MessageContentRequired,
-                "请求体不能为空"));
+                "请求体不能为空",
+                requestId: HttpContext.TraceIdentifier,
+                source: $"{ControllerSource}.messages",
+                elapsedMs: sw.ElapsedMilliseconds));
         }
 
         var userId = this.GetRequiredUserId();
@@ -1220,7 +1243,23 @@ public class InfraAgentSessionsController : ControllerBase
         }
         catch (InfraAgentSessionException ex)
         {
-            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(
+                ex.ErrorCode,
+                ex.Message,
+                traceId: await ResolveTraceIdSafeAsync(userId, id, ct),
+                requestId: HttpContext.TraceIdentifier,
+                source: $"{ControllerSource}.messages",
+                elapsedMs: sw.ElapsedMilliseconds));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail(
+                InfraAgentSessionErrorCodes.CdsRequestFailed,
+                ex.Message,
+                traceId: await ResolveTraceIdSafeAsync(userId, id, ct),
+                requestId: HttpContext.TraceIdentifier,
+                source: $"{ControllerSource}.messages",
+                elapsedMs: sw.ElapsedMilliseconds));
         }
     }
 
@@ -1600,6 +1639,18 @@ public class InfraAgentSessionsController : ControllerBase
         catch (InfraAgentSessionException ex)
         {
             return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    private async Task<string?> ResolveTraceIdSafeAsync(string userId, string id, CancellationToken ct)
+    {
+        try
+        {
+            return (await _service.GetAsync(userId, id, ct))?.TraceId;
+        }
+        catch
+        {
+            return null;
         }
     }
 }
