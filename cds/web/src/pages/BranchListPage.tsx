@@ -468,14 +468,15 @@ function deployFailureMessage(branch?: BranchSummary): string {
   if (!branch) return '';
   const failedServices = Object.values(branch.services || {}).filter((svc) => svc.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return '';
+  const label = branchIssueLabel(branch);
   const serviceNames = failedServices.map((svc) => svc.profileId).join(', ');
-  if (branch.errorMessage) return `应用代码错误：${branch.errorMessage}`;
+  if (branch.errorMessage) return `${label}：${branch.errorMessage}`;
   const serviceErrors = failedServices
     .map((svc) => svc.errorMessage ? `${svc.profileId}: ${svc.errorMessage}` : '')
     .filter(Boolean);
-  if (serviceErrors.length > 0) return `应用代码错误：${serviceErrors.join('；')}`;
-  if (serviceNames) return `应用代码错误：${serviceNames} 启动失败`;
-  return '应用代码错误：分支进入异常状态';
+  if (serviceErrors.length > 0) return `${label}：${serviceErrors.join('；')}`;
+  if (serviceNames) return `${label}：${serviceNames} 启动失败`;
+  return `${label}：分支进入异常状态`;
 }
 
 function projectIdFromQuery(): string {
@@ -663,25 +664,102 @@ function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: st
   };
 }
 
-function branchIssueLabel(branch: BranchSummary): string {
+// 错误归责分类(2026-05-21)
+//   - cds-runtime: CDS 自己该擦的屁股,容器在 docker 层消失/镜像拉不到/forwarder 挂了/磁盘满了
+//                  这些都不是应用代码的错,标红与应用代码错误区分开
+//   - app-code:    应用启动后崩了/找不到依赖/健康检查不通过/进程 exit code 非零
+//                  这是业务侧自查,CDS 不该自动 redeploy 替它擦
+//   - deploy-config: 端口冲突/OOM/资源不足,介于两者之间,通常调配额可解决
+//   - unknown:     未匹配到关键词
+type BranchIssueCategory = 'cds-runtime' | 'app-code' | 'deploy-config' | 'unknown';
+
+const BRANCH_ISSUE_LABELS: Record<BranchIssueCategory, string> = {
+  'cds-runtime': 'CDS 运行时错误',
+  'app-code': '应用代码错误',
+  'deploy-config': '部署配置错误',
+  'unknown': '未分类错误',
+};
+
+function branchIssueCategory(branch: BranchSummary): BranchIssueCategory {
   const text = [
     branch.errorMessage || '',
     ...Object.values(branch.services || {}).map((service) => service.errorMessage || ''),
   ].join('\n').toLowerCase();
-  if (/cds|forwarder|proxy|调度|scheduler|docker daemon|no space|capacity|容量|磁盘|内存/.test(text)) {
-    return 'CDS 环境异常';
+  if (!text.trim()) return 'unknown';
+
+  // CDS 运行时(容器丢失/CDS 重启中断/镜像拉取/调度器/forwarder/磁盘容量)
+  if (
+    /容器已丢失|cds 重启|cds重启|上一次部署|forwarder|proxy|调度|scheduler|docker daemon|no space|磁盘|capacity|容量|镜像.*(拉取|pull)|image.*(not found|pull access|manifest unknown|repository does not exist)|network.*(unreachable|超时)/.test(text)
+  ) {
+    return 'cds-runtime';
   }
-  return '应用代码错误';
+
+  // 部署配置(端口冲突 / OOM / 资源不足)
+  // 端口冲突文案与后端 isPortConflictError(src/routes/branches.ts) 对齐:
+  // docker 报 'port is already allocated',内核报 'address already in use'/EADDRINUSE
+  if (/eaddrinuse|address already in use|port is already allocated|端口被占用|端口.*(占用|冲突)|oomkilled|out of memory|cannot allocate memory|内存超限/.test(text)) {
+    return 'deploy-config';
+  }
+
+  // 应用代码(异常退出/缺依赖/启动失败/健康检查)
+  if (
+    /容器异常退出|容器.*启动后退出|疑似崩溃|exit\s*(code|ed with code)?\s*[:=]?\s*\d+|cannot find module|module not found|module_not_found|启动信号超时|健康检查.*超时|health.*(check.*timeout|probe failed)|readiness probe failed/.test(text)
+  ) {
+    return 'app-code';
+  }
+
+  return 'unknown';
+}
+
+function branchIssueLabel(branch: BranchSummary): string {
+  return BRANCH_ISSUE_LABELS[branchIssueCategory(branch)];
 }
 
 function branchIssueClass(branch: BranchSummary): string {
-  return branchIssueLabel(branch) === 'CDS 环境异常'
-    ? 'border-destructive/40 bg-destructive/15 text-destructive font-semibold'
-    : 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold';
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') {
+    return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
+  }
+  if (category === 'app-code') {
+    return 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold';
+  }
+  if (category === 'deploy-config') {
+    return 'border-orange-500/45 bg-orange-500/10 text-orange-700 dark:text-orange-300 font-semibold';
+  }
+  return 'border-muted-foreground/30 bg-muted/30 text-muted-foreground font-semibold';
 }
 
 function branchIssueRailClass(branch: BranchSummary): string {
-  return branchIssueLabel(branch) === 'CDS 环境异常' ? 'bg-destructive' : 'bg-amber-500';
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') return 'bg-destructive';
+  if (category === 'app-code') return 'bg-amber-500';
+  if (category === 'deploy-config') return 'bg-orange-500';
+  return 'bg-muted-foreground/40';
+}
+
+// 错误卡片整体描边/底色/光晕 —— 必须与 badge/rail 同一 category 配色,
+// 否则胶囊显橙(deploy-config)/灰(unknown)而卡片边框还是琥珀,视觉割裂。
+function branchIssueCardClass(branch: BranchSummary): string {
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') {
+    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]';
+  }
+  if (category === 'app-code') {
+    return 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]';
+  }
+  if (category === 'deploy-config') {
+    return 'border-orange-500/55 bg-orange-500/5 ring-1 ring-orange-500/20 shadow-[0_4px_16px_-4px_rgba(249,115,22,0.32)]';
+  }
+  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_4px_16px_-4px_rgba(100,116,139,0.28)]';
+}
+
+// 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
+function branchIssueHintTextClass(branch: BranchSummary): string {
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') return 'text-destructive/80';
+  if (category === 'app-code') return 'text-amber-700/90 dark:text-amber-300/90';
+  if (category === 'deploy-config') return 'text-orange-700/90 dark:text-orange-300/90';
+  return 'text-muted-foreground';
 }
 
 function statusLabel(status: BranchSummary['status'] | ServiceState['status']): string {
@@ -3675,9 +3753,7 @@ function BranchCard({
       data-branch-card-id={branch.id}
       className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
-          ? branchIssueLabel(branch) === 'CDS 环境异常'
-            ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
-            : 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]'
+          ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
@@ -4294,11 +4370,7 @@ function BranchFailureHint({
   const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
     <div
-      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${
-        branchIssueLabel(branch) === 'CDS 环境异常'
-          ? 'text-destructive/80'
-          : 'text-amber-700/90 dark:text-amber-300/90'
-      }`}
+      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${branchIssueHintTextClass(branch)}`}
       title={message}
     >
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
