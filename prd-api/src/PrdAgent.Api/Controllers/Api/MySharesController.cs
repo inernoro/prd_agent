@@ -122,7 +122,9 @@ public class MySharesController : ControllerBase
                     IsRevoked = s.IsRevoked,
                     ExpiresAt = s.ExpiresAt,
                     CreatedAt = s.CreatedAt,
-                    PrimaryPath = $"/public/share/{s.Token}",
+                    // 知识库历史有效路径是 /library/share/{token}（与 DocumentStorePage 创建 URL +
+                    // ShortLinkRouter navigate 一致）；App.tsx 没有 /public/share/:token 路由
+                    PrimaryPath = $"/library/share/{s.Token}",
                 });
             }
         }

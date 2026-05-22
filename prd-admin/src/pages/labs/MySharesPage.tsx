@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Share2, ExternalLink, Copy, Check, Eye, AlertCircle, FilterX } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -49,14 +49,19 @@ export default function MySharesPage() {
   const [filter, setFilter] = useState<string>('');
   const [showRevoked, setShowRevoked] = useState(true);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  // 防过期响应：filter / showRevoked 快速切换时，丢弃旧请求的回包（项目 learned rule）
+  const fetchIdRef = useRef(0);
 
   const load = async () => {
+    const fetchId = ++fetchIdRef.current;
     setLoading(true);
     setError(null);
     const res = await listMyShares({
       targetType: filter || undefined,
       includeRevoked: showRevoked,
     });
+    // 已有更新的请求发出 → 丢弃本次过期回包
+    if (fetchId !== fetchIdRef.current) return;
     setLoading(false);
     if (!res.success || !res.data) {
       setError(res.error?.message || '加载失败');

@@ -36,7 +36,7 @@ const LEGACY_PATH: Record<string, (t: string) => string | null> = {
   web_page: (t) => `/s/wp/${t}`,
   report: (t) => `/s/report-team/${t}`,
   skill: (t) => `/s/skill/${t}`,
-  document_store: (t) => `/public/share/${t}`,
+  document_store: (t) => `/library/share/${t}`, // App.tsx 无 /public/share/:token，有效路径是 /library/share/
   workflow: () => null, // 工作流没有旧版独立路径，新旧都走 /s/{token}
 };
 

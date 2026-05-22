@@ -2258,32 +2258,21 @@ public class DocumentStoreController : ControllerBase
         };
         await _db.DocumentStoreShareLinks.InsertOneAsync(link);
 
-        // P1 URL 统一：注册到 ShortLink 让 /s/{token} 和 /s/{seq} 都能命中
-        long shortSeq = 0;
+        // 注册到 ShortLink 全局索引（让 /s/{seq} 数字短链 + 分享总管理能查到）
         try
         {
-            shortSeq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.DocumentStore, link.Token);
+            await _shortLinks.AllocateAsync(ShortLinkTargetTypes.DocumentStore, link.Token);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "为知识库分享 {LinkId} 分配短链 seq 失败", link.Id);
         }
 
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            link.Id,
-            link.Token,
-            link.StoreId,
-            link.StoreName,
-            link.Title,
-            link.ExpiresAt,
-            // 恢复原前端期望的 URL：DocumentStorePage 历史一直用 /library/share/{token}
-            //（事实自查：App.tsx 没有 /public/share/:token 路由；强行改会破坏前端兼容）
-            shareUrl = $"/library/share/{link.Token}",
-            shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
-            // 字母统一长链（ShortLink 索引支持），保留作为高级选项
-            unifiedShareUrl = $"/s/{link.Token}",
-        }));
+        // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变
+        //（前端 DocumentStorePage prepend 到 list 后会渲染 viewCount/createdAt/isRevoked，
+        //  缺字段会回归；且前端自己用 token 拼 /library/share/{token}，不依赖后端 url 字段）
+        // ShortLink 已通过上面 AllocateAsync 注册，分享总管理 / 体检页另行查询，不靠此返回值。
+        return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
     }
 
     /// <summary>列出某知识库的所有分享链接</summary>
