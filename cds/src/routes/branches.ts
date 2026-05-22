@@ -36,6 +36,7 @@ import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { ProxyService } from '../services/proxy.js';
+import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -3039,6 +3040,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch: entry,
+        source: 'branch-delete',
+        message: 'captured before branch delete removes containers',
+      });
+
       // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
@@ -3549,6 +3558,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
           try {
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+            await archiveBranchContainerLogs({
+              stateService,
+              containerService,
+              branch: entry,
+              source: 'pre-deploy-recreate',
+              profileIds: new Set([profile.id]),
+              message: 'captured before docker rm/run during branch deploy',
+            });
 
             // ── Trace: resolved CDS_* env vars for this service ──
             const cdsVars: Record<string, string> = {};
@@ -4034,6 +4051,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'pre-deploy-recreate',
+          profileIds: new Set([profile.id]),
+          message: 'captured before docker rm/run during single service deploy',
+        });
         await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
@@ -4359,6 +4384,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         svc.status = 'stopped';
       }
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch: entry,
+        source: 'manual-stop',
+        message: 'captured after user stop preserved containers',
+      });
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
@@ -6898,6 +6930,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'cleanup',
+          message: 'captured before cleanup removes branch containers',
+        });
         for (const svc of Object.values(entry.services)) {
           try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
@@ -6991,6 +7030,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 3: stop containers + remove worktrees in parallel, then update state
       await Promise.all(orphans.map(async (entry) => {
         sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'cleanup',
+          message: 'captured before orphan cleanup removes branch containers',
+        });
 
         // Stop all containers for this orphan in parallel
         await Promise.all(
@@ -8513,6 +8559,14 @@ cdscli project list --human
           svc.status = 'building';
 
           try {
+            await archiveBranchContainerLogs({
+              stateService,
+              containerService,
+              branch: entry,
+              source: 'pre-deploy-recreate',
+              profileIds: new Set([profile.id]),
+              message: 'captured before docker rm/run during import deploy',
+            });
             await containerService.runService(entry, profile, svc, (chunk) => {
               sendSSE(res, 'log', { profileId: profile.id, chunk });
             }, mergedEnv);

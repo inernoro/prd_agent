@@ -31,6 +31,7 @@ import { createGracefulShutdownController } from './services/graceful-shutdown.j
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
+import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -531,6 +532,13 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopped';
     }
   }
+  await archiveBranchContainerLogs({
+    stateService,
+    containerService,
+    branch,
+    source: 'scheduler-stop',
+    message: 'captured after scheduler cooling stop preserved containers',
+  });
   branch.status = 'idle';
   // 2026-05-14: 记录调度器降温原因，让用户在 UI 上看清"为什么变灰"。
   // 区分空闲降温和容量驱逐，便于排查。
@@ -679,6 +687,13 @@ const autoLifecycleService = new AutoLifecycleService(
           svc.status = 'stopped';
         }
       }
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch,
+        source: 'auto-lifecycle-stop',
+        message: 'captured after auto-lifecycle stop preserved containers',
+      });
       branch.status = 'idle';
       // 2026-05-14 Cursor Bugbot review 修复：必须同步把 heatState 置 cold。
       // SchedulerService.getHotBranches() 只看 heatState==='hot'（或
@@ -962,6 +977,13 @@ janitorService.setRemoveFn(async (slug: string) => {
             if (!svc.errorMessage) svc.errorMessage = '上一次部署被 CDS 重启中断';
           }
         }
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch,
+          source: 'boot-reconcile',
+          message: `captured when CDS boot reconciled stale in-flight status=${prev}`,
+        });
         staleInFlight++;
       }
     }
@@ -1049,6 +1071,14 @@ janitorService.setRemoveFn(async (slug: string) => {
               note: reason,
             });
           } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
+          await archiveBranchContainerLogs({
+            stateService,
+            containerService,
+            branch,
+            source: 'crash-detected',
+            profileIds: new Set([profileId]),
+            message: reason,
+          });
           stateService.save();
         }
         if (now < att.nextAtMs) continue;

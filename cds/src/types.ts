@@ -629,7 +629,19 @@ export interface ContainerLogArchiveEntry {
   hostPort?: number;
   status?: ServiceState['status'] | string;
   capturedAt: string;
-  source: 'deploy-finalize' | 'deploy-error' | 'container-logs-api' | 'container-logs-stream';
+  source:
+    | 'deploy-finalize'
+    | 'deploy-error'
+    | 'container-logs-api'
+    | 'container-logs-stream'
+    | 'pre-deploy-recreate'
+    | 'manual-stop'
+    | 'scheduler-stop'
+    | 'auto-lifecycle-stop'
+    | 'crash-detected'
+    | 'boot-reconcile'
+    | 'branch-delete'
+    | 'cleanup';
   sha256: string;
   byteLength: number;
   lineCount: number;
