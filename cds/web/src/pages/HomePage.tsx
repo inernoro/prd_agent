@@ -10,24 +10,22 @@ const capabilities = [
 
 export function HomePage(): JSX.Element {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#050608] text-white">
+    <main className="relative min-h-screen overflow-hidden bg-[#120F17] text-white">
       <div className="absolute inset-0">
         <Prism
-          animationType="3drotate"
-          height={3.6}
-          baseWidth={5.8}
-          scale={3.4}
-          glow={1.6}
-          bloom={1.35}
-          noise={0.16}
-          hueShift={0.36}
-          colorFrequency={1.12}
-          timeScale={0.18}
+          animationType="rotate"
+          timeScale={0.5}
+          height={3.5}
+          baseWidth={5.5}
+          scale={3.6}
+          hueShift={0}
+          colorFrequency={1}
+          noise={0}
+          glow={1}
           transparent
         />
       </div>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_22%_18%,rgba(255,255,255,0.16),transparent_34%),linear-gradient(90deg,rgba(5,6,8,0.96),rgba(5,6,8,0.76)_42%,rgba(5,6,8,0.42))]" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:72px_72px] opacity-35 [mask-image:radial-gradient(circle_at_42%_38%,black,transparent_76%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(18,15,23,0.92),rgba(18,15,23,0.62)_45%,rgba(18,15,23,0.14)),linear-gradient(180deg,rgba(18,15,23,0.12),rgba(18,15,23,0.58)_82%,#120F17)]" />
 
       <section className="relative z-10 flex min-h-screen flex-col px-6 py-6 sm:px-10 lg:px-14">
         <header className="flex items-center justify-between rounded-full border border-white/10 bg-white/[0.045] px-4 py-3 shadow-[0_24px_80px_rgba(0,0,0,0.24)] backdrop-blur-2xl">

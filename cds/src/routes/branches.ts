@@ -11548,7 +11548,6 @@ function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'
   const panel = isLight ? 'rgba(255,255,255,.58)' : 'rgba(255,255,255,.035)';
   const line = isLight ? 'rgba(24,24,27,.12)' : 'rgba(255,255,255,.12)';
   const danger = isLight ? '#b91c1c' : '#fca5a5';
-  const ring = isLight ? 'rgba(24,24,27,.18)' : 'rgba(255,255,255,.28)';
 
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head>
@@ -11556,13 +11555,13 @@ function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'
 <title>启动失败 · ${safeSlug}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{color-scheme:${isLight ? 'light' : 'dark'};--bg:${bg};--text:${text};--muted:${muted};--panel:${panel};--line:${line};--danger:${danger};--ring:${ring}}
+:root{color-scheme:${isLight ? 'light' : 'dark'};--bg:${bg};--text:${text};--muted:${muted};--panel:${panel};--line:${line};--danger:${danger}}
 html,body{min-height:100%}
 body{min-height:100vh;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-body::before{content:"";position:fixed;inset:0;background:radial-gradient(760px 560px at 54% 46%,rgba(255,255,255,${isLight ? '.52' : '.16'}),transparent 72%),linear-gradient(90deg,${isLight ? 'rgba(247,247,244,.88),rgba(247,247,244,.18),rgba(247,247,244,.74)' : 'rgba(5,4,7,.88),rgba(5,4,7,.12),rgba(5,4,7,.78)'});z-index:1;pointer-events:none}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(760px 560px at 58% 48%,rgba(82,39,255,${isLight ? '.12' : '.2'}),transparent 66%),linear-gradient(90deg,${isLight ? 'rgba(247,247,244,.9),rgba(247,247,244,.34),rgba(247,247,244,.82)' : 'rgba(5,4,7,.92),rgba(5,4,7,.22),rgba(5,4,7,.82)'});z-index:1;pointer-events:none}
 body::after{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;opacity:${isLight ? '.18' : '.28'};background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:84px 84px;mask-image:radial-gradient(circle at 52% 48%,#000 0%,transparent 72%)}
-.rings{position:fixed;inset:-16%;z-index:0;pointer-events:none;background:repeating-radial-gradient(circle at 58% 48%,transparent 0 84px,var(--ring) 86px 88px,transparent 90px 126px);animation:drift 12s ease-in-out infinite alternate}
-.rings::before{content:"";position:absolute;inset:0;background:conic-gradient(from 20deg at 58% 48%,transparent 0 22%,rgba(255,255,255,${isLight ? '.18' : '.32'}) 28%,transparent 42%,rgba(255,255,255,${isLight ? '.12' : '.22'}) 58%,transparent 74%);mix-blend-mode:${isLight ? 'multiply' : 'screen'};filter:blur(1px);animation:spin 18s linear infinite}
+.light-pillar{position:fixed;inset:0;z-index:0;width:100%;height:100%;display:block;mix-blend-mode:${isLight ? 'multiply' : 'screen'}}
+.light-pillar.is-static{background:linear-gradient(100deg,transparent 18%,rgba(82,39,255,.38) 46%,rgba(255,159,252,.36) 54%,transparent 82%);filter:blur(18px)}
 .shell{position:relative;z-index:2;min-height:100vh;display:grid;align-items:center;padding:clamp(34px,7vw,96px)}
 .content{max-width:720px;text-shadow:0 20px 80px rgba(0,0,0,${isLight ? '.08' : '.72'})}
 .eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;color:var(--muted);font:600 11px/1 "JetBrains Mono","SFMono-Regular",monospace;letter-spacing:.28em;text-transform:uppercase}
@@ -11573,12 +11572,10 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:-.055em;margi
 .actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
 .btn{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:10px 16px;text-decoration:none;font-size:13px;font-weight:700}
 .hint{margin-top:28px;color:var(--muted);font-size:12px}
-@keyframes drift{0%{transform:translate3d(-2%,0,0) scale(1)}100%{transform:translate3d(2%,-2%,0) scale(1.04)}}
-@keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{transform:scale(.76);opacity:.62}50%{transform:scale(1.24);opacity:1}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style></head><body>
-<div class="rings" aria-hidden="true"></div>
+<canvas class="light-pillar" id="light-pillar" aria-hidden="true"></canvas>
 <main class="shell">
   <section class="content">
     <div class="eyebrow">CDS Preview Failed</div>
@@ -11592,5 +11589,137 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:-.055em;margi
     <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
   </section>
 </main>
+<script id="light-pillar-vertex" type="x-shader/x-vertex">
+attribute vec2 aPosition;
+varying vec2 vUv;
+void main(){vUv=(aPosition+1.0)*0.5;gl_Position=vec4(aPosition,0.0,1.0);}
+</script>
+<script id="light-pillar-fragment" type="x-shader/x-fragment">
+precision highp float;
+uniform float uTime;
+uniform vec2 uResolution;
+uniform vec3 uTopColor;
+uniform vec3 uBottomColor;
+uniform float uIntensity;
+uniform float uGlowAmount;
+uniform float uPillarWidth;
+uniform float uPillarHeight;
+uniform float uNoiseIntensity;
+uniform float uRotCos;
+uniform float uRotSin;
+uniform float uPillarRotCos;
+uniform float uPillarRotSin;
+uniform float uWaveSin;
+uniform float uWaveCos;
+varying vec2 vUv;
+const float STEP_MULT=1.0;
+const int MAX_ITER=80;
+const int WAVE_ITER=4;
+vec3 tanh3(vec3 x){
+  vec3 e2x=exp(2.0*x);
+  return (e2x-1.0)/(e2x+1.0);
+}
+void main(){
+  vec2 uv=(vUv*2.0-1.0)*vec2(uResolution.x/uResolution.y,1.0);
+  uv=vec2(uPillarRotCos*uv.x-uPillarRotSin*uv.y,uPillarRotSin*uv.x+uPillarRotCos*uv.y);
+  vec3 ro=vec3(0.0,0.0,-10.0);
+  vec3 rd=normalize(vec3(uv,1.0));
+  vec3 col=vec3(0.0);
+  float t=0.1;
+  for(int i=0;i<MAX_ITER;i++){
+    vec3 p=ro+rd*t;
+    p.xz=vec2(uRotCos*p.x-uRotSin*p.z,uRotSin*p.x+uRotCos*p.z);
+    vec3 q=p;
+    q.y=p.y*uPillarHeight+uTime;
+    float freq=1.0;
+    float amp=1.0;
+    for(int j=0;j<WAVE_ITER;j++){
+      q.xz=vec2(uWaveCos*q.x-uWaveSin*q.z,uWaveSin*q.x+uWaveCos*q.z);
+      q+=cos(q.zxy*freq-uTime*float(j)*2.0)*amp;
+      freq*=2.0;
+      amp*=0.5;
+    }
+    float d=length(cos(q.xz))-0.2;
+    float bound=length(p.xz)-uPillarWidth;
+    float k=4.0;
+    float h=max(k-abs(d-bound),0.0);
+    d=max(d,bound)+h*h*0.0625/k;
+    d=abs(d)*0.15+0.01;
+    float grad=clamp((15.0-p.y)/30.0,0.0,1.0);
+    col+=mix(uBottomColor,uTopColor,grad)/d;
+    t+=d*STEP_MULT;
+    if(t>50.0)break;
+  }
+  float widthNorm=uPillarWidth/3.0;
+  col=tanh3(col*uGlowAmount/widthNorm);
+  col-=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)/15.0*uNoiseIntensity;
+  gl_FragColor=vec4(col*uIntensity,1.0);
+}
+</script>
+<script>
+(function(){
+  var canvas=document.getElementById('light-pillar');
+  if(!canvas)return;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var gl=canvas.getContext('webgl',{alpha:true,antialias:false,depth:false,stencil:false});
+  if(!gl){canvas.className='light-pillar is-static';return;}
+  function source(id){var n=document.getElementById(id);return n?n.textContent:'';}
+  function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader failed');}return s;}
+  function hex(v){var r=String(v).replace('#','');var n=parseInt(r.length===3?r.replace(/(.)/g,'$1$1'):r,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
+  var program;
+  try{
+    program=gl.createProgram();
+    gl.attachShader(program,shader(gl.VERTEX_SHADER,source('light-pillar-vertex')));
+    gl.attachShader(program,shader(gl.FRAGMENT_SHADER,source('light-pillar-fragment')));
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'link failed');
+  }catch(e){canvas.className='light-pillar is-static';return;}
+  gl.useProgram(program);
+  var buffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  var pos=gl.getAttribLocation(program,'aPosition');
+  gl.enableVertexAttribArray(pos);
+  gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+  var loc={};
+  ['uTime','uResolution','uTopColor','uBottomColor','uIntensity','uGlowAmount','uPillarWidth','uPillarHeight','uNoiseIntensity','uRotCos','uRotSin','uPillarRotCos','uPillarRotSin','uWaveSin','uWaveCos'].forEach(function(name){loc[name]=gl.getUniformLocation(program,name);});
+  var top=hex('#5227FF');
+  var bottom=hex('#FF9FFC');
+  var pillarRot=25*Math.PI/180;
+  gl.uniform3f(loc.uTopColor,top[0],top[1],top[2]);
+  gl.uniform3f(loc.uBottomColor,bottom[0],bottom[1],bottom[2]);
+  gl.uniform1f(loc.uIntensity,1);
+  gl.uniform1f(loc.uGlowAmount,.002);
+  gl.uniform1f(loc.uPillarWidth,3);
+  gl.uniform1f(loc.uPillarHeight,.4);
+  gl.uniform1f(loc.uNoiseIntensity,.5);
+  gl.uniform1f(loc.uPillarRotCos,Math.cos(pillarRot));
+  gl.uniform1f(loc.uPillarRotSin,Math.sin(pillarRot));
+  gl.uniform1f(loc.uWaveSin,Math.sin(.4));
+  gl.uniform1f(loc.uWaveCos,Math.cos(.4));
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform2f(loc.uResolution,canvas.width,canvas.height);
+  }
+  function draw(t){
+    var time=reduced?0:t*.001*.3;
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(loc.uTime,time);
+    gl.uniform1f(loc.uRotCos,Math.cos(time*.3));
+    gl.uniform1f(loc.uRotSin,Math.sin(time*.3));
+    gl.drawArrays(gl.TRIANGLES,0,6);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
+</script>
 </body></html>`;
 }

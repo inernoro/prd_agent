@@ -105,9 +105,10 @@ const loadingPages: LoadingPage[] = [
   {
     id: 'cds-home-loading',
     name: 'CDS 首页加载态',
-    description: '控制台首页或项目列表首次加载时的品牌化等待状态。',
+    description: '控制台首页或项目列表首次加载时复用分支环境正在构建的 Magic Rings 等待状态。',
     icon: Home,
-    kind: 'local',
+    kind: 'iframe',
+    endpoint: '/api/loading-pages/cds-waiting-room/preview',
   },
   {
     id: 'branch-gone',
@@ -131,9 +132,9 @@ export function LoadingPagesTab(): JSX.Element {
   const previewUrl = useMemo(() => {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
     const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
-    if (page.id === 'cds-waiting-room') {
+    if (page.id === 'cds-waiting-room' || page.id === 'cds-home-loading') {
       params.set('status', scenario?.status || 'building');
-      params.set('branch', 'reactbits-shape-grid-preview');
+      params.set('branch', page.id === 'cds-home-loading' ? 'cds-home-loading' : 'reactbits-magic-rings-preview');
       params.set('waitingProfile', 'api');
     } else if (page.id === 'branch-gone') {
       params.set('branch', 'claude/deleted-preview-branch-demo');

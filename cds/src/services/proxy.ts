@@ -853,8 +853,8 @@ export class ProxyService {
 	:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--accent:#ffffff;--accent-two:#9f5050;--sync:#22c55e}
 	html,body{min-height:100%}
 	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
-	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
-	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 52% 46%,rgba(255,255,255,.08),transparent 36%,rgba(18,15,23,.82) 100%),linear-gradient(90deg,rgba(18,15,23,.88),rgba(18,15,23,.2) 48%,rgba(18,15,23,.82));z-index:1}
+	.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
+	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(780px 560px at 50% 50%,rgba(168,85,247,.08),transparent 54%),linear-gradient(90deg,rgba(18,15,23,.9),rgba(18,15,23,.34) 48%,rgba(18,15,23,.86));z-index:1}
 	.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
 	.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
 	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
@@ -888,7 +888,7 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .hint strong{color:#f5f7fa;font-weight:600}
 .note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
 .note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
-.shape-grid-bg.is-static{background:repeating-linear-gradient(30deg,rgba(255,255,255,.075) 0 1px,transparent 1px 34px),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
+.magic-rings-bg.is-static{background:radial-gradient(circle at 50% 50%,rgba(168,85,247,.28),transparent 12%,rgba(99,102,241,.16) 24%,transparent 42%),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
 @keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
 @keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
 @keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
@@ -899,7 +899,7 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
-<canvas class="shape-grid-bg" id="shape-grid" aria-hidden="true" data-speed="0.39" data-size="34" data-shape="hexagon"></canvas>
+<canvas class="magic-rings-bg" id="magic-rings" aria-hidden="true"></canvas>
 <main class="shell">
   <section class="content">
     <div class="eyebrow">CDS Waiting Room</div>
@@ -929,66 +929,125 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
     </div>
   </section>
 </main>
+<script id="magic-rings-vertex" type="x-shader/x-vertex">
+attribute vec2 aPosition;
+void main(){gl_Position=vec4(aPosition,0.0,1.0);}
+</script>
+<script id="magic-rings-fragment" type="x-shader/x-fragment">
+precision highp float;
+uniform float uTime,uAttenuation,uLineThickness;
+uniform float uBaseRadius,uRadiusStep,uScaleRate;
+uniform float uOpacity,uNoiseAmount,uRotation,uRingGap;
+uniform float uFadeIn,uFadeOut;
+uniform float uMouseInfluence,uHoverAmount,uHoverScale,uParallax,uBurst;
+uniform vec2 uResolution,uMouse;
+uniform vec3 uColor,uColorTwo;
+uniform int uRingCount;
+const float HP=1.5707963;
+const float CYCLE=3.45;
+float fade(float t){return t<uFadeIn?smoothstep(0.0,uFadeIn,t):1.0-smoothstep(uFadeOut,CYCLE-0.2,t);}
+float ring(vec2 p,float ri,float cut,float t0,float px){
+  float t=mod(uTime+t0,CYCLE);
+  float r=ri+t/CYCLE*uScaleRate;
+  float d=abs(length(p)-r);
+  float a=atan(abs(p.y),abs(p.x))/HP;
+  float th=max(1.0-a,0.5)*px*uLineThickness;
+  float h=(1.0-smoothstep(th,th*1.5,d))+1.0;
+  d+=pow(cut*a,3.0)*r;
+  return h*exp(-uAttenuation*d)*fade(t);
+}
+void main(){
+  float px=1.0/min(uResolution.x,uResolution.y);
+  vec2 p=(gl_FragCoord.xy-0.5*uResolution.xy)*px;
+  float cr=cos(uRotation),sr=sin(uRotation);
+  p=mat2(cr,-sr,sr,cr)*p;
+  p-=uMouse*uMouseInfluence;
+  float sc=mix(1.0,uHoverScale,uHoverAmount)+uBurst*0.3;
+  p/=sc;
+  vec3 c=vec3(0.0);
+  float rcf=max(float(uRingCount)-1.0,1.0);
+  for(int i=0;i<10;i++){
+    if(i>=uRingCount)break;
+    float fi=float(i);
+    vec2 pr=p-fi*uParallax*uMouse;
+    vec3 rc=mix(uColor,uColorTwo,fi/rcf);
+    c=mix(c,rc,vec3(ring(pr,uBaseRadius+fi*uRadiusStep,pow(uRingGap,fi),i==0?0.0:2.95*fi,px)));
+  }
+  c*=1.0+uBurst*2.0;
+  float n=fract(sin(dot(gl_FragCoord.xy+uTime*100.0,vec2(12.9898,78.233)))*43758.5453);
+  c+=(n-0.5)*uNoiseAmount;
+  gl_FragColor=vec4(c,max(c.r,max(c.g,c.b))*uOpacity);
+}
+</script>
 	<script>
 (function(){
-  var canvas=document.getElementById('shape-grid');
+  var canvas=document.getElementById('magic-rings');
   if(!canvas) return;
   var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var ctx=canvas.getContext('2d');
-  if(!ctx){
-    canvas.className='shape-grid-bg is-static';
+  var gl=canvas.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl){
+    canvas.className='magic-rings-bg is-static';
     return;
   }
-  var speed=0.39;
-  var size=34;
-  var offset={x:0,y:0};
-  var hexHoriz=size*1.5;
-  var hexVert=size*Math.sqrt(3);
+  function source(id){var node=document.getElementById(id);return node?node.textContent:'';}
+  function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader compile failed');}return s;}
+  function hex(hexColor){var raw=String(hexColor).replace('#','');var n=parseInt(raw.length===3?raw.replace(/(.)/g,'$1$1'):raw,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
+  var program;
+  try{
+    program=gl.createProgram();
+    gl.attachShader(program,shader(gl.VERTEX_SHADER,source('magic-rings-vertex')));
+    gl.attachShader(program,shader(gl.FRAGMENT_SHADER,source('magic-rings-fragment')));
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'program link failed');
+  }catch(err){
+    canvas.className='magic-rings-bg is-static';
+    return;
+  }
+  var buffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  gl.useProgram(program);
+  var position=gl.getAttribLocation(program,'aPosition');
+  gl.enableVertexAttribArray(position);
+  gl.vertexAttribPointer(position,2,gl.FLOAT,false,0,0);
+  var loc={};
+  ['uTime','uAttenuation','uLineThickness','uBaseRadius','uRadiusStep','uScaleRate','uOpacity','uNoiseAmount','uRotation','uRingGap','uFadeIn','uFadeOut','uMouseInfluence','uHoverAmount','uHoverScale','uParallax','uBurst','uResolution','uMouse','uColor','uColorTwo','uRingCount'].forEach(function(name){loc[name]=gl.getUniformLocation(program,name);});
+  var color=hex('#A855F7');
+  var colorTwo=hex('#6366F1');
+  gl.uniform1f(loc.uAttenuation,10);
+  gl.uniform1f(loc.uLineThickness,2);
+  gl.uniform1f(loc.uBaseRadius,.35);
+  gl.uniform1f(loc.uRadiusStep,.1);
+  gl.uniform1f(loc.uScaleRate,.1);
+  gl.uniform1f(loc.uOpacity,1);
+  gl.uniform1f(loc.uNoiseAmount,.1);
+  gl.uniform1f(loc.uRotation,0);
+  gl.uniform1f(loc.uRingGap,1.5);
+  gl.uniform1f(loc.uFadeIn,.7);
+  gl.uniform1f(loc.uFadeOut,.5);
+  gl.uniform1f(loc.uMouseInfluence,0);
+  gl.uniform1f(loc.uHoverAmount,0);
+  gl.uniform1f(loc.uHoverScale,1.2);
+  gl.uniform1f(loc.uParallax,.05);
+  gl.uniform1f(loc.uBurst,0);
+  gl.uniform3f(loc.uColor,color[0],color[1],color[2]);
+  gl.uniform3f(loc.uColorTwo,colorTwo[0],colorTwo[1],colorTwo[2]);
+  gl.uniform1i(loc.uRingCount,6);
   function resize(){
     var d=Math.min(window.devicePixelRatio||1,2);
     canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
     canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
     canvas.style.width='100%';
     canvas.style.height='100%';
-    ctx.setTransform(d,0,0,d,0,0);
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform2f(loc.uResolution,canvas.width,canvas.height);
   }
-  function drawHex(cx,cy,r){
-    ctx.beginPath();
-    for(var i=0;i<6;i+=1){
-      var angle=Math.PI/3*i;
-      var x=cx+r*Math.cos(angle);
-      var y=cy+r*Math.sin(angle);
-      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
-    }
-    ctx.closePath();
-  }
-  function draw(){
-    var width=canvas.offsetWidth;
-    var height=canvas.offsetHeight;
-    ctx.clearRect(0,0,width,height);
-    offset.x=(offset.x-(reduced?0:speed)+hexHoriz*2)%(hexHoriz*2);
-    offset.y=(offset.y-(reduced?0:speed)+hexVert)%hexVert;
-    var colShift=Math.floor(offset.x/hexHoriz);
-    var offsetX=((offset.x%hexHoriz)+hexHoriz)%hexHoriz;
-    var offsetY=((offset.y%hexVert)+hexVert)%hexVert;
-    var cols=Math.ceil(width/hexHoriz)+3;
-    var rows=Math.ceil(height/hexVert)+3;
-    ctx.lineWidth=1;
-    ctx.strokeStyle='rgba(255,255,255,0.09)';
-    for(var col=-2;col<cols;col+=1){
-      for(var row=-2;row<rows;row+=1){
-        var cx=col*hexHoriz+offsetX;
-        var cy=row*hexVert+((col+colShift)%2!==0?hexVert/2:0)+offsetY;
-        drawHex(cx,cy,size);
-        ctx.stroke();
-      }
-    }
-    var gradient=ctx.createRadialGradient(width*0.54,height*0.46,0,width*0.54,height*0.46,Math.sqrt(width*width+height*height)/2);
-    gradient.addColorStop(0,'rgba(255,255,255,0.02)');
-    gradient.addColorStop(0.5,'rgba(18,15,23,0.14)');
-    gradient.addColorStop(1,'rgba(18,15,23,0.72)');
-    ctx.fillStyle=gradient;
-    ctx.fillRect(0,0,width,height);
+  function draw(t){
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(loc.uTime,reduced?0:t*.001);
+    gl.uniform2f(loc.uMouse,0,0);
+    gl.drawArrays(gl.TRIANGLES,0,6);
     requestAnimationFrame(draw);
   }
   resize();
