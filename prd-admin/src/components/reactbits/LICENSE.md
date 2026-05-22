@@ -19,6 +19,16 @@ upstream changed.
 | `PixelCard.tsx` | `src/ts-tailwind/Components/PixelCard/PixelCard.tsx` | TS + Tailwind |
 | `BlurText.tsx` / `CountUp.tsx` / `DecryptedText.tsx` / `ShinyText.tsx` / `SplitText.tsx` | same path tree | TS + Tailwind |
 
+## 本地修改（偏离上游）
+
+为了让 git diff 上游保持清晰，我们尽量不改 vendored 文件。已知的唯一偏离：
+
+- `PixelCard.tsx`：新增可选 prop `autoAppear?: boolean`（默认 false，等价上游行为）。
+  设为 true 时挂载即播放 appear 动画并常驻，忽略 mouseleave/blur 的 disappear。
+  上游 PixelCard 是 hover-only（不 hover 画布空白），不适合"卡片身份视觉"这种
+  需要像素一直可见的场景，故加此开关。相关行均带 `// 本地修改` 注释，方便升级时
+  重新 cherry-pick。
+
 ## Attribution
 
 Copyright (c) 2024 David Haz Dev. Licensed under MIT + Commons Clause —

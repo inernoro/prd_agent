@@ -123,16 +123,13 @@ function SkillFavorite({ item }: { item: MarketplaceSkill }) {
   );
 }
 
-// ── 官方卡 PixelCard 包裹（解决 reactbits 默认 hover-only 问题）─────────────
+// ── 官方卡 PixelCard 包裹 ─────────────────────────────────────────────────
 //
-// reactbits 的 PixelCard 上游设计是：pixel.size 初始为 0，只在 onMouseEnter/onFocus
-// 时调 appear() 让像素生长。静止状态画布完全空白 —— 对"卡片身份视觉"场景不合适。
-//
-// 不改 vendored 源码（保留 git diff 上游能力），改用外层 wrapper：
-//   1) noFocus={false} 让 onFocus 也能触发 appear
-//   2) 挂载完后 50ms（等 ResizeObserver/initPixels 跑完）程式 focus 一下
-//   3) tab 切走/blur 后还想保持，监听容器 IntersectionObserver 滚回视口再 focus
-//   4) CSS 关掉 focus 轮廓（mkt-card-pixel-wrap:focus { outline: none } 在 surface.css）
+// reactbits PixelCard 上游是 hover-only（pixel.size 初始 0，靠 mouseenter/focus
+// 触发 appear()），静止画布空白，不适合"卡片身份视觉"。曾试过外层程式 focus()
+// 触发，但 focus 会被抢 / 多卡只能一张持有 / 鼠标一动就 blur 收起 —— 不可靠。
+// 最终给 vendored PixelCard 加了 autoAppear 开关（详见 reactbits/LICENSE.md
+// 「本地修改」段）：挂载即播放、忽略 mouseleave/blur 收起，像素常驻。
 function OfficialPixelWrap({
   colors,
   children,
@@ -140,42 +137,17 @@ function OfficialPixelWrap({
   colors: string;
   children: React.ReactNode;
 }) {
-  const wrapRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    const node = wrapRef.current?.firstElementChild as HTMLElement | null;
-    if (!node) return;
-    const trigger = () => node.focus?.({ preventScroll: true });
-    // 等 PixelCard initPixels 在 useEffect 内跑完
-    const t = window.setTimeout(trigger, 80);
-    // 滚回视口时再 focus 一次，避免长列表里偶尔退化
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) trigger();
-        }
-      },
-      { threshold: 0.4 },
-    );
-    io.observe(node);
-    return () => {
-      clearTimeout(t);
-      io.disconnect();
-    };
-  }, [colors]);
-
   return (
-    <div ref={wrapRef} style={{ display: 'contents' }}>
-      <PixelCard
-        className="mkt-card-pixel-wrap !w-full !h-[210px] !aspect-auto !rounded-[14px] !border-0 focus:!outline-none"
-        colors={colors}
-        gap={6}
-        speed={28}
-        noFocus={false}
-      >
-        {children}
-      </PixelCard>
-    </div>
+    <PixelCard
+      className="mkt-card-pixel-wrap !w-full !h-[210px] !aspect-auto !rounded-[14px] !border-0"
+      colors={colors}
+      gap={6}
+      speed={28}
+      noFocus
+      autoAppear
+    >
+      {children}
+    </PixelCard>
   );
 }
 

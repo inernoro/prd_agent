@@ -154,6 +154,12 @@ interface PixelCardProps {
   speed?: number;
   colors?: string;
   noFocus?: boolean;
+  /**
+   * 本仓库新增（非上游）：true 时挂载即播放 appear 动画并常驻，忽略 mouseleave/blur 的
+   * disappear —— 用于"卡片身份视觉"这种需要像素一直可见、不依赖 hover 的场景。
+   * 详见 reactbits/LICENSE.md 的「本地修改」段。
+   */
+  autoAppear?: boolean;
   className?: string;
   children: React.ReactNode;
 }
@@ -172,6 +178,7 @@ export default function PixelCard({
   speed,
   colors,
   noFocus,
+  autoAppear = false,
   className = '',
   children
 }: PixelCardProps): JSX.Element {
@@ -254,12 +261,16 @@ export default function PixelCard({
   };
 
   const onMouseEnter = () => handleAnimation('appear');
-  const onMouseLeave = () => handleAnimation('disappear');
+  const onMouseLeave = () => {
+    if (autoAppear) return; // 本地修改：常驻模式不在移出时收起
+    handleAnimation('disappear');
+  };
   const onFocus: React.FocusEventHandler<HTMLDivElement> = e => {
     if (e.currentTarget.contains(e.relatedTarget)) return;
     handleAnimation('appear');
   };
   const onBlur: React.FocusEventHandler<HTMLDivElement> = e => {
+    if (autoAppear) return; // 本地修改：常驻模式不在失焦时收起
     if (e.currentTarget.contains(e.relatedTarget)) return;
     handleAnimation('disappear');
   };
@@ -268,10 +279,12 @@ export default function PixelCard({
     initPixels();
     const observer = new ResizeObserver(() => {
       initPixels();
+      if (autoAppear) handleAnimation('appear'); // 本地修改：尺寸变化后重新点亮
     });
     if (containerRef.current) {
       observer.observe(containerRef.current);
     }
+    if (autoAppear) handleAnimation('appear'); // 本地修改：挂载即播放，无需 hover
     return () => {
       observer.disconnect();
       if (animationRef.current !== null) {
@@ -279,7 +292,7 @@ export default function PixelCard({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finalGap, finalSpeed, finalColors, finalNoFocus]);
+  }, [finalGap, finalSpeed, finalColors, finalNoFocus, autoAppear]);
 
   return (
     <div
