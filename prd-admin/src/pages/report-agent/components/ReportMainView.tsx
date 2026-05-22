@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Plus, Calendar, FileText,
   CheckCircle2, Clock, AlertCircle, Send, Pencil,
-  ArrowRight,
+  ArrowRight, LayoutGrid, CalendarDays, ChevronRight,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -52,6 +52,9 @@ function parseWeekKey(weekKey: string): WeekRef {
 // formatWeekLabel/formatWeekDateRange 共享自 utils/weekRange.ts（用户反馈："第 X 周"看不出是哪几天）
 const formatWeekLabel = formatWeekLabelWithRange;
 
+// 「我的周报」列表视图模式 sessionStorage key（cards / timeline）
+const REPORT_VIEW_MODE_KEY = 'report-agent:my-reports-view-mode';
+
 // 颜色三元组(color/bg/border)统一走 useStatusChipConfig() — SSOT;
 // label / icon 各页面自管,因为不同页面 icon 风格略有差异。
 const STATUS_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
@@ -80,6 +83,16 @@ export function ReportMainView() {
   const [weekFilterMode, setWeekFilterMode] = useState<'all' | 'specific'>('all');
   const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  // 列表视图：cards = 4 列响应式网格；timeline = 左侧年/月/周折叠树 + 右侧周报卡片面板。
+  // sessionStorage 持久化用户选择，下次进来仍是同一视图。
+  const [viewMode, setViewMode] = useState<'cards' | 'timeline'>(() => {
+    if (typeof window === 'undefined') return 'cards';
+    return window.sessionStorage.getItem(REPORT_VIEW_MODE_KEY) === 'timeline' ? 'timeline' : 'cards';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(REPORT_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
@@ -240,6 +253,41 @@ export function ReportMainView() {
                   ))}
                 </select>
               </div>
+              {/* 视图切换：卡片 / 时间树 */}
+              <div
+                className="inline-flex items-center p-0.5 rounded-lg"
+                style={{
+                  background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
+                  border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+                }}
+              >
+                {([
+                  { key: 'cards', icon: LayoutGrid, title: '卡片视图' },
+                  { key: 'timeline', icon: CalendarDays, title: '时间树视图（按年/月/周展开）' },
+                ] as const).map((v) => {
+                  const Icon = v.icon;
+                  const active = viewMode === v.key;
+                  return (
+                    <button
+                      key={v.key}
+                      className="px-2 py-1 rounded-md transition-all duration-200 flex items-center justify-center"
+                      style={{
+                        color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                        background: active
+                          ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
+                          : 'transparent',
+                        boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
+                      }}
+                      onClick={() => setViewMode(v.key)}
+                      title={v.title}
+                      aria-label={v.title}
+                      aria-pressed={active}
+                    >
+                      <Icon size={14} />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -273,10 +321,17 @@ export function ReportMainView() {
       )}
 
       {hasReports ? (
-        <ReportHistoryStrip
-          groupedReports={groupedReports}
-          onOpen={handleEditReport}
-        />
+        viewMode === 'cards' ? (
+          <ReportHistoryStrip
+            groupedReports={groupedReports}
+            onOpen={handleEditReport}
+          />
+        ) : (
+          <ReportTimelineView
+            reports={filteredReports as ReportLite[]}
+            onOpen={handleEditReport}
+          />
+        )
       ) : hasTeam && hasTemplate ? (
         <div className="flex-1 flex items-center justify-center" style={{ minHeight: 240 }}>
           <div className="flex flex-col items-center gap-4 text-center max-w-sm">
@@ -498,6 +553,477 @@ function MiniReportCard({
       </div>
     </div>
   );
+}
+
+// ────── Report Timeline View（年/月/周折叠树 + 右侧周报内容预览）──────
+
+function ReportTimelineView({
+  reports,
+  onOpen,
+}: {
+  reports: ReportLite[];
+  onOpen: (id: string) => void;
+}) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const statusColors = useStatusChipConfig(isLight);
+
+  // 按 year → month → week 三层分组
+  // 注意：一个 ISO 周可能跨月（如 W18 包含 4/27~5/3），归到「周一所在月」
+  interface WeekGroup {
+    weekYear: number;
+    weekNumber: number;
+    weekStart: Date; // 该周周一 UTC 日期
+    monthForGroup: number; // 1-12，按周一所在月归类
+    reports: ReportLite[];
+  }
+  interface MonthGroup {
+    month: number;
+    weeks: WeekGroup[];
+  }
+  interface YearGroup {
+    year: number;
+    months: MonthGroup[];
+    totalReports: number;
+  }
+  const tree = useMemo<YearGroup[]>(() => {
+    const byWeek = new Map<string, WeekGroup>();
+    for (const r of reports) {
+      const key = `${r.weekYear}-${r.weekNumber}`;
+      if (!byWeek.has(key)) {
+        const start = getISOWeekStartLocal(r.weekYear, r.weekNumber);
+        byWeek.set(key, {
+          weekYear: r.weekYear,
+          weekNumber: r.weekNumber,
+          weekStart: start,
+          monthForGroup: start.getUTCMonth() + 1,
+          reports: [],
+        });
+      }
+      byWeek.get(key)!.reports.push(r);
+    }
+    // 按周一日期倒序
+    const allWeeks = [...byWeek.values()].sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime());
+    // 分组到 year → month
+    const yearMap = new Map<number, Map<number, WeekGroup[]>>();
+    for (const wg of allWeeks) {
+      const y = wg.weekYear;
+      if (!yearMap.has(y)) yearMap.set(y, new Map());
+      const monthMap = yearMap.get(y)!;
+      if (!monthMap.has(wg.monthForGroup)) monthMap.set(wg.monthForGroup, []);
+      monthMap.get(wg.monthForGroup)!.push(wg);
+    }
+    const years: YearGroup[] = [];
+    for (const [year, monthMap] of yearMap) {
+      const months: MonthGroup[] = [];
+      let total = 0;
+      const sortedMonths = [...monthMap.keys()].sort((a, b) => b - a);
+      for (const m of sortedMonths) {
+        const weeks = monthMap.get(m)!;
+        total += weeks.reduce((s, w) => s + w.reports.length, 0);
+        months.push({ month: m, weeks });
+      }
+      years.push({ year, months, totalReports: total });
+    }
+    years.sort((a, b) => b.year - a.year);
+    return years;
+  }, [reports]);
+
+  // 当前年/月/周（用于默认展开 + 高亮）
+  const today = useMemo(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() + 1 };
+  }, []);
+  const currentISO = useMemo(() => getISOWeek(new Date()), []);
+
+  // 默认展开当前年 + 当前月；其他全部折叠
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const init = new Set<string>();
+    init.add(`Y-${today.year}`);
+    init.add(`Y-${today.year}-M-${today.month}`);
+    return init;
+  });
+  const toggle = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // 默认选中：第一个有报告的周（或当前周如果存在）
+  const allWeekKeys = useMemo(() => tree.flatMap((y) => y.months.flatMap((m) => m.weeks)), [tree]);
+  const defaultSelectedKey = useMemo(() => {
+    const cur = allWeekKeys.find((w) => w.weekYear === currentISO.weekYear && w.weekNumber === currentISO.weekNumber);
+    if (cur) return `${cur.weekYear}-${cur.weekNumber}`;
+    return allWeekKeys[0] ? `${allWeekKeys[0].weekYear}-${allWeekKeys[0].weekNumber}` : null;
+  }, [allWeekKeys, currentISO]);
+  const [selectedWeekKey, setSelectedWeekKey] = useState<string | null>(defaultSelectedKey);
+  useEffect(() => {
+    // 当报告集变化导致原选中 key 不存在时，回退到默认
+    if (!selectedWeekKey || !allWeekKeys.some((w) => `${w.weekYear}-${w.weekNumber}` === selectedWeekKey)) {
+      setSelectedWeekKey(defaultSelectedKey);
+    }
+  }, [allWeekKeys, defaultSelectedKey, selectedWeekKey]);
+
+  const selectedWeekGroup = useMemo(
+    () => allWeekKeys.find((w) => `${w.weekYear}-${w.weekNumber}` === selectedWeekKey) ?? null,
+    [allWeekKeys, selectedWeekKey],
+  );
+
+  const treeBg = isLight ? '#FFFFFF' : 'var(--surface-glass)';
+  const treeBorder = isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)';
+
+  return (
+    <div className="flex gap-3" style={{ minHeight: 480 }}>
+      {/* ── 左：年/月/周折叠树 ── */}
+      <aside
+        className="flex-none rounded-xl overflow-y-auto"
+        style={{
+          width: 240,
+          maxHeight: 'calc(100vh - 260px)',
+          background: treeBg,
+          backdropFilter: isLight ? undefined : 'blur(12px)',
+          WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+          border: treeBorder,
+          scrollbarWidth: 'thin',
+        }}
+      >
+        <div className="p-2 flex flex-col gap-0.5">
+          {tree.map((yg) => {
+            const yKey = `Y-${yg.year}`;
+            const yOpen = expanded.has(yKey);
+            return (
+              <div key={yKey} className="flex flex-col">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[12px] font-medium transition-colors hover:bg-[var(--bg-tertiary)]"
+                  style={{ color: 'var(--text-primary)' }}
+                  onClick={() => toggle(yKey)}
+                >
+                  <ChevronRight
+                    size={12}
+                    style={{
+                      color: 'var(--text-muted)',
+                      transform: yOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                      transition: 'transform 150ms',
+                    }}
+                  />
+                  <span>{yg.year}</span>
+                  <span className="ml-auto text-[10px] font-normal" style={{ color: 'var(--text-muted)' }}>
+                    {yg.totalReports}
+                  </span>
+                </button>
+                {yOpen && (
+                  <div className="ml-3 border-l flex flex-col gap-0.5" style={{ borderColor: isLight ? 'var(--hairline)' : 'rgba(148,163,184,0.18)' }}>
+                    {yg.months.map((mg) => {
+                      const mKey = `Y-${yg.year}-M-${mg.month}`;
+                      const mOpen = expanded.has(mKey);
+                      const mTotal = mg.weeks.reduce((s, w) => s + w.reports.length, 0);
+                      return (
+                        <div key={mKey} className="flex flex-col">
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11.5px] transition-colors hover:bg-[var(--bg-tertiary)]"
+                            style={{ color: 'var(--text-secondary)' }}
+                            onClick={() => toggle(mKey)}
+                          >
+                            <ChevronRight
+                              size={11}
+                              style={{
+                                color: 'var(--text-muted)',
+                                transform: mOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                                transition: 'transform 150ms',
+                              }}
+                            />
+                            <span>{mg.month} 月</span>
+                            <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>{mTotal}</span>
+                          </button>
+                          {mOpen && (
+                            <div className="ml-3 flex flex-col gap-0.5">
+                              {mg.weeks.map((wg) => {
+                                const wKey = `${wg.weekYear}-${wg.weekNumber}`;
+                                const isCurrent = wg.weekYear === currentISO.weekYear && wg.weekNumber === currentISO.weekNumber;
+                                const isSelected = wKey === selectedWeekKey;
+                                return (
+                                  <button
+                                    key={wKey}
+                                    type="button"
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all"
+                                    style={{
+                                      background: isSelected
+                                        ? 'rgba(99, 102, 241, 0.12)'
+                                        : 'transparent',
+                                      color: isSelected
+                                        ? 'rgba(129, 140, 248, 1)'
+                                        : (isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)'),
+                                      fontWeight: isSelected || isCurrent ? 600 : 400,
+                                    }}
+                                    onClick={() => setSelectedWeekKey(wKey)}
+                                    title={isCurrent ? '当前周' : undefined}
+                                  >
+                                    <span
+                                      className="w-1 h-1 rounded-full flex-shrink-0"
+                                      style={{
+                                        background: isCurrent
+                                          ? 'rgba(99, 102, 241, 0.9)'
+                                          : 'transparent',
+                                      }}
+                                    />
+                                    <span>{formatWeekDateRange(wg)}</span>
+                                    <span className="ml-auto text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                                      W{String(wg.weekNumber).padStart(2, '0')}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* ── 右：选中周的周报内容预览 ── */}
+      <section
+        className="flex-1 min-w-0 rounded-xl overflow-y-auto"
+        style={{
+          maxHeight: 'calc(100vh - 260px)',
+          background: treeBg,
+          backdropFilter: isLight ? undefined : 'blur(12px)',
+          WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+          border: treeBorder,
+          scrollbarWidth: 'thin',
+        }}
+      >
+        {selectedWeekGroup ? (
+          <div className="p-5 flex flex-col gap-5">
+            <header className="flex items-baseline justify-between flex-wrap gap-2">
+              <div className="flex items-baseline gap-2">
+                <h2
+                  className="text-[20px] font-semibold leading-tight"
+                  style={{
+                    color: 'var(--text-primary)',
+                    fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                    letterSpacing: isLight ? '-0.015em' : undefined,
+                  }}
+                >
+                  {formatWeekDateRange(selectedWeekGroup)}
+                </h2>
+                <span className="text-[12px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                  W{String(selectedWeekGroup.weekNumber).padStart(2, '0')} · {selectedWeekGroup.weekYear}
+                </span>
+              </div>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                共 {selectedWeekGroup.reports.length} 份周报
+              </span>
+            </header>
+            {selectedWeekGroup.reports.map((report) => (
+              <TimelineReportItem
+                key={report.id}
+                report={report}
+                isLight={isLight}
+                statusColors={statusColors}
+                onOpen={() => onOpen(report.id)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="p-8 flex flex-col items-center justify-center gap-2 text-center">
+            <FileText size={28} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+            <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>选择左侧任意一周查看周报</div>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/**
+ * 单份周报内容预览：状态 + 团队名 + 各章节内容缩略 + 进度。
+ * 章节 items 直接展开内容（取前 N 字），点击右上「查看完整」跳转详情。
+ */
+function TimelineReportItem({
+  report,
+  isLight,
+  statusColors,
+  onOpen,
+}: {
+  report: ReportLite;
+  isLight: boolean;
+  statusColors: ReturnType<typeof useStatusChipConfig>;
+  onOpen: () => void;
+}) {
+  const colors = statusColors[report.status] || statusColors[WeeklyReportStatus.Draft];
+  const meta = STATUS_LABELS[report.status] || STATUS_LABELS[WeeklyReportStatus.Draft];
+  const StatusIcon = meta.icon;
+  const totalItems = report.sections.reduce((sum, s) => sum + s.items.length, 0);
+  const filledItems = report.sections.reduce(
+    (sum, s) => sum + s.items.filter((i) => i.content.trim()).length, 0,
+  );
+  const progress = totalItems > 0 ? Math.round((filledItems / totalItems) * 100) : 0;
+
+  return (
+    <article
+      className="rounded-xl flex flex-col gap-3 p-4 transition-colors"
+      style={{
+        background: isLight ? 'rgba(15, 23, 42, 0.025)' : 'rgba(255, 255, 255, 0.03)',
+        border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+        borderLeft: `3px solid ${colors.border}`,
+      }}
+    >
+      <div className="flex items-baseline justify-between gap-3 flex-wrap">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span
+            className="inline-flex items-center gap-1 text-[10px] px-2 py-[2px] rounded-full font-semibold uppercase flex-shrink-0"
+            style={{
+              color: colors.color,
+              backgroundColor: colors.bg,
+              letterSpacing: '0.08em',
+            }}
+          >
+            <StatusIcon size={9} />
+            {meta.label}
+          </span>
+          <h3
+            className="text-[15px] font-semibold truncate"
+            style={{
+              color: 'var(--text-primary)',
+              fontFamily: isLight ? 'var(--font-serif)' : undefined,
+            }}
+          >
+            {report.teamName || '未知团队'}
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="text-[11px] underline-offset-2 hover:underline transition-colors"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          查看完整 →
+        </button>
+      </div>
+
+      {/* 章节内容缩略 */}
+      <div className="flex flex-col gap-2.5">
+        {report.sections.map((s, i) => {
+          const filled = s.items.filter((it) => it.content.trim()).length;
+          const total = s.items.length;
+          const isComplete = filled === total && total > 0;
+          return (
+            <div key={i} className="flex flex-col gap-1">
+              <div className="flex items-baseline gap-2">
+                <span
+                  className="text-[11px] font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {s.templateSection?.title || `章节 ${i + 1}`}
+                </span>
+                <span
+                  className="text-[10px] font-mono"
+                  style={{
+                    color: isComplete
+                      ? 'rgba(34, 197, 94, 0.8)'
+                      : filled > 0
+                        ? 'rgba(249, 115, 22, 0.8)'
+                        : 'rgba(148, 163, 184, 0.6)',
+                  }}
+                >
+                  {filled}/{total}
+                </span>
+              </div>
+              {s.items.length > 0 ? (
+                <ul className="flex flex-col gap-0.5 pl-3">
+                  {s.items.slice(0, 5).map((it, idx) => {
+                    const content = it.content.trim();
+                    const preview = content
+                      ? (content.length > 120 ? `${content.slice(0, 120).replace(/\s+/g, ' ')}…` : content.replace(/\s+/g, ' '))
+                      : '（未填写）';
+                    return (
+                      <li
+                        key={idx}
+                        className="text-[12px] leading-relaxed"
+                        style={{
+                          color: content ? 'var(--text-secondary)' : 'var(--text-muted)',
+                          fontStyle: content ? undefined : 'italic',
+                        }}
+                      >
+                        <span className="opacity-50 mr-1">·</span>{preview}
+                      </li>
+                    );
+                  })}
+                  {s.items.length > 5 && (
+                    <li className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      还有 {s.items.length - 5} 条…
+                    </li>
+                  )}
+                </ul>
+              ) : (
+                <span className="text-[11px] pl-3" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                  无条目
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 退回原因 */}
+      {report.returnReason && (
+        <div
+          className="text-[11px] px-3 py-2 rounded-lg leading-relaxed"
+          style={{
+            color: 'rgba(239, 68, 68, 0.85)',
+            backgroundColor: 'rgba(239, 68, 68, 0.06)',
+            border: '1px solid rgba(239, 68, 68, 0.1)',
+          }}
+        >
+          {report.returnReason}
+        </div>
+      )}
+
+      {/* 底部：进度条 + 更新时间 */}
+      <div className="flex items-center gap-3 mt-1">
+        <div
+          className="flex-1 h-1 rounded-full overflow-hidden"
+          style={{ background: isLight ? 'var(--hairline)' : 'var(--bg-tertiary)' }}
+        >
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{
+              width: `${progress}%`,
+              background: progress === 100
+                ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
+                : (isLight ? 'rgba(15, 23, 42, 0.32)' : colors.border),
+            }}
+          />
+        </div>
+        <span className="text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{progress}%</span>
+        <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {new Date(report.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
+        </span>
+      </div>
+    </article>
+  );
+}
+
+// timeline 视图用的本地 ISO 周一计算（不依赖 react import；与 utils/weekRange 内部实现一致）
+function getISOWeekStartLocal(weekYear: number, weekNumber: number): Date {
+  const jan4 = new Date(Date.UTC(weekYear, 0, 4));
+  const jan4Dow = jan4.getUTCDay() || 7;
+  const week1Mon = new Date(jan4);
+  week1Mon.setUTCDate(jan4.getUTCDate() - jan4Dow + 1);
+  const weekStart = new Date(week1Mon);
+  weekStart.setUTCDate(week1Mon.getUTCDate() + (weekNumber - 1) * 7);
+  return weekStart;
 }
 
 // ────── Onboarding Guide ──────
