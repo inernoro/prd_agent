@@ -465,7 +465,9 @@ public class PaAgentController : ControllerBase
                 // 错误码识别：把后端日志里能看到的关键词翻译成可操作的提示
                 var raw = streamError ?? string.Empty;
                 string userMsg2;
-                if (raw.Contains("User not found"))
+                if (raw.Contains("未在数据库中注册", StringComparison.Ordinal))
+                    userMsg2 = "毒舌秘书尚未完成应用注册：请重启 API 服务（启动时会自动同步），或在管理后台「AI 配置 → 初始化应用」执行一次。";
+                else if (raw.Contains("User not found"))
                     userMsg2 = "AI 模型服务暂时不可用：网关找不到用户上下文，请联系管理员检查 LlmRequestContext 配置。";
                 else if (raw.Contains("ModelGroup", StringComparison.OrdinalIgnoreCase)
                          || raw.Contains("无可用模型")

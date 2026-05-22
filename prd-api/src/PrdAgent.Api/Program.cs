@@ -250,8 +250,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
-// 应用调用者同步：已移除自动启动同步，改为管理后台手动点击「初始化应用」触发
-// builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
+// 应用调用者同步：启动时增量注册代码中的 AppCaller（含 pa-agent.chat::chat），并自动回填 chat 模型组
+// 管理后台「初始化应用」仍可全量对齐；二者互补，新 Agent 无需人工点初始化
+builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
 
 // 邮件通道服务
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailIntentDetector, PrdAgent.Infrastructure.Services.Email.EmailIntentDetector>();
