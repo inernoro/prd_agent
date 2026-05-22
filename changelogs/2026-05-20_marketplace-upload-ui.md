@@ -17,3 +17,5 @@
 | fix | prd-admin | 官方卡 PixelCard 内 mkt-card 被 grid 挤成 0 高度 → glass 被 overflow:hidden 切掉，导致整张卡只剩像素无文字；改用 position:absolute inset:0 直接覆盖在 canvas 上层 |
 | fix | prd-admin | 官方卡像素「不悬浮就空白」修复：给 vendored PixelCard 加 autoAppear 开关（挂载即播放 + 忽略 mouseleave/blur 收起），替换之前不可靠的程式 focus hack；偏离上游已在 reactbits/LICENSE.md 标注 |
 | feat | prd-admin | 官方技能卡改用自研 SkillGlyph（手绘古典线描）替代 reactbits PixelCard：暖彩线描 + feTurbulence 手绘抖线 + 暖光，三形态（罗盘/植物/星图）按 tag 命中 skillGlyphRegistry 决定、无 tag 回退名字哈希；视口懒渲染防 turbulence 拖慢；移除 vendored PixelCard + officialSkillPalette |
+| feat | prd-admin | SkillGlyph 新增「精英」金色八角徽章形态（emblem），tag=精英 触发；skillGlyphRegistry 补全 工具/需求/技能 等 tag 归类 |
+| chore | prd-admin | 官方技能打包：单主标签策略 + TAG_OVERRIDE 手工修正（老王=精英、findmapskills=技能+精英 等）+ 排除清单（qa-ledger/cn-brief-summary 等纯输出格式类不进市场） |

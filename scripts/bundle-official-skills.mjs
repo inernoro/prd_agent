@@ -25,18 +25,36 @@ const MAX_SKILL_MD = 16000;
 
 // ── tag 分类启发式 ────────────────────────────────────────────────────────
 // 与 prd-admin/src/lib/skillGlyphRegistry.ts 的 TAG_STYLE_GROUPS 对齐：
-//   工程/工具/运维 → 罗盘   创意/内容/设计 → 植物   分析/数据/报告 → 星图
-// 命中关键字给一个「类别 tag」，决定卡片图标形态 + 风格。命不中给 "工具" 兜底。
+//   工程/工具/运维 → 罗盘   创意/内容/设计 → 植物   分析/数据/报告 → 星图   精英 → 金色徽章
+// 策略（用户敲定）：分不准就只打「一个」主标签（取首个命中的规则）；个别用 OVERRIDE 手工指定。
 const TAG_RULES = [
-  { tag: '部署', kw: ['deploy', 'cds', '部署', '灰度', '容器', 'docker', 'pipeline', '环境', 'executor', '执行器'] },
-  { tag: '运维', kw: ['运维', '巡检', 'issue', '修复', 'fix', 'autofix', 'audit', '诊断', 'debug', '熵'] },
-  { tag: '分析', kw: ['分析', '评审', 'review', 'verify', '验证', '验收', 'trace', '追踪', 'risk', '风险', 'visibility', '审查', '台账', 'ledger'] },
+  { tag: '部署', kw: ['deploy', 'cds', '部署', '灰度', '容器', 'docker', 'pipeline', '发版', 'release', 'executor', '执行器'] },
+  { tag: '创意', kw: ['创意', '设计', 'ui', 'ux', '视觉', 'image', 'remotion', '视频', 'video', '涌现', 'emerge', '主题', 'theme', 'demo', '生图'] },
+  { tag: '分析', kw: ['分析', '评审', 'review', 'verify', '验证', '验收', 'trace', '追踪', 'risk', '风险', 'visibility', '审查', '台账', 'ledger', '巡检', 'audit', '诊断', 'debug'] },
   { tag: '周报', kw: ['周报', 'weekly', 'report', '报告', '总结', 'summary'] },
   { tag: '文档', kw: ['文档', 'doc', 'documentation', '写作', 'readme'] },
-  { tag: '创意', kw: ['创意', '设计', 'ui', 'ux', '视觉', '图', 'image', 'remotion', '视频', 'video', '涌现', 'emerge', '主题', 'theme', 'demo'] },
   { tag: '需求', kw: ['需求', 'validate', 'prd', '方案', 'plan', '规划'] },
   { tag: '技能', kw: ['skill', '技能', 'marketplace', '海鲜市场', 'findmap'] },
+  { tag: '运维', kw: ['运维', 'issue', '修复', 'fix', 'autofix', '熵', 'entropy', '环境', 'setup', '权限'] },
 ];
+
+// 手工覆盖：key → tags（命中即用，跳过启发式）。允许多标签。
+const TAG_OVERRIDE = {
+  laowang: ['精英'],
+  findmapskills: ['技能', '精英'],
+  'feature-emerge': ['创意'],
+  'release-version': ['部署'],
+  bridge: ['工具'],
+  cds: ['部署'],
+  'ui-ux-pro-max': ['创意'],
+};
+
+// 排除清单：不进海鲜市场（文件保留，Claude Code 仍用）。先放保守的「纯输出格式 / 纯元」类。
+// 要清更多就往这里加 key；要全放就清空。
+const EXCLUDE = new Set([
+  'qa-ledger',         // 对话台账：输出格式约定，非独立产品
+  'cn-brief-summary',  // 200 字总结：输出格式约定
+]);
 
 function parseFrontmatter(md) {
   // 取首个 --- ... --- 块里的 name / description（description 可能是多行 > 折叠）
@@ -74,14 +92,13 @@ function parseFrontmatter(md) {
 }
 
 function deriveTags(key, name, description) {
+  if (TAG_OVERRIDE[key]) return TAG_OVERRIDE[key];
   const hay = `${key} ${name ?? ''} ${description ?? ''}`.toLowerCase();
-  const tags = [];
+  // 分不准就只打一个：取首个命中的规则（TAG_RULES 顺序即优先级）
   for (const rule of TAG_RULES) {
-    if (rule.kw.some((k) => hay.includes(k))) tags.push(rule.tag);
+    if (rule.kw.some((k) => hay.includes(k))) return [rule.tag];
   }
-  if (tags.length === 0) tags.push('工具');
-  // 去重 + 最多 3 个（卡片只展示前 3）
-  return [...new Set(tags)].slice(0, 3);
+  return ['工具'];
 }
 
 function shortDesc(description, fallbackName) {
@@ -97,7 +114,7 @@ function main() {
   }
   const dirs = readdirSync(SKILLS_DIR).filter((d) => {
     const p = join(SKILLS_DIR, d);
-    return statSync(p).isDirectory() && existsSync(join(p, 'SKILL.md'));
+    return statSync(p).isDirectory() && existsSync(join(p, 'SKILL.md')) && !EXCLUDE.has(d);
   }).sort();
 
   const skills = [];
