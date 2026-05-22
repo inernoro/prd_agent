@@ -566,6 +566,13 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
   }
 }
 
+/**
+ * 按 attachmentId 获取附件元数据（用于把已有知识库 ID 还原成可见文件名）
+ */
+export async function getAttachmentMeta(attachmentId: string): Promise<ApiResponse<UploadedAttachment & { uploadedAt?: string }>> {
+  return await apiRequest(`/api/v1/attachments/${attachmentId}`);
+}
+
 // ============ Message Feedback ============
 
 /**

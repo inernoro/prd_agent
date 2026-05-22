@@ -1502,6 +1502,7 @@ export {
   streamDirectChat,
   streamCapabilityChat,
   uploadAttachment,
+  getAttachmentMeta,
   // Session & Messages
   listToolboxSessions,
   createToolboxSession,
