@@ -1,0 +1,1 @@
+| feat | prd-admin | 周报编辑器：同章节内 items 支持拖动排序。hover 任意 item 左侧出现 GripVertical 拖动手柄，按住可在该章节内改顺序；拖动时元素半透明，drop target 顶部 2px indigo 横线指示；跨章节拖动直接拒绝。覆盖 BulletList / RichText / IssueList 三种 inputType，复用 useAutosave 自动保存 |

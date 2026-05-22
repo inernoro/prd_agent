@@ -650,6 +650,10 @@ export const api = {
       get: () => '/api/report-agent/my/daily-log-tags',
       update: () => '/api/report-agent/my/daily-log-tags',
     },
+    defaultTab: {
+      get: () => '/api/report-agent/my/default-tab',
+      update: () => '/api/report-agent/my/default-tab',
+    },
     personalStats: () => '/api/report-agent/my/stats',
     teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
     teamWorkflowRun: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow/run`,

@@ -6,7 +6,8 @@ import { DailyLogPanel } from './DailyLogPanel';
 import { MyRecordsListPanel } from './MyRecordsListPanel';
 
 interface Props {
-  onClose: () => void;
+  /** 为兼容历史调用而保留；新版作为顶级 Tab 时不传 */
+  onClose?: () => void;
 }
 
 type SubTabKey = 'today' | 'records';
@@ -24,11 +25,11 @@ const SUB_TAB_ITEMS = [
 export function DailyLogInline({ onClose }: Props) {
   const [subTab, setSubTab] = useState<SubTabKey>('today');
 
-  const backButton = (
+  const backButton = onClose ? (
     <Button variant="ghost" size="sm" onClick={onClose}>
       <ArrowLeft size={15} /> 返回周报
     </Button>
-  );
+  ) : undefined;
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">

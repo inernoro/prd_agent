@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { X, MessageSquare, CornerDownRight, Trash2, Send, GitCompare } from 'lucide-react';
+import { formatWeekDateRange } from '../utils/weekRange';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -133,7 +134,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
               {report.userName} 的周报
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              {report.teamName} · {report.weekYear} 年第 {report.weekNumber} 周
+              {report.teamName} · {formatWeekDateRange({ weekYear: report.weekYear, weekNumber: report.weekNumber })} · W{String(report.weekNumber).padStart(2, '0')}
             </div>
           </div>
           <div className="flex items-center gap-1">

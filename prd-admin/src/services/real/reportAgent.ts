@@ -77,6 +77,10 @@ import type {
   ResetTeamAiSummaryPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
+  DailyLogTagsState,
+  GetMyDefaultTabContract,
+  UpdateMyDefaultTabContract,
+  DefaultTabKey,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -907,14 +911,28 @@ export const resetTeamAiSummaryPromptReal: ResetTeamAiSummaryPromptContract = as
   );
 };
 
+export const getMyDefaultTabReal: GetMyDefaultTabContract = async () => {
+  return await apiRequest<{ tab: DefaultTabKey | null }>(api.reportAgent.defaultTab.get(), { method: 'GET' });
+};
+
+export const updateMyDefaultTabReal: UpdateMyDefaultTabContract = async (input) => {
+  return await apiRequest<{ tab: DefaultTabKey | null }>(api.reportAgent.defaultTab.update(), {
+    method: 'PUT',
+    body: { tab: input.tab },
+  });
+};
+
 export const getMyDailyLogTagsReal: GetMyDailyLogTagsContract = async () => {
-  return await apiRequest<{ items: string[] }>(api.reportAgent.dailyLogTags.get(), { method: 'GET' });
+  return await apiRequest<DailyLogTagsState>(api.reportAgent.dailyLogTags.get(), { method: 'GET' });
 };
 
 export const updateMyDailyLogTagsReal: UpdateMyDailyLogTagsContract = async (input) => {
-  return await apiRequest<{ items: string[] }>(api.reportAgent.dailyLogTags.update(), {
+  const body: Record<string, unknown> = { items: input.items };
+  if (input.tagOrder !== undefined) body.tagOrder = input.tagOrder ?? [];
+  if (input.defaultTags !== undefined) body.defaultTags = input.defaultTags ?? [];
+  return await apiRequest<DailyLogTagsState>(api.reportAgent.dailyLogTags.update(), {
     method: 'PUT',
-    body: { items: input.items },
+    body,
   });
 };
 
