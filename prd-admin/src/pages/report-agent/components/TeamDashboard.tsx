@@ -615,8 +615,8 @@ export function TeamDashboard() {
         className="flex-1 min-w-0 min-h-0 flex flex-col gap-4 overflow-y-auto pr-1"
         style={{ overscrollBehavior: 'contain' }}
       >
-      {memberDrawerVisible && selectedTeam && (
-        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
+      {memberDrawerVisible && selectedTeam && createPortal(
+        <div className="fixed inset-0 z-[100] flex justify-end" onClick={() => closeMemberDrawer()}>
           <div
             className="absolute inset-0 backdrop-blur-sm transition-opacity duration-200"
             style={{
@@ -760,7 +760,8 @@ export function TeamDashboard() {
               })}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {selectedMemberUserId && selectedTeamId ? (
