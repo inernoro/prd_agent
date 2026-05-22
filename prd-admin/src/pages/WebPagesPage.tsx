@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -60,6 +60,7 @@ import {
   BookOpen,
   Replace,
   AlertTriangle,
+  Folder,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -117,6 +118,65 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
   return site.siteUrl;
 }
 
+// ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
+
+type GroupMode = 'time' | 'folder';
+const GROUP_MODE_KEY = 'web-pages-group-mode';
+
+/** 把日期格式化成分组标题：今天 / 昨天 / M月D日 / YYYY年M月D日 */
+function toDateBucketLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '未知时间';
+  const now = new Date();
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (dayDiff === 0) return '今天';
+  if (dayDiff === 1) return '昨天';
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`;
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+interface SiteGroup {
+  key: string;
+  label: string;
+  items: HostedSite[];
+}
+
+/** 按分组方式把（已排序的）站点列表切成分节。
+ * 关键：保持传入数组的顺序（= 排序结果），只按 first-seen 顺序建组，
+ * 因此「分组」与「排序」互不干扰 —— 排序决定顺序，分组只插标题。 */
+function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
+  const map = new Map<string, SiteGroup>();
+  for (const site of items) {
+    let key: string;
+    let label: string;
+    if (mode === 'folder') {
+      key = site.folder ? `f:${site.folder}` : 'f:__none__';
+      label = site.folder || '未分类';
+    } else {
+      label = toDateBucketLabel(site.createdAt);
+      key = `t:${label}`;
+    }
+    let g = map.get(key);
+    if (!g) {
+      g = { key, label, items: [] };
+      map.set(key, g);
+    }
+    g.items.push(site);
+  }
+  const groups = [...map.values()];
+  // 文件夹分组：组顺序按文件夹名字母序，「未分类」置底（对齐文学创作可预测排序）。
+  // 时间分组：保持 first-seen（= 排序结果）顺序，让排序方向决定时间桶先后。
+  if (mode === 'folder') {
+    groups.sort((a, b) => {
+      if (a.key === 'f:__none__') return 1;
+      if (b.key === 'f:__none__') return -1;
+      return a.label.localeCompare(b.label, 'zh-Hans-CN');
+    });
+  }
+  return groups;
+}
+
 // ─── Main Page ───
 
 export default function WebPagesPage() {
@@ -130,6 +190,12 @@ export default function WebPagesPage() {
   const [activeSourceType, setActiveSourceType] = useState<string | null>(null);
   const [sort, setSort] = useState('newest');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  // 分组方式（与排序不冲突：排序决定组内/整体顺序，分组只在边界插入分节标题）。
+  // 持久化沿用文学创作的 sessionStorage 直存方式（项目禁用 localStorage）。
+  const [groupMode, setGroupMode] = useState<GroupMode>(() => {
+    const saved = sessionStorage.getItem(GROUP_MODE_KEY);
+    return saved === 'folder' ? 'folder' : 'time';
+  });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const [folders, setFolders] = useState<string[]>([]);
@@ -294,6 +360,53 @@ export default function WebPagesPage() {
     });
   };
 
+  // 分组：保持服务端排序顺序，仅按 first-seen 切分节（排序与分组并存）
+  const siteGroups = useMemo(() => buildSiteGroups(sites, groupMode), [sites, groupMode]);
+
+  // 单组内的卡片/列表渲染，按 viewMode 复用
+  const renderGroupItems = (items: HostedSite[]) =>
+    viewMode === 'grid' ? (
+      <div
+        className="grid gap-3"
+        style={{
+          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 260px))',
+          justifyContent: 'start',
+        }}
+      >
+        {items.map(site => (
+          <SiteCard
+            key={site.id}
+            site={site}
+            selected={selectedIds.has(site.id)}
+            fresh={freshIds.has(site.id)}
+            onSelect={() => toggleSelect(site.id)}
+            onTogglePublic={() => handleMakePublic(site)}
+            onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+            onDelete={() => handleDelete(site.id)}
+            onShare={() => handleShare(site.id)}
+            onQrCode={() => setQrSite(site)}
+            onTransferToLibrary={() => setLibraryTargetSite(site)}
+            onReplaceFile={(file) => setReplaceTarget({ site, file })}
+          />
+        ))}
+      </div>
+    ) : (
+      <div className="flex flex-col gap-2">
+        {items.map(site => (
+          <SiteListItem
+            key={site.id}
+            site={site}
+            selected={selectedIds.has(site.id)}
+            onSelect={() => toggleSelect(site.id)}
+            onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
+            onDelete={() => handleDelete(site.id)}
+            onShare={() => handleShare(site.id)}
+            onQrCode={() => setQrSite(site)}
+          />
+        ))}
+      </div>
+    );
+
   return (
     <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
       {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
@@ -457,6 +570,32 @@ export default function WebPagesPage() {
             </Select>
           </div>
 
+          {/* 分组方式：按时间 / 按文件夹（与排序并存，互不冲突） */}
+          <div className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
+            <button
+              onClick={() => { setGroupMode('time'); sessionStorage.setItem(GROUP_MODE_KEY, 'time'); }}
+              className="flex items-center gap-1 px-2.5 py-2 text-xs transition-colors"
+              style={{
+                background: groupMode === 'time' ? 'var(--bg-elevated)' : 'var(--bg-sunken)',
+                color: groupMode === 'time' ? 'var(--accent-primary)' : 'var(--text-muted)',
+              }}
+              title="按时间分组"
+            >
+              <Clock size={12} /> 按时间
+            </button>
+            <button
+              onClick={() => { setGroupMode('folder'); sessionStorage.setItem(GROUP_MODE_KEY, 'folder'); }}
+              className="flex items-center gap-1 px-2.5 py-2 text-xs transition-colors"
+              style={{
+                background: groupMode === 'folder' ? 'var(--bg-elevated)' : 'var(--bg-sunken)',
+                color: groupMode === 'folder' ? 'var(--accent-primary)' : 'var(--text-muted)',
+              }}
+              title="按文件夹分组"
+            >
+              <Folder size={12} /> 按文件夹
+            </button>
+          </div>
+
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
             <button
@@ -546,44 +685,21 @@ export default function WebPagesPage() {
             <Upload size={14} className="mr-1" /> 上传第一个站点
           </Button>
         </div>
-      ) : viewMode === 'grid' ? (
-        <div
-          className="grid gap-3"
-          style={{
-            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 260px))',
-            justifyContent: 'start',
-          }}
-        >
-          {sites.map(site => (
-            <SiteCard
-              key={site.id}
-              site={site}
-              selected={selectedIds.has(site.id)}
-              fresh={freshIds.has(site.id)}
-              onSelect={() => toggleSelect(site.id)}
-              onTogglePublic={() => handleMakePublic(site)}
-              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
-              onDelete={() => handleDelete(site.id)}
-              onShare={() => handleShare(site.id)}
-              onQrCode={() => setQrSite(site)}
-              onTransferToLibrary={() => setLibraryTargetSite(site)}
-              onReplaceFile={(file) => setReplaceTarget({ site, file })}
-            />
-          ))}
-        </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {sites.map(site => (
-            <SiteListItem
-              key={site.id}
-              site={site}
-              selected={selectedIds.has(site.id)}
-              onSelect={() => toggleSelect(site.id)}
-              onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
-              onDelete={() => handleDelete(site.id)}
-              onShare={() => handleShare(site.id)}
-              onQrCode={() => setQrSite(site)}
-            />
+        <div className="flex flex-col gap-5">
+          {siteGroups.map(group => (
+            <div key={group.key} className="flex flex-col gap-2">
+              {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
+              <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                {groupMode === 'folder'
+                  ? <Folder size={12} style={{ color: 'var(--accent-primary)' }} />
+                  : <Clock size={12} style={{ color: 'var(--accent-primary)' }} />}
+                <span>{group.label}</span>
+                <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
+                <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
+              </div>
+              {renderGroupItems(group.items)}
+            </div>
           ))}
         </div>
       )}
