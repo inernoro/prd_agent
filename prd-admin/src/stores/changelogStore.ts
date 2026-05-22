@@ -29,7 +29,7 @@ interface ChangelogState {
 }
 
 /**
- * 计算「未读条目数」：本周更新中比 lastSeenAt 更新的条目数。
+ * 计算「未读条目数」：待发布碎片中比 lastSeenAt 更新的条目数。
  * 用于顶栏铃铛红点显示。
  *
  * 简化处理：用 fragment.date 做比较（精度到天即可）。
@@ -57,7 +57,7 @@ export function selectUnreadCount(state: ChangelogState): number {
 }
 
 /**
- * 拉平本周更新为「最近 N 条」列表（铃铛弹层使用）。
+ * 拉平待发布更新为「最近 N 条」列表（铃铛弹层使用）。
  */
 export function selectRecentEntries(
   state: ChangelogState,
@@ -96,7 +96,7 @@ export const useChangelogStore = create<ChangelogState>()(
         if (res.success) {
           set({ currentWeek: res.data, loadingCurrent: false });
         } else {
-          set({ loadingCurrent: false, error: res.error?.message || '加载本周更新失败' });
+          set({ loadingCurrent: false, error: res.error?.message || '加载待发布更新失败' });
         }
       },
 

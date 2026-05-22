@@ -305,7 +305,10 @@ function displayName(project: ProjectSummary): string {
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
-  return tabs.some((tab) => tab.value === hash) ? (hash as TabValue) : 'general';
+  if (tabs.some((tab) => tab.value === hash)) return hash as TabValue;
+
+  const queryTab = new URLSearchParams(window.location.search).get('tab') || '';
+  return tabs.some((tab) => tab.value === queryTab) ? (queryTab as TabValue) : 'general';
 }
 
 function formatDate(value?: string | null): string {

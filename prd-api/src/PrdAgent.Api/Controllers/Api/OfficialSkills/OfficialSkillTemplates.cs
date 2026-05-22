@@ -11,6 +11,63 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// </summary>
 public static class OfficialSkillTemplates
 {
+    public const string AiDefectResolveKey = "ai-defect-resolve";
+    public const string AiDefectResolveVersion = "1.1.0";
+    public const string AiDefectResolveReleaseDate = "2026-05-21";
+
+    public const string AiDefectResolveSkillMd = """
+---
+name: ai-defect-resolve
+version: {{VERSION}}
+description: AI 辅助缺陷修复技能。读取 PrdAgent 缺陷分享 agentLaunch 包，按“读取缺陷→评论计划→提交分析报告→执行修复→评论验收方式→标记修复”闭环处理缺陷。
+---
+
+# AI 辅助缺陷修复
+
+> 版本：{{VERSION}}（{{RELEASE_DATE}}）
+> 来源：{{BASE_URL}} 官方下载兜底包。
+> 项目内置优先：如果当前仓库存在 `.claude/skills/ai-defect-resolve/SKILL.md` 或同等项目内置技能，必须使用项目内置版本；不得用托管/市场/官方下载版本覆盖项目内置技能。
+
+## 输入
+
+优先读取分享响应中的 `agentLaunch`：
+
+- `domain`：PrdAgent / MAP 域名
+- `auth`：认证方式，优先 `Authorization: Bearer $PRD_AGENT_API_KEY`，也兼容 `X-AI-Access-Key: $AI_ACCESS_KEY`
+- `scope.shareUrl`：缺陷分享读取入口
+- `scope.defectIds`：覆盖的缺陷，可为空；为空时按分享范围处理
+- `skill.minVersion`：最低技能版本，当前版本低于该值时停止并提示升级
+
+## 流程
+
+1. `GET {domain}{scope.shareUrl}` 读取缺陷、截图、日志和历史消息。
+2. 在动手前调用 `{scope.shareUrl}/comments` 评论修复计划。
+3. 可选调用 `{scope.shareUrl}/report` 提交根因分析和修复建议。
+4. 按仓库规范执行代码修复和验证。
+5. 修复后先评论验收方式，再调用 `{scope.shareUrl}/fix-status` 标记修复完成。
+
+## 约束
+
+- 有争议、破坏性、跨模块、接口签名或数据结构变更必须先请求人类确认。
+- 不处理不在 `scope` 内的缺陷。
+- 不把密钥写入日志、提交、报告或评论。
+- 评论和修复说明必须包含可验收步骤。
+""";
+
+    public const string AiDefectResolveReadme = """
+# ai-defect-resolve
+
+PrdAgent 缺陷修复官方兜底技能包。
+
+安装后把分享包中的 `agentLaunch` 作为输入即可。若项目仓库已内置同名技能，请使用项目内置版本。
+
+最新版下载：
+
+```bash
+curl -sSLo ai-defect-resolve.zip {{BASE_URL}}/api/official-skills/ai-defect-resolve/download
+```
+""";
+
     /// <summary>
     /// 海鲜市场操作技能 —— 唯一官方下载包。
     /// AI 装上这一个技能就可以搜索 / 下载 / 上传 / 订阅海鲜市场。
