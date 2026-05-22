@@ -25,8 +25,9 @@ export function getISOWeekStart(weekYear: number, weekNumber: number): Date {
 }
 
 /**
- * 把 ISO 周渲染为日期范围字符串 "M/D - M/D"。
- * 不补零省空间（5/18 优于 05/18），跨月仍能直观读懂。
+ * 把 ISO 周渲染为日期范围字符串 "M.D~M.D"。
+ * 用点 . 作日期分隔、波浪 ~ 作起止连接，紧凑且符合用户习惯（如 5.11~5.17）。
+ * 不补零省空间，跨月仍能直观读懂。
  */
 export function formatWeekDateRange(week: WeekRefLike): string {
   const start = getISOWeekStart(week.weekYear, week.weekNumber);
@@ -36,7 +37,7 @@ export function formatWeekDateRange(week: WeekRefLike): string {
   const d1 = start.getUTCDate();
   const m2 = end.getUTCMonth() + 1;
   const d2 = end.getUTCDate();
-  return `${m1}/${d1} - ${m2}/${d2}`;
+  return `${m1}.${d1}~${m2}.${d2}`;
 }
 
 /**
