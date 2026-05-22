@@ -873,6 +873,11 @@ export function DocBrowser({
     return saved ? parseInt(saved, 10) : 280;
   });
   const [resizing, setResizing] = useState(false);
+  // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const resizeBaseLeftRef = useRef(0);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
@@ -931,12 +936,13 @@ export function DocBrowser({
   useEffect(() => {
     if (!resizing) return;
     const handleMove = (e: MouseEvent) => {
-      const newWidth = Math.min(560, Math.max(200, e.clientX - 20));
+      // 以拖拽开始时量出的侧栏真实左边界为基准，宽度 = 鼠标 X - 左边界，1:1 跟手
+      const newWidth = Math.min(560, Math.max(200, e.clientX - resizeBaseLeftRef.current));
       setSidebarWidth(newWidth);
     };
     const handleUp = () => {
       setResizing(false);
-      sessionStorage.setItem('doc-browser-sidebar-width', String(sidebarWidth));
+      sessionStorage.setItem('doc-browser-sidebar-width', String(sidebarWidthRef.current));
     };
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', handleUp);
@@ -948,7 +954,7 @@ export function DocBrowser({
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [resizing, sidebarWidth]);
+  }, [resizing]);
 
   // 从 entries 的 metadata 中构建每个文件夹的主文档映射
   const folderPrimaryMap = useMemo(() => {
@@ -1244,7 +1250,7 @@ export function DocBrowser({
     <div className="surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]" style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
-      <div className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
+      <div ref={sidebarRef} className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
         style={{
           width: `${sidebarWidth}px`,
           minHeight: 0,
@@ -1509,7 +1515,11 @@ export function DocBrowser({
         {/* 拖拽调整宽度的把手 */}
         <div
           className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
-          onMouseDown={(e) => { e.preventDefault(); setResizing(true); }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+            setResizing(true);
+          }}
           style={{ zIndex: 10 }}
         >
           <div
