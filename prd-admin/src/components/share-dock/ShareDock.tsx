@@ -344,7 +344,7 @@ export function ShareDock({
         {/* 文件 dropzone：1:1 方形大区域，支持「拖入 / 点击」两种上传，
             上传成功后内联展示分享码，用户一步拿到分享链接 */}
         {dropzone && (
-          <div className="mx-2 mt-2">
+          <div className="mx-2 mt-2 flex justify-center">
             {/* 点击上传用的隐藏 input */}
             <input
               ref={fileInputRef}
@@ -365,7 +365,7 @@ export function ShareDock({
               tabIndex={uploadState === 'idle' ? 0 : undefined}
               aria-label={uploadState === 'idle' ? '点击或拖文件到此上传' : undefined}
               className={[
-                'flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-2.5 text-center transition-all',
+                'flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-2.5 text-center transition-all',
                 uploadState === 'idle' ? 'cursor-pointer' : 'cursor-default',
                 fileOver
                   ? 'border-sky-300/80 bg-sky-500/15 text-sky-50'
@@ -373,8 +373,9 @@ export function ShareDock({
                     ? 'border-emerald-300/50 bg-emerald-500/10 text-emerald-50'
                     : 'border-white/15 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]',
               ].join(' ')}
-              // 1:1 方形，但限高避免太夸张；内容多时（done 态）可自然增高
-              style={{ aspectRatio: '1 / 1', maxHeight: 168 }}
+              // 1:1 方形并在面板内水平居中：maxWidth 限定方形尺寸（外层 flex justify-center 负责居中）；
+              // 内容多时（done 态）可自然超过正方形高度
+              style={{ width: '100%', maxWidth: 188, aspectRatio: '1 / 1' }}
               onClick={() => { if (uploadState === 'idle') fileInputRef.current?.click(); }}
               onKeyDown={(e) => {
                 if (uploadState === 'idle' && (e.key === 'Enter' || e.key === ' ')) {
