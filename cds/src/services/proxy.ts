@@ -662,6 +662,95 @@ export class ProxyService {
     res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : message);
   }
 
+  private displayBranchName(branchSlug: string, branch?: BranchEntry): string {
+    const actualBranch = branch?.branch?.trim();
+    return actualBranch || branchSlug;
+  }
+
+  private estimateServiceProgress(service: BranchEntry['services'][string]): {
+    percent: number;
+    confidence: 'low' | 'medium' | 'high';
+    matchedLog: boolean;
+  } {
+    const status = service.status;
+    if (status === 'running') return { percent: 100, confidence: 'high', matchedLog: true };
+    if (status === 'error') return { percent: 100, confidence: 'high', matchedLog: true };
+    if (status === 'stopping' || status === 'stopped') return { percent: 6, confidence: 'medium', matchedLog: false };
+    if (status === 'starting' || status === 'restarting') return { percent: 86, confidence: 'high', matchedLog: true };
+    if (status === 'idle') return { percent: 4, confidence: 'low', matchedLog: false };
+
+    const log = `${service.buildLog || ''}\n${service.errorMessage || ''}`.toLowerCase();
+    const matchers: Array<{ percent: number; confidence: 'medium' | 'high'; re: RegExp }> = [
+      { percent: 94, confidence: 'high', re: /(accepting connections|returned 200|listening on|server ready|ready in|health check passed|就绪探测通过|运行于\s*:?\d+)/ },
+      { percent: 78, confidence: 'high', re: /(built in|compiled successfully|successfully built|writing image sha|exporting layers|naming to|发布到|publish\/|publish succeeded)/ },
+      { percent: 58, confidence: 'medium', re: /(vite build|dotnet publish|npm run build|pnpm run build|yarn build|docker build|buildx|building image|构建镜像)/ },
+      { percent: 40, confidence: 'medium', re: /(npm ci|pnpm install|yarn install|dotnet restore|determining projects to restore|restored .*\.csproj|pip install|go mod download|apt-get|安装依赖)/ },
+      { percent: 20, confidence: 'medium', re: /(git clone|git fetch|checkout|pulling|拉取代码|worktree)/ },
+    ];
+    const matched = matchers.find((item) => item.re.test(log));
+    if (matched) {
+      return { percent: matched.percent, confidence: matched.confidence, matchedLog: true };
+    }
+    return { percent: status === 'building' ? 24 : 12, confidence: 'low', matchedLog: false };
+  }
+
+  private estimateWaitingProgress(branch: BranchEntry | undefined, waitingProfileId?: string): {
+    percent: number;
+    confidence: 'low' | 'medium' | 'high';
+    label: string;
+    reason: string;
+  } {
+    if (!branch) {
+      return { percent: 0, confidence: 'low', label: '等待分支状态', reason: '尚未读取到 CDS 分支状态' };
+    }
+    if (branch.status === 'running' && (!waitingProfileId || branch.services?.[waitingProfileId]?.status === 'running')) {
+      return { percent: 100, confidence: 'high', label: '已就绪', reason: '目标服务已进入 running' };
+    }
+    if (branch.status === 'error') {
+      return { percent: 100, confidence: 'high', label: '已失败', reason: 'CDS 已给出失败状态' };
+    }
+
+    const services = Object.values(branch.services || {});
+    if (services.length === 0) {
+      return { percent: 8, confidence: 'low', label: '等待创建服务', reason: '分支存在，但服务尚未登记' };
+    }
+
+    const estimates = services.map((service) => this.estimateServiceProgress(service));
+    const average = estimates.reduce((sum, item) => sum + item.percent, 0) / estimates.length;
+    const waitingEstimate = waitingProfileId && branch.services?.[waitingProfileId]
+      ? this.estimateServiceProgress(branch.services[waitingProfileId])
+      : null;
+    const weighted = waitingEstimate
+      ? waitingEstimate.percent * 0.62 + average * 0.38
+      : average;
+
+    const createdAtMs = Date.parse(branch.createdAt || '');
+    const elapsedSec = Number.isFinite(createdAtMs) ? Math.max(0, (Date.now() - createdAtMs) / 1000) : 0;
+    const timeCurve = Math.min(72, 12 + Math.sqrt(elapsedSec) * 5.4);
+    const rawPercent = estimates.some((item) => item.matchedLog)
+      ? weighted
+      : Math.max(weighted, timeCurve);
+    const percent = Math.max(1, Math.min(99, Math.round(rawPercent)));
+
+    const high = estimates.filter((item) => item.confidence === 'high').length;
+    const medium = estimates.filter((item) => item.confidence === 'medium').length;
+    const confidence: 'low' | 'medium' | 'high' = high > 0
+      ? 'high'
+      : medium > 0
+        ? 'medium'
+        : 'low';
+    const label = branch.status === 'building'
+      ? '预计构建进度'
+      : branch.status === 'starting' || branch.status === 'restarting'
+        ? '预计启动进度'
+        : '预计处理进度';
+    const reason = estimates.some((item) => item.matchedLog)
+      ? `基于 ${services.length} 个服务状态与构建日志估算`
+      : `基于 ${services.length} 个服务状态与运行时长估算`;
+
+    return { percent, confidence, label, reason };
+  }
+
   private serveWaitingStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
     const host = req.headers.host || '';
     const previewSlug = this.extractPreviewBranch(host) || '';
@@ -672,6 +761,7 @@ export class ProxyService {
     const waitingService = waitingProfileId && branch ? branch.services?.[waitingProfileId] : undefined;
     const ready = Boolean(branch && branch.status === 'running' && (!waitingProfileId || waitingService?.status === 'running'));
     const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
+    const displayBranch = this.displayBranchName(previewSlug, branch);
 
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -681,9 +771,12 @@ export class ProxyService {
       ok: true,
       ready,
       loading,
-      branch: previewSlug,
+      branch: displayBranch,
+      branchSlug: previewSlug,
+      displayBranch,
       status: branch?.status || 'not-found',
       waitingProfileId: waitingProfileId || null,
+      progress: this.estimateWaitingProgress(branch, waitingProfileId),
       services: services.map((svc) => ({
         profileId: svc.profileId,
         status: svc.status,
@@ -694,7 +787,12 @@ export class ProxyService {
 
   serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
-    const safeBranch = this.escapeHtml(branchSlug);
+    const displayBranch = this.displayBranchName(branchSlug, branch);
+    const progress = this.estimateWaitingProgress(branch, waitingProfileId);
+    const safeBranch = this.escapeHtml(displayBranch);
+    const safeProgressLabel = this.escapeHtml(progress.label);
+    const safeProgressReason = this.escapeHtml(progress.reason);
+    const safeProgressConfidence = this.escapeHtml(progress.confidence === 'high' ? '高' : progress.confidence === 'medium' ? '中' : '低');
     const safeWaitingProfile = waitingProfileId ? this.escapeHtml(waitingProfileId) : '';
     const branchStatus = String(branch.status);
     const stageLabel = (status: string): string => {
@@ -754,15 +852,14 @@ export class ProxyService {
 *{margin:0;padding:0;box-sizing:border-box}
 	:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--accent:#ffffff;--accent-two:#9f5050;--sync:#22c55e}
 	html,body{min-height:100%}
-	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#050407;color:var(--text);min-height:100vh;overflow:hidden}
-	.magic-rings-canvas{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
-	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 52% 46%,transparent 0%,rgba(5,4,7,.12) 46%,rgba(5,4,7,.78) 100%),linear-gradient(90deg,rgba(5,4,7,.82),rgba(5,4,7,.08) 44%,rgba(5,4,7,.72));z-index:1}
-	body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;opacity:.22;background-image:linear-gradient(rgba(245,242,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(245,242,255,.08) 1px,transparent 1px);background-size:84px 84px;mask-image:radial-gradient(circle at 52% 46%,#000 0%,transparent 72%)}
+	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
+	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
+	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 52% 46%,rgba(255,255,255,.08),transparent 36%,rgba(18,15,23,.82) 100%),linear-gradient(90deg,rgba(18,15,23,.88),rgba(18,15,23,.2) 48%,rgba(18,15,23,.82));z-index:1}
 	.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
 	.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
 	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
 	.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
-h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin-bottom:22px;max-width:100%}
+h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bottom:22px;max-width:100%}
 .shiny-text{display:inline-block;color:rgba(247,245,255,.78);background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
 .subtitle{max-width:580px;font-size:clamp(15px,1.45vw,20px);line-height:1.75;color:var(--muted);margin-bottom:28px}
 .meta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
@@ -777,12 +874,19 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin
 .svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color);animation:svc-pulse 1.55s ease-in-out infinite}
 .svc:nth-child(2) .svc-dot{animation-delay:.22s}
 .svc:nth-child(3) .svc-dot{animation-delay:.44s}
+.estimate{width:min(620px,100%);margin:-8px 0 28px;padding:15px 16px;border:1px solid rgba(245,242,255,.12);border-radius:18px;background:rgba(255,255,255,.035);backdrop-filter:blur(12px)}
+.estimate-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;font-size:12px;color:rgba(245,242,255,.7)}
+.estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
+.estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
+.estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#9f5050);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
+.estimate-meta span{display:inline-flex;align-items:center}
 .err{margin:0 0 22px;padding:0 0 14px;border-bottom:1px solid rgba(252,165,165,.28);color:var(--error);font-size:13px;line-height:1.7;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
 .hint{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted)}
 .hint strong{color:#f5f7fa;font-weight:600}
 .note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
 .note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
-.webgl-fallback{position:fixed;inset:0;z-index:0;background:radial-gradient(circle at 58% 46%,rgba(255,255,255,.64) 0 1px,rgba(255,255,255,.15) 2px,transparent 11px),repeating-radial-gradient(circle at 58% 46%,transparent 0 52px,rgba(255,255,255,.42) 53px 55px,transparent 56px 74px),#050407;animation:fallback-pulse 3.45s ease-in-out infinite}
+.shape-grid-bg.is-static{background:repeating-linear-gradient(30deg,rgba(255,255,255,.075) 0 1px,transparent 1px 34px),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
 @keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
 @keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
 @keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
@@ -793,18 +897,29 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
-<canvas class="magic-rings-canvas" id="magic-rings" aria-hidden="true"></canvas>
+<canvas class="shape-grid-bg" id="shape-grid" aria-hidden="true" data-speed="0.39" data-size="34" data-shape="hexagon"></canvas>
 <main class="shell">
   <section class="content">
     <div class="eyebrow">CDS Waiting Room</div>
     <h1><span class="${shouldAutoRefresh ? 'shiny-text' : ''}" data-role="heading">${heading}</span></h1>
     <p class="subtitle" data-role="subheading">${subheading}</p>
     <div class="meta">
-      <span class="chip branch">${safeBranch}</span>
+      <span class="chip branch" data-role="branch-name">${safeBranch}</span>
       <span class="chip" data-role="branch-status">分支状态 · ${branchLabel}</span>
     </div>
     ${errorNote}
     <div class="services" data-role="services">${serviceRows}</div>
+    <div class="estimate" data-role="progress-estimate">
+      <div class="estimate-top">
+        <span data-role="progress-label">${safeProgressLabel}</span>
+        <strong data-role="progress-percent">${progress.percent}%</strong>
+      </div>
+      <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
+      <div class="estimate-meta">
+        <span data-role="progress-confidence">置信度 ${safeProgressConfidence}</span>
+        <span data-role="progress-reason">${safeProgressReason}</span>
+      </div>
+    </div>
     <div class="hint">
       <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
       <span class="note">CDS Live Sync</span>
@@ -813,79 +928,64 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:-.06em;margin
 </main>
 	<script>
 (function(){
-  var canvas=document.getElementById('magic-rings');
+  var canvas=document.getElementById('shape-grid');
   if(!canvas) return;
   var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var gl=canvas.getContext('webgl',{alpha:true,antialias:true,preserveDrawingBuffer:false});
-  if(!gl||reduced){
-    canvas.className='webgl-fallback';
+  var ctx=canvas.getContext('2d');
+  if(!ctx){
+    canvas.className='shape-grid-bg is-static';
     return;
   }
-  var vertex='attribute vec2 aPosition;void main(){gl_Position=vec4(aPosition,0.0,1.0);}';
-  var fragment='precision highp float;uniform float uTime,uAttenuation,uLineThickness,uBaseRadius,uRadiusStep,uScaleRate,uOpacity,uNoiseAmount,uRotation,uRingGap,uFadeIn,uFadeOut,uMouseInfluence,uHoverAmount,uHoverScale,uParallax,uBurst;uniform vec2 uResolution,uMouse;uniform vec3 uColor,uColorTwo;uniform int uRingCount;const float HP=1.5707963;const float CYCLE=3.45;float fade(float t){return t<uFadeIn?smoothstep(0.0,uFadeIn,t):1.0-smoothstep(uFadeOut,CYCLE-0.2,t);}float ring(vec2 p,float ri,float cut,float t0,float px){float t=mod(uTime+t0,CYCLE);float r=ri+t/CYCLE*uScaleRate;float d=abs(length(p)-r);float a=atan(abs(p.y),abs(p.x))/HP;float th=max(1.0-a,0.5)*px*uLineThickness;float h=(1.0-smoothstep(th,th*1.5,d))+1.0;d+=pow(cut*a,3.0)*r;return h*exp(-uAttenuation*d)*fade(t);}void main(){float px=1.0/min(uResolution.x,uResolution.y);vec2 p=(gl_FragCoord.xy-0.5*uResolution.xy)*px;float cr=cos(uRotation),sr=sin(uRotation);p=mat2(cr,-sr,sr,cr)*p;p-=uMouse*uMouseInfluence;float sc=mix(1.0,uHoverScale,uHoverAmount)+uBurst*0.3;p/=sc;vec3 c=vec3(0.0);float rcf=max(float(uRingCount)-1.0,1.0);for(int i=0;i<10;i++){if(i>=uRingCount)break;float fi=float(i);vec2 pr=p-fi*uParallax*uMouse;vec3 rc=mix(uColor,uColorTwo,fi/rcf);c=mix(c,rc,vec3(ring(pr,uBaseRadius+fi*uRadiusStep,pow(uRingGap,fi),i==0?0.0:2.95*fi,px)));}c*=1.0+uBurst*2.0;float n=fract(sin(dot(gl_FragCoord.xy+uTime*100.0,vec2(12.9898,78.233)))*43758.5453);c+=(n-0.5)*uNoiseAmount;gl_FragColor=vec4(c,max(c.r,max(c.g,c.b))*uOpacity);}';
-  function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s)||'shader compile failed');return s;}
-  var program;
-  try{
-    program=gl.createProgram();
-    gl.attachShader(program,shader(gl.VERTEX_SHADER,vertex));
-    gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fragment));
-    gl.linkProgram(program);
-    if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'program link failed');
-  }catch(e){
-    canvas.className='webgl-fallback';
-    return;
-  }
-  gl.useProgram(program);
-  var buffer=gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
-  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
-  var pos=gl.getAttribLocation(program,'aPosition');
-  gl.enableVertexAttribArray(pos);
-  gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
-  var uni={};
-  ['uTime','uAttenuation','uLineThickness','uBaseRadius','uRadiusStep','uScaleRate','uOpacity','uNoiseAmount','uRotation','uRingGap','uFadeIn','uFadeOut','uMouseInfluence','uHoverAmount','uHoverScale','uParallax','uBurst','uResolution','uMouse','uColor','uColorTwo','uRingCount'].forEach(function(k){uni[k]=gl.getUniformLocation(program,k);});
-  function hex(h){h=h.replace('#','');return [parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255];}
-  var color=hex('#ffffff');
-  var colorTwo=hex('#9f5050');
-  var mouse=[0,0],smooth=[0,0];
+  var speed=0.39;
+  var size=34;
+  var offset={x:0,y:0};
+  var hexHoriz=size*1.5;
+  var hexVert=size*Math.sqrt(3);
   function resize(){
     var d=Math.min(window.devicePixelRatio||1,2);
     canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
     canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
     canvas.style.width='100%';
     canvas.style.height='100%';
-    gl.viewport(0,0,canvas.width,canvas.height);
+    ctx.setTransform(d,0,0,d,0,0);
   }
-  window.addEventListener('mousemove',function(e){mouse[0]=e.clientX/window.innerWidth-.5;mouse[1]=-(e.clientY/window.innerHeight-.5);});
-  window.addEventListener('mouseleave',function(){mouse[0]=0;mouse[1]=0;});
-  function draw(t){
-    smooth[0]+=(mouse[0]-smooth[0])*.08;
-    smooth[1]+=(mouse[1]-smooth[1])*.08;
-    gl.clearColor(0,0,0,0);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.uniform1f(uni.uTime,t*.001);
-    gl.uniform1f(uni.uAttenuation,10);
-    gl.uniform1f(uni.uLineThickness,2);
-    gl.uniform1f(uni.uBaseRadius,.35);
-    gl.uniform1f(uni.uRadiusStep,.1);
-    gl.uniform1f(uni.uScaleRate,.1);
-    gl.uniform1f(uni.uOpacity,1);
-    gl.uniform1f(uni.uNoiseAmount,.1);
-    gl.uniform1f(uni.uRotation,0);
-    gl.uniform1f(uni.uRingGap,1.5);
-    gl.uniform1f(uni.uFadeIn,.7);
-    gl.uniform1f(uni.uFadeOut,.5);
-    gl.uniform1f(uni.uMouseInfluence,0);
-    gl.uniform1f(uni.uHoverAmount,0);
-    gl.uniform1f(uni.uHoverScale,1.2);
-    gl.uniform1f(uni.uParallax,.05);
-    gl.uniform1f(uni.uBurst,0);
-    gl.uniform2f(uni.uResolution,canvas.width,canvas.height);
-    gl.uniform2f(uni.uMouse,smooth[0],smooth[1]);
-    gl.uniform3f(uni.uColor,color[0],color[1],color[2]);
-    gl.uniform3f(uni.uColorTwo,colorTwo[0],colorTwo[1],colorTwo[2]);
-    gl.uniform1i(uni.uRingCount,6);
-    gl.drawArrays(gl.TRIANGLES,0,3);
+  function drawHex(cx,cy,r){
+    ctx.beginPath();
+    for(var i=0;i<6;i+=1){
+      var angle=Math.PI/3*i;
+      var x=cx+r*Math.cos(angle);
+      var y=cy+r*Math.sin(angle);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+  }
+  function draw(){
+    var width=canvas.offsetWidth;
+    var height=canvas.offsetHeight;
+    ctx.clearRect(0,0,width,height);
+    offset.x=(offset.x-(reduced?0:speed)+hexHoriz*2)%(hexHoriz*2);
+    offset.y=(offset.y-(reduced?0:speed)+hexVert)%hexVert;
+    var colShift=Math.floor(offset.x/hexHoriz);
+    var offsetX=((offset.x%hexHoriz)+hexHoriz)%hexHoriz;
+    var offsetY=((offset.y%hexVert)+hexVert)%hexVert;
+    var cols=Math.ceil(width/hexHoriz)+3;
+    var rows=Math.ceil(height/hexVert)+3;
+    ctx.lineWidth=1;
+    ctx.strokeStyle='rgba(255,255,255,0.09)';
+    for(var col=-2;col<cols;col+=1){
+      for(var row=-2;row<rows;row+=1){
+        var cx=col*hexHoriz+offsetX;
+        var cy=row*hexVert+((col+colShift)%2!==0?hexVert/2:0)+offsetY;
+        drawHex(cx,cy,size);
+        ctx.stroke();
+      }
+    }
+    var gradient=ctx.createRadialGradient(width*0.54,height*0.46,0,width*0.54,height*0.46,Math.sqrt(width*width+height*height)/2);
+    gradient.addColorStop(0,'rgba(255,255,255,0.02)');
+    gradient.addColorStop(0.5,'rgba(18,15,23,0.14)');
+    gradient.addColorStop(1,'rgba(18,15,23,0.72)');
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,width,height);
     requestAnimationFrame(draw);
   }
   resize();
@@ -921,6 +1021,21 @@ ${shouldAutoRefresh ? `;(function(){
       root.appendChild(row);
     });
   }
+  function renderProgress(progress){
+    if(!progress)return;
+    var percent=Math.max(0,Math.min(100,Number(progress.percent)||0));
+    var label=document.querySelector('[data-role="progress-label"]');
+    var percentEl=document.querySelector('[data-role="progress-percent"]');
+    var bar=document.querySelector('[data-role="progress-bar"]');
+    var confidence=document.querySelector('[data-role="progress-confidence"]');
+    var reason=document.querySelector('[data-role="progress-reason"]');
+    var confidenceText=progress.confidence==='high'?'高':progress.confidence==='medium'?'中':'低';
+    if(label)label.textContent=progress.label||'预计处理进度';
+    if(percentEl)percentEl.textContent=Math.round(percent)+'%';
+    if(bar)bar.style.width=percent+'%';
+    if(confidence)confidence.textContent='置信度 '+confidenceText;
+    if(reason)reason.textContent=progress.reason||'基于当前状态估算';
+  }
   function poll(){
     fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
       .then(function(res){return res.ok?res.json():null;})
@@ -929,6 +1044,9 @@ ${shouldAutoRefresh ? `;(function(){
         if(data.ready){location.reload();return;}
         var statusEl=document.querySelector('[data-role="branch-status"]');
         if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
+        var branchEl=document.querySelector('[data-role="branch-name"]');
+        if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
+        renderProgress(data.progress);
         renderServices(data.services);
       })
       .catch(function(){});

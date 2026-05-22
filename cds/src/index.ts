@@ -1699,6 +1699,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     // progress, or just-created with status=running) — the transit page
     // will handle it via the SSE path.
     const localBranch = stateService.getBranch(branchSlug);
+    let displayName = localBranch?.branch || branchSlug;
     if (!localBranch) {
       const autoRepoRoot = config.repoRoot;
       const projectSlugs = (stateService.getProjects?.() ?? [])
@@ -1706,10 +1707,18 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
         .map((p) => p.slug as string);
       let foundRemote = false;
       try {
-        foundRemote = await worktreeService.branchExists(autoRepoRoot, branchSlug)
-          || !!(await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug))
-          || !!(await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug))
-          || !!(await worktreeService.findBranchByPreviewSlug(autoRepoRoot, branchSlug, projectSlugs));
+        if (await worktreeService.branchExists(autoRepoRoot, branchSlug)) {
+          foundRemote = true;
+          displayName = branchSlug;
+        } else {
+          const suffixMatch = await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug);
+          const slugMatch = suffixMatch || await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug);
+          const previewSlugMatch = slugMatch || await worktreeService.findBranchByPreviewSlug(autoRepoRoot, branchSlug, projectSlugs);
+          if (previewSlugMatch) {
+            foundRemote = true;
+            displayName = previewSlugMatch;
+          }
+        }
       } catch {
         foundRemote = false;
       }
@@ -1718,7 +1727,6 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
         return;
       }
     }
-    const displayName = branchSlug;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     res.end(buildTransitPageHtml(displayName));
     return;
