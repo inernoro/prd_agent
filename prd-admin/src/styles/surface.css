@@ -2582,61 +2582,57 @@
  * mkt-card 正确填满"，本身不引入新的视觉。
  * ───────────────────────────────────────────────────────────── */
 
-/* 通用：wrapper 在卡片网格里行为像 block，撑满列宽 */
-.mkt-card-spotlight-wrap,
-.mkt-card-pixel-wrap {
+/* 普通卡：SpotlightCard 包裹，内部 mkt-card 完整继承原样式 */
+.mkt-card-spotlight-wrap {
   width: 100%;
   display: block;
   position: relative;
   overflow: hidden;
 }
-
-/* SpotlightCard 包裹下：内部 mkt-card 完整继承原有样式（保留 height/bg/border-radius） */
 .mkt-card-spotlight-wrap > .mkt-card {
   width: 100%;
   height: 100%;
   border-radius: inherit;
 }
 
-/* PixelCard 上游用 `grid place-items-center` 但没定义 grid-template-rows，
- * canvas + mkt-card 会被自动放进两行 → mkt-card 被挤到 0 高度，glass 被
- * overflow:hidden 切掉。fix：把 mkt-card 拉出 grid 流，绝对定位覆盖 canvas。 */
-.mkt-card-pixel-wrap > .mkt-card.mkt-card-as-pixel-inner {
+/* ─── 官方卡：手绘古典线描标志（SkillGlyph）─────────────────────────────
+ * 结构：mkt-card（warm 辉光底） > [glyph-banner 上半 + glass 下半]
+ * glyph 是名字/tag 哈希出的暖彩线描，banner 顶部一层暖色径向辉光。 */
+.mkt-card-official-glyph {
+  background:
+    radial-gradient(78% 60% at 50% 8%, var(--warm), transparent 70%),
+    var(--bg-elevated);
+}
+.mkt-card-glyph-banner {
   position: absolute;
-  inset: 0;
-  width: auto;
-  height: auto;
-  background-color: transparent;
-  border: none;
-  border-radius: inherit;
-  /* 让像素动效在卡片背景透出 —— 关掉 mkt-card 的渐变背景 */
-  background-image: none !important;
+  top: 0; left: 0; right: 0;
+  height: 50%;
+  display: grid;
+  place-items: center;
   z-index: 1;
+  pointer-events: none;
 }
-
-/* 官方卡：底部信息面板加深一点，提升像素背景上的文字可读性 */
-.mkt-card-pixel-wrap > .mkt-card-as-pixel-inner .mkt-card-glass {
-  background: rgba(6, 8, 16, 0.78);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
+.skill-glyph-wrap {
+  width: 92px; height: 92px;
+  display: grid; place-items: center;
 }
-[data-theme="light"] .mkt-card-pixel-wrap > .mkt-card-as-pixel-inner .mkt-card-glass {
-  background: rgba(248, 245, 255, 0.88);
+.skill-glyph {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 0 5px var(--glyphGlow));
 }
-
-/* 官方卡 PixelCard 被程式 focus 后默认会有蓝色 outline —— 关掉，体验干净
- * （focus 仅用于触发 reactbits 的 appear 动画，不是给用户看的） */
-.mkt-card-pixel-wrap:focus,
-.mkt-card-pixel-wrap:focus-visible {
-  outline: none !important;
-  box-shadow: none;
+.skill-glyph .ink {
+  opacity: .9;
+  transform-box: view-box;
+  transform-origin: center;
+  transition: transform .7s cubic-bezier(.22, 1, .36, 1), opacity .4s ease;
 }
-
-/* PixelCard 底色：reactbits 默认 grid place-items-center + 透明，但当 mkt-card
- * 完全透明时，背景就是 body 的 #0a0a0f。给一层极淡的暗色底，让像素从黑里浮出来更显眼 */
-.mkt-card-pixel-wrap {
-  background-color: rgba(8, 10, 18, 0.55);
+/* 悬浮「绽放」：轻微旋转 + 放大 + 提亮 */
+.mkt-card-official-glyph:hover .skill-glyph .ink {
+  opacity: 1;
+  transform: rotate(-4deg) scale(1.07);
 }
-[data-theme="light"] .mkt-card-pixel-wrap {
-  background-color: rgba(248, 245, 255, 0.35);
+@media (prefers-reduced-motion: reduce) {
+  .skill-glyph .ink { transition: opacity .3s ease; }
+  .mkt-card-official-glyph:hover .skill-glyph .ink { transform: none; }
 }

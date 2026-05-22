@@ -22,8 +22,8 @@ import {
 } from '@/lib/marketplaceTypes';
 import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
 import SpotlightCard from '@/components/reactbits/SpotlightCard';
-import PixelCard from '@/components/reactbits/PixelCard';
-import { officialSkillPalette } from '@/lib/officialSkillPalette';
+import { SkillGlyph } from './SkillGlyph';
+import { resolveGlyphStyle, glyphCardGlow, glyphWarmBg } from '@/lib/skillGlyphRegistry';
 import { SkillDetailModal } from './SkillDetailModal';
 import { useSkillShare } from './useSkillShare';
 
@@ -120,34 +120,6 @@ function SkillFavorite({ item }: { item: MarketplaceSkill }) {
       <Heart size={11} fill={favorited ? 'currentColor' : 'none'} />
       <span>{count}</span>
     </button>
-  );
-}
-
-// ── 官方卡 PixelCard 包裹 ─────────────────────────────────────────────────
-//
-// reactbits PixelCard 上游是 hover-only（pixel.size 初始 0，靠 mouseenter/focus
-// 触发 appear()），静止画布空白，不适合"卡片身份视觉"。曾试过外层程式 focus()
-// 触发，但 focus 会被抢 / 多卡只能一张持有 / 鼠标一动就 blur 收起 —— 不可靠。
-// 最终给 vendored PixelCard 加了 autoAppear 开关（详见 reactbits/LICENSE.md
-// 「本地修改」段）：挂载即播放、忽略 mouseleave/blur 收起，像素常驻。
-function OfficialPixelWrap({
-  colors,
-  children,
-}: {
-  colors: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <PixelCard
-      className="mkt-card-pixel-wrap !w-full !h-[210px] !aspect-auto !rounded-[14px] !border-0"
-      colors={colors}
-      gap={6}
-      speed={28}
-      noFocus
-      autoAppear
-    >
-      {children}
-    </PixelCard>
   );
 }
 
@@ -381,19 +353,26 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     </>
   );
 
-  // ── 官方技能 → PixelCard 包裹（像素动效自身就是 identity，不放封面图）
+  // ── 官方技能 → 手绘古典线描标志（上半 banner）+ glass 信息条（下半）
   if (isOfficial) {
     const skill = item.data as MarketplaceSkill;
+    const glyphSeed = skill.title || skill.id;
+    const glyphStyle = resolveGlyphStyle(glyphSeed, tags);
     return (
-      <OfficialPixelWrap colors={officialSkillPalette(skill.title || skill.id)}>
-        <div
-          className="mkt-card mkt-card-as-pixel-inner"
-          onClick={handleCardClick}
-          style={{ cursor: item.type === 'skill' ? 'pointer' : undefined }}
-        >
-          {cardBody}
+      <div
+        className="mkt-card mkt-card-official-glyph"
+        onClick={handleCardClick}
+        style={{
+          ['--warm' as string]: glyphWarmBg(glyphStyle),
+          ['--glow' as string]: glyphCardGlow(glyphStyle),
+          cursor: item.type === 'skill' ? 'pointer' : undefined,
+        }}
+      >
+        <div className="mkt-card-glyph-banner">
+          <SkillGlyph seed={glyphSeed} tags={tags} />
         </div>
-      </OfficialPixelWrap>
+        {cardBody}
+      </div>
     );
   }
 
