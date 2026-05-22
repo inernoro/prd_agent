@@ -221,6 +221,37 @@ describe('MongoStateBackingStore', () => {
         action: 'push',
         ok: true,
       }];
+      state.serviceDeployments = {
+        'deploy-1': {
+          id: 'deploy-1',
+          projectId: 'shared-service',
+          hostId: 'host-1',
+          status: 'running',
+          seq: 1,
+          startedAt: '2026-05-22T00:00:05.000Z',
+          logs: [{ at: '2026-05-22T00:00:06.000Z', level: 'info', message: 'installed' }],
+        },
+      };
+      state.selfUpdateHistory = [{
+        ts: '2026-05-22T00:00:07.000Z',
+        branch: 'main',
+        fromSha: 'a',
+        toSha: 'b',
+        trigger: 'manual',
+        status: 'success',
+        steps: [{ ts: '2026-05-22T00:00:08.000Z', level: 'info', text: 'done' }],
+      }];
+      state.dataMigrations = [{
+        id: 'migration-1',
+        name: 'copy mongo',
+        dbType: 'mongodb',
+        source: { type: 'local', database: 'a' },
+        target: { type: 'local', database: 'b' },
+        status: 'completed',
+        progress: 100,
+        createdAt: '2026-05-22T00:00:09.000Z',
+        log: 'ok',
+      }];
 
       store.save(state);
       await store.flush();
@@ -230,15 +261,32 @@ describe('MongoStateBackingStore', () => {
       expect(mainDoc.state.containerLogArchives).toBeUndefined();
       expect(mainDoc.state.activityLogs).toBeUndefined();
       expect(mainDoc.state.githubWebhookDeliveries).toBeUndefined();
+      expect(mainDoc.state.selfUpdateHistory).toBeUndefined();
+      expect(mainDoc.state.dataMigrations).toBeUndefined();
+      expect(mainDoc.state.serviceDeployments['deploy-1'].logs).toEqual([]);
       expect(handle.fragments.docs.get('state:logs:feat-x')!.value).toHaveLength(1);
       expect(handle.fragments.docs.get('state:containerLogArchives:feat-x')!.value).toHaveLength(1);
       expect(handle.fragments.docs.get('state:activityLogs:prd-agent')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.get('state:serviceDeploymentLogs:deploy-1')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.get('state:selfUpdateHistory')!.value).toHaveLength(1);
+      expect(handle.fragments.docs.get('state:dataMigrations')!.value).toHaveLength(1);
       expect(handle.fragments.docs.get('state:githubWebhookDeliveries')!.value).toHaveLength(1);
     });
 
     it('loads detached state fragments back into the in-memory snapshot', async () => {
       const persisted = emptyState();
       persisted.defaultBranch = 'main';
+      persisted.serviceDeployments = {
+        'deploy-1': {
+          id: 'deploy-1',
+          projectId: 'shared-service',
+          hostId: 'host-1',
+          status: 'running',
+          seq: 1,
+          startedAt: '2026-05-22T00:00:00.000Z',
+          logs: [],
+        },
+      };
       delete (persisted as Partial<CdsState>).logs;
       handle.collection.docs.set(STATE_DOC_ID, { _id: STATE_DOC_ID, state: persisted });
       handle.fragments.docs.set('state:logs:feat-x', {
@@ -254,10 +302,19 @@ describe('MongoStateBackingStore', () => {
         }],
         updatedAt: '2026-05-22T00:00:00.000Z',
       });
+      handle.fragments.docs.set('state:serviceDeploymentLogs:deploy-1', {
+        _id: 'state:serviceDeploymentLogs:deploy-1',
+        scope: 'cds-state-detached',
+        kind: 'serviceDeploymentLogs',
+        ownerId: 'deploy-1',
+        value: [{ at: '2026-05-22T00:00:01.000Z', level: 'info', message: 'hello' }],
+        updatedAt: '2026-05-22T00:00:00.000Z',
+      });
 
       await store.init();
       expect(store.load()!.defaultBranch).toBe('main');
       expect(store.load()!.logs['feat-x']).toHaveLength(1);
+      expect(store.load()!.serviceDeployments!['deploy-1'].logs).toHaveLength(1);
     });
 
     it('trims oversized detached logs before writing mongo fragments', async () => {
@@ -285,16 +342,62 @@ describe('MongoStateBackingStore', () => {
           logs: 'y'.repeat(250_000),
         })),
       };
+      state.serviceDeployments = {
+        'deploy-1': {
+          id: 'deploy-1',
+          projectId: 'shared-service',
+          hostId: 'host-1',
+          status: 'running',
+          seq: 600,
+          startedAt: '2026-05-22T00:00:00.000Z',
+          logs: Array.from({ length: 600 }, (_, i) => ({
+            at: '2026-05-22T00:00:00.000Z',
+            level: 'info',
+            message: `${i}:` + 'z'.repeat(140_000),
+          })),
+        },
+      };
+      state.selfUpdateHistory = [{
+        ts: '2026-05-22T00:00:00.000Z',
+        branch: 'main',
+        fromSha: 'a',
+        toSha: 'b',
+        trigger: 'manual',
+        status: 'failed',
+        error: 'e'.repeat(140_000),
+        steps: [{ ts: '2026-05-22T00:00:00.000Z', level: 'error', text: 's'.repeat(140_000) }],
+      }];
+      state.dataMigrations = [{
+        id: 'migration-1',
+        name: 'copy mongo',
+        dbType: 'mongodb',
+        source: { type: 'local', database: 'a' },
+        target: { type: 'local', database: 'b' },
+        status: 'failed',
+        progress: 50,
+        createdAt: '2026-05-22T00:00:00.000Z',
+        errorMessage: 'm'.repeat(140_000),
+        log: 'd'.repeat(140_000),
+      }];
 
       store.save(state);
       await store.flush();
 
       const logs = handle.fragments.docs.get('state:logs:feat-x')!.value;
       const archives = handle.fragments.docs.get('state:containerLogArchives:feat-x')!.value;
+      const serviceLogs = handle.fragments.docs.get('state:serviceDeploymentLogs:deploy-1')!.value;
+      const selfUpdateHistory = handle.fragments.docs.get('state:selfUpdateHistory')!.value;
+      const dataMigrations = handle.fragments.docs.get('state:dataMigrations')!.value;
       expect(logs).toHaveLength(10);
-      expect(logs[0].events[0].log.length).toBeLessThan(21_000);
+      expect(Buffer.byteLength(logs[0].events[0].log, 'utf8')).toBeLessThanOrEqual(125 * 1024);
       expect(archives).toHaveLength(10);
-      expect(archives[0].logs.length).toBeLessThan(201_000);
+      expect(Buffer.byteLength(archives[0].logs, 'utf8')).toBeLessThanOrEqual(125 * 1024);
+      expect(serviceLogs).toHaveLength(500);
+      expect(Buffer.byteLength(serviceLogs[0].message, 'utf8')).toBeLessThanOrEqual(125 * 1024);
+      expect(Buffer.byteLength(selfUpdateHistory[0].error, 'utf8')).toBeLessThanOrEqual(125 * 1024);
+      expect(Buffer.byteLength(selfUpdateHistory[0].steps[0].text, 'utf8')).toBeLessThanOrEqual(125 * 1024);
+      expect(Buffer.byteLength(dataMigrations[0].errorMessage, 'utf8')).toBeLessThanOrEqual(125 * 1024);
+      expect(Buffer.byteLength(dataMigrations[0].log, 'utf8')).toBeLessThanOrEqual(125 * 1024);
     });
 
     it('a write failure does not break subsequent saves', async () => {
