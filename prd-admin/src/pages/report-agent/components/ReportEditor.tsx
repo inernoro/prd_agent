@@ -1043,99 +1043,99 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         </div>
       )}
 
-      {/* Sections（激进档 v2：恢复 surface 容器层次，避免被背景融化；前景灰阶但有边界与阴影） */}
+      {/* Sections（参考 Notion / Linear / Craft 重设计：清晰层级 + 可见 bullet + inline source + hover row） */}
       <div className="flex-1 min-h-0 overflow-auto">
-        <div className="max-w-[880px] mx-auto px-2 pb-12 flex flex-col gap-5">
+        <div className="max-w-[860px] mx-auto px-2 pb-12 flex flex-col gap-6">
           {report.sections.map((section, sIdx) => {
             const theme = sectionThemes[sIdx % sectionThemes.length];
             const filledCount = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
             const totalCount = (sections[sIdx]?.items || []).length;
+            const required = section.templateSection.isRequired;
             return (
               <section
                 key={sIdx}
-                className="relative rounded-2xl"
+                className="relative rounded-2xl overflow-hidden"
                 style={{
-                  // 前景层 surface：浅色纯白、暗色极淡填充，营造与主背景的层次
-                  background: isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.025)',
-                  border: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.12)'}`,
+                  // 提高卡片与主背景对比：暗色稍微亮一档，浅色保持纯白
+                  background: isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.035)',
+                  border: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.16)'}`,
                   boxShadow: isLight
-                    ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px -8px rgba(15, 23, 42, 0.06)'
-                    : '0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -16px rgba(0, 0, 0, 0.4)',
-                  backdropFilter: isLight ? undefined : 'blur(8px)',
-                  WebkitBackdropFilter: isLight ? undefined : 'blur(8px)',
+                    ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px -10px rgba(15, 23, 42, 0.08)'
+                    : '0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 28px -20px rgba(0, 0, 0, 0.5)',
+                  backdropFilter: isLight ? undefined : 'blur(10px)',
+                  WebkitBackdropFilter: isLight ? undefined : 'blur(10px)',
                 }}
               >
-                {/* mono 编号悬浮在卡片外左侧（页边码风），桌面显示，窄屏由 left-4 兜底 */}
-                <span
-                  className="absolute font-mono tabular-nums hidden lg:block select-none"
-                  style={{
-                    top: 22,
-                    left: -42,
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    opacity: 0.55,
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  {String(sIdx + 1).padStart(2, '0')}
-                </span>
-
-                {/* Section header — mono 编号(窄屏内联) + 标题 + 必填灰 chip + 右侧 mono 计数 */}
-                <header className="px-6 pt-5 pb-3 flex items-baseline gap-3">
-                  <span
-                    className="text-[11px] font-mono flex-shrink-0 tabular-nums lg:hidden"
-                    style={{ color: 'var(--text-muted)', opacity: 0.55 }}
-                  >
-                    {String(sIdx + 1).padStart(2, '0')}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2 flex-wrap">
-                      <h3
-                        className="text-[17px] font-semibold leading-tight"
-                        style={{
-                          color: 'var(--text-primary)',
-                          fontFamily: isLight ? 'var(--font-serif)' : undefined,
-                          letterSpacing: isLight ? '-0.005em' : undefined,
-                        }}
-                      >
-                        {section.templateSection.title}
-                      </h3>
-                      {section.templateSection.isRequired && (
-                        <span
-                          className="text-[10px] px-1.5 py-0.5 rounded font-normal"
+                {/* Section header — 编号 pill + 标题 + 描述 + 右上计数 */}
+                <header className="px-6 pt-5 pb-4">
+                  <div className="flex items-start gap-3">
+                    {/* 编号 pill：mono 数字嵌在 28×24 圆角矩形里，灰底克制配色 */}
+                    <span
+                      className="inline-flex items-center justify-center flex-shrink-0 font-mono tabular-nums"
+                      style={{
+                        width: 30,
+                        height: 22,
+                        marginTop: 1,
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        letterSpacing: '0.05em',
+                        color: isLight ? 'rgba(15, 23, 42, 0.65)' : 'rgba(229, 231, 235, 0.7)',
+                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.06)',
+                        border: `1px solid ${isLight ? 'rgba(15, 23, 42, 0.06)' : 'rgba(255, 255, 255, 0.04)'}`,
+                      }}
+                    >
+                      {String(sIdx + 1).padStart(2, '0')}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <h3
+                          className="text-[18px] font-semibold leading-tight"
                           style={{
-                            color: 'var(--text-muted)',
-                            background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.06)',
+                            color: 'var(--text-primary)',
+                            fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                            letterSpacing: isLight ? '-0.01em' : '-0.005em',
                           }}
-                          aria-label="必填"
-                          title="必填章节"
                         >
-                          必填
+                          {section.templateSection.title}
+                        </h3>
+                        {required && (
+                          <span
+                            className="text-[10px] px-1.5 py-[2px] rounded font-medium uppercase tracking-wider"
+                            style={{
+                              color: isLight ? 'rgba(194, 65, 12, 0.95)' : 'rgba(251, 146, 60, 0.9)',
+                              background: isLight ? 'rgba(249, 115, 22, 0.08)' : 'rgba(249, 115, 22, 0.12)',
+                              letterSpacing: '0.06em',
+                            }}
+                            aria-label="必填"
+                            title="必填章节"
+                          >
+                            必填
+                          </span>
+                        )}
+                        <span
+                          className="ml-auto text-[11px] font-mono tabular-nums flex-shrink-0"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          {filledCount}/{totalCount}
                         </span>
+                      </div>
+                      {section.templateSection.description && (
+                        <p className="text-[12.5px] mt-1.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                          {section.templateSection.description}
+                        </p>
                       )}
-                      <span
-                        className="ml-auto text-[11px] font-mono tabular-nums flex-shrink-0"
-                        style={{ color: 'var(--text-muted)' }}
-                      >
-                        {filledCount}/{totalCount}
-                      </span>
                     </div>
-                    {section.templateSection.description && (
-                      <p className="text-[12px] mt-1 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                        {section.templateSection.description}
-                      </p>
-                    )}
                   </div>
                 </header>
 
-                {/* 章节 header 与 items 间的细分隔线 */}
+                {/* Header 与 items 之间的细分隔线 */}
                 <div
-                  className="mx-6"
-                  style={{ borderTop: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.08)'}` }}
+                  style={{ borderTop: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.10)'}` }}
                 />
 
                 {/* Items */}
-                <div className="px-5 py-3 pb-4 flex flex-col gap-0.5">
+                <div className="px-3 py-2 flex flex-col">
                   {(sections[sIdx]?.items || []).map((item, iIdx) => {
                     const itemsLen = sections[sIdx]?.items?.length ?? 0;
                     const dragKey = `${sIdx}:${iIdx}`;
@@ -1144,11 +1144,18 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                     return (
                     <div
                       key={iIdx}
-                      className="flex items-start gap-2 group relative rounded-md px-1 transition-colors hover:bg-[var(--bg-tertiary)]"
+                      className="flex items-start gap-2 group relative rounded-lg px-2 transition-colors"
                       style={{
                         opacity: isDragging ? 0.4 : 1,
+                        background: 'transparent',
                         transition: 'opacity 120ms, background-color 120ms',
                       }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = isLight
+                          ? 'rgba(15, 23, 42, 0.025)'
+                          : 'rgba(255, 255, 255, 0.025)';
+                      }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                       onDragOver={(e) => {
                         if (!canEdit) return;
                         // 仅同一章节内允许：通过 dataTransfer.types 判断是否带本类 payload + 校验 sIdx
@@ -1207,11 +1214,16 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       {section.templateSection.inputType === ReportInputType.BulletList && (
                         <div
                           className="flex-shrink-0 flex items-center justify-center"
-                          style={{ height: 36, width: 8 }}
+                          style={{ height: 36, width: 12 }}
                         >
                           <div
-                            className="w-1 h-1 rounded-full"
-                            style={{ background: 'var(--text-muted)', opacity: 0.6 }}
+                            className="rounded-full"
+                            style={{
+                              width: 5,
+                              height: 5,
+                              // 比之前的 4px 60% 更可见：darker，明确的小圆点
+                              background: isLight ? 'rgba(71, 85, 105, 0.7)' : 'rgba(148, 163, 184, 0.75)',
+                            }}
                           />
                         </div>
                       )}
@@ -1292,14 +1304,23 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   })}
                   {canEdit && (
                     <button
-                      className="self-start mt-1 flex items-center gap-1 text-[12px] px-2 py-1 rounded transition-colors hover:bg-[var(--bg-tertiary)]"
+                      className="self-start ml-2 mt-2 mb-1 inline-flex items-center gap-1.5 text-[12px] rounded-md transition-all duration-150"
                       style={{
                         color: 'var(--text-muted)',
                         background: 'transparent',
-                        border: 'none',
+                        border: `1px dashed ${isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.18)'}`,
+                        padding: '4px 10px',
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = 'var(--text-secondary)';
+                        e.currentTarget.style.borderColor = isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.32)';
+                        e.currentTarget.style.background = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.03)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = 'var(--text-muted)';
+                        e.currentTarget.style.borderColor = isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.18)';
+                        e.currentTarget.style.background = 'transparent';
+                      }}
                       onClick={() => addItem(sIdx)}
                     >
                       <Plus size={12} /> 添加一条
