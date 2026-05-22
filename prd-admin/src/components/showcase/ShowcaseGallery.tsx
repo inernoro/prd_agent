@@ -102,9 +102,15 @@ function ShowcaseCard({
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: getAspectRatio(item),
-          background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
+          // 始终用彩色渐变占位（即使有封面），封面图懒加载后在渐变之上淡入，
+          // 避免下载完成前闪一块纯黑。
+          background: getFallbackGradient(item.id),
         }}
       >
+        {/* 封面图未加载完成时的轻微呼吸感占位（仅在已进入视口、图片还没 onLoad 时显示） */}
+        {hasCover && inView && !imgLoaded && (
+          <div className="absolute inset-0 animate-pulse" style={{ background: 'rgba(255,255,255,0.04)' }} />
+        )}
         {/* Cover image — only requested once the card nears the viewport */}
         {item.coverUrl && !imgError && inView && (
           <img
