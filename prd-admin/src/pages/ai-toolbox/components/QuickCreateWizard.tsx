@@ -870,6 +870,7 @@ export function QuickCreateWizard() {
 
   const handleSelectTemplate = (template: AgentTemplate) => {
     setSelectedTemplate(template);
+    setKnowledgeFiles([]);
     setForm((prev) => ({
       ...prev,
       name: template.name,
@@ -886,6 +887,7 @@ export function QuickCreateWizard() {
 
   const handleBlankCreate = () => {
     setSelectedTemplate(null);
+    setKnowledgeFiles([]);
     setForm((prev) => ({
       ...prev,
       name: '',

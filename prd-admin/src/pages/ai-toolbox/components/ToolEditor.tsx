@@ -54,7 +54,7 @@ import {
   File,
   Workflow as WorkflowIcon,
 } from 'lucide-react';
-import { uploadAttachment } from '@/services/real/aiToolbox';
+import { uploadAttachment, getAttachmentMeta } from '@/services/real/aiToolbox';
 
 // 图标组件映射
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -118,7 +118,6 @@ interface FormState {
   conversationStarters: string[];
   enabledTools: string[];
   workflowId: string;
-  knowledgeBase: string[];
   temperature: number;
   enableMemory: boolean;
 }
@@ -136,7 +135,6 @@ export function ToolEditor() {
     conversationStarters: editingItem?.conversationStarters?.length ? [...editingItem.conversationStarters] : ['帮我写一段文案', '分析一下这个数据'],
     enabledTools: editingItem?.enabledTools ?? [],
     workflowId: editingItem?.workflowId ?? '',
-    knowledgeBase: editingItem?.knowledgeBaseIds ?? [],
     temperature: editingItem?.temperature ?? 0.7,
     enableMemory: editingItem?.enableMemory ?? false,
   });
@@ -149,6 +147,7 @@ export function ToolEditor() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(false);
   const [wfDropdownOpen, setWfDropdownOpen] = useState(false);
+  // 知识库文件是唯一数据源：已有项的 knowledgeBaseIds 预加载为 done 条目，新上传追加进来
   const [knowledgeFiles, setKnowledgeFiles] = useState<Array<{
     id: string;
     fileName: string;
@@ -156,8 +155,33 @@ export function ToolEditor() {
     size: number;
     attachmentId?: string;
     status: 'uploading' | 'done' | 'error';
-  }>>([]);
+  }>>(() =>
+    (editingItem?.knowledgeBaseIds ?? []).map((aid) => ({
+      id: aid,
+      fileName: '知识库文档',
+      mimeType: '',
+      size: 0,
+      attachmentId: aid,
+      status: 'done' as const,
+    }))
+  );
   const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
+
+  // 已有 KB ID 只有 id 没有文件名，尽力拉取真实元数据回填（失败保留占位名，不影响保存）
+  useEffect(() => {
+    const ids = (editingItem?.knowledgeBaseIds ?? []);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    Promise.all(ids.map((aid) => getAttachmentMeta(aid).catch(() => null))).then((metas) => {
+      if (cancelled) return;
+      setKnowledgeFiles((prev) => prev.map((f) => {
+        const m = metas.find((x) => x?.success && x.data?.attachmentId === f.attachmentId);
+        return m?.data ? { ...f, fileName: m.data.fileName, mimeType: m.data.mimeType, size: m.data.size } : f;
+      }));
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const wfDropdownRef = useRef<HTMLDivElement>(null);
 
   // 当启用工作流能力时加载工作流列表
@@ -205,17 +229,19 @@ export function ToolEditor() {
   const CurrentIconComponent = getIconComponent(form.icon);
   const currentIconHue = getAccentHue(form.icon);
 
+  const isUploadingKb = knowledgeFiles.some(f => f.status === 'uploading');
+
   const handleSave = async () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
+    if (isUploadingKb) return;
 
     setSaving(true);
-    const knowledgeBaseIds = knowledgeFiles
-      .filter(f => f.status === 'done' && f.attachmentId)
-      .map(f => f.attachmentId!);
-    // 本编辑器无新上传文件时，保留预填的知识库（编辑已有项 或 从快速向导切过来均适用）
-    const finalKnowledgeBaseIds = knowledgeBaseIds.length > 0
-      ? knowledgeBaseIds
-      : form.knowledgeBase;
+    // 单一数据源：直接取列表里所有 done 文件的 attachmentId（已含预加载的旧 KB + 新上传），去重
+    const finalKnowledgeBaseIds = Array.from(new Set(
+      knowledgeFiles
+        .filter(f => f.status === 'done' && f.attachmentId)
+        .map(f => f.attachmentId!)
+    ));
 
     const success = await saveItem({
       ...(editingItem?.id ? { id: editingItem.id } : {}),
@@ -817,10 +843,11 @@ export function ToolEditor() {
                 variant="primary"
                 size="sm"
                 onClick={handleSave}
-                disabled={saving || !form.name.trim() || !form.prompt.trim()}
+                disabled={saving || isUploadingKb || !form.name.trim() || !form.prompt.trim()}
+                title={isUploadingKb ? '知识库文件上传中，请稍候' : undefined}
               >
-                {saving ? <MapSpinner size={13} /> : <Save size={13} />}
-                保存
+                {saving || isUploadingKb ? <MapSpinner size={13} /> : <Save size={13} />}
+                {isUploadingKb ? '上传中…' : '保存'}
               </Button>
             </div>
           }
