@@ -1087,12 +1087,6 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           {report.sections.length >= 3 && (
             <aside className="hidden lg:block flex-shrink-0" style={{ width: 200 }}>
               <div className="sticky top-2 flex flex-col gap-1 pt-1">
-                <div
-                  className="text-[10px] font-medium uppercase tracking-wider mb-2 px-2"
-                  style={{ color: 'var(--text-muted)', letterSpacing: '0.12em', opacity: 0.7 }}
-                >
-                  章节
-                </div>
                 {report.sections.map((section, sIdx) => {
                   const isActive = activeSectionIdx === sIdx;
                   const filled = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
@@ -1293,10 +1287,13 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           style={{ top: -6, height: 2, background: 'rgba(99, 102, 241, 0.9)', borderRadius: 1 }}
                         />
                       )}
-                      {/* 拖动手柄：hover 显示，仅当可编辑且本章节 ≥2 条时出现
-                          外层固定 36px 高对齐第一行文字中心（textarea 多行时仍对齐首行，与 bullet 一致） */}
-                      {canEdit && itemsLen > 1 && (
-                        <div className="flex-shrink-0 flex items-center" style={{ height: 36 }}>
+                      {/* 拖动手柄列：始终保留固定宽度避免「从 1 条变 2 条」时所有 item 横向跳跃；
+                          内部按钮仅当 canEdit && itemsLen > 1 时渲染 + hover 才可见 */}
+                      <div
+                        className="flex-shrink-0 flex items-center justify-center"
+                        style={{ height: 36, width: 20 }}
+                      >
+                        {canEdit && itemsLen > 1 && (
                           <button
                             type="button"
                             draggable
@@ -1314,8 +1311,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           >
                             <GripVertical size={14} style={{ color: 'var(--text-muted)' }} />
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                       {section.templateSection.inputType === ReportInputType.BulletList && (
                         <div
                           className="flex-shrink-0 flex items-center justify-center"
