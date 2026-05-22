@@ -242,6 +242,11 @@ public static class AdminPermissionCatalog
     public const string SkillAgentUse = "skill-agent.use";
 
     /// <summary>
+    /// 赋码采集关联系统综合智能体权限：PRD 文档生成 + 设备素材库 + 产线流程示意图绘制
+    /// </summary>
+    public const string CcasAgentUse = "ccas-agent.use";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -332,8 +337,6 @@ public static class AdminPermissionCatalog
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),
 
         new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
-
-        new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
 
         new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
