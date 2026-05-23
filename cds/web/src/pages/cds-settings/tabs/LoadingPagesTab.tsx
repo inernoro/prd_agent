@@ -111,6 +111,15 @@ const loadingPages: LoadingPage[] = [
     endpoint: '/api/loading-pages/cds-waiting-room/preview',
   },
   {
+    id: 'cds-waiting-room-legacy',
+    name: '构建等待页（备用）',
+    description: '保留上一版 ShapeGrid 构建等待页，用于备用方案对照。',
+    icon: Monitor,
+    kind: 'iframe',
+    endpoint: '/api/loading-pages/cds-waiting-room-legacy/preview',
+    scenarios: branchScenarios,
+  },
+  {
     id: 'branch-gone',
     name: '启动失败页',
     description: '访问已删除、未部署或不可路由的预览分支时展示，属于不可自动恢复状态。',
@@ -132,9 +141,9 @@ export function LoadingPagesTab(): JSX.Element {
   const previewUrl = useMemo(() => {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
     const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
-    if (page.id === 'cds-waiting-room' || page.id === 'cds-home-loading') {
+    if (page.id === 'cds-waiting-room' || page.id === 'cds-home-loading' || page.id === 'cds-waiting-room-legacy') {
       params.set('status', scenario?.status || 'building');
-      params.set('branch', page.id === 'cds-home-loading' ? 'cds-home-loading' : 'reactbits-magic-rings-preview');
+      params.set('branch', page.id === 'cds-home-loading' ? 'cds-home-loading' : page.id === 'cds-waiting-room-legacy' ? 'shape-grid-waiting-backup' : 'reactbits-magic-rings-preview');
       params.set('waitingProfile', 'api');
     } else if (page.id === 'branch-gone') {
       params.set('branch', 'claude/deleted-preview-branch-demo');

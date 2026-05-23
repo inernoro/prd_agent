@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Atom, Check, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Atom, Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -36,12 +36,28 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
+type ShellAuthStatus = {
+  enabled?: boolean;
+  mode?: string;
+  logoutEndpoint?: string | null;
+};
+
+function shellLoginHref(mode?: string): string {
+  const file = mode === 'github' ? 'login-gh.html' : 'login.html';
+  if (window.location.port === '5173') {
+    return `${window.location.protocol}//${window.location.hostname}:9900/${file}`;
+  }
+  return `/${file}`;
+}
+
 export function AppShell({ active = 'projects', topbar, children, wide = false }: AppShellProps): JSX.Element {
   /*
    * Global Cmd/Ctrl+K → CommandPalette opens. Mounting it here means every
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
@@ -59,9 +75,48 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
     };
   }, []);
 
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch('/api/auth/status', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      signal: ctrl.signal,
+    })
+      .then((res) => res.ok ? res.json() as Promise<ShellAuthStatus> : null)
+      .then((data) => setAuthStatus(data))
+      .catch((err: unknown) => {
+        if ((err as DOMException)?.name === 'AbortError') return;
+        setAuthStatus(null);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const logout = async (): Promise<void> => {
+    const endpoint = authStatus?.logoutEndpoint;
+    if (!endpoint) return;
+    setLogoutState('running');
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      window.location.href = shellLoginHref(authStatus.mode);
+    } catch {
+      setLogoutState('error');
+      window.setTimeout(() => setLogoutState('idle'), 3000);
+    }
+  };
+
   return (
     <div className="cds-app-shell">
-      <AppRail active={active} />
+      <AppRail
+        active={active}
+        canLogout={Boolean(authStatus?.logoutEndpoint)}
+        logoutState={logoutState}
+        onLogout={() => { void logout(); }}
+      />
       <div className="flex min-w-0 flex-col">
         {topbar}
         <main className={cn('cds-main', wide ? 'cds-main--wide' : null)}>
@@ -225,7 +280,17 @@ export function PaletteHint(): JSX.Element {
   );
 }
 
-function AppRail({ active }: { active: AppNavKey }): JSX.Element {
+function AppRail({
+  active,
+  canLogout,
+  logoutState,
+  onLogout,
+}: {
+  active: AppNavKey;
+  canLogout: boolean;
+  logoutState: 'idle' | 'running' | 'error';
+  onLogout: () => void;
+}): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       <div className="cds-rail-brand">
@@ -260,6 +325,21 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
       </a>
       </div>
       <div className="flex-1" />
+      {canLogout ? (
+        <button
+          type="button"
+          className="cds-rail-item cds-rail-item--danger"
+          onClick={onLogout}
+          disabled={logoutState === 'running'}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          <LogOut />
+          <span>
+            {logoutState === 'running' ? '退出中' : logoutState === 'error' ? '退出失败' : 'Logout'}
+          </span>
+        </button>
+      ) : null}
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
           标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}

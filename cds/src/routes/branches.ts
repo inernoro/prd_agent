@@ -9749,6 +9749,22 @@ cdscli project list --human
     );
   });
 
+  router.get('/loading-pages/cds-waiting-room-legacy/preview', (req, res) => {
+    const requestedStatus = String(req.query.status || 'building');
+    const allowedStatuses = new Set(['idle', 'building', 'starting', 'running', 'restarting', 'stopping', 'error']);
+    const status = allowedStatuses.has(requestedStatus) ? requestedStatus : 'building';
+    res.writeHead(503, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Retry-After': '2',
+    });
+    res.end(buildLegacyWaitingPreviewHtml(
+      String(req.query.branch || 'shape-grid-waiting-backup'),
+      status,
+      String(req.query.waitingProfile || 'api'),
+    ));
+  });
+
   router.get('/loading-pages/branch-gone/preview', (req, res) => {
     const theme = String(req.query.theme || 'dark') === 'light' ? 'light' : 'dark';
     const slug = String(req.query.branch || 'claude/removed-preview-branch');
@@ -11537,6 +11553,179 @@ function escapeLoadingPreviewHtml(value: string): string {
       default: return '&#39;';
     }
   });
+}
+
+function buildLegacyWaitingPreviewHtml(branch: string, status: string, waitingProfile: string): string {
+  const safeBranch = escapeLoadingPreviewHtml(branch);
+  const safeWaitingProfile = escapeLoadingPreviewHtml(waitingProfile);
+  const stageLabel = (value: string): string => {
+    switch (value) {
+      case 'building': return '构建中';
+      case 'starting': return '启动中';
+      case 'restarting': return '重启中';
+      case 'running': return '已就绪';
+      case 'error': return '失败';
+      case 'stopping': return '停止中';
+      case 'stopped': return '已停止';
+      default: return '待命';
+    }
+  };
+  const heading = status === 'error'
+    ? '分支部署出现异常'
+    : status === 'idle'
+      ? '分支当前未运行'
+      : status === 'restarting'
+        ? '分支环境正在热重启'
+        : status === 'building'
+          ? '分支环境正在构建'
+          : '分支正在刷新中';
+  const subheading = status === 'error'
+    ? 'CDS 已保留当前状态，请返回控制台查看日志与容器输出。'
+    : status === 'idle'
+      ? '预览访问不会自动重新部署。请回到 CDS 控制台确认日志后手动重新部署。'
+      : `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`;
+  const serviceStatus = status === 'error' ? 'error' : status === 'idle' ? 'idle' : status === 'running' ? 'running' : 'starting';
+  const progressPercent = status === 'error' ? 42 : status === 'running' ? 96 : status === 'idle' ? 12 : status === 'starting' ? 86 : 68;
+  const services = ['api', 'admin'].map((profileId) => {
+    const label = `${profileId} · ${stageLabel(serviceStatus)}${profileId === waitingProfile ? '（正在等待此服务就绪）' : ''}`;
+    const color = serviceStatus === 'error' ? '#fca5a5' : serviceStatus === 'running' ? '#f8fafc' : serviceStatus === 'idle' ? '#6b7280' : '#dbe4ee';
+    return `<div class="svc" data-profile="${profileId}"><span class="svc-dot" style="--svc-color:${color}">●</span><span>${label}</span></div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${heading} · ${safeBranch}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--sync:#22c55e}
+html,body{min-height:100%}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
+.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 52% 46%,rgba(255,255,255,.08),transparent 36%,rgba(18,15,23,.82) 100%),linear-gradient(90deg,rgba(18,15,23,.88),rgba(18,15,23,.2) 48%,rgba(18,15,23,.82));z-index:1}
+.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
+.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
+h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bottom:22px;max-width:100%}
+.shiny-text{display:inline-block;color:rgba(247,245,255,.78);background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
+.subtitle{max-width:580px;font-size:clamp(15px,1.45vw,20px);line-height:1.75;color:var(--muted);margin-bottom:28px}
+.meta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
+.chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
+.chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
+.branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
+.services{display:flex;flex-direction:column;gap:12px;margin:0 0 28px;max-width:620px}
+.svc{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid rgba(245,242,255,.13);font-size:15px;line-height:1.5}
+.svc::after{content:"";position:absolute;left:-35%;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.14),transparent);transform:skewX(-18deg);animation:svc-glint 3.2s ease-in-out infinite}
+.svc:nth-child(2)::after{animation-delay:.42s}
+.svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color);animation:svc-pulse 1.55s ease-in-out infinite}
+.svc:nth-child(2) .svc-dot{animation-delay:.22s}
+.estimate{width:min(620px,100%);margin:-8px 0 28px;padding:15px 16px;border:1px solid rgba(245,242,255,.12);border-radius:18px;background:rgba(255,255,255,.035);backdrop-filter:blur(12px)}
+.estimate-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;font-size:12px;color:rgba(245,242,255,.7)}
+.estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
+.estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
+.estimate-bar{display:block;height:100%;width:${progressPercent}%;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#9f5050);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
+.cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
+.cds-tip strong{color:rgba(245,242,255,.82);font-weight:700}
+.hint{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted)}
+.hint strong{color:#f5f7fa;font-weight:600}
+.note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
+.note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
+.shape-grid-bg.is-static{background:repeating-linear-gradient(30deg,rgba(255,255,255,.075) 0 1px,transparent 1px 34px),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
+@keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
+@keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
+@keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+@keyframes glint{0%,38%{transform:translateX(0) skewX(-18deg);opacity:0}54%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+@keyframes fallback-pulse{0%,100%{filter:saturate(.9) brightness(.8)}50%{filter:saturate(1.2) brightness(1.1)}}
+@keyframes shiny-text{0%{background-position:120% 0}100%{background-position:-120% 0}}
+@media (max-width:760px){.shell{padding:28px;display:flex;align-items:flex-end}.content{width:100%}h1{font-size:44px}.subtitle{font-size:14px}.hint{align-items:flex-start;flex-direction:column}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+</style></head><body>
+<canvas class="shape-grid-bg" id="shape-grid" aria-hidden="true" data-speed="0.39" data-size="34" data-shape="hexagon"></canvas>
+<main class="shell">
+  <section class="content">
+    <div class="eyebrow">CDS Waiting Room</div>
+    <h1><span class="shiny-text">${heading}</span></h1>
+    <p class="subtitle">${subheading}</p>
+    <div class="meta">
+      <span class="chip branch">${safeBranch}</span>
+      <span class="chip">分支状态 · ${stageLabel(status)}</span>
+    </div>
+    <div class="services">${services}</div>
+    <div class="estimate">
+      <div class="estimate-top"><span>预计构建进度</span><strong>${progressPercent}%</strong></div>
+      <div class="estimate-track"><span class="estimate-bar"></span></div>
+      <div class="estimate-meta"><span>置信度 高</span><span>基于 2 个服务状态与构建日志估算</span></div>
+    </div>
+    <p class="cds-tip"><strong>CDS 小提示：</strong><span>构建完成后还会等待服务健康检查稳定，再切入真实页面。</span></p>
+    <div class="hint">
+      <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
+      <span class="note">CDS Live Sync</span>
+    </div>
+  </section>
+</main>
+<script>
+(function(){
+  var canvas=document.getElementById('shape-grid');
+  if(!canvas)return;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var ctx=canvas.getContext('2d');
+  if(!ctx){canvas.className='shape-grid-bg is-static';return;}
+  var speed=0.39,size=34,offset={x:0,y:0};
+  var hexHoriz=size*1.5,hexVert=size*Math.sqrt(3);
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    ctx.setTransform(d,0,0,d,0,0);
+  }
+  function drawHex(cx,cy,r){
+    ctx.beginPath();
+    for(var i=0;i<6;i+=1){
+      var angle=Math.PI/3*i;
+      var x=cx+r*Math.cos(angle);
+      var y=cy+r*Math.sin(angle);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+  }
+  function draw(){
+    var width=canvas.offsetWidth,height=canvas.offsetHeight;
+    ctx.clearRect(0,0,width,height);
+    offset.x=(offset.x-(reduced?0:speed)+hexHoriz*2)%(hexHoriz*2);
+    offset.y=(offset.y-(reduced?0:speed)+hexVert)%hexVert;
+    var colShift=Math.floor(offset.x/hexHoriz);
+    var offsetX=((offset.x%hexHoriz)+hexHoriz)%hexHoriz;
+    var offsetY=((offset.y%hexVert)+hexVert)%hexVert;
+    var cols=Math.ceil(width/hexHoriz)+3;
+    var rows=Math.ceil(height/hexVert)+3;
+    ctx.lineWidth=1;
+    ctx.strokeStyle='rgba(255,255,255,0.09)';
+    for(var col=-2;col<cols;col+=1){
+      for(var row=-2;row<rows;row+=1){
+        var cx=col*hexHoriz+offsetX;
+        var cy=row*hexVert+((col+colShift)%2!==0?hexVert/2:0)+offsetY;
+        drawHex(cx,cy,size);
+        ctx.stroke();
+      }
+    }
+    var gradient=ctx.createRadialGradient(width*0.54,height*0.46,0,width*0.54,height*0.46,Math.sqrt(width*width+height*height)/2);
+    gradient.addColorStop(0,'rgba(255,255,255,0.02)');
+    gradient.addColorStop(0.5,'rgba(18,15,23,0.14)');
+    gradient.addColorStop(1,'rgba(18,15,23,0.72)');
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,width,height);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
+</script>
+</body></html>`;
 }
 
 function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'): string {
