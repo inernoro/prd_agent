@@ -21,6 +21,7 @@ import { GH_SESSION_COOKIE } from '../routes/auth.js';
 /** Paths that bypass the auth gate entirely. */
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
+  '/login',
   '/login-gh.html',
   '/api/auth/github/login',
   '/api/auth/github/callback',
@@ -33,6 +34,7 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   // public so GitHub's outbound webhook can reach it.
   '/api/github/webhook',
   // Static assets the login page needs before a session exists.
+  /^\/assets\//,
   '/style.css',
   '/favicon.svg',
   /^\/_next\//,

@@ -30,6 +30,8 @@ public class DefectAgentController : ControllerBase
     public const string AgentFixScope = "defect-agent:fix";
 
     private const string AppKey = "defect-agent";
+    private const string DefectResolveSkillName = "ai-defect-resolve";
+    private const string DefectResolveSkillMinVersion = "1.1.0";
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<DefectAgentController> _logger;
@@ -2050,7 +2052,12 @@ public class DefectAgentController : ControllerBase
             AppKey, shareLink.Token, shareLink.ShareScope, userId);
 
         var shareUrl = $"/api/defect-agent/share/view/{shareLink.Token}";
-        return Ok(ApiResponse<object>.Ok(new { shareLink, shareUrl }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shareLink,
+            shareUrl,
+            agentLaunch = BuildAgentLaunchPayload(shareLink, shareUrl)
+        }));
     }
 
     /// <summary>
@@ -2415,10 +2422,13 @@ public class DefectAgentController : ControllerBase
             aiScores = share.AiScores,
             aiScoreStatus = share.AiScoreStatus,
 
-            // LLM Agent 操作指引
+            // 精简 Agent 启动包：规则在技能内维护，分享只提供 domain/auth/scope/skill。
+            agentLaunch = BuildAgentLaunchPayload(share, $"/api/defect-agent/share/view/{token}"),
+
+            // LLM Agent 操作指引（兼容旧客户端；新客户端优先读取 agentLaunch）
             agentInstructions = new
             {
-                description = "缺陷分享 API：读取缺陷、查看截图和日志、发表评论、提交报告、标记修复。",
+                description = "请优先使用 agentLaunch 中指定的 ai-defect-resolve 技能。以下端点仅作向后兼容。",
                 importantNotes = new[]
                 {
                     "【截图最重要】每个缺陷的 screenshots 数组包含截图 URL 和 AI 图片分析描述(description 字段)，description 是 AI Vision 对截图的解析结果，请仔细阅读。图片 URL 也可以直接访问查看",
@@ -2489,6 +2499,51 @@ public class DefectAgentController : ControllerBase
                 workflow = "必须按此顺序：1) 查看截图和日志（最重要） → 2) 列出修复清单（有争议的先和人确认） → 3) 发评论说明计划 → 4) 执行修复 → 5) 发评论说明验收方式 → 6) 标记完成",
             },
         }));
+    }
+
+    private object BuildAgentLaunchPayload(DefectShareLink share, string shareUrl)
+    {
+        var baseUrl = ResolveBaseUrl();
+        var defectCount = share.ShareScope == DefectShareScopeType.Project
+            ? (int?)null
+            : share.DefectIds.Count;
+
+        return new
+        {
+            version = "1.0",
+            domain = baseUrl,
+            auth = new
+            {
+                type = "api-key",
+                header = "Authorization",
+                scheme = "Bearer",
+                env = "PRD_AGENT_API_KEY",
+                fallbackHeader = "X-AI-Access-Key",
+                obtainUrl = shareUrl,
+                requiredScope = AgentFixScope,
+                note = "如果没有明确传入 key，不要猜测环境变量；请打开分享链接或询问用户主站域名后，让用户一键签发临时 key。"
+            },
+            scope = new
+            {
+                shareToken = share.Token,
+                shareUrl,
+                type = share.ShareScope,
+                defectIds = share.ShareScope == DefectShareScopeType.Project ? null : share.DefectIds,
+                projectId = share.ProjectId,
+                projectName = share.ProjectName,
+                defectCount,
+                expiresAt = share.ExpiresAt,
+            },
+            skill = new
+            {
+                name = DefectResolveSkillName,
+                minVersion = DefectResolveSkillMinVersion,
+                priority = new[] { "repo-builtin", "user-installed", "official-download", "hosted-marketplace" },
+                downloadUrl = $"{baseUrl}/api/official-skills/{DefectResolveSkillName}/download",
+                rule = "如果当前仓库已内置同名技能，必须使用仓库内置版本；托管/市场技能不得覆盖本项目内置技能。"
+            },
+            prompt = $"使用 {DefectResolveSkillName} 技能处理 scope.shareUrl 覆盖的缺陷；如果没有该技能，请从 skill.downloadUrl 下载并安装。"
+        };
     }
 
     /// <summary>

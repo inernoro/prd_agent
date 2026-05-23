@@ -326,6 +326,8 @@ def test_onboard_creates_then_clones(monkeypatch):
 
     def fake_call(method, path, body=None, timeout=15, quiet=False):
         call_log.append((method, path, body))
+        if method == "GET" and path == "/api/config":
+            return {"reposBase": "/tmp/cds-repos"}
         if method == "POST" and path == "/api/projects":
             return {"project": {"id": "proj-onb", "slug": "alpha"}}
         if method == "GET" and path.startswith("/api/projects/"):
@@ -369,6 +371,8 @@ def test_onboard_slug_inferred_from_url(monkeypatch):
     captured: dict = {}
 
     def fake_call(method, path, body=None, timeout=15, quiet=False):
+        if method == "GET" and path == "/api/config":
+            return {"reposBase": "/tmp/cds-repos"}
         if method == "POST" and path == "/api/projects":
             captured.update(body=body)
             return {"project": {"id": "proj-z"}}

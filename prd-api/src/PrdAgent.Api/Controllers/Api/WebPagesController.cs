@@ -101,7 +101,12 @@ public class WebPagesController : ControllerBase
                     ? Path.GetFileNameWithoutExtension(file.FileName)
                     : title!.Trim();
                 var zipBytes = BuildWrapperZip(file.FileName, fileBytes, ext, effectiveTitle);
-                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList);
+                // 写 marker，下游靠它判定包装站，避免"用户上传的 index.html + report.pdf"被误判
+                var assetType = ext == ".pdf" ? "pdf"
+                    : VideoExtensions.Contains(ext) ? "video"
+                    : MarkdownExtensions.Contains(ext) ? "markdown"
+                    : null;
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType);
             }
             else
             {
@@ -372,15 +377,22 @@ public class WebPagesController : ControllerBase
         var uploadName = file.FileName;
 
         // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
+        string? wrappedAssetType = null;
         if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
         {
             fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
             uploadName = Path.ChangeExtension(file.FileName, ".zip");
+            wrappedAssetType = ext == ".pdf" ? "pdf"
+                : VideoExtensions.Contains(ext) ? "video"
+                : MarkdownExtensions.Contains(ext) ? "markdown"
+                : null;
         }
 
         try
         {
-            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName);
+            // 显式传 wrappedAssetType，普通 HTML/ZIP 传 null 会清空旧 marker（避免站点
+            // 从 PDF 包装改成 HTML 后前端还在渲染 PDF 占位，Codex P2 #612 抓到）
+            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName, wrappedAssetType);
             return Ok(ApiResponse<object>.Ok(updated));
         }
         catch (KeyNotFoundException)
@@ -463,16 +475,27 @@ public class WebPagesController : ControllerBase
                 GetUserId(), GetDisplayName(),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
-                req.Password, req.ExpiresInDays);
+                req.Password, req.ExpiresInDays,
+                purpose: req.Purpose == "visit" ? "visit" : "share");
 
+            // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
+            //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
+            //   - 用户只在主动选「超短链」时才用纯数字 /s/{seq}
+            //   - 字母统一长链 /s/{token} 仍然可用（ShortLink 全局索引支持），但不主推
             return Ok(ApiResponse<object>.Ok(new
             {
                 share.Id,
                 share.Token,
                 share.ShareType,
                 share.AccessLevel,
+                share.Password,
                 share.ExpiresAt,
+                share.ShortSeq,
                 shareUrl = $"/s/wp/{share.Token}",
+                // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
+                // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
+                shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
+                unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
         }
         catch (ArgumentException ex)
@@ -520,6 +543,12 @@ public class WebPagesController : ControllerBase
 
         if (result.Error != null)
         {
+            if (result.HttpStatus == 429)
+            {
+                if (result.RetryAfterSeconds is { } ra && ra > 0)
+                    Response.Headers["Retry-After"] = ra.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", result.Error));
+            }
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
@@ -556,6 +585,12 @@ public class WebPagesController : ControllerBase
 
         if (result.Error != null)
         {
+            if (result.HttpStatus == 429)
+            {
+                if (result.RetryAfterSeconds is { } ra && ra > 0)
+                    Response.Headers["Retry-After"] = ra.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", result.Error));
+            }
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
@@ -615,4 +650,6 @@ public class CreateWebPageShareRequest
     public string? Description { get; set; }
     public string? Password { get; set; }
     public int ExpiresInDays { get; set; }
+    /// <summary>用途：visit = 站点访问便捷链（公开永久、独立池）；其余/缺省 = 用户分享</summary>
+    public string? Purpose { get; set; }
 }

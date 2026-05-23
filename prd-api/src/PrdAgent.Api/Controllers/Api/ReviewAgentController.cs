@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -24,21 +25,33 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ReviewAgentController : ControllerBase
 {
     private const string AppKey = "review-agent";
+    // 申诉富文本图片上限 + 允许的 mime 类型（参考 ReportAgentController 同款配置）
+    private const long MaxAppealImageBytes = 5 * 1024 * 1024;
+    private static readonly HashSet<string> AllowedAppealImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"
+    };
+    // 申诉窗口（评审完成后多长时间内可申诉）
+    private static readonly TimeSpan AppealWindow = TimeSpan.FromHours(3);
+
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<ReviewAgentController> _logger;
     private readonly Services.ReviewAgent.ReviewWebhookService _webhookService;
+    private readonly IAssetStorage _assetStorage;
 
     public ReviewAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
         ILogger<ReviewAgentController> logger,
-        Services.ReviewAgent.ReviewWebhookService webhookService)
+        Services.ReviewAgent.ReviewWebhookService webhookService,
+        IAssetStorage assetStorage)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
         _webhookService = webhookService;
+        _assetStorage = assetStorage;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -60,6 +73,25 @@ public class ReviewAgentController : ControllerBase
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
         return permissions.Contains(AdminPermissionCatalog.ReviewAgentManage)
                || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    private bool HasAppealReviewPermission()
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.ReviewAgentAppealReview)
+               || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    /// <summary>判断某条 submission 当前是否允许新发起申诉（已通过/已申诉过/已过期 均不允许）</summary>
+    private static bool CanAppeal(ReviewSubmission s)
+    {
+        return s.Status == ReviewStatuses.Done
+            && s.IsPassed == false                     // 已通过不允许申诉
+            && s.AppealStatus != AppealStatuses.Pending // 没在审中
+            && s.AppealStatus != AppealStatuses.Approved // 已成功未消费的不允许重复申诉
+            && s.AppealStatus != AppealStatuses.Rejected // 被驳回的不允许再次申诉（一次性）
+            && s.CompletedAt.HasValue
+            && DateTime.UtcNow < s.CompletedAt.Value + AppealWindow;
     }
 
     // ──────────────────────────────────────────────
@@ -261,6 +293,160 @@ public class ReviewAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 排行榜 — 按自然月区间聚合，支持按提交人或方案两种维度统计：
+    /// 评审数量 / 通过率 / 一次性通过率（首次评审就通过且未 rerun 的占比）
+    /// </summary>
+    [HttpGet("leaderboard")]
+    public async Task<IActionResult> GetLeaderboard(
+        [FromQuery] string startMonth,
+        [FromQuery] string endMonth,
+        [FromQuery] string groupBy = "submitter",
+        CancellationToken ct = default)
+    {
+        if (!HasViewAllPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看排行榜"));
+
+        if (groupBy != "submitter" && groupBy != "document")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupBy 仅支持 submitter / document"));
+
+        DateTime startUtc, endUtcExclusive;
+        try
+        {
+            (startUtc, endUtcExclusive) = ParseMonthRange(startMonth, endMonth);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+
+        // 仅统计 Done 且 CompletedAt 在区间内的提交
+        var filter = Builders<ReviewSubmission>.Filter.And(
+            Builders<ReviewSubmission>.Filter.Eq(x => x.Status, ReviewStatuses.Done),
+            Builders<ReviewSubmission>.Filter.Gte(x => x.CompletedAt, startUtc),
+            Builders<ReviewSubmission>.Filter.Lt(x => x.CompletedAt, endUtcExclusive)
+        );
+
+        // 数据量当前在百级，未来到千级也是毫秒级，直接拉取后内存聚合更直观
+        var docs = await _db.ReviewSubmissions
+            .Find(filter)
+            .Project(x => new LeaderboardRow
+            {
+                SubmitterId = x.SubmitterId,
+                SubmitterName = x.SubmitterName,
+                Title = x.Title,
+                IsPassed = x.IsPassed,
+                RerunCount = x.RerunCount,
+                AppealStatus = x.AppealStatus,
+            })
+            .ToListAsync(ct);
+
+        IEnumerable<IGrouping<string, LeaderboardRow>> grouped = groupBy == "document"
+            ? docs.GroupBy(x => $"{x.SubmitterId}|{x.Title}")
+            : docs.GroupBy(x => x.SubmitterId);
+
+        // 申诉成功语义：该条评审「不计入通过、不计入未通过」（视为待重审），但仍计入总评审数。
+        // 通过率公式 = 有效通过 / (有效通过 + 有效未通过)，分母排除申诉成功的。
+        var items = grouped
+            .Select(g =>
+            {
+                var first = g.First();
+                var totalCount = g.Count();
+                var appealApprovedCount = g.Count(x => x.AppealStatus == AppealStatuses.Approved);
+                var effectivelyPassed = g.Count(x => x.IsPassed == true && x.AppealStatus != AppealStatuses.Approved);
+                var effectivelyFailed = g.Count(x => x.IsPassed == false && x.AppealStatus != AppealStatuses.Approved);
+                var ratedTotal = effectivelyPassed + effectivelyFailed; // 已落定（不含申诉成功）
+                var firstTimePassedCount = g.Count(x => x.IsPassed == true && x.RerunCount == 0 && x.AppealStatus != AppealStatuses.Approved);
+                return new
+                {
+                    key = g.Key,
+                    name = groupBy == "document" ? first.Title : first.SubmitterName,
+                    submitterId = first.SubmitterId,
+                    submitterName = first.SubmitterName,
+                    totalCount,
+                    passedCount = effectivelyPassed,
+                    appealApprovedCount,
+                    passRate = ratedTotal > 0 ? (double)effectivelyPassed / ratedTotal : 0d,
+                    firstTimePassedCount,
+                    // passedCount=0 时 N/A（前端显示「— 无通过」），避免 NaN
+                    firstTimePassRate = effectivelyPassed > 0 ? (double?)firstTimePassedCount / effectivelyPassed : null,
+                };
+            })
+            .OrderByDescending(x => x.totalCount)
+            .ThenByDescending(x => x.passRate)
+            .Select((x, i) => new
+            {
+                rank = i + 1,
+                x.key,
+                x.name,
+                x.submitterId,
+                x.submitterName,
+                x.totalCount,
+                x.passedCount,
+                x.appealApprovedCount,
+                x.passRate,
+                x.firstTimePassedCount,
+                x.firstTimePassRate,
+            })
+            .ToList();
+
+        var summaryTotal = docs.Count;
+        var summaryAppealApproved = docs.Count(x => x.AppealStatus == AppealStatuses.Approved);
+        var summaryEffectivePassed = docs.Count(x => x.IsPassed == true && x.AppealStatus != AppealStatuses.Approved);
+        var summaryEffectiveFailed = docs.Count(x => x.IsPassed == false && x.AppealStatus != AppealStatuses.Approved);
+        var summaryRatedTotal = summaryEffectivePassed + summaryEffectiveFailed;
+        var summaryFirstTimePassed = docs.Count(x => x.IsPassed == true && x.RerunCount == 0 && x.AppealStatus != AppealStatuses.Approved);
+        var summary = new
+        {
+            totalCount = summaryTotal,
+            totalPassedCount = summaryEffectivePassed,
+            totalAppealApprovedCount = summaryAppealApproved,
+            totalPassRate = summaryRatedTotal > 0 ? (double)summaryEffectivePassed / summaryRatedTotal : 0d,
+            totalFirstTimePassedCount = summaryFirstTimePassed,
+            totalFirstTimePassRate = summaryEffectivePassed > 0 ? (double?)summaryFirstTimePassed / summaryEffectivePassed : null,
+        };
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items,
+            summary,
+            period = new { startMonth, endMonth },
+            groupBy,
+        }));
+    }
+
+    /// <summary>解析 YYYY-MM 区间为 UTC 起止（end 为下个月 1 号 0 点，半开区间）</summary>
+    private static (DateTime startUtc, DateTime endUtcExclusive) ParseMonthRange(string startMonth, string endMonth)
+    {
+        if (string.IsNullOrWhiteSpace(startMonth) || string.IsNullOrWhiteSpace(endMonth))
+            throw new ArgumentException("startMonth 与 endMonth 必填，格式 YYYY-MM");
+
+        var sParts = startMonth.Split('-');
+        var eParts = endMonth.Split('-');
+        if (sParts.Length != 2 || eParts.Length != 2
+            || !int.TryParse(sParts[0], out var sy) || !int.TryParse(sParts[1], out var sm)
+            || !int.TryParse(eParts[0], out var ey) || !int.TryParse(eParts[1], out var em)
+            || sm < 1 || sm > 12 || em < 1 || em > 12)
+            throw new ArgumentException("月份格式应为 YYYY-MM（如 2026-03）");
+
+        var startUtc = new DateTime(sy, sm, 1, 0, 0, 0, DateTimeKind.Utc);
+        var endUtcExclusive = new DateTime(ey, em, 1, 0, 0, 0, DateTimeKind.Utc).AddMonths(1);
+        if (endUtcExclusive <= startUtc)
+            throw new ArgumentException("结束月份必须 ≥ 开始月份");
+        return (startUtc, endUtcExclusive);
+    }
+
+    /// <summary>排行榜聚合中间投影类型（避免匿名类型在 LINQ Project 表达式树中的限制）</summary>
+    private class LeaderboardRow
+    {
+        public string SubmitterId { get; set; } = string.Empty;
+        public string SubmitterName { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public bool? IsPassed { get; set; }
+        public int RerunCount { get; set; }
+        public string? AppealStatus { get; set; }
+    }
+
+    /// <summary>
     /// 获取单个提交详情（提交人自己或 view-all 权限用户）
     /// </summary>
     [HttpGet("submissions/{id}")]
@@ -309,7 +495,7 @@ public class ReviewAgentController : ControllerBase
         if (!string.IsNullOrEmpty(submission.ResultId))
             await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
 
-        // 重置状态
+        // 重置状态 + 累加 RerunCount（一次性通过率统计依赖此字段）
         await _db.ReviewSubmissions.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReviewSubmission>.Update
@@ -318,10 +504,323 @@ public class ReviewAgentController : ControllerBase
                 .Unset(x => x.IsPassed)
                 .Unset(x => x.CompletedAt)
                 .Unset(x => x.StartedAt)
-                .Unset(x => x.ErrorMessage),
+                .Unset(x => x.ErrorMessage)
+                .Inc(x => x.RerunCount, 1),
             cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { message = "已重置，请刷新页面重新评审" }));
+    }
+
+    // ──────────────────────────────────────────────
+    // 申诉
+    // ──────────────────────────────────────────────
+
+    public class CreateAppealRequest
+    {
+        public string ReasonHtml { get; set; } = string.Empty;
+        public List<string>? ImageAttachmentIds { get; set; }
+    }
+
+    public class ResolveAppealRequest
+    {
+        public string Comment { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// 提交申诉（仅提交人本人；评审完成后 3 小时内；未通过且无在审申诉）
+    /// </summary>
+    [HttpPost("submissions/{id}/appeal")]
+    public async Task<IActionResult> CreateAppeal(string id, [FromBody] CreateAppealRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可对自己的评审发起申诉"));
+
+        if (!CanAppeal(submission))
+        {
+            string reason;
+            if (submission.Status != ReviewStatuses.Done)
+                reason = "评审尚未完成，无法申诉";
+            else if (submission.IsPassed == true)
+                reason = "已通过的评审无法申诉";
+            else if (submission.AppealStatus == AppealStatuses.Pending)
+                reason = "已有申诉在审理中，请勿重复提交";
+            else if (submission.AppealStatus == AppealStatuses.Approved)
+                reason = "申诉已通过，请上传新方案重新评审";
+            else if (submission.AppealStatus == AppealStatuses.Rejected)
+                reason = "申诉已被驳回，不可再次申诉";
+            else if (submission.CompletedAt.HasValue && DateTime.UtcNow >= submission.CompletedAt.Value + AppealWindow)
+                reason = $"已超过 {AppealWindow.TotalHours} 小时申诉窗口";
+            else
+                reason = "当前状态不允许申诉";
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, reason));
+        }
+
+        var reasonHtml = (req.ReasonHtml ?? string.Empty).Trim();
+        // 简单纯文字长度校验：去 HTML 标签后须 ≥10 字（图片不算字数）
+        var plainLen = System.Text.RegularExpressions.Regex.Replace(reasonHtml, @"<[^>]+>", "").Trim().Length;
+        if (plainLen < 10)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "申诉理由过短，请至少填写 10 个字"));
+
+        var appeal = new ReviewAppeal
+        {
+            SubmissionId = id,
+            SubmitterId = userId,
+            SubmitterName = submission.SubmitterName,
+            ReasonHtml = reasonHtml,
+            ImageAttachmentIds = req.ImageAttachmentIds ?? new List<string>(),
+            Status = AppealStatuses.Pending,
+        };
+        await _db.ReviewAppeals.InsertOneAsync(appeal, cancellationToken: CancellationToken.None);
+
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AppealStatus, AppealStatuses.Pending)
+                .Set(x => x.LatestAppealId, appeal.Id),
+            cancellationToken: CancellationToken.None);
+
+        // 申诉提交时通过企微/钉钉/飞书 webhook 通知受理员群（AdminNotification 暂无按权限广播能力，
+        // 管理员可订阅 AppealSubmitted 事件配置 webhook 接收即时提醒）
+        await _webhookService.NotifyAppealEventAsync(ReviewEventType.AppealSubmitted, submission, appeal);
+
+        return Ok(ApiResponse<object>.Ok(new { appeal }));
+    }
+
+    /// <summary>
+    /// 列出某条 submission 的所有申诉记录（最新在前）
+    /// </summary>
+    [HttpGet("submissions/{id}/appeals")]
+    public async Task<IActionResult> ListAppeals(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        // 本人 / 持有 ViewAll / 持有 AppealReview 均可查看
+        if (submission.SubmitterId != userId
+            && !HasViewAllPermission()
+            && !HasAppealReviewPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看该申诉记录"));
+
+        var appeals = await _db.ReviewAppeals
+            .Find(x => x.SubmissionId == id)
+            .SortByDescending(x => x.CreatedAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { items = appeals }));
+    }
+
+    /// <summary>
+    /// 受理 — 通过申诉（需 ReviewAgentAppealReview 权限）
+    /// </summary>
+    [HttpPost("appeals/{appealId}/approve")]
+    public async Task<IActionResult> ApproveAppeal(string appealId, [FromBody] ResolveAppealRequest req, CancellationToken ct)
+    {
+        return await ResolveAppealAsync(appealId, req, AppealStatuses.Approved, ct);
+    }
+
+    /// <summary>
+    /// 受理 — 驳回申诉（需 ReviewAgentAppealReview 权限）
+    /// </summary>
+    [HttpPost("appeals/{appealId}/reject")]
+    public async Task<IActionResult> RejectAppeal(string appealId, [FromBody] ResolveAppealRequest req, CancellationToken ct)
+    {
+        return await ResolveAppealAsync(appealId, req, AppealStatuses.Rejected, ct);
+    }
+
+    private async Task<IActionResult> ResolveAppealAsync(string appealId, ResolveAppealRequest req, string targetStatus, CancellationToken ct)
+    {
+        if (!HasAppealReviewPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无申诉受理权限"));
+
+        var comment = (req?.Comment ?? string.Empty).Trim();
+        if (comment.Length < 5)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "受理意见过短，请至少填写 5 个字"));
+
+        var appeal = await _db.ReviewAppeals.Find(x => x.Id == appealId).FirstOrDefaultAsync(ct);
+        if (appeal == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "申诉记录不存在"));
+
+        if (appeal.Status != AppealStatuses.Pending)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"该申诉已是「{appeal.Status}」状态，无法再次受理"));
+
+        var resolverId = GetUserId();
+        var resolverName = GetDisplayName() ?? resolverId;
+        var now = DateTime.UtcNow;
+
+        // 乐观锁：以 Status==Pending 作为更新条件，防止并发受理
+        var updateResult = await _db.ReviewAppeals.UpdateOneAsync(
+            x => x.Id == appealId && x.Status == AppealStatuses.Pending,
+            Builders<ReviewAppeal>.Update
+                .Set(x => x.Status, targetStatus)
+                .Set(x => x.ResolverId, resolverId)
+                .Set(x => x.ResolverName, resolverName)
+                .Set(x => x.ResolverComment, comment)
+                .Set(x => x.ResolvedAt, now),
+            cancellationToken: CancellationToken.None);
+
+        if (updateResult.ModifiedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该申诉已被其他人受理"));
+
+        // 同步更新 submission.AppealStatus
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == appeal.SubmissionId,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AppealStatus, targetStatus)
+                .Set(x => x.AppealResolvedAt, now),
+            cancellationToken: CancellationToken.None);
+
+        // 重新读出最新 appeal + submission 推 webhook
+        appeal.Status = targetStatus;
+        appeal.ResolverId = resolverId;
+        appeal.ResolverName = resolverName;
+        appeal.ResolverComment = comment;
+        appeal.ResolvedAt = now;
+
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == appeal.SubmissionId).FirstOrDefaultAsync(CancellationToken.None);
+        if (submission != null)
+        {
+            // 给提交人发 AdminNotification
+            var notification = new AdminNotification
+            {
+                TargetUserId = submission.SubmitterId,
+                Title = targetStatus == AppealStatuses.Approved
+                    ? $"申诉通过：{submission.Title}"
+                    : $"申诉驳回：{submission.Title}",
+                Message = targetStatus == AppealStatuses.Approved
+                    ? $"您的申诉已通过，受理意见：{comment}。可重新上传方案进行评审。"
+                    : $"您的申诉已被驳回，受理意见：{comment}。",
+                Level = targetStatus == AppealStatuses.Approved ? "success" : "warning",
+                Source = AppKey,
+                ActionLabel = "查看详情",
+                ActionUrl = $"/review-agent/submissions/{submission.Id}",
+                ActionKind = "navigate",
+            };
+            await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: CancellationToken.None);
+
+            await _webhookService.NotifyAppealEventAsync(
+                targetStatus == AppealStatuses.Approved ? ReviewEventType.AppealApproved : ReviewEventType.AppealRejected,
+                submission, appeal);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { appeal }));
+    }
+
+    /// <summary>
+    /// 申诉成功后重新上传 md：替换原 submission 的附件并重置为 Queued 触发新评审。
+    /// RerunCount 清零 —— 等同于"新方案的首次评审"，便于一次性通过率正确计算。
+    /// </summary>
+    [HttpPost("submissions/{id}/reupload")]
+    public async Task<IActionResult> ReuploadSubmission(string id, [FromBody] ReuploadRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可重新上传方案"));
+
+        if (submission.AppealStatus != AppealStatuses.Approved)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在「申诉成功」状态下可重新上传方案"));
+
+        if (string.IsNullOrWhiteSpace(req?.AttachmentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
+
+        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
+
+        // 删除旧 ReviewResult（如有）
+        if (!string.IsNullOrEmpty(submission.ResultId))
+            await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
+
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AttachmentId, req.AttachmentId)
+                .Set(x => x.FileName, attachment.FileName)
+                .Set(x => x.ExtractedContent, attachment.ExtractedText)
+                .Set(x => x.Status, ReviewStatuses.Queued)
+                .Set(x => x.RerunCount, 0)  // 重新上传 = 新一次方案的「首次评审」，RerunCount 清零
+                .Unset(x => x.ResultId)
+                .Unset(x => x.IsPassed)
+                .Unset(x => x.CompletedAt)
+                .Unset(x => x.StartedAt)
+                .Unset(x => x.ErrorMessage)
+                .Unset(x => x.AppealStatus)
+                .Unset(x => x.LatestAppealId)
+                .Unset(x => x.AppealResolvedAt),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { message = "已替换附件，请刷新页面重新评审" }));
+    }
+
+    public class ReuploadRequest
+    {
+        public string AttachmentId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// 申诉富文本图片上传（粘贴/拖拽即用）
+    /// </summary>
+    [HttpPost("appeals/upload-image")]
+    [RequestSizeLimit(MaxAppealImageBytes)]
+    public async Task<IActionResult> UploadAppealImage([FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择图片文件"));
+        if (file.Length > MaxAppealImageBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "图片大小不能超过 5MB"));
+
+        var mimeType = file.ContentType?.Trim().ToLowerInvariant() ?? "application/octet-stream";
+        if (!AllowedAppealImageMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的图片类型：{mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mimeType,
+            ct,
+            domain: AppDomainPaths.DomainPrdAgent,
+            type: AppDomainPaths.TypeImg);
+
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mimeType,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Image,
+            UploadedAt = DateTime.UtcNow,
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            attachmentId = attachment.AttachmentId,
+            url = attachment.Url,
+            fileName = attachment.FileName,
+            mimeType = attachment.MimeType,
+            size = attachment.Size,
+        }));
     }
 
     // ──────────────────────────────────────────────
@@ -443,73 +942,131 @@ public class ReviewAgentController : ControllerBase
 
         // 构建评审提示词
         var systemPrompt = BuildReviewSystemPrompt(dims);
-        var userPrompt = BuildReviewUserPrompt(submission.Title, content, dims);
+        var userPromptBase = BuildReviewUserPrompt(submission.Title, content, dims);
 
-        // 推送阶段：分析中
-        await WriteSseEventAsync("phase", new { phase = "analyzing", message = "AI 正在分析方案内容..." });
+        // ── 确定性参数：temperature=0 + 由 submissionId 派生稳定 seed ──
+        // 同一份方案重复评审应得到一致结果；解析失败重试时 seed+1 避免完全复现失败的输出。
+        var baseSeed = DeriveSeed(submissionId);
+        const int MaxAttempts = 2; // 总共最多 2 次 LLM 调用（首次 + 1 次重试）
 
-        var gatewayRequest = new GatewayRequest
+        string llmOutput = string.Empty;
+        List<ReviewDimensionScore> dimensionScores = new();
+        string summary = string.Empty;
+        string? parseError = null;
+
+        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
         {
-            AppCallerCode = AppCallerRegistry.ReviewAgent.Review.Chat,
-            ModelType = ModelTypes.Chat,
-            Stream = true,
-            RequestBody = new JsonObject
+            if (attempt == 1)
             {
-                ["messages"] = new JsonArray
+                await WriteSseEventAsync("phase", new { phase = "analyzing", message = "AI 正在分析方案内容..." });
+            }
+            else
+            {
+                await WriteSseEventAsync("phase", new
                 {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                    phase = "retrying",
+                    message = $"AI 上一轮输出格式异常，正在自动重试（第 {attempt}/{MaxAttempts} 次）..."
+                });
+            }
+
+            // 重试时在 prompt 末尾追加严格输出要求，提高 JSON 命中率
+            var userPrompt = attempt == 1
+                ? userPromptBase
+                : userPromptBase + "\n\n## 严格输出要求（重试）\n上一轮输出未通过 JSON 解析。请严格按上方指定的 JSON schema 输出，不要包裹任何额外说明文字。";
+
+            var gatewayRequest = new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.ReviewAgent.Review.Chat,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = new JsonObject
+                {
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                        new JsonObject { ["role"] = "user", ["content"] = userPrompt }
+                    },
+                    ["temperature"] = 0,
+                    ["seed"] = baseSeed + (attempt - 1),
+                    ["max_tokens"] = 8192,
                 },
-                ["temperature"] = 0.3,
-                ["max_tokens"] = 8192,
-            },
-        };
+            };
 
-        var fullContent = new StringBuilder();
-        string? gatewayError = null;
+            var fullContent = new StringBuilder();
+            string? gatewayError = null;
 
-        await WriteSseEventAsync("phase", new { phase = "scoring", message = "正在逐维度评分..." });
+            await WriteSseEventAsync("phase", new { phase = "scoring", message = "正在逐维度评分..." });
 
-        await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
-        {
-            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
-                fullContent.Append(chunk.Content);
-                try
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
-                    await WriteSseEventAsync("typing", new { text = chunk.Content });
+                    fullContent.Append(chunk.Content);
+                    try
+                    {
+                        await WriteSseEventAsync("typing", new { text = chunk.Content });
+                    }
+                    catch (ObjectDisposedException) { break; }
+                    catch (OperationCanceledException) { break; }
                 }
-                catch (ObjectDisposedException) { break; }
-                catch (OperationCanceledException) { break; }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    gatewayError = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
+                    _logger.LogError("ReviewAgent 网关错误 [{SubmissionId}] attempt={Attempt}: {Error}",
+                        submissionId, attempt, gatewayError);
+                    break;
+                }
             }
-            else if (chunk.Type == GatewayChunkType.Error)
+
+            // 网关错误：直接标记失败（网关错误属上游/配额问题，不在解析重试范围内）
+            if (gatewayError != null)
             {
-                gatewayError = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
-                _logger.LogError("ReviewAgent 网关错误 [{SubmissionId}]: {Error}", submissionId, gatewayError);
-                break;
+                await _db.ReviewSubmissions.UpdateOneAsync(
+                    x => x.Id == submissionId,
+                    Builders<ReviewSubmission>.Update
+                        .Set(x => x.Status, ReviewStatuses.Error)
+                        .Set(x => x.ErrorMessage, $"LLM 网关错误: {gatewayError}"),
+                    cancellationToken: CancellationToken.None);
+                try { await WriteSseEventAsync("error", new { message = $"LLM 网关错误: {gatewayError}" }); }
+                catch { /* 客户端已断开 */ }
+                return;
             }
-        }
 
-        // 网关错误：标记失败并返回
-        if (gatewayError != null)
-        {
-            await _db.ReviewSubmissions.UpdateOneAsync(
-                x => x.Id == submissionId,
-                Builders<ReviewSubmission>.Update
-                    .Set(x => x.Status, ReviewStatuses.Error)
-                    .Set(x => x.ErrorMessage, $"LLM 网关错误: {gatewayError}"),
-                cancellationToken: CancellationToken.None);
-            try { await WriteSseEventAsync("error", new { message = $"LLM 网关错误: {gatewayError}" }); }
-            catch { /* 客户端已断开 */ }
-            return;
-        }
+            llmOutput = fullContent.ToString();
+            (dimensionScores, summary, parseError) = ParseReviewOutput(llmOutput, dims);
 
-        // 解析 LLM 输出
-        var llmOutput = fullContent.ToString();
-        var (dimensionScores, summary, parseError) = ParseReviewOutput(llmOutput, dims);
+            // 解析成功（parseError == null 表示 JSON 或正则至少一条命中），跳出循环走落库
+            if (parseError == null) break;
+
+            // 达到重试上限仍失败：标记 Error 让用户手动重试，不写 ReviewResult、不补 0 分
+            if (attempt == MaxAttempts)
+            {
+                _logger.LogWarning(
+                    "ReviewAgent 解析失败已达重试上限 [{SubmissionId}] attempts={Attempts} parseError={Error}",
+                    submissionId, attempt, parseError);
+                const string userFacingMsg = "AI 输出格式异常，已自动重试 1 次仍失败，请点击「重新评审」";
+                await _db.ReviewSubmissions.UpdateOneAsync(
+                    x => x.Id == submissionId,
+                    Builders<ReviewSubmission>.Update
+                        .Set(x => x.Status, ReviewStatuses.Error)
+                        .Set(x => x.ErrorMessage, userFacingMsg),
+                    cancellationToken: CancellationToken.None);
+                try { await WriteSseEventAsync("error", new { message = userFacingMsg }); }
+                catch { /* 客户端已断开 */ }
+                return;
+            }
+            // 否则进入下一轮重试
+        }
 
         var totalScore = dimensionScores.Sum(d => d.Score);
         var isPassed = totalScore >= 80;
+
+        // 在 summary 末尾追加权威结论，避免 LLM 文字与系统派生分数错位时误导用户
+        // （企微/钉钉 webhook 通知也读这个 summary，保证三处文案对齐）
+        var conclusionLine = $"[系统结论] 最终得分 {totalScore}/100，{(isPassed ? "已通过" : "未通过")}。";
+        summary = string.IsNullOrWhiteSpace(summary)
+            ? conclusionLine
+            : summary.TrimEnd() + "\n\n" + conclusionLine;
 
         // 推送分项结果
         foreach (var dimScore in dimensionScores)
@@ -577,6 +1134,61 @@ public class ReviewAgentController : ControllerBase
     // 私有工具方法
     // ──────────────────────────────────────────────
 
+    /// <summary>
+    /// 由 submissionId 派生稳定 seed：同一 submission 多次评审使用相同 seed，
+    /// 跨进程 / 跨平台一致（不依赖 string.GetHashCode 的运行时随机化）。
+    /// </summary>
+    private static int DeriveSeed(string submissionId)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(submissionId));
+        var raw = BitConverter.ToInt32(hash, 0);
+        // & 0x7FFFFFFF 保证非负，避免 Math.Abs(int.MinValue) 溢出
+        return raw & 0x7FFFFFFF;
+    }
+
+    /// <summary>
+    /// 基于系统派生的 Passed 真值，为清单类维度生成权威 comment 文案，
+    /// 覆盖 LLM 自填的可能与实际分数矛盾的评语。
+    /// </summary>
+    private static string BuildChecklistComment(int score, int maxScore, List<DimensionCheckItemResult> items)
+    {
+        var total = items.Count;
+        var passed = items.Count(i => i.Passed);
+        var failed = total - passed;
+        // 「声明不涉及」= involvedChecked=no 且系统判通过
+        var notInvolved = items.Count(i => i.InvolvedChecked == "no" && i.Passed);
+        // 「涉及且已覆盖」= involvedChecked=yes、coverageChecked=yes、solutionFound=true
+        var covered = items.Count(i =>
+            i.InvolvedChecked == "yes" && i.CoverageChecked == "yes" && i.SolutionFound == true);
+
+        if (total == 0)
+            return $"得分 {score}/{maxScore}（无检查项）。";
+
+        var sb = new StringBuilder();
+        sb.Append($"系统派生：共 {total} 项，{passed} 项通过");
+        if (notInvolved > 0 || covered > 0)
+        {
+            var parts = new List<string>();
+            if (notInvolved > 0) parts.Add($"{notInvolved} 项声明不涉及视为合规");
+            if (covered > 0) parts.Add($"{covered} 项涉及且方案已覆盖");
+            sb.Append("（其中 " + string.Join("、", parts) + "）");
+        }
+        if (failed > 0) sb.Append($"，{failed} 项不通过");
+        sb.Append($"。得分 {score}/{maxScore}。");
+
+        if (failed > 0)
+        {
+            var firstFail = items.FirstOrDefault(i => !i.Passed);
+            if (firstFail != null && !string.IsNullOrWhiteSpace(firstFail.Evidence))
+            {
+                var ev = firstFail.Evidence!.Length > 60 ? firstFail.Evidence[..60] + "…" : firstFail.Evidence;
+                sb.Append($" 首个不通过项「{firstFail.Text}」：{ev}");
+            }
+        }
+        return sb.ToString();
+    }
+
     private static string BuildReviewSystemPrompt(List<ReviewDimensionConfig> dims)
     {
         var sb = new StringBuilder();
@@ -584,15 +1196,43 @@ public class ReviewAgentController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("## 评审原则（必须遵守）");
         sb.AppendLine();
-        sb.AppendLine("1. **严格评分，宁可严格不宽松**：80分以上才算通过，代表方案质量较高。普通流水账式方案应在50-65分区间，有明显不足的在40-55分。");
+        sb.AppendLine("1. **严格评分，宁可严格不宽松**：通过线 80 分。多数合格方案应落 75-89 区间，不要轻易给到 90+。");
         sb.AppendLine("2. **必须有证据支撑**：每项评分必须能在方案中找到具体对应内容。方案内容空洞、表述模糊、缺乏具体数据/标准的，必须严格扣分。");
-        sb.AppendLine("3. **拒绝虚高分**：禁止给出\"意思意思\"的高分。如果某维度内容缺失或质量差，应给出0-60%的得分率，不得因为方案提交了就打高分。");
+        sb.AppendLine("3. **拒绝虚高分**：禁止给出\"意思意思\"的高分。如果某维度内容缺失或质量差，应给出 0-60% 的得分率，不得因为方案提交了就打高分。");
         sb.AppendLine("4. **评语要具体**：comment 必须指出方案中**具体缺失或不足的地方**（引用原文或点明缺少的章节/内容），而非泛泛而谈。");
-        sb.AppendLine("5. **分级参考**：");
-        sb.AppendLine("   - 90%+ 得分率：内容完整、质量优秀、逻辑严密，几乎无可挑剔");
-        sb.AppendLine("   - 75-90% 得分率：内容基本完整，有小瑕疵但整体达标");
-        sb.AppendLine("   - 60-75% 得分率：核心内容存在但不够充分，需改进");
-        sb.AppendLine("   - 60% 以下得分率：内容明显缺失或质量低下，需重写");
+        sb.AppendLine("5. **分级参考（按总分得分率）**：");
+        sb.AppendLine("   - 95-100%（罕见，仅限行业标杆级）：内容完整 + 高度凝练 + 每段有具体数据/链接/对比 + 提出非显而易见的洞察");
+        sb.AppendLine("   - 90-94%（上层优秀，约 top 15%）：内容完整、表述凝练无重复、关键论点有数据支撑、可立刻指导落地");
+        sb.AppendLine("   - 75-89%（多数合格方案应落此区间）：核心内容齐全、表述清楚、有可优化空间（如细节缺失或论证略浅，但无明显堆砌）");
+        sb.AppendLine("   - 60-74%：核心缺失，或表述冗余/重复展开，或仅泛泛而谈无具体抓手（不通过）");
+        sb.AppendLine("   - <60%：内容明显不足、空话连篇、为写而写（需重写）");
+        sb.AppendLine();
+        sb.AppendLine("6. **必须惩罚冗余表达（反堆砌硬规则）**：方案如有以下行为，必须在「表达质量与凝练度」维度扣分，并在 comment 中具体点名：");
+        sb.AppendLine("   - 同一观点在不同章节反复展开（重复论证）");
+        sb.AppendLine("   - 用「我们认为…」「建议加强…」「需要重视…」「至关重要」「全面提升」等空话占字数");
+        sb.AppendLine("   - 一句话能说清的事拆成三段写");
+        sb.AppendLine("   - 列表项之间高度重叠（A 是 B 的换种说法）");
+        sb.AppendLine("   - 引用大段背景资料但与方案无关");
+        sb.AppendLine("7. **凝练优先**：相同信息量下，1000 字优于 3000 字。如方案明显存在可删减 30% 不损失信息的冗余，「表达质量与凝练度」按 50% 得分率封顶；如通篇均为空话套话无具体抓手，本维度按 30% 得分率封顶。质量看密度不看长度，凝练扎实但篇幅短不扣分。");
+        sb.AppendLine("8. **数据/证据密度**：90% 以上总分得分率要求方案中至少出现 5 处具体数据/链接/截图/对比/具体配置项，否则总分封顶 89%。");
+        sb.AppendLine();
+        sb.AppendLine("## 评分校准示例（仅作锚点参考，不代表实际方案）");
+        sb.AppendLine();
+        sb.AppendLine("**示例 A — 凝练高分 87/100**（落在 75-89 合格区间上沿）：");
+        sb.AppendLine("> 为降低首屏加载 P95 从 3.2s 至 1.5s（数据来源：12 月监控 dashboard.example/perf），采用 SSR + 路由级 code-split。");
+        sb.AppendLine("> 风险：旧版 Safari 兼容性下降 0.8%（参考 PR #1234 历史回归），监控埋点 sentry.first-paint 看护，超 2s 自动告警。");
+        sb.AppendLine("评分理由：目标量化、方案明确、风险可观测、无废话；表达质量满分；信息密度高但缺乏行业洞察，因此未到 90+。");
+        sb.AppendLine();
+        sb.AppendLine("**示例 B — 堆砌中分 68/100**（落在 60-74 不通过区）：");
+        sb.AppendLine("> 为了更好地服务用户，提升用户体验，我们需要对首屏加载进行优化升级。");
+        sb.AppendLine("> 首屏加载是用户接触产品的第一印象，对用户体验至关重要。");
+        sb.AppendLine("> 我们建议加强首屏加载的优化工作，从多个维度入手，全面提升性能…");
+        sb.AppendLine("评分理由：3 句话说的是同一件事，无数据无方案；「表达质量与凝练度」按 50% 封顶（5 分），「问题陈述质量」「实现思路可行性」均严重不足；总分压在 60-74 区间，明确不通过。");
+        sb.AppendLine();
+        sb.AppendLine("**示例 C — 空洞低分 38/100**（落在 <60 重写区）：");
+        sb.AppendLine("> 本次改造旨在优化产品体验，提升用户满意度，建立行业领先地位。");
+        sb.AppendLine("> 我们将通过技术手段实现这一目标，确保项目顺利落地。");
+        sb.AppendLine("评分理由：通篇无具体内容仅口号；「表达质量与凝练度」按 30% 封顶；多个维度趋零；需要重写。");
         sb.AppendLine();
         sb.AppendLine("## 评审维度与评分标准");
         sb.AppendLine();
@@ -633,6 +1273,12 @@ public class ReviewAgentController : ControllerBase
                 sb.AppendLine("| yes | yes | false | 不通过（勾了但方案中找不到，作弊）|");
                 sb.AppendLine();
                 sb.AppendLine("**得分公式**：`MaxScore × 通过项数 / 总项数` 向下取整，由系统按上表自动计算（你仍需输出 score，系统会覆盖）。");
+                sb.AppendLine();
+                sb.AppendLine("**叙事一致性硬要求（最重要！）**：");
+                sb.AppendLine("- `involvedChecked=no`（用户声明不涉及）= **通过、计入得分**，**不是**\"未完成 / 未覆盖 / 0 分 / 缺失\"。");
+                sb.AppendLine("- 你写的 `comment` 与顶层 `summary`，对该情况应措辞为「声明不涉及（合规）」「N 项声明不涉及视为合规通过」等正向表述。");
+                sb.AppendLine("- 禁止把高得分维度在 `summary` 里描述为低分或不足，例如不得出现「检查清单得分极低 / 检查清单 0 分 / 全部未涉及导致 0 分」这种与系统派生分数冲突的表述。");
+                sb.AppendLine("- 若你确认所有项都是 `no`（不涉及），请明确写「方案合规声明全部 N 项规则均不涉及，该维度满分通过」。");
                 sb.AppendLine();
                 sb.AppendLine("检查项清单（id 必须原样回填）：");
                 var byCategory = dim.Items.GroupBy(x => x.Category);
@@ -697,7 +1343,14 @@ public class ReviewAgentController : ControllerBase
         sb.AppendLine(content);
         sb.AppendLine("---");
         sb.AppendLine();
-        sb.AppendLine("注意：评审要严格，对内容不足、逻辑不清、描述空洞的地方必须扣分，comment 中要指出具体问题。输出 JSON 格式结果。");
+        sb.AppendLine("**评分纪律**：");
+        sb.AppendLine("- 多数合格方案应落 **75-89 区间**；不要轻易给到 90+。");
+        sb.AppendLine("- 给 90+ 必须在 summary 里具体说明三项亮点：① 凝练（哪些表述压缩得当）② 数据/洞察（具体数据或非显而易见的判断）③ 立即可落地（实施路径清晰）。说不出来就降到 75-89 区间。");
+        sb.AppendLine("- 给 95+ 极高分前自问：这份方案能否作为行业范本对外发布？不能就降到 90-94。");
+        sb.AppendLine("- 重复表述、为撑字数的展开、空话套话必须显著扣分，并在评语点名「第 X 段与第 Y 段表达同一观点，建议合并」。");
+        sb.AppendLine("- 如方案凝练扎实但篇幅短，不得因「内容不够多」扣分。质量看密度不看长度。");
+        sb.AppendLine();
+        sb.AppendLine("输出 JSON 格式结果。");
         return sb.ToString();
     }
 
@@ -786,6 +1439,9 @@ public class ReviewAgentController : ControllerBase
                 .ToList();
             // 重算最终分数（系统派生 Passed → 公式重算，避免 LLM 自填的 score 干扰）
             score.Score = ComputeChecklistScore(dimConfig.MaxScore, score.Items);
+            // 用模板覆盖 LLM 自填的 comment，避免 LLM 文字叙事与系统派生分数错位
+            // （例如 LLM 把"不涉及"误解为"0 分"，写出与实际得分矛盾的评语）
+            score.Comment = BuildChecklistComment(score.Score, dimConfig.MaxScore, score.Items);
         }
 
         // ── summary 兜底提取（如果 JSON 解析没拿到或拿到空值） ──

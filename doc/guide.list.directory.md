@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-13
+> 最后更新：2026-05-22
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -69,6 +69,9 @@
 - [CDS 多项目数据字典](spec.cds-project-model) `spec.cds-project-model`
   > CDS 多项目数据模型的字段定义与约束
 
+- [统一短链系统规格](spec.short-links) `spec.short-links`
+  > 统一短链系统产品规格，已落地（PR #613）
+
 ### 二、设计文档
 
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
@@ -112,6 +115,9 @@
 
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
+
+- [缺陷管理标签体系设计](design.defect-labels) `design.defect-labels`
+  > 缺陷协作标签的枚举、权限、展示和桌面端同步设计
 
 - [缺陷截图 VLM 预解析设计文档](design.defect-image-analysis) `design.defect-image-analysis`
   > 使用视觉语言模型自动解析缺陷截图的设计
@@ -173,6 +179,18 @@
 - [CDS Agent API 契约设计](design.cds-agent-api) `design.cds-agent-api`
   > MAP/CDS 会话、事件、工具审批、Hook、runtime profile 与工作流调用的 API 契约
 
+- [CDS Agent 运行时架构设计](design.cds-agent-runtime-architecture) `design.cds-agent-runtime-architecture`
+  > MAP 会话、CDS shared-service、sidecar pool、会话级 worker 与业务分支容器的边界图
+
+- [CDS Agent 官方 SDK Adapter 设计](design.cds-agent-official-sdk-adapter) `design.cds-agent-official-sdk-adapter`
+  > 保留 MAP/CDS 控制面，把自研 agent loop 压缩为官方 SDK adapter 的边界设计
+
+- [CDS Agent 商业级架构与路线图](design.cds-agent-commercial-architecture-and-roadmap) `design.cds-agent-commercial-architecture-and-roadmap`
+  > CDS Agent 商业级可用的整体架构方案与路线图规划
+
+- [CDS Agent R0 · CDS-managed runtime fact source 设计](design.cds-agent-managed-runtime-fact-source) `design.cds-agent-managed-runtime-fact-source`
+  > CDS-managed runtime 事实来源的设计文档
+
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
@@ -199,9 +217,6 @@
 
 - [周报管理 Agent 架构设计](design.report-agent) `design.report-agent`
   > 周报 Agent 的完整架构：团队管理、AI 生成、数据源采集
-
-- [产品评审员技术设计文档](design.review-agent) `design.review-agent`
-  > ReviewAgent 的完整技术设计：状态机、LLM 集成、SSE 协议
 
 - [系统涌现：从基础组件到协同智能](design.system-emergence) `design.system-emergence`
   > MAP 平台从基础能力到协同智能的涌现机制说明
@@ -265,6 +280,9 @@
 
 - [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
+
+- [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
+  > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
 
 ### 三、指南
 
@@ -334,11 +352,23 @@
 - [CDS Agent 工作台用户指南](guide.cds-agent-workbench) `guide.cds-agent-workbench`
   > 普通用户从 CDS Agent 页面创建远程会话、发送任务、审批工具、查看事件和日志的操作指南
 
+- [CDS Agent 工作台复现操作指南](guide.cds-agent-workbench-reproduce) `guide.cds-agent-workbench-reproduce`
+  > 从真实入口复现 CDS Agent 创建会话、审批工具、查看产物、远程浏览器和 PR 闭环的操作教程
+
+- [CDS Agent 下一代测试与涌现建议](guide.cds-agent-next-agent-testing) `guide.cds-agent-next-agent-testing`
+  > 给下一个智能体的分层测试矩阵、视觉验收标准、涌现分析和下一代路线建议
+
 - [CDS Agent 管理员指南](guide.cds-agent-admin) `guide.cds-agent-admin`
   > 管理员配置系统级 CDS 长期授权、模型运行配置、Hook profile 和安全边界的操作指南
 
 - [CDS Agent 运行手册](guide.cds-agent-runbook) `guide.cds-agent-runbook`
   > CDS Agent 部署检查、401、撤销、runtime、事件恢复、PR 验收失败的排障手册
+
+- [CDS Agent 代码审查上手指南](guide.cds-agent-code-review-quickstart) `guide.cds-agent-code-review-quickstart`
+  > CDS Agent 代码审查功能快速上手指南
+
+- [CDS Agent Runtime Pool 恢复指南](guide.cds-agent-runtime-pool-recovery) `guide.cds-agent-runtime-pool-recovery`
+  > CDS Agent Runtime Pool 恢复与官方 SDK Smoke 测试操作指南
 
 - [CDS 环境变量配置指南](guide.cds-env) `guide.cds-env`
   > CDS 环境变量的配置与使用说明
@@ -459,6 +489,9 @@
 - [技能系统规则与创建指南](rule.skill-system) `rule.skill-system`
   > Claude Code Skill 的创建、注册与管理规范
 
+- [同族技能触发词去重规则](rule.skill-trigger-disambiguation) `rule.skill-trigger-disambiguation`
+  > 多个技能围绕同一中心系统拆分时的 description / slash / 触发词去重硬规则
+
 - [PRD Agent 全面代码审计报告](rule.audit-prd-desktop-codebase) `rule.audit-prd-desktop-codebase`
   > 桌面端代码库的全面审计报告与改进建议
 
@@ -559,6 +592,12 @@
 - [CDS Agent 工作台完全可用路线](plan.cds-agent-workbench) `plan.cds-agent-workbench`
   > MAP 通过 CDS 操作 Claude SDK / Codex 类 Agent 干活的完全可用路线，覆盖对话页、工作流、智能体、远程浏览器、可观测性和逐项验收
 
+- [CDS Agent 官方 SDK Adapter 迁移计划](plan.cds-agent-official-sdk-migration) `plan.cds-agent-official-sdk-migration`
+  > 一个周期内把 CDS Agent runtime 收缩到官方 SDK adapter 的最小开发计划、调试顺序和验收门槛
+
+- [CDS Agent Runtime 架构纠偏 · 有限计划](plan.cds-agent-runtime-correction-limited) `plan.cds-agent-runtime-correction-limited`
+  > CDS Agent Runtime 架构纠偏的有限范围实施计划
+
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
   > Phase 0-3 长期路线图
 
@@ -614,7 +653,64 @@
 - [Claude SDK 执行器 / Python sidecar 债务台账](debt.claude-sdk-executor) `debt.claude-sdk-executor`
   > claude-sdk 执行器与 Python sidecar 的已知债务与边界约束
 
+- [CDS state.json 影子存储 · 债务台账](debt.cds-state-json) `debt.cds-state-json`
+  > 4 条 open：webhook deliveries 全量刷盘 / StateService 内存全量加载 / mongo-split 模式 state.json 同步写 / 无独立清理策略
+
+- [CDS compose 模板 TODO secrets · 债务台账](debt.cds-compose-secrets) `debt.cds-compose-secrets`
+  > 2 条 open：x-cds-env TODO secrets 致全量 import 必被拒 / admin static 每次冷 vite build 就绪窗口紧绷
+
+- [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
+  > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
+
+- [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
+  > 分享链接系统的已知安全边界与待补项
+
 ### 七、周报
+
+- [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
+  > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
+
+- [CDS Agent P4-1 远端发布前验收与试用入口报告](report.cds-agent-p4-1-remote-preflight-2026-05-19) `report.cds-agent-p4-1-remote-preflight-2026-05-19`
+  > CDS Agent P4-1 远端发布前验收与试用入口的验收报告
+
+- [CDS Agent P4-2 远端 Provider 闭环验收报告](report.cds-agent-p4-2-provider-closure-2026-05-19) `report.cds-agent-p4-2-provider-closure-2026-05-19`
+  > CDS Agent P4-2 远端 Provider 闭环验收报告
+
+- [CDS Agent P4-3 远端试用入口与发布验收包](report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19) `report.cds-agent-p4-3-remote-trial-acceptance-2026-05-19`
+  > CDS Agent P4-3 远端试用入口与发布验收包
+
+- [CDS Agent P4-4 发布/合并策略评估报告](report.cds-agent-p4-4-release-merge-strategy-2026-05-19) `report.cds-agent-p4-4-release-merge-strategy-2026-05-19`
+  > CDS Agent P4-4 发布与合并策略的评估报告
+
+- [CDS Agent P4-5 writable/PR/KB apply 试用计划](report.cds-agent-p4-5-writable-trial-plan-2026-05-19) `report.cds-agent-p4-5-writable-trial-plan-2026-05-19`
+  > CDS Agent P4-5 writable / PR / KB apply 试用计划
+
+- [CDS Agent Phase 1 验收报告](report.cds-agent-phase1-acceptance-2026-05-19) `report.cds-agent-phase1-acceptance-2026-05-19`
+  > CDS Agent Phase 1 阶段验收报告（2026-05-19）
+
+- [CDS Agent Phase 2 验收报告](report.cds-agent-phase2-acceptance-2026-05-19) `report.cds-agent-phase2-acceptance-2026-05-19`
+  > CDS Agent Phase 2 阶段验收报告（2026-05-19）
+
+- [CDS Agent Phase 3 验收报告](report.cds-agent-phase3-acceptance-2026-05-19) `report.cds-agent-phase3-acceptance-2026-05-19`
+  > CDS Agent Phase 3 阶段验收报告（2026-05-19）
+
+- [CDS Agent 执行过程账本](report.cds-agent-execution-ledger-2026-05-18) `report.cds-agent-execution-ledger-2026-05-18`
+  > CDS Agent 开发执行过程的完整账本记录（2026-05-18）
+
+- [CDS Agent SDK Runtime 再次侵入 MAP 主系统 · 调查报告](report.cds-agent-runtime-pool-contamination-2026-05-18) `report.cds-agent-runtime-pool-contamination-2026-05-18`
+  > CDS Agent SDK Runtime 再次侵入 MAP 主系统的调查与根因分析报告（2026-05-18）
+
+- [CDS Agent sidecar 侵入 MAP 分支服务 · 调查报告](report.cds-agent-sidecar-contamination-2026-05-18) `report.cds-agent-sidecar-contamination-2026-05-18`
+  > CDS Agent sidecar 侵入 MAP 分支服务的调查报告（2026-05-18）
+
+- [Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告](report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18) `report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18`
+  > Claude Agent SDK 容器侵入 MAP 主系统的根因分析报告（2026-05-18）
+
+- [CDS Agent 当前进度面板](report.cds-agent-current-progress) `report.cds-agent-current-progress`
+  > CDS Agent 当前开发进度与状态面板（已合并到权威入口）
+
+- [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
+  > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
 - [周报 2026-W19 (05-04 ~ 05-10)](report.2026-W19) `report.2026-W19`
   > 2026 年第 19 周工作总结（310 commits / 15 PRs，CDS 蓝绿/Forwarder 架构落地、自更新十八轮收尾、五平台博主订阅 → 首页海报 Phase 2+3、Claude SDK 执行器 + CDS-MAP 配对协议 v1）
@@ -694,12 +790,18 @@
 - [文档技能评测·documentation-writer 样本输出](report.skill-eval-sample-diataxis) `report.skill-eval-sample-diataxis`
   > 评测报告引用的 skill 原始输出样本（Diátaxis 四象限类）
 
+- [CDS Mongo 日志拆分事故复盘（2026-05-23）](report.cds-mongo-log-split-incident-2026-05-23) `report.cds-mongo-log-split-incident-2026-05-23`
+  > CDS 控制面 cds-master 崩溃导致 502 的事故根因分析与复盘
+
 ---
 
 ## 变更历史
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-22 | 新增 | `design.defect-agent-share-skill-architecture` `debt.share-link-security` `report.cds-mongo-log-split-incident-2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
+| 2026-05-15 | 新增 | `design.cds-agent-runtime-architecture` | CDS Agent 运行时架构设计 |
+| 2026-05-15 | 新增 | `report.cds-agent-workbench-2026-05-15` `guide.cds-agent-workbench-reproduce` `guide.cds-agent-next-agent-testing` | CDS Agent A10 完成复盘、复现教程、下一代测试与涌现建议 |
 | 2026-05-14 | 新增 | `guide.cds-agent-workbench` `guide.cds-agent-admin` `design.cds-agent-api` `guide.cds-agent-runbook` | CDS Agent 完全可用文档闭环 |
 | 2026-05-11 | 补齐 | 批量 | 补齐 57 个长期未登记文档（spec×4 / design×17 / guide×16 / rule×6 / plan×6 / debt×2 / report×5 + 文件重命名 2 个 + index.yml 同步 53 条） |
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |

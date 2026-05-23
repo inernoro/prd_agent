@@ -32,6 +32,7 @@ public class AiToolboxController : ControllerBase
     private readonly IToolboxEventStore _eventStore;
     private readonly IRunQueue _runQueue;
     private readonly ILlmGateway _gateway;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<AiToolboxController> _logger;
 
     private const string AppKey = "ai-toolbox";
@@ -44,6 +45,7 @@ public class AiToolboxController : ControllerBase
         IToolboxEventStore eventStore,
         IRunQueue runQueue,
         ILlmGateway gateway,
+        IConfiguration configuration,
         ILogger<AiToolboxController> logger)
     {
         _db = db;
@@ -52,6 +54,7 @@ public class AiToolboxController : ControllerBase
         _eventStore = eventStore;
         _runQueue = runQueue;
         _gateway = gateway;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -156,6 +159,7 @@ public class AiToolboxController : ControllerBase
             PlannedAgents = intent.SuggestedAgents,
             Status = ToolboxRunStatus.Pending
         };
+        run.TraceId = $"toolbox-run-{run.Id}";
 
         // 根据意图创建执行步骤
         for (var i = 0; i < intent.SuggestedAgents.Count; i++)
@@ -187,7 +191,7 @@ public class AiToolboxController : ControllerBase
         if (autoExecute && run.Steps.Count > 0)
         {
             // 入队等待后台执行
-            await _runQueue.EnqueueAsync(ToolboxRunWorker.RunKind, run.Id, ct);
+            await _runQueue.EnqueueAsync(ToolboxRunWorker.ResolveRunKind(_configuration), run.Id, ct);
             _logger.LogInformation("Run 已入队: {RunId}", run.Id);
         }
 
@@ -216,6 +220,7 @@ public class AiToolboxController : ControllerBase
                 Status = s.Status.ToString().ToLowerInvariant()
             }).ToList(),
             Status = autoExecute ? "queued" : "pending",
+            TraceId = run.TraceId,
             SseUrl = $"/api/ai-toolbox/runs/{run.Id}/stream"
         };
 
@@ -260,7 +265,7 @@ public class AiToolboxController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"当前状态不允许执行: {run.Status}"));
         }
 
-        await _runQueue.EnqueueAsync(ToolboxRunWorker.RunKind, run.Id, ct);
+        await _runQueue.EnqueueAsync(ToolboxRunWorker.ResolveRunKind(_configuration), run.Id, ct);
         return Ok(ApiResponse<object>.Ok(new { message = "已加入执行队列" }));
     }
 
@@ -1785,6 +1790,11 @@ public class ToolboxChatResponse
     /// 运行状态
     /// </summary>
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 链路追踪 ID
+    /// </summary>
+    public string TraceId { get; set; } = string.Empty;
 
     /// <summary>
     /// SSE 流式事件 URL

@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AgentTools;
 
 namespace PrdAgent.Api.Services.Toolbox;
 
@@ -14,21 +15,77 @@ public class ToolboxRunWorker : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IRunQueue _runQueue;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<ToolboxRunWorker> _logger;
 
     // v1 队列名是全局 toolbox，多个旧预览容器共享 Redis 时会抢消费彼此的任务。
     // v2 先切开旧 worker，后续再升级为按部署命名空间隔离。
-    public const string RunKind = "toolbox-v2";
+    private const string RunKindPrefix = "toolbox-v3";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
 
     public ToolboxRunWorker(
         IServiceProvider serviceProvider,
         IRunQueue runQueue,
+        IConfiguration configuration,
         ILogger<ToolboxRunWorker> logger)
     {
         _serviceProvider = serviceProvider;
         _runQueue = runQueue;
+        _configuration = configuration;
         _logger = logger;
+    }
+
+    public static string ResolveRunKind(IConfiguration configuration)
+    {
+        var workspace = AgentWorkspace.Resolve(configuration);
+        var branch = FirstConfigValue(configuration, "VITE_GIT_BRANCH", "AGENT_WORKSPACE_GIT_REF", "GIT_BRANCH", "AgentWorkspace:GitRef")
+            ?? workspace.GitRef;
+        var repo = FirstConfigValue(configuration, "AGENT_WORKSPACE_GITHUB_REPOSITORY", "GITHUB_REPOSITORY", "AgentWorkspace:GitHubRepository")
+            ?? workspace.GitHubRepository;
+        var project = FirstConfigValue(configuration, "AGENT_WORKSPACE_PROJECT_SLUG", "AgentWorkspace:ProjectSlug");
+        if (string.IsNullOrWhiteSpace(project) && !string.IsNullOrWhiteSpace(repo))
+            project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+
+        var branchSlug = Slugify(branch);
+        var projectSlug = Slugify(project);
+        if (string.IsNullOrWhiteSpace(branchSlug) || string.IsNullOrWhiteSpace(projectSlug))
+            return $"{RunKindPrefix}:local";
+
+        return $"{RunKindPrefix}:{projectSlug}:{branchSlug}";
+    }
+
+    private static string? FirstConfigValue(IConfiguration configuration, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = configuration[key];
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+        return null;
+    }
+
+    private static string Slugify(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var sb = new System.Text.StringBuilder(value.Length);
+        var lastDash = false;
+        foreach (var ch in value.Trim().ToLowerInvariant())
+        {
+            var ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+            if (ok)
+            {
+                sb.Append(ch);
+                lastDash = false;
+                continue;
+            }
+            if (!lastDash && sb.Length > 0)
+            {
+                sb.Append('-');
+                lastDash = true;
+            }
+        }
+        return sb.ToString().Trim('-');
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -40,7 +97,7 @@ public class ToolboxRunWorker : BackgroundService
             try
             {
                 // 从队列获取任务
-                var runId = await _runQueue.DequeueAsync(RunKind, PollInterval, stoppingToken);
+                var runId = await _runQueue.DequeueAsync(ResolveRunKind(_configuration), PollInterval, stoppingToken);
 
                 if (string.IsNullOrEmpty(runId))
                 {

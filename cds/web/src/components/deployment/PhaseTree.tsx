@@ -1,6 +1,21 @@
 import type { ReactNode } from 'react';
-import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, Maximize2, XCircle } from 'lucide-react';
 import type { PhaseKey, PhaseState } from '@/lib/deploymentPhases';
+
+/**
+ * 2026-05-14: 内联容器日志支持多容器 tab 切换 + 一键最大化。
+ * 用户反馈:"图5 容器日志里面有2个容器应该把真正的容器日志复刻过来" —— 之前 PhaseTree
+ * 的内联日志只展示自动挑选的一个 service。
+ */
+export interface InlineContainerLogControls {
+  /** 全部 service，按显示顺序排好。少于 2 个时不渲染 tab 条。 */
+  services: Array<{ profileId: string; status: string; hostPort?: number }>;
+  /** 当前选中的 profileId。无选中视为不渲染 tab 条。 */
+  selected: string | null;
+  onSelect: (profileId: string) => void;
+  /** "最大化"按钮——跳到 Logs tab 容器模式查看完整日志。 */
+  onMaximize?: () => void;
+}
 
 /*
  * PhaseTree — Railway 风格的阶段树。
@@ -26,6 +41,11 @@ export interface PhaseTreeProps {
    * build 阶段仍通过「查看完整日志」跳转到构建日志面板。
    */
   containerLogsByPhase?: Partial<Record<PhaseKey, PhaseLogState>>;
+  /**
+   * 2026-05-14: 多容器 tab 切换 + 最大化控制。给定后，内联日志会渲染 tab strip。
+   * 缺省 = 沿用旧行为（单容器，仅自动挑选的那个）。
+   */
+  containerLogControls?: InlineContainerLogControls;
   /**
    * 内联日志默认显示最后多少行。null = 全部。
    */
@@ -111,19 +131,69 @@ function PhaseLogDetails({
   phase,
   state,
   tail,
+  controls,
 }: {
   phase: PhaseState;
   state: PhaseLogState;
   tail: number | null | undefined;
+  controls?: InlineContainerLogControls;
 }): JSX.Element {
+  const hasTabs = !!(controls && controls.services.length > 1);
   return (
     <details
       className="group rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2"
-      open={phase.status === 'running'}
+      open={phase.status === 'running' || phase.status === 'error'}
     >
-      <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground transition-colors group-open:text-foreground">
-        容器日志
+      <summary className="flex cursor-pointer select-none items-center justify-between gap-2 text-xs font-medium text-muted-foreground transition-colors group-open:text-foreground">
+        <span>容器日志</span>
+        {controls?.onMaximize ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              controls.onMaximize?.();
+            }}
+            title="跳转到「日志 → 容器日志」查看完整内容"
+          >
+            <Maximize2 className="h-3 w-3" />
+            最大化
+          </button>
+        ) : null}
       </summary>
+      {hasTabs ? (
+        <div className="mt-2 flex flex-wrap gap-1.5 border-b border-[hsl(var(--hairline))] pb-2">
+          {controls!.services.map((svc) => {
+            const active = svc.profileId === controls!.selected;
+            const dot = svc.status === 'running'
+              ? 'bg-emerald-500'
+              : svc.status === 'error'
+                ? 'bg-destructive'
+                : 'bg-muted-foreground/40';
+            return (
+              <button
+                key={svc.profileId}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  controls!.onSelect(svc.profileId);
+                }}
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+                  active
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+                <span className="font-mono">{svc.profileId}</span>
+                {svc.hostPort ? <span className="font-mono opacity-70">:{svc.hostPort}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <PhaseLogPreview state={state} tail={tail} />
     </details>
   );
@@ -133,6 +203,7 @@ export function PhaseTree({
   phases,
   onActionForError,
   containerLogsByPhase,
+  containerLogControls,
   inlineLogTailLines = 80,
   className,
 }: PhaseTreeProps): JSX.Element {
@@ -171,7 +242,12 @@ export function PhaseTree({
                 ) : null}
                 {phaseLogs ? (
                   <div className={phase.errorHint ? 'mt-2' : ''}>
-                    <PhaseLogDetails phase={phase} state={phaseLogs} tail={inlineLogTailLines} />
+                    <PhaseLogDetails
+                      phase={phase}
+                      state={phaseLogs}
+                      tail={inlineLogTailLines}
+                      controls={containerLogControls}
+                    />
                   </div>
                 ) : null}
                 {onActionForError ? (

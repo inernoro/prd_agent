@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Plus, FileText, ChevronLeft, ChevronRight, Calendar, CheckCircle2, Clock, AlertCircle, Send, Pencil } from 'lucide-react';
+import { formatWeekDateRange } from '../utils/weekRange';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
@@ -107,7 +108,7 @@ export function MyReportsList() {
                   letterSpacing: dataTheme === 'light' ? '-0.01em' : undefined,
                 }}
               >
-                {weekYear} 年第 {weekNumber} 周
+                {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
               </span>
               {isCurrentWeek && (
                 <span

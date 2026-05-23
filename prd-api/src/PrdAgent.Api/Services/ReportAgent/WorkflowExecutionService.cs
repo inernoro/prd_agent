@@ -74,6 +74,7 @@ public class WorkflowExecutionService : IWorkflowExecutionService
             }).ToList(),
             Status = WorkflowExecutionStatus.Queued,
         };
+        execution.TraceId = $"workflow-execution-{execution.Id}";
 
         await _db.WorkflowExecutions.InsertOneAsync(execution, cancellationToken: CancellationToken.None);
 

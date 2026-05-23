@@ -18,9 +18,14 @@ import {
 } from '@/services/real/submissions';
 import { SubmissionDetailModal } from '@/components/showcase/SubmissionDetailModal';
 import { LiteraryCard } from '@/components/showcase/LiteraryCard';
+import { CreatorFilterRow } from '@/components/showcase/CreatorFilterRow';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
+import { useInViewport } from '@/hooks/useInViewport';
+import { useCreatorFilter } from '@/hooks/useCreatorFilter';
+import { distributeToColumns, getAspectRatio } from '@/components/showcase/waterfall';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── Constants ──
@@ -31,31 +36,7 @@ const TABS = [
   { key: 'literary', label: '文学创作', icon: TrendingUp },
 ] as const;
 
-const PAGE_SIZE = 24;
-
-/** Distribute items into columns by shortest-column-first for waterfall layout */
-function distributeToColumns<T extends { coverWidth: number; coverHeight: number }>(
-  items: T[],
-  columnCount: number,
-): T[][] {
-  const columns: T[][] = Array.from({ length: columnCount }, () => []);
-  const heights = new Array(columnCount).fill(0);
-  for (const item of items) {
-    const ratio = item.coverWidth && item.coverHeight ? item.coverHeight / item.coverWidth : 0.625;
-    const shortest = heights.indexOf(Math.min(...heights));
-    columns[shortest].push(item);
-    heights[shortest] += ratio;
-  }
-  return columns;
-}
-
-/** Get aspect ratio string for a submission item */
-function getAspectRatio(item: SubmissionItem): string {
-  if (item.coverWidth && item.coverHeight) {
-    return `${item.coverWidth}/${item.coverHeight}`;
-  }
-  return '16/10';
-}
+const PAGE_SIZE = 18;
 
 // ── Unified Visual Card (NotebookLM style) ──
 
@@ -77,6 +58,7 @@ function MasonryCard({
   useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
   useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
+  const [boxRef, inView] = useInViewport<HTMLDivElement>();
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
   const hasCover = !!item.coverUrl && !imgError;
 
@@ -108,20 +90,22 @@ function MasonryCard({
     >
       {/* Card — natural aspect ratio for waterfall layout */}
       <div
+        ref={boxRef}
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : 'rgba(255,255,255,0.03)',
         }}
       >
-        {/* Cover image */}
-        {item.coverUrl && !imgError && (
+        {/* Cover image — only requested once the card nears the viewport */}
+        {item.coverUrl && !imgError && inView && (
           <img
             src={item.coverUrl}
             alt={item.title}
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
             style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
             loading="lazy"
+            decoding="async"
             onLoad={() => setImgLoaded(true)}
             onError={() => { setImgError(true); setImgLoaded(true); }}
           />
@@ -214,6 +198,15 @@ export default function PortfolioShowcasePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
   const [scrollY, setScrollY] = useState(0);
+  const {
+    creators,
+    creatorsLoading,
+    selectedCreatorId,
+    selectedCreatorRef,
+    fetchCreators,
+    selectCreator,
+    resetCreator,
+  } = useCreatorFilter();
   const fetchIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -234,6 +227,7 @@ export default function PortfolioShowcasePage() {
     try {
       const res = await listPublicSubmissions({
         contentType: contentType || undefined,
+        ownerUserId: selectedCreatorRef.current || undefined,
         skip,
         limit: PAGE_SIZE,
       });
@@ -248,16 +242,25 @@ export default function PortfolioShowcasePage() {
         setLoadingMore(false);
       }
     }
-  }, []);
+  }, [selectedCreatorRef]);
 
   useEffect(() => {
     fetchItems('', 0, false);
-  }, [fetchItems]);
+    fetchCreators('');
+  }, [fetchItems, fetchCreators]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setItems([]);
+    resetCreator();
     fetchItems(tab, 0, false);
+    fetchCreators(tab);
+  };
+
+  const handleSelectCreator = (userId: string | null) => {
+    selectCreator(userId);
+    setItems([]);
+    fetchItems(activeTab, 0, false);
   };
 
   const handleLikeToggle = async (id: string, liked: boolean) => {
@@ -283,9 +286,8 @@ export default function PortfolioShowcasePage() {
 
   const hasMore = items.length < total;
 
-  // Waterfall column count + distribution
-  const columnCount = isMobile ? 2 : 4;
-  const gap = isMobile ? 12 : 16;
+  // Waterfall column count — driven by actual container content width (ultrawide-aware)
+  const { columnCount, gap, ref: gridRef } = useWaterfallColumns();
   const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
 
   // Infinite scroll sentinel
@@ -311,6 +313,15 @@ export default function PortfolioShowcasePage() {
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ background: '#0a0a0f' }}>
+      {/* Decorative aurora glow behind the whole page (so it isn't dead-black below the hero) */}
+      <div
+        className="absolute inset-0 overflow-hidden pointer-events-none"
+        style={{ zIndex: 0, opacity: 0.55 }}
+        aria-hidden
+      >
+        <div className="showcase-aurora" />
+      </div>
+
       {/* ── Floating top bar ── */}
       <div
         className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between transition-all duration-500"
@@ -381,7 +392,7 @@ export default function PortfolioShowcasePage() {
       </div>
 
       {/* ── Scrollable content ── */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto relative z-10">
         {/* ── Hero Section ── */}
         <div
           className="relative overflow-hidden"
@@ -396,15 +407,8 @@ export default function PortfolioShowcasePage() {
               transition: 'transform 0.1s linear',
             }}
           >
-            {/* Multi-layer gradient orbs */}
-            <div className="absolute inset-0" style={{
-              background: `
-                radial-gradient(ellipse 80% 60% at 20% 40%, rgba(99,102,241,0.15) 0%, transparent 60%),
-                radial-gradient(ellipse 60% 80% at 80% 30%, rgba(168,85,247,0.12) 0%, transparent 55%),
-                radial-gradient(ellipse 50% 50% at 50% 80%, rgba(236,72,153,0.08) 0%, transparent 50%),
-                radial-gradient(ellipse 90% 40% at 60% 10%, rgba(59,130,246,0.10) 0%, transparent 50%)
-              `,
-            }} />
+            {/* Multi-layer animated aurora orbs */}
+            <div className="showcase-aurora" style={{ opacity: 0.9 }} />
 
             {/* Animated floating particles effect via CSS */}
             <div className="absolute inset-0" style={{
@@ -556,10 +560,22 @@ export default function PortfolioShowcasePage() {
               <span>最受欢迎</span>
             </div>
           </div>
+
+          {/* Creator avatar filter row */}
+          {(creatorsLoading || creators.length > 0) && (
+            <div style={{ padding: isMobile ? '0 16px 12px' : '0 48px 14px' }}>
+              <CreatorFilterRow
+                creators={creators}
+                selectedUserId={selectedCreatorId}
+                onSelect={handleSelectCreator}
+                loading={creatorsLoading}
+              />
+            </div>
+          )}
         </div>
 
         {/* ── Gallery content ── */}
-        <div style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
+        <div ref={gridRef} style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
           {/* Loading skeleton — waterfall */}
           {loading && (
             <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
@@ -626,32 +642,61 @@ export default function PortfolioShowcasePage() {
 
           {/* Empty state */}
           {!loading && items.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-32 gap-4">
-              <div
-                className="w-20 h-20 rounded-2xl flex items-center justify-center"
-                style={{
-                  background: 'rgba(129,140,248,0.08)',
-                  border: '1px solid rgba(129,140,248,0.15)',
-                }}
-              >
-                <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
+            (activeTab || selectedCreatorId) ? (
+              <div className="flex flex-col items-center justify-center py-32 gap-4">
+                <div
+                  className="w-20 h-20 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: 'rgba(129,140,248,0.08)',
+                    border: '1px solid rgba(129,140,248,0.15)',
+                  }}
+                >
+                  <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
+                </div>
+                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  没有符合条件的作品
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleTabChange('')}
+                  className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-105"
+                  style={{
+                    background: 'rgba(255,255,255,0.08)',
+                    color: 'rgba(255,255,255,0.7)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                  }}
+                >
+                  查看全部作品
+                </button>
               </div>
-              <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
-                暂无作品，创作第一件作品吧
-              </p>
-              <button
-                type="button"
-                onClick={() => navigate('/')}
-                className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-105"
-                style={{
-                  background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
-                  color: '#fff',
-                  boxShadow: '0 4px 20px rgba(99,102,241,0.3)',
-                }}
-              >
-                开始创作
-              </button>
-            </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-32 gap-4">
+                <div
+                  className="w-20 h-20 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: 'rgba(129,140,248,0.08)',
+                    border: '1px solid rgba(129,140,248,0.15)',
+                  }}
+                >
+                  <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
+                </div>
+                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  暂无作品，创作第一件作品吧
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-medium transition-all duration-200 hover:scale-105"
+                  style={{
+                    background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
+                    color: '#fff',
+                    boxShadow: '0 4px 20px rgba(99,102,241,0.3)',
+                  }}
+                >
+                  开始创作
+                </button>
+              </div>
+            )
           )}
         </div>
       </div>

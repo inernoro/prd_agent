@@ -115,6 +115,7 @@ public class MongoDbContext
 
     // 海鲜市场「技能」条目（用户上传的 zip 技能包）
     public IMongoCollection<MarketplaceSkill> MarketplaceSkills => _database.GetCollection<MarketplaceSkill>("marketplace_skills");
+    public IMongoCollection<MarketplaceSkillShareLink> MarketplaceSkillShareLinks => _database.GetCollection<MarketplaceSkillShareLink>("marketplace_skill_share_links");
 
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
@@ -135,6 +136,7 @@ public class MongoDbContext
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
+    public IMongoCollection<ReviewAppeal> ReviewAppeals => _database.GetCollection<ReviewAppeal>("review_appeals");
 
     // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
     public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
@@ -235,6 +237,10 @@ public class MongoDbContext
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
 
+    // 统一短链路由（所有分享系统共用 /s/{seq}）
+    public IMongoCollection<ShortLink> ShortLinks => _database.GetCollection<ShortLink>("short_links");
+    public IMongoCollection<ShortLinkCounter> ShortLinkCounters => _database.GetCollection<ShortLinkCounter>("short_link_counters");
+
     // MAP Inbox — 跨系统数据导入通道（骨架，Controller 留待下次迭代开发）
     public IMongoCollection<InboxItem> InboxItems => _database.GetCollection<InboxItem>("inbox_items");
 
@@ -270,6 +276,7 @@ public class MongoDbContext
     public IMongoCollection<DocumentStoreAgentRun> DocumentStoreAgentRuns => _database.GetCollection<DocumentStoreAgentRun>("document_store_agent_runs");
     public IMongoCollection<DocumentStoreViewEvent> DocumentStoreViewEvents => _database.GetCollection<DocumentStoreViewEvent>("document_store_view_events");
     public IMongoCollection<DocumentInlineComment> DocumentInlineComments => _database.GetCollection<DocumentInlineComment>("document_inline_comments");
+    public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
 
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
@@ -974,6 +981,15 @@ public class MongoDbContext
             Builders<DefectShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_share_links_creator" }));
 
+        // MarketplaceSkillShareLinks：Token 唯一索引（公开匿名读端点按 token 查，必须有索引）
+        // 注：本方法按 no-auto-index 规则不在运行时执行，此处仅作 DBA 手动建索引的参考来源
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.Token),
+            new CreateIndexOptions { Name = "uniq_marketplace_skill_share_links_token", Unique = true }));
+        MarketplaceSkillShareLinks.Indexes.CreateOne(new CreateIndexModel<MarketplaceSkillShareLink>(
+            Builders<MarketplaceSkillShareLink>.IndexKeys.Ascending(x => x.CreatedBy).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_marketplace_skill_share_links_creator" }));
+
         // DefectFixReports：按分享链接和 Token 查询
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareLinkId).Descending(x => x.CreatedAt),
@@ -1448,6 +1464,31 @@ public class MongoDbContext
         ShareViewLogs.Indexes.CreateOne(new CreateIndexModel<ShareViewLog>(
             Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
             new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
+
+        // ========== 统一短链 ==========
+        // ShortLinks：按 Seq 唯一（对外 URL 主键）
+        try
+        {
+            ShortLinks.Indexes.CreateOne(new CreateIndexModel<ShortLink>(
+                Builders<ShortLink>.IndexKeys.Ascending(x => x.Seq),
+                new CreateIndexOptions { Name = "uniq_short_links_seq", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // ShortLinks：(TargetType, TargetId) 唯一 — 同一资源只发一个短链 + 并发兜底
+        try
+        {
+            ShortLinks.Indexes.CreateOne(new CreateIndexModel<ShortLink>(
+                Builders<ShortLink>.IndexKeys.Ascending(x => x.TargetType).Ascending(x => x.TargetId),
+                new CreateIndexOptions { Name = "uniq_short_links_target", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // ShortLinkCounters：仅依赖 _id 唯一（Id="global"），无需额外索引
 
         // ========== Desktop 更新加速缓存索引 ==========
 

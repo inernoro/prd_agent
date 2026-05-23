@@ -7,7 +7,11 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { deriveContainerSlug, resolvePreviewRootDomain } from '../../src/routes/remote-hosts.js';
+import {
+  deriveContainerSlug,
+  resolvePreviewRootDomain,
+  shouldIncludeBranchServicesInInstanceDiscovery,
+} from '../../src/routes/remote-hosts.js';
 import { isSafeContainerSlug } from '../../src/services/sidecar/sidecar-deployer.js';
 
 const previewEnvKeys = [
@@ -120,5 +124,19 @@ describe('deriveContainerSlug', () => {
       expect(slug.endsWith('-')).toBe(false);
       expect(isSafeContainerSlug(slug)).toBe(true);
     }
+  });
+});
+
+describe('shouldIncludeBranchServicesInInstanceDiscovery', () => {
+  it('普通 git 项目不暴露分支服务，避免业务服务被识别为 Agent runtime', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'git' })).toBe(false);
+  });
+
+  it('shared-service 项目也暴露源码分支服务，兼容 CDS 托管的 sidecar pool', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'shared-service' })).toBe(true);
+  });
+
+  it('manual 项目不走分支服务实例发现', () => {
+    expect(shouldIncludeBranchServicesInInstanceDiscovery({ kind: 'manual' })).toBe(false);
   });
 });

@@ -185,6 +185,12 @@ public static class AdminPermissionCatalog
     public const string ReviewAgentManage = "review-agent.manage";
 
     /// <summary>
+    /// 产品评审员申诉受理权限：审理用户对评审结果的申诉（通过/驳回）。
+    /// 默认所有角色不持有此权限，需管理员在「系统设置 → 角色权限」显式分配。
+    /// </summary>
+    public const string ReviewAgentAppealReview = "review-agent.appeal-review";
+
+    /// <summary>
     /// PR Review 权限：基于每用户 GitHub OAuth 的 PR 审查工作台（pr-review）
     /// </summary>
     public const string PrReviewUse = "pr-review.use";
@@ -198,6 +204,12 @@ public static class AdminPermissionCatalog
     /// 网页托管权限（写）：上传/编辑/删除/分享托管站点
     /// </summary>
     public const string WebPagesWrite = "web-pages.write";
+
+    /// <summary>
+    /// 统一短链管理权限（管理员级）：查看/吊销所有用户创建的 /s/{seq} 短链。
+    /// 用于系统设置→分享短链页面，区分于业务侧的 web-pages.write 等子系统写权限。
+    /// </summary>
+    public const string ShortLinksManage = "short-links.manage";
 
     /// <summary>
     /// 文档空间权限（读）：查看文档空间与文档列表
@@ -308,11 +320,13 @@ public static class AdminPermissionCatalog
         new(ReviewAgentUse, "产品评审智能体", "提交方案并查看自己的评审结果"),
         new(ReviewAgentViewAll, "产品评审智能体-查看全部", "查看所有提交记录和评审结果"),
         new(ReviewAgentManage, "产品评审智能体-管理", "自定义评审维度配置"),
+        new(ReviewAgentAppealReview, "产品评审智能体-申诉受理", "审理用户对评审结果的申诉（通过 / 驳回）"),
 
         new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
+        new(ShortLinksManage, "短链管理", "系统设置 → 查看/吊销所有用户的 /s/{seq} 短链"),
 
         new(DocumentStoreRead, "文档空间-读", "查看文档空间与文档列表"),
         new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),

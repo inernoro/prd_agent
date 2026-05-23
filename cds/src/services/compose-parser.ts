@@ -412,6 +412,9 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
 
       // Bugbot fix(PR #521 第十一轮 Bug 3)— isAppServiceCandidate 把
       // build + healthcheck 的自建 infra 留在 infra 分支(custom postgres 等)。
+      if (isAgentRuntimeSidecarService(serviceId, entry)) {
+        continue;
+      }
       const isAppService = isAppServiceCandidate(entry);
 
       if (isAppService) {
@@ -876,6 +879,33 @@ function isAppServiceCandidate(entry: ComposeServiceEntry): boolean {
   // Has build but ALSO has docker healthcheck → treat as custom infra
   const hasDockerHealthcheck = !!entry.healthcheck && (entry.healthcheck.test !== undefined);
   return !hasDockerHealthcheck;
+}
+
+/**
+ * Agent runtime sidecars are execution-pool infrastructure, not branch app
+ * services. If imported as a normal BuildProfile, every app branch inherits a
+ * claude-agent-sdk runtime container and MAP/main gets polluted.
+ */
+function isAgentRuntimeSidecarService(serviceId: string, entry: ComposeServiceEntry): boolean {
+  const env = extractEnv(entry.environment);
+  const text = [
+    serviceId,
+    entry.image,
+    entry.container_name,
+    ...(entry.volumes || []),
+    extractCommand(entry.command),
+    extractCommand(entry.entrypoint),
+    env.SIDECAR_AGENT_ADAPTER,
+    env.SIDECAR_PROVIDER_KEY_MODE,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (!text.trim()) return false;
+  if (text.includes('claude-agent-sdk-runtime')) return true;
+  if (text.includes('claude-sidecar')) return true;
+  if (text.includes('claude-sdk-sidecar')) return true;
+  if (text.includes('sidecar_agent_adapter') && text.includes('claude-agent-sdk')) return true;
+  if (env.SIDECAR_AGENT_ADAPTER === 'claude-agent-sdk') return true;
+  return false;
 }
 
 /**

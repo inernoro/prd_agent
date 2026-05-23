@@ -3,11 +3,12 @@ import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitB
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
+import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import type { PhaseLogState } from '@/components/deployment/PhaseTree';
 
 /*
@@ -47,6 +48,12 @@ interface BranchDetailData {
   githubCommitSha?: string;
   githubPrNumber?: number;
   lastDeployAt?: string;
+  lastAccessedAt?: string;
+  lastReadyAt?: string;
+  /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
+  lastStoppedAt?: string;
+  lastStopReason?: string;
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
   deployCount?: number;
   pullCount?: number;
   stopCount?: number;
@@ -55,6 +62,7 @@ interface BranchDetailData {
     kind: 'source' | 'release' | 'mixed';
     label: string;
     title: string;
+    pendingPublish?: boolean;
   };
 }
 
@@ -108,8 +116,22 @@ interface OperationLog {
   type: string;
   startedAt: string;
   finishedAt?: string;
+  runtimeStartedAt?: string;
+  containerLogSnapshots?: DeploymentContainerLogSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
+}
+
+export interface DeploymentContainerLogSnapshot {
+  profileId: string;
+  containerName: string;
+  hostPort?: number;
+  status?: string;
+  capturedAt: string;
+  tailLines: number;
+  source: 'deploy-finalize' | 'deploy-error';
+  logs: string;
+  message?: string;
 }
 
 interface ServiceLogsState {
@@ -133,6 +155,23 @@ interface DrawerActivityEvent {
   label?: string;
   errorSummary?: string;
 }
+
+// 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
+// 后端 GET /api/branches/:id/activity-logs 返回，已按最新在前排序。
+interface BranchActivityLog {
+  id: string;
+  at: string;
+  type: string;
+  branchId?: string;
+  branchName?: string;
+  actor?: string;
+  note?: string;
+}
+type SystemLogsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; logs: BranchActivityLog[] }
+  | { status: 'error'; message: string };
 
 interface BuildLogSelection {
   title: string;
@@ -177,21 +216,27 @@ export interface BranchDeploymentItem {
   log: string[];
   startedAt: number;
   finishedAt?: number;
+  runtimeStartedAt?: number;
+  runtimeEndedAt?: number;
+  containerLogSnapshots?: DeploymentContainerLogSnapshot[];
   lastStep?: string;
   phase?: string;
   suggestion?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'events' | 'logs' | 'httpLogs' | 'variables' | 'metrics' | 'settings';
-type LogsMode = 'build' | 'container';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
+// 2026-05-18: 日志页签合一。原本 Webhook 日志 / 日志 / HTTP 三个并列页签
+// 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
+// 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
+type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+const DETAIL_LOG_VIEWPORT_CLASS = 'h-[424px] overflow-auto';
+const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading-6 text-muted-foreground';
 
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '服务' },
-  { key: 'events', label: 'Webhook 日志' },
   { key: 'logs', label: '日志' },
-  { key: 'httpLogs', label: 'HTTP' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
   { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
   { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
@@ -261,7 +306,17 @@ type TriggerLogsState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; deliveries: GithubWebhookDelivery[]; total: number; filteredTotal: number };
+  | {
+      status: 'ok';
+      deliveries: GithubWebhookDelivery[];
+      total: number;
+      filteredTotal: number;
+      hasMore: boolean;
+      loadingMore?: boolean;
+    };
+
+// 2026-05-14: webhook 日志分页 — 每页 20 条，懒加载下一页，与 buffer 1000 配合。
+const TRIGGER_LOGS_PAGE_SIZE = 20;
 
 /** 5-min ring buffer (60 points × 5s 间隔) per service+metric — UI sparkline 用 */
 interface MetricSeries {
@@ -374,11 +429,154 @@ function logFailureReason(log: OperationLog): string {
   return error ? eventText(error) : '';
 }
 
+function deriveRuntimeStartedAt(log: OperationLog): number | undefined {
+  if (log.runtimeStartedAt) {
+    const explicit = new Date(log.runtimeStartedAt).getTime();
+    if (Number.isFinite(explicit)) return explicit;
+  }
+  const readyEvents = (log.events || []).filter((event) => {
+    if (event.status !== 'done') return false;
+    const text = `${event.step || ''} ${event.title || ''}`;
+    return text.includes('runtime-ready')
+      || text.includes('运行于')
+      || text.includes('启动成功')
+      || text.includes('已通过就绪探测');
+  });
+  const lastReady = readyEvents[readyEvents.length - 1];
+  if (!lastReady?.timestamp) return undefined;
+  const derived = new Date(lastReady.timestamp).getTime();
+  return Number.isFinite(derived) ? derived : undefined;
+}
+
 function branchFailureReason(branch: BranchDetailData): string {
   if (branch.errorMessage) return branch.errorMessage;
   const failed = Object.values(branch.services || {}).filter((svc) => svc.status === 'error');
   if (failed.length === 0) return '';
   return failed.map((svc) => `${svc.profileId}: ${svc.errorMessage || '启动失败'}`).join('\n');
+}
+
+function buildLlmFailurePrompt(
+  branch: BranchDetailData,
+  failureReason: string,
+  diagnostics: Array<{
+    profileId: string;
+    containerName?: string;
+    tailLines: string[];
+    errorCategory: string;
+    errorHint: string;
+    responsibilitySide: 'code' | 'config' | 'cds' | 'unknown';
+  }>,
+): string {
+  const services = Object.values(branch.services || {});
+  const lines = [
+    '请作为资深工程师分析并修复下面这个 CDS 分支部署/启动失败问题。',
+    '要求：先判断是应用代码、配置、依赖、资源还是 CDS 平台问题；给出最小修复步骤；如果需要改代码，请指出应检查的文件、命令和验证方式。',
+    '',
+    '## 分支上下文',
+    `项目ID: ${branch.projectId}`,
+    `分支ID: ${branch.id}`,
+    `分支名: ${branch.branch}`,
+    `状态: ${branch.status}`,
+    branch.githubRepoFullName ? `GitHub仓库: ${branch.githubRepoFullName}` : '',
+    branch.githubCommitSha ? `GitHub提交: ${branch.githubCommitSha}` : '',
+    branch.commitSha ? `当前提交: ${branch.commitSha}` : '',
+    branch.lastDeployAt ? `最近成功部署: ${branch.lastDeployAt}` : '',
+    '',
+    '## 失败摘要',
+    failureReason || branch.errorMessage || '未提供失败摘要',
+    '',
+    '## 服务状态',
+    ...services.map((svc) => [
+      `- ${svc.profileId}`,
+      `container=${svc.containerName}`,
+      `port=${svc.hostPort}`,
+      `status=${svc.status}`,
+      svc.errorMessage ? `error=${svc.errorMessage}` : '',
+    ].filter(Boolean).join(' · ')),
+    '',
+    '## CDS 诊断',
+    diagnostics.length > 0
+      ? diagnostics.map((diag) => [
+        `### ${diag.profileId}`,
+        diag.containerName ? `container: ${diag.containerName}` : '',
+        `category: ${diag.errorCategory}`,
+        `side: ${diag.responsibilitySide}`,
+        diag.errorHint ? `hint: ${diag.errorHint}` : '',
+        diag.tailLines.length > 0 ? 'tail logs:' : '',
+        diag.tailLines.slice(-30).join('\n'),
+      ].filter(Boolean).join('\n')).join('\n\n')
+      : 'CDS 未返回结构化诊断；请基于失败摘要和服务状态分析。',
+    '',
+    '## 可用排查入口',
+    `- GET /api/branches/${encodeURIComponent(branch.id)}/failure-diagnosis`,
+    `- GET /api/branches/${encodeURIComponent(branch.id)}/logs`,
+    `- POST /api/branches/${encodeURIComponent(branch.id)}/container-logs { "profileId": "<服务ID>" }`,
+    `- GET /api/branches/${encodeURIComponent(branch.id)}/activity-logs?limit=100`,
+    '',
+    '请输出：根因判断、修复方案、验证命令、风险点。',
+  ];
+  return lines.filter((line) => line !== '').join('\n');
+}
+
+function isGenericFailureHint(value: string): boolean {
+  return /未识别的错误模式|查看完整日志诊断/i.test(value);
+}
+
+function failureKeyLogLines(lines: string[], max = 8): string[] {
+  const keywords = [
+    /error\b/i,
+    /exception\b/i,
+    /failed?\b/i,
+    /fatal\b/i,
+    /denied\b/i,
+    /timeout|timed out/i,
+    /not found/i,
+    /cannot|can't/i,
+    /缺少|失败|异常|错误|超时|拒绝|不存在|找不到|无法/,
+  ];
+  const ignored = [
+    /update available/i,
+    /packages?: \+/i,
+    /progress: resolved/i,
+    /all projects are up-to-date/i,
+    /lockfile is up to date/i,
+    /determining projects to restore/i,
+  ];
+  const cleaned = lines
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim())
+    .filter((line) => !ignored.some((pattern) => pattern.test(line)));
+  const selected: string[] = [];
+  cleaned.forEach((line, index) => {
+    if (!keywords.some((pattern) => pattern.test(line))) return;
+    for (let offset = -1; offset <= 4; offset += 1) {
+      const context = cleaned[index + offset];
+      if (context) selected.push(context.trim());
+    }
+  });
+  return Array.from(new Set(selected)).slice(-max);
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Browser permission policies can reject clipboard writes even on HTTPS.
+      // Fall through to the textarea path so the recovery button still works.
+    }
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
 }
 
 const ACTIVE_DEPLOYMENT_TAIL_MS = 60_000;
@@ -388,6 +586,7 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
   const lines = events.map(eventText);
   const finishedAt = log.finishedAt ? new Date(log.finishedAt).getTime() : undefined;
   const startedAt = log.startedAt ? new Date(log.startedAt).getTime() : Date.now();
+  const runtimeStartedAt = deriveRuntimeStartedAt(log);
   const status: BranchDeploymentItem['status'] = log.status === 'completed'
     ? 'success'
     : log.status === 'error'
@@ -405,6 +604,8 @@ function legacyLogToDeploymentItem(log: OperationLog, branchId: string): BranchD
     log: lines,
     startedAt,
     finishedAt,
+    runtimeStartedAt,
+    containerLogSnapshots: log.containerLogSnapshots || [],
     lastStep,
   };
 }
@@ -491,7 +692,7 @@ export function BranchDetailDrawer({
   onToast?: (message: string) => void;
   /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
       delete 完成时本组件会自动 onClose,父页面无需特别处理。 */
-  onActionComplete?: (action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete') => void;
+  onActionComplete?: (action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete') => void;
   /**
    * Production preview URL precomputed at the caller (so the Drawer
    * doesn't have to load /api/config independently). Empty string =
@@ -510,6 +711,7 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [loading, setLoading] = useState(false);
+  const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
   // Phase A — Variables tab(2026-05-04)
@@ -519,9 +721,20 @@ export function BranchDetailDrawer({
   const [revealedValues, setRevealedValues] = useState<Map<string, string>>(new Map());
   const [envQuery, setEnvQuery] = useState('');
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
+  const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });
   const [triggerLogsState, setTriggerLogsState] = useState<TriggerLogsState>({ status: 'idle' });
+  // 2026-05-14 Codex review P2 修复：loadMore 的 offset 不能从 setState 的
+  // updater 里"顺便"读出来（React 会 batch，updater 可能在 fetch 之后才跑，
+  // 导致 offset 仍是 0、第二页重复拉第一页并 append 重复 webhook 记录）。
+  // 用一个 ref 同步镜像当前已加载条数，loadMore 时同步读取。
+  const triggerLogsCountRef = useRef(0);
+  // 2026-05-14 Codex review P2：loadMore 的并发守卫不能只靠 setState
+  // updater 的 loadingMore（异步提交）。双击在 React commit 前两次都能
+  // 过 updater 检查 → 用同一 offset 发两次请求、同页追加两次。这个 ref
+  // 同步置位，是真正的去重闸门。
+  const triggerLogsLoadMoreInFlightRef = useRef(false);
   const [profileState, setProfileState] = useState<ProfileOverridesState>({ status: 'idle' });
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
@@ -543,25 +756,29 @@ export function BranchDetailDrawer({
   const branchIdRef = useRef<string>(branchId || '');
   useEffect(() => { branchIdRef.current = branchId || ''; }, [branchId]);
   // Phase C — Settings tab(2026-05-04)
-  const [actionBusy, setActionBusy] = useState<'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null>(null);
+  const [actionBusy, setActionBusy] = useState<{ branchId: string; action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' } | null>(null);
+  const currentActionBusy = actionBusy?.branchId === branchId ? actionBusy.action : null;
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [logsMode, setLogsMode] = useState<LogsMode>('build');
+  const [logsMode, setLogsMode] = useState<LogsMode>('system');
   const [selectedBuildLog, setSelectedBuildLog] = useState<BuildLogSelection | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
   const [serviceLogs, setServiceLogs] = useState<ServiceLogsState>({ status: 'idle' });
   const [logQuery, setLogQuery] = useState('');
+  const logsSectionRef = useRef<HTMLElement | null>(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   // 失败诊断(2026-05-04 UX 优化):分支 status === 'error' 时 lazy-load,显示
   // 错误归类 + 最后 5 行 stderr + 责任归属。
   const [failureDiag, setFailureDiag] = useState<{
     failedServices: Array<{
       profileId: string;
+      containerName?: string;
       tailLines: string[];
       errorCategory: string;
       errorHint: string;
       responsibilitySide: 'code' | 'config' | 'cds' | 'unknown';
     }>;
   } | null>(null);
+  const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
   const load = useCallback(async () => {
     if (!branchId) return;
@@ -600,7 +817,8 @@ export function BranchDetailDrawer({
     setTriggerLogsState({ status: 'loading' });
     try {
       const params = new URLSearchParams();
-      params.set('limit', '50');
+      params.set('limit', String(TRIGGER_LOGS_PAGE_SIZE));
+      params.set('offset', '0');
       params.set('branchId', branchId);
       if (branch?.githubRepoFullName) params.set('repoFullName', branch.githubRepoFullName);
       if (branch?.branch) params.set('ref', `refs/heads/${branch.branch}`);
@@ -622,17 +840,109 @@ export function BranchDetailDrawer({
         deliveries: GithubWebhookDelivery[];
         total?: number;
         filteredTotal?: number;
+        hasMore?: boolean;
       };
+      const deliveries = data.deliveries || [];
+      const filteredTotal = typeof data.filteredTotal === 'number' ? data.filteredTotal : deliveries.length;
       setTriggerLogsState({
         status: 'ok',
-        deliveries: data.deliveries || [],
-        total: typeof data.total === 'number' ? data.total : data.deliveries.length,
-        filteredTotal: typeof data.filteredTotal === 'number' ? data.filteredTotal : data.deliveries.length,
+        deliveries,
+        total: typeof data.total === 'number' ? data.total : deliveries.length,
+        filteredTotal,
+        hasMore: typeof data.hasMore === 'boolean' ? data.hasMore : deliveries.length < filteredTotal,
       });
     } catch (err) {
       setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+
+  const loadSystemLogs = useCallback(async () => {
+    if (!branchId) return;
+    const requestForBranch = branchId;
+    setSystemLogsState({ status: 'loading' });
+    try {
+      const raw = await apiRequest<{ logs?: BranchActivityLog[] }>(
+        `/api/branches/${encodeURIComponent(branchId)}/activity-logs?limit=100`,
+      );
+      // 切到别的分支后，慢响应不得覆盖新分支的时间线（Codex P1）。
+      if (branchIdRef.current !== requestForBranch) return;
+      setSystemLogsState({ status: 'ok', logs: Array.isArray(raw?.logs) ? raw.logs : [] });
+    } catch (err) {
+      if (branchIdRef.current !== requestForBranch) return;
+      setSystemLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [branchId]);
+
+  /**
+   * 2026-05-14: 加载下一页 webhook 日志。state 必须已经是 ok，把后端返回的下一段
+   * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
+   */
+  const loadMoreTriggerLogs = useCallback(async () => {
+    if (!branchId) return;
+    // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
+    // updater 的执行时机；这才是这次 offset bug 的根因修复。
+    const currentOffset = triggerLogsCountRef.current;
+    if (currentOffset <= 0) return; // 还没有第一页，loadMore 无意义
+    // 同步去重闸门：双击在 React commit loadingMore 前不会两次进入。
+    if (triggerLogsLoadMoreInFlightRef.current) return;
+    let proceed = true;
+    setTriggerLogsState((prev) => {
+      if (prev.status !== 'ok' || !prev.hasMore || prev.loadingMore) {
+        proceed = false;
+        return prev;
+      }
+      return { ...prev, loadingMore: true };
+    });
+    if (!proceed) return;
+    triggerLogsLoadMoreInFlightRef.current = true;
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(TRIGGER_LOGS_PAGE_SIZE));
+      params.set('offset', String(currentOffset));
+      params.set('branchId', branchId);
+      if (branch?.githubRepoFullName) params.set('repoFullName', branch.githubRepoFullName);
+      if (branch?.branch) params.set('ref', `refs/heads/${branch.branch}`);
+      const raw = await apiRequest<unknown>(
+        `/api/cds-system/github/webhook-deliveries?${params.toString()}`,
+      );
+      const data = raw as {
+        deliveries?: GithubWebhookDelivery[];
+        total?: number;
+        filteredTotal?: number;
+        hasMore?: boolean;
+      };
+      const more = data.deliveries || [];
+      setTriggerLogsState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        const merged = [...prev.deliveries, ...more];
+        const filteredTotal = typeof data.filteredTotal === 'number' ? data.filteredTotal : merged.length;
+        return {
+          status: 'ok',
+          deliveries: merged,
+          total: typeof data.total === 'number' ? data.total : prev.total,
+          filteredTotal,
+          hasMore: typeof data.hasMore === 'boolean' ? data.hasMore : merged.length < filteredTotal,
+          loadingMore: false,
+        };
+      });
+    } catch (err) {
+      // 翻页失败保留前面已加载的部分，仅清掉 loading 旗，避免清掉整个列表。
+      setTriggerLogsState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        return { ...prev, loadingMore: false };
+      });
+      console.error('[trigger-logs] loadMore failed', err);
+    } finally {
+      triggerLogsLoadMoreInFlightRef.current = false;
+    }
+  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+
+  // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
+  // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
+  useEffect(() => {
+    triggerLogsCountRef.current =
+      triggerLogsState.status === 'ok' ? triggerLogsState.deliveries.length : 0;
+  }, [triggerLogsState]);
 
   // 每个 drawer session 是否已经为"失败分支"自动跳过 tab。避免 branch 多次
   // load 时反复抢用户手动切的 tab。
@@ -641,9 +951,14 @@ export function BranchDetailDrawer({
     if (!open || !branchId) return;
     failureAutoSwitchedRef.current = false;
     setActiveTab('deployments');
-    setLogsMode('build');
+    setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
+    // 2026-05-14 Codex review P2：切到另一分支时必须清空内联容器日志的
+    // 用户选择，否则 drawer 复用、且新分支有同名 profileId 时，旧分支选过
+    // 的 profile 会粘住，deploymentLogProfileId 不再回退到新分支的
+    // errored/running service。
+    setSelectedDeploymentLogProfileId(null);
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
     setShowAllHistory(false);
@@ -655,6 +970,10 @@ export function BranchDetailDrawer({
     setBranchEnvEditorOpen(false);
     setMetricsState({ status: 'idle' });
     setTriggerLogsState({ status: 'idle' });
+    setCopiedFailurePrompt(false);
+    // Codex review P1：切换分支必须重置系统日志状态，否则 status 仍是 'ok'
+    // 时 effect 不会重新拉取，UI 会把上一个分支的生命周期事件错挂到新分支。
+    setSystemLogsState({ status: 'idle' });
     setMetricSeries({});
     lastMetricsTsRef.current = 0;
     lastMetricsByServiceRef.current = {};
@@ -687,12 +1006,13 @@ export function BranchDetailDrawer({
       try {
         const r = await apiRequest<{ failedServices?: Array<{
           profileId: string; tailLines?: string[]; errorCategory?: string;
-          errorHint?: string; responsibilitySide?: string;
+          containerName?: string; errorHint?: string; responsibilitySide?: string;
         }> }>(`/api/branches/${encodeURIComponent(branchId)}/failure-diagnosis`);
         if (cancelled) return;
         setFailureDiag({
           failedServices: (r.failedServices || []).map((s) => ({
             profileId: s.profileId,
+            containerName: s.containerName,
             tailLines: s.tailLines || [],
             errorCategory: s.errorCategory || 'unknown',
             errorHint: s.errorHint || '',
@@ -746,10 +1066,14 @@ export function BranchDetailDrawer({
   }, [activeTab, envState.status, loadEnv]);
 
   useEffect(() => {
-    if (activeTab === 'events' && branch && triggerLogsState.status === 'idle') {
+    if (activeTab !== 'logs' || !branch) return;
+    if (logsMode === 'webhook' && triggerLogsState.status === 'idle') {
       void loadTriggerLogs();
     }
-  }, [activeTab, branch, loadTriggerLogs, triggerLogsState.status]);
+    if (logsMode === 'system' && systemLogsState.status === 'idle') {
+      void loadSystemLogs();
+    }
+  }, [activeTab, logsMode, branch, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -836,11 +1160,12 @@ export function BranchDetailDrawer({
   // 直接 reuse 现有 endpoints,不引入新 backend 路径。delete 成功后自动关抽屉,
   // 其它操作完成后重新拉一次 branch 详情(让"运行中"状态及时更新)。
   const runBranchAction = useCallback(async (
-    action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
+    action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
   ): Promise<void> => {
     if (!branchId) return;
-    setActionBusy(action);
+    const actionBranchId = branchId;
+    setActionBusy({ branchId: actionBranchId, action });
     try {
       const path = `/api/branches/${encodeURIComponent(branchId)}` + (
         action === 'delete' ? '' : `/${action}`
@@ -859,7 +1184,9 @@ export function BranchDetailDrawer({
       const message = err instanceof ApiError ? err.message : String(err);
       onToast?.(`${label} 失败:${message}`);
     } finally {
-      setActionBusy(null);
+      setActionBusy((current) => (
+        current?.branchId === actionBranchId && current.action === action ? null : current
+      ));
     }
   }, [branchId, onToast, onActionComplete, onClose, load]);
 
@@ -910,6 +1237,46 @@ export function BranchDetailDrawer({
     }
   }, [branchId]);
 
+  const refreshCurrentPanel = useCallback(async () => {
+    if (!branchId || headerRefreshing) return;
+    setHeaderRefreshing(true);
+    try {
+      await load();
+      if (activeTab === 'logs') {
+        if (logsMode === 'system') {
+          await loadSystemLogs();
+        } else if (logsMode === 'webhook') {
+          await loadTriggerLogs();
+        } else if (logsMode === 'container' && selectedServiceId) {
+          await loadServiceLogs(selectedServiceId);
+        }
+      } else if (activeTab === 'variables') {
+        await loadEnv();
+      } else if (activeTab === 'metrics') {
+        await loadMetrics();
+      }
+      onToast?.('已刷新当前分支面板');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`刷新失败:${message}`);
+    } finally {
+      setHeaderRefreshing(false);
+    }
+  }, [
+    activeTab,
+    branchId,
+    headerRefreshing,
+    load,
+    loadEnv,
+    loadMetrics,
+    loadServiceLogs,
+    loadSystemLogs,
+    loadTriggerLogs,
+    logsMode,
+    onToast,
+    selectedServiceId,
+  ]);
+
   const visibleDeployments = useMemo(() => {
     const scoped = deployments.filter((item) => item.branchId === branchId);
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
@@ -923,8 +1290,19 @@ export function BranchDetailDrawer({
       .slice(0, 6)
       .map((log) => legacyLogToDeploymentItem(log, branchId));
     const all = [...visibleDeployments, ...legacy];
-    return all.sort((left, right) => right.startedAt - left.startedAt);
-  }, [branchId, visibleDeployments, logs]);
+    const sorted = all.sort((left, right) => right.startedAt - left.startedAt);
+    return sorted.map((item, index) => {
+      if (!item.runtimeStartedAt) return item;
+      const newer = index > 0 ? sorted[index - 1] : null;
+      const stoppedAt = branch?.lastStoppedAt ? new Date(branch.lastStoppedAt).getTime() : undefined;
+      const runtimeEndedAt = newer?.startedAt && newer.startedAt > item.runtimeStartedAt
+        ? newer.startedAt
+        : stoppedAt && stoppedAt > item.runtimeStartedAt
+          ? stoppedAt
+          : undefined;
+      return runtimeEndedAt ? { ...item, runtimeEndedAt } : item;
+    });
+  }, [branch?.lastStoppedAt, branchId, visibleDeployments, logs]);
 
   const activeDeployment = useMemo(
     () => pickActiveDeployment(combinedDeployments, now),
@@ -960,6 +1338,17 @@ export function BranchDetailDrawer({
     ? githubBranchTreeUrl(branch.githubRepoFullName, branch.branch)
     : '';
   const currentFailureReason = branch ? branchFailureReason(branch) : '';
+  const copyFailurePrompt = useCallback(async () => {
+    if (!branch) return;
+    const text = buildLlmFailurePrompt(branch, currentFailureReason, failureDiag?.failedServices || []);
+    try {
+      await copyTextToClipboard(text);
+      setCopiedFailurePrompt(true);
+      window.setTimeout(() => setCopiedFailurePrompt(false), 1800);
+    } catch {
+      setCopiedFailurePrompt(false);
+    }
+  }, [branch, currentFailureReason, failureDiag]);
   const visibleActivityEvents = useMemo(() => {
     if (!branch) return [];
     return activityEvents
@@ -992,13 +1381,25 @@ export function BranchDetailDrawer({
     return activeDeploymentPhases?.find((p) => p.status === 'error')?.key ?? null;
   }, [activeDeploymentPhases]);
 
-  const deploymentLogProfileId = useMemo(() => {
+  /**
+   * 2026-05-14: 部署 tab 内联容器日志的多容器选择。null = 让自动逻辑挑（错误/运行中/启动中）。
+   * 用户在 tab strip 上点击其他 service 后会写入这里，覆盖自动逻辑。
+   */
+  const [selectedDeploymentLogProfileId, setSelectedDeploymentLogProfileId] = useState<string | null>(null);
+  const autoDeploymentLogProfileId = useMemo(() => {
     if (!services.length) return null;
     const errored = services.find((s) => s.status === 'error');
     const running = services.find((s) => s.status === 'running');
     const starting = services.find((s) => s.status === 'starting');
     return errored?.profileId || running?.profileId || starting?.profileId || services[0].profileId;
   }, [services]);
+  const deploymentLogProfileId = useMemo(() => {
+    // 用户选过 → 校验该 service 还在；不在了 fallback 自动选择。
+    if (selectedDeploymentLogProfileId && services.some((s) => s.profileId === selectedDeploymentLogProfileId)) {
+      return selectedDeploymentLogProfileId;
+    }
+    return autoDeploymentLogProfileId;
+  }, [autoDeploymentLogProfileId, selectedDeploymentLogProfileId, services]);
 
   useEffect(() => {
     if (!open || activeTab !== 'deployments') return;
@@ -1006,7 +1407,11 @@ export function BranchDetailDrawer({
     if (!deploymentLogProfileId) return;
     if (
       serviceLogs.profileId === deploymentLogProfileId &&
-      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading')
+      // 2026-05-14 Codex review P2：error 也算"已加载"，否则容器日志拉取
+      // 失败时本 effect 每次 render 都重发请求，造成 loading/error 抖动死循环。
+      // 用户切容器 tab（deploymentLogProfileId 变）或点刷新按钮（显式调
+      // loadServiceLogs 绕过本 guard）才会重新拉。
+      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading' || serviceLogs.status === 'error')
     ) {
       return;
     }
@@ -1020,6 +1425,34 @@ export function BranchDetailDrawer({
     serviceLogs.profileId,
     serviceLogs.status,
   ]);
+
+  /**
+   * 2026-05-14: 内联容器日志的 tab strip + 最大化控制。
+   * 多于 1 个 service 时 PhaseTree 会渲染 tab 条。最大化 → 跳到 Logs tab 容器模式。
+   */
+  const inlineContainerLogControls = useMemo(() => {
+    if (services.length === 0) return undefined;
+    return {
+      services: services.map((svc) => ({
+        profileId: svc.profileId,
+        status: svc.status,
+        hostPort: svc.hostPort,
+      })),
+      selected: deploymentLogProfileId,
+      onSelect: (profileId: string) => {
+        setSelectedDeploymentLogProfileId(profileId);
+        void loadServiceLogs(profileId);
+      },
+      onMaximize: () => {
+        if (deploymentLogProfileId) {
+          // 复用 openContainerLogs 的跳转逻辑
+          setLogsMode('container');
+          setActiveTab('logs');
+          void loadServiceLogs(deploymentLogProfileId);
+        }
+      },
+    };
+  }, [deploymentLogProfileId, loadServiceLogs, services]);
 
   const containerLogsByPhase = useMemo<Partial<Record<PhaseKey, PhaseLogState>> | undefined>(() => {
     if (!activeDeployment) return undefined;
@@ -1065,44 +1498,6 @@ export function BranchDetailDrawer({
     });
   }, [openBuildLogs]);
 
-  /*
-   * Reset / retry CTAs for ActiveDeployment (Week 4.8 Round 4c).
-   * 之前 ActiveDeployment 的 onResetError / onRetryDiagnosis 是 optional
-   * 但从未传入 → deploy/verify 失败时按钮不渲染。这一刀把这两个 callback
-   * 接到 Drawer,真实调用后端并 reload。
-   */
-  const resetBranchError = useCallback(async (_deployment: BranchDeploymentItem) => {
-    if (!branchId) return;
-    try {
-      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/reset`, { method: 'POST' });
-      await load();
-    } catch (err) {
-      // 失败时把错误吞回 error state,Drawer 顶部会显示
-      setError(err instanceof ApiError ? err.message : String(err));
-    }
-  }, [branchId, load]);
-
-  const retryRuntimeDiagnosis = useCallback(async (_deployment: BranchDeploymentItem) => {
-    if (!branchId) return;
-    // 优先使用当前选中服务,否则用第一个 error 状态服务,再不行用第一个服务
-    const errorSvc = Object.values(branch?.services || {}).find((s) => s.status === 'error');
-    const fallbackSvc = Object.values(branch?.services || {})[0];
-    const target = selectedService?.profileId || errorSvc?.profileId || fallbackSvc?.profileId;
-    if (!target) {
-      setError('没有可诊断的服务');
-      return;
-    }
-    try {
-      await apiRequest(
-        `/api/branches/${encodeURIComponent(branchId)}/verify-runtime/${encodeURIComponent(target)}`,
-        { method: 'POST' },
-      );
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
-    }
-  }, [branchId, branch, load, selectedService]);
-
   const copyDeploymentDiagnosis = useCallback(async (deployment: BranchDeploymentItem) => {
     const lines = [
       `分支：${deployment.branchName || branch?.branch || ''}`,
@@ -1128,6 +1523,13 @@ export function BranchDetailDrawer({
     }
   }, [loadServiceLogs, selectedService?.profileId]);
 
+  const openFailureLogs = useCallback((profileId?: string) => {
+    openContainerLogs(profileId);
+    window.requestAnimationFrame(() => {
+      logsSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }, [openContainerLogs]);
+
   if (!open || !branchId) return null;
 
   return (
@@ -1139,7 +1541,7 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
-        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[640px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[860px] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
         style={{ minHeight: 0 }}
       >
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4">
@@ -1154,27 +1556,57 @@ export function BranchDetailDrawer({
           </div>
           <div className="flex items-center gap-1">
             {githubPrHref ? (
-              <Button asChild variant="ghost" size="icon" title={`打开 GitHub PR #${branch?.githubPrNumber}`} aria-label="打开 GitHub PR">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="text-violet-600 hover:bg-violet-500/10 hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200"
+                title={`打开 GitHub PR #${branch?.githubPrNumber}`}
+                aria-label="打开 GitHub PR"
+              >
                 <a href={githubPrHref} target="_blank" rel="noreferrer">
                   <GitPullRequest />
                 </a>
               </Button>
-            ) : null}
+            ) : (
+              <Button variant="ghost" size="icon" disabled title="没有关联 GitHub PR" aria-label="没有关联 GitHub PR">
+                <GitPullRequest />
+              </Button>
+            )}
             {githubBranchHref ? (
-              <Button asChild variant="ghost" size="icon" title="打开 GitHub 分支" aria-label="打开 GitHub 分支">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                title="打开 GitHub 分支"
+                aria-label="打开 GitHub 分支"
+              >
                 <a href={githubBranchHref} target="_blank" rel="noreferrer">
                   <GitBranch />
                 </a>
               </Button>
-            ) : null}
+            ) : (
+              <Button variant="ghost" size="icon" disabled title="没有关联 GitHub 分支" aria-label="没有关联 GitHub 分支">
+                <GitBranch />
+              </Button>
+            )}
             <Button asChild variant="ghost" size="sm" title="完整页面">
               <a href={fullPageHref}>
                 <ExternalLink />
                 完整页面
               </a>
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => void load()} title="刷新" aria-label="刷新">
-              <RefreshCw />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void refreshCurrentPanel()}
+              disabled={headerRefreshing}
+              title={headerRefreshing ? '正在刷新当前面板' : '刷新当前面板'}
+              aria-label={headerRefreshing ? '正在刷新当前面板' : '刷新当前面板'}
+            >
+              <RefreshCw className={headerRefreshing ? 'animate-spin' : undefined} />
+              {headerRefreshing ? '刷新中' : '刷新'}
             </Button>
             <Button variant="ghost" size="icon" onClick={onClose} title="关闭" aria-label="关闭">
               <X />
@@ -1183,13 +1615,16 @@ export function BranchDetailDrawer({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
-          {loading && !branch ? <LoadingBlock label="加载分支详情" /> : null}
+          {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <>
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
+                  const recoveredRuntimeWithoutDeployLog =
+                    branch.status === 'running' && !branch.lastDeployAt && Boolean(branch.lastReadyAt || branch.lastAccessedAt);
+                  const displayedDeployCount = Math.max(branch.deployCount || 0, recoveredRuntimeWithoutDeployLog ? 1 : 0);
                   return (
                     <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1199,36 +1634,89 @@ export function BranchDetailDrawer({
                         <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
                       </div>
                       <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-                        <span>最近部署：{formatDeployTimestamp(branch.lastDeployAt)}</span>
-                        <span>部署次数：{branch.deployCount || 0}</span>
+                        <span>
+                          最近部署：{formatDeployTimestamp(
+                            branch.lastDeployAt || (branch.status === 'running' ? branch.lastReadyAt || branch.lastAccessedAt : undefined),
+                          )}
+                        </span>
+                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''}</span>
                         <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
+                      {/*
+                        2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。
+                        没有 lastStoppedAt 的老分支显示 - 即可，不破坏 layout。
+                      */}
+                      {/*
+                        2026-05-14 Cursor Bugbot Medium：lastStoppedAt 是历史
+                        戳，分支被 stop 后又经 deploy/auto-build/调度器唤醒
+                        重新 running 时该戳仍在 → 不能只看 lastStoppedAt
+                        就弹"上次停止"，否则正在运行的分支被误报已停止。
+                        只在分支当前确实非活跃（非 running/构建/启动中）时显示。
+                      */}
+                      {branch.lastStoppedAt &&
+                      !['running', 'building', 'starting', 'restarting'].includes(branch.status) ? (
+                        <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">上次停止</span>
+                            <span className="opacity-90">{formatDeployTimestamp(branch.lastStoppedAt)}</span>
+                            {branch.lastStopSource ? (
+                              <span className="rounded border border-amber-500/40 px-1.5 py-0.5">
+                                {branch.lastStopSource === 'user' ? '用户'
+                                  : branch.lastStopSource === 'scheduler' ? '调度器'
+                                  : branch.lastStopSource === 'executor' ? '执行器'
+                                  : branch.lastStopSource === 'crash' ? '崩溃'
+                                  : '系统'}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="opacity-95">{branch.lastStopReason || '原因未记录'}</div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })()}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                  {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
-                  <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
+                <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                    {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                    <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
+                    {branch.subject ? (
+                      <span className="min-w-[220px] flex-1 truncate text-sm leading-6 text-muted-foreground" title={branch.subject}>
+                        {branch.subject}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/*
+                    Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
+                    绿点旁边没有 URL"):running 时显眼显示 production 域名,
+                    hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
+                  */}
+                  {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
+                    <PreviewUrlChip url={previewUrl} />
+                  ) : null}
                 </div>
-                {/*
-                  Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
-                  绿点旁边没有 URL"):running 时显眼显示 production 域名,
-                  hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
-                */}
-                {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
-                  <PreviewUrlChip url={previewUrl} />
-                ) : null}
-                {branch.subject ? (
-                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{branch.subject}</p>
-                ) : null}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-                    <div className="font-semibold">最近失败原因</div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-semibold">最近失败原因</div>
+                      <button
+                        type="button"
+                        onClick={() => void copyFailurePrompt()}
+                        className={`inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/45 bg-destructive/15 px-2 text-[11px] font-semibold text-destructive transition-colors hover:bg-destructive/25 ${
+                          copiedFailurePrompt ? '' : 'animate-pulse'
+                        }`}
+                        title="复制错误上下文和大模型修复提示词"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                        {copiedFailurePrompt ? '已复制' : '复制到大模型'}
+                      </button>
+                    </div>
                     <div className="mt-1 whitespace-pre-wrap text-destructive/90">{currentFailureReason}</div>
                     {failureDiag && failureDiag.failedServices.length > 0 ? (
                       <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2">
-                        {failureDiag.failedServices.map((diag) => (
+                        {failureDiag.failedServices.map((diag) => {
+                          const keyLines = failureKeyLogLines(diag.tailLines);
+                          return (
                           <div key={diag.profileId} className="space-y-1.5">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-[10px] font-medium uppercase">
@@ -1253,27 +1741,26 @@ export function BranchDetailDrawer({
                                   : '未识别'}
                               </span>
                             </div>
-                            {diag.errorHint ? (
+                            {diag.errorHint && !isGenericFailureHint(diag.errorHint) ? (
                               <div className="text-destructive/90">{diag.errorHint}</div>
                             ) : null}
-                            {diag.tailLines.length > 0 ? (
-                              <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/80">
-                                {diag.tailLines.slice(-5).join('\n')}
+                            {keyLines.length > 0 ? (
+                              <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-[10px] leading-4 text-foreground/85">
+                                {keyLines.join('\n')}
                               </pre>
                             ) : null}
                           </div>
-                        ))}
+                          );
+                        })}
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveTab('logs');
-                            setLogsMode('container');
                             const first = failureDiag.failedServices[0];
-                            if (first) setSelectedServiceId(first.profileId);
+                            openFailureLogs(first?.profileId);
                           }}
                           className="inline-flex items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
                         >
-                          查看完整日志 →
+                          打开容器日志 →
                         </button>
                       </div>
                     ) : null}
@@ -1311,14 +1798,12 @@ export function BranchDetailDrawer({
                     {activeDeployment ? (
                       <ActiveDeployment
                         deployment={activeDeployment}
-                        projectId={projectId}
                         branchErrorMessage={currentFailureReason || undefined}
                         now={now}
                         onOpenLogs={openDeploymentBuildLogs}
                         onCopyDiagnosis={(item) => void copyDeploymentDiagnosis(item)}
-                        onResetError={(item) => void resetBranchError(item)}
-                        onRetryDiagnosis={(item) => void retryRuntimeDiagnosis(item)}
                         containerLogsByPhase={containerLogsByPhase}
+                        containerLogControls={inlineContainerLogControls}
                       />
                     ) : null}
 
@@ -1353,27 +1838,30 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 {activeTab === 'logs' ? (
-                  <section className="cds-surface-raised cds-hairline">
+                  <section ref={logsSectionRef} className="cds-surface-raised cds-hairline">
                     <header className="border-b border-[hsl(var(--hairline))] px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
-                          <button
-                            type="button"
-                            className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === 'build' ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                            onClick={() => {
-                              setLogsMode('build');
-                              setSelectedBuildLog(null);
-                            }}
-                          >
-                            构建日志
-                          </button>
-                          <button
-                            type="button"
-                            className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === 'container' ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                            onClick={() => openContainerLogs()}
-                          >
-                            容器日志
-                          </button>
+                        <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
+                          {([
+                            ['system', '系统日志'],
+                            ['build', '构建日志'],
+                            ['container', '容器日志'],
+                            ['webhook', 'Webhook'],
+                            ['http', 'HTTP'],
+                          ] as Array<[LogsMode, string]>).map(([mode, label]) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === mode ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                              onClick={() => {
+                                if (mode === 'container') { openContainerLogs(); return; }
+                                if (mode === 'build') setSelectedBuildLog(null);
+                                setLogsMode(mode);
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
                         </div>
                         <div className="flex min-w-0 items-center gap-2">
                           <input
@@ -1386,7 +1874,12 @@ export function BranchDetailDrawer({
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => logsMode === 'build' ? void load() : selectedService ? void loadServiceLogs(selectedService.profileId) : undefined}
+                            onClick={() => {
+                              if (logsMode === 'system') return void loadSystemLogs();
+                              if (logsMode === 'webhook') return void loadTriggerLogs();
+                              if (logsMode === 'build' || logsMode === 'http') return void load();
+                              if (selectedService) void loadServiceLogs(selectedService.profileId);
+                            }}
                           >
                             <RefreshCw />
                             刷新
@@ -1394,13 +1887,24 @@ export function BranchDetailDrawer({
                         </div>
                       </div>
                     </header>
-                    {logsMode === 'build' ? (
+                    {logsMode === 'system' ? (
+                      <SystemLogsPanel state={systemLogsState} query={logQuery} />
+                    ) : logsMode === 'webhook' ? (
+                      <TriggerLogsPanel
+                        state={triggerLogsState}
+                        query={logQuery}
+                        branch={branch}
+                        onLoadMore={() => void loadMoreTriggerLogs()}
+                      />
+                    ) : logsMode === 'http' ? (
+                      <HttpLogsPanel events={visibleActivityEvents} query={logQuery} />
+                    ) : logsMode === 'build' ? (
                       <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
-                        {services.length > 1 ? (
-                          <div className="flex gap-2 overflow-x-auto border-b border-[hsl(var(--hairline))] px-4 py-3">
-                            {services.map((svc) => (
+                        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+                          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                            {(services.length > 0 ? services : []).map((svc) => (
                               <button
                                 key={svc.profileId}
                                 type="button"
@@ -1417,34 +1921,11 @@ export function BranchDetailDrawer({
                               </button>
                             ))}
                           </div>
-                        ) : null}
+                          <CopyServiceLogsButton service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                        </div>
                         <ServiceLogsPanel service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
                       </>
                     )}
-                  </section>
-                ) : null}
-
-                {activeTab === 'events' ? (
-                  <section className="cds-surface-raised cds-hairline">
-                    <LogsHeader
-                      title="Webhook 日志"
-                      query={logQuery}
-                      onQueryChange={setLogQuery}
-                      onRefresh={() => void loadTriggerLogs()}
-                    />
-                    <TriggerLogsPanel state={triggerLogsState} query={logQuery} branch={branch} />
-                  </section>
-                ) : null}
-
-                {activeTab === 'httpLogs' ? (
-                  <section className="cds-surface-raised cds-hairline">
-                    <LogsHeader
-                      title="HTTP Logs"
-                      query={logQuery}
-                      onQueryChange={setLogQuery}
-                      onRefresh={() => void load()}
-                    />
-                    <HttpLogsPanel events={visibleActivityEvents} query={logQuery} />
                   </section>
                 ) : null}
 
@@ -1603,7 +2084,7 @@ export function BranchDetailDrawer({
                   <SettingsPanel
                     branch={branch}
                     projectId={projectId}
-                    busy={actionBusy}
+                    busy={currentActionBusy}
                     profileState={profileState}
                     modeSavingProfileId={modeSavingProfileId}
                     confirmDelete={confirmDelete}
@@ -1643,11 +2124,21 @@ export function BranchDetailDrawer({
               <>
                 <Button
                   className="flex-1"
-                  disabled={!!actionBusy}
+                  disabled={!!currentActionBusy}
+                  title="只把已构建好的容器拉起来（docker restart），不重新拉代码 / 不重建镜像。没有代码变更时用这个，秒级。"
+                  onClick={() => void runBranchAction('restart', '重新启动')}
+                >
+                  {currentActionBusy === 'restart' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  {currentActionBusy === 'restart' ? '正在重启…' : '重新启动'}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!!currentActionBusy}
+                  title="拉取最新代码 + 重新构建镜像 + 重启（有代码变更 / 重启失败时用这个，较慢）。"
                   onClick={() => void runBranchAction('deploy', '部署')}
                 >
-                  {actionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
-                  {actionBusy === 'deploy' ? '正在部署…' : '重新部署'}
+                  {currentActionBusy === 'deploy' ? <Loader2 className="animate-spin" /> : <Play />}
+                  {currentActionBusy === 'deploy' ? '正在部署…' : '重新部署'}
                 </Button>
                 <Button asChild variant="outline">
                   <a href={fullPageHref}>
@@ -1748,33 +2239,59 @@ function filterServiceLogs(state: ServiceLogsState, query: string): ServiceLogsS
   return { ...state, logs: lines.join('\n') };
 }
 
-function LogsHeader({
-  title,
-  query,
-  onQueryChange,
-  onRefresh,
-}: {
-  title: string;
-  query: string;
-  onQueryChange: (value: string) => void;
-  onRefresh: () => void;
-}): JSX.Element {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
-      <h3 className="text-sm font-semibold">{title}</h3>
-      <div className="flex min-w-0 items-center gap-2">
-        <input
-          className="h-8 w-52 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-xs outline-none placeholder:text-muted-foreground focus:border-primary"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Filter logs"
-        />
-        <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
-          <RefreshCw />
-          刷新
-        </Button>
+// 2026-05-18: 分支系统日志（生命周期时间线）。每条带时间戳 + 事件类型徽标
+// + 触发者 + 原因，最新在前。这是用户排查"分支莫名其妙停止"的主入口：
+// 崩溃 / 调度器降温 / janitor 回收 / 用户手动停止 / auto-restart 都会留痕。
+function systemLogTypeMeta(type: string): { label: string; cls: string } {
+  switch (type) {
+    case 'deploy': return { label: '部署', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
+    case 'deploy-failed': return { label: '部署失败', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
+    case 'pull': return { label: '拉取', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
+    case 'stop': return { label: '停止', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
+    case 'restart': return { label: '重启', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
+    case 'crash': return { label: '崩溃', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
+    case 'branch-created': return { label: '新建', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
+    case 'branch-deleted': return { label: '回收', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
+    default: return { label: type, cls: 'border-border bg-muted text-muted-foreground' };
+  }
+}
+
+function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
+  if (state.status === 'loading') return <div className={DETAIL_LOG_EMPTY_CLASS}>加载系统日志…</div>;
+  if (state.status === 'error') {
+    return <div className={`${DETAIL_LOG_EMPTY_CLASS} text-destructive`}>加载失败：{state.message}</div>;
+  }
+  if (state.status === 'idle') return <div className={DETAIL_LOG_EMPTY_CLASS}>切换到此页签后加载。</div>;
+  const q = query.trim().toLowerCase();
+  const rows = (q
+    ? state.logs.filter((e) =>
+        (e.note || '').toLowerCase().includes(q) ||
+        (e.actor || '').toLowerCase().includes(q) ||
+        e.type.toLowerCase().includes(q))
+    : state.logs);
+  if (rows.length === 0) {
+    return (
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
+        {q ? '没有匹配的系统日志。' : '本分支还没有生命周期事件记录。部署 / 停止 / 崩溃 / 回收发生后会在这里显示。'}
       </div>
-    </header>
+    );
+  }
+  return (
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} divide-y divide-[hsl(var(--hairline))]`}>
+      {rows.map((e) => {
+        const meta = systemLogTypeMeta(e.type);
+        return (
+          <div key={e.id} className="px-4 py-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded border px-2 py-0.5 ${meta.cls}`}>{meta.label}</span>
+              <span className="text-muted-foreground">{formatDeployTimestamp(e.at)}</span>
+              {e.actor ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-muted-foreground">{e.actor}</span> : null}
+            </div>
+            {e.note ? <div className="mt-1.5 leading-5 text-foreground">{e.note}</div> : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1856,39 +2373,45 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
 
 function idleBranchExplanation(branch: BranchDetailData): string {
   if ((branch.stopCount || 0) > 0) {
-    return '当前没有运行中的容器，也没有失败日志。该分支存在停止记录，可能是页面手动停止、/cds stop、PR 关闭或分支删除 webhook 触发的停止；Webhook 日志和活动记录里会显示具体来源。点击下方「重新部署」会拉取当前代码并重新启动服务。';
+    return '当前没有运行中的容器。该分支存在停止记录（手动停止 / 调度器降温 / 容器崩溃 / janitor 回收 / webhook 触发）——具体"谁停的、何时、为什么"见「日志」页签的「系统日志」。没有代码变更点「重新启动」秒级拉起；要拉新代码重建点「重新部署」。';
   }
   if ((branch.deployCount || 0) === 0) {
-    return '当前没有运行中的容器，也没有成功部署记录。若上方 Webhook 日志显示派发失败，会直接标出原因；点击下方「重新部署」会拉取当前代码并启动首次部署。';
+    return '当前没有运行中的容器，也没有成功部署记录。派发失败原因见「日志」页签的「Webhook」/「系统日志」；点击下方「重新部署」会拉取当前代码并启动首次部署。';
   }
-  return '当前没有运行中的容器，也没有失败日志。最近成功部署时间以上方「最近部署」为准；点击下方「重新部署」会拉取当前代码并重新启动服务。';
+  return '当前没有运行中的容器。最近成功部署时间以上方「最近部署」为准；停止 / 崩溃 / 回收的来源见「日志」页签的「系统日志」。没有代码变更点「重新启动」，要重建点「重新部署」。';
 }
 
 function TriggerLogsPanel({
   state,
   query,
   branch,
+  onLoadMore,
 }: {
   state: TriggerLogsState;
   query: string;
   branch: BranchDetailData;
+  onLoadMore?: () => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return <LoadingBlock label="加载 Webhook 日志" />;
+    return (
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
+        <LoadingBlock label="加载 Webhook 日志" />
+      </div>
+    );
   }
   if (state.status === 'error') {
-    return <div className="p-5"><ErrorBlock message={state.message} /></div>;
+    return <div className={`${DETAIL_LOG_EMPTY_CLASS} items-start py-5`}><ErrorBlock message={state.message} /></div>;
   }
 
   const rows = state.deliveries.filter((item) => textMatchesQuery(triggerLogSearchText(item), query));
   if (rows.length === 0) {
     const origin = branchOriginInsight(branch);
     return (
-      <div className="space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground">
+      <div className={`${DETAIL_LOG_VIEWPORT_CLASS} space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground`}>
         <div>
           {query
             ? '没有匹配的 Webhook 日志。'
-            : '最近 200 条 GitHub webhook 投递里没有命中这个分支。'}
+            : '最近 1000 条 GitHub webhook 投递里没有命中这个分支。'}
         </div>
         {!query ? (
           <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5">
@@ -1905,7 +2428,7 @@ function TriggerLogsPanel({
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="mb-3 flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
         <span>匹配 {state.filteredTotal}</span>
         <span>全量 {state.total}</span>
@@ -1977,6 +2500,29 @@ function TriggerLogsPanel({
           );
         })}
       </div>
+      {/*
+        2026-05-14: 分页加载更多。后端 buffer 上限 1000 条，每页 20。
+        用户反复反馈"webhook 看不到历史"——这里给出累计条数 + 加载更多按钮。
+      */}
+      {state.hasMore || state.loadingMore ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs text-muted-foreground">
+          <span>
+            已加载 {state.deliveries.length} / {state.filteredTotal} 条匹配（buffer 上限 1000）
+          </span>
+          <button
+            type="button"
+            className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-1 text-xs hover:border-[hsl(var(--hairline-strong))] disabled:opacity-60"
+            onClick={() => onLoadMore?.()}
+            disabled={!state.hasMore || !!state.loadingMore}
+          >
+            {state.loadingMore ? '加载中...' : '加载更早 20 条'}
+          </button>
+        </div>
+      ) : state.deliveries.length > 0 ? (
+        <div className="mt-3 border-t border-[hsl(var(--hairline))] pt-3 text-xs text-muted-foreground">
+          已展示全部 {state.deliveries.length} 条
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2001,13 +2547,13 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
             {selection.message ? <span className="min-w-0 truncate">{selection.message}</span> : null}
           </div>
         </div>
-        <div className="max-h-[560px] overflow-auto">
+        <div className={DETAIL_LOG_VIEWPORT_CLASS}>
           <div className="grid grid-cols-[150px_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
             <span>Time</span>
             <span>Message</span>
           </div>
           {rows.length === 0 ? (
-            <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的构建日志。' : '这条部署还没有日志。'}</div>
+            <div className={DETAIL_LOG_EMPTY_CLASS}>{query ? '没有匹配的构建日志。' : '这条部署还没有日志。'}</div>
           ) : (
             <div className="divide-y divide-[hsl(var(--hairline))]">
               {rows.map((row) => (
@@ -2042,11 +2588,11 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
     });
 
   if (rows.length === 0) {
-    return <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的构建日志。' : '还没有构建记录。'}</div>;
+    return <div className={DETAIL_LOG_EMPTY_CLASS}>{query ? '没有匹配的构建日志。' : '还没有构建记录。'}</div>;
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="space-y-2">
         {rows.map((row) => (
           <div key={row.key} className={`rounded-md border px-3 py-2 ${row.status === 'error' ? 'border-destructive/35 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'}`}>
@@ -2069,10 +2615,56 @@ function ServiceLogsPanel({
   service: ServiceState | null;
   state: ServiceLogsState;
 }): JSX.Element {
-  const [copied, setCopied] = useState(false);
   const logs = state.status === 'ok' ? (state.logs || '') : '';
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
+  const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
+  const serviceLogViewportClass = 'min-h-0 flex-1 overflow-auto';
+
+  if (!service) {
+    return <div className={DETAIL_LOG_EMPTY_CLASS}>选择一个服务查看容器日志。</div>;
+  }
+
+  return (
+    <div className="h-[424px] min-w-0 overflow-hidden p-4 pt-3">
+      <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
+        <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+          <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-muted-foreground">
+            <span>容器详情日志</span>
+            {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
+          </div>
+          {service.errorMessage ? (
+            <div className="mb-2 shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+              {service.errorMessage}
+            </div>
+          ) : null}
+          {state.status === 'error' && isCurrent ? (
+            <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
+              {state.message}
+            </div>
+          ) : (
+            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground`}>
+              {state.status === 'loading' && isCurrent
+                ? '正在读取 docker logs...'
+                : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyServiceLogsButton({
+  service,
+  state,
+}: {
+  service: ServiceState | null;
+  state: ServiceLogsState;
+}): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const isCurrent = service && state.profileId === service.profileId;
+  const logs = state.status === 'ok' && isCurrent ? normalizeContainerLogsForDisplay(state.logs || '') : '';
 
   async function copyLogs(): Promise<void> {
     if (!service) return;
@@ -2081,7 +2673,7 @@ function ServiceLogsPanel({
       service.containerName,
       service.errorMessage ? `error: ${service.errorMessage}` : '',
       '',
-      displayLogs,
+      logs,
     ].filter(Boolean).join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -2092,59 +2684,16 @@ function ServiceLogsPanel({
     }
   }
 
-  if (!service) {
-    return <div className="p-5 text-sm text-muted-foreground">选择一个服务查看容器日志。</div>;
-  }
-
   return (
-    <div className="min-w-0 p-4">
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
-        <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold">{service.profileId}</span>
-                <span className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${statusClass(service.status)}`}>{statusLabel(service.status)}</span>
-              </div>
-              <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
-                <span>:{service.hostPort || '?'}</span>
-                <span className="min-w-0 truncate">{service.containerName}</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => void copyLogs()}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copied ? '已复制' : '复制'}
-            </button>
-          </div>
-          {service.errorMessage ? (
-            <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-              {service.errorMessage}
-            </div>
-          ) : null}
-        </div>
-        <div className="px-4 py-3">
-          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span>容器详情日志</span>
-            {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
-          </div>
-          {state.status === 'error' && isCurrent ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-              {state.message}
-            </div>
-          ) : (
-            <pre className="max-h-[420px] min-h-[260px] overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
-              {state.status === 'loading' && isCurrent
-                ? '正在读取 docker logs...'
-                : displayLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
-            </pre>
-          )}
-        </div>
-      </div>
-    </div>
+    <button
+      type="button"
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+      onClick={() => void copyLogs()}
+      disabled={!service}
+    >
+      <Copy className="h-3.5 w-3.5" />
+      {copied ? '已复制' : '复制'}
+    </button>
   );
 }
 
@@ -2159,14 +2708,14 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
 
   if (rows.length === 0) {
     return (
-      <div className="px-5 py-8 text-sm leading-6 text-muted-foreground">
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
         {query ? '没有匹配的 HTTP 访问日志。' : '还没有捕获到这个分支的 HTTP 请求。打开预览后，请求会出现在这里。'}
       </div>
     );
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="space-y-2">
         {rows.map((event, index) => {
           const ok = (event.status || 0) < 400;
@@ -2536,13 +3085,13 @@ function SettingsPanel({
 }: {
   branch: BranchDetailData | null;
   projectId: string;
-  busy: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete' | null;
+  busy: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null;
   profileState: ProfileOverridesState;
   modeSavingProfileId: string | null;
   confirmDelete: boolean;
   onConfirmDelete: (next: boolean) => void;
   onRunAction: (
-    action: 'deploy' | 'pull' | 'stop' | 'reset' | 'delete',
+    action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete',
     label: string,
   ) => void;
   onSetProfileDeployMode: (profile: ProfileRow, mode: string) => void;

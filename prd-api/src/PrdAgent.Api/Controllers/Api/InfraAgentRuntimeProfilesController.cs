@@ -22,8 +22,31 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var items = await _service.ListAsync(ct);
+        var userId = this.GetRequiredUserId();
+        var items = await _service.ListAsync(userId, ct);
         return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpGet("templates")]
+    public async Task<IActionResult> ListTemplates(CancellationToken ct)
+    {
+        var items = await _service.ListTemplatesAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpGet("adapter-compatibility")]
+    public async Task<IActionResult> ListAdapterCompatibility(CancellationToken ct)
+    {
+        var items = await _service.ListAdapterCompatibilityAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpGet("adapter-matrix")]
+    public async Task<IActionResult> AdapterMatrix(CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var matrix = await _service.GetAdapterMatrixAsync(userId, ct);
+        return Ok(ApiResponse<object>.Ok(new { matrix }));
     }
 
     [HttpPost]
@@ -34,6 +57,36 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
         {
             var item = await _service.CreateAsync(userId, req, ct);
             return StatusCode(StatusCodes.Status201Created, ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentRuntimeProfileException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    [HttpPost("templates/{templateId}/profiles")]
+    public async Task<IActionResult> CreateFromTemplate(string templateId, [FromBody] CreateInfraAgentRuntimeProfileFromTemplateRequest req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var item = await _service.CreateFromTemplateAsync(templateId, userId, req, ct);
+            return StatusCode(StatusCodes.Status201Created, ApiResponse<object>.Ok(new { item }));
+        }
+        catch (InfraAgentRuntimeProfileException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+    }
+
+    [HttpPost("templates/{templateId}/default-profile")]
+    public async Task<IActionResult> CreateDefaultFromTemplateAfterTest(string templateId, [FromBody] CreateInfraAgentRuntimeProfileFromTemplateRequest req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var result = await _service.CreateDefaultFromTemplateAfterTestAsync(templateId, userId, req, ct);
+            return StatusCode(StatusCodes.Status201Created, ApiResponse<object>.Ok(new { item = result.Item, test = result.Test }));
         }
         catch (InfraAgentRuntimeProfileException ex)
         {
@@ -74,7 +127,8 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
-        var deleted = await _service.DeleteAsync(id, ct);
+        var userId = this.GetRequiredUserId();
+        var deleted = await _service.DeleteAsync(id, userId, ct);
         if (!deleted)
         {
             return NotFound(ApiResponse<object>.Fail(
@@ -87,9 +141,10 @@ public class InfraAgentRuntimeProfilesController : ControllerBase
     [HttpPost("{id}/test")]
     public async Task<IActionResult> Test(string id, CancellationToken ct)
     {
+        var userId = this.GetRequiredUserId();
         try
         {
-            var result = await _service.TestAsync(id, ct);
+            var result = await _service.TestAsync(id, userId, ct);
             return Ok(ApiResponse<object>.Ok(new { result }));
         }
         catch (InfraAgentRuntimeProfileException ex)

@@ -116,11 +116,21 @@ export interface WeeklyPoster {
   updatedAt: string;
 }
 
+export interface WeeklyPosterListItem {
+  id: string;
+  title: string;
+  weekKey: string;
+  status: WeeklyPosterStatus;
+  pageCount: number;
+  updatedAt: string;
+  publishedAt?: string | null;
+}
+
 export interface WeeklyPosterListView {
   total: number;
   page: number;
   pageSize: number;
-  items: WeeklyPoster[];
+  items: WeeklyPosterListItem[];
 }
 
 export interface WeeklyPosterUpsertInput {
@@ -134,6 +144,23 @@ export interface WeeklyPosterUpsertInput {
   pages?: WeeklyPosterPage[];
   ctaText?: string;
   ctaUrl?: string;
+}
+
+export interface WeeklyPosterImageRun {
+  runId: string;
+  status: string;
+  total: number;
+  reused: boolean;
+}
+
+export interface WeeklyPosterImageRunStatus {
+  runId: string;
+  posterId: string;
+  status: string;
+  total: number;
+  done: number;
+  failed: number;
+  poster?: WeeklyPoster | null;
 }
 
 // ============ API Calls ============
@@ -242,5 +269,24 @@ export async function generateWeeklyPosterPageImage(
   return await apiRequest<WeeklyPoster>(
     `/api/weekly-posters/${encodeURIComponent(posterId)}/pages/${order}/generate-image`,
     { method: 'POST', body: overridePrompt ? { overridePrompt } : {} }
+  );
+}
+
+/** 创建后台批量生图任务。服务端负责继续生成并回填页面，浏览器关闭不影响任务执行。 */
+export async function generateWeeklyPosterImages(
+  posterId: string,
+  input?: { regenerate?: boolean; maxConcurrency?: number },
+) {
+  return await apiRequest<WeeklyPosterImageRun>(
+    `/api/weekly-posters/${encodeURIComponent(posterId)}/generate-images`,
+    { method: 'POST', body: input ?? {} }
+  );
+}
+
+/** 查询周报海报后台生图任务状态，并返回最新海报。 */
+export async function getWeeklyPosterImageRun(runId: string) {
+  return await apiRequest<WeeklyPosterImageRunStatus>(
+    `/api/weekly-posters/image-runs/${encodeURIComponent(runId)}`,
+    { method: 'GET' }
   );
 }

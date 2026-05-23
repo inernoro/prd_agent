@@ -3,6 +3,7 @@ import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
 import type {
+  CreateMarketplaceSkillShareContract,
   DeleteMarketplaceSkillContract,
   FavoriteMarketplaceSkillContract,
   ForkMarketplaceSkillContract,
@@ -13,7 +14,19 @@ import type {
   UnfavoriteMarketplaceSkillContract,
   UpdateMarketplaceSkillContract,
   UploadMarketplaceSkillContract,
+  ViewSkillShareData,
 } from '@/services/contracts/marketplaceSkills';
+
+function getApiBaseUrl() {
+  return ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$/, '');
+  const p = path.replace(/^\/+/, '');
+  if (!b) return `/${p}`;
+  return `${b}/${p}`;
+}
 
 /**
  * 列出海鲜市场公开的技能包
@@ -159,3 +172,32 @@ export const deleteMarketplaceSkillReal: DeleteMarketplaceSkillContract = async 
     emptyResponseData: { deleted: true },
   });
 };
+
+/**
+ * 生成技能的公开免登录分享链接（需登录创建）。
+ */
+export const createMarketplaceSkillShareReal: CreateMarketplaceSkillShareContract = async (input) => {
+  return await apiRequest(api.marketplaceSkills.share(encodeURIComponent(input.id)), {
+    method: 'POST',
+    body: input.expiresInDays != null ? { expiresInDays: input.expiresInDays } : {},
+  });
+};
+
+/**
+ * 公开分享页读取技能只读快照。
+ * 走 raw fetch（非 apiRequest），避免 401 自动跳转 —— 此端点匿名可访问；
+ * 已登录时附带 token 以便后端做访问者归属。
+ */
+export async function viewSkillShare(token: string): Promise<ApiResponse<ViewSkillShareData>> {
+  const url = joinUrl(getApiBaseUrl(), api.marketplaceSkills.publicShare(encodeURIComponent(token)));
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    const json = await res.json();
+    return json as ApiResponse<ViewSkillShareData>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
+  }
+}

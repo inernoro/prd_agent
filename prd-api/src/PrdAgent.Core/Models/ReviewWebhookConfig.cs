@@ -36,6 +36,9 @@ public class ReviewWebhookConfig
 public static class ReviewEventType
 {
     public const string ReviewCompleted = "review_completed";
+    public const string AppealSubmitted = "appeal_submitted";
+    public const string AppealApproved = "appeal_approved";
+    public const string AppealRejected = "appeal_rejected";
 
-    public static readonly string[] All = { ReviewCompleted };
+    public static readonly string[] All = { ReviewCompleted, AppealSubmitted, AppealApproved, AppealRejected };
 }

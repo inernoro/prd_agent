@@ -39,6 +39,7 @@ import { WeekNavRail } from './WeekNavRail';
 import { MemberReportInlineView } from './MemberReportInlineView';
 import { TeamIssuesPanel } from './TeamIssuesPanel';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { formatWeekDateRange } from '../utils/weekRange';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -615,8 +616,8 @@ export function TeamDashboard() {
         className="flex-1 min-w-0 min-h-0 flex flex-col gap-4 overflow-y-auto pr-1"
         style={{ overscrollBehavior: 'contain' }}
       >
-      {memberDrawerVisible && selectedTeam && (
-        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
+      {memberDrawerVisible && selectedTeam && createPortal(
+        <div className="fixed inset-0 z-[100] flex justify-end" onClick={() => closeMemberDrawer()}>
           <div
             className="absolute inset-0 backdrop-blur-sm transition-opacity duration-200"
             style={{
@@ -760,7 +761,8 @@ export function TeamDashboard() {
               })}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {selectedMemberUserId && selectedTeamId ? (
@@ -813,7 +815,7 @@ export function TeamDashboard() {
                 : <option value="">暂无团队</option>}
             </select>
             <span className="text-[13px] font-semibold whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
-              {weekYear} 年第 {weekNumber} 周
+              {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
             </span>
             {selectedTeamId && (
               <Button variant="secondary" size="sm" onClick={openMemberDrawer}>
@@ -876,7 +878,7 @@ export function TeamDashboard() {
       )}
 
       {hasScopedTeams && selectedTeamId && (viewMode === 'report_list' || viewMode === 'issues') && (
-        <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden">
+        <GlassCard variant="subtle" className="surface-raised p-0 overflow-hidden flex-1 min-h-0 flex flex-col">
           <div className="px-5 py-4 flex items-center justify-between gap-3 flex-wrap" style={{ borderBottom: '1px solid var(--border-primary)' }}>
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
@@ -960,7 +962,10 @@ export function TeamDashboard() {
               )}
             </div>
           </div>
-          <div className="px-5 py-4 max-h-[540px] overflow-auto">
+          <div
+            className="px-5 py-4 flex-1 min-h-0 overflow-y-auto"
+            style={{ overscrollBehavior: 'contain' }}
+          >
             {viewMode === 'issues' ? (
               <TeamIssuesPanel teamId={selectedTeamId} weekYear={weekYear} weekNumber={weekNumber} />
             ) : reportsLoading ? (
@@ -1027,7 +1032,7 @@ export function TeamDashboard() {
               </div>
               <div className="mt-2 flex items-center flex-wrap gap-2 text-[11px]">
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
-                  {weekYear} 年第 {weekNumber} 周
+                  {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
                 </span>
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
                   {summaryView?.visibilityScope === 'self_only' ? '个人汇总视图' : '团队汇总视图'}

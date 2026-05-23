@@ -193,6 +193,160 @@ describe('GitHubWebhookDispatcher', () => {
       expect(branch!.githubCommitSha).toBe('cafebabe01234567890abcdef1234567890abcde');
     });
 
+    it('refreshes branch metadata without deploy for docs-only pushes', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt/p1/proj-main',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+      const result = await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: 'fecd0c501234567890abcdef1234567890abcde',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        commits: [
+          {
+            id: 'fecd0c501234567890abcdef1234567890abcde',
+            modified: ['doc/guide.cds-agent-runbook.md', 'README.md', 'scripts/smoke-cds-agent-one-cycle.sh'],
+          },
+        ],
+      });
+      expect(result.action).toBe('ignored-doc-only');
+      expect(result.branchId).toBe('proj-main');
+      expect(result.deployRequest).toBeUndefined();
+      expect(worktree.createdWorktrees).toHaveLength(0);
+      const branch = stateService.getBranch('proj-main');
+      expect(branch!.githubCommitSha).toBe('fecd0c501234567890abcdef1234567890abcde');
+      expect(branch!.githubRepoFullName).toBe('octocat/repo');
+    });
+
+    it('does not docs-only skip when a push changes application code', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt/p1/proj-main',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+      const result = await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: 'beadfeed01234567890abcdef1234567890abcde',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        commits: [
+          {
+            id: 'beadfeed01234567890abcdef1234567890abcde',
+            modified: ['doc/guide.md', 'prd-admin/src/pages/cds-agent/CdsAgentPage.tsx'],
+          },
+        ],
+      });
+      expect(result.action).toBe('branch-refreshed');
+      expect(result.deployRequest).toEqual({ branchId: 'proj-main', commitSha: 'beadfeed01234567890abcdef1234567890abcde' });
+    });
+
+    it('does not docs-only skip when GitHub push commit payload may be truncated', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt/p1/proj-main',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+      const commits = Array.from({ length: 2048 }, (_, index) => ({
+        id: `doc${index}`,
+        modified: [`doc/change-${index}.md`],
+      }));
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: 'abfecd501234567890abcdef1234567890abcde',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        commits,
+      });
+
+      expect(result.action).toBe('branch-refreshed');
+      expect(result.deployRequest).toEqual({ branchId: 'proj-main', commitSha: 'abfecd501234567890abcdef1234567890abcde' });
+    });
+
+    it('does not docs-only skip when GitHub reports more commits than delivered', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-main',
+        projectId: 'p1',
+        branch: 'main',
+        worktreePath: '/tmp/wt/p1/proj-main',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: 'feedc0de1234567890abcdef1234567890abcde',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        size: 2,
+        distinct_size: 2,
+        commits: [
+          {
+            id: 'doc-only-visible',
+            modified: ['doc/visible.md'],
+          },
+        ],
+      });
+
+      expect(result.action).toBe('branch-refreshed');
+      expect(result.deployRequest).toEqual({ branchId: 'proj-main', commitSha: 'feedc0de1234567890abcdef1234567890abcde' });
+    });
+
     it('refreshes a pre-existing legacy-format branch after legacyFlag was flipped off', async () => {
       // Regression for the "two main branches" phantom duplicate bug:
       // when a project migrated from legacyFlag=true → false, a later

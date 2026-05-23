@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type ClipboardEvent } from 'react';
-import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload } from 'lucide-react';
+import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload, GripVertical } from 'lucide-react';
+import { formatWeekDateRange } from '../utils/weekRange';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -47,29 +48,29 @@ interface SectionTheme {
 }
 
 function buildSectionThemes(theme: DataTheme): SectionTheme[] {
+  // 激进档：去掉每段彩色变化，所有章节走中性灰阶 + 单一 indigo accent（仅 focus / 拖动指示用）
+  // 保留函数形态（返回数组），但每个 sIdx 拿到的是同一份 theme，免去调用点改动。
+  // 参考标准：Notion / Linear / Stripe Docs —— 彩色只用于状态(草稿/已审阅/退回 chip)，结构层级靠字号 + hairline 表达。
   const isLight = theme === 'light';
-  if (isLight) {
-    // 浅色:去掉大色条,改 editorial 克制风
-    // - header 背景 transparent,靠左侧 3px 色条 + 底部 hairline 分层
-    // - 数字徽章改为深色单色 (slate-900) + 白字,不用饱和彩色
-    return SECTION_RGB.map((rgb) => ({
-      color:        `rgba(${rgb}, 1)`,                    // 左侧 3px accent
-      bg:           'transparent',                         // 不再整行填色
-      border:       'var(--hairline)',                     // section 外框细线
-      badgeBg:      '#0F172A',                             // slate-900 统一数字徽章
-      badgeColor:   '#FFFFFF',
-      headerBorder: 'var(--hairline)',                     // header 下沿细线
-    }));
-  }
-  // 暗色:保留原发光感
-  return SECTION_RGB.map((rgb) => ({
-    color:        `rgba(${rgb}, 0.9)`,
-    bg:           `rgba(${rgb}, 0.06)`,
-    border:       `rgba(${rgb}, 0.15)`,
-    badgeBg:      `rgba(${rgb}, 0.9)`,
-    badgeColor:   '#FFFFFF',
-    headerBorder: `rgba(${rgb}, 0.15)`,
-  }));
+  const accent = 'rgba(99, 102, 241, 0.9)';
+  const base: SectionTheme = isLight
+    ? {
+        color:        accent,
+        bg:           'transparent',
+        border:       'var(--hairline)',
+        badgeBg:      'transparent',
+        badgeColor:   'var(--text-muted)',
+        headerBorder: 'var(--hairline)',
+      }
+    : {
+        color:        accent,
+        bg:           'transparent',
+        border:       'rgba(148, 163, 184, 0.18)',
+        badgeBg:      'transparent',
+        badgeColor:   'var(--text-muted)',
+        headerBorder: 'rgba(148, 163, 184, 0.18)',
+      };
+  return SECTION_RGB.map(() => base);
 }
 
 interface Props {
@@ -226,6 +227,9 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [deleting, setDeleting] = useState(false);
   const [createModeLoading, setCreateModeLoading] = useState<ReportCreationMode | null>(null);
   const [pastingImageKey, setPastingImageKey] = useState<string | null>(null);
+  // items 拖动排序状态：draggingKey = "sIdx:iIdx" 被拖元素；dragOverIdx = 当前 drop target
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<{ sIdx: number; iIdx: number } | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
   const [myDefaultTemplateId, setMyDefaultTemplateId] = useState<string | null>(null);
@@ -450,6 +454,39 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     }
   }, [report, autosave]);
 
+  // 左侧大纲 scroll spy：根据 section 元素在滚动容器内的可见性更新 activeSectionIdx
+  useEffect(() => {
+    const sectionsCount = report?.sections?.length ?? 0;
+    if (sectionsCount < 3) return; // 大纲仅在 ≥3 章节时显示，少了就不跑 observer
+    const root = scrollContainerRef.current;
+    if (!root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting);
+        if (visible.length === 0) return;
+        // 取最靠顶部的那个可见 section
+        const topMost = visible.reduce((a, b) => (a.boundingClientRect.top < b.boundingClientRect.top ? a : b));
+        const idx = sectionRefs.current.findIndex((el) => el === topMost.target);
+        if (idx >= 0) setActiveSectionIdx(idx);
+      },
+      {
+        root,
+        // section 进入上 30% 视区时算激活，避免快速切换
+        rootMargin: '-20% 0px -60% 0px',
+        threshold: 0,
+      },
+    );
+    const els = sectionRefs.current.filter((el): el is HTMLElement => !!el);
+    els.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [report?.sections?.length]);
+
+  const scrollToSection = useCallback((idx: number) => {
+    const el = sectionRefs.current[idx];
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   const handleSubmit = useCallback(async () => {
     if (!report) return;
     setSaving(true);
@@ -583,7 +620,25 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
+  // 同一章节内 items 拖动排序（用户需求：编辑状态下 hover item 出现拖动手柄）
+  const reorderItem = (sectionIdx: number, fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
+    setSections((prev) => {
+      const next = [...prev];
+      const arr = [...next[sectionIdx].items];
+      if (fromIdx < 0 || fromIdx >= arr.length || toIdx < 0 || toIdx >= arr.length) return prev;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      next[sectionIdx] = { ...next[sectionIdx], items: arr };
+      return next;
+    });
+  };
+
   const bulletInputRefsRef = useRef<Record<string, HTMLInputElement | null>>({});
+  // 左侧大纲：章节 DOM refs + 当前激活章节 idx（scroll spy）
+  const sectionRefs = useRef<(HTMLElement | null)[]>([]);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [activeSectionIdx, setActiveSectionIdx] = useState(0);
 
   const focusBulletAt = useCallback((sectionIdx: number, itemIdx: number, caret: 'start' | 'end' = 'end') => {
     requestAnimationFrame(() => {
@@ -713,7 +768,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
               创建周报
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-              {weekYear} 年第 {weekNumber} 周
+              {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
             </div>
           </div>
         </div>
@@ -916,7 +971,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   className="text-[11px] px-2 py-0.5 rounded-full"
                   style={{ color: 'var(--text-muted)', background: 'var(--bg-tertiary)' }}
                 >
-                  {report.weekYear} 年第 {report.weekNumber} 周
+                  {formatWeekDateRange({ weekYear: report.weekYear, weekNumber: report.weekNumber })} · W{String(report.weekNumber).padStart(2, '0')}
                 </span>
               </div>
               {/* Mini progress bar — 浅色下走 Claude 橙 */}
@@ -946,6 +1001,19 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           </div>
           {(canEdit || canSubmit || canGenerate || canDelete) && (
             <div className="flex items-center gap-2 flex-wrap shrink-0 ml-auto">
+              {report.autoGeneratedAt && (
+                <span
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap"
+                  style={{
+                    color: isLight ? 'rgba(126, 34, 206, 0.95)' : 'rgba(192, 132, 252, 0.95)',
+                    background: isLight ? 'rgba(168, 85, 247, 0.06)' : 'rgba(168, 85, 247, 0.10)',
+                    border: `1px solid ${isLight ? 'rgba(168, 85, 247, 0.22)' : 'rgba(168, 85, 247, 0.28)'}`,
+                  }}
+                  title={`AI 于 ${new Date(report.autoGeneratedAt).toLocaleString('zh-CN')} 自动生成（${generationModelLabel}），请审阅后提交`}
+                >
+                  <Sparkles size={11} /> AI 草稿
+                </span>
+              )}
               {canEdit && (
                 <AutosaveIndicator
                   status={autosave.status}
@@ -983,25 +1051,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         </div>
       </GlassCard>
 
-      {/* AI banner — editorial note 风：去面板化,只保留左侧 2px 线 + 无底色文本 */}
-      {report.autoGeneratedAt && (
-        <div
-          className="flex items-center gap-2.5 text-[12px] pl-4 pr-5 py-2.5"
-          style={{
-            color: isLight ? 'var(--text-secondary)' : 'rgba(168, 85, 247, 0.9)',
-            background: isLight ? 'transparent' : 'rgba(168, 85, 247, 0.06)',
-            borderLeft: `2px solid ${isLight ? 'rgba(126, 34, 206, 0.55)' : 'rgba(168, 85, 247, 0.5)'}`,
-            borderRadius: isLight ? '2px' : '12px',
-            border: isLight ? undefined : `1px solid rgba(168, 85, 247, 0.12)`,
-            borderLeftWidth: '2px',
-          }}
-        >
-          <Sparkles size={13} style={{ color: isLight ? 'rgba(126, 34, 206, 0.8)' : undefined, flexShrink: 0 }} />
-          <span title={report.autoGeneratedPlatformId ? `平台：${report.autoGeneratedPlatformId}` : undefined}>
-            AI 于 {new Date(report.autoGeneratedAt).toLocaleString('zh-CN')} 自动生成（{generationModelLabel}），请审阅后提交
-          </span>
-        </div>
-      )}
+      {/* AI banner 已收敛到 header 右侧 chip（见上方 actions 区域），此处不再显示全宽横幅 */}
 
       {/* Return reason */}
       {report.returnReason && (
@@ -1030,89 +1080,254 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         </div>
       )}
 
-      {/* Sections */}
-      <div className="flex-1 min-h-0 overflow-auto">
-        <div className="flex flex-col gap-5">
-          {report.sections.map((section, sIdx) => {
-            const theme = sectionThemes[sIdx % sectionThemes.length];
-            return (
-              <div
-                key={sIdx}
-                className="rounded-xl overflow-hidden"
-                style={{
-                  background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
-                  backdropFilter: isLight ? undefined : 'blur(12px)',
-                  WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
-                  border: isLight ? `1px solid ${theme.border}` : '1px solid var(--border-primary)',
-                  borderLeft: isLight ? `3px solid ${theme.color}` : '1px solid var(--border-primary)',
-                  boxShadow: isLight ? 'var(--shadow-card-sm)' : undefined,
-                }}
-              >
-                {/* Section header — editorial hairline in light, colored band in dark */}
-                <div
-                  className="px-5 py-3.5 flex items-center gap-3.5"
-                  style={{
-                    background: theme.bg,
-                    borderBottom: `1px solid ${theme.headerBorder}`,
-                  }}
-                >
-                  <div
-                    className="w-7 h-7 rounded-md flex items-center justify-center text-[12px] font-semibold flex-shrink-0"
-                    style={{
-                      background: theme.badgeBg,
-                      color: theme.badgeColor,
-                      boxShadow: isLight ? 'none' : `0 2px 8px ${theme.color.replace('0.9', '0.3')}`,
-                      fontFamily: isLight ? 'var(--font-serif)' : undefined,
-                    }}
-                  >
-                    {sIdx + 1}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-baseline gap-2">
+      {/* Sections（参考 Notion / Linear / Craft：清晰层级 + 可见 bullet + inline source + hover row + 左侧 sticky 大纲） */}
+      <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
+        <div className="max-w-[1200px] mx-auto px-2 pb-12 flex gap-8">
+          {/* 左侧大纲 - 仅桌面 lg+ 且章节数 ≥3 时显示 */}
+          {report.sections.length >= 3 && (
+            <aside className="hidden lg:block flex-shrink-0" style={{ width: 200 }}>
+              <div className="sticky top-2 flex flex-col gap-1 pt-1">
+                {report.sections.map((section, sIdx) => {
+                  const isActive = activeSectionIdx === sIdx;
+                  const filled = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
+                  const total = (sections[sIdx]?.items || []).length;
+                  return (
+                    <button
+                      key={sIdx}
+                      type="button"
+                      onClick={() => scrollToSection(sIdx)}
+                      className="group flex items-baseline gap-2 px-2 py-1.5 rounded-md text-left transition-colors"
+                      style={{
+                        background: isActive
+                          ? (isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)')
+                          : 'transparent',
+                        color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.03)';
+                          e.currentTarget.style.color = 'var(--text-secondary)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = 'var(--text-muted)';
+                        }
+                      }}
+                    >
                       <span
-                        className="text-[16px] font-semibold"
+                        className="font-mono tabular-nums flex-shrink-0"
                         style={{
-                          color: 'var(--text-primary)',
-                          fontFamily: isLight ? 'var(--font-serif)' : undefined,
-                          letterSpacing: isLight ? '-0.005em' : undefined,
+                          fontSize: 10,
+                          opacity: isActive ? 0.8 : 0.55,
+                          letterSpacing: '0.05em',
+                          minWidth: 16,
                         }}
                       >
+                        {String(sIdx + 1).padStart(2, '0')}
+                      </span>
+                      <span className="text-[12.5px] flex-1 min-w-0 truncate" style={{ fontWeight: isActive ? 600 : 400 }}>
                         {section.templateSection.title}
                       </span>
-                      {section.templateSection.isRequired && (
-                        <span
-                          className="text-[11px]"
+                      <span
+                        className="font-mono tabular-nums flex-shrink-0 ml-1"
+                        style={{ fontSize: 10, opacity: 0.55 }}
+                      >
+                        {filled}/{total}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          )}
+          {/* 内容主区：max-w 920 让长文阅读更舒展，仍居中（左侧大纲不影响 */}
+          <div className="flex-1 min-w-0 max-w-[920px] mx-auto flex flex-col gap-5">
+          {report.sections.map((section, sIdx) => {
+            const theme = sectionThemes[sIdx % sectionThemes.length];
+            const filledCount = (sections[sIdx]?.items || []).filter((i) => i.content.trim()).length;
+            const totalCount = (sections[sIdx]?.items || []).length;
+            const required = section.templateSection.isRequired;
+            return (
+              <section
+                key={sIdx}
+                ref={(el) => { sectionRefs.current[sIdx] = el; }}
+                className="relative rounded-2xl overflow-hidden scroll-mt-3"
+                style={{
+                  // 提高卡片与主背景对比：暗色稍微亮一档，浅色保持纯白
+                  background: isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.035)',
+                  border: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.16)'}`,
+                  boxShadow: isLight
+                    ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px -10px rgba(15, 23, 42, 0.08)'
+                    : '0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 28px -20px rgba(0, 0, 0, 0.5)',
+                  backdropFilter: isLight ? undefined : 'blur(10px)',
+                  WebkitBackdropFilter: isLight ? undefined : 'blur(10px)',
+                }}
+              >
+                {/* Section header — 编号 pill + 标题 + 描述 + 右上计数 */}
+                <header className="px-6 pt-5 pb-4">
+                  <div className="flex items-start gap-3">
+                    {/* 编号 pill：mono 数字嵌在 28×24 圆角矩形里，灰底克制配色 */}
+                    <span
+                      className="inline-flex items-center justify-center flex-shrink-0 font-mono tabular-nums"
+                      style={{
+                        width: 30,
+                        height: 22,
+                        marginTop: 1,
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        letterSpacing: '0.05em',
+                        color: isLight ? 'rgba(15, 23, 42, 0.65)' : 'rgba(229, 231, 235, 0.7)',
+                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.06)',
+                        border: `1px solid ${isLight ? 'rgba(15, 23, 42, 0.06)' : 'rgba(255, 255, 255, 0.04)'}`,
+                      }}
+                    >
+                      {String(sIdx + 1).padStart(2, '0')}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <h3
+                          className="text-[18px] font-semibold leading-tight"
                           style={{
-                            color: isLight ? 'var(--accent-claude)' : 'rgba(239, 68, 68, 0.8)',
-                            fontWeight: 500,
+                            color: 'var(--text-primary)',
+                            fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                            letterSpacing: isLight ? '-0.01em' : '-0.005em',
                           }}
-                          aria-label="必填"
-                          title="必填"
                         >
-                          *
+                          {section.templateSection.title}
+                        </h3>
+                        {required && (
+                          <span
+                            className="text-[10px] px-1.5 py-[2px] rounded font-medium uppercase tracking-wider"
+                            style={{
+                              color: isLight ? 'rgba(194, 65, 12, 0.95)' : 'rgba(251, 146, 60, 0.9)',
+                              background: isLight ? 'rgba(249, 115, 22, 0.08)' : 'rgba(249, 115, 22, 0.12)',
+                              letterSpacing: '0.06em',
+                            }}
+                            aria-label="必填"
+                            title="必填章节"
+                          >
+                            必填
+                          </span>
+                        )}
+                        <span
+                          className="ml-auto text-[11px] font-mono tabular-nums flex-shrink-0"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          {filledCount}/{totalCount}
                         </span>
+                      </div>
+                      {section.templateSection.description && (
+                        <p className="text-[12.5px] mt-1.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                          {section.templateSection.description}
+                        </p>
                       )}
                     </div>
-                    {section.templateSection.description && (
-                      <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {section.templateSection.description}
-                      </div>
-                    )}
                   </div>
-                  <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                    {(sections[sIdx]?.items || []).filter(i => i.content.trim()).length} 条
-                  </span>
-                </div>
+                </header>
+
+                {/* Header 与 items 之间的细分隔线 */}
+                <div
+                  style={{ borderTop: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.10)'}` }}
+                />
 
                 {/* Items */}
-                <div className="px-5 py-4 flex flex-col gap-3">
-                  {(sections[sIdx]?.items || []).map((item, iIdx) => (
-                    <div key={iIdx} className="flex items-start gap-3 group">
+                <div className="px-3 py-2 flex flex-col">
+                  {(sections[sIdx]?.items || []).map((item, iIdx) => {
+                    const itemsLen = sections[sIdx]?.items?.length ?? 0;
+                    const dragKey = `${sIdx}:${iIdx}`;
+                    const isDragging = draggingKey === dragKey;
+                    const isDropTarget = dragOverIdx?.sIdx === sIdx && dragOverIdx?.iIdx === iIdx;
+                    return (
+                    <div
+                      key={iIdx}
+                      className="flex items-start gap-2 group relative rounded-lg px-2 transition-colors"
+                      style={{
+                        opacity: isDragging ? 0.4 : 1,
+                        background: 'transparent',
+                        transition: 'opacity 120ms, background-color 120ms',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = isLight
+                          ? 'rgba(15, 23, 42, 0.025)'
+                          : 'rgba(255, 255, 255, 0.025)';
+                      }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      onDragOver={(e) => {
+                        if (!canEdit) return;
+                        // 仅同一章节内允许：通过 dataTransfer.types 判断是否带本类 payload + 校验 sIdx
+                        if (!e.dataTransfer.types.includes('application/x-report-item-section')) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (!isDropTarget) setDragOverIdx({ sIdx, iIdx });
+                      }}
+                      onDragLeave={(e) => {
+                        // 仅当鼠标真正离开当前 row（非 enter 子元素）才清除
+                        const related = e.relatedTarget as Node | null;
+                        if (related && e.currentTarget.contains(related)) return;
+                        if (isDropTarget) setDragOverIdx(null);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (!canEdit) return;
+                        const fromSection = Number(e.dataTransfer.getData('application/x-report-item-section') || '-1');
+                        const fromIdx = Number(e.dataTransfer.getData('application/x-report-item-index') || '-1');
+                        setDragOverIdx(null);
+                        setDraggingKey(null);
+                        if (fromSection !== sIdx || fromIdx < 0 || fromIdx === iIdx) return;
+                        reorderItem(sIdx, fromIdx, iIdx);
+                      }}
+                    >
+                      {/* drop indicator：顶部 2px indigo 横线 */}
+                      {isDropTarget && (
+                        <div
+                          className="absolute left-0 right-0 pointer-events-none"
+                          style={{ top: -6, height: 2, background: 'rgba(99, 102, 241, 0.9)', borderRadius: 1 }}
+                        />
+                      )}
+                      {/* 拖动手柄列：始终保留固定宽度避免「从 1 条变 2 条」时所有 item 横向跳跃；
+                          内部按钮仅当 canEdit && itemsLen > 1 时渲染 + hover 才可见 */}
+                      <div
+                        className="flex-shrink-0 flex items-center justify-center"
+                        style={{ height: 36, width: 20 }}
+                      >
+                        {canEdit && itemsLen > 1 && (
+                          <button
+                            type="button"
+                            draggable
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded"
+                            style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+                            title="拖动调整该章节内顺序"
+                            aria-label="拖动调整顺序"
+                            onDragStart={(e) => {
+                              e.dataTransfer.effectAllowed = 'move';
+                              e.dataTransfer.setData('application/x-report-item-section', String(sIdx));
+                              e.dataTransfer.setData('application/x-report-item-index', String(iIdx));
+                              setDraggingKey(dragKey);
+                            }}
+                            onDragEnd={() => { setDraggingKey(null); setDragOverIdx(null); }}
+                          >
+                            <GripVertical size={14} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        )}
+                      </div>
                       {section.templateSection.inputType === ReportInputType.BulletList && (
                         <div
-                          className="w-2 h-2 rounded-full mt-3 flex-shrink-0"
-                          style={{ background: theme.color }}
-                        />
+                          className="flex-shrink-0 flex items-center justify-center"
+                          style={{ height: 36, width: 12 }}
+                        >
+                          <div
+                            className="rounded-full"
+                            style={{
+                              width: 5,
+                              height: 5,
+                              // 比之前的 4px 60% 更可见：darker，明确的小圆点
+                              background: isLight ? 'rgba(71, 85, 105, 0.7)' : 'rgba(148, 163, 184, 0.75)',
+                            }}
+                          />
+                        </div>
                       )}
                       {section.templateSection.inputType === ReportInputType.IssueList ? (
                         <IssueItemCard
@@ -1127,18 +1342,20 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           pasting={pastingImageKey === `${sIdx}-${iIdx}`}
                         />
                       ) : section.templateSection.inputType === ReportInputType.RichText ? (
-                        <div className="flex-1">
+                        <div className="flex-1 min-w-0">
                           <textarea
-                            className="w-full px-4 py-3 rounded-xl text-[13px] resize-none transition-all duration-200"
+                            className="w-full text-[14px] resize-none transition-all duration-150 leading-relaxed"
                             style={{
-                              background: 'var(--bg-secondary)',
+                              background: 'transparent',
                               color: 'var(--text-primary)',
-                              border: '1px solid var(--border-primary)',
-                              minHeight: 100,
+                              border: 'none',
+                              borderBottom: '1px solid transparent',
+                              padding: '8px 4px',
+                              minHeight: 80,
                               outline: 'none',
                             }}
-                            onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
-                            onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
+                            onFocus={(e) => { e.currentTarget.style.borderBottomColor = 'rgba(99, 102, 241, 0.55)'; }}
+                            onBlur={(e) => { e.currentTarget.style.borderBottomColor = 'transparent'; }}
                             value={item.content}
                             onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
                             onPaste={(e) => { void handleRichTextPaste(e, sIdx, iIdx); }}
@@ -1157,15 +1374,17 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       ) : (
                         <input
                           ref={(el) => { bulletInputRefsRef.current[`${sIdx}:${iIdx}`] = el; }}
-                          className="flex-1 px-4 py-3 rounded-xl text-[13px] transition-all duration-200"
+                          className="flex-1 min-w-0 text-[14px] transition-all duration-150 leading-relaxed"
                           style={{
-                            background: 'var(--bg-secondary)',
+                            background: 'transparent',
                             color: 'var(--text-primary)',
-                            border: '1px solid var(--border-primary)',
+                            border: 'none',
+                            borderBottom: '1px solid transparent',
+                            padding: '8px 4px',
                             outline: 'none',
                           }}
-                          onFocus={(e) => { e.currentTarget.style.borderColor = theme.color.replace('0.9', '0.4'); e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.color.replace('0.9', '0.08')}`; }}
-                          onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
+                          onFocus={(e) => { e.currentTarget.style.borderBottomColor = 'rgba(99, 102, 241, 0.55)'; }}
+                          onBlur={(e) => { e.currentTarget.style.borderBottomColor = 'transparent'; }}
                           value={item.content}
                           onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
                           onKeyDown={(e) => handleBulletKeyDown(sIdx, iIdx, e)}
@@ -1183,24 +1402,37 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         </button>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                   {canEdit && (
                     <button
-                      className="self-start flex items-center gap-1.5 text-[12px] px-3 py-2 rounded-lg transition-all duration-150"
+                      className="self-start ml-2 mt-2 mb-1 inline-flex items-center gap-1.5 text-[12px] rounded-md transition-all duration-150"
                       style={{
-                        color: theme.color,
-                        background: theme.bg,
-                        border: `1px dashed ${theme.border}`,
+                        color: 'var(--text-muted)',
+                        background: 'transparent',
+                        border: `1px dashed ${isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.18)'}`,
+                        padding: '4px 10px',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = 'var(--text-secondary)';
+                        e.currentTarget.style.borderColor = isLight ? 'rgba(15, 23, 42, 0.25)' : 'rgba(148, 163, 184, 0.32)';
+                        e.currentTarget.style.background = isLight ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.03)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = 'var(--text-muted)';
+                        e.currentTarget.style.borderColor = isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(148, 163, 184, 0.18)';
+                        e.currentTarget.style.background = 'transparent';
                       }}
                       onClick={() => addItem(sIdx)}
                     >
-                      <Plus size={13} /> 添加一条
+                      <Plus size={12} /> 添加一条
                     </button>
                   )}
                 </div>
-              </div>
+              </section>
             );
           })}
+          </div>
         </div>
       </div>
     </div>

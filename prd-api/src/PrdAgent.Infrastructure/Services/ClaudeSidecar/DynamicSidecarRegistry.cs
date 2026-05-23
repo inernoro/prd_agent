@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -37,6 +38,9 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
     private List<DynamicSidecarInstance> _dynamic = new();
     private DateTime? _lastRefreshedAt;
     private string? _lastRefreshError;
+    private int? _lastLoggedDiscoveryCount;
+    private string? _lastLoggedDiscoveryReason;
+    private bool? _lastLoggedDiscoveryFailed;
 
     public DynamicSidecarRegistry(
         IOptionsMonitor<ClaudeSidecarOptions> options,
@@ -76,12 +80,13 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         var opts = _options.CurrentValue;
         var next = new List<DynamicSidecarInstance>();
         var errors = new List<string>();
+        var notes = new List<string>();
 
         if (opts.CdsDiscovery.EnablePairedInfraConnections)
         {
             try
             {
-                next.AddRange(await DiscoverPairedConnectionsAsync(opts, ct));
+                next.AddRange(await DiscoverPairedConnectionsAsync(opts, notes, ct));
             }
             catch (Exception ex)
             {
@@ -89,12 +94,16 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 _logger.LogWarning(ex, "[CdsDiscovery] paired infra connection refresh failed");
             }
         }
+        else
+        {
+            notes.Add("paired-connections disabled");
+        }
 
         if (opts.CdsDiscovery.Enabled && !string.IsNullOrWhiteSpace(opts.CdsDiscovery.BaseUrl))
         {
             try
             {
-                next.AddRange(await DiscoverConfiguredCdsAsync(opts, ct));
+                next.AddRange(await DiscoverConfiguredCdsAsync(opts, notes, ct));
             }
             catch (Exception ex)
             {
@@ -102,30 +111,93 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 _logger.LogWarning(ex, "[CdsDiscovery] configured CDS refresh failed");
             }
         }
+        else
+        {
+            notes.Add("configured-cds disabled");
+        }
 
         if (errors.Count > 0 && next.Count == 0)
         {
+            var errorReason = string.Join("; ", errors);
             lock (_lock)
             {
                 _lastRefreshedAt = DateTime.UtcNow;
-                _lastRefreshError = string.Join("; ", errors);
+                _lastRefreshError = string.Join("; ", errors.Concat(notes));
             }
-            _logger.LogWarning("[CdsDiscovery] refresh failed; keeping previous snapshot: {Error}", string.Join("; ", errors));
+            if (ShouldLogDiscoverySummary(count: 0, reason: errorReason, failed: true))
+            {
+                _logger.LogWarning("[CdsDiscovery] refresh failed; keeping previous snapshot: {Error}", errorReason);
+            }
+            else
+            {
+                _logger.LogDebug("[CdsDiscovery] refresh still failing; keeping previous snapshot: {Error}", errorReason);
+            }
             return;
         }
 
+        var zeroInstanceReason = next.Count == 0 && notes.Count > 0
+            ? string.Join("; ", notes)
+            : null;
         lock (_lock)
         {
             _dynamic = next;
             _lastRefreshedAt = DateTime.UtcNow;
-            _lastRefreshError = errors.Count == 0 ? null : string.Join("; ", errors);
+            _lastRefreshError = errors.Count == 0
+                ? zeroInstanceReason
+                : string.Join("; ", errors.Concat(notes));
         }
-        _logger.LogInformation(
-            "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+        if (next.Count == 0)
+        {
+            var reason = zeroInstanceReason ?? "no discovery source returned instances";
+            if (ShouldLogDiscoverySummary(count: 0, reason: reason, failed: false))
+            {
+                _logger.LogWarning(
+                    "[CdsDiscovery] refreshed 0 sidecar instance(s) from CDS; reason={Reason}",
+                    reason);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "[CdsDiscovery] refreshed 0 sidecar instance(s) from CDS; reason={Reason}",
+                    reason);
+            }
+        }
+        else
+        {
+            if (ShouldLogDiscoverySummary(count: next.Count, reason: null, failed: false))
+            {
+                _logger.LogInformation(
+                    "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "[CdsDiscovery] refreshed {N} sidecar instance(s) from CDS", next.Count);
+            }
+        }
+    }
+
+    private bool ShouldLogDiscoverySummary(int count, string? reason, bool failed)
+    {
+        lock (_lock)
+        {
+            if (_lastLoggedDiscoveryCount == count
+                && string.Equals(_lastLoggedDiscoveryReason, reason, StringComparison.Ordinal)
+                && _lastLoggedDiscoveryFailed == failed)
+            {
+                return false;
+            }
+
+            _lastLoggedDiscoveryCount = count;
+            _lastLoggedDiscoveryReason = reason;
+            _lastLoggedDiscoveryFailed = failed;
+            return true;
+        }
     }
 
     private async Task<IReadOnlyList<DynamicSidecarInstance>> DiscoverConfiguredCdsAsync(
         ClaudeSidecarOptions opts,
+        List<string> notes,
         CancellationToken ct)
     {
         var http = _httpFactory.CreateClient(HttpClientName);
@@ -141,10 +213,13 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
         }
 
         var discovered = new List<DynamicSidecarInstance>();
+        var enabledHosts = 0;
+        var hostsWithInstance = 0;
         foreach (var host in listResp.Hosts)
         {
             if (host.Id == null) continue;
             if (host.IsEnabled == false) continue;
+            enabledHosts += 1;
 
             InstanceEnvelope? instResp;
             try
@@ -161,6 +236,7 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
 
             var inst = instResp.Instance;
             if (string.IsNullOrWhiteSpace(inst.Host) || inst.Port == null) continue;
+            hostsWithInstance += 1;
 
             discovered.Add(ToDynamicInstance(
                 name: $"cds:{host.Id}",
@@ -170,12 +246,17 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                 tags: host.Tags ?? inst.Tags ?? new List<string>(),
                 source: "cds"));
         }
+        if (discovered.Count == 0)
+        {
+            notes.Add($"configured-cds hosts={listResp.Hosts.Count} enabled={enabledHosts} withInstance={hostsWithInstance}");
+        }
 
         return discovered;
     }
 
     private async Task<IReadOnlyList<DynamicSidecarInstance>> DiscoverPairedConnectionsAsync(
         ClaudeSidecarOptions opts,
+        List<string> notes,
         CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -189,33 +270,68 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
             .Where(c => !string.IsNullOrWhiteSpace(c.PartnerBaseUrl))
             .Where(c => !string.IsNullOrWhiteSpace(c.InstanceDiscoveryUrl))
             .ToList();
-        if (activeCds.Count == 0) return Array.Empty<DynamicSidecarInstance>();
+        if (activeCds.Count == 0)
+        {
+            notes.Add($"paired-connections total={connections.Count} activeCds=0");
+            return Array.Empty<DynamicSidecarInstance>();
+        }
 
         var discovered = new List<DynamicSidecarInstance>();
+        var usableConnections = 0;
+        var endpointsWithInstances = 0;
+        var emptyEndpoints = 0;
+        var endpointFailures = 0;
+        var encryptedTokenFailures = 0;
+        var endpointFailureDetails = new List<string>();
+        var emptyEndpointDetails = new List<string>();
         foreach (var conn in activeCds)
         {
+            // Discovery refresh is a background read path. It must never revoke the
+            // platform-level CDS pairing; explicit probe/auth flows own that state.
             var longToken = await service.TryUnprotectLongTokenAsync(conn.Id, ct, revokeOnFailure: false);
-            if (string.IsNullOrWhiteSpace(longToken)) continue;
+            if (string.IsNullOrWhiteSpace(longToken))
+            {
+                encryptedTokenFailures += 1;
+                continue;
+            }
+            usableConnections += 1;
 
             var http = _httpFactory.CreateClient(HttpClientName);
             http.Timeout = TimeSpan.FromSeconds(Math.Max(2, opts.CdsDiscovery.RequestTimeoutSeconds));
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", longToken);
 
             var url = JoinUrl(conn.PartnerBaseUrl, conn.InstanceDiscoveryUrl);
-            ProjectInstancesEnvelope? envelope;
-            try
+            var result = await FetchProjectInstancesAsync(http, url, ct);
+            if (result.Error != null)
             {
-                envelope = await http.GetFromJsonAsync<ProjectInstancesEnvelope>(url, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "[CdsDiscovery] paired instance discovery failed connection={Id}", conn.Id);
+                endpointFailures += 1;
+                endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} {result.Error}");
+                _logger.LogDebug("[CdsDiscovery] paired instance discovery failed connection={Id}: {Error}", conn.Id, result.Error);
+                if (result.InvalidLongToken)
+                {
+                    await service.ProbeAsync(conn.Id, ct);
+                }
                 continue;
             }
-            if (envelope?.Instances == null) continue;
+            if (result.Envelope?.Instances == null)
+            {
+                endpointFailures += 1;
+                endpointFailureDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} response_missing_instances");
+                continue;
+            }
+            if (result.Envelope.Instances.Count == 0)
+            {
+                emptyEndpoints += 1;
+                var discoverySummary = result.Envelope.Discovery == null
+                    ? string.Empty
+                    : " " + result.Envelope.Discovery.ToSummary();
+                emptyEndpointDetails.Add($"{ShortId(conn.Id)} {conn.ProjectId} empty_instances{discoverySummary}");
+                continue;
+            }
+            endpointsWithInstances += 1;
 
             var idx = 0;
-            foreach (var inst in envelope.Instances)
+            foreach (var inst in result.Envelope.Instances)
             {
                 idx += 1;
                 if (string.IsNullOrWhiteSpace(inst.BaseUrl) && (string.IsNullOrWhiteSpace(inst.Host) || inst.Port == null)) continue;
@@ -224,24 +340,129 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
                     : !string.IsNullOrWhiteSpace(inst.DeploymentId)
                         ? inst.DeploymentId
                         : idx.ToString();
+                var tags = NormalizeInstanceTags(inst);
                 discovered.Add(string.IsNullOrWhiteSpace(inst.BaseUrl)
                     ? ToDynamicInstance(
                         name: $"cds-pairing:{conn.Id}:{stable}",
                         host: inst.Host!,
                         port: inst.Port!.Value,
                         token: ResolveSharedSidecarToken(opts),
-                        tags: inst.Tags ?? new List<string>(),
+                        tags: tags,
                         source: "cds-pairing")
                     : ToDynamicInstance(
                         name: $"cds-pairing:{conn.Id}:{stable}",
                         baseUrl: inst.BaseUrl!,
                         token: ResolveSharedSidecarToken(opts),
-                        tags: inst.Tags ?? new List<string>(),
+                        tags: tags,
                         source: "cds-pairing"));
+            }
+        }
+        if (discovered.Count == 0)
+        {
+            notes.Add(
+                $"paired-connections total={connections.Count} activeCds={activeCds.Count} usable={usableConnections} tokenFailures={encryptedTokenFailures} endpointFailures={endpointFailures} emptyEndpoints={emptyEndpoints} endpointsWithInstances={endpointsWithInstances}");
+            if (endpointFailureDetails.Count > 0)
+            {
+                notes.Add("paired-endpoint-failures " + string.Join(" | ", endpointFailureDetails.Take(5)));
+            }
+            if (emptyEndpointDetails.Count > 0)
+            {
+                notes.Add("paired-empty-endpoints " + string.Join(" | ", emptyEndpointDetails.Take(5)));
             }
         }
 
         return discovered;
+    }
+
+    private static async Task<ProjectInstancesResult> FetchProjectInstancesAsync(
+        HttpClient http,
+        string url,
+        CancellationToken ct)
+    {
+        try
+        {
+            using var response = await http.GetAsync(url, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new ProjectInstancesResult(
+                    null,
+                    $"HTTP {(int)response.StatusCode} {TruncateOneLine(body, 180)}".Trim(),
+                    BodyHasErrorCode(body, "invalid_long_token"));
+            }
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return new ProjectInstancesResult(null, "empty_body", false);
+            }
+
+            var envelope = JsonSerializer.Deserialize<ProjectInstancesEnvelope>(
+                body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return new ProjectInstancesResult(envelope, null, false);
+        }
+        catch (Exception ex)
+        {
+            return new ProjectInstancesResult(null, $"{ex.GetType().Name}: {TruncateOneLine(ex.Message, 180)}", false);
+        }
+    }
+
+    private static bool BodyHasErrorCode(string body, string code)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
+            {
+                return error.TryGetProperty("code", out var nestedCode)
+                    && string.Equals(nestedCode.GetString(), code, StringComparison.OrdinalIgnoreCase);
+            }
+            return root.TryGetProperty("errorCode", out var topCode)
+                && string.Equals(topCode.GetString(), code, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ShortId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "unknown";
+        return value.Length <= 8 ? value : value[..8];
+    }
+
+    private static string TruncateOneLine(string? value, int max)
+    {
+        var normalized = (value ?? string.Empty)
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+        if (normalized.Length <= max) return normalized;
+        return normalized[..max] + "...";
+    }
+
+    private static IReadOnlyList<string> NormalizeInstanceTags(InstanceDto inst)
+    {
+        var tags = new List<string>();
+        if (inst.Tags != null)
+        {
+            tags.AddRange(inst.Tags.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
+        }
+        AddTag(tags, "profile", inst.ProfileId);
+        AddTag(tags, "branch", inst.Branch);
+        AddTag(tags, "branchId", inst.BranchId);
+        AddTag(tags, "serviceKind", inst.ServiceKind);
+        AddTag(tags, "projectKind", inst.ProjectKind);
+        return tags.Distinct(StringComparer.OrdinalIgnoreCase).Take(24).ToList();
+    }
+
+    private static void AddTag(List<string> tags, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        tags.Add($"{key}:{value.Trim()}");
     }
 
     private static DynamicSidecarInstance ToDynamicInstance(
@@ -335,11 +556,54 @@ public sealed class DynamicSidecarRegistry : IDynamicSidecarRegistry
     {
         public string? ProjectId { get; set; }
         public List<InstanceDto>? Instances { get; set; }
+        public ProjectInstancesDiscoveryDto? Discovery { get; set; }
     }
+
+    private sealed class ProjectInstancesDiscoveryDto
+    {
+        public string? ProjectKind { get; set; }
+        public int? DeploymentCount { get; set; }
+        public int? RunningDeploymentCount { get; set; }
+        public int? DisabledHostDeploymentCount { get; set; }
+        public int? BranchCount { get; set; }
+        public int? RunningBranchCount { get; set; }
+        public int? RunningBranchServiceCount { get; set; }
+        public int? RuntimeBranchServiceCount { get; set; }
+        public int? SkippedBranchServiceCount { get; set; }
+        public bool? PreviewRootConfigured { get; set; }
+
+        public string ToSummary()
+        {
+            var parts = new List<string>
+            {
+                $"projectKind={ProjectKind ?? "unknown"}",
+                $"deployments={DeploymentCount ?? 0}",
+                $"runningDeployments={RunningDeploymentCount ?? 0}",
+                $"disabledHostDeployments={DisabledHostDeploymentCount ?? 0}",
+                $"branches={BranchCount ?? 0}",
+                $"runningBranches={RunningBranchCount ?? 0}",
+                $"runningBranchServices={RunningBranchServiceCount ?? 0}",
+                $"runtimeBranchServices={RuntimeBranchServiceCount ?? 0}",
+                $"skippedBranchServices={SkippedBranchServiceCount ?? 0}",
+                $"previewRootConfigured={PreviewRootConfigured == true}",
+            };
+            return "discovery(" + string.Join(" ", parts) + ")";
+        }
+    }
+
+    private sealed record ProjectInstancesResult(
+        ProjectInstancesEnvelope? Envelope,
+        string? Error,
+        bool InvalidLongToken);
 
     private sealed class InstanceDto
     {
         public string? DeploymentId { get; set; }
+        public string? ProfileId { get; set; }
+        public string? BranchId { get; set; }
+        public string? Branch { get; set; }
+        public string? ServiceKind { get; set; }
+        public string? ProjectKind { get; set; }
         public string? BaseUrl { get; set; }
         public string? Host { get; set; }
         public int? Port { get; set; }

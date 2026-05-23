@@ -26,6 +26,7 @@ import {
 
 import { apiRequest, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import {
   Dialog,
   DialogContent,
@@ -129,8 +130,6 @@ export function ConnectionsTab({
   };
 
   const handleRevoke = async (conn: CdsConnectionView) => {
-    if (!window.confirm(`确认撤销与 "${conn.partnerName || conn.name}" 的连接？对方将无法继续调用 CDS API。`))
-      return;
     try {
       await apiRequest(`/api/cds-system/connections/${conn.id}/revoke`, {
         method: 'POST',
@@ -143,7 +142,6 @@ export function ConnectionsTab({
   };
 
   const handleDelete = async (conn: CdsConnectionView) => {
-    if (!window.confirm(`确认删除连接记录 "${conn.name}"？`)) return;
     try {
       await apiRequest(`/api/cds-system/connections/${conn.id}`, {
         method: 'DELETE',
@@ -239,23 +237,29 @@ export function ConnectionsTab({
                     <td className="px-3 py-2.5 text-right">
                       <div className="flex items-center justify-end gap-1">
                         {conn.status === 'active' ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void handleRevoke(conn)}
-                            title="撤销"
-                          >
-                            <ShieldCheck className="h-4 w-4" />
-                          </Button>
+                          <ConfirmAction
+                            title="撤销连接"
+                            description={`撤销与 ${conn.partnerName || conn.name} 的连接，对方将无法继续调用 CDS API。`}
+                            confirmLabel="撤销"
+                            onConfirm={() => handleRevoke(conn)}
+                            trigger={(
+                              <Button variant="ghost" size="sm" title="撤销">
+                                <ShieldCheck className="h-4 w-4" />
+                              </Button>
+                            )}
+                          />
                         ) : null}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void handleDelete(conn)}
-                          title="删除记录"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <ConfirmAction
+                          title="删除连接记录"
+                          description={`删除连接记录 ${conn.name}。已撤销的记录删除后不会影响现有状态。`}
+                          confirmLabel="删除"
+                          onConfirm={() => handleDelete(conn)}
+                          trigger={(
+                            <Button variant="ghost" size="sm" title="删除记录">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        />
                       </div>
                     </td>
                   </tr>

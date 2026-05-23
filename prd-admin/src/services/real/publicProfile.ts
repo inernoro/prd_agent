@@ -41,6 +41,9 @@ export interface PublicSite {
   viewCount: number;
   publishedAt?: string | null;
   updatedAt: string;
+  /** 是否为 PDF 包装站点（前端据此渲染 PDF 占位卡，避免嵌套 iframe 破图） */
+  isPdfWrapper?: boolean;
+  totalSize?: number;
 }
 
 export interface PublicSkill {

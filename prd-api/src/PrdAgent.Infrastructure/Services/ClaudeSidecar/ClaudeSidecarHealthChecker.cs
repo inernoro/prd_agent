@@ -6,7 +6,7 @@ using PrdAgent.Core.Interfaces;
 namespace PrdAgent.Infrastructure.Services.ClaudeSidecar;
 
 /// <summary>
-/// 周期性 GET 每个 sidecar 的 /healthz，把成败写入 InstanceStateRegistry。
+/// 周期性 GET 每个 sidecar 的 readiness endpoint，把成败写入 InstanceStateRegistry。
 /// 实例列表通过 IDynamicSidecarRegistry 拿（合并 appsettings 静态 + CDS 发现）。
 /// 配置未启用时仍会探测 CDS 配对发现的远程 sidecar；这些实例自带外部
 /// Anthropic 凭据，不依赖 MAP 本地 AutoConfigureFromEnv。
@@ -62,7 +62,7 @@ public sealed class ClaudeSidecarHealthChecker : BackgroundService
     private async Task ProbeAllAsync(CancellationToken ct)
     {
         var opts = _options.CurrentValue;
-        var path = string.IsNullOrWhiteSpace(opts.HealthCheck.Path) ? "/healthz" : opts.HealthCheck.Path;
+        var path = string.IsNullOrWhiteSpace(opts.HealthCheck.Path) ? "/readyz" : opts.HealthCheck.Path;
         var timeout = TimeSpan.FromSeconds(Math.Max(1, opts.HealthCheck.TimeoutSeconds));
 
         var all = _registry.GetCurrent();

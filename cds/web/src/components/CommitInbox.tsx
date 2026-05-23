@@ -85,6 +85,16 @@ function branchDetailHref(notice: CommitNotice): string {
   return `/branches/${encodeURIComponent(notice.projectId)}?branch=${encodeURIComponent(notice.branchId)}`;
 }
 
+function currentBranchListProjectId(): string | null {
+  const match = /^\/branches\/([^/?#]+)\/?$/.exec(window.location.pathname);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 function noticeFromBranch(branch: BranchSummary, ts: string | undefined, source: CommitNotice['source']): CommitNotice | null {
   const sha = branch.githubCommitSha || branch.commitSha;
   if (!branch.id || !branch.projectId || !sha) return null;
@@ -196,6 +206,13 @@ export function CommitInbox(): JSX.Element | null {
   }, [connected, latest, latestTime]);
 
   const openNotice = (notice: CommitNotice): void => {
+    if (currentBranchListProjectId() === notice.projectId) {
+      window.dispatchEvent(new CustomEvent('cds:focus-branch', {
+        detail: { projectId: notice.projectId, branchId: notice.branchId },
+      }));
+      setOpen(false);
+      return;
+    }
     window.location.assign(branchDetailHref(notice));
   };
 

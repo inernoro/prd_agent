@@ -1,5 +1,8 @@
+using System.Linq.Expressions;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -54,6 +57,62 @@ public class ExecutiveController : ControllerBase
     public ExecutiveController(MongoDbContext db)
     {
         _db = db;
+    }
+
+    /// <summary>
+    /// 服务端聚合：$match + $group by 用户字段 → { userId: count }。
+    /// 关键点：分组在 MongoDB 内完成，只把 (userId,count) 拉回，
+    /// 不再 Find().ToListAsync() 把整个大集合搬进内存。
+    /// </summary>
+    private static async Task<Dictionary<string, int>> CountByUserAsync<T>(
+        IMongoCollection<T> col,
+        Expression<Func<T, bool>> match,
+        Expression<Func<T, string?>> userKey,
+        HashSet<string> userIds)
+    {
+        var grouped = await col.Aggregate()
+            .Match(match)
+            .Group(userKey, g => new { Uid = g.Key, C = g.Count() })
+            .ToListAsync();
+
+        var dict = new Dictionary<string, int>();
+        foreach (var row in grouped)
+        {
+            if (string.IsNullOrEmpty(row.Uid) || !userIds.Contains(row.Uid)) continue;
+            dict[row.Uid] = row.C;
+        }
+        return dict;
+    }
+
+    /// <summary>
+    /// 维度口径元数据（SSOT）：前端问号 tooltip 直接渲染这些文案，
+    /// 不在前端硬编码。desc=怎么算的 / how=怎么操作会+1 / anomaly=排除了什么异常。
+    /// </summary>
+    private static readonly Dictionary<string, (string Desc, string How, string Anomaly)> DimMeta =
+        new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["prd-agent"]          = ("PRD 解读 Agent 的使用次数（LLM 对话 + 写操作合计）", "在 PRD 解读中发起对话或执行操作", "已排除 Bot 账号与匿名请求"),
+        ["visual-agent"]       = ("视觉创作 Agent 的使用次数（LLM + 写操作合计）", "在视觉创作中生成或编辑作品", "已排除 Bot 账号与匿名请求"),
+        ["literary-agent"]     = ("文学创作 Agent 的使用次数（LLM + 写操作合计）", "在文学创作中发起创作", "已排除 Bot 账号与匿名请求"),
+        ["ai-toolbox"]         = ("AI 百宝箱使用次数：工作流执行、教程邮件等百宝箱内工具的调用", "在百宝箱中运行工作流或使用其中的工具", "已排除 Bot 账号与匿名请求"),
+        ["report-agent"]       = ("周报 Agent 的使用次数（LLM + 写操作合计）", "在周报中生成或提交周报", "已排除 Bot 账号与匿名请求"),
+        ["video-agent"]        = ("视频 Agent 的使用次数（LLM + 写操作合计）", "在视频生成中发起任务", "已排除 Bot 账号与匿名请求"),
+        ["defects"]            = ("真实缺陷贡献 = 你提交的缺陷数 + 你解决的缺陷数", "在缺陷管理中提交新缺陷，或把缺陷标记为已解决", "只统计真实提交/解决；未解决的缺陷不计入解决数，已排除 Bot 账号"),
+        ["images"]             = ("名下生成的图片总数（所有来源合计）", "在视觉或文学创作中生成图片", "已排除 Bot 账号"),
+        ["image-gen-visual"]   = ("视觉创作 AI 生图的成功次数", "在视觉创作中成功生成图片", "只统计成功完成的生图，失败或排队中的不计入"),
+        ["image-gen-literary"] = ("文学创作配图的成功次数", "在文学创作中成功生成配图", "只统计成功完成的生图"),
+        ["image-upload"]       = ("上传的参考图数量", "在创作中上传参考图", "只统计参考图（input_image），不含生成结果"),
+        ["workflows"]          = ("触发的工作流执行次数", "在百宝箱中运行工作流", "已排除 Bot 账号"),
+        ["arena"]              = ("模型竞技场的对战次数", "在模型竞技场发起对战", "已排除 Bot 账号"),
+    };
+
+    private static object MakeDim(string key, string name, string category,
+        Dictionary<string, int> values, object? subValues = null)
+    {
+        DimMeta.TryGetValue(key, out var m);
+        if (subValues == null)
+            return new { key, name, category, values, description = m.Desc ?? "", howToIncrease = m.How ?? "", anomalyNote = m.Anomaly ?? "" };
+        return new { key, name, category, values, description = m.Desc ?? "", howToIncrease = m.How ?? "", anomalyNote = m.Anomaly ?? "", subValues };
     }
 
     /// <summary>
@@ -186,53 +245,39 @@ public class ExecutiveController : ControllerBase
         var periodStart = days > 0 ? DateTime.UtcNow.Date.AddDays(-days + 1) : DateTime.MinValue;
 
         var users = await _db.Users.Find(_ => true).ToListAsync();
-        var result = new List<object>();
+        var humanUsers = users.Where(u => u.UserType != UserType.Bot).ToList();
+        var userIds = humanUsers.Select(u => u.UserId).ToHashSet();
 
-        foreach (var user in users)
+        // 每个指标一次服务端 $group，彻底消除原来的 per-user N+1（用户数 × 5 次查询）
+        var messagesByUser = await CountByUserAsync(_db.Messages,
+            m => m.Timestamp >= periodStart, m => m.SenderId, userIds);
+        var sessionsByUser = await CountByUserAsync(_db.Sessions,
+            s => s.CreatedAt >= periodStart, s => s.OwnerUserId, userIds);
+        var defectsCreatedByUser = await CountByUserAsync(_db.DefectReports,
+            d => d.CreatedAt >= periodStart, d => d.ReporterId, userIds);
+        // 口径修正：未解决的缺陷 ResolvedById/ResolvedAt 为 null，原 `ResolvedAt >= MinValue`
+        // 在 days=0 时会把未解决缺陷也算进"已解决"。显式要求 ResolvedById/ResolvedAt 非空。
+        var defectsResolvedByUser = await CountByUserAsync(_db.DefectReports,
+            d => d.ResolvedById != null && d.ResolvedAt != null && d.ResolvedAt >= periodStart,
+            d => d.ResolvedById, userIds);
+        var imageRunsByUser = await CountByUserAsync(_db.ImageGenRuns,
+            r => r.CreatedAt >= periodStart, r => r.OwnerAdminId, userIds);
+
+        var result = humanUsers.Select(user => (object)new
         {
-            if (user.UserType == UserType.Bot) continue;
-
-            // 消息数 + Token
-            var msgFilter = Builders<Message>.Filter.Eq(m => m.SenderId, user.UserId) &
-                            Builders<Message>.Filter.Gte(m => m.Timestamp, periodStart);
-            var userMessages = await _db.Messages.CountDocumentsAsync(msgFilter);
-
-            // 助手消息的 Token (用户发的消息产生的助手回复)
-            var assistantTokenFilter = Builders<Message>.Filter.Gte(m => m.Timestamp, periodStart) &
-                                       Builders<Message>.Filter.Eq(m => m.Role, MessageRole.Assistant) &
-                                       Builders<Message>.Filter.Ne(m => m.TokenUsage, null);
-            // 通过 session 关联用户 — 简化处理：取所有助手消息
-            // 更精确的做法需要 session->owner 关联，这里先按消息数反映活跃度
-
-            // 会话数
-            var sessionCount = await _db.Sessions.CountDocumentsAsync(s => s.OwnerUserId == user.UserId && s.CreatedAt >= periodStart);
-
-            // 缺陷
-            var defectsCreated = await _db.DefectReports.CountDocumentsAsync(d => d.ReporterId == user.UserId && d.CreatedAt >= periodStart);
-            var defectsResolved = await _db.DefectReports.CountDocumentsAsync(d => d.ResolvedById == user.UserId && d.ResolvedAt >= periodStart);
-
-            // 图片生成
-            var imageRuns = await _db.ImageGenRuns.CountDocumentsAsync(r => r.OwnerAdminId == user.UserId && r.CreatedAt >= periodStart);
-
-            // 活跃天数 (简化: 取 LastActiveAt)
-            var isActive = user.LastActiveAt >= periodStart;
-
-            result.Add(new
-            {
-                userId = user.UserId,
-                username = user.Username,
-                displayName = user.DisplayName ?? user.Username,
-                role = user.Role.ToString(),
-                avatarFileName = user.AvatarFileName,
-                lastActiveAt = user.LastActiveAt,
-                isActive,
-                messages = userMessages,
-                sessions = sessionCount,
-                defectsCreated,
-                defectsResolved,
-                imageRuns,
-            });
-        }
+            userId = user.UserId,
+            username = user.Username,
+            displayName = user.DisplayName ?? user.Username,
+            role = user.Role.ToString(),
+            avatarFileName = user.AvatarFileName,
+            lastActiveAt = user.LastActiveAt,
+            isActive = user.LastActiveAt >= periodStart,
+            messages = messagesByUser.GetValueOrDefault(user.UserId),
+            sessions = sessionsByUser.GetValueOrDefault(user.UserId),
+            defectsCreated = defectsCreatedByUser.GetValueOrDefault(user.UserId),
+            defectsResolved = defectsResolvedByUser.GetValueOrDefault(user.UserId),
+            imageRuns = imageRunsByUser.GetValueOrDefault(user.UserId),
+        }).ToList();
 
         var sorted = result.OrderByDescending(u => ((dynamic)u).messages).ToList();
         return Ok(ApiResponse<object>.Ok(sorted));
@@ -449,42 +494,82 @@ public class ExecutiveController : ControllerBase
             { "/api/video-agent/", "video-agent" },
         };
 
-        // LLM 维度
-        var logs = await _db.LlmRequestLogs
-            .Find(l => l.StartedAt >= periodStart && l.AppCallerCode != null && l.UserId != null)
-            .Project(l => new { l.UserId, l.AppCallerCode })
+        var aggOpts = new AggregateOptions { AllowDiskUse = true };
+
+        // LLM 维度：服务端按 {AppCallerCode,UserId} 分组（基数 = 不同 appcaller×用户，
+        // 远小于日志条数），再在内存做 NormalizeAppKey 归一。不再把整张 llmrequestlogs 拉回。
+        var llmGroups = await _db.LlmRequestLogs.Aggregate(aggOpts)
+            .Match(l => l.StartedAt >= periodStart && l.AppCallerCode != null && l.UserId != null)
+            .Group(l => new { l.AppCallerCode, l.UserId },
+                   g => new { g.Key.AppCallerCode, g.Key.UserId, C = g.Count() })
             .ToListAsync();
 
-        var llmAgentUserCounts = logs
-            .Where(l => l.UserId != null && userIds.Contains(l.UserId))
-            .GroupBy(l => NormalizeAppKey(l.AppCallerCode ?? ""))
-            .Where(g => !string.IsNullOrEmpty(g.Key))
-            .ToDictionary(
-                g => g.Key,
-                g => g.GroupBy(x => x.UserId!).ToDictionary(ug => ug.Key, ug => ug.Count())
-            );
+        var llmAgentUserCounts = new Dictionary<string, Dictionary<string, int>>();
+        foreach (var row in llmGroups)
+        {
+            if (row.UserId == null || !userIds.Contains(row.UserId)) continue;
+            var appKey = NormalizeAppKey(row.AppCallerCode ?? "");
+            if (string.IsNullOrEmpty(appKey)) continue;
+            if (!llmAgentUserCounts.TryGetValue(appKey, out var inner))
+                llmAgentUserCounts[appKey] = inner = new Dictionary<string, int>();
+            inner[row.UserId] = inner.GetValueOrDefault(row.UserId) + row.C;
+        }
 
-        // API 维度 (写操作)
-        var apiLogsForLb = await _db.ApiRequestLogs
-            .Find(l => l.StartedAt >= periodStart && l.Method != "GET"
-                        && l.StatusCode >= 200 && l.StatusCode < 400)
-            .Project(l => new { l.Path, l.UserId })
-            .ToListAsync();
+        // API 维度（写操作）：Path 含资源 GUID（如 /api/prd-agent/sessions/{guid}/messages），
+        // 若按原始 Path 分组基数≈文档数，既失去聚合意义又会撞 $group 100MB 内存上限。
+        // 改为在管道内用 $switch 把 Path 前缀直接归一成 appKey，再按 {appKey,UserId} 分组，
+        // 基数收敛到 ≈7×用户数（与 LLM 维度同量级）。
+        var apiPrefixRegex = "^(" + string.Join("|", agentRoutePrefixes.Keys.Select(Regex.Escape)) + ")";
+        var switchBranches = new BsonArray(agentRoutePrefixes.Select(kv => new BsonDocument
+        {
+            { "case", new BsonDocument("$regexMatch", new BsonDocument
+                {
+                    { "input", "$Path" },
+                    { "regex", "^" + Regex.Escape(kv.Key) },
+                    { "options", "i" },
+                }) },
+            { "then", kv.Value },
+        }));
 
-        var apiAgentUserCounts = apiLogsForLb
-            .Select(l =>
+        var apiPipeline = new BsonDocument[]
+        {
+            new("$match", new BsonDocument
             {
-                foreach (var kv in agentRoutePrefixes)
-                    if (l.Path.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase))
-                        return new { AppKey = kv.Value, l.UserId };
-                return null;
-            })
-            .Where(x => x != null && x.UserId != null && x.UserId != "anonymous" && userIds.Contains(x.UserId))
-            .GroupBy(x => x!.AppKey)
-            .ToDictionary(
-                g => g.Key,
-                g => g.GroupBy(x => x!.UserId!).ToDictionary(ug => ug.Key, ug => ug.Count())
-            );
+                { "StartedAt", new BsonDocument("$gte", periodStart) },
+                { "Method", new BsonDocument("$ne", "GET") },
+                { "StatusCode", new BsonDocument { { "$gte", 200 }, { "$lt", 400 } } },
+                { "UserId", new BsonDocument("$nin", new BsonArray { BsonNull.Value, "anonymous" }) },
+                { "Path", new BsonRegularExpression(apiPrefixRegex, "i") },
+            }),
+            new("$set", new BsonDocument("_ak", new BsonDocument("$switch", new BsonDocument
+            {
+                { "branches", switchBranches },
+                { "default", BsonNull.Value },
+            }))),
+            new("$match", new BsonDocument("_ak", new BsonDocument("$ne", BsonNull.Value))),
+            new("$group", new BsonDocument
+            {
+                { "_id", new BsonDocument { { "ak", "$_ak" }, { "u", "$UserId" } } },
+                { "c", new BsonDocument("$sum", 1) },
+            }),
+        };
+
+        var apiGroups = await _db.ApiRequestLogs
+            .Aggregate<BsonDocument>(apiPipeline, aggOpts)
+            .ToListAsync();
+
+        var apiAgentUserCounts = new Dictionary<string, Dictionary<string, int>>();
+        foreach (var row in apiGroups)
+        {
+            var id = row["_id"].AsBsonDocument;
+            var matchedKey = id["ak"].AsString;
+            var uid = id["u"].IsString ? id["u"].AsString : null;
+            if (string.IsNullOrEmpty(uid) || !userIds.Contains(uid)) continue;
+            var c = row["c"].ToInt32();
+            if (!apiAgentUserCounts.TryGetValue(matchedKey, out var inner))
+                apiAgentUserCounts[matchedKey] = inner = new Dictionary<string, int>();
+            inner[uid] = inner.GetValueOrDefault(uid) + c;
+        }
 
         // 合并两个数据源
         var agentUserCounts = new Dictionary<string, Dictionary<string, int>>();
@@ -502,89 +587,28 @@ public class ExecutiveController : ControllerBase
             agentUserCounts[appKey] = merged;
         }
 
-        // --- 缺陷提交 ---
-        var dcItems = await _db.DefectReports
-            .Find(d => d.CreatedAt >= periodStart)
-            .Project(d => new { d.ReporterId })
-            .ToListAsync();
-        var defectsCreatedByUser = dcItems
-            .Where(d => d.ReporterId != null && userIds.Contains(d.ReporterId))
-            .GroupBy(d => d.ReporterId!)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 缺陷解决 ---
-        var drItems = await _db.DefectReports
-            .Find(d => d.ResolvedAt >= periodStart)
-            .Project(d => new { d.ResolvedById })
-            .ToListAsync();
-        var defectsResolvedByUser = drItems
-            .Where(d => d.ResolvedById != null && userIds.Contains(d.ResolvedById))
-            .GroupBy(d => d.ResolvedById!)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 图片生成（合计，所有来源）---
-        var imgItems = await _db.ImageAssets
-            .Find(r => r.CreatedAt >= periodStart)
-            .Project(r => new { r.OwnerUserId })
-            .ToListAsync();
-        var imageByUser = imgItems
-            .Where(r => !string.IsNullOrEmpty(r.OwnerUserId) && userIds.Contains(r.OwnerUserId))
-            .GroupBy(r => r.OwnerUserId)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 视觉创作 AI 生图（image_gen_runs AppKey=visual-agent, Completed）---
-        var visualGenItems = await _db.ImageGenRuns
-            .Find(r => r.CreatedAt >= periodStart
-                    && r.AppKey == "visual-agent"
-                    && r.Status == ImageGenRunStatus.Completed)
-            .Project(r => new { r.OwnerAdminId })
-            .ToListAsync();
-        var visualGenByUser = visualGenItems
-            .Where(r => !string.IsNullOrEmpty(r.OwnerAdminId) && userIds.Contains(r.OwnerAdminId))
-            .GroupBy(r => r.OwnerAdminId)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 文学创作配图（image_gen_runs AppKey=literary-agent, Completed）---
-        var literaryGenItems = await _db.ImageGenRuns
-            .Find(r => r.CreatedAt >= periodStart
-                    && r.AppKey == "literary-agent"
-                    && r.Status == ImageGenRunStatus.Completed)
-            .Project(r => new { r.OwnerAdminId })
-            .ToListAsync();
-        var literaryGenByUser = literaryGenItems
-            .Where(r => !string.IsNullOrEmpty(r.OwnerAdminId) && userIds.Contains(r.OwnerAdminId))
-            .GroupBy(r => r.OwnerAdminId)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 上传参考图（upload_artifacts Kind=input_image）---
-        var uploadItems = await _db.UploadArtifacts
-            .Find(r => r.CreatedAt >= periodStart && r.Kind == "input_image")
-            .Project(r => new { r.CreatedByAdminId })
-            .ToListAsync();
-        var uploadByUser = uploadItems
-            .Where(r => !string.IsNullOrEmpty(r.CreatedByAdminId) && userIds.Contains(r.CreatedByAdminId))
-            .GroupBy(r => r.CreatedByAdminId)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 工作流执行 ---
-        var wfItems = await _db.WorkflowExecutions
-            .Find(w => w.CreatedAt >= periodStart)
-            .Project(w => new { w.TriggeredBy })
-            .ToListAsync();
-        var workflowByUser = wfItems
-            .Where(w => !string.IsNullOrEmpty(w.TriggeredBy) && userIds.Contains(w.TriggeredBy))
-            .GroupBy(w => w.TriggeredBy!)
-            .ToDictionary(g => g.Key, g => g.Count());
-
-        // --- 竞技场对战 ---
-        var arenaItems = await _db.ArenaBattles
-            .Find(a => a.CreatedAt >= periodStart)
-            .Project(a => new { a.UserId })
-            .ToListAsync();
-        var arenaByUser = arenaItems
-            .Where(a => !string.IsNullOrEmpty(a.UserId) && userIds.Contains(a.UserId))
-            .GroupBy(a => a.UserId)
-            .ToDictionary(g => g.Key, g => g.Count());
+        // --- 各活动维度：全部走服务端 $group，不再 Find().ToListAsync() 全量进内存 ---
+        var defectsCreatedByUser = await CountByUserAsync(_db.DefectReports,
+            d => d.CreatedAt >= periodStart, d => d.ReporterId, userIds);
+        // 口径修正：未解决缺陷 ResolvedById/ResolvedAt 为 null。原 `ResolvedAt >= periodStart`
+        // 在 days=0(periodStart=MinValue) 时会把未解决缺陷也算进"已解决"。显式要求非空。
+        var defectsResolvedByUser = await CountByUserAsync(_db.DefectReports,
+            d => d.ResolvedById != null && d.ResolvedAt != null && d.ResolvedAt >= periodStart,
+            d => d.ResolvedById, userIds);
+        var imageByUser = await CountByUserAsync(_db.ImageAssets,
+            r => r.CreatedAt >= periodStart, r => r.OwnerUserId, userIds);
+        var visualGenByUser = await CountByUserAsync(_db.ImageGenRuns,
+            r => r.CreatedAt >= periodStart && r.AppKey == "visual-agent" && r.Status == ImageGenRunStatus.Completed,
+            r => r.OwnerAdminId, userIds);
+        var literaryGenByUser = await CountByUserAsync(_db.ImageGenRuns,
+            r => r.CreatedAt >= periodStart && r.AppKey == "literary-agent" && r.Status == ImageGenRunStatus.Completed,
+            r => r.OwnerAdminId, userIds);
+        var uploadByUser = await CountByUserAsync(_db.UploadArtifacts,
+            r => r.CreatedAt >= periodStart && r.Kind == "input_image", r => r.CreatedByAdminId, userIds);
+        var workflowByUser = await CountByUserAsync(_db.WorkflowExecutions,
+            w => w.CreatedAt >= periodStart, w => w.TriggeredBy, userIds);
+        var arenaByUser = await CountByUserAsync(_db.ArenaBattles,
+            a => a.CreatedAt >= periodStart, a => a.UserId, userIds);
 
         // 用户列表 (按活跃度排序)
         var userList = humanUsers
@@ -601,24 +625,34 @@ public class ExecutiveController : ControllerBase
             })
             .ToList();
 
-        // 构建维度
-        var knownAgents = new[] { "prd-agent", "visual-agent", "literary-agent", "defect-agent", "ai-toolbox", "report-agent", "video-agent" };
+        // 构建维度。缺陷三列（defect-agent LLM 调用 / 缺陷提交 / 缺陷解决）合并为
+        // 单列「缺陷」= 真实提交数 + 解决数；defect-agent 不再单列（口径混乱）。
+        var knownAgents = new[] { "prd-agent", "visual-agent", "literary-agent", "ai-toolbox", "report-agent", "video-agent" };
         var dimensions = new List<object>();
 
         foreach (var appKey in knownAgents)
         {
             agentUserCounts.TryGetValue(appKey, out var vals);
-            dimensions.Add(new { key = appKey, name = ResolveAgentName(appKey), category = "agent", values = vals ?? new Dictionary<string, int>() });
+            dimensions.Add(MakeDim(appKey, ResolveAgentName(appKey), "agent", vals ?? new Dictionary<string, int>()));
         }
 
-        dimensions.Add(new { key = "defects-created", name = "缺陷提交", category = "activity", values = defectsCreatedByUser });
-        dimensions.Add(new { key = "defects-resolved", name = "缺陷解决", category = "activity", values = defectsResolvedByUser });
-        dimensions.Add(new { key = "images", name = "图片合计", category = "activity", values = imageByUser });
-        dimensions.Add(new { key = "image-gen-visual", name = "视觉生图", category = "image", values = visualGenByUser });
-        dimensions.Add(new { key = "image-gen-literary", name = "文学配图", category = "image", values = literaryGenByUser });
-        dimensions.Add(new { key = "image-upload", name = "上传参考图", category = "image", values = uploadByUser });
-        dimensions.Add(new { key = "workflows", name = "工作流执行", category = "activity", values = workflowByUser });
-        dimensions.Add(new { key = "arena", name = "竞技场对战", category = "activity", values = arenaByUser });
+        // 缺陷合并：values = 提交 + 解决；subValues 给 tooltip 拆解显示
+        var defectValues = new Dictionary<string, int>();
+        var defectSub = new Dictionary<string, object>();
+        foreach (var uid in defectsCreatedByUser.Keys.Union(defectsResolvedByUser.Keys))
+        {
+            var c = defectsCreatedByUser.GetValueOrDefault(uid);
+            var r = defectsResolvedByUser.GetValueOrDefault(uid);
+            defectValues[uid] = c + r;
+            defectSub[uid] = new { created = c, resolved = r };
+        }
+        dimensions.Add(MakeDim("defects", "缺陷", "activity", defectValues, defectSub));
+        dimensions.Add(MakeDim("images", "图片合计", "activity", imageByUser));
+        dimensions.Add(MakeDim("image-gen-visual", "视觉生图", "image", visualGenByUser));
+        dimensions.Add(MakeDim("image-gen-literary", "文学配图", "image", literaryGenByUser));
+        dimensions.Add(MakeDim("image-upload", "上传参考图", "image", uploadByUser));
+        dimensions.Add(MakeDim("workflows", "工作流执行", "activity", workflowByUser));
+        dimensions.Add(MakeDim("arena", "竞技场对战", "activity", arenaByUser));
 
         // 计算实际天数: days>0 时等于 days; days=0 时从最早的 LLM 日志到今天
         int totalDays;

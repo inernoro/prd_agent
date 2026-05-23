@@ -1,10 +1,17 @@
 using System.Security.Cryptography;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 托管站点 — 用户上传 HTML/ZIP 或工作流自动生成的可运行网页
+///
+/// BsonIgnoreExtraElements: schema 演进期间 DB 文档可能出现 model 类还没
+/// 同步过来的字段（例如 WrappedAssetType 历史上一度只在脏数据里、最近才在
+/// main 正式补回 model），不忽略则反序列化抛 FormatException 让 List 端点 500。
+/// 保留这个 attribute 当作未来 schema drift 的常态防御。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class HostedSite
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -30,6 +37,15 @@ public class HostedSite
 
     /// <summary>入口文件名 (默认 index.html)</summary>
     public string EntryFile { get; set; } = "index.html";
+
+    /// <summary>
+    /// 自动包装的资产类型（"pdf" / "video" / "markdown" / null=非包装站）。
+    /// 当用户上传单个 PDF/视频/Markdown 时，Controller 会现场生成 index.html
+    /// 壳子 + 原文件，打包成 ZIP 走托管路径；此字段标记原始资产类型，下游
+    /// 据此选直接打开原始文件 URL（避免 sandbox iframe 嵌套被屏蔽）或走
+    /// 专用缩略图占位。值由 BuildWrapperZip 调用方写入。
+    /// </summary>
+    public string? WrappedAssetType { get; set; }
 
     /// <summary>完整入口 URL (COS public URL + cosPrefix + entryFile)</summary>
     public string SiteUrl { get; set; } = string.Empty;
@@ -90,6 +106,7 @@ public class HostedSiteFile
 /// <summary>
 /// 网页分享链接 — 基于 Token 的分享机制（密码保护 + 过期时间）
 /// </summary>
+[BsonIgnoreExtraElements]
 public class WebPageShareLink
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -106,6 +123,13 @@ public class WebPageShareLink
     /// <summary>分享类型：single = 单站点, collection = 合集</summary>
     public string ShareType { get; set; } = "single";
 
+    /// <summary>
+    /// 用途：share = 用户主动分享（自选有效期/密码，出现在分享管理列表）；
+    /// visit = 站点「访问」便捷链（恒为公开永久，与用户分享互不复用、互不篡改，不进分享列表）。
+    /// 旧记录无此字段，反序列化为默认 "share"，按用户分享对待。
+    /// </summary>
+    public string Purpose { get; set; } = "share";
+
     /// <summary>分享标题</summary>
     public string? Title { get; set; }
 
@@ -115,11 +139,32 @@ public class WebPageShareLink
     /// <summary>访问级别：public = 任何人 | password = 需密码</summary>
     public string AccessLevel { get; set; } = "public";
 
-    /// <summary>访问密码（AccessLevel = password 时有效）</summary>
+    /// <summary>
+    /// 明文密码 —— 仅旧分享和创建时"按密码去重"使用。
+    /// 新分享统一以 PasswordHash + PasswordSalt 存储；校验路径优先 Hash，
+    /// 仅在 PasswordHash 为空时回退到本字段（向后兼容存量数据）。
+    /// </summary>
     public string? Password { get; set; }
+
+    /// <summary>密码 Hash (PBKDF2-SHA256, base64)。新分享必填；旧分享为空时走明文回退路径</summary>
+    public string? PasswordHash { get; set; }
+
+    /// <summary>密码盐 (16 bytes base64)。与 PasswordHash 配对，缺一个就视为旧分享</summary>
+    public string? PasswordSalt { get; set; }
+
+    /// <summary>
+    /// 最近 N 次尝试时间戳（滑动窗口速率限制专用，单位 UTC）。
+    /// 不按 IP 锁定 —— 容器/反向代理下 IP 不可靠，且公司局域网 NAT 出口同 IP，
+    /// 一人输错会让所有同事被锁。改用 per-shareLink 滑动窗口：1 分钟内 ≥ 10 次尝试就拒绝。
+    /// 窗口自然滚动过期，不需要任何"解锁"操作；列表只保留近 1 分钟内的条目，长度恒定。
+    /// </summary>
+    public List<DateTime> RecentAttempts { get; set; } = new();
 
     public long ViewCount { get; set; }
     public DateTime? LastViewedAt { get; set; }
+
+    /// <summary>统一短链 Seq（来自 short_links 集合，旧记录为 0 表示无短链）</summary>
+    public long ShortSeq { get; set; }
 
     public string CreatedBy { get; set; } = string.Empty;
 

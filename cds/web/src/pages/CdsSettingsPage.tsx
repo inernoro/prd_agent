@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   TerminalSquare,
+  Timer,
   Wrench,
 } from 'lucide-react';
 
@@ -32,6 +33,7 @@ import { MaintenanceTab } from '@/pages/cds-settings/tabs/MaintenanceTab';
 import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
 import { OverviewTab } from '@/pages/cds-settings/tabs/OverviewTab';
 import { RemoteHostsTab } from '@/pages/cds-settings/tabs/RemoteHostsTab';
+import { SchedulerTab } from '@/pages/cds-settings/tabs/SchedulerTab';
 import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
 
 /*
@@ -48,6 +50,7 @@ type TabValue =
   | 'github-whitelist'
   | 'webhook-log'
   | 'storage'
+  | 'scheduler'
   | 'cluster'
   | 'remote-hosts'
   | 'connections'
@@ -93,6 +96,7 @@ const tabGroups: TabGroup[] = [
     label: '运行时',
     items: [
       { value: 'storage', label: '存储后端', icon: Database },
+      { value: 'scheduler', label: '调度器', icon: Timer },
       { value: 'cluster', label: '集群', icon: Boxes },
       { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
       { value: 'connections', label: '对接 MAP', icon: Plug },
@@ -148,7 +152,7 @@ export function CdsSettingsPage(): JSX.Element {
         />
       }
     >
-      <Workspace>
+      <Workspace className="cds-workspace-settings">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
           <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
             <TabsList
@@ -194,6 +198,9 @@ export function CdsSettingsPage(): JSX.Element {
               </TabsContent>
               <TabsContent value="storage">
                 <StorageTab />
+              </TabsContent>
+              <TabsContent value="scheduler">
+                <SchedulerTab onToast={setToast} />
               </TabsContent>
               <TabsContent value="cluster">
                 <ClusterTab />

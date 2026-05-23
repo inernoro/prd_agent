@@ -130,8 +130,19 @@ export interface WeeklyReport {
   workflowExecutionId?: string;
   /** v2.0 提交时快照的统计数据 */
   statsSnapshot?: Record<string, unknown>;
+  /** 状态变更版本记录（仅时间和事件类型） */
+  versionHistory?: ReportVersionEntry[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** 周报版本记录事件类型 */
+export type ReportVersionEventType = 'submitted' | 'reviewed' | 'returned' | 'edited';
+
+/** 周报版本记录单条 */
+export interface ReportVersionEntry {
+  event: ReportVersionEventType;
+  at: string;
 }
 
 export interface WeeklyReportSection {
@@ -212,6 +223,8 @@ export interface DailyLogItem {
   /** 计划目标 ISO 周（1-53，仅 Todo 有效） */
   planWeekNumber?: number;
   createdAt?: string;
+  /** Todo 完成时间（仅 Todo 有效；非空表示已完成） */
+  completedAt?: string;
 }
 
 export const DailyLogCategory = {
@@ -1025,11 +1038,33 @@ export type ResetTeamAiSummaryPromptContract = (input: {
   teamId: string;
 }) => Promise<ApiResponse<ReportAiPromptSettings>>;
 
-export type GetMyDailyLogTagsContract = () => Promise<ApiResponse<{ items: string[] }>>;
+export interface DailyLogTagsState {
+  /** 自定义标签名称列表 */
+  items: string[];
+  /** 标签呈现顺序（系统 category key + 自定义标签名称） */
+  tagOrder: string[];
+  /** 默认勾选的标签（系统 category key + 自定义标签名称） */
+  defaultTags: string[];
+}
+
+export type DefaultTabKey = 'dailyLog' | 'report' | 'team' | 'settings';
+
+export type GetMyDefaultTabContract = () => Promise<ApiResponse<{ tab: DefaultTabKey | null }>>;
+
+export type UpdateMyDefaultTabContract = (input: {
+  /** null/空 表示取消偏好，走默认逻辑 */
+  tab: DefaultTabKey | null;
+}) => Promise<ApiResponse<{ tab: DefaultTabKey | null }>>;
+
+export type GetMyDailyLogTagsContract = () => Promise<ApiResponse<DailyLogTagsState>>;
 
 export type UpdateMyDailyLogTagsContract = (input: {
   items: string[];
-}) => Promise<ApiResponse<{ items: string[] }>>;
+  /** 选填，传 null/undefined 表示不改；传 [] 表示清空 */
+  tagOrder?: string[] | null;
+  /** 选填，传 null/undefined 表示不改；传 [] 表示清空 */
+  defaultTags?: string[] | null;
+}) => Promise<ApiResponse<DailyLogTagsState>>;
 
 // --- Personal Sources ---
 export interface PersonalSource {

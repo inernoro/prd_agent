@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 
 const LEGACY_CACHE_BASE_RE = /\/data\/cds\/[^/]+\/cache/;
 
@@ -6,13 +7,29 @@ function sanitizeProjectSlug(slug: string): string {
   return slug.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
 }
 
+function canCreateUnder(candidatePath: string): boolean {
+  let current = candidatePath;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+
+  try {
+    fs.accessSync(current, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the host-side cache root for build profile mounts.
  *
- * Linux/server deployments keep the historical `/data/cds/<slug>/cache`
- * default. Local desktop environments cannot reliably create `/data`, so
- * they fall back to a writable directory inside the repo unless explicitly
- * overridden with CDS_CACHE_BASE.
+ * Linux/server deployments prefer the historical `/data/cds/<slug>/cache`
+ * default when the host can write there. Containerized control planes may have
+ * a read-only `/data`, so they fall back to a writable directory inside the
+ * repo unless explicitly overridden with CDS_CACHE_BASE.
  */
 export function resolveCacheBase(projectSlug: string, repoRoot?: string): string {
   const slug = sanitizeProjectSlug(projectSlug);
@@ -24,7 +41,11 @@ export function resolveCacheBase(projectSlug: string, repoRoot?: string): string
   if (process.platform === 'darwin' || process.platform === 'win32') {
     return path.resolve(repoRoot || process.cwd(), '.cds-cache', slug);
   }
-  return `/data/cds/${slug}/cache`;
+  const linuxDefault = `/data/cds/${slug}/cache`;
+  if (canCreateUnder(linuxDefault)) {
+    return linuxDefault;
+  }
+  return path.resolve(repoRoot || process.cwd(), '.cds-cache', slug);
 }
 
 export function normalizeCacheHostPath(hostPath: string, cacheBase: string): string {

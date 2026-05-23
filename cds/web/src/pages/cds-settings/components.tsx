@@ -55,6 +55,44 @@ export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.E
   );
 }
 
+export function BranchDetailLoadingSkeleton({ className }: { className?: string }): JSX.Element {
+  return (
+    <div
+      className={cn(
+        'relative min-h-[620px] overflow-hidden bg-[#090a0f] px-7 py-7 text-white',
+        className,
+      )}
+    >
+      <ShapeGrid
+        className="absolute inset-0 h-full w-full opacity-55"
+        direction="diagonal"
+        speed={0.39}
+        squareSize={34}
+        shape="hexagon"
+        borderColor="rgba(255,255,255,0.052)"
+        hoverFillColor="rgba(255,255,255,0.035)"
+        hoverTrailAmount={0}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_56%_44%,rgba(255,255,255,0.035),transparent_34%),linear-gradient(90deg,rgba(9,10,15,0.94),rgba(9,10,15,0.58)_46%,rgba(9,10,15,0.92))]" />
+      <div className="relative z-10 space-y-8">
+        <div className="flex flex-wrap items-center gap-5">
+          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px]" />
+          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px] opacity-90" />
+          <div className="cds-loading-skeleton-line h-[74px] w-[170px] rounded-[20px] opacity-80" />
+        </div>
+
+        <div className="cds-loading-skeleton-panel h-[min(66vh,760px)] min-h-[430px] rounded-[28px]" />
+
+        <div className="space-y-7 pb-10">
+          <div className="cds-loading-skeleton-line h-11 w-[28%] min-w-72 rounded-[18px]" />
+          <div className="cds-loading-skeleton-line h-11 w-[38%] min-w-96 rounded-[18px] opacity-88" />
+          <div className="cds-loading-skeleton-line h-11 w-[30%] min-w-80 rounded-[18px] opacity-74" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ErrorBlock({ message }: { message: string }): JSX.Element {
   if (message.includes('未登录') || message.includes('401')) {
     return <AuthRequiredBlock />;

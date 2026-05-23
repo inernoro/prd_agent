@@ -182,6 +182,12 @@ function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
           <span>{formatRelative(ev.enteredAt)}</span>
           <span>·</span>
           <span>停留 {formatDurationMs(ev.durationMs)}</span>
+          {(ev.revisitCount ?? 0) > 0 && (
+            <>
+              <span>·</span>
+              <span>访问 {(ev.revisitCount ?? 0) + 1} 次</span>
+            </>
+          )}
         </div>
       </div>
     </li>

@@ -75,6 +75,7 @@ export interface ToolboxItemRun {
   runId: string;
   itemId: string;
   status: string;
+  traceId?: string;
   output?: string;
 }
 
@@ -88,6 +89,7 @@ export interface ToolboxRunEvent {
   type: string;
   stepId?: string;
   content?: string;
+  artifact?: ToolboxArtifact;
   runStatus?: string;
   errorMessage?: string;
   seq: number;
@@ -117,6 +119,7 @@ export interface ToolboxArtifact {
 
 export interface ToolboxRun {
   id: string;
+  traceId?: string;
   userId: string;
   sessionId?: string;
   userMessage: string;
@@ -559,8 +562,15 @@ export async function uploadAttachment(file: File): Promise<ApiResponse<Uploaded
   try {
     return JSON.parse(text) as ApiResponse<UploadedAttachment>;
   } catch {
-    return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as any;
+    return { success: false, data: null, error: { code: 'PARSE_ERROR', message: text || '上传失败' } };
   }
+}
+
+/**
+ * 按 attachmentId 获取附件元数据（用于把已有知识库 ID 还原成可见文件名）
+ */
+export async function getAttachmentMeta(attachmentId: string): Promise<ApiResponse<UploadedAttachment & { uploadedAt?: string }>> {
+  return await apiRequest(`/api/v1/attachments/${attachmentId}`);
 }
 
 // ============ Message Feedback ============

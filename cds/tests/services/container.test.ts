@@ -70,7 +70,10 @@ describe('ContainerService', () => {
       // Spy on writeFileSync to capture the env file content
       const writeSpy = vi.spyOn(fs, 'writeFileSync');
 
-      await service.runService(makeEntry(), makeProfile(), makeService());
+      await service.runService({
+        ...makeEntry(),
+        githubCommitSha: '47c74c1f5aabbccddeeff0011223344556677889',
+      }, makeProfile(), makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'));
       expect(runCmd).toBeDefined();
@@ -91,8 +94,105 @@ describe('ContainerService', () => {
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('Jwt__Secret=test-secret');
       expect(envFileContent).toContain('Jwt__Issuer=prdagent');
+      expect(envFileContent).toContain('VITE_GIT_BRANCH=feature/a');
+      expect(envFileContent).toContain('VITE_BUILD_ID=47c74c1f5aab');
 
       writeSpy.mockRestore();
+    });
+
+    it('should remove stale same branch/profile app containers before attaching service aliases', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
+        stdout: [
+          'cds-feature-a-api',
+          'cds-feature-a-api-old',
+          'cds-other-branch-api',
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*cds-feature-a-api-old/, () => ({
+        stdout: 'feature-a|api|["api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*cds-other-branch-api/, () => ({
+        stdout: 'feature-b|api|["api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
+      expect(rmCommands.some(c => c.includes("'cds-feature-a-api-old'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'cds-other-branch-api'"))).toBe(false);
+      expect(rmCommands.some(c => c.includes('docker rm -f cds-feature-a-api'))).toBe(true);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'cds-feature-a-api-old'"));
+      const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
+      expect(staleRmIndex).toBeGreaterThanOrEqual(0);
+      expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
+    });
+
+    it('should remove unlabeled stale network endpoints only for the same service container prefix', async () => {
+      mock.addResponsePattern(/docker ps -aq --filter 'network=cds-network'/, () => ({
+        stdout: ['stale-id', 'other-branch-id', 'current-id'].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*stale-id/, () => ({
+        stdout: 'stale-id|/cds-feature-a-api-stale|["api","cds-feature-a-api-stale"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*other-branch-id/, () => ({
+        stdout: 'other-branch-id|/cds-feature-b-api-stale|["api","cds-feature-b-api-stale"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format=.*current-id/, () => ({
+        stdout: 'current-id|/cds-feature-a-api|["api","cds-feature-a-api"]',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker network inspect --format=.*cds-network/, () => ({
+        stdout: JSON.stringify({
+          stale: {
+            Name: 'cds-feature-a-api-stale',
+            Aliases: ['api', 'cds-feature-a-api-stale'],
+          },
+          otherBranch: {
+            Name: 'cds-feature-b-api-stale',
+            Aliases: ['api', 'cds-feature-b-api-stale'],
+          },
+          current: {
+            Name: 'cds-feature-a-api',
+            Aliases: ['api', 'cds-feature-a-api'],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
+      expect(rmCommands.some(c => c.includes("'stale-id'"))).toBe(true);
+      expect(rmCommands.some(c => c.includes("'other-branch-id'"))).toBe(false);
+      const staleRmIndex = mock.commands.findIndex(c => c.includes("docker rm -f 'stale-id'"));
+      const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
+      expect(staleRmIndex).toBeGreaterThanOrEqual(0);
+      expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
     });
 
     it('should run a single docker command (no 3-step)', async () => {
@@ -230,14 +330,61 @@ describe('ContainerService', () => {
     });
   });
 
-  describe('stop', () => {
-    it('should stop and remove container', async () => {
+  describe('stop (pause — container preserved)', () => {
+    it('writes a [CDS-STOP] sentinel then docker stop, and does NOT docker rm', async () => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await service.stop('cds-feature-a-api', '调度器降温（保留容器，可秒级唤醒）');
+
+      // 哨兵先写,进入 docker logs 末尾 → 与莫名崩溃区分
+      expect(mock.commands[0]).toContain('docker exec cds-feature-a-api');
+      expect(mock.commands[0]).toContain('[CDS-STOP]');
+      // Bugbot #640：全角括号/逗号必须保留(U+FF00–FFEF 在白名单内),
+      // 否则 docker logs 里 reason 丢失可读结构。
+      expect(mock.commands[0]).toContain('reason=调度器降温（保留容器，可秒级唤醒）');
+      // Bugbot #640：单引号包裹 line(单引号已被白名单排除),不再依赖
+      // "过滤双引号/$"来做 shell 转义。命令形如 sh -c "echo '...' > ..."。
+      expect(mock.commands[0]).toContain(`sh -c "echo '[CDS-STOP]`);
+      expect(mock.commands[0]).not.toContain(`sh -c 'echo "`);
+      expect(mock.commands[1]).toBe('docker stop cds-feature-a-api');
+      // 关键不变量:stop 绝不 docker rm,否则 /restart 无法 docker restart
+      // 唤醒(Cursor Bugbot 反馈的"正常停止后重启必失败"的根因)。
+      expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
+    });
+
+    it('still stops when the sentinel exec fails (best-effort, no shell in image)', async () => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: 'no sh', exitCode: 1 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await expect(service.stop('cds-feature-a-api')).resolves.toBeUndefined();
+      expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
+      expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
+    });
+  });
+
+  describe('remove (destroy — container deleted)', () => {
+    it('docker stop then docker rm', async () => {
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
-      await service.stop('cds-feature-a-api');
-      expect(mock.commands[0]).toContain('docker stop cds-feature-a-api');
-      expect(mock.commands[1]).toContain('docker rm cds-feature-a-api');
+      await service.remove('cds-feature-a-api');
+      expect(mock.commands[0]).toBe('docker stop cds-feature-a-api');
+      expect(mock.commands[1]).toBe('docker rm cds-feature-a-api');
+    });
+
+    it('is idempotent for already-stopped containers: docker stop non-zero must NOT skip docker rm (Codex P1 @ ade2a21)', async () => {
+      // 容器已是 exited:模拟 docker stop 返回非零(Codex 担心的场景)。
+      // remove() 是两条相互独立的 await shell.exec —— shell.exec 在非零退出
+      // 时 resolve(不 reject),所以第二条 docker rm 必达,不会被第一条短路。
+      // (实际 docker 里 `docker stop <已停容器>` 也是 exit 0 幂等;此处用非零
+      // 是更严苛的反例,证明即便非零 rm 仍执行。)
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'already stopped', exitCode: 1 }));
+      mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await expect(service.remove('cds-feature-a-api')).resolves.toBeUndefined();
+      expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
+      expect(mock.commands.some((c) => c === 'docker rm cds-feature-a-api')).toBe(true);
     });
   });
 

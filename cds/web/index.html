@@ -12,8 +12,14 @@
       // with the rest of the prd_agent monorepo).
       (function () {
         try {
-          var t = sessionStorage.getItem('cds_theme');
-          if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+          var mode = sessionStorage.getItem('cds_theme') || 'system';
+          var t = mode === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : mode;
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.dataset.theme = t;
+            document.documentElement.dataset.themeMode = mode === 'light' || mode === 'dark' ? mode : 'system';
+          }
         } catch (_) {
           /* private mode; default applies */
         }

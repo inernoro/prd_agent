@@ -329,6 +329,41 @@ describe('Projects router (P4 Part 2)', () => {
       expect(idle.lastDeployedAt).toBeNull();
     });
 
+    it('does not roll branch previews into shared-service project stats', async () => {
+      stateService.addProject({
+        id: 'shared-sidecar-pool',
+        slug: 'shared-sidecar-pool',
+        name: 'Claude SDK Sidecar Pool',
+        kind: 'shared-service',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      stateService.addBranch({
+        id: 'shared-main',
+        branch: 'main',
+        projectId: 'shared-sidecar-pool',
+        worktreePath: '/tmp/shared-main',
+        status: 'running',
+        services: {
+          api: { profileId: 'api', containerName: 'shared-api', hostPort: 10001, status: 'running' },
+        },
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+      });
+
+      const res = await request(server, 'GET', '/api/projects');
+      expect(res.status).toBe(200);
+
+      const project = res.body.projects.find((p: any) => p.id === 'shared-sidecar-pool');
+      expect(project).toBeDefined();
+      expect(project.branchCount).toBe(0);
+      expect(project.runningBranchCount).toBe(0);
+      expect(project.appServiceCount).toBe(0);
+      expect(project.runningServiceCount).toBe(0);
+      expect(project.appServices).toEqual([]);
+      expect(project.lastDeployedAt).toBeNull();
+    });
+
     it('does not expose CDS internal state storage as project infra', async () => {
       stateService.addProject({
         id: 'prd-agent',

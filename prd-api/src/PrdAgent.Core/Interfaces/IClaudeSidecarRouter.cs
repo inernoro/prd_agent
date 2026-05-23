@@ -17,6 +17,12 @@ public interface IClaudeSidecarRouter
     /// <summary>已通过最近一次健康检查的实例数。</summary>
     int HealthyCount { get; }
 
+    /// <summary>Current known blockers without probing remote /readyz.</summary>
+    IReadOnlyList<string> Blockers { get; }
+
+    /// <summary>Current recommended recovery actions without probing remote /readyz.</summary>
+    IReadOnlyList<string> NextActions { get; }
+
     /// <summary>
     /// 流式执行一次 agent run。调用方应在 await foreach 中消费事件，
     /// 直到收到 <c>done</c> 或 <c>error</c> 类型的事件。
@@ -26,6 +32,17 @@ public interface IClaudeSidecarRouter
     IAsyncEnumerable<SidecarEvent> RunStreamAsync(
         SidecarRunRequest request,
         CancellationToken ct);
+
+    /// <summary>
+    /// Best-effort cancellation for a previously dispatched run.
+    /// Implementations may broadcast to multiple sidecar instances when the owning instance is unknown.
+    /// </summary>
+    Task<SidecarCancelResult> CancelRunAsync(string runId, CancellationToken ct);
+
+    /// <summary>
+    /// Runtime pool diagnostics for UI/runbook checks. Does not include secrets.
+    /// </summary>
+    Task<SidecarPoolDiagnostics> GetDiagnosticsAsync(CancellationToken ct);
 }
 
 /// <summary>Sidecar 协议事件类型，与 Python sidecar 的 SidecarEvent.type 一一对应。</summary>
@@ -36,6 +53,7 @@ public enum SidecarEventType
     ToolUse,
     ToolResult,
     Usage,
+    RuntimeInit,
     Done,
     Error,
     Keepalive,
@@ -101,6 +119,24 @@ public sealed class SidecarRunRequest
 
     /// <summary>上游协议：anthropic 或 openai-compatible。为空时 sidecar 默认按 anthropic 兼容处理。</summary>
     public string? Protocol { get; init; }
+
+    /// <summary>Optional sidecar runtime adapter selector, for example claude-agent-sdk.</summary>
+    public string? RuntimeAdapter { get; init; }
+
+    /// <summary>MAP session id for cross-system tracing. Not a secret.</summary>
+    public string? MapSessionId { get; init; }
+
+    /// <summary>MAP trace id for event/SDK trace correlation. Not a secret.</summary>
+    public string? TraceId { get; init; }
+
+    /// <summary>Per-run workspace root inside the sidecar container. Falls back to AGENT_WORKSPACE_ROOT.</summary>
+    public string? WorkspaceRoot { get; init; }
+
+    /// <summary>Repository identity for diagnostics and future workspace preparation.</summary>
+    public string? GitRepository { get; init; }
+
+    /// <summary>Git ref/branch for diagnostics and future workspace preparation.</summary>
+    public string? GitRef { get; init; }
 }
 
 public sealed class SidecarChatMessage
@@ -115,3 +151,228 @@ public sealed class SidecarToolDef
     public string Description { get; init; } = string.Empty;
     public System.Text.Json.JsonElement InputSchema { get; init; }
 }
+
+public sealed record SidecarCancelResult(
+    bool Cancelled,
+    string? Reason = null,
+    string? SidecarName = null
+);
+
+public sealed record SidecarPoolDiagnostics(
+    bool IsConfigured,
+    int InstanceCount,
+    int HealthyCount,
+    IReadOnlyList<SidecarInstanceDiagnostics> Instances,
+    DateTime? RegistryLastRefreshedAt = null,
+    string? RegistryLastRefreshError = null,
+    IReadOnlyList<string>? Blockers = null,
+    IReadOnlyList<string>? NextActions = null,
+    string? DesiredRuntimeAdapter = null,
+    string? RuntimeTransport = null,
+    SidecarDiscoveryMetrics? DiscoveryMetrics = null,
+    SidecarRuntimeProfileDiagnostics? DefaultRuntimeProfile = null,
+    SidecarCommercialReadinessDiagnostics? CommercialReadiness = null,
+    SidecarRuntimeProfileRepairPlan? RuntimeProfileRepairPlan = null,
+    SidecarNextCyclePlan? NextCyclePlan = null,
+    IReadOnlyList<SidecarDebugCommand>? DebugCommands = null,
+    SidecarExecutionPanel? ExecutionPanel = null
+);
+
+public sealed record SidecarRuntimeProfileDiagnostics(
+    string Id,
+    string Name,
+    string Runtime,
+    string Protocol,
+    string Model,
+    bool HasApiKey,
+    bool IsDefault,
+    bool CompatibleWithDesiredRuntimeAdapter,
+    string? Warning = null,
+    string? CompatibilityReasonCode = null,
+    string? CompatibilityReason = null,
+    IReadOnlyList<string>? CompatibilityNextActions = null
+);
+
+public sealed record SidecarCommercialReadinessDiagnostics(
+    string Overall,
+    int Passed,
+    int Total,
+    IReadOnlyList<SidecarCommercialReadinessGate> Gates,
+    IReadOnlyList<string> Pending
+);
+
+public sealed record SidecarCommercialReadinessGate(
+    string Code,
+    string Label,
+    string Status,
+    string Message,
+    IReadOnlyList<string>? NextActions = null,
+    string? ReasonCode = null
+);
+
+public sealed record SidecarRuntimeProfileRepairPlan(
+    string Gate,
+    string State,
+    SidecarRuntimeProfileDiagnostics? CurrentProfile,
+    string TargetTemplateId,
+    string TargetProtocol,
+    string TargetBaseUrl,
+    string TargetModel,
+    bool TargetIsDefaultRecommended,
+    IReadOnlyList<string> NextActions
+);
+
+public sealed record SidecarNextCyclePlan(
+    string Cycle,
+    string State,
+    IReadOnlyList<SidecarNextCyclePlanItem> Items,
+    IReadOnlyList<string> StopConditions
+);
+
+public sealed record SidecarNextCyclePlanItem(
+    int Order,
+    string Code,
+    string Title,
+    string Goal,
+    string Evidence,
+    string Status,
+    string? BlockedBy = null,
+    IReadOnlyList<string>? NextActions = null
+);
+
+public sealed record SidecarDebugCommand(
+    string Code,
+    string Label,
+    string Command,
+    string Purpose,
+    string Status,
+    string? BlockedBy = null
+);
+
+public sealed record SidecarExecutionPanel(
+    string Status,
+    bool CommercialComplete,
+    string CurrentBlockingGate,
+    string BlockingReason,
+    string DeploymentAdvice,
+    string NextCommand,
+    string NextCommandCode,
+    string NextCommandSafety,
+    IReadOnlyList<SidecarExecutionRunbookStep> Runbook,
+    IReadOnlyDictionary<string, int> GateCounts,
+    int StepIndex,
+    int StepTotal,
+    int PassedSteps,
+    int PendingSteps,
+    SidecarExecutionPanelStep? CurrentStep,
+    IReadOnlyList<SidecarExecutionPanelStep> Timeline,
+    IReadOnlyList<SidecarExecutionTask> TaskBoard,
+    string NextStepEta,
+    string TimeSinkAdvice
+);
+
+public sealed record SidecarExecutionPanelStep(
+    int Order,
+    string Code,
+    string Title,
+    string Status,
+    string? BlockedBy = null
+);
+
+public sealed record SidecarExecutionTask(
+    int Order,
+    string Code,
+    string Title,
+    string Status,
+    string NextAction,
+    string EstimatedDuration,
+    string Evidence
+);
+
+public sealed record SidecarExecutionRunbookStep(
+    int Order,
+    string Code,
+    string Title,
+    string CommandCode,
+    string Safety,
+    string Status,
+    string? BlockedBy = null,
+    SidecarCommandApplyManifest? ApplyManifest = null
+);
+
+public sealed record SidecarCommandApplyManifest(
+    string Safety,
+    string Method,
+    string Endpoint,
+    IReadOnlyList<string> RequiredEnv,
+    IReadOnlyList<SidecarCommandApplyPrecondition> Preconditions,
+    string ExpectedPostCheck,
+    string? LocalPreflightCommand = null,
+    IReadOnlyList<string>? ReportFields = null,
+    IReadOnlyList<string>? OptionalEnv = null
+);
+
+public sealed record SidecarCommandApplyPrecondition(
+    string Code,
+    string? Expected,
+    string? Actual,
+    bool Passed
+);
+
+public sealed record SidecarWorkspacePreparationDiagnostics(
+    bool? AutoGitWorkspace = null,
+    string? WorkspacesRoot = null,
+    bool? WorkspacesRootExists = null,
+    bool? GitInstalled = null,
+    IReadOnlyList<string>? SupportedRepositoryHosts = null,
+    IReadOnlyList<string>? SupportedRepositoryFormats = null,
+    bool? PrivateRepositoryAuthConfigured = null,
+    string? WorkspaceLock = null
+);
+
+public sealed record SidecarDiscoveryMetrics(
+    int? TotalConnections = null,
+    int? ActiveCdsConnections = null,
+    int? UsableConnections = null,
+    int? TokenFailures = null,
+    int? EndpointFailures = null,
+    int? EmptyEndpoints = null,
+    int? EndpointsWithInstances = null,
+    string? ProjectKind = null,
+    int? DeploymentCount = null,
+    int? RunningDeploymentCount = null,
+    int? DisabledHostDeploymentCount = null,
+    int? BranchCount = null,
+    int? RunningBranchCount = null,
+    int? RunningBranchServiceCount = null,
+    int? RuntimeBranchServiceCount = null,
+    int? SkippedBranchServiceCount = null,
+    bool? PreviewRootConfigured = null
+);
+
+public sealed record SidecarInstanceDiagnostics(
+    string Name,
+    string BaseUrl,
+    string Source,
+    IReadOnlyList<string> Tags,
+    bool TokenConfigured,
+    bool HealthRegistryHealthy,
+    int? HttpStatus,
+    bool? Ready,
+    bool? AnthropicKeyConfigured,
+    bool? ProviderKeyRequiredForReady,
+    bool? SidecarTokenConfigured,
+    string? AgentAdapter,
+    string? AdapterDiagnosticsJson,
+    string? Error,
+    IReadOnlyList<string>? ReadyzBlockers = null,
+    IReadOnlyList<string>? ReadyzNextActions = null,
+    string? LoopOwner = null,
+    bool? SdkLoopEnabled = null,
+    string? LegacyLoopImport = null,
+    string? MapRole = null,
+    string? CdsRole = null,
+    string? ClaudeCliPath = null,
+    bool? ClaudeCliBundled = null,
+    SidecarWorkspacePreparationDiagnostics? WorkspacePreparation = null
+);

@@ -184,6 +184,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           }, mergedEnv);
 
           svc.status = 'running';
+          svc.errorMessage = undefined;
           sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}` });
         } catch (err) {
           svc.status = 'error';
@@ -220,7 +221,12 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
     try {
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        // 先翻 stopping 再 await stop()。stop() 重构后容器停止仍保留(exited)，
+        // 执行器进程同样跑 auto-restart 巡检，若此处仍 running，30s tick 命中
+        // await 窗口会把主动停止误判为 crash 并 docker start 抢跑
+        // （Codex P1，与 coolFn / auto-lifecycle / 手动 /stop 同款修复）。
+        svc.status = 'stopping';
+        try { await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）'); } catch { /* ok */ }
         svc.status = 'stopped';
       }
       entry.status = 'idle';
@@ -279,7 +285,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     }
     try {
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
       }
       // P4 Part 18 (G1.2): executor stays on config.repoRoot.
       try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }

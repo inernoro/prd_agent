@@ -355,6 +355,11 @@ export class ProxyService {
     const url = req.url || '/';
     const handleStart = Date.now();
 
+    if (url.startsWith('/_cds/waiting-status')) {
+      this.serveWaitingStatus(req, res);
+      return;
+    }
+
     // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
     // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
     if (url.startsWith('/_cds/')) {
@@ -657,9 +662,137 @@ export class ProxyService {
     res.end((req.method || 'GET').toUpperCase() === 'HEAD' ? undefined : message);
   }
 
+  private displayBranchName(branchSlug: string, branch?: BranchEntry): string {
+    const actualBranch = branch?.branch?.trim();
+    return actualBranch || branchSlug;
+  }
+
+  private estimateServiceProgress(service: BranchEntry['services'][string]): {
+    percent: number;
+    confidence: 'low' | 'medium' | 'high';
+    matchedLog: boolean;
+  } {
+    const status = service.status;
+    if (status === 'running') return { percent: 100, confidence: 'high', matchedLog: true };
+    if (status === 'error') return { percent: 100, confidence: 'high', matchedLog: true };
+    if (status === 'stopping' || status === 'stopped') return { percent: 6, confidence: 'medium', matchedLog: false };
+    if (status === 'starting' || status === 'restarting') return { percent: 86, confidence: 'high', matchedLog: true };
+    if (status === 'idle') return { percent: 4, confidence: 'low', matchedLog: false };
+
+    const log = `${service.buildLog || ''}\n${service.errorMessage || ''}`.toLowerCase();
+    const matchers: Array<{ percent: number; confidence: 'medium' | 'high'; re: RegExp }> = [
+      { percent: 94, confidence: 'high', re: /(accepting connections|returned 200|listening on|server ready|ready in|health check passed|就绪探测通过|运行于\s*:?\d+)/ },
+      { percent: 78, confidence: 'high', re: /(built in|compiled successfully|successfully built|writing image sha|exporting layers|naming to|发布到|publish\/|publish succeeded)/ },
+      { percent: 58, confidence: 'medium', re: /(vite build|dotnet publish|npm run build|pnpm run build|yarn build|docker build|buildx|building image|构建镜像)/ },
+      { percent: 40, confidence: 'medium', re: /(npm ci|pnpm install|yarn install|dotnet restore|determining projects to restore|restored .*\.csproj|pip install|go mod download|apt-get|安装依赖)/ },
+      { percent: 20, confidence: 'medium', re: /(git clone|git fetch|checkout|pulling|拉取代码|worktree)/ },
+    ];
+    const matched = matchers.find((item) => item.re.test(log));
+    if (matched) {
+      return { percent: matched.percent, confidence: matched.confidence, matchedLog: true };
+    }
+    return { percent: status === 'building' ? 24 : 12, confidence: 'low', matchedLog: false };
+  }
+
+  private estimateWaitingProgress(branch: BranchEntry | undefined, waitingProfileId?: string): {
+    percent: number;
+    confidence: 'low' | 'medium' | 'high';
+    label: string;
+    reason: string;
+  } {
+    if (!branch) {
+      return { percent: 0, confidence: 'low', label: '等待分支状态', reason: '尚未读取到 CDS 分支状态' };
+    }
+    if (branch.status === 'running' && (!waitingProfileId || branch.services?.[waitingProfileId]?.status === 'running')) {
+      return { percent: 100, confidence: 'high', label: '已就绪', reason: '目标服务已进入 running' };
+    }
+    if (branch.status === 'error') {
+      return { percent: 100, confidence: 'high', label: '已失败', reason: 'CDS 已给出失败状态' };
+    }
+
+    const services = Object.values(branch.services || {});
+    if (services.length === 0) {
+      return { percent: 8, confidence: 'low', label: '等待创建服务', reason: '分支存在，但服务尚未登记' };
+    }
+
+    const estimates = services.map((service) => this.estimateServiceProgress(service));
+    const average = estimates.reduce((sum, item) => sum + item.percent, 0) / estimates.length;
+    const waitingEstimate = waitingProfileId && branch.services?.[waitingProfileId]
+      ? this.estimateServiceProgress(branch.services[waitingProfileId])
+      : null;
+    const weighted = waitingEstimate
+      ? waitingEstimate.percent * 0.62 + average * 0.38
+      : average;
+
+    const createdAtMs = Date.parse(branch.createdAt || '');
+    const elapsedSec = Number.isFinite(createdAtMs) ? Math.max(0, (Date.now() - createdAtMs) / 1000) : 0;
+    const timeCurve = Math.min(72, 12 + Math.sqrt(elapsedSec) * 5.4);
+    const rawPercent = estimates.some((item) => item.matchedLog)
+      ? weighted
+      : Math.max(weighted, timeCurve);
+    const percent = Math.max(1, Math.min(99, Math.round(rawPercent)));
+
+    const high = estimates.filter((item) => item.confidence === 'high').length;
+    const medium = estimates.filter((item) => item.confidence === 'medium').length;
+    const confidence: 'low' | 'medium' | 'high' = high > 0
+      ? 'high'
+      : medium > 0
+        ? 'medium'
+        : 'low';
+    const label = branch.status === 'building'
+      ? '预计构建进度'
+      : branch.status === 'starting' || branch.status === 'restarting'
+        ? '预计启动进度'
+        : '预计处理进度';
+    const reason = estimates.some((item) => item.matchedLog)
+      ? `基于 ${services.length} 个服务状态与构建日志估算`
+      : `基于 ${services.length} 个服务状态与运行时长估算`;
+
+    return { percent, confidence, label, reason };
+  }
+
+  private serveWaitingStatus(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const host = req.headers.host || '';
+    const previewSlug = this.extractPreviewBranch(host) || '';
+    const branch = previewSlug ? this.resolveBranchEntry(previewSlug) : undefined;
+    const url = new URL(req.url || '/_cds/waiting-status', 'http://cds.local');
+    const waitingProfileId = url.searchParams.get('profile') || undefined;
+    const services = branch ? Object.values(branch.services || {}) : [];
+    const waitingService = waitingProfileId && branch ? branch.services?.[waitingProfileId] : undefined;
+    const ready = Boolean(branch && branch.status === 'running' && (!waitingProfileId || waitingService?.status === 'running'));
+    const loading = Boolean(branch && (branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || waitingService?.status === 'building' || waitingService?.status === 'starting' || waitingService?.status === 'restarting'));
+    const displayBranch = this.displayBranchName(previewSlug, branch);
+
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(JSON.stringify({
+      ok: true,
+      ready,
+      loading,
+      branch: displayBranch,
+      branchSlug: previewSlug,
+      displayBranch,
+      status: branch?.status || 'not-found',
+      waitingProfileId: waitingProfileId || null,
+      progress: this.estimateWaitingProgress(branch, waitingProfileId),
+      services: services.map((svc) => ({
+        profileId: svc.profileId,
+        status: svc.status,
+      })),
+      errorMessage: branch?.errorMessage || null,
+    }));
+  }
+
   serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
-    const safeBranch = this.escapeHtml(branchSlug);
+    const displayBranch = this.displayBranchName(branchSlug, branch);
+    const progress = this.estimateWaitingProgress(branch, waitingProfileId);
+    const safeBranch = this.escapeHtml(displayBranch);
+    const safeProgressLabel = this.escapeHtml(progress.label);
+    const safeProgressReason = this.escapeHtml(progress.reason);
+    const safeProgressConfidence = this.escapeHtml(progress.confidence === 'high' ? '高' : progress.confidence === 'medium' ? '中' : '低');
     const safeWaitingProfile = waitingProfileId ? this.escapeHtml(waitingProfileId) : '';
     const branchStatus = String(branch.status);
     const stageLabel = (status: string): string => {
@@ -685,7 +818,7 @@ export class ProxyService {
           const safeProfileId = this.escapeHtml(svc.profileId);
           const base = `${safeProfileId} · ${stageLabel(svc.status)}`;
           const label = waitingProfileId === svc.profileId ? `${base}（正在等待此服务就绪）` : base;
-          return `<div class="svc"><span class="svc-dot" style="--svc-color:${colorFor(svc.status)}">●</span><span>${label}</span></div>`;
+          return `<div class="svc" data-profile="${safeProfileId}"><span class="svc-dot" style="--svc-color:${colorFor(svc.status)}">●</span><span>${label}</span></div>`;
         }).join('')
       : `<div class="svc"><span class="svc-dot" style="--svc-color:#6b7280">●</span><span>服务尚未创建</span></div>`;
 
@@ -717,109 +850,285 @@ export class ProxyService {
 <title>${heading} · ${safeBranch}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-	:root{color-scheme:dark;--panel:rgba(19,17,27,.78);--border:rgba(154,139,190,.24);--grid-line:rgba(154,139,190,.22);--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--accent:#f5f2ff;--accent-two:#22c55e}
+	:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--accent:#ffffff;--accent-two:#9f5050;--sync:#22c55e}
 	html,body{min-height:100%}
-	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f0b15;color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh;overflow:hidden;padding:24px}
-	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;border:0;display:block;pointer-events:none;opacity:1}
-	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 560px at 50% 42%,rgba(24,20,34,.18),transparent 68%),linear-gradient(180deg,rgba(15,11,21,.08),rgba(15,11,21,.34));z-index:0}
-	body::after{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at center,transparent 0%,rgba(15,11,21,.18) 62%,rgba(15,11,21,.72) 100%);z-index:0}
-	.shell{position:relative;z-index:1;width:min(100%,620px)}
-	.panel{position:relative;overflow:hidden;padding:34px 34px 32px;border:1px solid var(--border);border-radius:30px;background:linear-gradient(180deg,rgba(22,20,30,.82),rgba(13,12,19,.72));backdrop-filter:blur(18px);box-shadow:0 36px 120px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.05)}
-	.panel::before{content:"";position:absolute;inset:0 0 auto 0;height:1px;background:linear-gradient(90deg,transparent,rgba(245,242,255,.32),transparent)}
-	.panel::after{content:"";position:absolute;left:-12%;top:-16%;width:72%;height:48%;pointer-events:none;background:radial-gradient(circle,rgba(154,139,190,.09),transparent 62%);filter:blur(12px)}
-	.eyebrow{display:inline-flex;align-items:center;gap:10px;padding:8px 14px;border-radius:999px;background:rgba(245,242,255,.045);border:1px solid rgba(154,139,190,.22);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
+	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
+	.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
+	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(780px 560px at 50% 50%,rgba(168,85,247,.08),transparent 54%),linear-gradient(90deg,rgba(18,15,23,.9),rgba(18,15,23,.34) 48%,rgba(18,15,23,.86));z-index:1}
+	.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
+	.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
+	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
 	.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
-	.rings-wrap{position:relative;width:130px;height:130px;margin:22px 0 18px;background:transparent;isolation:isolate}
-	.rings-orbit,.rings-orbit::before,.rings-orbit::after{content:"";position:absolute;border-radius:50%;background:transparent}
-	.rings-orbit{inset:18px;border:1px solid rgba(245,242,255,.28);box-shadow:0 0 34px rgba(245,242,255,.12),inset 0 0 20px rgba(245,242,255,.05);animation:spin 8s linear infinite}
-	.rings-orbit::before{inset:16px;border:1px solid rgba(245,242,255,.18)}
-	.rings-orbit::after{inset:34px;background:radial-gradient(circle,rgba(245,242,255,.94) 0%,rgba(245,242,255,.18) 34%,transparent 72%);animation:pulse 2.4s ease-in-out infinite}
-	.rings-wave{position:absolute;inset:0;border-radius:50%;background:repeating-radial-gradient(circle at 50% 50%,transparent 0 13px,rgba(34,197,94,.36) 14px 15px,transparent 16px 22px);-webkit-mask-image:linear-gradient(90deg,#000 0 28%,transparent 46% 54%,#000 72% 100%);mask-image:linear-gradient(90deg,#000 0 28%,transparent 46% 54%,#000 72% 100%);opacity:.9;animation:scan 2.8s ease-in-out infinite}
-	.rings-scan{position:absolute;left:18px;right:18px;top:50%;height:1px;background:linear-gradient(90deg,transparent,rgba(245,242,255,.62),transparent);transform:translateY(-50%);animation:scan-line 2.6s ease-in-out infinite}
-h1{font-size:28px;line-height:1.15;letter-spacing:-.03em;margin-bottom:10px}
-.subtitle{font-size:14px;line-height:1.7;color:var(--muted);margin-bottom:20px}
-.meta{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
-.chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;color:#dde3ea}
+h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bottom:22px;max-width:100%}
+.shiny-text{display:inline-block;color:rgba(247,245,255,.78);background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
+.subtitle{max-width:580px;font-size:clamp(15px,1.45vw,20px);line-height:1.75;color:var(--muted);margin-bottom:28px}
+.meta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
+.chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
+.chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
 .branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
-.services{display:flex;flex-direction:column;gap:10px;margin:18px 0 20px}
-	.svc{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:16px;border:1px solid rgba(154,139,190,.18);background:rgba(245,242,255,.032);font-size:13px;line-height:1.5}
-.svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color)}
-.err{margin-top:2px;padding:12px 14px;border-radius:16px;border:1px solid rgba(252,165,165,.25);background:rgba(244,63,94,.08);color:var(--error);font-size:12px;line-height:1.6;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
-.hint{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:18px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:var(--muted)}
+.services{display:flex;flex-direction:column;gap:12px;margin:0 0 28px;max-width:620px}
+	.svc{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid rgba(245,242,255,.13);font-size:15px;line-height:1.5}
+.svc::after{content:"";position:absolute;left:-35%;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.14),transparent);transform:skewX(-18deg);animation:svc-glint 3.2s ease-in-out infinite}
+.svc:nth-child(2)::after{animation-delay:.42s}
+.svc:nth-child(3)::after{animation-delay:.84s}
+.svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color);animation:svc-pulse 1.55s ease-in-out infinite}
+.svc:nth-child(2) .svc-dot{animation-delay:.22s}
+.svc:nth-child(3) .svc-dot{animation-delay:.44s}
+.estimate{width:min(620px,100%);margin:-8px 0 28px;padding:15px 16px;border:1px solid rgba(245,242,255,.12);border-radius:18px;background:rgba(255,255,255,.035);backdrop-filter:blur(12px)}
+.estimate-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;font-size:12px;color:rgba(245,242,255,.7)}
+.estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
+.estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
+.estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#9f5050);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
+.estimate-meta span{display:inline-flex;align-items:center}
+.cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
+.cds-tip strong{color:rgba(245,242,255,.82);font-weight:700}
+.err{margin:0 0 22px;padding:0 0 14px;border-bottom:1px solid rgba(252,165,165,.28);color:var(--error);font-size:13px;line-height:1.7;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;max-height:160px;overflow:auto}
+.hint{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted)}
 .hint strong{color:#f5f7fa;font-weight:600}
-.note{letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
-@keyframes spin{to{transform:rotate(360deg)}}
+.note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
+.note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
+.magic-rings-bg.is-static{background:radial-gradient(circle at 50% 50%,rgba(168,85,247,.28),transparent 12%,rgba(99,102,241,.16) 24%,transparent 42%),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
 @keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
-@keyframes scan{0%,100%{transform:scaleX(.82);opacity:.38}50%{transform:scaleX(1.06);opacity:.82}}
-@keyframes scan-line{0%,100%{transform:translateY(-50%) scaleX(.32);opacity:.32}50%{transform:translateY(-50%) scaleX(1);opacity:1}}
-@media (max-width:640px){body{padding:18px}.panel{padding:24px;border-radius:24px}h1{font-size:24px}.hint{align-items:flex-start;flex-direction:column}}
+@keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
+@keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+@keyframes glint{0%,38%{transform:translateX(0) skewX(-18deg);opacity:0}54%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+@keyframes fallback-pulse{0%,100%{filter:saturate(.9) brightness(.8)}50%{filter:saturate(1.2) brightness(1.1)}}
+@keyframes shiny-text{0%{background-position:120% 0}100%{background-position:-120% 0}}
+@media (max-width:760px){.shell{padding:28px;display:flex;align-items:flex-end}.content{width:100%}h1{font-size:44px}.subtitle{font-size:14px}.hint{align-items:flex-start;flex-direction:column}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
-<canvas class="shape-grid-bg" id="shape-grid-bg" aria-hidden="true"></canvas>
+<canvas class="magic-rings-bg" id="magic-rings" aria-hidden="true"></canvas>
 <main class="shell">
-  <section class="panel">
-	    <div class="eyebrow">CDS Waiting Room</div>
-	    <div class="rings-wrap" aria-hidden="true">
-	      <div class="rings-wave"></div>
-	      <div class="rings-orbit"></div>
-	      <div class="rings-scan"></div>
-	    </div>
-    <h1>${heading}</h1>
-    <p class="subtitle">${subheading}</p>
+  <section class="content">
+    <div class="eyebrow">CDS Waiting Room</div>
+    <h1><span class="${shouldAutoRefresh ? 'shiny-text' : ''}" data-role="heading">${heading}</span></h1>
+    <p class="subtitle" data-role="subheading">${subheading}</p>
     <div class="meta">
-      <span class="chip branch">${safeBranch}</span>
-      <span class="chip">分支状态 · ${branchLabel}</span>
+      <span class="chip branch" data-role="branch-name">${safeBranch}</span>
+      <span class="chip" data-role="branch-status">分支状态 · ${branchLabel}</span>
     </div>
     ${errorNote}
-    <div class="services">${serviceRows}</div>
+    <div class="services" data-role="services">${serviceRows}</div>
+    <div class="estimate" data-role="progress-estimate">
+      <div class="estimate-top">
+        <span data-role="progress-label">${safeProgressLabel}</span>
+        <strong data-role="progress-percent">${progress.percent}%</strong>
+      </div>
+      <div class="estimate-track"><span class="estimate-bar" data-role="progress-bar" style="width:${progress.percent}%"></span></div>
+      <div class="estimate-meta">
+        <span data-role="progress-confidence">置信度 ${safeProgressConfidence}</span>
+        <span data-role="progress-reason">${safeProgressReason}</span>
+      </div>
+    </div>
+    <p class="cds-tip"><strong>CDS 小提示：</strong><span data-role="cds-tip-text">构建完成后还会等待服务健康检查稳定，再切入真实页面。</span></p>
     <div class="hint">
-      <span><strong>自动刷新</strong> 每 2 秒检查一次服务状态。</span>
+      <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
       <span class="note">CDS Live Sync</span>
     </div>
   </section>
 </main>
+<script id="magic-rings-vertex" type="x-shader/x-vertex">
+attribute vec2 aPosition;
+void main(){gl_Position=vec4(aPosition,0.0,1.0);}
+</script>
+<script id="magic-rings-fragment" type="x-shader/x-fragment">
+precision highp float;
+uniform float uTime,uAttenuation,uLineThickness;
+uniform float uBaseRadius,uRadiusStep,uScaleRate;
+uniform float uOpacity,uNoiseAmount,uRotation,uRingGap;
+uniform float uFadeIn,uFadeOut;
+uniform float uMouseInfluence,uHoverAmount,uHoverScale,uParallax,uBurst;
+uniform vec2 uResolution,uMouse;
+uniform vec3 uColor,uColorTwo;
+uniform int uRingCount;
+const float HP=1.5707963;
+const float CYCLE=3.45;
+float fade(float t){return t<uFadeIn?smoothstep(0.0,uFadeIn,t):1.0-smoothstep(uFadeOut,CYCLE-0.2,t);}
+float ring(vec2 p,float ri,float cut,float t0,float px){
+  float t=mod(uTime+t0,CYCLE);
+  float r=ri+t/CYCLE*uScaleRate;
+  float d=abs(length(p)-r);
+  float a=atan(abs(p.y),abs(p.x))/HP;
+  float th=max(1.0-a,0.5)*px*uLineThickness;
+  float h=(1.0-smoothstep(th,th*1.5,d))+1.0;
+  d+=pow(cut*a,3.0)*r;
+  return h*exp(-uAttenuation*d)*fade(t);
+}
+void main(){
+  float px=1.0/min(uResolution.x,uResolution.y);
+  vec2 p=(gl_FragCoord.xy-0.5*uResolution.xy)*px;
+  float cr=cos(uRotation),sr=sin(uRotation);
+  p=mat2(cr,-sr,sr,cr)*p;
+  p-=uMouse*uMouseInfluence;
+  float sc=mix(1.0,uHoverScale,uHoverAmount)+uBurst*0.3;
+  p/=sc;
+  vec3 c=vec3(0.0);
+  float rcf=max(float(uRingCount)-1.0,1.0);
+  for(int i=0;i<10;i++){
+    if(i>=uRingCount)break;
+    float fi=float(i);
+    vec2 pr=p-fi*uParallax*uMouse;
+    vec3 rc=mix(uColor,uColorTwo,fi/rcf);
+    c=mix(c,rc,vec3(ring(pr,uBaseRadius+fi*uRadiusStep,pow(uRingGap,fi),i==0?0.0:2.95*fi,px)));
+  }
+  c*=1.0+uBurst*2.0;
+  float n=fract(sin(dot(gl_FragCoord.xy+uTime*100.0,vec2(12.9898,78.233)))*43758.5453);
+  c+=(n-0.5)*uNoiseAmount;
+  gl_FragColor=vec4(c,max(c.r,max(c.g,c.b))*uOpacity);
+}
+</script>
 	<script>
 (function(){
-  var canvas=document.getElementById('shape-grid-bg');
+  var canvas=document.getElementById('magic-rings');
   if(!canvas) return;
-  var ctx=canvas.getContext('2d');
-  if(!ctx) return;
-  var offset={x:0,y:0};
-  var size=72;
   var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var gl=canvas.getContext('webgl',{alpha:true,antialias:false});
+  if(!gl){
+    canvas.className='magic-rings-bg is-static';
+    return;
+  }
+  function source(id){var node=document.getElementById(id);return node?node.textContent:'';}
+  function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader compile failed');}return s;}
+  function hex(hexColor){var raw=String(hexColor).replace('#','');var n=parseInt(raw.length===3?raw.replace(/(.)/g,'$1$1'):raw,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
+  var program;
+  try{
+    program=gl.createProgram();
+    gl.attachShader(program,shader(gl.VERTEX_SHADER,source('magic-rings-vertex')));
+    gl.attachShader(program,shader(gl.FRAGMENT_SHADER,source('magic-rings-fragment')));
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'program link failed');
+  }catch(err){
+    canvas.className='magic-rings-bg is-static';
+    return;
+  }
+  var buffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  gl.useProgram(program);
+  var position=gl.getAttribLocation(program,'aPosition');
+  gl.enableVertexAttribArray(position);
+  gl.vertexAttribPointer(position,2,gl.FLOAT,false,0,0);
+  var loc={};
+  ['uTime','uAttenuation','uLineThickness','uBaseRadius','uRadiusStep','uScaleRate','uOpacity','uNoiseAmount','uRotation','uRingGap','uFadeIn','uFadeOut','uMouseInfluence','uHoverAmount','uHoverScale','uParallax','uBurst','uResolution','uMouse','uColor','uColorTwo','uRingCount'].forEach(function(name){loc[name]=gl.getUniformLocation(program,name);});
+  var color=hex('#A855F7');
+  var colorTwo=hex('#6366F1');
+  gl.uniform1f(loc.uAttenuation,10);
+  gl.uniform1f(loc.uLineThickness,2);
+  gl.uniform1f(loc.uBaseRadius,.35);
+  gl.uniform1f(loc.uRadiusStep,.1);
+  gl.uniform1f(loc.uScaleRate,.1);
+  gl.uniform1f(loc.uOpacity,1);
+  gl.uniform1f(loc.uNoiseAmount,.1);
+  gl.uniform1f(loc.uRotation,0);
+  gl.uniform1f(loc.uRingGap,1.5);
+  gl.uniform1f(loc.uFadeIn,.7);
+  gl.uniform1f(loc.uFadeOut,.5);
+  gl.uniform1f(loc.uMouseInfluence,0);
+  gl.uniform1f(loc.uHoverAmount,0);
+  gl.uniform1f(loc.uHoverScale,1.2);
+  gl.uniform1f(loc.uParallax,.05);
+  gl.uniform1f(loc.uBurst,0);
+  gl.uniform3f(loc.uColor,color[0],color[1],color[2]);
+  gl.uniform3f(loc.uColorTwo,colorTwo[0],colorTwo[1],colorTwo[2]);
+  gl.uniform1i(loc.uRingCount,6);
   function resize(){
     var d=Math.min(window.devicePixelRatio||1,2);
     canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
     canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
-    ctx.setTransform(d,0,0,d,0,0);
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform2f(loc.uResolution,canvas.width,canvas.height);
   }
-  function draw(){
-    var w=window.innerWidth;
-    var h=window.innerHeight;
-    ctx.clearRect(0,0,w,h);
-    if(!reduced) offset.x=(offset.x-.08+size)%size;
-    var ox=((offset.x%size)+size)%size;
-    var oy=((offset.y%size)+size)%size;
-    ctx.strokeStyle='rgba(154,139,190,.22)';
-    ctx.lineWidth=1;
-    ctx.beginPath();
-    for(var x=-size+ox;x<w+size;x+=size){
-      ctx.moveTo(x,-size);
-      ctx.lineTo(x,h+size);
-    }
-    for(var y=-size+oy;y<h+size;y+=size){
-      ctx.moveTo(-size,y);
-      ctx.lineTo(w+size,y);
-    }
-    ctx.stroke();
+  function draw(t){
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(loc.uTime,reduced?0:t*.001);
+    gl.uniform2f(loc.uMouse,0,0);
+    gl.drawArrays(gl.TRIANGLES,0,6);
     requestAnimationFrame(draw);
   }
   resize();
   window.addEventListener('resize',resize);
   requestAnimationFrame(draw);
 }());
-${shouldAutoRefresh ? 'window.setTimeout(function(){location.reload()},2000)' : ''}
+${shouldAutoRefresh ? `;(function(){
+  var statusUrl='/_cds/waiting-status${waitingProfileId ? `?profile=${encodeURIComponent(waitingProfileId)}` : ''}';
+  var labels={building:'构建中',starting:'启动中',restarting:'重启中',running:'已就绪',error:'失败',stopping:'停止中',stopped:'已停止',idle:'待命'};
+  var colors={running:'#f8fafc',error:'#fca5a5',building:'#dbe4ee',starting:'#dbe4ee',restarting:'#dbe4ee',stopping:'#6b7280',stopped:'#6b7280',idle:'#6b7280'};
+  var waitingProfile=${JSON.stringify(waitingProfileId || '')};
+  var tips=[
+    'CDS 会把拉代码、构建镜像、启动服务和健康检查归并为一个等待状态。',
+    '百分比是根据服务状态、构建日志关键词和运行时长估算，服务未 ready 前不会显示 100%。',
+    '内部 upstream 或 forwarder 窗口期不会直接暴露给用户，只会继续显示分支环境正在构建。',
+    '若进入失败页，CDS 会保留最近日志摘要，方便复制给大模型或重新部署。'
+  ];
+  var tipIndex=0;
+  function renderTip(){
+    var tip=document.querySelector('[data-role="cds-tip-text"]');
+    if(tip)tip.textContent=tips[tipIndex++%tips.length];
+  }
+  function label(status){return labels[status]||'待命';}
+  function serviceText(svc){
+    var base=svc.profileId+' · '+label(svc.status);
+    return waitingProfile&&waitingProfile===svc.profileId?base+'（正在等待此服务就绪）':base;
+  }
+  function renderServices(services){
+    var root=document.querySelector('[data-role="services"]');
+    if(!root||!Array.isArray(services)||services.length===0)return;
+    root.innerHTML='';
+    services.forEach(function(svc){
+      var row=document.createElement('div');
+      row.className='svc';
+      row.setAttribute('data-profile',svc.profileId);
+      var dot=document.createElement('span');
+      dot.className='svc-dot';
+      dot.style.setProperty('--svc-color',colors[svc.status]||'#6b7280');
+      dot.textContent='●';
+      var text=document.createElement('span');
+      text.textContent=serviceText(svc);
+      row.appendChild(dot);
+      row.appendChild(text);
+      root.appendChild(row);
+    });
+  }
+  function renderProgress(progress){
+    if(!progress)return;
+    var percent=Math.max(0,Math.min(100,Number(progress.percent)||0));
+    var label=document.querySelector('[data-role="progress-label"]');
+    var percentEl=document.querySelector('[data-role="progress-percent"]');
+    var bar=document.querySelector('[data-role="progress-bar"]');
+    var confidence=document.querySelector('[data-role="progress-confidence"]');
+    var reason=document.querySelector('[data-role="progress-reason"]');
+    var confidenceText=progress.confidence==='high'?'高':progress.confidence==='medium'?'中':'低';
+    if(label)label.textContent=progress.label||'预计处理进度';
+    if(percentEl)percentEl.textContent=Math.round(percent)+'%';
+    if(bar)bar.style.width=percent+'%';
+    if(confidence)confidence.textContent='置信度 '+confidenceText;
+    if(reason)reason.textContent=progress.reason||'基于当前状态估算';
+  }
+  function poll(){
+    fetch(statusUrl,{cache:'no-store',headers:{Accept:'application/json'}})
+      .then(function(res){return res.ok?res.json():null;})
+      .then(function(data){
+        if(!data)return;
+        if(data.ready){location.reload();return;}
+        var statusEl=document.querySelector('[data-role="branch-status"]');
+        if(statusEl)statusEl.textContent='分支状态 · '+label(data.status);
+        var branchEl=document.querySelector('[data-role="branch-name"]');
+        if(branchEl&&data.displayBranch)branchEl.textContent=data.displayBranch;
+        renderProgress(data.progress);
+        renderServices(data.services);
+      })
+      .catch(function(){});
+  }
+  window.setInterval(poll,2000);
+  window.setInterval(renderTip,4200);
+  window.setTimeout(poll,400);
+  renderTip();
+}())` : ''}
 </script>
 </body></html>`;
 
@@ -842,21 +1151,19 @@ ${shouldAutoRefresh ? 'window.setTimeout(function(){location.reload()},2000)' : 
     const html = `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>预览已下线 — ${safe}</title>
+<title>启动失败 — ${safe}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
 .card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-.emoji{font-size:40px;margin-bottom:12px}
 h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
 .branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
 .desc{font-size:13px;color:#8b949e;line-height:1.6}
 </style></head><body>
 <div class="card">
-  <div class="emoji">OFF</div>
-  <h2>预览已下线</h2>
+  <h2>启动失败</h2>
   <div class="branch">${safe}</div>
-  <div class="desc">该分支在此 CDS 实例上未注册。<br>请确认分支名称或联系管理员。</div>
+  <div class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。<br>请确认分支名称，或回到 CDS 控制台重新部署。</div>
 </div>
 </body></html>`;
     res.writeHead(404, {

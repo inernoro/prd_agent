@@ -1,6 +1,6 @@
 # CDS Agent 工作台完全可用路线 · 计划
 
-> **版本**：v2.0 | **日期**：2026-05-14 | **状态**：开发中
+> **版本**：v2.3 | **日期**：2026-05-18 | **状态**：MVP 已跑通，官方 SDK adapter 迁移和商业级门禁已重新标注；执行进度以 `executionPanel` 为事实源
 
 ## 1. 目标
 
@@ -10,11 +10,20 @@
 2. 新建 Agent 会话。
 3. 启动 CDS 容器或复用 CDS shared-service worker。
 4. 发送 prompt，让 Claude SDK 或后续可选执行器开始干活。
-5. 在 MAP 页面看到流式输出、工具调用、容器日志、状态变化。
+5. 在 MAP 页面看到持续更新的事件、工具调用、容器日志、状态变化。
 6. 停止、恢复、重试、归档会话。
 7. 对每个阶段都有冒烟测试和视觉测试，测试通过后才勾选完成。
 
 当前已完成的连接授权页只能证明“MAP 能和 CDS 建立连接、探活、展示状态”。本计划要补齐的是“MAP 能通过 CDS 操作 Agent 干活”的产品闭环。
+
+2026-05-17 校准：
+
+- `claude-sdk` 是历史 runtime 名；新的代码审查目标路径是官方 `claude-agent-sdk`。
+- MAP/CDS 必须继续保留控制面职责：登录、连接、workspace、profile、审批、事件、日志、产物、诊断和视觉调试。
+- 自研 agent loop 必须压缩为官方 SDK adapter；除非官方 SDK 没有实现，否则不要继续扩展 legacy sidecar loop。
+- 当前可验证证据是：runtime pool 能发现 `loopOwner=claude-agent-sdk`，profile preflight 能阻断不兼容默认 profile，官方模板和兼容矩阵由后端提供。
+- 当前不可宣称完成的是：远程 preview 还没有配置真实 Anthropic/Claude-compatible 默认 profile，因此 S1/S2/S3 provider run 仍被门禁跳过。
+- A10 证明旧 MVP 链路能完成一次真实自巡检 PR；它不等于官方 SDK adapter 商业级能力全部完成。
 
 ## 2. 完成标准
 
@@ -48,13 +57,63 @@
 | 新建任务 | 页面输入任务 | 基础设施服务页新建测试会话 |
 | 后台执行 | 离开页面继续执行 | 会话状态由后端持久化，页面可恢复 |
 | 流式过程 | 页面能看进度和结果 | SSE 推送消息、工具调用、日志 |
-| 工具调用 | 读文件、编辑、执行命令、搜索 | Claude SDK tools / MCP / CDS 容器命令 |
+| 工具调用 | 读文件、编辑、执行命令、搜索 | MAP/CDS 自研 repo tools / MCP / CDS 容器命令 |
 | 权限控制 | 工具批准、受限网络、凭据隔离 | MAP 页面批准工具，CDS 隔离凭据 |
 | 产物 | 分支、diff、PR、日志 | 先做日志和文本输出，再扩展 diff/PR |
 | 并行任务 | 多任务并行 | 多会话列表和状态隔离 |
 | 恢复/继续 | session resume | MAP 会话恢复、CDS worker reconnect |
 
 第一版不追求一次补齐 PR 创建、GitHub Review、完整 IDE 体验；第一版必须先把“远程会话能启动、能对话、能看到过程、能停止”跑通。
+
+## 3.1 官方 SDK 收敛原则
+
+目标不是把 MAP/CDS 做成另一个 Agent SDK，而是把它做成控制面和可观察性层。
+
+| 能力 | 默认归属 | MAP/CDS 允许保留的部分 |
+| --- | --- | --- |
+| Agent turn loop | 官方 `claude-agent-sdk` | adapter lifecycle、runId 映射、错误归档 |
+| 上下文和代码工具 | 官方 SDK | workspace 准备、仓库授权、路径边界 |
+| 权限回调 | 官方 SDK callback | MAP approval UI、审计、允许/拒绝结果持久化 |
+| Stop/cancel | 官方 SDK interrupt/cancel | MAP stop API、状态机、超时和日志证据 |
+| 事件流 | 官方 SDK stream | MAP/CDS 事件标准化、afterSeq 续读、run bundle |
+| Profile/provider | Anthropic/Claude-compatible profile | 模板、key 加密、兼容性 preflight |
+| 其他非代码智能体 | 各自业务链路 | 不因 CDS Agent sidecar pool 不健康而失败 |
+
+兼容性结论：
+
+- `legacy-sidecar` 只保留为显式 fallback，不能继续扩大功能面。
+- OpenAI-compatible、OpenRouter、DeepSeek profile 可以继续服务其他文本/结构化智能体，但不能直接作为 `claude-agent-sdk` 默认 profile；当前结构化判定必须返回 `compatibilityReasonCode=openai-compatible-non-claude-model`，并提示不要把代码审查任务路由到 `claude-agent-sdk`。
+- Codex-like adapter 目前是 `planned-not-routable`；没有官方可路由实现和明确权限/事件/cancel 映射前，不接入代码审查默认路径。
+- PRD/Defect/Literary/Visual 等非代码智能体不能被强制迁入 Claude Agent SDK sidecar，否则会引入 workspace、审批、长任务和 provider 兼容性副作用。
+
+## 3.2 下一周期最小开发计划
+
+下一周期只关闭“上手就能真实审查代码”的硬门禁，不扩展新功能。
+
+进度展示必须以 `/api/infra-agent-sessions/runtime-status` 返回的 `diagnostics.executionPanel` 为事实源，而不是聊天记录或人工记忆。页面顶部 `当前执行面板` 必须展示：
+
+- `stepIndex/stepTotal`：当前执行到第几项。
+- `passedSteps/pendingSteps`：已完成和未完成数量。
+- `currentStep`：当前应该处理的 N1-N6 项。
+- `timeline`：本周期完整任务列表。
+- `deploymentAdvice`：是否需要部署；`blocked_r1`、默认 profile 不兼容、provider smoke 未开启时不得建议重复部署。
+- `nextCommand`：当前最窄下一条命令。
+
+| 顺序 | 任务 | 完成证据 |
+| --- | --- | --- |
+| N1 | 用 Anthropic 官方模板创建默认 runtime profile，并填入真实 API key | readiness R1 pass，`compatibleWithDesiredRuntimeAdapter=true`；若失败，`compatibilityReasonCode` 必须明确说明原因 |
+| N2 | 运行 S1 只读审查当前仓库 | 远程 session 有 assistant 结果、repo/ref/workspace 证据，无文件变更 |
+| N3 | 运行 S2 工具审批拒绝链路 | 页面出现 MAP approval，拒绝后有 `tool_result` 证据 |
+| N4 | 运行 S3 Stop/cancel 链路 | session 进入 stopped/stopping，并有 cancel/interrupt 事件 |
+| N5 | 捕获远程页面视觉证据 | `/cds-agent?sessionId=...` 显示 sessionId、traceId、adapter、loop owner、workspace、last event/error |
+| N6 | 复跑非代码智能体冒烟 | PRD/Defect/Report 不受 CDS Agent runtime pool 影响 |
+
+本周期不做：
+
+- 不把 OpenAI-compatible profile 硬适配给 Claude Agent SDK。
+- 不把 PRD/Defect/Literary/Visual 强迁到 code sidecar。
+- 不在没有 S1/S2/S3 证据时宣称商业级完成。
+- 不为了 `blocked_r1`、`openai-compatible-non-claude-model` 或 S1/S2/S3 pending 重复 self update / redeploy。
 
 ## 4. 总体架构
 
@@ -81,19 +140,19 @@ prd-api
 CDS
   shared-service project
   session container / worker
-  claude-sdk sidecar or built-in executor
+  Claude sidecar runtime or built-in executor
        |
        v
 Agent runtime
-  Claude SDK / Codex-like executor / later pluggable runtimes
+  Claude sidecar / Codex-like executor / later pluggable runtimes
 ```
 
 核心约束：
 
 - MAP 是用户操作入口，所有交互都在 MAP 页面完成。
 - CDS 是执行和隔离环境，负责容器生命周期、日志、实例发现。
-- Agent runtime 可替换，默认先用 Claude SDK sidecar。
-- 所有长任务必须 SSE 可见，禁止页面静止等待。
+- Agent runtime 可替换，默认先用 Claude sidecar runtime。历史配置值仍叫 `claude-sdk`。
+- 目标上所有长任务必须 SSE 可见，禁止页面静止等待；当前 MVP 仍有同步发送和前端轮询限制，见 2026-05-17 校准项。
 - 会话状态必须可恢复，刷新页面后不能丢失正在运行的任务。
 
 ## 5. 数据模型计划
@@ -253,9 +312,9 @@ Agent runtime
 - 启动失败时页面显示可读错误，不只显示 500。
 - 2026-05-14 真实页面视觉：`https://main-prd-agent.miduo.org/` 登录后进入左侧设置，再进基础设施服务，`CDS Agent 测试会话` 显示 `运行中`、`已停止`，日志可见 `worker=fake-worker-shared-sidecar-pool-mp4anabh` 与 `container=cds-agent-fake-shared-sidecar-pool-mp4anabh`。
 
-### P3 Agent 流式对话
+### P3 Agent 事件化对话
 
-目标：用户能在 MAP 页面输入 prompt，远程 Agent 开始执行，页面看到流式响应。
+目标：用户能在 MAP 页面输入 prompt，远程 Agent 开始执行，页面看到持续更新的事件。生产级目标是真 SSE；当前 MVP 已标准化事件，但页面仍主要靠轮询刷新。
 
 任务：
 
@@ -263,7 +322,7 @@ Agent runtime
 |----|----------|--------------|--------------|------|
 | P3.1 MAP 发送用户消息 | [x] | [x] | [x] | 保存 user message |
 | P3.2 MAP 代理调用 CDS send message | [x] | [x] | [x] | MAP 已代理调用 CDS send message，并统一映射错误 |
-| P3.3 CDS 转发到 Claude SDK sidecar | [x] | [x] | [x] | 当前先用 fake runtime 兜底，UI 显示 runtime；真实 sidecar 替换仍待增强 |
+| P3.3 CDS 转发到 Claude sidecar runtime | [x] | [x] | [x] | 当前有 fake runtime 兜底；真实 sidecar 链路已跑通过，但仍需后台 run / cancel / 分页增强 |
 | P3.4 SSE 事件标准化 | [x] | [x] | [x] | 已标准化 `text_delta`、`tool_call`、`tool_result`、`done`、`error` |
 | P3.5 MAP 持久化 assistant message | [x] | [x] | [x] | `done.finalText` 会持久化 assistant message |
 | P3.6 前端流式渲染 | [x] | [x] | [x] | 前端事件时间线展示 text_delta/done，刷新后可恢复 |
@@ -445,7 +504,7 @@ Agent runtime
 - Chrome 打开 `https://main-prd-agent.miduo.org/`。
 - 从左侧“设置”进入“基础设施服务”。
 - 按页面按钮完成完整流程。
-- 截图或可访问性树能证明页面展示了流式输出、事件、停止状态。
+- 截图或可访问性树能证明页面展示了事件刷新、日志和停止状态；如果是轮询而不是真 SSE，必须在验收记录里写明。
 - 2026-05-14 完整路径视觉记录：`https://main-prd-agent.miduo.org/` 登录后按 `左侧设置 -> 顶部基础设施服务 -> 连接 CDS -> CDS 授权页 -> 授权并返回 MAP -> CDS Agent 测试台` 操作；active 连接为 `miduo.org · https://cds.miduo.org · shared-sidecar-pool-mp4anabh`。
 - 2026-05-14 完整会话视觉记录：session `5bbcd42dde6946b29ada432a4572c1e7` / cdsSession `cds-agent-5fb5e1de0d4f46e8ac974adad6074384`，可见 `running`、`tool_call waiting`、`允许/拒绝`、`tool_result allowed`、`text_delta`、`done`、`beforeStop/afterStop`、`stopped`、刷新恢复。
 - 2026-05-14 最新提交视觉补充：`fe155f10` 登录页右下角环境条可见，证明 admin 静态资源已更新；本轮浏览器会话普通账号重新登录失败，未再次完成工作台点击，因此最新提交的“复制按钮/危险提示”以本地 lint/type/build 与 CDS 部署作为验证，完整工作台视觉证据沿用同日主分支预览上一轮。
@@ -575,7 +634,7 @@ Agent runtime
 - 智能体大模型配置必须允许任意 OpenAI-compatible `baseUrl`、`model` 和 API key，不允许写死 demo model。
 - 最终用户必须看到一个独立、简易、可长期使用的 CDS Agent 页面，而不是只在设置页里操作测试台。
 - sidecar / sandbox runtime 属于 CDS 自托管基础设施能力，不属于每个业务项目的 app profile；当前 `api/admin/claude-sidecar` 三容器形态只允许作为过渡验证链路，最终验收时 `prd-agent` 业务项目不应携带 `claude-sidecar-prd-agent`。
-- 最终验收必须让远程 Claude Code / Codex SDK sandbox 巡检 `prd_agent` 自己，并提交一个巡检 PR。
+- 最终验收必须让远程 CDS Agent sandbox 巡检 `prd_agent` 自己，并提交一个巡检 PR；不得把 `claude-sdk` 历史名写成官方 SDK 完整接入。
 
 ## 14. 市面能力基线
 
@@ -642,7 +701,7 @@ Agent runtime
 
 ### P10 真实远程 runtime
 
-目标：CDS 不再只靠 fake runtime，而是能启动真实 Claude SDK/Codex-like runtime。
+目标：CDS 不再只靠 fake runtime，而是能启动真实 Claude sidecar / Codex-like runtime。
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
@@ -747,7 +806,7 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P12.1 CDS browser runtime | [x] | [x] | [x] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路待有效 CDS Bridge 授权后验证 |
+| P12.1 CDS browser runtime | [x] | [x] | [x] | 首版复用 CDS Bridge，而不是在 sidecar 内另装浏览器；真实 Bridge 正向链路已用 MAP 长期 CDS 系统连接验证 |
 | P12.2 MAP browser stream | [x] | [x] | [x] | 新增 `cds_bridge_snapshot` 与 CDS Agent 页 Bridge 状态渲染，能展示 URL、title、DOM、console/network 错误 |
 | P12.3 操作工具 | [x] | [x] | [x] | 新增 `cds_bridge_action`，支持 click/type/scroll/spa-navigate/navigate/evaluate，统一走危险工具审批 |
 | P12.4 人工接管 | [x] | [x] | [x] | 新增服务端持久 `manualTakeoverEnabled`，开启后暂停 Agent 自动发送，发送框改为人工输入记录，工具审批仍可继续；远端 API 冒烟验证开启、人工输入、发送拦截、恢复，真实入口视觉验证人工接管卡片与 manual 事件 |
@@ -759,12 +818,14 @@ P10 当前结论：
 - MAP 页面能看到 URL、截图或 DOM 事件。
 - 2026-05-14 本地冒烟：`dotnet test tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 覆盖 Bridge 工具无 session 连接时返回 `cds_connection_missing`，非法 action 返回 `bridge_action_not_allowed`。
 - 2026-05-14 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter AgentToolsTests --no-restore` 通过 6 个测试，覆盖 Bridge 导航到 `127.0.0.1` 返回 `bridge_url_blocked`，相对路径继续通过 URL 校验；`dotnet build --no-restore` 无新增 CS error。
+- 2026-05-14 远端冒烟：`prd-agent-main` 业务部署只包含 `api-prd-agent` 与 `admin-prd-agent`；CDS 自更新到 `7f731622` 后，MAP 使用长期 active CDS connection `16f2d832b78848d7ad8ad3e90d42cb09` 创建会话 `ffe09230198045faac846d0b87c5366b`，调用 `capture-browser-snapshot` 成功写入 `tool_call`、`tool_result` 与 `browser` 事件，证明 Bridge API 已接受系统连接 long token 的 `instance:read` 授权。
 
 视觉测试：
 
 - 对话页右侧或下方展示远程浏览器状态。
 - 浏览器画面不被日志或输入框遮挡。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/settings?tab=infra-services&v=472b388c` 经左侧设置、顶部基础设施服务进入，点击 `基础设施操作台 -> 配置`，断言可见 `cds_bridge_snapshot` / `cds_bridge_action` 两个远程页面工具，页脚 commit 为 `472b388c`。该视觉只证明工具入口和渲染上线，真实 Bridge 正向操作仍需有效 CDS Bridge 授权后验收。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 点击 `登录 / 注册 -> 进入控制台 -> 首页 CDS Agent 卡片`，未直达 `/cds-agent`；选中 `P12 Bridge long token smoke` 会话后，审计摘要显示事件类型 `browser / log / status / tool_call / tool_result`，指标显示当前事件 5、工具事件 2、可见产物 1；截图保存到 `.Codex/tmp/cds-agent-bridge-snapshot-session-2026-05-14.png`。本项证明远程页面快照/DOM 回传已通，点击/输入正向验收仍归入 A6。
 
 ### P13 文件、diff 与产物
 
@@ -815,7 +876,7 @@ P10 当前结论：
 |----|----------|--------------|--------------|------|
 | P14.1 定义节点 schema | [x] | [x] | [x] | `cds-agent` 胶囊已在 CapsuleTypeRegistry 暴露 prompt、connectionId、runtimeProfileId、runtime、model、toolPolicy、hookProfileId、stopAfterRun；API 冒烟和工作流真实入口舱目录视觉均通过 |
 | P14.2 输出 schema | [x] | [x] | [x] | `cds-agent` 输出 `agentResult:text`、`eventTimeline:json`、`runtimeLog:text`，目标单测和 capsule-types API 冒烟通过 |
-| P14.3 暂停审批 | [ ] | [ ] | [ ] | 工具审批可暂停工作流并恢复 |
+| P14.3 暂停审批 | [x] | [x] | [x] | 工作流 CDS Agent 节点可生成危险工具审批并进入 paused；继续执行会写入审批结果并恢复为 completed，真实入口视觉已通过 |
 | P14.4 失败重试 | [x] | [x] | [x] | CDS Agent 节点复用现有 WorkflowRunWorker `RetryPolicy`，失败时按节点最大次数重试或跳过下游；目标单测覆盖 schema 后继续通过 |
 | P14.5 运行记录关联 | [x] | [x] | [x] | WorkflowRunWorker 已对 `cds-agent` 开启长任务事件透传，`cds-agent-phase` 带 sessionId/status；工作流编辑器真实入口可见 CDS Agent 舱，API 返回事件输出槽 |
 
@@ -823,10 +884,17 @@ P10 当前结论：
 
 - 一个工作流节点调用 CDS Agent，等待完成后把结果传给下一节点。
 - 危险工具审批能暂停并恢复工作流。
+- 2026-05-14 API 冒烟：工作流 `b42cf55d864d4fa79cc1f3203317ef38` 执行 `3535018a3dad41b0ac3256cb4a116b0c` 进入 `paused`，节点产物包含 `cds-agent-out`、`cds-agent-events`、`cds-agent-log`、`cds-agent-approval`；调用 `POST /api/workflow-agent/executions/{id}/continue` 后执行变为 `completed`。
+- 2026-05-14 本地校验：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter WorkflowAgentTests --no-restore` 通过 56 个测试；`dotnet build --no-restore` 无 `error CS`。
+- 2026-05-14 前端校验：`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin lint` 通过，只有仓库既有 warning。
+- 2026-05-14 部署校验：`prd-agent-main` 部署到 commit `1bf96047`，`api-prd-agent` 与 `admin-prd-agent` 均为 `running`。
 
 视觉测试：
 
 - 工作流运行页能看到 CDS Agent 节点状态、日志和跳转入口。
+- 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 进入左侧 `工作流`，在 `A1 视觉工作流审批 220006` 卡片点击 `执行`，进入执行历史后可见 `已暂停`、`CDS Agent 危险审批暂停: paused` 和 `查看详情`。
+- 2026-05-14 真实入口视觉：进入详情页后可见 `继续执行`、`已暂停`、`执行暂停` 日志；截图保存到 `.Codex/tmp/cds-agent-a1-workflow-approval-pause-ui-2026-05-14.png`。
+- 2026-05-14 真实入口视觉：点击 `继续执行` 后后端执行变为 `completed`；部署到 `1bf96047` 后重新从 `首页 -> 工作流 -> 执行 -> 查看详情` 进入，页面显示 `已完成`、`执行日志 (4 条)`、`执行完成` 和 4 个最终产物；截图保存到 `.Codex/tmp/cds-agent-a1-workflow-approval-completed-ui-2026-05-14.png`。
 
 ### P15 智能体执行器接入
 
@@ -855,7 +923,7 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P16.1 统一 traceId | [x] | [x] | [ ] | MAP session 与事件已统一 `traceId` 并在 CDS Agent 页、基础设施操作台展示；CDS session、workflow run、agent run 贯通仍待 P14/P15 接入后补齐 |
+| P16.1 统一 traceId | [x] | [x] | [x] | MAP session、CDS session、workflow run、toolbox run 与 tool approval 已统一 `traceId`；工作流执行历史和详情页已真实入口视觉验收 |
 | P16.2 事件 schema 稳定化 | [x] | [x] | [x] | 新增 `GET /api/infra-agent-sessions/event-schema`，后端集中声明 status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser；主分支真实入口视觉已验收 |
 | P16.3 指标面板 | [x] | [x] | [x] | CDS Agent 工作台新增会话总数、失败会话、当前事件、工具事件和可见产物指标条；主分支真实入口视觉已验收 |
 | P16.4 审计报表 | [x] | [x] | [x] | CDS Agent 工作台新增审计摘要，展示会话用户、连接、模型配置、工具策略、审批相关事件和凭据暴露状态；主分支真实入口视觉已验收 |
@@ -871,6 +939,8 @@ P10 当前结论：
 - 2026-05-14 本地冒烟：`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx` 与 `git diff --check` 通过，确认审计摘要可编译且无新增 lint 问题。
 - 2026-05-14 本地冒烟：`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -60` 无本次新增错误；`pnpm --prefix prd-admin tsc --noEmit`、`pnpm --prefix prd-admin exec eslint src/pages/cds-agent/CdsAgentPage.tsx src/services/real/infraAgentSessions.ts src/services/api.ts` 与 `git diff --check` 通过，确认事件 schema 接口和前端类型可编译。
 - 2026-05-14 远端 API 冒烟：登录 `https://main-prd-agent.miduo.org/` 后请求 `GET /api/infra-agent-sessions/event-schema`，返回 11 个事件类型并覆盖 `status/text_delta/tool_call/tool_result/log/error/done/hook/file/diff/browser`。
+- 2026-05-14 A3 本地冒烟：`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter "ToolboxOrchestratorTests|InfraAgentSessionsControllerTests" --no-restore` 通过 14 个测试；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter WorkflowAgentTests --no-restore` 通过 56 个测试；`dotnet test prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj --filter "WorkflowAgentTests|ToolboxOrchestratorTests" --no-restore` 通过 59 个测试；`cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无本次新增错误；`pnpm --prefix prd-admin tsc --noEmit` 通过；`pnpm --prefix prd-admin lint` 为 0 error、321 个既有 warning。
+- 2026-05-14 A3 远端冒烟：`prd-agent-main` 部署到 `a9103a50` 且 `api-prd-agent/admin-prd-agent` 均 running；真实 API 创建 `A3 traceId 视觉验收工作流 3`，执行 `7a4a8101f0cd431984acb78b2676b551` completed，返回 `traceId=workflow-execution-7a4a8101f0cd431984acb78b2676b551` 和 1 个最终产物。首次滚动部署冒烟发现旧 worker 反序列化 `TraceId` 失败，已在 `a9103a50` 增加 WorkflowExecution BSON ignore-extra 后复测通过。
 
 视觉测试：
 
@@ -879,6 +949,7 @@ P10 当前结论：
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `c5bb472c`。审计摘要可见“事件类型”，当前会话显示 `log / status / tool_call / tool_result`，验证页面消费稳定事件类型。
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `0104809e`。首屏可见“会话总数 / 失败会话 / 当前事件 / 工具事件 / 可见产物”五个指标卡，当前会话显示 21 条事件、16 条工具事件和 9 个可见产物。
 - 2026-05-14 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“首页” -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，页脚提交号为 `dd9aa48b`。硬刷新后首屏可见“审计摘要”，包含会话用户、CDS 连接、模型配置、工具策略、审批相关事件和“凭据暴露：不向前端显示 long token / API key”。
+- 2026-05-14 A3 主分支真实入口视觉：`https://main-prd-agent.miduo.org/` -> 左侧“工作流” -> `A3 traceId 视觉验收工作流 3` -> 点击卡片“执行” -> 执行历史 -> 查看详情。页面在执行历史与详情页均显示 `trace workflow-execution-7a4a8101f0cd431984acb78b2676b551`，执行状态为已完成并展示最终产物；截图：`.Codex/tmp/cds-agent-a3-traceid-workflow-ui-execute-2026-05-14.png`、`.Codex/tmp/cds-agent-a3-traceid-workflow-detail-2026-05-14.png`。
 
 ### P17 真实端到端验收
 
@@ -886,16 +957,16 @@ P10 当前结论：
 
 | 项 | 开发完成 | 冒烟测试完成 | 视觉测试完成 | 说明 |
 |----|----------|--------------|--------------|------|
-| P17.1 管理员从零配置 CDS | [ ] | [ ] | [ ] | 填 CDS 地址、授权、配置 runtime、探活通过 |
-| P17.2 用户创建真实任务 | [ ] | [ ] | [ ] | 从对话页提交一个代码/网页操作任务 |
-| P17.3 Agent 执行真实工具 | [ ] | [ ] | [ ] | 读文件、改文件、跑命令或操作网页 |
-| P17.4 工具审批与恢复 | [ ] | [ ] | [ ] | 危险工具审批、刷新后恢复 |
-| P17.5 产物验收 | [ ] | [ ] | [ ] | diff/日志/测试结果/浏览器结果可见 |
-| P17.6 工作流验收 | [ ] | [ ] | [ ] | 工作流节点调用并使用结果 |
-| P17.7 智能体验收 | [ ] | [ ] | [ ] | 智能体调用 CDS Agent 并回填结果 |
-| P17.8 停止释放 | [ ] | [ ] | [ ] | 停止后 runtime 清理，资源不泄漏 |
-| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已对齐到 `b3c391be`，业务部署只包含 api/admin；CDS 系统级 sidecar pool 独立 running，真实入口调用仍能进入远程 runtime |
-| P17.10 巡检 PR 验收 | [ ] | [ ] | [ ] | `repo_create_pull_request` 工具已上线并冒烟；仍需有效模型配置后由远程 Agent 巡检 `prd_agent`，生成分支并提交一个巡检 PR |
+| P17.1 管理员从零配置 CDS | [x] | [x] | [x] | 长期 CDS 授权、系统级 runtime profile、OpenAI-compatible baseUrl/model/key 与探活均已通过真实入口复测 |
+| P17.2 用户创建真实任务 | [x] | [x] | [x] | AI 百宝箱与 CDS Agent 页面均能创建远程任务；A10 已提交真实巡检任务 |
+| P17.3 Agent 执行真实工具 | [x] | [x] | [x] | A10 远程 Agent 使用 `repo_*` 工具读取、写入、运行测试并创建 PR |
+| P17.4 工具审批与恢复 | [x] | [x] | [x] | 真实入口生成危险工具审批卡，刷新后仍可恢复，允许后写入 `tool_result` 审计事件 |
+| P17.5 产物验收 | [x] | [x] | [x] | A10 页面和事件中可见 PR 链接、测试输出、工具事件、日志与停止状态 |
+| P17.6 工作流验收 | [x] | [x] | [x] | A8 工作流节点已调用 CDS Agent 并把输出映射给后续节点 |
+| P17.7 智能体验收 | [x] | [x] | [x] | A9 智能体页面已调用 CDS Agent 并回填结果和产物 |
+| P17.8 停止释放 | [x] | [x] | [x] | A10 会话完成后已调用 stop，MAP 状态回写为 stopped |
+| P17.9 部署验收 | [x] | [x] | [x] | `prd-agent-main` 已部署到主分支，业务部署只包含 api/admin；CDS 系统级 sidecar pool 独立 running，真实入口调用仍能进入远程 runtime |
+| P17.10 巡检 PR 验收 | [x] | [x] | [x] | A10 远程 sandbox 已巡检 `prd_agent`，提交分支并创建 Draft PR #617 |
 
 冒烟测试：
 
@@ -961,17 +1032,66 @@ P10 当前结论：
 
 | 顺序 | 阶段 | 子项 | 开发 | 冒烟 | 视觉 | 完成条件 |
 |------|------|------|------|------|------|----------|
-| A1 | P14 | 工作流危险工具暂停审批 | [ ] | [ ] | [ ] | CDS Agent 工作流节点遇到危险工具时进入 waiting approval，审批后恢复运行 |
+| A1 | P14 | 工作流危险工具暂停审批 | [x] | [x] | [x] | 工作流 CDS Agent 节点遇到危险工具时进入 paused，继续执行后写入审批并恢复 completed；真实入口视觉已验证暂停和完成状态 |
 | A2 | P15 | 智能体执行器链路 | [x] | [x] | [x] | AI 百宝箱 run 已能委托 CDS Agent，实时显示 session、事件、产物和错误；正向生成仍等待有效模型 provider key |
-| A3 | P16 | Agent run 贯通 traceId | [ ] | [ ] | [ ] | 一个 traceId 能串起 toolbox run、workflow run、MAP session、CDS session 和 tool approval |
+| A3 | P16 | Agent run 贯通 traceId | [x] | [x] | [x] | workflow run、toolbox run、MAP session、CDS session 和 tool approval 已支持同一 traceId；主分支真实入口完成执行历史和详情页视觉验收 |
 | A4 | P17 | 系统级长期授权复测 | [x] | [x] | [x] | 新建 active CDS 连接后，二次部署重建仍可探测成功；真实入口视觉可见长期连接和模型配置复用 |
-| A5 | P17 | 有效模型配置正向生成 | [ ] | [ ] | [ ] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
-| A6 | P17 | 远程浏览器操作验收 | [ ] | [ ] | [ ] | Agent 能打开网页、读取 DOM、执行点击或输入，并把快照回传 MAP |
-| A7 | P17 | 工具审批恢复验收 | [ ] | [ ] | [ ] | 危险工具审批卡片刷新后仍在，允许/拒绝结果可审计 |
-| A8 | P17 | 工作流用户验收 | [ ] | [ ] | [ ] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
-| A9 | P17 | 智能体用户验收 | [ ] | [ ] | [ ] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
-| A10 | P17 | 自巡检 PR 验收 | [ ] | [ ] | [ ] | 远程 sandbox 巡检 `prd_agent`，提交分支并创建一个真实 PR |
+| A5 | P17 | 有效模型配置正向生成 | [x] | [x] | [x] | 使用真实 provider key 测试通过，远程 runtime 能产出文本和工具调用 |
+| A6 | P17 | 远程浏览器操作验收 | [x] | [x] | [x] | Agent 能打开网页、读取 DOM、执行输入和 SPA 跳转，并把快照、工具事件和 browser 产物回传 MAP |
+| A7 | P17 | 工具审批恢复验收 | [x] | [x] | [x] | 主分支真实入口生成 `repo_run_command` 危险审批卡，刷新后仍在，允许后写入 `tool_result` 且结果可审计 |
+| A8 | P17 | 工作流用户验收 | [x] | [x] | [x] | 工作流节点调用 CDS Agent 并把输出映射给后续节点 |
+| A9 | P17 | 智能体用户验收 | [x] | [x] | [x] | 用户在智能体页面发任务，看到远程 CDS Agent 执行、产物和最终结果 |
+| A10 | P17 | 自巡检 PR 验收 | [x] | [x] | [x] | 远程 sandbox 巡检 `prd_agent`，提交分支 `cx/cds-agent-a10-self-audit` 并创建 Draft PR #617 |
 | A11 | P10/P17 | CDS 系统级 sidecar 迁移 | [x] | [x] | [x] | CDS 提供 `shared-sidecar-pool-mp4anabh` 系统 runtime pool；`prd-agent-main` 业务部署不再包含 sidecar app profile，AI 百宝箱真实入口仍能创建远程 Agent 会话并进入 `sidecar_runtime_started` |
+
+2026-05-14 A7 验收记录：
+
+- 代码提交：`871ab453 fix(cds-agent): 修正长期授权连接状态`，`prd-agent-main` 已部署到 `api/admin running`。
+- 长期授权冒烟：`/api/infra-connections` 使用 root JWT 查询，多个 CDS 连接显示 `status=active`、`lastProbeOk=true`、`longTokenExpiresAt=2099-12-31T23:59:59Z`，证明状态不再受 10 分钟最近探活窗口误杀。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` -> 生成审批卡 -> 刷新页面 -> 点击 `允许`。
+- 断言：页面显示 `tool_call #3 repo_run_command dangerous waiting`，刷新后 `允许/拒绝` 仍存在；点击 `允许` 后新增 `tool_result #4`，包含 `approvalId=map-approval-3`、`decision=allow`、`source=map-tool-approval`。
+- 截图证据：`.Codex/tmp/cds-agent-a7-approval-recovery-ui-2026-05-14.png`。
+
+2026-05-14 A5 验收记录：
+
+- 系统级模型配置已切换为 OpenAI-compatible runtime，`baseUrl=https://openrouter.ai/api/v1`，`model=deepseek/deepseek-v4-pro`；API key 仅保存在系统配置密文中，计划文档不记录明文。
+- 模型配置冒烟：`/api/infra-agent-runtime-profiles/{id}/test` 返回 200 OK，证明 provider key、baseUrl、model 三者可用。
+- 文本生成冒烟：会话 `73fd245f7ebe462cb8461524a522390f`，trace `a5-openrouter-positive-generation`，事件出现 `text_delta` 与 `done`。
+- 远程工具冒烟：修复 sidecar 回调地址和 release 容器 Git 元数据后，主分支部署到 `ff17f816`，CDS 显示 `prd-agent-main` 的 `api/admin` 均为 running，短提交为 `ff17f81`。
+- 最终工具会话：`61d931ff9a4448fba44f3aaa1e355e49`，trace `a5-openrouter-git-tool-final`；事件 seq 10 为 `tool_call repo_git_status`，seq 11 为 `tool_result auto_allowed`，seq 12 返回 `commit=ff17f81` 且工作区干净，seq 28 为 `done`。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页智能体区 -> `CDS Agent` 卡片 -> `/cds-agent`，选中 `A5 OpenRouter Git 工具最终验收` 会话；页面可见 OpenRouter 配置、`repo_git_status`、trace、commit 和完成输出。
+- 截图证据：`.Codex/tmp/cds-agent-a5-openrouter-git-tool-final-2026-05-14.png`。
+
+2026-05-14 A8 验收记录：
+
+- 部署确认：`prd-agent-main` 已更新到 `5822483`，`api-prd-agent` 与 `admin-prd-agent` 均为 running。
+- API 冒烟：创建工作流 `559730365f0241be93a2a0699707105b`，名称 `A8 CDS Agent 输出映射验收工作流`，包含 `CDS Agent` 与 `数据合并` 两个节点，边 `cds-agent-out -> merge-in-1`。
+- 执行冒烟：执行 `95360bb870b54d0b8ad51f1b9f49e064` 完成，trace `workflow-execution-95360bb870b54d0b8ad51f1b9f49e064`；`cds-a8-agent` 输出 3 个产物，`a8-merge-result` 输出 1 个产物。
+- 下游映射断言：最终产物 `merge-out / 合并结果.txt` 内容为包含 `A8 工作流映射验收通过` 的数组，证明 CDS Agent 输出进入下游节点并生成最终产物。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 左侧 `工作流` -> 点击 `A8 CDS Agent 输出映射验收工作流`；详情页可见两个节点均 `已完成`，上游产物 `CDS Agent 输出/事件/日志` 与下游最终产物 `合并结果.txt`。
+- 截图证据：`.Codex/tmp/cds-agent-a8-workflow-output-mapping-ui-2026-05-14.png`。
+
+2026-05-15 A9 验收记录：
+
+- 代码修复：后台 worker 没有 HTTP 请求上下文时，`ClaudeSidecarRouter` 会根据 CDS 注入的分支和仓库信息推导公网回调地址，例如主分支推导为 `https://main-prd-agent.miduo.org`，避免 paired sidecar 工具回调退回容器内 `api` 主机名。
+- 本地冒烟：`dotnet test tests/PrdAgent.Tests/PrdAgent.Tests.csproj --filter DynamicSidecarRegistryTests --no-restore` 通过 5 个测试；`dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30` 无 `error CS`，仅既有 warning。
+- 部署确认：提交 `54907e31 fix(cds-agent): 修复后台智能体回调地址` 后，`prd-agent-main` 已部署到 `54907e3`，`api-prd-agent` 与 `admin-prd-agent` 均为 running。
+- 智能体冒烟：AI 百宝箱 run `6a06091f8e646c11e825c159`，trace `toolbox-run-6a06091f8e646c11e825c159`，指定 `preferredAgents=["cds-agent"]`；run 状态为 `Completed`，远程会话 `86ac628fb705426e83ed0d9c392b4ab0`，模型 `deepseek/deepseek-v4-pro`。
+- 结果断言：run 输出包含 `智能体页面远程执行验收通过`，并生成 2 个产物：`CDS Agent 事件时间线` 与 `CDS Agent 运行日志`。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> `百宝箱` 发起智能体任务；随后从首页 `CDS Agent` 卡片查看该远程会话，页面可见 A9 输出、事件/日志产物和 footer commit `54907e3`。
+- 截图证据：`.Codex/tmp/cds-agent-a9-toolbox-run-ui-2026-05-15.png`。
+
+2026-05-15 A10 验收记录：
+
+- 部署与运行确认：A10 启动前主分支已部署到 `1df21b4f fix(cds-agent): 修复共享 sidecar 回调兜底`，`prd-agent-main` 的 `api-prd-agent/admin-prd-agent` 均 running；随后主分支合入 PR #613 并快进到 `296a58c3`，最终视觉验收以最新主分支为准。
+- 智能体入口：从 MAP AI 百宝箱发起 `CDS Agent` 远程任务，runId `6a0618190b1a85ccd3e2e429`，traceId `toolbox-run-6a0618190b1a85ccd3e2e429`。
+- 远程会话：MAP session `5767a03899ba47d08bfb5ff629de9e5e`，CDS session `cds-agent-9d333e31c3eb4feab2b0b4ff68e8c8bc`，runtime `claude-sdk`，model `deepseek/deepseek-v4-pro`，baseUrl 为系统级 OpenAI-compatible 配置。
+- 工具执行：远程 Agent 使用 shared sidecar `cds-pairing:67b58464dcd847dab943a97ebd717454:shared-sidecar-pool-mp4anabh-main`，通过 `repo_read_file`、`repo_search`、`repo_write_file`、`repo_run_command`、`repo_create_pull_request` 完成读取、巡检、写测试、跑测试和创建 PR。危险工具均经过 MAP 审批事件。
+- 修复产物：远程 sandbox 新增 `ToolboxRunWorker.ResolveRunKind` 回归测试，提交到分支 `cx/cds-agent-a10-self-audit`，创建 Draft PR `https://github.com/inernoro/prd_agent/pull/617`，commit `613969c`。
+- 测试结果：远程执行 `cd prd-api/tests/PrdAgent.Tests && dotnet test --filter "FullyQualifiedName~ToolboxRunWorkerTests" --verbosity minimal` 通过 11 个新增测试；随后执行 `dotnet test --filter "FullyQualifiedName~DynamicSidecarRegistryTests|FullyQualifiedName~ToolboxRunWorkerTests|FullyQualifiedName~ModelResolverTests|FullyQualifiedName~PoolHealthTrackerTests" --verbosity minimal`，结果为 `Failed: 0, Passed: 55, Skipped: 0, Total: 55`。
+- 停止释放：A10 完成后调用 `POST /api/infra-agent-sessions/5767a03899ba47d08bfb5ff629de9e5e/stop`，会话状态从 `running` 回写为 `stopped`，`stoppedAt=2026-05-14T19:10:48.7218365Z`。
+- 真实入口视觉路径：`https://main-prd-agent.miduo.org/` -> 首页 -> `百宝箱` -> `CDS Agent` -> 选中 A10 远程会话；页面已可见最终报告、PR 链接、工具事件、测试输出和停止状态。截图证据记录在 `.Codex/tmp/cds-agent-a10-pr-visual-2026-05-15.png`。
+- 后续工程债务：A10 暴露出长时间 `repo_run_command` 通过公网 `/api/agent-tools/invoke` callback 时可能被 Cloudflare 524 截断；短工具调用已可用，最终应让 CDS shared sidecar 对长命令优先使用内网 callback 基址，公网 callback 只作为外部可达兜底。
 
 ### 17.4 当前阻塞与不可混用凭据
 
@@ -980,10 +1100,10 @@ P10 当前结论：
 | 凭据 | 用途 | 当前判断 |
 |------|------|----------|
 | `AI_ACCESS_KEY` | MAP/CDS 管理 API 访问、部署和系统操作 | 已可用于 MAP/CDS 管理链路；不能用于模型生成 |
-| 模型 provider API key | OpenAI-compatible 或 Anthropic-compatible 模型调用 | 当前配置是 placeholder 或不可用 key，会导致 provider 401；未通过 P17 正向生成 |
-| GitHub token 或 App 凭据 | 推送分支、创建 PR | `repo_create_pull_request` 工具已具备缺失凭据诊断，最终 PR 仍需真实 GitHub 写权限 |
+| 模型 provider API key | OpenAI-compatible 或 Anthropic-compatible 模型调用 | 已配置可用的 OpenAI-compatible provider，用于 P17 正向生成与工具调用验收；明文不写入文档 |
+| GitHub token 或 App 凭据 | 推送分支、创建 PR | release 容器已可读取 GitHub token 环境；A10 已通过 `repo_create_pull_request` 创建 Draft PR #617 |
 
-因此后续实现可以继续补 UI、审批、trace 和工作流，但“远程 Agent 自己巡检并提交 PR”必须等真实模型 provider key 与 GitHub 写凭据都可用后才能打勾。
+因此“模型不可用”和“最终 PR 闭环未验收”均已解除；后续不是验收阻塞，而是继续打磨长命令内网 callback、更多 runtime adapter 与更细的权限策略。
 
 2026-05-14 部署修复记录：
 
@@ -1002,7 +1122,7 @@ P10 当前结论：
 - 2026-05-14 真实入口视觉：push 到 commit `7a187de1` 后，`prd-agent-main` 的 `api/admin/claude-sidecar` 均为 `running`；从 `https://main-prd-agent.miduo.org/ai-toolbox` 点击 `CDS Agent` 卡片进入工作台，页面显示“当前模型配置的 API key 无法读取，请重新保存 API key 后再启动远程会话”，测试模型、新建远程会话、启动和发送按钮均为禁用态，保存新模型配置区自动展开。
 - 2026-05-14 Git/PR 工具进展：新增 `repo_create_pull_request`，危险工具审批后可在远端 sandbox 内提交当前工作区改动、推送分支并调用 GitHub API 创建 PR；本地单测通过，主分支部署到 `6fc623d9`，线上 `/api/agent-tools/list` 已返回该工具。
 - 2026-05-14 真实入口视觉：从 `https://main-prd-agent.miduo.org/` 的 `登录 / 注册 -> 百宝箱 -> CDS Agent` 进入工作台，页面可见 `CDS Agent`、长期系统级模型配置说明、`保存新模型配置`、`新建远程会话`、`对话`、`事件时间线`、产物面板和 footer commit `6fc623d9`。
-- 当前 P17 正向验收仍阻塞在模型 provider key：页面显示当前默认配置 `https://api.anthropic.com / claude-opus-4-5` 的 API key 不可读或不可用，测试/新建/启动/发送被正确禁用。`AI_ACCESS_KEY=shenmemima` 是 MAP/CDS 管理访问凭据，不是 Anthropic 或 OpenAI-compatible 模型供应商密钥，不能用来完成远程 Agent 生成与巡检 PR。
+- 当前 P17 正向验收曾阻塞在模型 provider key：页面显示当时默认配置 `https://api.anthropic.com / claude-opus-4-5` 的 API key 不可读或不可用，测试/新建/启动/发送被正确禁用。`AI_ACCESS_KEY` 是 MAP/CDS 管理访问凭据，不是 Anthropic 或 OpenAI-compatible 模型供应商密钥，不能用来完成远程 Agent 生成与巡检 PR。
 - 2026-05-14 P12.4 人工接管：主分支部署到 `1aa8bb3a`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟使用现有会话验证 `manual-takeover -> manual-inputs -> messages 409 manual_takeover_enabled -> manual-takeover false`，manual 事件数为 3。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“人工接管中”“恢复 Agent”“发送框只记录人工输入”，审计摘要事件类型包含 `manual`，随后已恢复会话。
 - 2026-05-14 P10.5 资源限制：rebase 远端 `127bd613` 后提交并部署到 `8c7d251f`，`api/admin/claude-sidecar` 均为 `running`。远端 API 冒烟创建临时 runtime profile，返回并列表确认 `1.5/2048/120/egress-only/15`，随后删除成功。真实入口视觉从首页 `CDS Agent` 卡片进入，页面显示“资源边界: 2 CPU / 4096 MB / 900s / 受限网络 / 30m 清理”，审计摘要显示资源限制，footer commit 为 `8c7d251f`。
 - 2026-05-14 系统级长期授权复测：`c8b78bf8` 部署后新建 CDS connection `b32e0594e26144a5bf37037d3bef94b3` 为 `active`，`longTokenExpiresAt=2099-12-31T23:59:59Z`；再次部署重建后同一连接 `probe` 仍为 `active` 且 `lastProbeOk=true`，证明 DataProtection key ring 已由 MongoDB 持久化，授权不再因容器重建变为“已撤销”。
@@ -1010,6 +1130,7 @@ P10 当前结论：
 - 2026-05-14 系统级 sidecar pool 复测：`dddbd50f` 部署后，`prd-agent-main` 状态显示仅 `api-prd-agent` 与 `admin-prd-agent` running；系统 sidecar pool `main-shared-sidecar-pool-mp4anabh` `/healthz` 为 200。因旧连接被清理为 `revoked`，已重新建立长期 active connection `2338fac1cc30492da7ac5377c843061a`，discovery 恢复为 1。AI 百宝箱真实调用 `preferredAgents=["cds-agent"]` 产出 timeline/log artifacts，事件包含 `sidecar_runtime_started` 和 `runtime-router sidecar tools exposed count=12`，错误为 provider `openai_http_401 invalid_api_key`，证明已越过系统 sidecar discovery 与健康路由。
 - 2026-05-14 模型凭据审计：远端 MAP `/api/mds/platforms` 显示多个 enabled 平台但 `/api/mds/{model}/test` 对主模型 `model5`、视觉模型 `model2`、stub chat `model8` 均返回 `INVALID_CONFIG`；`POST /api/infra-agent-runtime-profiles/import-default-model` 返回 `model_config_incomplete`；当前 runtime profile 测试返回 OpenAI `401 invalid_api_key`，本地与远端容器环境均未发现 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `OPENROUTER_API_KEY`。
 - 2026-05-14 真实入口视觉：Playwright 从 `https://main-prd-agent.miduo.org/` 走 `登录 / 注册 -> 进入 MAP -> 百宝箱 -> CDS Agent`，未直达 `/cds-agent`；页面可见长期 CDS 连接 `miduo.org`、默认 OpenAI-compatible 模型 `gpt-4.1-mini @ https://api.openai.com/v1`、资源边界、会话列表、事件时间线、产物日志和 OpenAI `401 invalid_api_key` 失败；截图保存到 `.Codex/tmp/cds-agent-real-entry-visual-2026-05-14.png`。
+- 2026-05-14 A6 远程浏览器操作验收：主分支部署到 `acf51db5` 后，重新建立长期 active CDS connection `67b58464dcd847dab943a97ebd717454`，`longTokenExpiresAt=2099-12-31T23:59:59Z`。API 冒烟创建会话 `ee34b219d9394895876f32adfa938a14`，先通过 `capture-browser-snapshot` 读取 DOM，再通过 `browser-actions` 执行 `type` 到元素索引 69 与 `spa-navigate /cds-agent`，事件尾部出现 `cds_bridge_action completed` 与 `map-browser-action browser`。真实入口视觉从 `https://main-prd-agent.miduo.org/` 走 `登录 / 注册 -> 进入控制台 -> 首页 CDS Agent 卡片`，选中 `A6 Bridge click type smoke` 会话，页面显示“远程页面动作”控件并执行成功；审计摘要显示事件类型 `browser / log / status / tool_call / tool_result`，当前事件 21、工具事件 10、可见产物 5；截图保存到 `.Codex/tmp/cds-agent-a6-browser-action-ui-2026-05-14.png`。
 
 | 顺序 | Todo | 所属阶段 | 状态 | 验收标准 |
 |------|------|----------|------|----------|
@@ -1024,10 +1145,10 @@ P10 当前结论：
 | 8.1 | 模型配置不可用时阻断误操作 | P11 | [x] | 不可读 API key 直接禁用测试、新建、启动、发送，并打开保存配置入口 |
 | 9 | 实现真实 runtime adapter | P10 | [x] | fake 与真实 runtime 可切换，页面明确标识 |
 | 10 | 新增 CDS Agent 对话页 | P11 | [x] | 路由、设置入口和百宝箱入口已实现；main 预览真实入口视觉已通过 |
-| 11 | 接入远程浏览器操作 | P12 | [ ] | Agent 能打开网页并把过程显示在 MAP |
+| 11 | 接入远程浏览器操作 | P12 | [x] | Agent 能通过 CDS Bridge 读取远程页面快照并把 browser 事件、工具事件和产物显示在 MAP；点击/输入正向验收继续跟进 A6 |
 | 12 | 展示文件、diff、命令和测试产物 | P13 | [x] | 文件树、diff、命令结果、日志产物、复制下载和真实入口视觉均已验收；危险命令审批归入 P4/P17 正向模型验收 |
 | 13 | 接入工作流节点 | P14 | [x] | 工作流可调用 CDS Agent 并等待结果 |
 | 14 | 接入 MAP 智能体执行器 | P15 | [x] | 智能体可委托 CDS Agent 干活 |
-| 15 | 建立可观测性和审计回放 | P16 | [ ] | traceId 贯通，事件可回放，审批可审计 |
-| 16 | 完成真实端到端验收 | P17 | [ ] | main 预览真实入口与部署状态已通过；仍待有效模型 key 后跑通真实生成、工具审批、日志读取、停止释放和刷新恢复 |
-| 17 | 完成远程巡检 PR 验收 | P17 | [ ] | PR 创建工具已上线；仍待远程 Agent 对 `prd_agent` 完成巡检并提交 PR |
+| 15 | 建立可观测性和审计回放 | P16 | [x] | traceId 已贯通，事件可回放，审批可审计；A10 通过 runId/sessionId/approvalId 串联完整链路 |
+| 16 | 完成真实端到端验收 | P17 | [x] | main 预览真实入口、真实模型、工具审批、日志读取、停止释放和刷新恢复均已验收 |
+| 17 | 完成远程巡检 PR 验收 | P17 | [x] | 远程 Agent 已对 `prd_agent` 完成巡检并提交 Draft PR #617 |

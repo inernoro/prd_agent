@@ -541,6 +541,39 @@ export interface BranchEntry {
   lastPullAt?: string;
   /** 最近一次成功部署完成的 ISO 时间戳。 */
   lastDeployAt?: string;
+  /**
+   * 2026-05-14: 容器最近一次进入 running 状态的 ISO 时间戳。
+   * 由 reconcileBranchStatus() 在状态机切换到 'running' 时打戳。
+   * 调度器（项目级 autoPublishAfterMinutes）
+   * 以本字段为计时锚点 —— "完全启动成功之后开始算"。
+   * 进入 running 后再回退到其他状态时**不清空**，下一次再次 running 才覆盖；
+   * 这样调度器即便错过一拍也能基于上一次有效 ready 时间继续工作。
+   */
+  lastReadyAt?: string;
+  /**
+   * 2026-05-14: 最近一次容器被停止的 ISO 时间戳。
+   * 涵盖用户主动 /stop、调度器空闲降温、远端执行器停止；不涵盖部署失败转 error
+   * 状态（那个走 errorMessage）。UI 上配合 lastStopReason / lastStopSource 展示，
+   * 解决"分支莫名变灰用户不知道为什么"的问题。
+   */
+  lastStoppedAt?: string;
+  /**
+   * 停止原因的人类可读短语，UI 直接展示。例如：
+   *   - "用户手动停止"
+   *   - "调度器：空闲超过 15 分钟自动降温"
+   *   - "调度器：超出热容量上限被驱逐"
+   *   - "远端执行器停止"
+   */
+  lastStopReason?: string;
+  /**
+   * 停止发起方分类，用于过滤与统计：
+   *   - 'user'      用户在 UI 上点了停止
+   *   - 'scheduler' 调度器自动降温/驱逐
+   *   - 'executor'  远端执行器
+   *   - 'crash'     容器自行退出（崩溃 / OOM / docker kill），由 auto-restart 巡检发现
+   *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
+   */
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -552,6 +585,14 @@ export interface ServiceState {
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
+  /**
+   * 2026-05-14：容器**真正启动成功那一刻**实际使用的 deploy mode id
+   * （= 当时 resolveEffectiveProfile 的 activeDeployMode）。这是"在跑的
+   * 是不是发布版"的唯一真相来源——卡片徽章据此判断真实态 vs 配置意图，
+   * 不再只看 profileOverrides。空串 = 源码/默认模式启动。
+   * undefined = 该容器在本字段引入前启动（旧数据），徽章回退到配置语义。
+   */
+  deployedMode?: string;
 }
 
 /** A build/operation log event */
@@ -565,11 +606,62 @@ export interface OperationLogEvent {
   timestamp: string;
 }
 
+/** A tail snapshot of docker logs captured when a deployment finalizes. */
+export interface OperationLogContainerSnapshot {
+  profileId: string;
+  containerName: string;
+  hostPort?: number;
+  status?: ServiceState['status'] | string;
+  capturedAt: string;
+  tailLines: number;
+  source: 'deploy-finalize' | 'deploy-error';
+  logs: string;
+  message?: string;
+}
+
+/** Append-only CDS-owned container log archive. */
+export interface ContainerLogArchiveEntry {
+  id: string;
+  branchId: string;
+  projectId?: string;
+  profileId: string;
+  containerName?: string;
+  hostPort?: number;
+  status?: ServiceState['status'] | string;
+  capturedAt: string;
+  source:
+    | 'deploy-finalize'
+    | 'deploy-error'
+    | 'container-logs-api'
+    | 'container-logs-stream'
+    | 'pre-deploy-recreate'
+    | 'manual-stop'
+    | 'scheduler-stop'
+    | 'auto-lifecycle-stop'
+    | 'crash-detected'
+    | 'boot-reconcile'
+    | 'branch-delete'
+    | 'cleanup';
+  sha256: string;
+  byteLength: number;
+  lineCount: number;
+  masked: boolean;
+  logs: string;
+  message?: string;
+}
+
 /** A complete operation log */
 export interface OperationLog {
   type: 'build' | 'run' | 'auto-build';
   startedAt: string;
   finishedAt?: string;
+  /**
+   * Timestamp when CDS judged the branch runtime to be truly ready.
+   * This is stamped after container creation plus readiness/startup probes,
+   * not when docker run starts.
+   */
+  runtimeStartedAt?: string;
+  containerLogSnapshots?: OperationLogContainerSnapshot[];
   status: 'running' | 'completed' | 'error';
   events: OperationLogEvent[];
 }
@@ -602,6 +694,8 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** Per-branch append-only container log archives owned by CDS. */
+  containerLogArchives?: Record<string, ContainerLogArchiveEntry[]>;
   /**
    * Legacy 全局 default branch（PR_A 之后改为 per-project，存在
    * Project.defaultBranch 上）。本字段仍由 setProjectDefaultBranch 同步刷新，
@@ -655,6 +749,19 @@ export interface CdsState {
    * `false` = forced off (even if config file has enabled:true).
    */
   schedulerEnabledOverride?: boolean;
+  /**
+   * UI-controlled override for the warm-pool scheduler idle timeout
+   * (`config.scheduler.idleTTLSeconds`, seconds). Same semantics as
+   * `schedulerEnabledOverride`: when defined it supersedes the config-file
+   * value at runtime and is re-applied on boot. `undefined` = no override.
+   */
+  schedulerIdleTTLOverride?: number;
+  /**
+   * UI-controlled override for the warm-pool scheduler hot-pool cap
+   * (`config.scheduler.maxHotBranches`). Same semantics as
+   * `schedulerEnabledOverride`. `undefined` = no override. `0` = unlimited.
+   */
+  schedulerMaxHotOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
@@ -1174,6 +1281,8 @@ export interface ProjectActivityLog {
     | 'deploy-failed'  // 同上但部分 / 全部 service error
     | 'pull'           // POST /branches/:id/pull
     | 'stop'           // POST /branches/:id/stop
+    | 'restart'        // POST /branches/:id/restart（轻量重启，未重建）
+    | 'crash'          // 容器异常退出，auto-restart 巡检发现
     | 'colormark-on'   // 标记调试中
     | 'colormark-off'  // 取消调试中
     | 'ai-occupy'      // AI agent 开始操作
@@ -1626,6 +1735,23 @@ export interface Project {
    * never mutates existing branches and never writes BuildProfile.activeDeployMode.
    */
   defaultDeployModes?: Record<string, string>;
+  /**
+   * 2026-05-14: 项目级 "运行 N 分钟后自动切发布版" 策略。
+   * - 0 / 缺省 / 未启用：禁用。
+   * - >0：从 BranchEntry.lastReadyAt（容器进入 running 状态时打戳）计时；
+   *   超过 N 分钟仍是源码 / 热加载模式且当前 running，则将所有 profileOverrides 的
+   *   activeDeployMode 翻转到 profile.deployModes 里第一个被 classifyDeployRuntime
+   *   判定为 'release' 的模式，并停止容器；用户下次访问会被 auto-build 路径以发布
+   *   模式拉起来。
+   * 时间锚点 = lastReadyAt（部署成绿色），而不是 HTTP 流量，避免长连接永远刷新。
+   */
+  autoPublishAfterMinutes?: number;
+  /**
+   * Deprecated: 旧版项目级 "运行 N 分钟后自动停止" 策略。
+   * 自动停止已收敛到 CDS 系统级 SchedulerService，避免项目设置中出现
+   * 两个互相打架的分钟值。字段保留仅用于兼容旧 state/API，运行时不再执行。
+   */
+  autoStopAfterMinutes?: number;
   /**
    * 当 routing rules 都不匹配时回退到的分支 id（旧 state.defaultBranch）。
    * 历史上是机器级单值，多项目时会 cross-talk —— 现在每个项目独立。

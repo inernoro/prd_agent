@@ -147,3 +147,52 @@ class ToolBridge:
             return False, str(data.get("message") or data.get("errorCode") or "tool approval denied")
 
         return False, "tool approval denied"
+
+    async def request_permission(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        approval_id: str,
+        description: str | None = None,
+    ) -> tuple[bool, str]:
+        if not self.is_configured:
+            return False, "tool bridge is not configured"
+        if not approval_id:
+            return False, "approval id not provided"
+
+        url = (
+            f"{self.callback_base_url}/api/agent-tools/approvals/"
+            f"{self.run_id}/{approval_id}/request"
+        )
+        headers = {
+            "X-Sidecar-Token": self.callback_token or "",
+            "X-Sidecar-Name": os.environ.get("SIDECAR_NAME", "default"),
+        }
+        payload = {
+            "toolName": tool_name,
+            "input": tool_input,
+            "description": description,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as ex:
+            logger.exception("tool permission request transport error tool=%s", tool_name)
+            return False, f"permission request transport error: {ex}"
+
+        if resp.status_code >= 400:
+            return False, f"permission request HTTP {resp.status_code}: {resp.text[:500]}"
+
+        try:
+            data = resp.json()
+        except ValueError:
+            return False, f"permission request returned non-json response: {resp.text[:500]}"
+
+        if isinstance(data, dict) and data.get("success") is True:
+            return True, str(data.get("risk") or "unknown")
+
+        if isinstance(data, dict):
+            return False, str(data.get("message") or data.get("errorCode") or "permission request denied")
+
+        return False, "permission request denied"

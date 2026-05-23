@@ -191,12 +191,11 @@ export function applyProfileOverride(baseline: BuildProfile, override?: BuildPro
  *   2. branch-level override         — BranchEntry.profileOverrides[profileId]
  *   3. deploy-mode override          — profile.deployModes[activeDeployMode]
  *
- * The branch override can even change the active deploy mode, so it is applied
- * before `resolveProfileWithMode`.
- *
- * All call sites that previously used `resolveProfileWithMode(profile)` directly
- * should switch to `resolveEffectiveProfile(profile, branch)` so per-branch
- * overrides take effect.
+ * 2026-05-14：用户明确选择「项目默认运行模式只在创建分支时拷贝一次」
+ * （保留旧 UI 承诺「不改已有分支」）。因此这里**不再**读
+ * Project.defaultDeployModes 做实时回退——项目默认由 branches.ts 的
+ * applyProjectDefaultDeployModes() 在建分支时写进 branch.profileOverrides，
+ * 之后就是普通的分支级 override，本函数只认 branch override + baseline。
  */
 export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
   const branchOverride = branch?.profileOverrides?.[profile.id];
@@ -375,6 +374,144 @@ export class ContainerService {
     try { fs.unlinkSync(envFilePath); } catch { /* ok */ }
   }
 
+  private shellQuote(value: string): string {
+    return `'${value.replace(/'/g, `'\\''`)}'`;
+  }
+
+  /**
+   * Remove stale CDS app containers for the same branch/profile before a new
+   * docker run attaches service aliases. Docker DNS keeps every container that
+   * still has a matching network alias, so a leftover endpoint can make
+   * `getent hosts <service-alias>` alternate between old and new containers.
+   *
+   * Scope is intentionally narrow: same branchId + same profileId, excluding
+   * the container name we are about to recreate. Other branches may legitimately
+   * run the same profile id on the same project network.
+   */
+  private async pruneStaleAppContainersForProfile(
+    entry: BranchEntry,
+    profile: BuildProfile,
+    service: ServiceState,
+    network: string,
+    aliases: string[],
+    onOutput?: (chunk: string) => void,
+  ): Promise<void> {
+    if (aliases.length === 0) return;
+    const removed = new Set<string>();
+    const isSameServiceFallbackName = (name: string): boolean =>
+      name === service.containerName || name.startsWith(`${service.containerName}-`);
+    const removeStale = async (name: string, staleAliases: string[], source: string, id?: string): Promise<void> => {
+      const cleanName = name.replace(/^\/+/, '');
+      const target = id || cleanName;
+      if (cleanName === service.containerName || removed.has(target)) return;
+      onOutput?.(`── 清理同 alias 的旧 endpoint(${source}): ${cleanName} (${staleAliases.join(', ')}) ──\n`);
+      const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(target)}`);
+      if (rm.exitCode !== 0) {
+        await this.shell.exec(
+          `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(target)}`,
+        );
+      }
+      removed.add(target);
+    };
+
+    const list = await this.shell.exec(
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format "{{.Names}}"`,
+    );
+    const aliasSet = new Set(aliases);
+
+    if (list.exitCode === 0 && list.stdout.trim()) {
+      const format = [
+        '{{index .Config.Labels "cds.branch.id"}}',
+        '{{index .Config.Labels "cds.profile.id"}}',
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
+      ].join('|');
+
+      for (const name of list.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
+        if (name === service.containerName) continue;
+        const inspect = await this.shell.exec(
+          `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(name)}`,
+        );
+        if (inspect.exitCode !== 0) continue;
+        const [branchId = '', profileId = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
+        if (branchId !== entry.id || profileId !== profile.id) continue;
+
+        let staleAliases: string[] = [];
+        try {
+          const parsed = JSON.parse(aliasesJson);
+          if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
+        } catch {
+          staleAliases = [];
+        }
+        if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+        await removeStale(name, staleAliases, 'labels');
+      }
+    }
+
+    const networkContainers = await this.shell.exec(
+      `docker ps -aq --filter ${this.shellQuote(`network=${network}`)}`,
+    );
+    if (networkContainers.exitCode === 0 && networkContainers.stdout.trim()) {
+      const format = [
+        '{{.Id}}',
+        '{{.Name}}',
+        `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
+      ].join('|');
+      for (const id of networkContainers.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
+        const inspect = await this.shell.exec(
+          `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(id)}`,
+        );
+        if (inspect.exitCode !== 0) continue;
+        const [containerId = id, name = '', aliasesJson = '[]'] = inspect.stdout.trim().split('|');
+        const cleanName = name.replace(/^\/+/, '');
+        if (!cleanName || cleanName === service.containerName || removed.has(containerId)) continue;
+        if (!isSameServiceFallbackName(cleanName)) continue;
+        let staleAliases: string[] = [];
+        try {
+          const parsed = JSON.parse(aliasesJson);
+          if (Array.isArray(parsed)) staleAliases = parsed.filter((item): item is string => typeof item === 'string');
+        } catch {
+          staleAliases = [];
+        }
+        if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+        await removeStale(cleanName, staleAliases, 'network-containers', containerId);
+      }
+    }
+
+    // Older CDS-created containers may not have cds.* labels. Docker DNS is
+    // driven by network endpoints, and a service alias cannot be shared on the
+    // same project network without round-robin responses. Inspect the network
+    // as a second line of defense and keep this profile's aliases unique.
+    const networkInspect = await this.shell.exec(
+      `docker network inspect --format='{{json .Containers}}' ${this.shellQuote(network)}`,
+    );
+    if (networkInspect.exitCode !== 0 || !networkInspect.stdout.trim()) return;
+
+    let containers: Record<string, { Name?: string; Aliases?: unknown }> = {};
+    try {
+      const parsed = JSON.parse(networkInspect.stdout.trim());
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        containers = parsed as Record<string, { Name?: string; Aliases?: unknown }>;
+      }
+    } catch {
+      return;
+    }
+
+    for (const endpoint of Object.values(containers)) {
+      const name = typeof endpoint.Name === 'string' ? endpoint.Name : '';
+      const cleanName = name.replace(/^\/+/, '');
+      if (!cleanName || cleanName === service.containerName || removed.has(cleanName)) continue;
+      if (!isSameServiceFallbackName(cleanName)) continue;
+      const staleAliases = Array.isArray(endpoint.Aliases)
+        ? endpoint.Aliases.filter((item): item is string => typeof item === 'string')
+        : [];
+      if (!staleAliases.some((item) => aliasSet.has(item))) continue;
+
+      await removeStale(cleanName, staleAliases, 'network');
+    }
+  }
+
   /**
    * Run a branch service from source using a build profile.
    * Mounts the worktree + shared cache volumes into a Docker container.
@@ -389,6 +526,11 @@ export class ContainerService {
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
+    const profileAliases = computeProfileAliases(
+      profile.id,
+      this.getProjectMarkers(entry.projectId),
+    );
+    await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
 
     // Remove any existing container
     await this.shell.exec(`docker rm -f ${service.containerName}`);
@@ -412,9 +554,16 @@ export class ContainerService {
     mergedEnv['Jwt__Secret'] = this.config.jwt.secret;
     mergedEnv['Jwt__Issuer'] = this.config.jwt.issuer;
 
-    // Inject git branch name so frontend build tools (e.g. Vite __GIT_BRANCH__) can pick it up.
+    // Inject git metadata so frontend build tools can stamp bundle URLs.
+    // Branch containers often mount only a subdirectory (e.g. prd-admin -> /app),
+    // so `git rev-parse` inside Vite may fall back to "local". That makes CDN
+    // and browser caches keep stale `*-local.js` assets even after CDS shows a
+    // newer GitHub commit in the widget.
     if (entry.branch) {
       mergedEnv['VITE_GIT_BRANCH'] = entry.branch;
+    }
+    if (entry.githubCommitSha) {
+      mergedEnv['VITE_BUILD_ID'] = entry.githubCommitSha.slice(0, 12);
     }
 
     // Detect Node.js containers by image name (node:*, *node:*, etc.)
@@ -616,10 +765,6 @@ export class ContainerService {
       //   2. shortAlias        — 去掉项目后缀,如 'imp-api' / 'mysql'(如果与
       //      profile.id 不同)
       // 多 alias 用多个 --network-alias 标志(docker 支持任意多个)。
-      const profileAliases = computeProfileAliases(
-        profile.id,
-        this.getProjectMarkers(entry.projectId),
-      );
       const profileAliasFlags = profileAliases.map((a) => `--network-alias ${a}`);
 
       const runCmd = [
@@ -896,7 +1041,62 @@ export class ContainerService {
     }
   }
 
-  async stop(containerName: string): Promise<void> {
+  /**
+   * 容器停止前往其 PID1 stdout 写一行 [CDS-STOP] 哨兵,让 `docker logs`
+   * 末尾留下"这是 CDS 主动停的"证据,与"莫名崩溃"区分。best-effort:
+   * 容器无 sh / distroless / exec 失败都静默跳过 —— 判定"正常 vs 异常
+   * 停止"的权威源是 CDS 侧的 lastStopSource / 活动日志(见 index.ts
+   * runAutoRestartTick),哨兵只是给人查 docker logs 时的肉眼便利。
+   */
+  private async writeStopSentinel(containerName: string, reason: string): Promise<void> {
+    // 容器名拼进 shell 前硬校验(与 getServiceStats 同款白名单:不符合
+    // docker 命名规则的一定不是合法容器名 → 直接放弃写哨兵,reject 比
+    // escape 更安全)。
+    const validName = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+    if (!validName.test(containerName)) return;
+    // reason 仅供人读。白名单保留:ASCII 字母数字/空格/_.:- + CJK 汉字
+    // (U+4E00–U+9FA5) + CJK 标点 (U+3000–U+303F:、。「」【】) + 全角符号
+    // (U+FF00–U+FFEF:（），：等)。这些区段都不含任何 shell 元字符,**单引号
+    // (')、双引号(")、$、反引号、\、; 等一律落在白名单外被剔除** —— 即便
+    // 未来调用方乱传也进不了 shell。下面用单引号包裹 line,单引号串里唯一
+    // 能破坏引用的字符就是单引号本身,而它已被白名单排除:不再依赖"过滤
+    // 引号"来做 shell 转义(Cursor Bugbot #640 加固)。
+    const safeReason =
+      (reason || 'cds-stop')
+        .replace(/[^一-龥　-〿＀-￯a-zA-Z0-9 _.:-]/g, '')
+        .slice(0, 120) || 'cds-stop';
+    const line = `[CDS-STOP] reason=${safeReason} ts=${new Date().toISOString()}`;
+    try {
+      await this.shell.exec(
+        `docker exec ${containerName} sh -c "echo '${line}' > /proc/1/fd/1 2>/dev/null"`,
+        { timeout: 3000 },
+      );
+    } catch {
+      /* best-effort:哨兵写失败不影响停止,判定走 CDS 账本 */
+    }
+  }
+
+  /**
+   * 停止容器但**保留**它(不 docker rm)。容器进入 exited 状态:
+   *  - 不占端口 / CPU / 内存,仅保留可写层与 `docker logs`
+   *  - 可被 /restart(docker restart)或 auto-restart(docker start)秒级唤醒
+   *  - docker logs 末尾留有 [CDS-STOP] 哨兵 → 与莫名崩溃区分
+   * 用于:手动停止 / 调度器降温 / auto-lifecycle / 执行器停止 等"还要回来"
+   * 的场景。需要彻底销毁容器(删分支 / reset / 孤儿清理 / force-rebuild)
+   * 请改用 remove()。
+   */
+  async stop(containerName: string, reason = 'cds-stop'): Promise<void> {
+    await this.writeStopSentinel(containerName, reason);
+    await this.shell.exec(`docker stop ${containerName}`);
+  }
+
+  /**
+   * 彻底销毁容器:docker stop + docker rm,容器与其 docker logs 一并消失。
+   * 仅用于明确"销毁"语义的路径(删除分支 / 重置 / 孤儿清理 /
+   * force-rebuild / janitor 回收)。停止后还想唤醒请用 stop()。
+   * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
+   */
+  async remove(containerName: string): Promise<void> {
     await this.shell.exec(`docker stop ${containerName}`);
     await this.shell.exec(`docker rm ${containerName}`);
   }
@@ -990,7 +1190,7 @@ export class ContainerService {
   }
 
   async getLogs(containerName: string, tail = 500): Promise<string> {
-    const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
+    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`);
     return combinedOutput(result);
   }
 
@@ -1005,7 +1205,7 @@ export class ContainerService {
     tail = 200,
   ): AbortController {
     const ac = new AbortController();
-    const child = spawn('docker', ['logs', '-f', '--tail', String(tail), containerName], {
+    const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const forward = (data: Buffer) => {

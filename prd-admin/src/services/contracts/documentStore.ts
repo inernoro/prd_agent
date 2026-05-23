@@ -262,6 +262,10 @@ export type DocumentStoreViewEvent = {
   enteredAt: string;
   leftAt?: string;
   durationMs?: number;
+  /** 去重窗口内最后一次访问时间 */
+  lastSeenAt?: string;
+  /** 去重窗口内的重复访问次数（0 表示仅访问一次） */
+  revisitCount?: number;
   userAgent?: string;
   referer?: string;
 };
@@ -285,6 +289,8 @@ export type DocumentInlineComment = {
   contextAfter: string;
   startOffset: number;
   endOffset: number;
+  /** 全文评论：无选区，对整篇文档发表，不参与定位/高亮 */
+  isWholeDocument?: boolean;
   content: string;
   authorUserId: string;
   authorDisplayName: string;

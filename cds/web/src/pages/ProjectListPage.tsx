@@ -1,10 +1,25 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
+import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
+import goIconUrl from 'devicon/icons/go/go-original.svg';
+import javaIconUrl from 'devicon/icons/java/java-original.svg';
+import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
+import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
+import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
+import phpIconUrl from 'devicon/icons/php/php-original.svg';
+import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
+import pythonIconUrl from 'devicon/icons/python/python-original.svg';
+import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
+import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
+import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import {
   AlertTriangle,
   ArrowRight,
   Bell,
   Beaker,
+  Braces,
   CheckCircle2,
+  Code2,
   Copy,
   Database,
   Download,
@@ -37,6 +52,11 @@ import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/compone
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
 
+const PROJECT_DOCK_BASE_SIZE = 56;
+const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
+const PROJECT_DOCK_DISTANCE = 150;
+const PROJECT_DOCK_SPRING = { mass: 0.12, stiffness: 180, damping: 16 };
+
 interface ProjectSummary {
   id: string;
   slug: string;
@@ -51,9 +71,14 @@ interface ProjectSummary {
   runningServiceCount?: number;
   appServices?: Array<{
     id: string;
+    name?: string;
     branch: string;
     status?: string;
     runningCount?: number;
+    dockerImage?: string;
+    command?: string;
+    workDir?: string;
+    containerPort?: number;
   }>;
   infraServiceCount?: number;
   runningInfraServiceCount?: number;
@@ -342,6 +367,7 @@ function formatRelativeTime(value?: string | null): string {
 }
 
 function projectHref(project: ProjectSummary): string {
+  if (project.kind === 'shared-service') return '/cds-settings#remote-hosts';
   return `/branches/${encodeURIComponent(project.id)}`;
 }
 
@@ -1220,64 +1246,101 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
+function DeviconIcon({ src }: { src: string }): JSX.Element {
+  return <img aria-hidden alt="" className="cds-project-node-icon cds-project-node-devicon" draggable={false} src={src} />;
+}
+
 function MongoIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path
-        d="M12.2 2.2c3.4 2.6 5.1 5.9 5.1 9.8 0 4.1-1.9 7.1-5 9.4-3.1-2.3-4.9-5.3-4.9-9.4 0-3.9 1.6-7.2 4.8-9.8Z"
-        fill="currentColor"
-        opacity="0.95"
-      />
-      <path d="M12.2 5.5v13.8" stroke="hsl(var(--surface-sunken))" strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
-    </svg>
-  );
+  return <DeviconIcon src={mongoIconUrl} />;
 }
 
 function RedisIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path d="M4 7.5 12 4l8 3.5-8 3.5L4 7.5Z" fill="currentColor" />
-      <path d="m4 11 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-      <path d="m4 15 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-    </svg>
-  );
+  return <DeviconIcon src={redisIconUrl} />;
 }
 
 function MysqlIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path
-        d="M4.4 14.1c2.9-6.4 8.5-7.9 15.2-6.3-2.1.8-3.6 2.2-4.6 4.2 1.9.2 3.4 1 4.4 2.4-3.6.8-7 .7-10.1-.4-1.8-.6-3.4-.6-4.9.1Z"
-        fill="currentColor"
-      />
-      <path d="M5.2 16.4c3.9 1.9 8 2.2 12.5.9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <DeviconIcon src={mysqlIconUrl} />;
+}
+
+function PostgresIcon(): JSX.Element {
+  return <DeviconIcon src={postgresIconUrl} />;
 }
 
 function RabbitIcon(): JSX.Element {
+  return <DeviconIcon src={rabbitIconUrl} />;
+}
+
+function MilvusIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path d="M7 7.5V4.2h2.8v6.1h1.8V4.2h2.8v6.1H17c1.7 0 3 1.3 3 3v4.5H4v-7.5h3Z" fill="currentColor" />
-      <path d="M7.4 15.1h9.2" stroke="hsl(var(--surface-sunken))" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+      <circle cx="7.2" cy="8" r="2.2" fill="currentColor" />
+      <circle cx="16.8" cy="8" r="2.2" fill="currentColor" opacity="0.72" />
+      <circle cx="12" cy="16.1" r="2.8" fill="currentColor" opacity="0.9" />
+      <path d="M9 9.7 11 13.5M15 9.7l-2 3.8M9.5 16.1h5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" opacity="0.7" />
     </svg>
   );
 }
 
-function WordmarkIcon({ text }: { text: string }): JSX.Element {
+function VectorDbIcon(): JSX.Element {
   return (
-    <span aria-hidden className="font-mono text-xs font-extrabold leading-none tracking-normal">
-      {text}
-    </span>
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path d="M5 6.5 12 3l7 3.5v7L12 17l-7-3.5v-7Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M5 6.5 12 10l7-3.5M12 10v7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
+      <circle cx="12" cy="20" r="1.6" fill="currentColor" />
+    </svg>
   );
+}
+
+function MinioIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path
+        d="M5 8.3 12 4l7 4.3v7.4L12 20l-7-4.3V8.3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinejoin="round"
+      />
+      <path d="M5 8.3 12 12.6l7-4.3M12 12.6V20" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round" opacity="0.82" />
+      <path d="M8.5 6.2 15.5 10.4" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" opacity="0.55" />
+    </svg>
+  );
+}
+
+function DotnetIcon(): JSX.Element {
+  return <DeviconIcon src={dotnetIconUrl} />;
+}
+
+function NodeIcon(): JSX.Element {
+  return <DeviconIcon src={nodeIconUrl} />;
+}
+
+function PythonIcon(): JSX.Element {
+  return <DeviconIcon src={pythonIconUrl} />;
+}
+
+function JavaIcon(): JSX.Element {
+  return <DeviconIcon src={javaIconUrl} />;
+}
+
+function GoIcon(): JSX.Element {
+  return <DeviconIcon src={goIconUrl} />;
+}
+
+function RustIcon(): JSX.Element {
+  return <DeviconIcon src={rustIconUrl} />;
+}
+
+function PhpIcon(): JSX.Element {
+  return <DeviconIcon src={phpIconUrl} />;
 }
 
 function NacosIcon(): JSX.Element {
   return (
-    <span aria-hidden className="flex flex-col items-center justify-center leading-none">
-      <span className="font-mono text-[15px] font-black tracking-normal">Na</span>
-      <span className="mt-1 h-0.5 w-5 rounded-full bg-current opacity-80" />
-    </span>
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <path d="M4.5 15.6c2.2-5.9 5.8-8.9 10.8-9.1 2.1-.1 3.6.5 4.7 1.5-1.7.3-3 1.2-3.9 2.8 1.6.2 2.7.8 3.4 1.9-3 .8-5.8.9-8.5.2-2.4-.6-4.5.2-6.5 2.7Z" fill="currentColor" />
+      <path d="M5.6 17.8c4.2 1.7 8.4 1.6 12.8-.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" opacity="0.85" />
+    </svg>
   );
 }
 
@@ -1308,6 +1371,27 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
       icon: <MysqlIcon />,
     };
   }
+  if (raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') || /\bpg[-_0-9]/.test(raw)) {
+    return {
+      label: 'PostgreSQL',
+      tileClassName: 'border-sky-700/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      icon: <PostgresIcon />,
+    };
+  }
+  if (raw.includes('milvus')) {
+    return {
+      label: 'Milvus',
+      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
+      icon: <MilvusIcon />,
+    };
+  }
+  if (raw.includes('qdrant') || raw.includes('weaviate') || raw.includes('chroma')) {
+    return {
+      label: raw.includes('qdrant') ? 'Qdrant' : raw.includes('weaviate') ? 'Weaviate' : 'Vector DB',
+      tileClassName: 'border-fuchsia-600/45 bg-fuchsia-500/15 text-fuchsia-700 dark:border-fuchsia-500/35 dark:bg-fuchsia-500/10 dark:text-fuchsia-300',
+      icon: <VectorDbIcon />,
+    };
+  }
   if (raw.includes('rabbit')) {
     return {
       label: 'RabbitMQ',
@@ -1326,14 +1410,238 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
     return {
       label: 'MinIO',
       tileClassName: 'border-zinc-500/45 bg-zinc-500/15 text-zinc-700 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-200',
-      icon: <WordmarkIcon text="IO" />,
+      icon: <MinioIcon />,
     };
   }
   return {
     label: service.name || service.id,
-    tileClassName: 'border-sky-500/30 bg-sky-500/10 text-sky-500',
-    icon: <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />,
+    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-600 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-300',
+    icon: <Database className="cds-project-node-icon" />,
   };
+}
+
+type ProjectBrand = {
+  key: string;
+  label: string;
+  tileClassName: string;
+  icon: JSX.Element;
+  score: number;
+  source: string;
+};
+
+function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number]): ProjectBrand {
+  const raw = [
+    service.id,
+    service.name,
+    service.dockerImage,
+    service.command,
+    service.workDir,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (raw.includes('dotnet') || raw.includes('aspnet') || raw.includes('.net') || raw.includes('csharp') || raw.includes('csproj')) {
+    return {
+      key: 'dotnet',
+      label: '.NET',
+      tileClassName: 'border-violet-600/45 bg-violet-500/15 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/10 dark:text-violet-300',
+      icon: <DotnetIcon />,
+      score: 900 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('node') || raw.includes('pnpm') || raw.includes('npm ') || raw.includes('yarn') || raw.includes('vite') || raw.includes('next') || raw.includes('react')) {
+    return {
+      key: 'node',
+      label: 'Node.js',
+      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300',
+      icon: <NodeIcon />,
+      score: 800 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('python') || raw.includes('pip ') || raw.includes('uvicorn') || raw.includes('fastapi') || raw.includes('django') || raw.includes('flask')) {
+    return {
+      key: 'python',
+      label: 'Python',
+      tileClassName: 'border-blue-600/45 bg-blue-500/15 text-blue-700 dark:border-blue-500/35 dark:bg-blue-500/10 dark:text-blue-300',
+      icon: <PythonIcon />,
+      score: 700 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('java') || raw.includes('maven') || raw.includes('gradle') || raw.includes('spring')) {
+    return {
+      key: 'java',
+      label: 'Java',
+      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-300',
+      icon: <JavaIcon />,
+      score: 650 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (/\bgolang\b|\bgo[:\s-]/.test(raw) || raw.includes('go run') || raw.includes('go build')) {
+    return {
+      key: 'go',
+      label: 'Go',
+      tileClassName: 'border-cyan-600/45 bg-cyan-500/15 text-cyan-700 dark:border-cyan-500/35 dark:bg-cyan-500/10 dark:text-cyan-300',
+      icon: <GoIcon />,
+      score: 640 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('rust') || raw.includes('cargo')) {
+    return {
+      key: 'rust',
+      label: 'Rust',
+      tileClassName: 'border-amber-700/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-300',
+      icon: <RustIcon />,
+      score: 630 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('php') || raw.includes('composer')) {
+    return {
+      key: 'php',
+      label: 'PHP',
+      tileClassName: 'border-indigo-600/45 bg-indigo-500/15 text-indigo-700 dark:border-indigo-500/35 dark:bg-indigo-500/10 dark:text-indigo-300',
+      icon: <PhpIcon />,
+      score: 620 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('nginx') || raw.includes('caddy') || raw.includes('static')) {
+    return {
+      key: 'static',
+      label: 'Static',
+      tileClassName: 'border-lime-600/45 bg-lime-500/15 text-lime-700 dark:border-lime-500/35 dark:bg-lime-500/10 dark:text-lime-300',
+      icon: <Braces className="cds-project-node-icon" />,
+      score: 500 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  if (raw.includes('api') || raw.includes('server') || raw.includes('backend')) {
+    return {
+      key: 'api',
+      label: 'API Service',
+      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      icon: <Code2 className="cds-project-node-icon" />,
+      score: 100 + (service.runningCount || 0),
+      source: service.dockerImage || service.command || service.id,
+    };
+  }
+  return {
+    key: `app:${service.name || service.id}`,
+    label: service.name || service.id,
+    tileClassName: 'border-zinc-500/35 bg-zinc-500/10 text-zinc-700 dark:border-zinc-400/25 dark:bg-zinc-400/10 dark:text-zinc-200',
+    icon: <Code2 className="cds-project-node-icon" />,
+    score: 0 + (service.runningCount || 0),
+    source: service.dockerImage || service.command || service.id,
+  };
+}
+
+function primaryInfraBrand(service: NonNullable<ProjectSummary['infraServices']>[number]): ProjectBrand {
+  const brand = infraIconFor(service);
+  const raw = `${service.id} ${service.name || ''} ${service.dockerImage || ''}`.toLowerCase();
+  const key =
+    raw.includes('mysql') ? 'mysql'
+      : raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') ? 'postgres'
+        : raw.includes('mongo') ? 'mongo'
+          : raw.includes('redis') ? 'redis'
+            : raw.includes('rabbit') ? 'rabbit'
+              : raw.includes('minio') ? 'minio'
+                : raw.includes('milvus') ? 'milvus'
+                  : raw.includes('qdrant') ? 'qdrant'
+                    : raw.includes('weaviate') ? 'weaviate'
+                      : raw.includes('chroma') ? 'chroma'
+                        : `infra:${service.name || service.id}`;
+  const score =
+    raw.includes('mysql') ? 490
+      : raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') ? 485
+        : raw.includes('mongo') ? 480
+          : raw.includes('redis') ? 470
+            : raw.includes('rabbit') ? 460
+              : raw.includes('minio') ? 450
+                : raw.includes('milvus') || raw.includes('qdrant') || raw.includes('weaviate') || raw.includes('chroma') ? 440
+                  : 100;
+  return {
+    ...brand,
+    key,
+    score: score + (service.status === 'running' ? 10 : 0),
+    source: service.dockerImage || service.name || service.id,
+  };
+}
+
+function uniqueProjectBrands(project: ProjectSummary): ProjectBrand[] {
+  const appBrands = (project.appServices || [])
+    .map((service) => appIconFor(service))
+    .filter((brand) => brand.score > 0)
+    .sort((left, right) => right.score - left.score);
+  const infraBrands = (project.infraServices || [])
+    .map(primaryInfraBrand)
+    .sort((left, right) => right.score - left.score);
+  const selected = new Map<string, ProjectBrand>();
+  for (const brand of [...appBrands, ...infraBrands]) {
+    const existing = selected.get(brand.key);
+    if (!existing || brand.score > existing.score) selected.set(brand.key, brand);
+  }
+  const brands = Array.from(selected.values()).sort((left, right) => right.score - left.score);
+  const hasSpecificBrand = brands.some((brand) => !brand.key.startsWith('app:') && !brand.key.startsWith('infra:') && brand.key !== 'api');
+  return hasSpecificBrand
+    ? brands.filter((brand) => !brand.key.startsWith('app:') && !brand.key.startsWith('infra:') && brand.key !== 'api')
+    : brands;
+}
+
+function ProjectDockNode({
+  mouseX,
+  className,
+  title,
+  ariaLabel,
+  children,
+}: {
+  mouseX: MotionValue<number>;
+  className: string;
+  title: string;
+  ariaLabel: string;
+  children: React.ReactNode;
+}): JSX.Element {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const distance = useTransform(mouseX, (value) => {
+    const bounds = ref.current?.getBoundingClientRect();
+    if (!bounds) return Infinity;
+    return value - bounds.x - bounds.width / 2;
+  });
+  const scale = useSpring(
+    useTransform(
+      distance,
+      [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE],
+      [1, PROJECT_DOCK_MAGNIFIED_SIZE / PROJECT_DOCK_BASE_SIZE, 1],
+    ),
+    PROJECT_DOCK_SPRING,
+  );
+  const y = useSpring(
+    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [0, -8, 0]),
+    PROJECT_DOCK_SPRING,
+  );
+  const iconSize = useSpring(
+    useTransform(distance, [-PROJECT_DOCK_DISTANCE, 0, PROJECT_DOCK_DISTANCE], [28, 32, 28]),
+    PROJECT_DOCK_SPRING,
+  );
+  const iconSizePx = useTransform(iconSize, (value) => `${value}px`);
+
+  return (
+    <motion.span
+      ref={ref}
+      className={className}
+      style={{
+        y,
+        scale,
+        '--project-node-icon-size': iconSizePx,
+      } as unknown as React.CSSProperties}
+      title={title}
+      aria-label={ariaLabel}
+    >
+      {children}
+    </motion.span>
+  );
 }
 
 /*
@@ -1372,16 +1680,15 @@ function ProjectCard({
   const running = project.runningServiceCount || 0;
   const branches = project.branchCount || 0;
   const appTotal = project.appServiceCount || Math.max(branches, running);
-  const appServices = project.appServices || [];
   const infra = project.infraServices || [];
   const infraCount = project.infraServiceCount ?? infra.length;
   const runningInfra = project.runningInfraServiceCount || 0;
   const totalOnline = running + runningInfra;
   const totalServices = appTotal + infraCount;
-  const maxVisualNodes = 6;
-  const visibleAppServices = appServices.slice(0, maxVisualNodes);
-  const visibleInfraServices = infra.slice(0, Math.max(0, maxVisualNodes - visibleAppServices.length));
-  const hiddenVisualNodes = Math.max(0, appServices.length + infra.length - visibleAppServices.length - visibleInfraServices.length);
+  const stackBrands = uniqueProjectBrands(project);
+  const visibleStackBrands = stackBrands.slice(0, 6);
+  const hiddenStackBrandCount = Math.max(0, stackBrands.length - visibleStackBrands.length);
+  const dockMouseX = useMotionValue(Infinity);
   const dotTone = project.cloneStatus === 'error'
     ? 'bg-destructive'
     : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
@@ -1421,59 +1728,44 @@ function ProjectCard({
           }}
         >
           <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
-            <div className="cds-project-node-row flex flex-wrap items-center justify-center">
-              {visibleAppServices.length > 0 ? (
-                visibleAppServices.map((service) => (
-                  <span
-                    key={`${service.branch}-${service.id}`}
-                    className="cds-project-node relative flex items-center justify-center border border-zinc-500/45 bg-zinc-900/10 text-zinc-800 shadow-sm ring-1 ring-inset ring-white/60 dark:border-zinc-400/35 dark:bg-zinc-400/10 dark:text-zinc-100 dark:ring-white/5"
-                    title={
-                      (service.runningCount || 0) > 1
-                        ? `${service.id} · ${service.runningCount} 个运行分支`
-                        : `${service.branch} · ${service.id}`
-                    }
-                    aria-label={service.id}
+            <motion.div
+              className="cds-project-node-row flex flex-nowrap items-center justify-center"
+              onMouseMove={(event) => dockMouseX.set(event.clientX)}
+              onMouseLeave={() => dockMouseX.set(Infinity)}
+            >
+              {visibleStackBrands.length > 0 ? (
+                visibleStackBrands.map((brand) => (
+                  <ProjectDockNode
+                    key={brand.key}
+                    mouseX={dockMouseX}
+                    className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${brand.tileClassName}`}
+                    title={`${brand.label}${brand.source ? ` · ${brand.source}` : ''}`}
+                    ariaLabel={`${brand.label} 项目类型`}
                   >
-                    <Github className="cds-project-node-icon" />
-                    {(service.runningCount || 0) > 1 ? (
-                      <span className="cds-project-node-badge text-emerald-400">x{service.runningCount}</span>
-                    ) : null}
-                  </span>
+                    {brand.icon}
+                  </ProjectDockNode>
                 ))
-              ) : null}
-              {visibleInfraServices.length > 0 ? (
-                visibleInfraServices.map((service) => {
-                  const online = service.status === 'running';
-                  const brand = infraIconFor(service);
-                  return (
-                    <span
-                      key={service.id}
-                      className={`cds-project-node flex items-center justify-center border shadow-sm ring-1 ring-inset ring-white/5 ${
-                        online
-                          ? brand.tileClassName
-                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70'
-                      }`}
-                      title={`${brand.label} · ${service.name || service.id}${service.dockerImage ? ` · ${service.dockerImage}` : ''}`}
-                      aria-label={brand.label}
-                    >
-                      {online ? brand.icon : <WordmarkIcon text={(service.name || service.id).slice(0, 2).toUpperCase()} />}
-                    </span>
-                  );
-                })
-              ) : null}
-              {visibleAppServices.length === 0 && visibleInfraServices.length === 0 ? (
-                <span
+              ) : (
+                <ProjectDockNode
+                  mouseX={dockMouseX}
                   className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 shadow-sm"
                   title="应用服务"
-                  aria-label="应用服务"
+                  ariaLabel="应用服务"
                 >
                   <Github className="cds-project-node-icon text-zinc-700 dark:text-muted-foreground" />
-                </span>
+                </ProjectDockNode>
+              )}
+              {hiddenStackBrandCount > 0 ? (
+                <ProjectDockNode
+                  mouseX={dockMouseX}
+                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[12px] font-semibold text-muted-foreground shadow-sm"
+                  title={`另有 ${hiddenStackBrandCount} 个技术栈`}
+                  ariaLabel={`另有 ${hiddenStackBrandCount} 个技术栈`}
+                >
+                  +{hiddenStackBrandCount}
+                </ProjectDockNode>
               ) : null}
-              {hiddenVisualNodes > 0 ? (
-                <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-500">+{hiddenVisualNodes}</span>
-              ) : null}
-            </div>
+            </motion.div>
 
             <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />

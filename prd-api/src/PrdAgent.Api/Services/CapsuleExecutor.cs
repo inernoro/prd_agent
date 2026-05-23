@@ -19,7 +19,41 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public static class CapsuleExecutor
 {
+    private const int CdsAgentEventPageSize = 500;
+    private const int CdsAgentMaxEventPages = 20;
+
     public record CapsuleResult(List<ExecutionArtifact> Artifacts, string Logs);
+
+    internal sealed record CdsAgentEventCursorResult(
+        List<InfraAgentEventView> Events,
+        bool IsComplete,
+        long LastSeq
+    );
+
+    public sealed class CapsulePauseException : Exception
+    {
+        public CapsulePauseException(
+            string message,
+            List<ExecutionArtifact> artifacts,
+            string logs,
+            string workflowStatus = WorkflowExecutionStatus.Paused,
+            string nodeStatus = NodeExecutionStatus.Paused,
+            string pauseKind = "paused")
+            : base(message)
+        {
+            Artifacts = artifacts;
+            Logs = logs;
+            WorkflowStatus = workflowStatus;
+            NodeStatus = nodeStatus;
+            PauseKind = pauseKind;
+        }
+
+        public List<ExecutionArtifact> Artifacts { get; }
+        public string Logs { get; }
+        public string WorkflowStatus { get; }
+        public string NodeStatus { get; }
+        public string PauseKind { get; }
+    }
 
     /// <summary>共享序列化选项：不转义中文、美化输出</summary>
     private static readonly JsonSerializerOptions JsonPretty = new()
@@ -4334,6 +4368,11 @@ function safeChart(canvasId, config) {
         return null;
     }
 
+    private static int ClampInt(string? value, int fallback, int min, int max)
+    {
+        if (!int.TryParse(value, out var parsed)) return fallback;
+        return Math.Clamp(parsed, min, max);
+    }
 
     public static string ReplaceVariables(string template, Dictionary<string, string> variables)
     {
@@ -4610,41 +4649,87 @@ function safeChart(canvasId, config) {
         if (string.IsNullOrWhiteSpace(userId))
             throw new InvalidOperationException("CDS Agent 需要执行用户上下文，请从工作流运行或配置 userId 后再执行");
 
-        var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
-        var connection = string.IsNullOrWhiteSpace(connectionId)
-            ? await db.InfraConnections
-                .Find(x => x.Partner == "cds" && x.Status == "active")
-                .SortByDescending(x => x.UpdatedAt)
-                .FirstOrDefaultAsync(CancellationToken.None)
-            : await db.InfraConnections
-                .Find(x => x.Id == connectionId && x.Partner == "cds" && x.Status == "active")
-                .FirstOrDefaultAsync(CancellationToken.None);
-        if (connection == null)
-            throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+        var requestedSessionId = ReplaceVariables(GetConfigString(node, "sessionId") ?? "", variables).Trim();
+        InfraAgentSessionView? session = null;
+        InfraConnection? connection = null;
+        InfraAgentRuntimeProfile? runtimeProfile = null;
 
-        var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
-        var runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
-            ? await db.InfraAgentRuntimeProfiles
-                .Find(x => x.IsDefault)
-                .FirstOrDefaultAsync(CancellationToken.None)
-                ?? await db.InfraAgentRuntimeProfiles
-                    .Find(_ => true)
-                    .SortByDescending(x => x.UpdatedAt)
+        if (!string.IsNullOrWhiteSpace(requestedSessionId))
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "reusing", sessionId = requestedSessionId, traceId = variables.GetValueOrDefault("__traceId") });
+            session = await sessions.GetAsync(userId, requestedSessionId, CancellationToken.None);
+            if (session == null)
+                throw new InvalidOperationException($"CDS Agent session 不存在或无权限访问: {requestedSessionId}");
+        }
+        else
+        {
+            var connectionId = ReplaceVariables(GetConfigString(node, "connectionId") ?? "", variables).Trim();
+            connection = await ResolveCdsConnectionForWorkflowAsync(db, connectionId, CancellationToken.None);
+            if (connection == null)
+                throw new InvalidOperationException("没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+
+            var runtimeProfileId = ReplaceVariables(GetConfigString(node, "runtimeProfileId") ?? "", variables).Trim();
+            var memberTeamIds = await db.ReportTeamMembers
+                .Find(x => x.UserId == userId)
+                .Limit(500)
+                .ToListAsync(CancellationToken.None);
+            var leaderTeams = await db.ReportTeams
+                .Find(x => x.LeaderUserId == userId)
+                .Limit(500)
+                .ToListAsync(CancellationToken.None);
+            var visibleTeamIds = memberTeamIds
+                .Select(x => x.TeamId)
+                .Concat(leaderTeams.Select(x => x.Id))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var profileBuilder = Builders<InfraAgentRuntimeProfile>.Filter;
+            var ownedProfileFilter = profileBuilder.Eq(x => x.CreatedByUserId, userId);
+            var sharedProfileFilter = visibleTeamIds.Count == 0
+                ? profileBuilder.Where(_ => false)
+                : profileBuilder.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
+            var visibleProfileFilter = ownedProfileFilter | sharedProfileFilter;
+            runtimeProfile = string.IsNullOrWhiteSpace(runtimeProfileId)
+                ? await db.InfraAgentRuntimeProfiles
+                    .Find(ownedProfileFilter & profileBuilder.Eq(x => x.IsDefault, true))
                     .FirstOrDefaultAsync(CancellationToken.None)
-            : await db.InfraAgentRuntimeProfiles
-                .Find(x => x.Id == runtimeProfileId)
-                .FirstOrDefaultAsync(CancellationToken.None);
-        if (runtimeProfile == null)
-            throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
+                    ?? await db.InfraAgentRuntimeProfiles
+                        .Find(sharedProfileFilter & profileBuilder.Eq(x => x.IsDefault, true))
+                        .SortByDescending(x => x.UpdatedAt)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? await db.InfraAgentRuntimeProfiles
+                        .Find(ownedProfileFilter)
+                        .SortByDescending(x => x.UpdatedAt)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? await db.InfraAgentRuntimeProfiles
+                        .Find(sharedProfileFilter)
+                        .SortByDescending(x => x.UpdatedAt)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                : await db.InfraAgentRuntimeProfiles
+                    .Find(profileBuilder.Eq(x => x.Id, runtimeProfileId) & visibleProfileFilter)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (runtimeProfile == null)
+                throw new InvalidOperationException("没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
+        }
 
-        var runtime = ReplaceVariables(GetConfigString(node, "runtime") ?? runtimeProfile.Runtime, variables).Trim();
+        var runtime = ReplaceVariables(GetConfigString(node, "runtime") ?? session?.Runtime ?? runtimeProfile?.Runtime ?? "", variables).Trim();
         if (string.IsNullOrWhiteSpace(runtime))
-            runtime = runtimeProfile.Runtime;
-        var model = ReplaceVariables(GetConfigString(node, "model") ?? runtimeProfile.Model, variables).Trim();
+            runtime = session?.Runtime ?? runtimeProfile?.Runtime ?? "";
+        var model = ReplaceVariables(GetConfigString(node, "model") ?? session?.Model ?? runtimeProfile?.Model ?? "", variables).Trim();
         if (string.IsNullOrWhiteSpace(model))
-            model = runtimeProfile.Model;
-        var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "confirm-dangerous", variables).Trim();
+            model = session?.Model ?? runtimeProfile?.Model ?? "";
+        if (string.IsNullOrWhiteSpace(runtime) || string.IsNullOrWhiteSpace(model))
+            throw new InvalidOperationException("CDS Agent session 缺少 runtime/model，且节点未显式配置 runtime/model");
+        var toolPolicy = ReplaceVariables(GetConfigString(node, "toolPolicy") ?? "readonly-auto", variables).Trim();
         var hookProfileId = ReplaceVariables(GetConfigString(node, "hookProfileId") ?? "", variables).Trim();
+        var workflowApprovalMode = ReplaceVariables(GetConfigString(node, "workflowApprovalMode") ?? "none", variables).Trim();
+        var approvalTimeoutSeconds = ClampInt(GetConfigString(node, "approvalTimeoutSeconds"), 3600, 60, 86400);
+        var traceId = variables.GetValueOrDefault("__traceId");
+        var workspaceRoot = ReplaceVariables(GetConfigString(node, "workspaceRoot") ?? session?.WorkspaceRoot ?? "", variables).Trim();
+        var gitRepository = ReplaceVariables(GetConfigString(node, "gitRepository") ?? session?.GitRepository ?? "", variables).Trim();
+        var gitRef = ReplaceVariables(GetConfigString(node, "gitRef") ?? session?.GitRef ?? "main", variables).Trim();
+        if (string.IsNullOrWhiteSpace(gitRef)) gitRef = "main";
 
         var prompt = ReplaceVariables(GetConfigString(node, "prompt") ?? "", variables).Trim();
         var upstream = string.Join("\n\n", inputArtifacts
@@ -4655,34 +4740,108 @@ function safeChart(canvasId, config) {
         if (string.IsNullOrWhiteSpace(prompt))
             throw new InvalidOperationException("CDS Agent 任务提示词不能为空");
 
-        if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection.Id, runtime, model });
-        var session = await sessions.CreateAsync(
-            userId,
-            new CreateInfraAgentSessionRequest(
-                connection.Id,
-                runtime,
-                model,
-                node.Name,
-                toolPolicy,
-                string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
-                runtimeProfile.Id),
-            CancellationToken.None);
+        if (session == null)
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "creating", connectionId = connection!.Id, runtime, model, traceId });
+            session = await sessions.CreateAsync(
+                userId,
+                new CreateInfraAgentSessionRequest(
+                    connection!.Id,
+                    runtime,
+                    model,
+                    node.Name,
+                    toolPolicy,
+                    string.IsNullOrWhiteSpace(hookProfileId) ? null : hookProfileId,
+                    runtimeProfile!.Id,
+                    traceId,
+                    string.IsNullOrWhiteSpace(workspaceRoot) ? null : workspaceRoot,
+                    string.IsNullOrWhiteSpace(gitRepository) ? null : gitRepository,
+                    string.IsNullOrWhiteSpace(gitRef) ? null : gitRef),
+                CancellationToken.None);
+        }
         sb.AppendLine($"会话: {session.Id}");
+        sb.AppendLine($"TraceId: {session.TraceId}");
+        sb.AppendLine($"Workspace: {session.WorkspaceRoot ?? workspaceRoot}");
+        sb.AppendLine($"Repository: {session.GitRepository ?? gitRepository}");
+        sb.AppendLine($"Ref: {session.GitRef ?? gitRef}");
 
-        if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id });
-        session = await sessions.StartAsync(userId, session.Id, new StartInfraAgentSessionRequest(runtime, model), CancellationToken.None) ?? session;
+        if (!string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
+        {
+            if (emitEvent != null)
+                await emitEvent("cds-agent-phase", new { phase = "starting", sessionId = session.Id, traceId = session.TraceId });
+            session = await sessions.StartAsync(userId, session.Id, new StartInfraAgentSessionRequest(runtime, model), CancellationToken.None) ?? session;
+        }
         sb.AppendLine($"状态: {session.Status}");
 
         if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "running", sessionId = session.Id });
+            await emitEvent("cds-agent-phase", new { phase = "running", sessionId = session.Id, traceId = session.TraceId });
+
+        if (string.Equals(workflowApprovalMode, "request-dangerous", StringComparison.OrdinalIgnoreCase))
+        {
+            var approvalToolName = ReplaceVariables(GetConfigString(node, "approvalToolName") ?? "kb_apply", variables).Trim();
+            if (string.IsNullOrWhiteSpace(approvalToolName)) approvalToolName = "kb_apply";
+            var approvalArgsSummary = ReplaceVariables(GetConfigString(node, "approvalArgsSummary") ?? "{\"draftId\":\"workflow-demo-draft\"}", variables).Trim();
+            if (string.IsNullOrWhiteSpace(approvalArgsSummary)) approvalArgsSummary = "{\"draftId\":\"workflow-demo-draft\"}";
+            await sessions.RequestToolApprovalAsync(
+                userId,
+                session.Id,
+                new CreateToolApprovalRequest(
+                    approvalToolName,
+                    approvalArgsSummary,
+                    approvalToolName == "kb_apply" ? "write" : "dangerous"),
+                CancellationToken.None);
+
+            var approvalCursor = await ListCdsAgentEventsByCursorAsync(
+                (afterSeq, limit, ct) => sessions.ListEventsAsync(userId, session.Id, afterSeq, limit, ct),
+                CancellationToken.None);
+            var approvalEvents = approvalCursor.Events;
+            var pendingApproval = FindFirstPendingApproval(approvalEvents);
+            var requestedAt = DateTime.UtcNow;
+            var timeoutAt = requestedAt.AddSeconds(approvalTimeoutSeconds);
+            var approvalWorkbenchPath = $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}";
+            var approvalLogs = $"[CDS Agent] 工作流等待工具审批\n会话: {session.Id}\n审批: {pendingApproval?.ApprovalId ?? "(unknown)"}\n工具: {pendingApproval?.ToolName ?? approvalToolName}\n超时: {timeoutAt:O}\n事件读取: {FormatCdsAgentEventCursorSummary(approvalCursor)}";
+            var approvalRendered = RenderCdsAgentEvents(approvalEvents);
+            var approvalEventsJson = JsonSerializer.Serialize(approvalEvents, JsonPretty);
+            throw new CapsulePauseException(
+                "CDS Agent 工作流等待危险工具审批",
+                new List<ExecutionArtifact>
+                {
+                    MakeTextArtifact(node, "cds-agent-out", "CDS Agent 输出", approvalRendered),
+                    MakeTextArtifact(node, "cds-agent-events", "CDS Agent 事件", approvalEventsJson, "application/json"),
+                    MakeTextArtifact(node, "cds-agent-log", "CDS Agent 日志", approvalLogs),
+                    MakeTextArtifact(node, "cds-agent-approval", "CDS Agent 待审批工具", JsonSerializer.Serialize(new
+                    {
+                        sessionId = session.Id,
+                        traceId = session.TraceId,
+                        approvalId = pendingApproval?.ApprovalId,
+                        toolName = pendingApproval?.ToolName ?? approvalToolName,
+                        argsSummary = approvalArgsSummary,
+                        risk = pendingApproval?.Risk ?? (approvalToolName == "kb_apply" ? "write" : "dangerous"),
+                        status = WorkflowExecutionStatus.WaitingApproval,
+                        requestedAt,
+                        timeoutAt,
+                        timeoutSeconds = approvalTimeoutSeconds,
+                        workbenchPath = approvalWorkbenchPath,
+                        continuePath = $"POST /api/workflow-agent/executions/{variables.GetValueOrDefault("__executionId")}/continue",
+                        rejectPath = $"POST /api/workflow-agent/executions/{variables.GetValueOrDefault("__executionId")}/reject-approval"
+                    }, JsonPretty), "application/json"),
+                },
+                approvalLogs,
+                WorkflowExecutionStatus.WaitingApproval,
+                NodeExecutionStatus.WaitingApproval,
+                "waiting_approval");
+        }
+
         session = await sessions.SendMessageAsync(userId, session.Id, new SendInfraAgentMessageRequest(prompt), CancellationToken.None) ?? session;
 
-        var events = await sessions.ListEventsAsync(userId, session.Id, 0, 1000, CancellationToken.None);
+        var eventCursor = await ListCdsAgentEventsByCursorAsync(
+            (afterSeq, limit, ct) => sessions.ListEventsAsync(userId, session.Id, afterSeq, limit, ct),
+            CancellationToken.None);
+        var events = eventCursor.Events;
         var logs = await sessions.GetLogsAsync(userId, session.Id, CancellationToken.None) ?? "";
         var rendered = RenderCdsAgentEvents(events);
-        sb.AppendLine($"事件数: {events.Count()}");
+        sb.AppendLine($"事件读取: {FormatCdsAgentEventCursorSummary(eventCursor)}");
         sb.AppendLine($"日志长度: {logs.Length}");
 
         var stopAfterRun = !string.Equals(
@@ -4692,18 +4851,55 @@ function safeChart(canvasId, config) {
         if (stopAfterRun)
         {
             if (emitEvent != null)
-                await emitEvent("cds-agent-phase", new { phase = "stopping", sessionId = session.Id });
+                await emitEvent("cds-agent-phase", new { phase = "stopping", sessionId = session.Id, traceId = session.TraceId });
             session = await sessions.StopAsync(userId, session.Id, CancellationToken.None) ?? session;
             sb.AppendLine($"停止后状态: {session.Status}");
         }
 
         if (emitEvent != null)
-            await emitEvent("cds-agent-phase", new { phase = "completed", sessionId = session.Id, status = session.Status });
+            await emitEvent("cds-agent-phase", new { phase = "completed", sessionId = session.Id, status = session.Status, traceId = session.TraceId });
+
+        var workbenchPath = $"/cds-agent?sessionId={Uri.EscapeDataString(session.Id)}";
+        var finalText = rendered;
+        var runHandle = new
+        {
+            kind = "cds-agent-workflow-run",
+            sessionId = session.Id,
+            cdsSessionId = session.CdsSessionId,
+            traceId = session.TraceId,
+            status = session.Status,
+            workspaceRoot = session.WorkspaceRoot,
+            gitRepository = session.GitRepository,
+            gitRef = session.GitRef,
+            runtimeProfileId = session.RuntimeProfileId,
+            finalText,
+            artifacts = new[]
+            {
+                new { name = "CDS Agent 输出", slotId = "cds-agent-out", mimeType = "text/plain" },
+                new { name = "CDS Agent 事件", slotId = "cds-agent-events", mimeType = "application/json" },
+                new { name = "CDS Agent 日志", slotId = "cds-agent-log", mimeType = "text/plain" },
+            },
+            eventsCursor = new
+            {
+                lastSeq = eventCursor.LastSeq,
+                count = eventCursor.Events.Count,
+                isComplete = eventCursor.IsComplete,
+                cursor = eventCursor.IsComplete ? "complete" : "truncated_or_stalled",
+            },
+            workbenchPath,
+            eventStreamPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/stream",
+            eventsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/events",
+            logsPath = $"/api/infra-agent-sessions/{Uri.EscapeDataString(session.Id)}/logs",
+            isReadonly = true,
+            createdAt = DateTime.UtcNow,
+        };
 
         var eventsJson = JsonSerializer.Serialize(events, JsonPretty);
+        var handleJson = JsonSerializer.Serialize(runHandle, JsonPretty);
         return new CapsuleResult(new List<ExecutionArtifact>
         {
             MakeTextArtifact(node, "cds-agent-out", "CDS Agent 输出", rendered),
+            MakeTextArtifact(node, "cds-agent-run", "CDS Agent 运行句柄", handleJson, "application/json"),
             MakeTextArtifact(node, "cds-agent-events", "CDS Agent 事件", eventsJson, "application/json"),
             MakeTextArtifact(node, "cds-agent-log", "CDS Agent 日志", logs),
         }, sb.ToString());
@@ -4723,7 +4919,7 @@ function safeChart(canvasId, config) {
                 else if (evt.Type == InfraAgentEventTypes.Done && root.TryGetProperty("finalText", out var finalText))
                     sb.AppendLine(finalText.GetString());
                 else if (evt.Type is InfraAgentEventTypes.ToolCall or InfraAgentEventTypes.ToolResult or InfraAgentEventTypes.Error or InfraAgentEventTypes.Hook)
-                    sb.AppendLine($"[{evt.Seq}] {evt.Type}: {root}");
+                    sb.AppendLine($"[{evt.Seq}] {evt.Type}: {CdsAgentRuntimeEventRenderer.Render(evt)}");
             }
             catch
             {
@@ -4731,6 +4927,77 @@ function safeChart(canvasId, config) {
             }
         }
         return sb.ToString().Trim();
+    }
+
+    internal static async Task<CdsAgentEventCursorResult> ListCdsAgentEventsByCursorAsync(
+        Func<long, int, CancellationToken, Task<List<InfraAgentEventView>>> listEventsAsync,
+        CancellationToken ct)
+    {
+        var all = new List<InfraAgentEventView>();
+        var afterSeq = 0L;
+
+        for (var page = 0; page < CdsAgentMaxEventPages; page++)
+        {
+            var batch = await listEventsAsync(afterSeq, CdsAgentEventPageSize, ct);
+            if (batch.Count == 0)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+
+            var progressed = false;
+            foreach (var item in batch.OrderBy(x => x.Seq))
+            {
+                if (item.Seq <= afterSeq) continue;
+                all.Add(item);
+                afterSeq = item.Seq;
+                progressed = true;
+            }
+
+            if (!progressed)
+            {
+                return new CdsAgentEventCursorResult(all, false, afterSeq);
+            }
+
+            if (batch.Count < CdsAgentEventPageSize)
+            {
+                return new CdsAgentEventCursorResult(all, true, afterSeq);
+            }
+        }
+
+        return new CdsAgentEventCursorResult(all, false, afterSeq);
+    }
+
+    private static string FormatCdsAgentEventCursorSummary(CdsAgentEventCursorResult cursor)
+    {
+        var status = cursor.IsComplete ? "complete" : "truncated_or_stalled";
+        return $"{cursor.Events.Count} events, lastSeq={cursor.LastSeq}, cursor={status}";
+    }
+
+    private static (string? ApprovalId, string? ToolName, string? Risk)? FindFirstPendingApproval(List<InfraAgentEventView> events)
+    {
+        foreach (var evt in events.OrderByDescending(x => x.Seq))
+        {
+            if (evt.Type != InfraAgentEventTypes.ToolCall) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(evt.PayloadJson);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("status", out var status)
+                    || !string.Equals(status.GetString(), "waiting", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                return (
+                    root.TryGetProperty("approvalId", out var approvalId) ? approvalId.GetString() : null,
+                    root.TryGetProperty("toolName", out var toolName) ? toolName.GetString() : null,
+                    root.TryGetProperty("risk", out var risk) ? risk.GetString() : null);
+            }
+            catch
+            {
+                // Ignore malformed historical payloads.
+            }
+        }
+
+        return null;
     }
 
     // ── CLI Agent 执行器（多执行器分发） ────────────────────────
@@ -5500,9 +5767,11 @@ function safeChart(canvasId, config) {
                     case SidecarEventType.TextDelta:
                         if (!string.IsNullOrEmpty(ev.Text))
                         {
-                            collected.Append(ev.Text);
+                            var text = SanitizeAgentText(ev.Text);
+                            if (string.IsNullOrEmpty(text)) break;
+                            collected.Append(text);
                             if (emitEvent != null)
-                                await emitEvent("cli-agent-chunk", new { text = ev.Text, turn = ev.Turn });
+                                await emitEvent("cli-agent-chunk", new { text, turn = ev.Turn });
                         }
                         break;
 
@@ -5537,7 +5806,7 @@ function safeChart(canvasId, config) {
                         break;
 
                     case SidecarEventType.Done:
-                        if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(ev.FinalText);
+                        if (!string.IsNullOrEmpty(ev.FinalText)) collected.Clear().Append(SanitizeAgentText(ev.FinalText));
                         if (ev.InputTokens.HasValue) inTokens = ev.InputTokens.Value;
                         if (ev.OutputTokens.HasValue) outTokens = ev.OutputTokens.Value;
                         break;
@@ -8263,5 +8532,62 @@ function safeChart(canvasId, config) {
             cur = next;
         }
         return cur;
+    }
+
+    private static async Task<InfraConnection?> ResolveCdsConnectionForWorkflowAsync(
+        MongoDbContext db,
+        string connectionId,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(connectionId))
+        {
+            return await db.InfraConnections
+                .Find(x => x.Partner == "cds"
+                    && x.LongTokenEncrypted != string.Empty
+                    && (x.Status == "active"
+                        || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
+                .SortByDescending(x => x.UpdatedAt)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        var original = await db.InfraConnections
+            .Find(x => x.Id == connectionId && x.Partner == "cds")
+            .FirstOrDefaultAsync(ct);
+        if (original == null)
+            return null;
+
+        if (string.Equals(original.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(original.LongTokenEncrypted)
+            && original.LongTokenExpiresAt > now)
+        {
+            return original;
+        }
+
+        return await db.InfraConnections
+            .Find(x => x.Id != original.Id
+                && x.Partner == original.Partner
+                && x.PartnerBaseUrl == original.PartnerBaseUrl
+                && x.ProjectId == original.ProjectId
+                && x.Status == "active"
+                && x.LongTokenEncrypted != string.Empty
+                && x.LongTokenExpiresAt > now)
+            .SortByDescending(x => x.LastProbeOk)
+            .ThenByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    private static string SanitizeAgentText(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        var sb = new StringBuilder(text.Length);
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (rune.Value is 0x200D or 0xFE0F) continue;
+            if (Rune.GetUnicodeCategory(rune) == System.Globalization.UnicodeCategory.OtherSymbol) continue;
+            sb.Append(rune.ToString());
+        }
+        return sb.ToString();
     }
 }

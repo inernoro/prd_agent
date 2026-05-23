@@ -61,7 +61,7 @@ x-cds-deploy-modes:
       command: >-
         corepack enable &&
         pnpm install --frozen-lockfile &&
-        pnpm exec vite build &&
+        VITE_BUILD_ID="${VITE_BUILD_ID:-$(date +%Y%m%d%H%M%S)}" pnpm exec vite build &&
         npx -y serve -s dist -l tcp://0.0.0.0:8000
 services:
   # ── App Services (有相对路径 volume mount) ──
@@ -71,7 +71,7 @@ services:
     working_dir: /repo
     volumes:
       - .:/repo
-      - ./.cds-data/api-nuget-cache:/root/.nuget/packages
+      - api-nuget-cache:/root/.nuget/packages
     ports:
       - "5000"
     command: >-
@@ -93,10 +93,14 @@ services:
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
       ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
+      # CDS Agent runtime 必须来自 shared-service discovery 或显式外部 sidecar。
+      # 禁止把 claude-agent-sdk runtime 写成本应用分支 service，否则 main/业务分支会被 runtime 污染。
       ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
       ClaudeSdkExecutor__CdsDiscovery__SharedSidecarToken: "dev-skip"
       ClaudeSdkExecutor__CdsDiscovery__RefreshIntervalSeconds: "10"
       AGENT_WORKSPACE_ROOT: /repo
+      AGENT_WORKSPACE_GITHUB_REPOSITORY: "inernoro/prd_agent"
+      AGENT_WORKSPACE_GIT_REF: "${VITE_GIT_BRANCH:-main}"
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
@@ -106,17 +110,23 @@ services:
     working_dir: /app
     volumes:
       - ./prd-admin:/app
+      # public/thirdparty/ref 是符号链接指向仓库根 thirdparty/ref（22+ 个 HTML 素材）。
+      # 单挂 ./prd-admin 时 symlink 解析到 /thirdparty/ref 找不到目录，
+      # vite build (static 模式) 的 copyPublicDir 步骤会报 ENOENT。
+      - ./thirdparty:/thirdparty:ro
     ports:
       - "8000"
     command: >-
       corepack enable &&
       pnpm install --frozen-lockfile &&
-      pnpm exec vite build &&
+      VITE_BUILD_ID="${VITE_BUILD_ID:-$(date +%Y%m%d%H%M%S)}" pnpm exec vite build &&
       npx -y serve -s dist -l tcp://0.0.0.0:8000
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      cds.readiness-timeout: "600"
+      # admin static 模式每次部署都 pnpm install + vite build（重型依赖 mermaid/katex/cytoscape，
+      # 共享 CDS 主机冷构建实测 ~614s）。600s 上限会必现"就绪探测超时"，提到 1200s 留足余量。
+      cds.readiness-timeout: "1200"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──
@@ -144,5 +154,6 @@ services:
       retries: 3
 
 volumes:
+  api-nuget-cache:
   mongodb-data:
   redis-data:

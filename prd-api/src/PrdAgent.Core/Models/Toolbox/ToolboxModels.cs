@@ -194,6 +194,11 @@ public class ToolboxRun
     public string Id { get; set; } = string.Empty;
 
     /// <summary>
+    /// 链路追踪 ID，用于串联百宝箱、工作流、CDS Agent 会话和审批事件。
+    /// </summary>
+    public string TraceId { get; set; } = string.Empty;
+
+    /// <summary>
     /// 所属用户 ID
     /// </summary>
     public string UserId { get; set; } = string.Empty;

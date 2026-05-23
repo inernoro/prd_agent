@@ -29,7 +29,9 @@ import {
 } from 'lucide-react';
 import {
   createWeeklyPoster,
+  generateWeeklyPosterImages,
   generateWeeklyPosterPageImage,
+  getWeeklyPosterImageRun,
   getWeeklyPoster,
   listWeeklyPosterKnowledgeEntries,
   listWeeklyPosters,
@@ -37,6 +39,7 @@ import {
   publishWeeklyPoster,
   updateWeeklyPoster,
   type WeeklyPoster,
+  type WeeklyPosterListItem,
   type WeeklyPosterKnowledgeEntryMeta,
   type WeeklyPosterPage,
   type WeeklyPosterSourceType,
@@ -66,6 +69,13 @@ type WorkspaceTab = 'content' | 'assets' | 'layout';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
 type CreateMode = 'guided' | 'manual';
+type PosterImageRunState = {
+  runId: string;
+  status: string;
+  total: number;
+  done: number;
+  failed: number;
+};
 
 interface PosterDesignerPageProps {
   embedded?: boolean;
@@ -106,7 +116,7 @@ const COMING_SOON_FEATURES = [
 export default function PosterDesignerPage({ embedded = false }: PosterDesignerPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
-  const [posters, setPosters] = useState<WeeklyPoster[]>([]);
+  const [posters, setPosters] = useState<WeeklyPosterListItem[]>([]);
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
   const [templates, setTemplates] = useState<WeeklyPosterTemplateMeta[]>(POSTER_TEMPLATES_SEED);
   const [currentOrder, setCurrentOrder] = useState(0);
@@ -120,6 +130,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [imageProgress, setImageProgress] = useState<Record<number, PageProgress>>({});
+  const [imageRun, setImageRun] = useState<PosterImageRunState | null>(null);
   const [activeMenu, setActiveMenu] = useState<WorkspaceMenuKey>('project');
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('content');
   const [devicePreview, setDevicePreview] = useState<DevicePreview>('desktop');
@@ -160,13 +171,27 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     const res = await listWeeklyPosters({ pageSize: 50 });
     setLoadingList(false);
     if (!res.success || !res.data) {
+      // 诊断日志：捕获完整错误信息帮助排查 400 根因
+      console.error('[refreshList] failed', {
+        success: res.success,
+        errorCode: res.error?.code,
+        errorMessage: res.error?.message,
+        timestamp: new Date().toISOString(),
+      });
       toast.error(res.error?.message || '加载海报列表失败');
       return;
     }
 
     const items = res.data.items ?? [];
     setPosters(items);
-    const nextId = preferredId || searchParams.get('id') || loadDraftId() || items[0]?.id || null;
+    // searchParams.get('id') 拿到的是字符串，URL 被污染时可能是字面量 "undefined" / "null" / ""
+    const sanitize = (v: string | null | undefined): string | null => {
+      if (!v) return null;
+      const t = v.trim();
+      if (!t || t === 'undefined' || t === 'null') return null;
+      return t;
+    };
+    const nextId = sanitize(preferredId) || sanitize(searchParams.get('id')) || sanitize(loadDraftId()) || items[0]?.id || null;
     if (nextId) void selectPoster(nextId, false);
     else {
       setPoster(null);
@@ -182,6 +207,11 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setLoadingPoster(false);
     if (!res.success || !res.data) {
       toast.error(res.error?.message || '加载海报失败');
+      // 清理污染的 URL（如 ?id=undefined / ?id=已删除），避免下次刷新继续 404
+      if (!embedded && searchParams.get('id') === id) {
+        setSearchParams({}, { replace: true });
+      }
+      saveDraftId(null);
       return;
     }
     setPoster(res.data);
@@ -349,6 +379,97 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setLastSavedAt(new Date());
     setImageProgress((prev) => ({ ...prev, [currentPage.order]: 'done' }));
   };
+
+  const startBulkImageRun = async () => {
+    if (!poster) return;
+    const targets = pages.filter((page) => page.imagePrompt?.trim() && !page.imageUrl);
+    if (targets.length === 0) {
+      toast.info('没有待补充的背景图');
+      return;
+    }
+
+    setImageProgress((prev) => {
+      const next = { ...prev };
+      for (const page of targets) next[page.order] = 'generating-image';
+      return next;
+    });
+
+    const res = await generateWeeklyPosterImages(poster.id, { regenerate: false, maxConcurrency: 3 });
+    if (!res.success || !res.data) {
+      toast.error(res.error?.message || '创建后台生图任务失败');
+      setImageProgress((prev) => {
+        const next = { ...prev };
+        for (const page of targets) next[page.order] = 'failed';
+        return next;
+      });
+      return;
+    }
+
+    setImageRun({
+      runId: res.data.runId,
+      status: res.data.status,
+      total: res.data.total,
+      done: 0,
+      failed: 0,
+    });
+    toast.success(res.data.reused ? '已有后台生图任务，继续跟踪' : '已创建后台生图任务');
+  };
+
+  const activeImageRunId = imageRun?.runId;
+
+  useEffect(() => {
+    const runId = activeImageRunId;
+    if (!runId) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+    const tick = async () => {
+      const res = await getWeeklyPosterImageRun(runId);
+      if (cancelled) return;
+      if (!res.success || !res.data) {
+        timer = window.setTimeout(tick, 3000);
+        return;
+      }
+
+      const data = res.data;
+      setImageRun({
+        runId: data.runId,
+        status: data.status,
+        total: data.total,
+        done: data.done,
+        failed: data.failed,
+      });
+      if (data.poster) {
+        setPoster(data.poster);
+        setPosters((prev) => upsertPosterSummary(prev, data.poster!));
+        lastSavedSignatureRef.current = buildPosterSignature(data.poster);
+        setSaveStatus('saved');
+        setLastSavedAt(new Date());
+        setImageProgress((prev) => {
+          const next = { ...prev };
+          for (const page of data.poster?.pages ?? []) {
+            if (page.imageUrl && next[page.order] === 'generating-image') {
+              next[page.order] = 'done';
+            }
+          }
+          return next;
+        });
+      }
+
+      if (['Completed', 'Failed', 'Cancelled'].includes(data.status)) {
+        if (data.status === 'Completed') toast.success('背景图已全部回填');
+        else toast.error(data.status === 'Cancelled' ? '后台生图已取消' : '部分背景图生成失败');
+        return;
+      }
+      timer = window.setTimeout(tick, 2500);
+    };
+
+    timer = window.setTimeout(tick, 1000);
+    return () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [activeImageRunId]);
 
   const handlePublish = async () => {
     if (!poster || publishing) return;
@@ -634,6 +755,25 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void startBulkImageRun()}
+                        disabled={!poster || pages.length === 0 || Boolean(imageRun && !['Completed', 'Failed', 'Cancelled'].includes(imageRun.status))}
+                        title="服务端后台生成所有缺失的海报背景图，关闭浏览器后仍会继续回填"
+                        className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          color: 'rgba(157,220,255,0.95)',
+                          background: 'rgba(56,189,248,0.12)',
+                          border: '1px solid rgba(125,211,252,0.28)',
+                        }}
+                      >
+                        {imageRun && !['Completed', 'Failed', 'Cancelled'].includes(imageRun.status)
+                          ? <Loader2 size={14} className="animate-spin" />
+                          : <ImagePlus size={14} />}
+                        {imageRun && !['Completed', 'Failed', 'Cancelled'].includes(imageRun.status)
+                          ? `后台生图 ${imageRun.done}/${imageRun.total}`
+                          : '一键生成背景图'}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setAutoPublishOpen(true)}
@@ -1671,7 +1811,6 @@ function PageListItem({
   dimensionLabel: string;
   onClick: () => void;
 }) {
-  const stateLabel = pageProgressLabel(progress ?? pageQualityState(page));
   const stateColor = pageProgressColor(progress ?? pageQualityState(page));
 
   return (
@@ -1706,10 +1845,13 @@ function PageListItem({
               <div className="mt-1 text-[10.5px] text-white/44">{dimensionLabel}</div>
             </div>
             <span
-              className="rounded-full px-2 py-1 text-[10px] font-medium"
-              style={{ background: `${stateColor}22`, border: `1px solid ${stateColor}55`, color: stateColor }}
+              className="rounded-full inline-flex shrink-0 items-center justify-center"
+              style={{ width: 20, height: 20, background: `${stateColor}33`, border: `1px solid ${stateColor}66`, color: stateColor }}
             >
-              {stateLabel}
+              {(progress ?? pageQualityState(page)) === 'done' && <Check size={11} strokeWidth={3} />}
+              {(progress ?? pageQualityState(page)) === 'pending' && <ImagePlus size={11} />}
+              {(progress ?? pageQualityState(page)) === 'generating-image' && <Loader2 size={11} className="animate-spin" />}
+              {(progress ?? pageQualityState(page)) === 'failed' && <X size={11} strokeWidth={2.5} />}
             </span>
           </div>
           <div className="mt-2 text-[10.5px] text-white/45 line-clamp-2">
@@ -2253,6 +2395,18 @@ function CreatePosterModal({
         toast.error('生成响应缺少 poster 字段');
         return;
       }
+      // 防御：后端 SSE 帧曾因默认 PascalCase 序列化导致 .id 为 undefined
+      // 这里显式校验，避免静默把 undefined 写到 URL/请求路径里
+      if (!data.poster.id) {
+        const keys = Object.keys(data.poster as unknown as Record<string, unknown>);
+        console.error('[autopilot.onDone] poster.id 缺失，可能是后端序列化大小写不匹配', {
+          keys,
+          rawSample: JSON.stringify(data.poster).slice(0, 200),
+        });
+        setPhase('idle');
+        toast.error('生成响应字段格式异常（poster.id 缺失），请刷新重试');
+        return;
+      }
       setGeneratedPoster(data.poster);
       saveCanvasOrientation(data.poster.id, orientation);
       saveDraftId(data.poster.id);
@@ -2578,7 +2732,7 @@ function CreatePosterModal({
             <div className="flex-1 min-h-0 overflow-y-auto p-5">
               {typingText && phase === 'llm' && <TypingPanel text={typingText} />}
               {generatedPoster ? (
-                <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                <div className="grid gap-3 mt-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                   {[...(generatedPoster.pages ?? [])].sort((a, b) => a.order - b.order).map((page, i) => (
                     <GeneratedPageCard
                       key={`${page.order ?? `idx-${i}`}`}
@@ -2732,9 +2886,21 @@ function toUpsertInput(poster: WeeklyPoster) {
   };
 }
 
-function upsertPosterSummary(items: WeeklyPoster[], poster: WeeklyPoster) {
+function toPosterListItem(poster: WeeklyPoster): WeeklyPosterListItem {
+  return {
+    id: poster.id,
+    title: poster.title,
+    weekKey: poster.weekKey,
+    status: poster.status,
+    pageCount: poster.pages?.length ?? 0,
+    updatedAt: poster.updatedAt,
+    publishedAt: poster.publishedAt ?? null,
+  };
+}
+
+function upsertPosterSummary(items: WeeklyPosterListItem[], poster: WeeklyPoster): WeeklyPosterListItem[] {
   const rest = items.filter((item) => item.id !== poster.id);
-  return [poster, ...rest].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return [toPosterListItem(poster), ...rest].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
 function loadDraftId(): string | null {
@@ -2873,13 +3039,6 @@ function pageQualityState(page: WeeklyPosterPage): PageProgress {
   if (page.imageUrl) return 'done';
   if (page.body || page.imagePrompt) return 'pending';
   return 'pending';
-}
-
-function pageProgressLabel(progress: PageProgress) {
-  if (progress === 'generating-image') return '生图中';
-  if (progress === 'done') return '已完成';
-  if (progress === 'failed') return '失败';
-  return '待补充';
 }
 
 function pageProgressColor(progress: PageProgress) {

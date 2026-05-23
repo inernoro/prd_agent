@@ -15,6 +15,7 @@ import type {
   ToolboxItem,
   ToolboxItemRun,
   ToolboxRunEvent,
+  ToolboxArtifact,
   AgentInfo,
 } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
@@ -111,6 +112,7 @@ interface ToolboxState {
   currentRun: ToolboxItemRun | null;
   runStatus: 'idle' | 'running' | 'completed' | 'failed';
   runOutput: string;
+  runArtifacts: ToolboxArtifact[];
   runError: string | null;
   unsubscribe: (() => void) | null;
 
@@ -357,6 +359,39 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     createdAt: new Date().toISOString(),
   },
   {
+    id: 'builtin-my-shares',
+    name: '我的分享',
+    description: '跨网页托管 / 周报 / 知识库 / 工作流的所有分享统一管理 — 按类型分类、查看访问次数、复制 3 种 URL 形态、识别已撤销/过期',
+    icon: 'Share2',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'my-shares',
+    routePath: '/my/shares',
+    permission: 'access',
+    tags: ['分享', '管理', '总览'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    createdByName: '官方',
+  },
+  {
+    id: 'builtin-share-link-tester',
+    name: '分享链接体检',
+    description: '粘贴任意分享 slug（数字 seq 或字母 token），看后端解析出的资源类型，并对比 3 种 URL 形态（统一长链 / 超短链 / 旧版前缀链）的打开效果',
+    icon: 'Link2',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'share-link-tester',
+    routePath: '/labs/share-link-tester',
+    permission: 'access',
+    tags: ['分享', '调试', '链接', '实验室'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    createdByName: '官方',
+    wip: true,
+  },
+  {
     id: 'builtin-transcript-agent',
     name: '转录工作台',
     description: '音视频智能转录，支持多模型ASR转写、时间戳编辑、模板转文案',
@@ -456,6 +491,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   currentRun: null,
   runStatus: 'idle',
   runOutput: '',
+  runArtifacts: [],
   runError: null,
   unsubscribe: null,
 
@@ -610,6 +646,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       view: 'detail',
       runStatus: 'idle',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
   },
@@ -751,6 +788,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       view: 'running',
       runStatus: 'running',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
 
@@ -796,6 +834,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       editingItem: null,
       runStatus: 'idle',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
   },
@@ -810,6 +849,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       currentRun: null,
       runStatus: 'idle',
       runOutput: '',
+      runArtifacts: [],
       runError: null,
     });
   },
@@ -823,6 +863,17 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
         if (event.content) {
           set((state) => ({
             runOutput: state.runOutput + event.content,
+          }));
+        }
+        break;
+
+      case 'step_artifact':
+        if (event.artifact) {
+          set((state) => ({
+            runArtifacts: [
+              ...state.runArtifacts.filter((item) => item.id !== event.artifact?.id),
+              event.artifact!,
+            ],
           }));
         }
         break;

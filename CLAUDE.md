@@ -277,34 +277,30 @@ https://${tail}-${prefix}-${projectSlug}.miduo.org/
 
 实现唯一来源：`cds/src/services/preview-slug.ts` 的 `computePreviewSlug(branch, projectSlug)`。CDS 后端、PR 评论模板、check-run 摘要、Settings 预览全部过这一函——改公式只动一处。
 
-#### 强制行为
+#### 强制行为：永远只调一条命令（不许自己 slugify）
 
-每次 push 后必须调用 `/preview-url` 技能（或内联跑下方脚本拼接），在交付消息里独立成行输出：
-
-```
-【预览】https://{tail}-{prefix}-{project-slug}.miduo.org/{可选-具体页面路径}
-```
-
-#### 推荐写法
+每次 push 后**只跑这条**，把输出原文贴到交付消息里的【预览】行：
 
 ```bash
-slugify() {
-  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//'
-}
-PROJECT_SLUG=$(slugify "$(basename "$(git rev-parse --show-toplevel)")")
-BRANCH=$(git branch --show-current)
-case "$BRANCH" in
-  */*)
-    PREFIX=$(slugify "${BRANCH%%/*}")
-    TAIL=$(slugify "${BRANCH#*/}")
-    SLUG="${TAIL}-${PREFIX}-${PROJECT_SLUG}"
-    ;;
-  *)
-    SLUG="$(slugify "$BRANCH")-${PROJECT_SLUG}"
-    ;;
-esac
-echo "https://${SLUG}.miduo.org/"
+python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
+
+```
+【预览】<cdscli 输出原文>{可选-具体页面路径}
+```
+
+这条 CLI 是预览 URL 唯一的可执行 SSOT。它做三件事：
+
+1. 有 `CDS_HOST` + `AI_ACCESS_KEY` → `GET /api/branches` 拿后端 `previewSlug` 字段（与 `cds/src/services/preview-slug.ts:computePreviewSlug` 永不漂移）
+2. 没 CDS 凭据 → 用 cdscli 内嵌的 `_compute_preview_slug()` 推算（同 SSOT 公式，依赖目录名 ≈ CDS 项目 slug）
+3. 不在 git 仓库 / detached HEAD → exit 1 报错
+
+**禁止以下"绕开 cdscli"的行为**（都被 `cds/tests/services/preview-url-skill-drift.test.ts` 守卫扫，CI 会 fail）：
+
+- 在 bash / Python / 任何脚本里写自己的 `slugify()` 函数
+- 拼 `${X}.miduo.org` / `${BRANCH_ID}.miduo.org` 这种 v1 风格
+- `tr '/' '-'` 单步推 CDS branch id
+- 在 commit message / PR body / skill 模板里手写 URL
 
 #### 适用场景
 
@@ -357,6 +353,7 @@ echo "https://${SLUG}.miduo.org/"
 | `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 | `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
+| `blocked-state-circuit-breaker.md` | 长任务 / 多轮自动执行 Agent | 撞上自己无法提供的外部输入时必须熔断：≥8 提交或≥2h 无功能净进展即停止进度剧场、发一条合并升级、切纯代码或挂起；禁止 plan thrashing 和不眠 grinding |
 
 ---
 
@@ -411,6 +408,7 @@ echo "https://${SLUG}.miduo.org/"
 | **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
 | **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
 | **daily-entropy-plan** | `/daily-entropy` | 仅手动触发 → 一条命令跑完整日例行：合并历史熵减 PR → 切新分支 → 六维双向扫描 → 自动修复 → diff 核验 → 提交 + 推送 + 创建 PR + squash 合并。全程不中断，不需要人工确认 |
+| **laowang** | `老王`、`/laowang` | 用户卡住/任务太难/争执不下时触发 → 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）强制拆解。风格直率，副作用：50% 概率追加一项延伸任务 |
 
 ### 专项修复技能
 

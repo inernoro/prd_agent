@@ -85,7 +85,7 @@ export const menuList: MenuDef[] = [
     appKey: 'settings',
     label: '系统设置',
     icon: 'Settings',
-    permissions: ['settings.read', 'settings.write'],
+    permissions: ['settings.read', 'settings.write', 'short-links.manage'],
   },
   {
     appKey: 'authz',
@@ -234,6 +234,9 @@ export const allPermissions: PermissionDef[] = [
   // 系统设置
   { key: 'settings.read', label: '系统设置 - 读', description: '查看系统设置', category: 'read' },
   { key: 'settings.write', label: '系统设置 - 写', description: '修改系统设置', category: 'write' },
+
+  // 统一短链管理（系统设置 → 分享短链 Tab）
+  { key: 'short-links.manage', label: '分享短链管理', description: '跨用户查看/吊销所有 /s/{seq} 短链', category: 'manage' },
 
   // 提示词管理
   // 实验室

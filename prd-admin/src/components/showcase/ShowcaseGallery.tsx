@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'motion/react';
 import { Eye, BookOpen, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SubmissionDetailModal } from './SubmissionDetailModal';
@@ -11,9 +12,13 @@ import {
 } from '@/services/real/submissions';
 import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
 import { HeartLikeButton } from '@/components/effects/HeartLikeButton';
-import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
+import { distributeToColumns, getAspectRatio } from './waterfall';
+import { useWaterfallColumns } from '@/hooks/useWaterfallColumns';
+import { useInViewport } from '@/hooks/useInViewport';
+import { useCreatorFilter } from '@/hooks/useCreatorFilter';
+import { CreatorFilterRow } from './CreatorFilterRow';
 
 const TABS = [
   { key: '', label: '全部' },
@@ -21,31 +26,7 @@ const TABS = [
   { key: 'literary', label: '文学创作' },
 ] as const;
 
-const PAGE_SIZE = 20;
-
-/** Distribute items into columns by shortest-column-first for waterfall layout */
-function distributeToColumns<T extends { coverWidth: number; coverHeight: number }>(
-  items: T[],
-  columnCount: number,
-): T[][] {
-  const columns: T[][] = Array.from({ length: columnCount }, () => []);
-  const heights = new Array(columnCount).fill(0);
-  for (const item of items) {
-    const ratio = item.coverWidth && item.coverHeight ? item.coverHeight / item.coverWidth : 0.625;
-    const shortest = heights.indexOf(Math.min(...heights));
-    columns[shortest].push(item);
-    heights[shortest] += ratio;
-  }
-  return columns;
-}
-
-/** Get aspect ratio string for a submission item */
-function getAspectRatio(item: SubmissionItem): string {
-  if (item.coverWidth && item.coverHeight) {
-    return `${item.coverWidth}/${item.coverHeight}`;
-  }
-  return '16/10';
-}
+const PAGE_SIZE = 12;
 
 /* ── NotebookLM-style gradient fallbacks ── */
 const FALLBACK_GRADIENTS = [
@@ -87,6 +68,7 @@ function ShowcaseCard({
   useEffect(() => { setLiked(item.likedByMe); }, [item.likedByMe]);
   useEffect(() => { setLikeCount(item.likeCount); }, [item.likeCount]);
 
+  const [boxRef, inView] = useInViewport<HTMLDivElement>();
   const avatarUrl = resolveAvatarUrl({ avatarFileName: item.ownerAvatarFileName });
   const hasCover = !!item.coverUrl && !imgError;
 
@@ -116,20 +98,28 @@ function ShowcaseCard({
     >
       {/* Card — full-bleed image/gradient, natural aspect ratio for waterfall */}
       <div
+        ref={boxRef}
         className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: getAspectRatio(item),
-          background: hasCover ? '#0a0a0f' : getFallbackGradient(item.id),
+          // 始终用彩色渐变占位（即使有封面），封面图懒加载后在渐变之上淡入，
+          // 避免下载完成前闪一块纯黑。
+          background: getFallbackGradient(item.id),
         }}
       >
-        {/* Cover image */}
-        {item.coverUrl && !imgError && (
+        {/* 封面图未加载完成时的轻微呼吸感占位（仅在已进入视口、图片还没 onLoad 时显示） */}
+        {hasCover && inView && !imgLoaded && (
+          <div className="absolute inset-0 animate-pulse" style={{ background: 'rgba(255,255,255,0.04)' }} />
+        )}
+        {/* Cover image — only requested once the card nears the viewport */}
+        {item.coverUrl && !imgError && inView && (
           <img
             src={item.coverUrl}
             alt={item.title}
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-[1.06]"
             style={{ opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.5s ease' }}
             loading="lazy"
+            decoding="async"
             onLoad={() => setImgLoaded(true)}
             onError={() => setImgError(true)}
           />
@@ -247,7 +237,6 @@ function ShowcaseCard({
 /* ── ShowcaseGallery ── */
 
 export function ShowcaseGallery() {
-  const { isMobile } = useBreakpoint();
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === 'ADMIN';
   const [activeTab, setActiveTab] = useState('');
@@ -256,6 +245,15 @@ export function ShowcaseGallery() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const {
+    creators,
+    creatorsLoading,
+    selectedCreatorId,
+    selectedCreatorRef,
+    fetchCreators,
+    selectCreator,
+    resetCreator,
+  } = useCreatorFilter();
   const initialLoadDone = useRef(false);
   const fetchIdRef = useRef(0);
 
@@ -267,6 +265,7 @@ export function ShowcaseGallery() {
     try {
       const res = await listPublicSubmissions({
         contentType: contentType || undefined,
+        ownerUserId: selectedCreatorRef.current || undefined,
         skip,
         limit: PAGE_SIZE,
       });
@@ -281,19 +280,28 @@ export function ShowcaseGallery() {
         setLoadingMore(false);
       }
     }
-  }, []);
+  }, [selectedCreatorRef]);
 
   useEffect(() => {
     if (!initialLoadDone.current) {
       initialLoadDone.current = true;
       fetchItems('', 0, false);
+      fetchCreators('');
     }
-  }, [fetchItems]);
+  }, [fetchItems, fetchCreators]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setItems([]);
+    resetCreator();
     fetchItems(tab, 0, false);
+    fetchCreators(tab);
+  };
+
+  const handleSelectCreator = (userId: string | null) => {
+    selectCreator(userId);
+    setItems([]);
+    fetchItems(activeTab, 0, false);
   };
 
   const handleLikeToggle = async (id: string, liked: boolean) => {
@@ -340,9 +348,8 @@ export function ShowcaseGallery() {
 
   const hasMore = items.length < total;
 
-  // Waterfall column count
-  const columnCount = isMobile ? 2 : 4;
-  const gap = isMobile ? 12 : 16;
+  // Waterfall column count — driven by actual container content width (ultrawide-aware)
+  const { columnCount, gap, ref: gridRef } = useWaterfallColumns();
   const columns = useMemo(() => distributeToColumns(items, columnCount), [items, columnCount]);
 
   // Infinite scroll: observe a sentinel at the bottom
@@ -363,10 +370,10 @@ export function ShowcaseGallery() {
   }, [loading, loadingMore, items.length, total, activeTab, fetchItems]);
 
   // 只在初始加载（全部tab）没有数据时隐藏整个区域
-  if (!loading && items.length === 0 && initialLoadDone.current && !activeTab) return null;
+  if (!loading && items.length === 0 && initialLoadDone.current && !activeTab && !selectedCreatorId) return null;
 
   return (
-    <section className="mt-10">
+    <section ref={gridRef} className="mt-10">
       {/* Section header with tabs */}
       <div className="flex items-center justify-between mb-6">
         <div
@@ -403,6 +410,18 @@ export function ShowcaseGallery() {
         </div>
       </div>
 
+      {/* Creator avatar filter row */}
+      {(creatorsLoading || creators.length > 0) && (
+        <div className="mb-6">
+          <CreatorFilterRow
+            creators={creators}
+            selectedUserId={selectedCreatorId}
+            onSelect={handleSelectCreator}
+            loading={creatorsLoading}
+          />
+        </div>
+      )}
+
       {/* Loading skeleton — waterfall */}
       {loading && (
         <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
@@ -423,21 +442,33 @@ export function ShowcaseGallery() {
         </div>
       )}
 
-      {/* Waterfall layout — natural aspect ratio cards */}
+      {/* Waterfall layout — natural aspect ratio cards
+          入场动效参考 reactbits.dev/components/masonry：位移 + 缩放 + 模糊淡入 + 顺序 stagger */}
       {!loading && items.length > 0 && (
         <>
           <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>
             {columns.map((col, colIdx) => (
               <div key={colIdx} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap }}>
-                {col.map((item) => (
-                  <ShowcaseCard
+                {col.map((item, rowIdx) => (
+                  <motion.div
                     key={item.id}
-                    item={item}
-                    onLikeToggle={handleLikeToggle}
-                    onClick={() => setSelectedId(item.id)}
-                    isAdmin={isAdmin}
-                    onAdminWithdraw={handleAdminWithdraw}
-                  />
+                    initial={{ opacity: 0, y: 80, scale: 0.86, filter: 'blur(12px)' }}
+                    whileInView={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+                    viewport={{ once: true, margin: '0px 0px -10% 0px' }}
+                    transition={{
+                      duration: 0.65,
+                      ease: [0.22, 1, 0.36, 1],
+                      delay: Math.min(rowIdx * 0.08 + colIdx * 0.04, 0.6),
+                    }}
+                  >
+                    <ShowcaseCard
+                      item={item}
+                      onLikeToggle={handleLikeToggle}
+                      onClick={() => setSelectedId(item.id)}
+                      isAdmin={isAdmin}
+                      onAdminWithdraw={handleAdminWithdraw}
+                    />
+                  </motion.div>
                 ))}
               </div>
             ))}
@@ -461,7 +492,7 @@ export function ShowcaseGallery() {
       )}
 
       {/* Empty state */}
-      {!loading && items.length === 0 && activeTab && (
+      {!loading && items.length === 0 && (activeTab || selectedCreatorId) && (
         <div
           className="flex flex-col items-center justify-center h-40 gap-2"
           style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}

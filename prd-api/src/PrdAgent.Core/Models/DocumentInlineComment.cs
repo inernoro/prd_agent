@@ -39,6 +39,12 @@ public class DocumentInlineComment
     /// <summary>结束字符偏移量（hint；rebind 后会更新）</summary>
     public int EndOffset { get; set; }
 
+    /// <summary>
+    /// 是否为"全文评论"（无选区，对整篇文档发表）。
+    /// true 时 SelectedText / Context / Offset 均为空，不参与 rebind，正文不显示定位高亮。
+    /// </summary>
+    public bool IsWholeDocument { get; set; }
+
     /// <summary>评论内容</summary>
     public string Content { get; set; } = string.Empty;
 

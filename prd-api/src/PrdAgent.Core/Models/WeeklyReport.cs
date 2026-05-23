@@ -97,9 +97,35 @@ public class WeeklyReport
     /// <summary>提交时快照的统计数据（v2.0，JSON 对象）</summary>
     public Dictionary<string, object>? StatsSnapshot { get; set; }
 
+    /// <summary>状态变更版本记录（仅记录时间和事件类型，不含内容）</summary>
+    public List<ReportVersionEntry> VersionHistory { get; set; } = new();
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 周报版本记录条目：仅追踪状态变更事件（提交/审阅/退回），不记录内容差异
+/// </summary>
+public class ReportVersionEntry
+{
+    /// <summary>事件类型：submitted / reviewed / returned</summary>
+    public string Event { get; set; } = string.Empty;
+
+    /// <summary>事件发生时间</summary>
+    public DateTime At { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>周报版本事件类型常量</summary>
+public static class ReportVersionEvent
+{
+    public const string Submitted = "submitted";
+    public const string Reviewed = "reviewed";
+    public const string Returned = "returned";
+
+    /// <summary>已提交状态下被再次编辑保存（仅在 status=submitted 时记录）</summary>
+    public const string Edited = "edited";
 }
 
 /// <summary>

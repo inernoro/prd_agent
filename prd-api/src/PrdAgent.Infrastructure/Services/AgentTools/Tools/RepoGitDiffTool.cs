@@ -36,6 +36,12 @@ public sealed class RepoGitDiffTool : IAgentTool
     {
         try
         {
+            var repair = await _workspace.EnsureGitRepositoryAsync(ct);
+            if (repair != null)
+            {
+                return AgentToolInvokeResult.Fail("repo_git_diff_failed", repair.Stderr);
+            }
+
             var cwd = input.TryGetProperty("cwd", out var d) && d.ValueKind == JsonValueKind.String
                 ? d.GetString()
                 : ".";

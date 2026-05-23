@@ -46,8 +46,12 @@ function NavigationBridge() {
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
+const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
+const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
+const MySharesPage = lazy(() => import('@/pages/labs/MySharesPage'));
+const SkillShareViewPage = lazy(() => import('@/pages/SkillShareViewPage'));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
@@ -185,6 +189,9 @@ export default function App() {
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
         <Route path="/u/:username" element={<PublicProfilePage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
+        <Route path="/s/skill/:token" element={<SkillShareViewPage />} />
+        {/* 统一短链 /s/{seq}（数字）— 兼容所有分享系统，老链接继续走上方专属路由 */}
+        <Route path="/s/:slug" element={<ShortLinkRouter />} />
 
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
@@ -293,6 +300,8 @@ export default function App() {
 
         {/* 后端 menuCatalog 注册的路由（admin / 特殊权限页，前端不进 launcher） */}
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
+        <Route path="labs/share-link-tester" element={<ShareLinkTesterPage />} />
+        <Route path="my/shares" element={<MySharesPage />} />
         <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />

@@ -650,6 +650,10 @@ export const api = {
       get: () => '/api/report-agent/my/daily-log-tags',
       update: () => '/api/report-agent/my/daily-log-tags',
     },
+    defaultTab: {
+      get: () => '/api/report-agent/my/default-tab',
+      update: () => '/api/report-agent/my/default-tab',
+    },
     personalStats: () => '/api/report-agent/my/stats',
     teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
     teamWorkflowRun: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow/run`,
@@ -746,6 +750,8 @@ export const api = {
     favorite: (id: string) => `/api/marketplace/skills/${id}/favorite`,
     unfavorite: (id: string) => `/api/marketplace/skills/${id}/unfavorite`,
     byId: (id: string) => `/api/marketplace/skills/${id}`,
+    share: (id: string) => `/api/marketplace/skills/${id}/share`,
+    publicShare: (token: string) => `/api/marketplace/skills/public/skill-share/${token}`,
   },
 
   // ============ Agent API Keys 开放接口凭据（供 AI / Agent 调用本平台开放接口） ============
@@ -771,6 +777,10 @@ export const api = {
   // ============ Infra Agent Sessions CDS Agent 工作台 ============
   infraAgentSessions: {
     eventSchema: () => '/api/infra-agent-sessions/event-schema',
+    runtimeStatus: () => '/api/infra-agent-sessions/runtime-status',
+    slaDashboard: () => '/api/infra-agent-sessions/sla-dashboard',
+    scheduleDashboard: () => '/api/infra-agent-sessions/schedule-dashboard',
+    governanceDashboard: () => '/api/infra-agent-sessions/governance-dashboard',
     list: () => '/api/infra-agent-sessions',
     create: () => '/api/infra-agent-sessions',
     byId: (id: string) => `/api/infra-agent-sessions/${id}`,
@@ -782,7 +792,11 @@ export const api = {
     stop: (id: string) => `/api/infra-agent-sessions/${id}/stop`,
     archive: (id: string) => `/api/infra-agent-sessions/${id}/archive`,
     collectArtifacts: (id: string) => `/api/infra-agent-sessions/${id}/collect-artifacts`,
+    traceBundle: (id: string) => `/api/infra-agent-sessions/${id}/trace-bundle`,
     runReadonlyChecks: (id: string) => `/api/infra-agent-sessions/${id}/run-readonly-checks`,
+    captureBrowserSnapshot: (id: string) => `/api/infra-agent-sessions/${id}/capture-browser-snapshot`,
+    runBrowserAction: (id: string) => `/api/infra-agent-sessions/${id}/browser-actions`,
+    requestToolApproval: (id: string) => `/api/infra-agent-sessions/${id}/tool-approval-requests`,
     manualTakeover: (id: string) => `/api/infra-agent-sessions/${id}/manual-takeover`,
     manualInputs: (id: string) => `/api/infra-agent-sessions/${id}/manual-inputs`,
     logs: (id: string) => `/api/infra-agent-sessions/${id}/logs`,
@@ -796,6 +810,11 @@ export const api = {
 
   infraAgentRuntimeProfiles: {
     list: () => '/api/infra-agent-runtime-profiles',
+    templates: () => '/api/infra-agent-runtime-profiles/templates',
+    adapterCompatibility: () => '/api/infra-agent-runtime-profiles/adapter-compatibility',
+    adapterMatrix: () => '/api/infra-agent-runtime-profiles/adapter-matrix',
+    createFromTemplate: (templateId: string) => `/api/infra-agent-runtime-profiles/templates/${templateId}/profiles`,
+    createDefaultFromTemplateAfterTest: (templateId: string) => `/api/infra-agent-runtime-profiles/templates/${templateId}/default-profile`,
     create: () => '/api/infra-agent-runtime-profiles',
     importDefaultModel: () => '/api/infra-agent-runtime-profiles/import-default-model',
     byId: (id: string) => `/api/infra-agent-runtime-profiles/${id}`,
@@ -957,6 +976,7 @@ export const api = {
       byId: (id: string) => `/api/workflow-agent/executions/${id}`,
       cancel: (id: string) => `/api/workflow-agent/executions/${id}/cancel`,
       continue: (id: string) => `/api/workflow-agent/executions/${id}/continue`,
+      rejectApproval: (id: string) => `/api/workflow-agent/executions/${id}/reject-approval`,
       resumeFrom: (executionId: string, nodeId: string) =>
         `/api/workflow-agent/executions/${executionId}/resume-from/${nodeId}`,
       nodeLogs: (executionId: string, nodeId: string) =>
@@ -1073,6 +1093,12 @@ export const api = {
   publicProfile: {
     byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,
   },
+  // ============ 统一短链解析 ============
+  shortLinks: {
+    resolve: (seq: string | number) => `/api/short-links/${seq}`,
+    // P1 URL 统一：接受任意 slug（纯数字 → Seq，其它 → Token）走同一端点
+    resolveSlug: (slug: string) => `/api/short-links/resolve/${encodeURIComponent(slug)}`,
+  },
   // ============ 快捷指令 ============
   shortcuts: {
     list: () => '/api/shortcuts',
@@ -1088,6 +1114,7 @@ export const api = {
   // ============ 作品投稿展示 ============
   submissions: {
     public: () => '/api/submissions/public',
+    creators: () => '/api/submissions/public/creators',
     mine: () => '/api/submissions/mine',
     create: () => '/api/submissions',
     check: () => '/api/submissions/check',
@@ -1136,6 +1163,7 @@ export const api = {
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
+      replace: (entryId: string) => `/api/document-store/entries/${entryId}/replace`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,

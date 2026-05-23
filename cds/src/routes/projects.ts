@@ -322,9 +322,14 @@ interface ProjectStats {
   runningServiceCount: number;
   appServices: Array<{
     id: string;
+    name?: string;
     branch: string;
     status?: string;
     runningCount?: number;
+    dockerImage?: string;
+    command?: string;
+    workDir?: string;
+    containerPort?: number;
   }>;
   infraServiceCount: number;
   runningInfraServiceCount: number;
@@ -415,12 +420,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // helper treats branches without a projectId as belonging to the
     // legacy 'default' project, which preserves the pre-P4 rollup
     // behaviour for the legacy project.
-    const branches = stateService.getBranchesForProject(project.id);
+    const isSharedService = project.kind === 'shared-service';
+    const branches = isSharedService ? [] : stateService.getBranchesForProject(project.id);
     let runningBranchCount = 0;
     let appServiceCount = 0;
     let runningServiceCount = 0;
     let lastDeployedAt: string | null = null;
     const appServiceMap = new Map<string, ProjectStats['appServices'][number]>();
+    const profilesById = new Map(stateService.getBuildProfilesForProject(project.id).map((profile) => [profile.id, profile]));
     const infra = stateService.getInfraServicesForProject(project.id);
     const runningInfra = infra.filter((service) => service.status === 'running').length;
     for (const b of branches) {
@@ -435,11 +442,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           if (existing) {
             existing.runningCount = (existing.runningCount || 1) + 1;
           } else {
+            const profile = profilesById.get(service.profileId);
             appServiceMap.set(service.profileId, {
               id: service.profileId,
+              name: profile?.name,
               branch: b.branch,
               status: service.status,
               runningCount: 1,
+              dockerImage: profile?.dockerImage,
+              command: profile?.command,
+              workDir: profile?.workDir,
+              containerPort: profile?.containerPort,
             });
           }
         }
@@ -1909,6 +1922,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
       defaultDeployModes: Record<string, string>;
+      autoPublishAfterMinutes: number;
+      autoStopAfterMinutes: number;
       // PR_D.3: 5 个 per-event toggle，对应 Project.githubEventPolicy
       githubEventPolicy: {
         push?: boolean;
@@ -1991,7 +2006,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
@@ -2034,6 +2049,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         next[profileId] = mode;
       }
       patch.defaultDeployModes = next;
+    }
+    // 自动切发布版保留为项目级单值；autoStopAfterMinutes 仅兼容旧 API，
+    // 运行时已由系统级 SchedulerService 接管，不再在 AutoLifecycle 执行。
+    // 限制 [0, 1440]（24 小时）防止配错。0 = 关闭。
+    for (const field of ['autoPublishAfterMinutes', 'autoStopAfterMinutes'] as const) {
+      if (body[field] === undefined) continue;
+      const raw = body[field];
+      const num = typeof raw === 'number' ? raw : Number(raw);
+      if (!Number.isFinite(num) || num < 0 || num > 1440) {
+        res.status(400).json({ error: 'validation', field, message: `${field} 必须是 0~1440 之间的整数（0 = 关闭）` });
+        return;
+      }
+      patch[field] = Math.floor(num);
     }
     if (body.name !== undefined) patch.name = String(body.name).trim();
     // For alias fields an empty string explicitly clears them so the UI

@@ -293,7 +293,7 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
   'cds-agent': {
     typeKey: 'cds-agent',
     name: 'CDS Agent',
-    description: '把工作流节点委托给远程 CDS sandbox，支持代码巡检、PR 任务、事件和产物回填',
+    description: '把工作流节点委托给 CDS sandbox 执行只读代码巡检，回填 session、trace、事件和产物',
     Icon: Bot,
     emoji: 'CDS',
     category: 'processor',

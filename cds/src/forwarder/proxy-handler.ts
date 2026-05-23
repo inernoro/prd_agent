@@ -24,6 +24,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 
 export interface ProxyHandlerOptions {
   /** upstream 连接超时 ms,默认 5000(connect 5s 无应答 → 504) */
@@ -641,28 +642,18 @@ export class ProxyHandler {
     });
   }
 
-  /** 写 502/503 友好 HTML 自动刷新页(浏览器场景),对齐 master proxy.ts:1074-1092 */
+  /** 写 502/503 友好 HTML 自动刷新页。用户只需要知道预览仍在等待，不暴露 upstream 细节。 */
   private respondHtmlError(res: ServerResponse, status: number, hint: string, code: string) {
     if (res.headersSent || res.writableEnded) return;
-    const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>预览环境准备中</title>
-<style>body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px}
-.card{max-width:480px;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-.spinner{width:32px;height:32px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 20px}
-@keyframes spin{to{transform:rotate(360deg)}}
-h2{font-size:17px;margin:0 0 12px;color:#f0f6fc}.tag{display:inline-block;font-size:11px;padding:3px 10px;border-radius:99px;background:#1f6feb22;color:#58a6ff;margin-bottom:14px}
-.desc{font-size:13px;color:#8b949e;line-height:1.6}.kbd{font-family:ui-monospace,monospace;font-size:11px;background:#21262d;padding:2px 8px;border-radius:4px;color:#c9d1d9}</style>
-</head><body><div class="card">
-<div class="spinner"></div><h2>预览环境准备中</h2>
-<div class="tag">${this.escapeHtml(code)} · 状态码 ${status}</div>
-<div class="desc">${this.escapeHtml(hint)}<br>本页 <span class="kbd">3s</span> 自动刷新。</div>
-</div><script>setTimeout(function(){location.reload()},3000)</script></body></html>`;
     try {
       res.writeHead(status, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store, no-cache, must-revalidate',
         'Retry-After': '3',
+        'X-CDS-Preview-Wait-Code': code,
+        'X-CDS-Preview-Wait-Hint': encodeURIComponent(hint).slice(0, 180),
       });
-      res.end(html);
+      res.end(buildForwarderWaitingPageHtml());
     } catch {
       // noop
     }

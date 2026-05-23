@@ -1,0 +1,186 @@
+import { useEffect, useState } from 'react';
+import { Flame, Snowflake } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { apiRequest, ApiError } from '@/lib/api';
+import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
+import type { LoadState } from '../types';
+
+interface SchedulerConfig {
+  enabled: boolean;
+  maxHotBranches: number;
+  idleTTLSeconds: number;
+  tickIntervalSeconds: number;
+  pinnedBranches: string[];
+}
+
+interface SchedulerSnapshot {
+  enabled?: boolean;
+  // scheduler 未挂载时后端可能返回 config: null —— 全部按可选处理（Codex P2）。
+  config?: SchedulerConfig | null;
+  hot?: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
+  cold?: Array<{ slug: string; lastAccessedAt: string | undefined }>;
+  capacityUsage?: { current: number; max: number };
+}
+
+const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
+  enabled: false,
+  maxHotBranches: 3,
+  idleTTLSeconds: 900,
+  tickIntervalSeconds: 60,
+  pinnedBranches: [],
+};
+
+const inputClass =
+  'min-h-11 w-32 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring';
+
+export function SchedulerTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
+  const [state, setState] = useState<LoadState<SchedulerSnapshot>>({ status: 'loading' });
+  const [enabled, setEnabled] = useState(false);
+  const [idleMinutes, setIdleMinutes] = useState('15');
+  const [maxHot, setMaxHot] = useState('3');
+  const [submitting, setSubmitting] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    apiRequest<SchedulerSnapshot>('/api/scheduler/state', { signal: ctrl.signal })
+      .then((data) => {
+        const cfg = data.config ?? DEFAULT_SCHEDULER_CONFIG;
+        setState({ status: 'ok', data });
+        setEnabled(data.enabled ?? cfg.enabled);
+        setIdleMinutes(String(Math.round((cfg.idleTTLSeconds || 900) / 60)));
+        setMaxHot(String(cfg.maxHotBranches ?? 3));
+      })
+      .catch((err: unknown) => {
+        if ((err as DOMException)?.name === 'AbortError') return;
+        setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      });
+    return () => ctrl.abort();
+  }, [reloadKey]);
+
+  if (state.status === 'loading') return <LoadingBlock />;
+  if (state.status === 'error') return <ErrorBlock message={state.message} />;
+
+  const snap = state.data;
+  const cfg = snap.config ?? DEFAULT_SCHEDULER_CONFIG;
+  const hotList = snap.hot ?? [];
+  const coldList = snap.cold ?? [];
+  const capMax = snap.capacityUsage?.max ?? cfg.maxHotBranches;
+
+  async function save(): Promise<void> {
+    const minutes = Number(idleMinutes);
+    const hot = Number(maxHot);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+      onToast('空闲超时必须是 1 到 1440 之间的整数（分钟）');
+      return;
+    }
+    if (!Number.isInteger(hot) || hot < 0 || hot > 100) {
+      onToast('最大热分支数必须是 0 到 100 之间的整数（0 = 不限）');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiRequest<SchedulerSnapshot>('/api/scheduler/config', {
+        method: 'PUT',
+        body: { enabled, idleTTLSeconds: minutes * 60, maxHotBranches: hot },
+      });
+      onToast('调度器配置已保存并即时生效');
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      onToast(`保存失败：${err instanceof ApiError ? err.message : String(err)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Section
+      title="调度器"
+      description="调度器开启后，空闲超过设定时长的分支会自动停止变灰；热分支数超上限时按 LRU 驱逐最久未访问分支。固定分支永不冷却。配置即时生效并在重启后保留。"
+    >
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-md border border-border bg-card px-4 py-4">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Flame className="h-4 w-4 text-amber-500" />
+              当前热分支
+            </div>
+            <div className="mt-2 text-2xl font-semibold">{hotList.length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              上限 {capMax === 0 ? '不限' : capMax}
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-card px-4 py-4">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Snowflake className="h-4 w-4 text-sky-500" />
+              当前冷分支
+            </div>
+            <div className="mt-2 text-2xl font-semibold">{coldList.length}</div>
+            <div className="mt-1 text-xs text-muted-foreground">已被停止 / 降温的分支</div>
+          </div>
+        </div>
+
+        <Field label="启用调度器">
+          <Button
+            type="button"
+            variant={enabled ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setEnabled((v) => !v)}
+          >
+            {enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
+          </Button>
+          <div className="mt-1.5 text-xs text-muted-foreground">
+            停用后所有分支不再被自动降温；已停止的分支下次被访问时会自动重建。
+          </div>
+        </Field>
+
+        <Field label="空闲自动下线时长（分钟）">
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            value={idleMinutes}
+            onChange={(e) => setIdleMinutes(e.target.value)}
+            className={inputClass}
+          />
+          <div className="mt-1.5 text-xs text-muted-foreground">
+            分支无预览域名访问超过此时长即被停止。范围 1–1440 分钟。当前生效值{' '}
+            <CodePill>{Math.round((cfg.idleTTLSeconds || 900) / 60)} 分钟</CodePill>
+          </div>
+        </Field>
+
+        <Field label="最大热分支数">
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={maxHot}
+            onChange={(e) => setMaxHot(e.target.value)}
+            className={inputClass}
+          />
+          <div className="mt-1.5 text-xs text-muted-foreground">
+            同时保持运行的分支上限，超出按 LRU 驱逐最久未访问的非固定分支。0 = 不限。当前生效值{' '}
+            <CodePill>{cfg.maxHotBranches === 0 ? '不限' : cfg.maxHotBranches}</CodePill>
+          </div>
+        </Field>
+
+        {cfg.pinnedBranches.length > 0 ? (
+          <Field label="固定分支（永不冷却）">
+            <div className="flex flex-wrap gap-2">
+              {cfg.pinnedBranches.map((slug) => (
+                <CodePill key={slug}>{slug}</CodePill>
+              ))}
+            </div>
+          </Field>
+        ) : null}
+
+        <div>
+          <Button type="button" onClick={() => void save()} disabled={submitting}>
+            {submitting ? '保存中…' : '保存'}
+          </Button>
+        </div>
+      </div>
+    </Section>
+  );
+}

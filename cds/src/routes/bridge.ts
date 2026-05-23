@@ -52,6 +52,13 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
     stateService.save();
   };
 
+  const touchAiActivity = (branchId: string): void => {
+    if (!stateService) return;
+    if (!stateService.getBranch(branchId)) return;
+    stateService.stampBranchTimestamp(branchId, 'lastAiOccupantAt');
+    stateService.save();
+  };
+
   // ── Widget endpoints ──
 
   // POST /api/bridge/heartbeat — Widget heartbeat (fast polling, 500ms interval)
@@ -150,6 +157,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
     };
 
     try {
+      touchAiActivity(branchId);
       const response = await bridgeService.sendCommand(branchId, command);
       res.json(response);
     } catch (err) {

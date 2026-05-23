@@ -3,7 +3,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { Copy, Eye, Trash2, FileText, BarChart3, Image as ImageIcon, FileDown, FileImage, Search, X, ChevronRight, ChevronDown, KeyRound } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { createAgentApiKey, listDefectShares, revokeDefectShare, getShareScores, getDefectMessages } from '@/services';
+import { createAgentApiKey, createDefectShare, listDefectShares, revokeDefectShare, getShareScores, getDefectMessages } from '@/services';
 import { api } from '@/services/api';
 import { useSseStream } from '@/lib/useSseStream';
 import { SseStreamPanel } from '@/components/sse';
@@ -14,7 +14,7 @@ import { DefectFixReportPanel } from './DefectFixReportPanel';
 import { useDefectStore } from '@/stores/defectStore';
 import { useAuthStore } from '@/stores/authStore';
 import { formatDefectTitle } from '@/lib/defectTitle';
-import type { DefectShareLink, DefectAiScoreItem, DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
+import type { DefectAgentLaunch, DefectShareLink, DefectAiScoreItem, DefectReport, DefectAttachment } from '@/services/contracts/defectAgent';
 
 type ImageMode = 'base64' | 'url' | 'description';
 
@@ -217,33 +217,33 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
         return;
       }
 
-      const messagesMap = new Map<string, string[]>();
-      await Promise.allSettled(
-        selected.map(async (d) => {
-          const res = await getDefectMessages({ id: d.id });
-          if (res.success && res.data) {
-            const humanMsgs = res.data.messages
-              .filter((m) => m.source === 'human' || m.role === 'user')
-              .map((m) => m.content);
-            if (humanMsgs.length > 0) messagesMap.set(d.id, humanMsgs);
-          }
-        })
-      );
-
-      const username = useAuthStore.getState().user?.username ?? 'admin';
       const baseUrl = window.location.origin;
       const apiKey = keyRes.data.apiKey;
       const expiresAt = keyRes.data.item.expiresAt ?? null;
-      const text = buildClipboardText(selected, messagesMap, 'description', new Map(), {
-        username,
+
+      const shareRes = await createDefectShare({
+        shareScope: selected.length === 1 ? 'single' : 'selected',
+        defectIds: selected.map((d) => d.id),
+        title: `Agent 缺陷修复 ${new Date().toLocaleString('zh-CN')}`,
+        expiresInDays: 1,
+      });
+      if (!shareRes.success || !shareRes.data) {
+        toast.error(shareRes.error?.message || '创建缺陷分享失败');
+        return;
+      }
+
+      const text = buildAgentLaunchPrompt({
         baseUrl,
         apiKey,
         expiresAt,
+        launch: shareRes.data.agentLaunch,
+        shareUrl: `${baseUrl}${shareRes.data.shareUrl}`,
       });
       setTempApiKey(apiKey);
       setTempKeyExpiresAt(expiresAt);
       await navigator.clipboard.writeText(text);
-      toast.success('临时密钥和 AI 提示词已复制');
+      await loadShares();
+      toast.success('精简 Agent 启动参数已复制');
     } catch {
       toast.error('创建临时密钥失败');
     } finally {
@@ -264,19 +264,15 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
 
   const handleCopySharePrompt = (share: DefectShareLink) => {
     const baseUrl = window.location.origin;
-    const viewUrl = `${baseUrl}/api/defect-agent/share/view/${share.token}`;
-    const { user, token } = useAuthStore.getState();
-    const username = user?.username ?? 'admin';
-    const prompt = [
-      `## 缺陷修复任务`, ``,
-      `我有 ${share.defectIds?.length || '若干'} 个缺陷需要分析和修复。`, ``,
-      `### 认证`, ``,
-      `\`\`\``, `X-AI-Access-Key: $AI_ACCESS_KEY`, `X-AI-Impersonate: ${username}`, `\`\`\``, ``,
-      `或：\`Authorization: Bearer ${token}\``, ``,
-      `### 获取数据`, ``,
-      `\`\`\``, `GET ${viewUrl}`, `\`\`\``, ``,
-      `请先获取数据，列出修复计划。`,
-    ].join('\n');
+    const { token } = useAuthStore.getState();
+    const shareUrl = `${baseUrl}/api/defect-agent/share/view/${share.token}`;
+    const prompt = buildAgentLaunchPrompt({
+      baseUrl,
+      apiKey: token || undefined,
+      launch: undefined,
+      shareUrl,
+      scopeLabel: scopeLabel(share),
+    });
     navigator.clipboard.writeText(prompt).catch(() => {});
     toast.success('已复制 AI 提示词到剪贴板');
   };
@@ -452,7 +448,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
                 title="创建 1 天有效的缺陷修复临时密钥，并复制包含密钥的 AI 提示词"
               >
                 {keyLoading ? <MapSpinner size={12} /> : <KeyRound size={12} />}
-                {keyLoading ? '创建中...' : '创建 1 天临时密钥并复制 AI 提示词'}
+                {keyLoading ? '创建中...' : '创建 1 天临时密钥并复制 Agent 启动参数'}
               </Button>
               {tempApiKey && (
                 <div className="mt-2 rounded-lg border border-token-subtle bg-token-nested px-2 py-1.5">
@@ -624,8 +620,10 @@ function buildClipboardText(
   imageDataMap: Map<string, string>,
   context: { username: string; baseUrl: string; apiKey?: string; expiresAt?: string | null },
 ): string {
-  const { username, baseUrl, apiKey, expiresAt } = context;
-  const accessKey = apiKey || '$AI_ACCESS_KEY';
+  const { baseUrl, apiKey, expiresAt } = context;
+  const authHeaderLines = apiKey
+    ? [`Authorization: Bearer ${apiKey}`]
+    : [`# 未签发临时 key：请先回到分享页一键创建临时密钥，再调用写接口`];
   const lines: string[] = [
     `# 缺陷修复任务`,
     ``,
@@ -653,8 +651,7 @@ function buildClipboardText(
     '```http',
     `POST ${baseUrl}/api/defect-agent/defects/{defectId}/messages`,
     `Content-Type: application/json`,
-    `X-AI-Access-Key: ${accessKey}`,
-    `X-AI-Impersonate: ${username}`,
+    ...authHeaderLines,
     ``,
     `{`,
     `  "content": "评论内容（支持 Markdown）",`,
@@ -675,8 +672,7 @@ function buildClipboardText(
     '```http',
     `POST ${baseUrl}/api/defect-agent/defects/{defectId}/resolve`,
     `Content-Type: application/json`,
-    `X-AI-Access-Key: ${accessKey}`,
-    `X-AI-Impersonate: ${username}`,
+    ...authHeaderLines,
     ``,
     `{`,
     `  "resolution": "修复说明（必须包含验收方式）"`,
@@ -693,8 +689,8 @@ function buildClipboardText(
     `4. **说明验收方式**：标记完成时必须告诉提交者如何验证修复效果`,
     ``,
     apiKey
-      ? `> **认证说明**：已随本提示词提供 1 天临时密钥，过期时间：${formatExpiry(expiresAt)}。Header 名称区分大小写：\`X-AI-Access-Key\`。`
-      : `> **认证说明**：\`AI_ACCESS_KEY\` 从环境变量读取（Header 名称区分大小写：\`X-AI-Access-Key\`）。\`X-AI-Impersonate\` 是要"代理操作"的用户名。`,
+      ? `> **认证说明**：已随本提示词提供 1 天临时密钥，过期时间：${formatExpiry(expiresAt)}。请使用 \`Authorization: Bearer <临时密钥>\`，权限以创建密钥的用户为准。`
+      : `> **认证说明**：本提示词没有携带可用 key。不要猜测环境变量或复用历史 key；请让用户打开主站缺陷分享页，一键创建临时密钥后再调用评论/解决接口。`,
     ``,
     `---`,
     ``,
@@ -779,6 +775,51 @@ function formatExpiry(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('zh-CN');
+}
+
+function buildAgentLaunchPrompt(args: {
+  baseUrl: string;
+  shareUrl: string;
+  apiKey?: string;
+  expiresAt?: string | null;
+  launch?: DefectAgentLaunch;
+  scopeLabel?: string;
+}): string {
+  const { baseUrl, shareUrl, apiKey, expiresAt, launch, scopeLabel } = args;
+  const domain = launch?.domain || baseUrl;
+  const relativeShareUrl = launch?.scope.shareUrl || shareUrl.replace(domain, '');
+  const skillName = launch?.skill.name || 'ai-defect-resolve';
+  const minVersion = launch?.skill.minVersion || '1.1.0';
+  const downloadUrl = launch?.skill.downloadUrl || `${domain}/api/official-skills/${skillName}/download`;
+  const auth = apiKey
+    ? `Authorization: Bearer ${apiKey}`
+    : `未提供；不要猜测环境变量或复用旧 key`;
+  const scope = launch
+    ? `${launch.scope.type}${launch.scope.defectCount ? ` / ${launch.scope.defectCount} 个缺陷` : ''}${launch.scope.projectName ? ` / ${launch.scope.projectName}` : ''}`
+    : (scopeLabel || '当前分享链接覆盖的缺陷');
+
+  return [
+    `使用 ${skillName} 技能处理缺陷。`,
+    ``,
+    `参数：`,
+    `- domain: ${domain}`,
+    `- auth: ${auth}`,
+    `- scope: ${scope}`,
+    `- shareUrl: ${relativeShareUrl}`,
+    ``,
+    `技能：`,
+    `- name: ${skillName}`,
+    `- minVersion: ${minVersion}`,
+    `- download: ${downloadUrl}`,
+    `- priority: repo-builtin > user-installed > official-download > hosted-marketplace`,
+    ``,
+    `如果当前仓库已有内置 ${skillName} 技能，必须使用仓库内置版本，不能用托管/市场技能覆盖。`,
+    `如果没有该技能，请从 download 地址安装后再执行。`,
+    ``,
+    apiKey
+      ? `临时 key 过期时间：${formatExpiry(expiresAt)}`
+      : `缺少认证时：先询问用户“你的 MAP/PrdAgent 主站是什么？”；已知主站后让用户打开 ${shareUrl}，点击“一键创建临时密钥/复制提示词”后再执行。`,
+  ].join('\n');
 }
 
 /** 评分表格（查看已有评分用） */

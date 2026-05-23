@@ -4,13 +4,13 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createBranchRouter } from '../../src/routes/branches.js';
+import { clearRunningServiceErrorMessages, createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import type { CdsConfig } from '../../src/types.js';
+import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
 function makeConfig(tmpDir: string): CdsConfig {
   return {
@@ -24,6 +24,40 @@ function makeConfig(tmpDir: string): CdsConfig {
     jwt: { secret: 'test-secret', issuer: 'prdagent' },
   };
 }
+
+describe('branch status helpers', () => {
+  it('clears stale service errors once a service is running again', () => {
+    const entry: BranchEntry = {
+      id: 'branch-1',
+      projectId: 'default',
+      branch: 'main',
+      worktreePath: '/tmp/branch-1',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      services: {
+        api: {
+          profileId: 'api',
+          containerName: 'api-container',
+          hostPort: 10001,
+          status: 'running',
+          errorMessage: '容器 "api-container" 已消失',
+        },
+        worker: {
+          profileId: 'worker',
+          containerName: 'worker-container',
+          hostPort: 10002,
+          status: 'error',
+          errorMessage: '启动失败',
+        },
+      },
+    };
+
+    clearRunningServiceErrorMessages(entry);
+
+    expect(entry.services.api.errorMessage).toBeUndefined();
+    expect(entry.services.worker.errorMessage).toBe('启动失败');
+  });
+});
 
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown,
@@ -491,6 +525,88 @@ describe('Branch Routes', () => {
       expect((res.body as any).head).toBeDefined();
       expect(stateService.getBranch('feature-test')?.lastPullAt).toBeDefined();
       expect(stateService.getProject('default')?.lastPullAt).toBeDefined();
+    });
+
+    it('pulls a real git project branch named cds-managed-runtime', async () => {
+      stateService.addBranch({
+        id: 'regular-runtime',
+        projectId: 'default',
+        branch: 'cds-managed-runtime',
+        worktreePath: path.join(tmpDir, 'worktrees', 'regular-runtime'),
+        status: 'running',
+        services: {},
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+        githubCommitSha: 'abc1234',
+      });
+      mock.commands.length = 0;
+
+      const res = await request(server, 'POST', '/api/branches/regular-runtime/pull');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).skipped).toBeUndefined();
+      expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
+    });
+
+    it('skips pull only for the shared-service synthetic cds-managed-runtime branch', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'shared-sidecar-pool',
+        slug: 'shared-sidecar-pool',
+        name: 'Shared Sidecar Pool',
+        kind: 'shared-service',
+        createdAt: now,
+        updatedAt: now,
+      });
+      stateService.addBranch({
+        id: 'shared-runtime',
+        projectId: 'shared-sidecar-pool',
+        branch: 'cds-managed-runtime',
+        worktreePath: path.join(tmpDir, 'worktrees', 'shared-runtime'),
+        status: 'running',
+        services: {},
+        createdAt: now,
+        lastAccessedAt: now,
+        githubCommitSha: 'cds-managed-runtime',
+      });
+      mock.commands.length = 0;
+
+      const res = await request(server, 'POST', '/api/branches/shared-runtime/pull');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).skipped).toBe(true);
+      expect((res.body as any).reason).toBe('synthetic-cds-managed-runtime');
+      expect(mock.commands.some(command => command.includes('git fetch'))).toBe(false);
+    });
+
+    it('does not skip pull when only the synthetic SHA sentinel matches', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'shared-sidecar-pool',
+        slug: 'shared-sidecar-pool',
+        name: 'Shared Sidecar Pool',
+        kind: 'shared-service',
+        createdAt: now,
+        updatedAt: now,
+      });
+      stateService.addBranch({
+        id: 'shared-runtime-stale-sha',
+        projectId: 'shared-sidecar-pool',
+        branch: 'feature/runtime',
+        worktreePath: path.join(tmpDir, 'worktrees', 'shared-runtime-stale-sha'),
+        status: 'running',
+        services: {},
+        createdAt: now,
+        lastAccessedAt: now,
+        githubCommitSha: 'cds-managed-runtime',
+      });
+      mock.commands.length = 0;
+
+      const res = await request(server, 'POST', '/api/branches/shared-runtime-stale-sha/pull');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).skipped).toBeUndefined();
+      expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
     });
 
     it('should return 404 for unknown branch', async () => {
@@ -984,7 +1100,11 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(503);
       expect(res.body).toContain('CDS Waiting Room');
       expect(res.body).toContain('shape-grid-bg');
-      expect(res.body).toContain('rings-orbit');
+      expect(res.body).toContain('id="shape-grid"');
+      expect(res.body).toContain('data-shape="hexagon"');
+      expect(res.body).toContain('data-speed="0.39"');
+      expect(res.body).not.toContain('rings-orbit');
+      expect(res.body).not.toContain('class="panel"');
       expect(res.body).toContain('分支环境正在构建');
     });
   });
@@ -1153,6 +1273,50 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(500);
       const body = res.body as { error: string };
       expect(body.error).toContain('获取分支列表失败');
+    });
+  });
+
+  // ── 轻量重启 + 分支系统日志（2026-05-18）──
+
+  describe('POST /api/branches/:id/restart', () => {
+    it('404 when branch does not exist', async () => {
+      const res = await request(server, 'POST', '/api/branches/nope/restart');
+      expect(res.status).toBe(404);
+    });
+
+    it('409 when branch has no built containers', async () => {
+      stateService.addBranch({
+        id: 'feat-x', branch: 'feat/x', worktreePath: '/tmp/wt/feat-x',
+        services: {}, status: 'idle', createdAt: '2026-02-12T00:00:00Z',
+        projectId: 'default',
+      });
+      const res = await request(server, 'POST', '/api/branches/feat-x/restart');
+      expect(res.status).toBe(409);
+    });
+
+  });
+
+  describe('GET /api/branches/:id/activity-logs', () => {
+    it('404 for unknown branch', async () => {
+      const res = await request(server, 'GET', '/api/branches/nope/activity-logs');
+      expect(res.status).toBe(404);
+    });
+
+    it('只返回本分支事件且最新在前', async () => {
+      stateService.addBranch({
+        id: 'feat-z', branch: 'feat/z', worktreePath: '/tmp/wt/feat-z',
+        services: {}, status: 'idle', createdAt: '2026-02-12T00:00:00Z', projectId: 'default',
+      });
+      stateService.appendActivityLog('default', { type: 'deploy', branchId: 'feat-z', actor: 'user', at: '2026-05-18T00:00:00.000Z' });
+      stateService.appendActivityLog('default', { type: 'crash', branchId: 'feat-z', actor: 'auto-restart', at: '2026-05-18T01:00:00.000Z' });
+      stateService.appendActivityLog('default', { type: 'stop', branchId: 'other-branch', actor: 'user', at: '2026-05-18T02:00:00.000Z' });
+      stateService.save();
+      const res = await request(server, 'GET', '/api/branches/feat-z/activity-logs');
+      expect(res.status).toBe(200);
+      const body = res.body as { logs: Array<{ type: string; branchId: string }> };
+      expect(body.logs.every((e) => e.branchId === 'feat-z')).toBe(true);
+      expect(body.logs[0].type).toBe('crash'); // 最新在前
+      expect(body.logs.map((e) => e.type)).toEqual(['crash', 'deploy']);
     });
   });
 });

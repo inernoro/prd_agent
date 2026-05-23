@@ -25,14 +25,20 @@ import {
   Database,
   Music,
   Film,
+  Share2,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { getMobileAssets } from '@/services';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
+import { lazy, Suspense } from 'react';
 import type { MobileAssetItem } from '@/services/contracts/mobile';
 
+// 「分享」tab 走独立内容组件，按用户诉求在「我的资产」下统一管理
+const MySharesEmbedded = lazy(() => import('@/pages/labs/MySharesPage'));
+
 /* ── Types ── */
-type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage';
+type AssetTab = 'all' | 'image' | 'document' | 'attachment' | 'webpage' | 'shares';
 type SortBy = 'date' | 'size' | 'name';
 type ViewMode = 'grid' | 'list';
 
@@ -43,6 +49,7 @@ const TABS: { key: AssetTab; label: string; icon: typeof Image }[] = [
   { key: 'document', label: '文档', icon: FileText },
   { key: 'attachment', label: '附件', icon: Paperclip },
   { key: 'webpage', label: '网页', icon: Globe },
+  { key: 'shares', label: '分享', icon: Share2 },
 ];
 
 const PAGE_SIZE = 50;
@@ -741,7 +748,29 @@ function EmptyState({ tab }: { tab: AssetTab }) {
 
 /* ── Main Page ── */
 export default function DesktopAssetsPage() {
-  const [activeTab, setActiveTab] = useState<AssetTab>('all');
+  // 支持 URL query 直达 tab（如 ShareDialog 「查看所有分享」跳过来 ?tab=shares）
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (() => {
+    const t = searchParams.get('tab');
+    if (t === 'all' || t === 'image' || t === 'document' || t === 'attachment' || t === 'webpage' || t === 'shares') return t;
+    return 'all';
+  })();
+  const [activeTab, setActiveTabRaw] = useState<AssetTab>(initialTab);
+  const setActiveTab = (t: AssetTab) => {
+    setActiveTabRaw(t);
+    // 切 tab 时同步 URL（让"查看所有分享"链接可复制可分享）
+    const next = new URLSearchParams(searchParams);
+    if (t === 'all') next.delete('tab'); else next.set('tab', t);
+    setSearchParams(next, { replace: true });
+  };
+  // 深链：URL ?tab= 变化（页面不 remount）时同步 activeTab，
+  // 否则从其它页跳 /my-assets?tab=shares 不会切到分享 tab
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    const valid: AssetTab[] = ['all', 'image', 'document', 'attachment', 'webpage', 'shares'];
+    const next = (valid as string[]).includes(t ?? '') ? (t as AssetTab) : 'all';
+    setActiveTabRaw((prev) => (prev === next ? prev : next));
+  }, [searchParams]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [assets, setAssets] = useState<MobileAssetItem[]>([]);
@@ -770,12 +799,18 @@ export default function DesktopAssetsPage() {
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Fetch assets — 后端始终返回全局 categoryCounts 等统计
+  // 'shares' tab 走独立组件 MySharesEmbedded，不调 getMobileAssets
   const fetchAssets = useCallback(async (category?: AssetTab) => {
+    if (category === 'shares') {
+      setLoading(false);
+      setAssets([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const res = await getMobileAssets({
-        category: category === 'all' ? undefined : category,
+        category: (category === 'all' || !category) ? undefined : (category as 'image' | 'document' | 'attachment' | 'webpage'),
         limit: PAGE_SIZE,
         skip: 0,
       });
@@ -798,11 +833,11 @@ export default function DesktopAssetsPage() {
   }, []);
 
   const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore) return;
+    if (!hasMore || loadingMore || activeTab === 'shares') return;
     setLoadingMore(true);
     try {
       const res = await getMobileAssets({
-        category: activeTab === 'all' ? undefined : activeTab,
+        category: activeTab === 'all' ? undefined : (activeTab as 'image' | 'document' | 'attachment' | 'webpage'),
         limit: PAGE_SIZE,
         skip: assets.length,
       });
@@ -1031,6 +1066,14 @@ export default function DesktopAssetsPage() {
       </div>
 
       {/* ── Content ── */}
+      {activeTab === 'shares' ? (
+        // 「分享」tab：跨 4 类聚合管理，复用 MySharesPage 完整组件
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <Suspense fallback={<MapSectionLoader />}>
+            <MySharesEmbedded />
+          </Suspense>
+        </div>
+      ) : (
       <div className="flex-1 flex overflow-hidden min-h-0 gap-4">
         {/* Main area */}
         <div ref={scrollRef} className="flex-1 min-w-0 overflow-y-auto pr-1">
@@ -1117,6 +1160,7 @@ export default function DesktopAssetsPage() {
           />
         )}
       </div>
+      )}
     </div>
   );
 }

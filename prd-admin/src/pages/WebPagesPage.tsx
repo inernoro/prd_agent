@@ -3,7 +3,10 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
+import { Select } from '@/components/design/Select';
+import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
+import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   uploadSite,
@@ -55,6 +58,8 @@ import {
   Globe,
   Library,
   BookOpen,
+  Replace,
+  AlertTriangle,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -93,6 +98,25 @@ const sourceTypeLabels: Record<string, string> = {
   'saved-share': '从分享保存',
 };
 
+/**
+ * 「访问」专用地址解析 —— 与「分享」彻底分开：
+ * - 访问：地址一律走 ≥12 字母 token 形式 /s/wp/{token}
+ * - 分享：ShareDialog 走数字短链 /s/{seq}
+ * 复用/新建判定全部在服务端闭环（createSiteShareLink 内部按 用户+站点+访问级别+purpose 去重，
+ * 不依赖任何前端分页列表），前端只发指令、用返回 token 拼地址。
+ * purpose:'visit' 使其落在独立池：永远是公开永久链，绝不复用或篡改用户主动创建的限期分享，
+ * 也不出现在分享管理列表。解析失败时回退原始 siteUrl，保证访问永不失效。
+ */
+async function resolveVisitUrl(site: HostedSite): Promise<string> {
+  try {
+    const res = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, purpose: 'visit' });
+    if (res.success && res.data.token) return `${window.location.origin}/s/wp/${res.data.token}`;
+  } catch {
+    /* 网络异常回退裸链接 */
+  }
+  return site.siteUrl;
+}
+
 // ─── Main Page ───
 
 export default function WebPagesPage() {
@@ -124,6 +148,9 @@ export default function WebPagesPage() {
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const [shares, setShares] = useState<ShareLinkItem[]>([]);
   const [qrSite, setQrSite] = useState<HostedSite | null>(null);
+  // 拖文件到卡片触发的"替换网页"二次确认（非 null 时弹出确认框）
+  const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
+  const [replacing, setReplacing] = useState(false);
 
   // ─── Load ───
 
@@ -230,6 +257,27 @@ export default function WebPagesPage() {
       loadMeta();
     }
   }, [loadMeta]);
+
+  const handleConfirmReplace = useCallback(async () => {
+    if (!replaceTarget || replacing) return;
+    setReplacing(true);
+    try {
+      const res = await reuploadSite(replaceTarget.site.id, replaceTarget.file);
+      if (res.success) {
+        toast.success('替换成功', `「${replaceTarget.site.title}」的网页内容已更新`);
+        setReplaceTarget(null);
+        load();
+        loadMeta();
+      } else {
+        toast.error('替换失败', res.error?.message || '请稍后重试');
+      }
+    } catch (e) {
+      // 网络异常等抛错时，若不在 finally 复位 replacing，按钮与弹窗会被永久锁死
+      toast.error('替换失败', e instanceof Error ? e.message : '网络异常，请稍后重试');
+    } finally {
+      setReplacing(false);
+    }
+  }, [replaceTarget, replacing, load, loadMeta]);
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
@@ -345,44 +393,47 @@ export default function WebPagesPage() {
 
           {/* Folder filter */}
           {folders.length > 0 && (
-            <select
-              value={activeFolder ?? ''}
-              onChange={e => setActiveFolder(e.target.value || null)}
-              className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-              style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-            >
-              <option value="">全部文件夹</option>
-              {folders.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
+            <div className="w-[150px] shrink-0">
+              <Select
+                uiSize="sm"
+                value={activeFolder ?? ''}
+                onChange={e => setActiveFolder(e.target.value || null)}
+              >
+                <option value="">全部文件夹</option>
+                {folders.map(f => <option key={f} value={f}>{f}</option>)}
+              </Select>
+            </div>
           )}
 
           {/* Source type filter */}
-          <select
-            value={activeSourceType ?? ''}
-            onChange={e => setActiveSourceType(e.target.value || null)}
-            className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-            style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-          >
-            <option value="">全部来源</option>
-            <option value="upload">手动上传</option>
-            <option value="workflow">工作流</option>
-            <option value="api">API</option>
-            <option value="saved-share">从分享保存</option>
-          </select>
+          <div className="w-[140px] shrink-0">
+            <Select
+              uiSize="sm"
+              value={activeSourceType ?? ''}
+              onChange={e => setActiveSourceType(e.target.value || null)}
+            >
+              <option value="">全部来源</option>
+              <option value="upload">手动上传</option>
+              <option value="workflow">工作流</option>
+              <option value="api">API</option>
+              <option value="saved-share">从分享保存</option>
+            </Select>
+          </div>
 
           {/* Sort */}
-          <select
-            value={sort}
-            onChange={e => setSort(e.target.value)}
-            className="px-3 py-2 rounded-lg text-sm outline-none cursor-pointer"
-            style={{ background: 'var(--bg-sunken)', color: 'var(--text-primary)', border: '1px solid var(--border-default)' }}
-          >
-            <option value="newest">最新创建</option>
-            <option value="oldest">最早创建</option>
-            <option value="title">按标题</option>
-            <option value="most-viewed">最多浏览</option>
-            <option value="largest">最大体积</option>
-          </select>
+          <div className="w-[130px] shrink-0">
+            <Select
+              uiSize="sm"
+              value={sort}
+              onChange={e => setSort(e.target.value)}
+            >
+              <option value="newest">最新创建</option>
+              <option value="oldest">最早创建</option>
+              <option value="title">按标题</option>
+              <option value="most-viewed">最多浏览</option>
+              <option value="largest">最大体积</option>
+            </Select>
+          </div>
 
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
@@ -494,6 +545,7 @@ export default function WebPagesPage() {
               onShare={() => handleShare(site.id)}
               onQrCode={() => setQrSite(site)}
               onTransferToLibrary={() => setLibraryTargetSite(site)}
+              onReplaceFile={(file) => setReplaceTarget({ site, file })}
             />
           ))}
         </div>
@@ -532,6 +584,47 @@ export default function WebPagesPage() {
           }}
         />
       )}
+
+      {/* 拖文件替换网页 — 二次确认 */}
+      <Dialog
+        open={!!replaceTarget}
+        onOpenChange={(o) => { if (!o && !replacing) setReplaceTarget(null); }}
+        title="替换网页内容"
+        maxWidth={460}
+        content={
+          replaceTarget && (
+            <div className="flex flex-col gap-4">
+              <div
+                className="flex items-start gap-2.5 rounded-xl p-3 text-[13px]"
+                style={{ background: 'rgba(251,146,60,0.12)', border: '1px solid rgba(251,146,60,0.32)', color: 'var(--text-secondary)' }}
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: '#fb923c' }} />
+                <span>
+                  即将用新文件覆盖「<span style={{ color: 'var(--text-primary)' }}>{replaceTarget.site.title}</span>」的全部网页内容，
+                  原有文件将被清理且<span style={{ color: 'var(--text-primary)' }}>无法恢复</span>。访问链接保持不变。
+                </span>
+              </div>
+              <div
+                className="flex items-center gap-2.5 rounded-xl p-3"
+                style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
+              >
+                <Replace size={18} style={{ color: 'var(--accent-primary)' }} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{replaceTarget.file.name}</p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{fmtSize(replaceTarget.file.size)}</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" disabled={replacing} onClick={() => setReplaceTarget(null)}>取消</Button>
+                <Button size="sm" variant="primary" disabled={replacing} onClick={handleConfirmReplace}>
+                  {replacing ? <MapSpinner size={14} className="mr-1" /> : <Replace size={14} className="mr-1" />}
+                  确认替换
+                </Button>
+              </div>
+            </div>
+          )
+        }
+      />
 
       {/* Share Dialog */}
       {showShareDialog && (
@@ -575,45 +668,21 @@ export default function WebPagesPage() {
 function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void }) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      // 1. 查找该 site 已有的、可用的无密码分享链接
-      const listRes = await listSiteShares();
-      if (cancelled) return;
-      if (listRes.success) {
-        const existing = listRes.data.items.find(s =>
-          s.siteId === site.id &&
-          s.shareType === 'single' &&
-          !s.isRevoked &&
-          s.accessLevel === 'public' &&
-          (!s.expiresAt || new Date(s.expiresAt) > new Date())
-        );
-        if (existing) {
-          setShareUrl(`${window.location.origin}/s/wp/${existing.token}`);
-          setLoading(false);
-          return;
-        }
-      }
-      // 2. 没有可复用的，才创建新的
-      const res = await createSiteShareLink({
-        siteId: site.id,
-        shareType: 'single',
-        expiresInDays: 0,
-      });
+      // 扫码访问 = 永久访问便捷链，与「访问」按钮同源走 resolveVisitUrl：
+      // 落在隔离的 visit 池（purpose:'visit'），绝不复用/篡改用户主动创建的限期分享，
+      // 也不依赖 listSiteShares 分页扫描。失败兜底裸链接，二维码恒可用。
+      const url = await resolveVisitUrl(site);
       if (cancelled) return;
       setLoading(false);
-      if (res.success) {
-        setShareUrl(`${window.location.origin}${res.data.shareUrl}`);
-      } else {
-        setError('创建分享链接失败');
-      }
+      setShareUrl(url);
     })();
     return () => { cancelled = true; };
-  }, [site.id]);
+  }, [site]);
 
   return (
     <Dialog
@@ -625,8 +694,6 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
         <div className="flex flex-col items-center gap-4 py-4">
           {loading ? (
             <MapSectionLoader text="正在生成分享链接…" />
-          ) : error ? (
-            <p className="text-sm py-8" style={{ color: '#ef4444' }}>{error}</p>
           ) : shareUrl ? (
             <>
               <div className="p-4 rounded-2xl" style={{ background: '#fff' }}>
@@ -789,7 +856,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary }: {
+function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -800,14 +867,47 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
   onShare: () => void;
   onQrCode: () => void;
   onTransferToLibrary: () => void;
+  onReplaceFile: (file: File) => void;
 }) {
   const isPublic = site.visibility === 'public';
+  const [fileDragOver, setFileDragOver] = useState(false);
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
     id: site.id,
     label: site.title,
     icon: '🌐',
   });
+
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!fileDragOver) setFileDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // 仅当真正离开卡片时才收起（忽略子元素间冒泡）
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setFileDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    setFileDragOver(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) onReplaceFile(f);
+  };
+
+  // 访问 = 无密码分享链接（≥12 字母 token 形式 /s/wp/{token}），
+  // 与分享的数字短链 /s/{seq} 体系彻底分开。先同步开窗规避拦截，再异步解析。
+  const handleVisit = () => {
+    const w = window.open('', '_blank');
+    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+  };
+
   return (
     <div
       className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
@@ -817,24 +917,46 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
         outlineOffset: selected ? 3 : 0,
       }}
       onPointerDown={onPointerDown}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <div
         className="relative overflow-hidden rounded-[18px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-xl group-hover:shadow-black/25"
         style={{
           background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
-          borderColor: selected ? 'var(--accent-primary)' : 'var(--border-default)',
+          borderColor: fileDragOver ? 'var(--accent-primary)' : selected ? 'var(--accent-primary)' : 'var(--border-default)',
         }}
       >
+        {/* 拖文件到卡片上时显示"替换网页"提示，松手后弹二次确认 */}
+        {fileDragOver && (
+          <div
+            className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-[18px] backdrop-blur-sm"
+            style={{
+              background: 'color-mix(in srgb, var(--accent-primary) 26%, rgba(0,0,0,0.55))',
+              border: '2px dashed var(--accent-primary)',
+            }}
+          >
+            <Replace size={30} className="text-white" />
+            <span className="text-[15px] font-semibold text-white">替换此网页</span>
+            <span className="px-3 text-center text-[11px] text-white/80">松开以替换「{site.title}」的内容</span>
+          </div>
+        )}
         <div
           className="relative cursor-pointer overflow-hidden"
           style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
-          onClick={() => window.open(site.siteUrl, '_blank')}
+          onClick={handleVisit}
         >
           {site.coverImageUrl ? (
             <img
               src={site.coverImageUrl}
               alt=""
               className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.035]"
+            />
+          ) : isPdfSite(site) ? (
+            <PdfThumbnail
+              sizeBytes={site.files.find(f => f.path?.toLowerCase().endsWith('.pdf'))?.size ?? site.totalSize}
+              className="absolute inset-0 h-full w-full"
             />
           ) : (
             <SitePreview url={site.siteUrl} className="h-full w-full transition-transform duration-700 group-hover:scale-[1.035]" />
@@ -854,7 +976,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="group/pub inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
+                className="group/pub inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-sky-500/32 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md transition-colors hover:bg-rose-500/45 hover:text-rose-50"
                 title="点击取消公开"
               >
                 <Globe size={12} className="inline-block group-hover/pub:hidden" />
@@ -866,7 +988,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
-                className="inline-flex h-7 items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+                className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/42 px-2.5 text-[11px] font-semibold text-white/90 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
                 title="设为公开"
               >
                 <Globe size={12} /> 设为公开
@@ -875,7 +997,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
-              className="inline-flex h-7 items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-white/80 opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
+              className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-white/80 opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
               title={selected ? '取消选择' : '选择'}
             >
               <input
@@ -889,23 +1011,14 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             </button>
           </div>
 
-          <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
-            <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
-              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
-            </span>
-          </div>
-
-          <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); window.open(site.siteUrl, '_blank'); }}
-              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-black/54 px-3 text-[12px] font-semibold text-white shadow-md backdrop-blur-md transition-colors hover:bg-black/70"
-              title="访问"
-            >
-              <ExternalLink size={13} />
-              访问
-            </button>
-          </div>
+          {/* 来源标签：手动上传是常态，不展示；仅工作流/API/分享保存等非常态来源才标注 */}
+          {site.sourceType !== 'upload' && (
+            <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
+              <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
+                {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+              </span>
+            </div>
+          )}
 
           <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
@@ -927,7 +1040,7 @@ function SiteCard({ site, selected, fresh, onSelect, onTogglePublic, onEdit, onD
             <h3
               className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
               style={{ color: 'var(--text-primary)' }}
-              onClick={() => window.open(site.siteUrl, '_blank')}
+              onClick={handleVisit}
               title={site.title}
             >
               {site.title}
@@ -988,7 +1101,7 @@ function IconAction({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+      className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
       title={label}
       aria-label={label}
       style={danger ? { color: '#fecaca' } : undefined}
@@ -1016,6 +1129,11 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
     label: site.title,
     icon: '🌐',
   });
+  // 访问地址与 SiteCard 网格视图一致：统一走 /s/wp/{token}，避免列表/网格切换得到不同 URL
+  const handleVisit = () => {
+    const w = window.open('', '_blank');
+    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+  };
   return (
     <GlassCard
       className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
@@ -1032,6 +1150,8 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
 
       {site.coverImageUrl ? (
         <img src={site.coverImageUrl} alt="" className="shrink-0 w-10 h-10 rounded object-cover" />
+      ) : isPdfSite(site) ? (
+        <PdfThumbnail className="shrink-0 w-10 h-10 rounded overflow-hidden" compact />
       ) : (
         <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
           <SitePreview url={site.siteUrl} className="w-full h-full" />
@@ -1043,13 +1163,15 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
           <span
             className="text-sm font-medium truncate cursor-pointer hover:underline"
             style={{ color: 'var(--text-primary)' }}
-            onClick={() => window.open(site.siteUrl, '_blank')}
+            onClick={handleVisit}
           >
             {site.title}
           </span>
-          <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
-            {sourceTypeLabels[site.sourceType] ?? site.sourceType}
-          </Badge>
+          {site.sourceType !== 'upload' && (
+            <Badge variant={site.sourceType === 'workflow' ? 'subtle' : site.sourceType === 'api' ? 'warning' : 'subtle'}>
+              {sourceTypeLabels[site.sourceType] ?? site.sourceType}
+            </Badge>
+          )}
           {isPublic && (
             <span
               className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/25 px-1.5 py-0.5 text-[10px] font-medium text-sky-200"
@@ -1073,7 +1195,7 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
       </div>
 
       <div className="flex items-center gap-1 shrink-0">
-        <button onClick={() => window.open(site.siteUrl, '_blank')} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+        <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
         <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]">
@@ -1300,11 +1422,38 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
 
 // ─── Share Dialog ───
 
-function genPassword(len = 6) {
+/**
+ * 长链场景密码 — 字母长链 token 已有 72 bits 熵，密码主要防顺手分享外泄。
+ * 字符集去 i/l/o/0/1 易混淆字符，便于口述/抄写。
+ */
+function genPassword(len = 8) {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   return Array.from(crypto.getRandomValues(new Uint8Array(len)))
     .map(b => chars[b % chars.length]).join('');
 }
+
+/**
+ * 短链场景密码 — 短链 URL `/s/{seq}` 可被遍历枚举，密码是唯一防线。
+ * 12 位含大小写+数字+符号，熵 ≈ 78 bits；后端配合失败锁防在线暴破。
+ */
+function genStrongPassword(len = 12) {
+  const lower = 'abcdefghjkmnpqrstuvwxyz';
+  const upper = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+  const digit = '23456789';
+  const symbol = '!@#$%^&*-_=+';
+  const all = lower + upper + digit + symbol;
+  const pick = (s: string) => s[crypto.getRandomValues(new Uint8Array(1))[0] % s.length];
+  // 保证四类各 ≥ 1，剩余位随机填充后整体洗牌
+  const arr = [pick(lower), pick(upper), pick(digit), pick(symbol),
+    ...Array.from(crypto.getRandomValues(new Uint8Array(len - 4))).map(b => all[b % all.length])];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = crypto.getRandomValues(new Uint8Array(1))[0] % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.join('');
+}
+
+const STRONG_PWD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_=+]).{12,}$/;
 
 function ShareDialog({ siteId, siteIds, onClose }: {
   siteId: string | null;
@@ -1312,35 +1461,106 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   onClose: () => void;
 }) {
   const [creating, setCreating] = useState(false);
-  const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string } | null>(null);
+  const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string; linkType: 'long' | 'short' } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [usePassword, setUsePassword] = useState(false);
-  const [password, setPassword] = useState('');
-  const [expiresInDays, setExpiresInDays] = useState(0);
+  // 默认勾选密码保护：用户至少要主动取消才会裸链分享
+  const [usePassword, setUsePassword] = useState(true);
+  const [password, setPassword] = useState(() => genPassword());
+  const [expiresInDays, setExpiresInDays] = useState(7);
+  // 默认走字母长链 /s/wp/{token}（不可枚举）；短链 /s/{seq} 作为"高级选项"
+  const [linkType, setLinkType] = useState<'long' | 'short'>('long');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  // 短链 + 取消密码场景的 10s 风险提示
+  const [showRiskGate, setShowRiskGate] = useState(false);
+  const [riskCountdown, setRiskCountdown] = useState(10);
 
   const isCollection = !siteId && siteIds && siteIds.length > 1;
+  const isShort = linkType === 'short';
+  const pwdInvalid = isShort && usePassword && !STRONG_PWD_RE.test(password);
 
-  const handleCreate = async () => {
+  // 切到短链：强制开启密码，且若现有密码不达强密码标准就自动重生成
+  useEffect(() => {
+    if (isShort) {
+      setUsePassword(true);
+      setPassword(prev => (STRONG_PWD_RE.test(prev) ? prev : genStrongPassword()));
+    }
+  }, [isShort]);
+
+  // 10s 倒计时
+  useEffect(() => {
+    if (!showRiskGate) return;
+    setRiskCountdown(10);
+    const t = setInterval(() => setRiskCountdown(v => (v <= 1 ? 0 : v - 1)), 1000);
+    return () => clearInterval(t);
+  }, [showRiskGate]);
+
+  const handleTogglePassword = (next: boolean) => {
+    if (!next && isShort) {
+      // 短链取消密码 = 高风险，强制看完 10s 警告再确认
+      setShowRiskGate(true);
+      return;
+    }
+    setUsePassword(next);
+    if (next && !password) setPassword(isShort ? genStrongPassword() : genPassword());
+    if (!next) setPassword('');
+  };
+
+  const handleRiskAccept = () => {
+    setShowRiskGate(false);
+    setUsePassword(false);
+    setPassword('');
+  };
+
+  const doCreate = async () => {
     setCreating(true);
     const pwd = usePassword ? (password.trim() || undefined) : undefined;
-    const res = await createSiteShareLink({
-      siteId: siteId || undefined,
-      siteIds: isCollection ? siteIds : undefined,
-      shareType: isCollection ? 'collection' : 'single',
-      password: pwd,
-      expiresInDays,
-    });
-    setCreating(false);
-    if (res.success) {
-      const shareResult = { shareUrl: res.data.shareUrl, token: res.data.token, password: pwd };
-      setResult(shareResult);
-      // 自动复制链接和密码
-      let text = `${window.location.origin}${shareResult.shareUrl}`;
-      if (shareResult.password) text += `\n访问密码：${shareResult.password}`;
-      navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+
+    // 复用 vs 新建、有效期刷新全部在服务端闭环：createSiteShareLink 按
+    // 用户+站点/合集+访问级别 去重（不依赖任何前端分页列表，账号链接再多也不失效），
+    // 并把有效期刷新为本次所选窗口。前端只发指令、用返回值展示。
+    try {
+      const res = await createSiteShareLink({
+        siteId: siteId || undefined,
+        siteIds: isCollection ? siteIds : undefined,
+        shareType: isCollection ? 'collection' : 'single',
+        password: pwd,
+        expiresInDays,
+      });
+      if (res.success) {
+        // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准
+        const effPwd = res.data.password ?? pwd;
+        // P1 调整（2026-05-21 用户反馈）：
+        //   shareUrl        = /s/wp/{token}（带分类前缀长链，URL 有语义、利于总管理分类）
+        //   shortShareUrl   = /s/{seq}（数字超短链，须配强密码）
+        //   unifiedShareUrl = /s/{token}（字母统一长链，ShortLink 索引支持，高级用）
+        // 默认走 shareUrl 带前缀长链；短链选项走 shortShareUrl
+        const chosenUrl = isShort
+          ? (res.data.shortShareUrl ?? res.data.shareUrl)
+          : res.data.shareUrl;
+        const shareResult = { shareUrl: chosenUrl, token: res.data.token, password: effPwd, linkType };
+        setResult(shareResult);
+        let text = `${window.location.origin}${shareResult.shareUrl}`;
+        if (effPwd) text += `\n访问密码：${effPwd}`;
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        toast.error('创建分享链接失败', res.error?.message || '请稍后重试');
+      }
+    } catch (e) {
+      // 网络异常等抛错时若无 catch，会变成未处理的 promise rejection，用户毫无反馈
+      toast.error('创建分享链接失败', e instanceof Error ? e.message : '网络异常，请稍后重试');
+    } finally {
+      setCreating(false);
     }
+  };
+
+  const handleCreate = () => {
+    if (pwdInvalid) {
+      toast.error('密码强度不足', '短链密码需 ≥12 位且含大小写、数字、符号');
+      return;
+    }
+    void doCreate();
   };
 
   const handleCopy = () => {
@@ -1367,7 +1587,16 @@ function ShareDialog({ siteId, siteIds, onClose }: {
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
               <Check size={16} style={{ color: '#22c55e' }} />
-              <span className="text-sm" style={{ color: '#22c55e' }}>分享链接已生成，已复制到剪贴板</span>
+              <span className="text-sm flex-1" style={{ color: '#22c55e' }}>分享链接已生成，已复制到剪贴板</span>
+              <a
+                href="/my-assets?tab=shares"
+                target="_blank"
+                rel="noopener"
+                className="text-xs underline whitespace-nowrap"
+                style={{ color: '#22c55e' }}
+              >
+                查看所有分享 →
+              </a>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -1415,21 +1644,16 @@ function ShareDialog({ siteId, siteIds, onClose }: {
 
             {/* 分享选项 */}
             <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
                 <input
                   type="checkbox"
                   checked={usePassword}
-                  onChange={e => {
-                    setUsePassword(e.target.checked);
-                    if (e.target.checked) {
-                      setPassword(genPassword());
-                    } else {
-                      setPassword('');
-                    }
-                  }}
+                  onChange={e => handleTogglePassword(e.target.checked)}
                 />
                 <Lock size={12} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>密码保护</span>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
+                </span>
               </label>
               {usePassword && (
                 <div className="flex flex-col gap-1.5">
@@ -1438,16 +1662,23 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                       type="text"
                       value={password}
                       onChange={e => setPassword(e.target.value)}
-                      placeholder="输入密码"
+                      placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
                       className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
-                      style={inputStyle}
+                      style={{
+                        ...inputStyle,
+                        border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border,
+                      }}
                     />
-                    <Button size="xs" variant="ghost" onClick={() => setPassword(genPassword())} title="随机生成密码">
+                    <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
                       <RefreshCw size={12} />
                     </Button>
                   </div>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    可修改密码或点击右侧按钮重新生成
+                  <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
+                    {pwdInvalid
+                      ? '短链场景密码强度不足：需 ≥12 位，含大小写字母、数字、符号'
+                      : isShort
+                        ? '短链可被遍历枚举，密码是唯一防线，建议直接用随机生成的强密码'
+                        : '可修改密码或点击右侧按钮重新生成'}
                   </span>
                 </div>
               )}
@@ -1469,14 +1700,86 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                   <option value={90}>90 天</option>
                 </select>
               </label>
+
+              {/* 高级选项 — 链接类型 */}
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(v => !v)}
+                className="text-xs flex items-center gap-1 self-start"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <span style={{ display: 'inline-block', transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}>›</span>
+                高级选项
+              </button>
+              {showAdvanced && (
+                <div className="flex flex-col gap-1.5 pl-4" style={{ borderLeft: '2px solid var(--border-default)' }}>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接形式</span>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={linkType === 'long'} onChange={() => setLinkType('long')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: 'var(--text-secondary)' }}>字母长链 /s/wp/xxxxxxxxxxx（推荐）</span>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>72 bits 随机 token，不可枚举猜测；密码可选</span>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={linkType === 'short'} onChange={() => setLinkType('short')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: 'var(--text-secondary)' }}>超短数字链 /s/123（自用便捷）</span>
+                      <span className="text-xs" style={{ color: '#f97316' }}>可被遍历猜测，必须配强密码使用</span>
+                    </div>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 mt-2">
               <Button variant="ghost" onClick={onClose}>取消</Button>
-              <Button onClick={handleCreate} disabled={creating}>
+              <Button onClick={handleCreate} disabled={creating || pwdInvalid}>
                 {creating ? '生成中...' : '一键分享'}
               </Button>
             </div>
+
+            {/* 10s 风险确认模态：短链取消密码必看 */}
+            {showRiskGate && (
+              <div
+                style={{
+                  position: 'fixed', inset: 0, zIndex: 200,
+                  background: 'rgba(0, 0, 0, 0.55)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: 16,
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                <div
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid #f97316',
+                    borderRadius: 12,
+                    padding: 24,
+                    maxWidth: 480,
+                    width: '100%',
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Lock size={20} style={{ color: '#f97316' }} />
+                    <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      风险确认：短链无密码 = 任何人可枚举访问
+                    </h3>
+                  </div>
+                  <ul className="text-sm flex flex-col gap-1.5 mb-4" style={{ color: 'var(--text-secondary)' }}>
+                    <li>· 数字短链 /s/123 是全局自增 ID，攻击者可从 1 起逐个尝试</li>
+                    <li>· 没有密码的短链意味着任何获得链接（甚至猜对数字）的人都能查看内容</li>
+                    <li>· 你即将分享的内容如果包含未公开信息，请改用字母长链或保留密码</li>
+                  </ul>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="ghost" onClick={() => setShowRiskGate(false)}>放弃，保留密码</Button>
+                    <Button onClick={handleRiskAccept} disabled={riskCountdown > 0}>
+                      {riskCountdown > 0 ? `我已知晓继续 (${riskCountdown}s)` : '我已知晓继续'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )
       }
@@ -1513,8 +1816,13 @@ function SharesPanel({ shares, setShares, onClose }: {
     }
   };
 
-  const handleCopy = (token: string) => {
-    navigator.clipboard.writeText(`${window.location.origin}/s/wp/${token}`);
+  const shareUrlOf = (s: ShareLinkItem) =>
+    s.shortSeq && s.shortSeq > 0
+      ? `${window.location.origin}/s/${s.shortSeq}`
+      : `${window.location.origin}/s/wp/${s.token}`;
+
+  const handleCopy = (s: ShareLinkItem) => {
+    navigator.clipboard.writeText(shareUrlOf(s));
   };
 
   const handleShowLogs = async (token: string) => {
@@ -1553,6 +1861,15 @@ function SharesPanel({ shares, setShares, onClose }: {
                         <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
                         </span>
+                        {share.shortSeq && share.shortSeq > 0 ? (
+                          <span title={`/s/${share.shortSeq}`}>
+                            <Badge variant="subtle">#{share.shortSeq}</Badge>
+                          </span>
+                        ) : (
+                          <span title="老分享，仅长链可用">
+                            <Badge variant="subtle">长链</Badge>
+                          </span>
+                        )}
                         <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
                           {share.accessLevel === 'password' ? '密码保护' : '公开'}
                         </Badge>
@@ -1575,10 +1892,10 @@ function SharesPanel({ shares, setShares, onClose }: {
                       >
                         <Eye size={12} />
                       </Button>
-                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share.token)} title="复制链接">
+                      <Button size="xs" variant="ghost" onClick={() => handleCopy(share)} title="复制链接">
                         <Copy size={12} />
                       </Button>
-                      <Button size="xs" variant="ghost" onClick={() => window.open(`/s/wp/${share.token}`, '_blank')} title="预览">
+                      <Button size="xs" variant="ghost" onClick={() => window.open(shareUrlOf(share), '_blank')} title="预览">
                         <ExternalLink size={12} />
                       </Button>
                       <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">

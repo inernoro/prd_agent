@@ -158,6 +158,7 @@ public class SimpleOrchestrator : IToolboxOrchestrator
             var context = new AgentExecutionContext
             {
                 RunId = run.Id,
+                TraceId = string.IsNullOrWhiteSpace(run.TraceId) ? $"toolbox-run-{run.Id}" : run.TraceId,
                 StepId = step.StepId,
                 UserId = run.UserId,
                 UserMessage = run.UserMessage,

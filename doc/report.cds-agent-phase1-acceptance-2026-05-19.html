@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>CDS Agent Phase 1 验收报告</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #111827; background: #fff; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    h2 { font-size: 17px; margin: 26px 0 10px; }
+    p { line-height: 1.55; margin: 6px 0; }
+    .meta { color: #4b5563; font-size: 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0 18px; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 6px; background: #ecfdf5; color: #047857; font-weight: 700; font-size: 12px; }
+    .summary { border: 1px solid #d1fae5; background: #f0fdf4; padding: 14px; border-radius: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; min-height: 88px; }
+    .card strong { display: block; margin-bottom: 6px; }
+    .flow { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; align-items: center; margin-top: 10px; }
+    .node { border: 1px solid #c7d2fe; background: #eef2ff; border-radius: 8px; padding: 10px 8px; text-align: center; font-size: 12px; min-height: 40px; display: flex; align-items: center; justify-content: center; }
+    .arrow { color: #6b7280; text-align: center; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { border: 1px solid #e5e7eb; padding: 7px; text-align: left; vertical-align: top; }
+    th { background: #f9fafb; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    .ok { color: #047857; font-weight: 700; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>CDS Agent Phase 1 验收报告 <span class="badge">本地通过</span></h1>
+  <div class="meta">
+    <div>日期：2026-05-19</div>
+    <div>分支：codex/cds-agent-workbench-ui</div>
+    <div>基线：c15e4da11</div>
+    <div>范围：P1-1 到 P1-6</div>
+  </div>
+
+  <section class="summary">
+    <strong>结论</strong>
+    <p>Phase 1 商业级最小可用闭环本地验收通过：简洁面板、可观测字段、stop/timeout、工作流调度、KnowledgeBase 只读工具和验收证据已归档。未执行远端发布。</p>
+  </section>
+
+  <h2>控制面与调用边界</h2>
+  <div class="flow">
+    <div class="node">用户</div><div class="arrow">→</div>
+    <div class="node">MAP 控制面</div><div class="arrow">→</div>
+    <div class="node">CDS 容器/分支管理</div><div class="arrow">→</div>
+  </div>
+  <div class="flow">
+    <div class="node">简洁面板 / 工作流</div><div class="arrow">→</div>
+    <div class="node">官方 SDK Adapter</div><div class="arrow">→</div>
+    <div class="node">MAP Agent Tools</div><div class="arrow">→</div>
+  </div>
+  <div class="flow">
+    <div class="node">只读代码巡检</div><div class="arrow">+</div>
+    <div class="node">KB list/search/read</div><div class="arrow"></div>
+    <div class="node">无写入工具</div><div class="arrow"></div>
+  </div>
+
+  <h2>阶段完成情况</h2>
+  <div class="grid">
+    <div class="card"><strong>P1-1 简洁面板</strong>3 步内启动只读巡检。</div>
+    <div class="card"><strong>P1-2 可观测性</strong><code>traceId</code>、耗时、timeout、lastEventSeq、产物入口。</div>
+    <div class="card"><strong>P1-3 stop/timeout</strong>沿用 MAP/CDS/runtime cancel 链路。</div>
+    <div class="card"><strong>P1-4 工作流</strong>Start -> CdsAgentRun -> Notify。</div>
+    <div class="card"><strong>P1-5 知识库</strong><code>kb_list</code> / <code>kb_search</code> / <code>kb_read</code>。</div>
+    <div class="card"><strong>P1-6 验收包</strong>smoke、单测、构建、截图证据归档。</div>
+  </div>
+
+  <h2>验收证据</h2>
+  <table>
+    <thead><tr><th>类型</th><th>证据</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>smoke</td><td><code>scripts/smoke-cds-agent-simple-panel.sh</code></td><td class="ok">pass</td></tr>
+      <tr><td>smoke</td><td><code>scripts/smoke-cds-agent-workflow-node.sh</code></td><td class="ok">pass</td></tr>
+      <tr><td>smoke</td><td><code>scripts/smoke-cds-agent-kb-readonly-tools.sh</code></td><td class="ok">pass</td></tr>
+      <tr><td>后端单测</td><td><code>AgentToolsTests | WorkflowAgentTests | CapsuleExecutorCdsAgentEventCursorTests | CdsAgentAdapterTests</code></td><td class="ok">72/72 pass</td></tr>
+      <tr><td>前端类型</td><td><code>pnpm --prefix prd-admin tsc</code></td><td class="ok">pass</td></tr>
+      <tr><td>前端单测</td><td><code>pnpm --prefix prd-admin test -- src/pages/cds-agent/__tests__/cdsAgentReadiness.test.ts</code></td><td class="ok">281/281 pass</td></tr>
+      <tr><td>前端构建</td><td><code>pnpm --prefix prd-admin build</code></td><td class="ok">pass，存在既有 Rollup warnings</td></tr>
+      <tr><td>视觉截图</td><td><code>/tmp/cds-agent-simple-panel-desktop.png</code><br><code>/tmp/cds-agent-simple-panel-mobile-quickrun.png</code><br><code>/tmp/cds-agent-workflow-p1-4-template-modal.png</code></td><td class="ok">已归档</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Phase 2 入口</h2>
+  <p class="muted">Phase 2 才进入可写协作：知识库 draft/diff、人工审批、apply、commit、PR 写入。写操作必须先生成可审查差异，不直落库。</p>
+</body>
+</html>

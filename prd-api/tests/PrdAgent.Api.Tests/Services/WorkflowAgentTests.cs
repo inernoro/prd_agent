@@ -114,12 +114,21 @@ public class WorkflowAgentTests
 
         Assert.NotNull(meta);
         Assert.Contains(meta.ConfigSchema, f => f.Key == "prompt" && f.Required);
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "sessionId" && !f.Required);
         Assert.Contains(meta.ConfigSchema, f => f.Key == "runtime");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "runtimeProfileId");
-        Assert.Contains(meta.ConfigSchema, f => f.Key == "toolPolicy");
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "toolPolicy" && f.DefaultValue == "readonly-auto");
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "toolPolicy"
+            && f.Options != null
+            && f.Options.Any(o => o.Value == "code-writable-confirm"));
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "workflowApprovalMode");
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "approvalTimeoutSeconds" && f.DefaultValue == "3600");
+        Assert.Contains(meta.ConfigSchema, f => f.Key == "approvalToolName" && f.DefaultValue == "kb_apply");
         Assert.Contains(meta.ConfigSchema, f => f.Key == "stopAfterRun");
         Assert.Contains(meta.DefaultInputSlots, s => s.Name == "taskContext");
         Assert.Contains(meta.DefaultOutputSlots, s => s.Name == "agentResult" && s.DataType == "text");
+        Assert.Contains(meta.DefaultOutputSlots, s => s.SlotId == "cds-agent-run" && s.DataType == "json");
+        Assert.Contains(meta.DefaultOutputSlots, s => s.SlotId == "cds-agent-approval" && s.DataType == "json");
         Assert.Contains(meta.DefaultOutputSlots, s => s.Name == "eventTimeline" && s.DataType == "json");
         Assert.Contains(meta.DefaultOutputSlots, s => s.Name == "runtimeLog" && s.DataType == "text");
     }
@@ -281,11 +290,13 @@ public class WorkflowAgentTests
     {
         Assert.Contains(WorkflowExecutionStatus.Queued, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Running, WorkflowExecutionStatus.All);
+        Assert.Contains(WorkflowExecutionStatus.WaitingApproval, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Completed, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Failed, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Cancelled, WorkflowExecutionStatus.All);
         Assert.Contains(WorkflowExecutionStatus.Paused, WorkflowExecutionStatus.All);
-        Assert.Equal(6, WorkflowExecutionStatus.All.Length);
+        Assert.Contains(WorkflowExecutionStatus.TimedOut, WorkflowExecutionStatus.All);
+        Assert.Equal(8, WorkflowExecutionStatus.All.Length);
     }
 
     [Fact]

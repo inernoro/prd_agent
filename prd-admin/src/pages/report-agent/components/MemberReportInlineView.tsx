@@ -2,6 +2,7 @@ import { ArrowLeft, UserX } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import ReportDetailPage from '../ReportDetailPage';
+import { formatWeekDateRange } from '../utils/weekRange';
 
 export interface MemberReportInlineViewProps {
   reportId?: string;
@@ -37,7 +38,7 @@ export function MemberReportInlineView({
                 {memberName || memberUserId}
               </div>
               <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                {weekYear} 年第 {weekNumber} 周
+                {formatWeekDateRange({ weekYear, weekNumber })} · W{String(weekNumber).padStart(2, '0')}
               </div>
             </div>
           </div>

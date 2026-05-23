@@ -88,7 +88,12 @@ public sealed class WorkflowRunWorker : BackgroundService
             return;
         }
 
-        if (execution.Status is WorkflowExecutionStatus.Completed or WorkflowExecutionStatus.Failed or WorkflowExecutionStatus.Cancelled or WorkflowExecutionStatus.Paused)
+        if (execution.Status is WorkflowExecutionStatus.Completed
+            or WorkflowExecutionStatus.Failed
+            or WorkflowExecutionStatus.Cancelled
+            or WorkflowExecutionStatus.Paused
+            or WorkflowExecutionStatus.WaitingApproval
+            or WorkflowExecutionStatus.TimedOut)
         {
             _logger.LogInformation("Execution already terminal: {ExecutionId} status={Status}", executionId, execution.Status);
             return;
@@ -102,6 +107,9 @@ public sealed class WorkflowRunWorker : BackgroundService
         if (!string.IsNullOrEmpty(execution.TriggeredByName))
             execution.Variables["__triggeredByName"] = execution.TriggeredByName;
         execution.Variables["__executionId"] = executionId;
+        if (string.IsNullOrWhiteSpace(execution.TraceId))
+            execution.TraceId = $"workflow-execution-{executionId}";
+        execution.Variables["__traceId"] = execution.TraceId;
 
         // 2. 标记为运行中 + 推送 SSE 事件
         var sw = Stopwatch.StartNew();
@@ -109,12 +117,14 @@ public sealed class WorkflowRunWorker : BackgroundService
             e => e.Id == executionId,
             Builders<WorkflowExecution>.Update
                 .Set(e => e.Status, WorkflowExecutionStatus.Running)
+                .Set(e => e.TraceId, execution.TraceId)
                 .Set(e => e.StartedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
         await EmitEventAsync(executionId, "execution-started", new
         {
             executionId,
+            traceId = execution.TraceId,
             status = WorkflowExecutionStatus.Running,
             totalNodes = execution.NodeExecutions.Count,
         });
@@ -129,11 +139,21 @@ public sealed class WorkflowRunWorker : BackgroundService
             artifactStore[ne.NodeId] = ne.OutputArtifacts;
         }
 
+        foreach (var completedNodeId in artifactStore.Keys)
+        {
+            if (!downstream.TryGetValue(completedNodeId, out var children)) continue;
+            foreach (var childId in children)
+            {
+                if (inDegree.ContainsKey(childId))
+                    inDegree[childId]--;
+            }
+        }
+
         // 5. 确定初始就绪节点（入度为 0 或前驱全部已完成）
         var ready = new List<string>();
         foreach (var (nodeId, degree) in inDegree)
         {
-            if (degree == 0 && !artifactStore.ContainsKey(nodeId))
+            if (degree <= 0 && !artifactStore.ContainsKey(nodeId))
                 ready.Add(nodeId);
         }
 
@@ -255,6 +275,38 @@ public sealed class WorkflowRunWorker : BackgroundService
 
                     batchResults[nodeId] = (nodeExec, nodeDef, false);
                 }
+                catch (CapsuleExecutor.CapsulePauseException pause)
+                {
+                    nodeSw.Stop();
+                    nodeExec.Status = pause.NodeStatus;
+                    nodeExec.CompletedAt = DateTime.UtcNow;
+                    nodeExec.DurationMs = nodeSw.ElapsedMilliseconds;
+                    nodeExec.OutputArtifacts = pause.Artifacts;
+                    nodeExec.Logs = CapsuleExecutor.TruncateLogs(pause.Logs);
+                    nodeExec.ErrorMessage = pause.Message;
+
+                    var waitApproval = string.Equals(pause.WorkflowStatus, WorkflowExecutionStatus.WaitingApproval, StringComparison.OrdinalIgnoreCase);
+                    await EmitEventAsync(executionId, waitApproval ? "node-waiting-approval" : "node-paused", new
+                    {
+                        nodeId,
+                        nodeName = nodeExec.NodeName,
+                        nodeType = nodeExec.NodeType,
+                        pauseKind = pause.PauseKind,
+                        status = nodeExec.Status,
+                        reason = pause.Message,
+                        durationMs = nodeExec.DurationMs,
+                        artifacts = pause.Artifacts.Select(a => new
+                        {
+                            a.Name,
+                            a.MimeType,
+                            a.SizeBytes,
+                            a.SlotId,
+                            preview = a.InlineContent?.Length > 300 ? a.InlineContent[..300] + "..." : a.InlineContent,
+                        }),
+                    });
+
+                    batchResults[nodeId] = (nodeExec, nodeDef, false);
+                }
                 catch (Exception ex)
                 {
                     nodeSw.Stop();
@@ -315,6 +367,12 @@ public sealed class WorkflowRunWorker : BackgroundService
                     artifactStore[nodeId] = nodeExec.OutputArtifacts;
 
                 await UpdateNodeExecutionAsync(db, executionId, nodeExec);
+
+                if (nodeExec.Status is NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval)
+                {
+                    pauseRequested = true;
+                    continue;
+                }
 
                 // 断点：节点完成后暂停工作流
                 if (nodeExec.Status == NodeExecutionStatus.Completed && nodeDef.Breakpoint)
@@ -387,25 +445,32 @@ public sealed class WorkflowRunWorker : BackgroundService
             if (pauseRequested)
             {
                 sw.Stop();
+                var waitingApproval = batch.Any(nid =>
+                    batchResults.TryGetValue(nid, out var r)
+                    && r.nodeExec.Status == NodeExecutionStatus.WaitingApproval);
+                var workflowStatus = waitingApproval ? WorkflowExecutionStatus.WaitingApproval : WorkflowExecutionStatus.Paused;
                 await db.WorkflowExecutions.UpdateOneAsync(
                     e => e.Id == executionId,
                     Builders<WorkflowExecution>.Update
-                        .Set(e => e.Status, WorkflowExecutionStatus.Paused)
+                        .Set(e => e.Status, workflowStatus)
                         .Set(e => e.DurationMs, sw.ElapsedMilliseconds),
                     cancellationToken: CancellationToken.None);
 
                 var pausedNode = batch
-                    .Where(nid => batchResults.TryGetValue(nid, out var r) && r.nodeExec.Status == NodeExecutionStatus.Paused)
+                    .Where(nid => batchResults.TryGetValue(nid, out var r)
+                        && r.nodeExec.Status is NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval)
                     .FirstOrDefault();
                 var pausedExec = pausedNode != null ? batchResults[pausedNode].nodeExec : null;
 
-                await EmitEventAsync(executionId, "execution-paused", new
+                await EmitEventAsync(executionId, waitingApproval ? "execution-waiting-approval" : "execution-paused", new
                 {
                     executionId,
+                    status = workflowStatus,
                     pausedAtNodeId = pausedNode,
                     pausedAtNodeName = pausedExec?.NodeName,
+                    pauseKind = waitingApproval ? "waiting_approval" : "paused",
                     durationMs = sw.ElapsedMilliseconds,
-                    completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused),
+                    completedNodes = execution.NodeExecutions.Count(n => n.Status is NodeExecutionStatus.Completed or NodeExecutionStatus.Paused or NodeExecutionStatus.WaitingApproval),
                 });
 
                 return;

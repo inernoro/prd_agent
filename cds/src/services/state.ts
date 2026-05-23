@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -39,6 +39,26 @@ function isSystemInfraService(service: Partial<InfraService>): boolean {
   return classifyInfraScope(service) === 'system';
 }
 
+function isAgentRuntimeBuildProfile(profile: Partial<BuildProfile>): boolean {
+  const env = profile.env || {};
+  const text = [
+    profile.id,
+    profile.name,
+    profile.dockerImage,
+    profile.workDir,
+    profile.containerWorkDir,
+    profile.command,
+    ...Object.keys(env),
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (!text.trim()) return false;
+  if (text.includes('claude-agent-sdk-runtime')) return true;
+  if (text.includes('claude-sidecar')) return true;
+  if (text.includes('claude-sdk-sidecar')) return true;
+  if ((env.SIDECAR_AGENT_ADAPTER || '').toLowerCase() === 'claude-agent-sdk') return true;
+  return false;
+}
+
 /**
  * Phase 9 — Bugbot fix(PR #521 第四轮):TODO 占位符检测。
  * 必须与 cdscli `_REQUIRED_VALUE_MARKERS` 保持一致 — 否则 cdscli 把
@@ -68,6 +88,7 @@ function emptyState(): CdsState {
     branches: {},
     nextPortIndex: 0,
     logs: {},
+    containerLogArchives: {},
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
@@ -200,6 +221,7 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
@@ -844,17 +866,30 @@ export class StateService {
     }
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
     if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+    this.assertBuildProfileRuntimeBoundary(profile);
     this.state.buildProfiles.push(profile);
   }
 
   updateBuildProfile(id: string, updates: Partial<BuildProfile>): void {
     const idx = this.state.buildProfiles.findIndex(p => p.id === id);
     if (idx === -1) throw new Error(`构建配置 "${id}" 不存在`);
+    this.assertBuildProfileRuntimeBoundary({ ...this.state.buildProfiles[idx], ...updates });
     Object.assign(this.state.buildProfiles[idx], updates);
   }
 
   removeBuildProfile(id: string): void {
     this.state.buildProfiles = this.state.buildProfiles.filter(p => p.id !== id);
+  }
+
+  private assertBuildProfileRuntimeBoundary(profile: BuildProfile): void {
+    if (!isAgentRuntimeBuildProfile(profile)) return;
+    const project = this.getProject(profile.projectId);
+    if (project?.kind === 'shared-service') return;
+
+    throw new Error(
+      `构建配置 "${profile.id}" 看起来是 Claude Agent SDK runtime sidecar；` +
+      'agent runtime 必须由 CDS shared-service runtime pool 管理，不能写入业务项目 BuildProfile。',
+    );
   }
 
   // ── Operation logs ──
@@ -871,6 +906,34 @@ export class StateService {
 
   getLogs(branchId: string): OperationLog[] {
     return this.state.logs[branchId] || [];
+  }
+
+  appendContainerLogArchive(branchId: string, entry: Omit<ContainerLogArchiveEntry, 'id' | 'branchId' | 'capturedAt' | 'sha256' | 'byteLength' | 'lineCount'> & {
+    capturedAt?: string;
+    logs: string;
+  }): ContainerLogArchiveEntry {
+    if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
+    if (!this.state.containerLogArchives[branchId]) {
+      this.state.containerLogArchives[branchId] = [];
+    }
+    const capturedAt = entry.capturedAt || new Date().toISOString();
+    const logs = entry.logs || '';
+    const archived: ContainerLogArchiveEntry = {
+      ...entry,
+      id: `${branchId}:${capturedAt}:${this.state.containerLogArchives[branchId].length + 1}`,
+      branchId,
+      capturedAt,
+      sha256: crypto.createHash('sha256').update(logs).digest('hex'),
+      byteLength: Buffer.byteLength(logs, 'utf8'),
+      lineCount: logs ? logs.split(/\r?\n/).length : 0,
+      logs,
+    };
+    this.state.containerLogArchives[branchId].push(archived);
+    return archived;
+  }
+
+  getContainerLogArchives(branchId: string): ContainerLogArchiveEntry[] {
+    return (this.state.containerLogArchives || {})[branchId] || [];
   }
 
   removeLogs(branchId: string): void {
@@ -891,6 +954,33 @@ export class StateService {
       delete this.state.schedulerEnabledOverride;
     } else {
       this.state.schedulerEnabledOverride = value;
+    }
+  }
+
+  // Idle-timeout override (seconds). Mirrors the enabled override above so
+  // the Dashboard can tune idleTTLSeconds without editing cds.config.json.
+  getSchedulerIdleTTLOverride(): number | undefined {
+    return this.state.schedulerIdleTTLOverride;
+  }
+
+  setSchedulerIdleTTLOverride(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.schedulerIdleTTLOverride;
+    } else {
+      this.state.schedulerIdleTTLOverride = value;
+    }
+  }
+
+  // Hot-pool cap override. Same persistence semantics as the two above.
+  getSchedulerMaxHotOverride(): number | undefined {
+    return this.state.schedulerMaxHotOverride;
+  }
+
+  setSchedulerMaxHotOverride(value: number | undefined): void {
+    if (value === undefined) {
+      delete this.state.schedulerMaxHotOverride;
+    } else {
+      this.state.schedulerMaxHotOverride = value;
     }
   }
 
@@ -2348,7 +2438,15 @@ export class StateService {
   // 调 recordGithubWebhookDelivery 写入。前端 CDS 系统设置 → GitHub Webhook
   // 日志 tab 列表展示。
 
-  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 200;
+  /**
+   * 2026-05-14: 历史上限从 200 调到 1000。
+   * 单条 delivery ~1KB（含 payloadSnippet 截断），1000 条 ~1MB，state.json 可承受。
+   * 用户反馈"webhook 只有 1 条以为没日志"——根因是上限太小，遇到一阵 push 风暴
+   * 几分钟就被旧条目挤掉。1000 条相当于一个忙项目两天的窗口，足够回溯排查。
+   * 后续若上 MongoDB 持久化，把本 ring buffer 改成 capped collection，参考
+   * doc/debt.cds-state-json.md。
+   */
+  static readonly WEBHOOK_DELIVERY_HISTORY_MAX = 1000;
 
   recordGithubWebhookDelivery(delivery: import('../types.js').GithubWebhookDelivery): void {
     const list = this.state.githubWebhookDeliveries || [];
@@ -2363,10 +2461,15 @@ export class StateService {
     }
   }
 
-  getGithubWebhookDeliveries(limit = 50): import('../types.js').GithubWebhookDelivery[] {
+  /**
+   * 2026-05-14: 新增 `offset` 支持翻页。limit 默认 50，最大等于 buffer 上限。
+   * 倒序（最新在前），offset 跳过 N 条最新条目读后面的。
+   */
+  getGithubWebhookDeliveries(limit = 50, offset = 0): import('../types.js').GithubWebhookDelivery[] {
     const list = this.state.githubWebhookDeliveries || [];
-    // 倒序(最新在前)
-    return [...list].reverse().slice(0, Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX)));
+    const cappedLimit = Math.max(1, Math.min(limit, StateService.WEBHOOK_DELIVERY_HISTORY_MAX));
+    const cappedOffset = Math.max(0, offset);
+    return [...list].reverse().slice(cappedOffset, cappedOffset + cappedLimit);
   }
 
   getGithubAppWhitelist(): import('../types.js').GithubAppWhitelistSettings {

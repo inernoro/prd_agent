@@ -115,6 +115,7 @@ public sealed class WorkflowScheduleWorker : BackgroundService
             }).ToList(),
             Status = WorkflowExecutionStatus.Queued,
         };
+        execution.TraceId = $"workflow-execution-{execution.Id}";
 
         await db.WorkflowExecutions.InsertOneAsync(execution, cancellationToken: CancellationToken.None);
         await _runQueue.EnqueueAsync(RunKinds.Workflow, execution.Id, CancellationToken.None);

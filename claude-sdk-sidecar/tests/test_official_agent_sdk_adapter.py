@@ -1,0 +1,544 @@
+import asyncio
+import os
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.official_agent_sdk import run_official_agent, workspace_diagnostics  # noqa: E402
+from app.schemas import SidecarMessage, SidecarRunRequest  # noqa: E402
+
+LAST_OPTIONS: Any = None
+GIT_COMMANDS: list[list[str]] = []
+GIT_ENVS: list[dict[str, str] | None] = []
+FAKE_RESULT_SUBTYPE = "success"
+
+
+class FakeResultMessage:
+    def __init__(self, result: str = "", subtype: str = "success", usage: Any = None):
+        self.result = result
+        self.subtype = subtype
+        self.usage = usage
+        self.session_id = "sdk-session-1"
+        self.total_cost_usd = 0.0123
+        self.duration_ms = 1234
+
+
+class FakeUsage:
+    input_tokens = 3
+    output_tokens = 5
+
+
+class FakeTextBlock:
+    type = "text"
+    text = "adapter ok"
+
+
+class FakeAssistantMessage:
+    content = [FakeTextBlock()]
+
+
+class FakeClaudeSDKClient:
+    def __init__(self, options: Any = None):
+        self.options = options
+        self.interrupted = False
+
+    async def __aenter__(self) -> "FakeClaudeSDKClient":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        return None
+
+    async def query(self, prompt: str) -> None:
+        self.prompt = prompt
+
+    async def interrupt(self) -> None:
+        self.interrupted = True
+
+    async def receive_response(self):
+        for _ in range(3):
+            await asyncio.sleep(0)
+            if self.interrupted:
+                yield FakeResultMessage(subtype="error_during_execution", usage=FakeUsage())
+                return
+        if FAKE_RESULT_SUBTYPE != "success":
+            yield FakeResultMessage(subtype=FAKE_RESULT_SUBTYPE, usage=FakeUsage())
+            return
+        yield FakeAssistantMessage()
+        yield FakeResultMessage(result="adapter ok", usage=FakeUsage())
+
+
+class FakeGitProcess:
+    def __init__(self, args: tuple[Any, ...], cwd: str | None = None):
+        self.args = [str(item) for item in args]
+        self.cwd = cwd
+        self.returncode = 0
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        if len(self.args) > 1 and self.args[1] == "clone":
+            target = Path(self.args[-1])
+            target.mkdir(parents=True, exist_ok=True)
+            (target / ".git").mkdir(exist_ok=True)
+            return b"", b""
+        if self.args[:3] == ["git", "rev-parse", "--short"]:
+            return b"abc1234\n", b""
+        return b"", b""
+
+
+class FailingGitProcess(FakeGitProcess):
+    def __init__(self, args: tuple[Any, ...], stderr: str):
+        super().__init__(args)
+        self.returncode = 128
+        self.stderr = stderr
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return b"", self.stderr.encode("utf-8")
+
+
+async def fake_git_exec(*args: Any, cwd: str | None = None, env: dict[str, str] | None = None, **_: Any) -> FakeGitProcess:
+    GIT_COMMANDS.append([str(item) for item in args])
+    GIT_ENVS.append(env)
+    return FakeGitProcess(args, cwd=cwd)
+
+
+async def fake_git_auth_failure_exec(*args: Any, cwd: str | None = None, env: dict[str, str] | None = None, **_: Any) -> FailingGitProcess:
+    GIT_COMMANDS.append([str(item) for item in args])
+    GIT_ENVS.append(env)
+    return FailingGitProcess(args, "remote: Repository not found.")
+
+
+def install_fake_sdk() -> None:
+    module = types.ModuleType("claude_agent_sdk")
+
+    class ClaudeAgentOptions:
+        def __init__(self, **kwargs: Any):
+            global LAST_OPTIONS
+            self.kwargs = kwargs
+            LAST_OPTIONS = self
+
+    def tool(name: str, description: str, input_schema: dict[str, Any]):
+        def decorator(handler: Any) -> Any:
+            return {
+                "name": name,
+                "description": description,
+                "input_schema": input_schema,
+                "handler": handler,
+            }
+
+        return decorator
+
+    def create_sdk_mcp_server(name: str, version: str, tools: list[Any]) -> dict[str, Any]:
+        return {"name": name, "version": version, "tools": tools}
+
+    class PermissionResultAllow:
+        behavior = "allow"
+
+        def __init__(self, **kwargs: Any):
+            self.kwargs = kwargs
+
+    class PermissionResultDeny:
+        behavior = "deny"
+
+        def __init__(self, message: str = "", interrupt: bool = False, **kwargs: Any):
+            self.message = message
+            self.interrupt = interrupt
+            self.kwargs = kwargs
+
+    module.ClaudeSDKClient = FakeClaudeSDKClient
+    module.ClaudeAgentOptions = ClaudeAgentOptions
+    module.PermissionResultAllow = PermissionResultAllow
+    module.PermissionResultDeny = PermissionResultDeny
+    module.ResultMessage = FakeResultMessage
+    module.create_sdk_mcp_server = create_sdk_mcp_server
+    module.tool = tool
+    sys.modules["claude_agent_sdk"] = module
+
+
+def build_request() -> SidecarRunRequest:
+    return SidecarRunRequest(
+        runId="official-test",
+        model="claude-opus-4-5",
+        messages=[SidecarMessage(role="user", content="check repo")],
+        maxTurns=1,
+    )
+
+
+class OfficialAgentSdkAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        global LAST_OPTIONS, GIT_COMMANDS, GIT_ENVS, FAKE_RESULT_SUBTYPE
+        LAST_OPTIONS = None
+        GIT_COMMANDS = []
+        GIT_ENVS = []
+        FAKE_RESULT_SUBTYPE = "success"
+        install_fake_sdk()
+        os.environ.pop("CLAUDE_AGENT_SDK_ALLOWED_TOOLS", None)
+        os.environ.pop("CLAUDE_AGENT_SDK_PERMISSION_MODE", None)
+        os.environ.pop("CLAUDE_AGENT_SDK_BARE", None)
+        os.environ.pop("CLAUDE_AGENT_SDK_SETTING_SOURCES", None)
+        os.environ.pop("AGENT_WORKSPACE_ROOT", None)
+        os.environ.pop("SIDECAR_WORKSPACES_ROOT", None)
+        os.environ.pop("SIDECAR_GITHUB_TOKEN", None)
+        os.environ.pop("GITHUB_TOKEN", None)
+        os.environ.pop("ANTHROPIC_BASE_URL", None)
+        os.environ.pop("SIDECAR_PROVIDER_KEY_MODE", None)
+        os.environ["ANTHROPIC_API_KEY"] = "sk-env-test"
+
+    async def test_streams_runtime_text_usage_and_done(self) -> None:
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], [
+            "runtime_init",
+            "text_delta",
+            "usage",
+            "done",
+        ])
+        self.assertEqual(events[1].text, "adapter ok")
+        self.assertEqual(events[-1].final_text, "adapter ok")
+        self.assertEqual(events[-1].input_tokens, 3)
+        self.assertEqual(events[-1].output_tokens, 5)
+        self.assertEqual(events[2].content["sdkResult"]["subtype"], "success")
+        self.assertEqual(events[2].content["sdkResult"]["session_id"], "sdk-session-1")
+        self.assertEqual(events[2].content["sdkResult"]["total_cost_usd"], 0.0123)
+        self.assertEqual(events[-1].content["sdkResult"]["duration_ms"], 1234)
+        self.assertEqual(events[0].content["allowedTools"], ["Read", "Grep", "Glob"])
+        self.assertEqual(events[0].content["disallowedTools"], ["Bash", "Edit", "Write"])
+        self.assertEqual(events[0].content["permissionMode"], "default")
+        self.assertEqual(events[0].content["bareMode"], True)
+        self.assertEqual(events[0].content["settingSources"], [])
+        self.assertEqual(events[0].content["builtinWriteToolsEnabled"], False)
+        self.assertEqual(events[0].content["approvalBridge"], "sdk-can-use-tool")
+        self.assertEqual(events[0].content["loopOwner"], "claude-agent-sdk")
+        self.assertEqual(events[0].content["sdkLoopEnabled"], True)
+        self.assertEqual(events[0].content["mapRole"], "control-plane")
+        self.assertEqual(events[0].content["cdsRole"], "sandbox-runtime")
+        self.assertEqual(events[0].content["upstreamSource"], "env-default")
+        self.assertEqual(events[0].content["baseUrlConfigured"], False)
+        self.assertEqual(events[0].content["apiKeyConfigured"], True)
+        self.assertEqual(events[0].content["workspaceSource"], "unset")
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_API_KEY"], "sk-env-test")
+        self.assertEqual(LAST_OPTIONS.kwargs["tools"], ["Read", "Grep", "Glob"])
+        self.assertEqual(LAST_OPTIONS.kwargs["disallowed_tools"], ["Bash", "Edit", "Write"])
+        self.assertEqual(LAST_OPTIONS.kwargs["setting_sources"], [])
+        self.assertEqual(LAST_OPTIONS.kwargs["extra_args"], {"bare": None})
+        self.assertIn("Never call Bash, Edit, or Write", LAST_OPTIONS.kwargs["system_prompt"]["append"])
+
+    async def test_missing_provider_key_is_structured_error_before_sdk_run(self) -> None:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "provider_key_missing")
+        self.assertEqual(events[0].content["adapter"], "claude-agent-sdk")
+        self.assertEqual(events[0].content["upstreamSource"], "env-default")
+        self.assertEqual(events[0].content["apiKeyConfigured"], False)
+        self.assertEqual(events[0].content["providerKeyMode"], "runtime-profile-or-env")
+        self.assertIn("MAP runtime profile", events[0].content["nextActions"][1])
+        self.assertIsNone(LAST_OPTIONS)
+
+    async def test_env_default_provider_base_url_is_passed_to_sdk_options(self) -> None:
+        os.environ["ANTHROPIC_BASE_URL"] = "https://gateway.example/v1"
+
+        stream = run_official_agent(build_request())
+        first = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["upstreamSource"], "env-default")
+        self.assertEqual(first.content["baseUrlConfigured"], True)
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_BASE_URL"], "https://gateway.example/v1")
+
+    async def test_permission_callback_allows_readonly_and_denies_unbridged_write(self) -> None:
+        stream = run_official_agent(build_request())
+        first = await anext(stream)
+        self.assertEqual(first.type, "runtime_init")
+        await stream.aclose()
+
+        can_use_tool = LAST_OPTIONS.kwargs["can_use_tool"]
+        readonly = await can_use_tool("Read", {"file_path": "README.md"}, object())
+        write = await can_use_tool("Bash", {"command": "git status"}, object())
+
+        self.assertEqual(readonly.behavior, "allow")
+        self.assertEqual(write.behavior, "deny")
+        self.assertIn("MAP approval request failed", write.message)
+
+    async def test_runtime_init_reports_opt_in_builtin_write_tools(self) -> None:
+        os.environ["CLAUDE_AGENT_SDK_ALLOWED_TOOLS"] = "Read,Bash,Edit,Write"
+        os.environ["CLAUDE_AGENT_SDK_PERMISSION_MODE"] = "acceptEdits"
+
+        stream = run_official_agent(build_request())
+        first = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["permissionMode"], "acceptEdits")
+        self.assertEqual(first.content["builtinWriteToolsEnabled"], True)
+        self.assertEqual(first.content["builtinWriteTools"], ["Bash", "Edit", "Write"])
+        self.assertEqual(first.content["disallowedTools"], [])
+        self.assertEqual(LAST_OPTIONS.kwargs["tools"], ["Read", "Bash", "Edit", "Write"])
+        self.assertEqual(LAST_OPTIONS.kwargs["disallowed_tools"], [])
+
+    async def test_runtime_init_reports_request_provider_override(self) -> None:
+        req = build_request().model_copy(update={
+            "base_url": "https://provider.example/v1",
+            "api_key": "sk-test",
+            "protocol": "anthropic",
+        })
+
+        stream = run_official_agent(req)
+        first = await anext(stream)
+        await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["upstreamSource"], "request-override")
+        self.assertEqual(first.content["baseUrlConfigured"], True)
+        self.assertEqual(first.content["apiKeyConfigured"], True)
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_BASE_URL"], "https://provider.example/v1")
+        self.assertEqual(LAST_OPTIONS.kwargs["env"]["ANTHROPIC_API_KEY"], "sk-test")
+
+    async def test_profile_resolution_failure_is_structured_error(self) -> None:
+        req = build_request().model_copy(update={"profile": "missing-profile"})
+
+        with patch("app.upstream.resolve_profile", return_value=None):
+            events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "upstream_resolve_failed")
+        self.assertEqual(events[0].content["adapter"], "claude-agent-sdk")
+        self.assertEqual(events[0].content["profile"], "missing-profile")
+
+    async def test_cancel_event_interrupts_client_and_returns_cancelled_error(self) -> None:
+        cancel_event = asyncio.Event()
+        stream = run_official_agent(build_request(), cancel_event=cancel_event)
+
+        first = await anext(stream)
+        self.assertEqual(first.type, "runtime_init")
+        cancel_event.set()
+
+        remaining = [event async for event in stream]
+        self.assertEqual([event.type for event in remaining], ["usage", "error"])
+        self.assertEqual(remaining[-1].error_code, "cancelled")
+
+    async def test_sdk_result_error_is_not_reported_as_cancelled_without_cancel_event(self) -> None:
+        global FAKE_RESULT_SUBTYPE
+        FAKE_RESULT_SUBTYPE = "error_during_execution"
+
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], ["runtime_init", "usage", "error"])
+        self.assertEqual(events[-1].error_code, "claude_agent_sdk_result_error")
+        self.assertEqual(events[-1].message, "error_during_execution")
+        self.assertEqual(events[-1].content["sdkResult"]["subtype"], "error_during_execution")
+
+    async def test_preflight_allows_bundled_cli_when_path_command_is_missing(self) -> None:
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], [
+            "runtime_init",
+            "text_delta",
+            "usage",
+            "done",
+        ])
+
+    async def test_preflight_reports_missing_workspace_root(self) -> None:
+        os.environ["AGENT_WORKSPACE_ROOT"] = "/tmp/cds-agent-missing-workspace"
+
+        events = [event async for event in run_official_agent(build_request())]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "claude_agent_sdk_runtime_not_ready")
+        self.assertIn("workspace_root", events[0].content["missing"])
+
+    async def test_request_workspace_root_overrides_env_and_reports_repo_context(self) -> None:
+        os.environ["AGENT_WORKSPACE_ROOT"] = "/tmp/cds-agent-missing-env-workspace"
+        with tempfile.TemporaryDirectory() as workspace:
+            req = build_request().model_copy(update={
+                "map_session_id": "session-1",
+                "trace_id": "trace-1",
+                "workspace_root": workspace,
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": "codex/cds-agent-workbench-ui",
+            })
+
+            stream = run_official_agent(req)
+            first = await anext(stream)
+            await stream.aclose()
+
+            self.assertEqual(first.type, "runtime_init")
+            self.assertEqual(first.content["cwd"], workspace)
+            self.assertEqual(first.content["mapSessionId"], "session-1")
+            self.assertEqual(first.content["traceId"], "trace-1")
+            self.assertEqual(first.content["workspaceSource"], "request")
+            self.assertEqual(first.content["gitRepository"], "inernoro/prd_agent")
+            self.assertEqual(first.content["gitRef"], "codex/cds-agent-workbench-ui")
+            self.assertEqual(LAST_OPTIONS.kwargs["cwd"], workspace)
+
+    async def test_git_repository_prepares_workspace_and_sets_sdk_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": "main",
+            })
+
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspaceSource"], "git")
+        self.assertEqual(first.content["workspace"]["workspacePrepared"], True)
+        self.assertEqual(first.content["workspace"]["gitRepository"], "inernoro/prd_agent")
+        self.assertEqual(first.content["workspace"]["gitRef"], "main")
+        self.assertEqual(first.content["workspace"]["gitCommit"], "abc1234")
+        self.assertEqual(first.content["workspace"]["workspaceAction"], "clone")
+        self.assertEqual(first.content["workspace"]["workspaceLock"], "in-process")
+        self.assertIn(workspaces_root, first.content["cwd"])
+        self.assertEqual(LAST_OPTIONS.kwargs["cwd"], first.content["cwd"])
+        self.assertEqual(GIT_COMMANDS[0][:5], ["git", "clone", "--depth", "1", "--branch"])
+        self.assertEqual(GIT_COMMANDS[0][5], "main")
+
+    async def test_git_repository_uses_private_github_token_without_leaking_to_command_or_events(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            os.environ["SIDECAR_GITHUB_TOKEN"] = "ghp-private-test"
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/private_repo",
+                "git_ref": "main",
+            })
+
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspace"]["privateRepositoryAuthConfigured"], True)
+        self.assertNotIn("ghp-private-test", str(first.content))
+        self.assertNotIn("ghp-private-test", " ".join(GIT_COMMANDS[0]))
+        self.assertEqual(GIT_ENVS[0]["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader")
+        self.assertEqual(GIT_ENVS[0]["GIT_CONFIG_VALUE_0"], "AUTHORIZATION: bearer ghp-private-test")
+
+    async def test_existing_git_workspace_fetches_explicit_ref_under_same_workspace_path(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": "main",
+            })
+            slug = "inernoro-prd_agent-main-24f20bb79b"
+            existing = Path(workspaces_root) / slug
+            (existing / ".git").mkdir(parents=True)
+
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspace"]["workspaceAction"], "fetch")
+        self.assertEqual(GIT_COMMANDS[0], ["git", "fetch", "--depth", "1", "origin", "main"])
+        self.assertEqual(GIT_COMMANDS[1], ["git", "checkout", "--force", "FETCH_HEAD"])
+
+    async def test_existing_default_git_workspace_checks_out_fetched_origin_head(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/prd_agent",
+                "git_ref": None,
+            })
+            slug = "inernoro-prd_agent-default-2f4ed769c8"
+            existing = Path(workspaces_root) / slug
+            (existing / ".git").mkdir(parents=True)
+
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_exec):
+                stream = run_official_agent(req)
+                first = await anext(stream)
+                await stream.aclose()
+
+        self.assertEqual(first.type, "runtime_init")
+        self.assertEqual(first.content["workspace"]["workspaceAction"], "fetch")
+        self.assertEqual(GIT_COMMANDS[0], ["git", "fetch", "--all", "--prune"])
+        self.assertEqual(GIT_COMMANDS[1], ["git", "checkout", "--force", "origin/HEAD"])
+
+    async def test_invalid_git_repository_returns_structured_error(self) -> None:
+        req = build_request().model_copy(update={
+            "git_repository": "ssh://github.com/inernoro/prd_agent",
+            "git_ref": "main",
+        })
+
+        events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["workspaceErrorCode"], "unsupported_git_repository")
+        self.assertEqual(events[0].content["gitRepository"], "ssh://github.com/inernoro/prd_agent")
+        self.assertEqual(events[0].content["gitRef"], "main")
+        self.assertIn("owner/repo", events[0].content["nextActions"][0])
+
+    async def test_invalid_git_ref_returns_structured_error(self) -> None:
+        req = build_request().model_copy(update={
+            "git_repository": "inernoro/prd_agent",
+            "git_ref": "../main",
+        })
+
+        events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["workspaceErrorCode"], "unsupported_git_ref")
+        self.assertEqual(events[0].content["gitRepository"], "inernoro/prd_agent")
+        self.assertEqual(events[0].content["gitRef"], "../main")
+        self.assertIn("gitRef", events[0].content["nextActions"][0])
+
+    async def test_git_auth_or_missing_repo_failure_returns_actionable_workspace_error_without_token(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            os.environ["SIDECAR_GITHUB_TOKEN"] = "ghp-private-test"
+            req = build_request().model_copy(update={
+                "git_repository": "inernoro/private_repo",
+                "git_ref": "main",
+            })
+
+            with patch("app.workspace.asyncio.create_subprocess_exec", fake_git_auth_failure_exec):
+                events = [event async for event in run_official_agent(req)]
+
+        self.assertEqual([event.type for event in events], ["error"])
+        self.assertEqual(events[0].error_code, "workspace_prepare_failed")
+        self.assertEqual(events[0].content["workspaceErrorCode"], "github_repository_auth_or_not_found")
+        self.assertEqual(events[0].content["privateRepositoryAuthConfigured"], True)
+        self.assertIn("SIDECAR_GITHUB_TOKEN", events[0].content["nextActions"][1])
+        self.assertNotIn("ghp-private-test", str(events[0].content))
+        self.assertNotIn("ghp-private-test", events[0].message)
+
+    def test_workspace_diagnostics_reports_git_workspace_capabilities(self) -> None:
+        with tempfile.TemporaryDirectory() as workspaces_root:
+            os.environ["SIDECAR_WORKSPACES_ROOT"] = workspaces_root
+            diagnostics = workspace_diagnostics()
+
+        self.assertEqual(diagnostics["autoGitWorkspace"], True)
+        self.assertEqual(diagnostics["workspacesRoot"], workspaces_root)
+        self.assertEqual(diagnostics["workspaceLock"], "in-process")
+        self.assertIn("github.com", diagnostics["supportedRepositoryHosts"])
+        self.assertIn("owner/repo", diagnostics["supportedRepositoryFormats"])
+        self.assertEqual(diagnostics["privateRepositoryAuthConfigured"], False)
+
+    def test_workspace_diagnostics_reports_private_github_auth_without_token_value(self) -> None:
+        os.environ["GITHUB_TOKEN"] = "ghp-diagnostic-test"
+
+        diagnostics = workspace_diagnostics()
+
+        self.assertEqual(diagnostics["privateRepositoryAuthConfigured"], True)
+        self.assertIn("GITHUB_TOKEN", diagnostics["privateRepositoryAuthSources"])
+        self.assertNotIn("ghp-diagnostic-test", str(diagnostics))
+
+
+if __name__ == "__main__":
+    unittest.main()

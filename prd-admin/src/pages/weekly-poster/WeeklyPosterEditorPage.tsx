@@ -14,12 +14,14 @@ import {
 } from 'lucide-react';
 import {
   listWeeklyPosters,
+  getWeeklyPoster,
   createWeeklyPoster,
   updateWeeklyPoster,
   publishWeeklyPoster,
   unpublishWeeklyPoster,
   deleteWeeklyPoster,
   type WeeklyPoster,
+  type WeeklyPosterListItem,
   type WeeklyPosterPage,
 } from '@/services';
 import { apiRequest } from '@/services/real/apiClient';
@@ -52,7 +54,7 @@ function emptyPage(order: number): WeeklyPosterPage {
 }
 
 export default function WeeklyPosterEditorPage() {
-  const [items, setItems] = useState<WeeklyPoster[]>([]);
+  const [items, setItems] = useState<WeeklyPosterListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<WeeklyPoster | null>(null);
   const [draft, setDraft] = useState<WeeklyPoster | null>(null);
@@ -73,7 +75,17 @@ export default function WeeklyPosterEditorPage() {
     void refresh();
   }, [refresh]);
 
-  const handleSelect = (poster: WeeklyPoster) => {
+  const handleSelect = async (poster: WeeklyPoster | WeeklyPosterListItem) => {
+    if (!('pages' in poster)) {
+      const res = await getWeeklyPoster(poster.id);
+      if (!res.success || !res.data) {
+        toast.error(res.error?.message || '加载海报详情失败');
+        return;
+      }
+      setSelected(res.data);
+      setDraft(JSON.parse(JSON.stringify(res.data)) as WeeklyPoster);
+      return;
+    }
     setSelected(poster);
     setDraft(JSON.parse(JSON.stringify(poster)) as WeeklyPoster);
   };
@@ -96,7 +108,7 @@ export default function WeeklyPosterEditorPage() {
     if (res.success && res.data) {
       toast.success('已创建草稿');
       await refresh();
-      handleSelect(res.data);
+      void handleSelect(res.data);
     } else {
       toast.error(res.error?.message || '创建失败');
     }
@@ -244,7 +256,7 @@ export default function WeeklyPosterEditorPage() {
                     <li key={item.id}>
                       <button
                         type="button"
-                        onClick={() => handleSelect(item)}
+                        onClick={() => void handleSelect(item)}
                         data-active={active}
                         className="surface-row w-full text-left px-3 py-2.5 rounded-lg border border-transparent transition-colors data-[active=true]:border-token-subtle"
                       >
@@ -278,7 +290,7 @@ export default function WeeklyPosterEditorPage() {
                           {item.title || '未命名海报'}
                         </div>
                         <div className="text-[11px] text-token-muted-faint mt-0.5">
-                          {item.pages?.length ?? 0} 页
+                          {item.pageCount ?? 0} 页
                         </div>
                       </button>
                     </li>

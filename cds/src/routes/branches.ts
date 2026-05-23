@@ -11,10 +11,11 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
+import { classifyDeployRuntime } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -35,6 +36,7 @@ import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { ProxyService } from '../services/proxy.js';
+import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -170,37 +172,88 @@ type BranchDeployRuntime = {
   releaseProfiles: number;
   sourceProfiles: number;
   modes: string[];
+  /**
+   * 2026-05-14 真实态徽章：配置已切到发布版，但容器还没真正以发布版跑
+   * 起来（正在重部署 / 还停着 / 旧容器仍是源码构建）。true 时卡片应显示
+   * 「发布版·待生效」橙色，而不是绿色「发布版」——区分"配置意图"与
+   * "运行现状"，杜绝设了 override 就亮绿的虚假徽章。
+   */
+  pendingPublish: boolean;
 };
 
-function classifyDeployRuntime(modeId?: string, modeLabel?: string): 'source' | 'release' {
-  if (!modeId) return 'source';
-  const text = `${modeId} ${modeLabel || ''}`;
-  return /(prod|production|release|static|publish|published|dist|standalone|built|发布|生产|正式|构建)/i.test(text)
-    ? 'release'
-    : 'source';
+// classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
+// auto-lifecycle.ts 共用同一份正则，避免两处漂移）。
+
+function isSyntheticCdsManagedRuntimeBranch(
+  branch: Pick<BranchEntry, 'branch' | 'githubCommitSha'>,
+  project?: Pick<Project, 'kind'> | null,
+): boolean {
+  if (project?.kind !== 'shared-service') return false;
+  return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
+}
+
+function isAiActivityLog(entry: ProjectActivityLog): boolean {
+  const actor = entry.actor || '';
+  return entry.type === 'ai-occupy'
+    || entry.type === 'ai-release'
+    || actor === 'ai'
+    || actor.startsWith('ai:');
 }
 
 function summarizeBranchDeployRuntime(
   branch: BranchEntry,
   profiles: BuildProfile[],
 ): BranchDeployRuntime {
-  let releaseProfiles = 0;
-  let sourceProfiles = 0;
+  // 真相 = "正在跑的容器实际用哪个 deploy mode"（svc.deployedMode），
+  // 不是"配置成什么"（profileOverrides）。两者分别算，再比对得出徽章。
+  let releaseProfiles = 0;   // 实际以发布版在跑的 profile 数（真相）
+  let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
+  let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
-    const activeMode = effectiveProfile.activeDeployMode;
-    const modeLabel = activeMode
-      ? effectiveProfile.deployModes?.[activeMode]?.label || activeMode
+    const configMode = effectiveProfile.activeDeployMode;
+    const configLabel = configMode
+      ? effectiveProfile.deployModes?.[configMode]?.label || configMode
       : '源码';
-    const kind = classifyDeployRuntime(activeMode, modeLabel);
-    if (kind === 'release') {
-      releaseProfiles += 1;
-    } else {
-      sourceProfiles += 1;
-    }
-    modeLabels.push(`${profile.name || profile.id}: ${modeLabel}`);
+    const configKind = classifyDeployRuntime(configMode, configLabel);
+
+    const svc = branch.services?.[profile.id];
+    const running = svc?.status === 'running';
+    const hasTruth = running && svc?.deployedMode !== undefined;
+    // 真相 = "现在跑的是什么"。
+    //  - running 且有 deployedMode 戳 → 用戳（确知真相）。
+    //  - running 但无戳（旧数据）→ 退回信任配置，避免存量 running 分支
+    //    齐刷刷误报待生效。
+    //  - 没在跑 → 它**不在以任何模式运行**，actualMode 视为源码/未知。
+    //    2026-05-14 Codex review P2：之前 !running 也回退 configMode，
+    //    导致"配置 release 但已 auto-stop/手动停"的分支被算成 release、
+    //    亮绿徽章（前端 kind==='release' 先于 pendingPublish 判断），
+    //    而它其实该是「发布版·待生效」。停着就不能算真发布。
+    const actualMode = hasTruth
+      ? (svc!.deployedMode as string)
+      : running
+        ? configMode
+        : '';
+    const actualLabel = actualMode
+      ? effectiveProfile.deployModes?.[actualMode]?.label || actualMode
+      : '源码';
+    const actualKind = classifyDeployRuntime(actualMode, actualLabel);
+
+    if (actualKind === 'release') releaseProfiles += 1;
+    else sourceProfiles += 1;
+
+    // 配置要发布版，但真相不是发布版（容器没跟上 / 还停着 / 旧源码构建）
+    // → pending。仅在"确知真相 且 真相≠release"或"配置 release 但没在跑"
+    // 时判 pending；旧数据无真相时不误报。
+    if (configKind === 'release' && actualKind !== 'release') pendingPublish = true;
+    if (configKind === 'release' && !running) pendingPublish = true;
+
+    const suffix = hasTruth && actualMode !== configMode
+      ? `${actualLabel}（配置 ${configLabel}，待生效）`
+      : actualLabel;
+    modeLabels.push(`${profile.name || profile.id}: ${suffix}`);
   }
 
   const activeProfiles = profiles.length;
@@ -219,12 +272,13 @@ function summarizeBranchDeployRuntime(
     kind,
     label,
     title: modeLabels.length > 0
-      ? `当前生效模式: ${modeLabels.join(' / ')}`
+      ? `实际运行模式: ${modeLabels.join(' / ')}${pendingPublish ? '（发布版配置已设，等待重新部署生效）' : ''}`
       : '当前没有构建配置，按源码默认模式显示',
     activeProfiles,
     releaseProfiles,
     sourceProfiles,
     modes: modeLabels,
+    pendingPublish,
   };
 }
 
@@ -890,13 +944,30 @@ function buildSmokeEnv(opts: {
   return env;
 }
 
+export function clearRunningServiceErrorMessages(entry: Pick<BranchEntry, 'services'>): void {
+  for (const svc of Object.values(entry.services || {})) {
+    if (svc.status === 'running' && svc.errorMessage) {
+      svc.errorMessage = undefined;
+    }
+  }
+}
+
 function reconcileBranchStatus(entry: BranchEntry): void {
+  clearRunningServiceErrorMessages(entry);
   const statuses = Object.values(entry.services || {}).map((service) => service.status);
+  const previousStatus = entry.status;
   if (statuses.some((status) => status === 'error')) entry.status = 'error';
   else if (statuses.some((status) => status === 'building')) entry.status = 'building';
   else if (statuses.some((status) => status === 'starting' || status === 'restarting')) entry.status = 'starting';
   else if (statuses.some((status) => status === 'running')) entry.status = 'running';
   else entry.status = 'idle';
+
+  // 2026-05-14: 进入 running 时打 lastReadyAt 戳。项目级 autoPublishAfterMinutes /
+  // autoPublishAfterMinutes 调度器以本字段为计时起点。从非 running 翻到 running 才更新，
+  // 内部 running→running（多次 reconcile）不刷新，避免调度器永远被推迟。
+  if (entry.status === 'running' && previousStatus !== 'running') {
+    entry.lastReadyAt = new Date().toISOString();
+  }
 
   const failedReasons = Object.entries(entry.services || {})
     .filter(([, service]) => service.status === 'error')
@@ -1078,6 +1149,56 @@ export function createBranchRouter(deps: RouterDeps): Router {
     githubApp,
     config,
   });
+  async function captureContainerLogSnapshots(
+    entry: BranchEntry,
+    source: OperationLogContainerSnapshot['source'],
+    profileIds?: Set<string>,
+    tailLines = 500,
+  ): Promise<OperationLogContainerSnapshot[]> {
+    const services = Object.entries(entry.services || {})
+      .filter(([profileId, svc]) => (!profileIds || profileIds.has(profileId)) && !!svc.containerName);
+    const snapshots: OperationLogContainerSnapshot[] = [];
+
+    for (const [profileId, svc] of services) {
+      try {
+        const raw = await containerService.getLogs(svc.containerName, tailLines);
+        const maskedLogs = maskSecretsText(raw, { mask: true });
+        stateService.appendContainerLogArchive(entry.id, {
+          projectId: entry.projectId,
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          source,
+          masked: true,
+          logs: maskedLogs,
+        });
+        snapshots.push({
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          capturedAt: new Date().toISOString(),
+          tailLines,
+          source,
+          logs: maskedLogs,
+        });
+      } catch (err) {
+        snapshots.push({
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          capturedAt: new Date().toISOString(),
+          tailLines,
+          source,
+          logs: '',
+          message: (err as Error)?.message || String(err),
+        });
+      }
+    }
+    return snapshots;
+  }
 
   const resolveProjectIdParam = (raw: unknown): string | null => {
     if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -1236,7 +1357,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // merged env var map and let it handle the rest.
     // P4 Part 17 (G2 fix): scope by the branch's project so a remote
     // executor only receives profiles owned by this project.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    // 2026-05-14 Codex review P2 "Propagate release overrides to remote
+    // redeploys"：执行器侧没有 master 的 branch.profileOverrides，也不会跑
+    // resolveEffectiveProfile。必须在 master 侧先 resolve，把已合并 override
+    // （含 auto-publish 刚写的 release activeDeployMode）的 effective profile
+    // 发过去——compute-then-send：master 算，executor 只管按收到的构建。
+    // 否则 cluster 场景执行器仍按源码/热加载旧模式重建，但 master state
+    // 有 override → branchAutoPublishConverged 误判收敛、不再重试，
+    // auto-publish 表面成功实际没切容器。
+    const profiles = stateService
+      .getBuildProfilesForProject(entry.projectId || 'default')
+      .map((p) => resolveEffectiveProfile(p, entry));
     const env = getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
@@ -1310,6 +1441,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
         if (eventName === 'error') proxyHasError = true;
+        // 2026-05-14 Codex review P2 "Don't stamp remote deploys before
+        // checking service failures"：/exec/deploy 仅单服务失败时发
+        // complete（services 里带 status:'error'）而**不**发 error 事件，
+        // proxyHasError 一直 false → 下方把失败的 release 部署也钉成真相 +
+        // 刷 lastDeployAt。complete 必须按权威 ok / services 判失败。
+        if (eventName === 'complete') {
+          if (parsed.ok === false) {
+            proxyHasError = true;
+          } else if (parsed.services && typeof parsed.services === 'object') {
+            const svcMap = parsed.services as Record<string, { status?: string }>;
+            if (Object.values(svcMap).some((s) => s?.status === 'error')) {
+              proxyHasError = true;
+            }
+          }
+        }
         opLog.events.push({
           step: typeof parsed.step === 'string' ? parsed.step : eventName,
           status: typeof parsed.status === 'string' ? parsed.status : eventName,
@@ -1363,6 +1509,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
+      // 2026-05-14 真实态徽章（远端）：proxy 成功时，钉住我们**派发给
+      // 执行器的已 resolve profile** 的 activeDeployMode。因为 Codex P2
+      // 修复后发过去的就是 resolveEffectiveProfile 结果，executor 实际
+      // 构建的就是这个模式，所以这是远端真相。失败则不动（保留旧值）。
+      if (!proxyHasError) {
+        for (const rp of profiles) {
+          const svc = entry.services[rp.id];
+          if (svc) svc.deployedMode = rp.activeDeployMode || '';
+        }
+        // 2026-05-14 Codex review P2 "Refresh the lifecycle clock after
+        // remote redeploys"：本地部署成功会 stamp lastDeployAt（branches.ts
+        // ~3651），auto-lifecycle tick 的陈旧检测靠它把 lastReadyAt 刷新到
+        // 本次部署之后。远端 proxy 成功路径之前漏 stamp → 远端 auto-publish
+        // 重部署后，新 release 容器仍按上一轮 source run 的旧 lastReadyAt
+        // 计时，下一拍可能立刻被 auto-stop。与本地路径对齐：stamp
+        // lastDeployAt，让 release run 拿到自己的完整生命周期区间。
+        stateService.stampBranchTimestamp(entry.id, 'lastDeployAt');
+      }
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
     } catch (err) {
@@ -1923,6 +2087,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = Object.values(state.branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
+    const aiActivityByBranch = new Map<string, { count: number; lastAt: string }>();
+    const projectIds = new Set(branches.map((b) => b.projectId || 'default'));
+    const branchIdSet = new Set(branches.map((b) => b.id));
+    const branchNameToIds = new Map<string, string[]>();
+    for (const b of branches) {
+      const ids = branchNameToIds.get(b.branch) || [];
+      ids.push(b.id);
+      branchNameToIds.set(b.branch, ids);
+    }
+    for (const projectId of projectIds) {
+      for (const log of stateService.getActivityLogs(projectId)) {
+        if (!isAiActivityLog(log)) continue;
+        const ids = log.branchId && branchIdSet.has(log.branchId)
+          ? [log.branchId]
+          : log.branchName
+            ? (branchNameToIds.get(log.branchName) || [])
+            : [];
+        for (const id of ids) {
+          const current = aiActivityByBranch.get(id);
+          aiActivityByBranch.set(id, {
+            count: (current?.count || 0) + 1,
+            lastAt: current?.lastAt && current.lastAt > log.at ? current.lastAt : log.at,
+          });
+        }
+      }
+    }
 
     // Batch-reconcile container status (perf fix, 2026-05-03):
     // Old code did `containerService.isRunning(svc.containerName)` sequentially
@@ -1964,8 +2154,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
         );
         if (!live) {
+          const derivedAi = aiActivityByBranch.get(b.id);
           return {
             ...b,
+            aiOpCount: b.aiOpCount || derivedAi?.count,
+            lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
             subject: '',
             previewSlug,
@@ -1978,9 +2171,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
-          return { ...b, commitSha: lines[0] || '', subject: lines[1] || '', previewSlug, deployRuntime };
+          const derivedAi = aiActivityByBranch.get(b.id);
+          return {
+            ...b,
+            aiOpCount: b.aiOpCount || derivedAi?.count,
+            lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
+            commitSha: lines[0] || '',
+            subject: lines[1] || '',
+            previewSlug,
+            deployRuntime,
+          };
         } catch {
-          return { ...b, commitSha: b.githubCommitSha || '', subject: '', previewSlug, deployRuntime };
+          const derivedAi = aiActivityByBranch.get(b.id);
+          return {
+            ...b,
+            aiOpCount: b.aiOpCount || derivedAi?.count,
+            lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
+            commitSha: b.githubCommitSha || '',
+            subject: '',
+            previewSlug,
+            deployRuntime,
+          };
         }
       }),
     );
@@ -2829,10 +3040,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch: entry,
+        source: 'branch-delete',
+        message: 'captured before branch delete removes containers',
+      });
+
       // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         sendSSE(res, 'step', { step: 'stop', status: 'done', title: `已停止 ${svc.containerName}` });
       }
 
@@ -2903,7 +3122,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     try {
-      const result = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const result = isSyntheticCdsManagedRuntimeBranch(entry, project)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'pullCount');
       stateService.stampBranchTimestamp(id, 'lastPullAt');
@@ -3102,7 +3324,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
         force: true,
       });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -3313,7 +3537,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
-          // Resolve baseline → branch override → deploy-mode override
+          // Resolve baseline → 项目默认 → 分支 override → mode override
           const effectiveProfile = resolveEffectiveProfile(profile, entry);
           const branchOverride = entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
@@ -3334,6 +3558,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
           try {
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+            await archiveBranchContainerLogs({
+              stateService,
+              containerService,
+              branch: entry,
+              source: 'pre-deploy-recreate',
+              profileIds: new Set([profile.id]),
+              message: 'captured before docker rm/run during branch deploy',
+            });
 
             // ── Trace: resolved CDS_* env vars for this service ──
             const cdsVars: Record<string, string> = {};
@@ -3431,6 +3663,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
             if (ready) {
               svc.status = 'running';
+              svc.errorMessage = undefined;
+              // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode
+              // 启动（用本次构建的 effectiveProfile，已含 override）。卡片
+              // 据此判断"真发布"还是"配置了但容器没跟上"。
+              svc.deployedMode = effectiveProfile.activeDeployMode || '';
               logDeploy(id, `${profile.name} 启动成功 ✓`);
               const elapsed = Date.now() - serviceStartTime;
               logEvent({
@@ -3554,6 +3791,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       opLog.status = hasError ? 'error' : 'completed';
       opLog.finishedAt = new Date().toISOString();
+      if (!hasError && hasRunning) {
+        const runtimeReadyAt = new Date().toISOString();
+        entry.lastReadyAt = runtimeReadyAt;
+        opLog.runtimeStartedAt = runtimeReadyAt;
+        logEvent({
+          step: 'runtime-ready',
+          status: 'done',
+          title: '运行时已通过就绪探测',
+          detail: { profileIds: Array.from(activeProfileIds) },
+          timestamp: runtimeReadyAt,
+        });
+      }
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+        entry,
+        hasError ? 'deploy-error' : 'deploy-finalize',
+        activeProfileIds,
+      );
       stateService.appendLog(id, opLog);
       stateService.save();
 
@@ -3589,6 +3843,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
+        // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
+        // 直接读 ok，不要再用全量 entry.services 重新推导——否则已删除/
+        // 僵尸 profile 的 stopped/error 服务会被误判成部署失败。
+        ok: !hasError,
         message: completeMsg,
         services: entry.services,
       });
@@ -3673,6 +3932,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = errMsg;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error');
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${errMsg}`);
@@ -3750,7 +4010,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+        ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
       // Clear pinned commit — deploy always restores to branch HEAD
@@ -3788,6 +4051,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'pre-deploy-recreate',
+          profileIds: new Set([profile.id]),
+          message: 'captured before docker rm/run during single service deploy',
+        });
         await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
@@ -3827,6 +4098,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         if (ready) {
           svc.status = 'running';
+          svc.errorMessage = undefined;
+          // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
+          svc.deployedMode = effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';
@@ -3849,12 +4123,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
       opLog.finishedAt = new Date().toISOString();
+      if (svc.status === 'running') {
+        const runtimeReadyAt = new Date().toISOString();
+        entry.lastReadyAt = runtimeReadyAt;
+        opLog.runtimeStartedAt = runtimeReadyAt;
+        logEvent({
+          step: 'runtime-ready',
+          status: 'done',
+          title: `${profile.name} 已通过就绪探测`,
+          detail: { profileIds: [profile.id] },
+          timestamp: runtimeReadyAt,
+        });
+      }
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(
+        entry,
+        svc.status === 'running' ? 'deploy-finalize' : 'deploy-error',
+        new Set([profile.id]),
+      );
       stateService.appendLog(id, opLog);
       stateService.save();
 
       const completeMsg = svc.status === 'running' ? `${profile.name} 已启动` : `${profile.name} 启动失败`;
       logDeploy(id, `部署完成: ${completeMsg}`);
       sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
+        // 消费方统一读 ok 而非重推导 entry.services。
+        ok: svc.status === 'running',
         message: completeMsg,
         services: entry.services,
       });
@@ -3863,6 +4157,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.errorMessage = (err as Error).message;
       opLog.status = 'error';
       opLog.finishedAt = new Date().toISOString();
+      opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
       stateService.appendLog(id, opLog);
       stateService.save();
       logDeploy(id, `部署失败: ${(err as Error).message}`);
@@ -4053,6 +4348,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // plausible local state in the meantime.
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
         entry.status = 'idle';
+        entry.lastStoppedAt = new Date().toISOString();
+        entry.lastStopReason = `远端执行器 ${remoteExecutor.id} 停止`;
+        entry.lastStopSource = 'executor';
+        // 2026-05-14 Cursor Bugbot Medium 修复：远端执行器停止路径与本地
+        // 手动停止 / scheduler coolFn / AutoLifecycle 一致，也要 +1 stopCount
+        // 并写活动日志，否则 UI「停止次数」对远端停止漏计、活动时间线缺这条。
+        stateService.incrementBranchStat(id, 'stopCount');
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'stop',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+        });
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {
@@ -4076,7 +4384,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         svc.status = 'stopped';
       }
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch: entry,
+        source: 'manual-stop',
+        message: 'captured after user stop preserved containers',
+      });
       entry.status = 'idle';
+      // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
+      entry.lastStoppedAt = new Date().toISOString();
+      entry.lastStopReason = '用户手动停止';
+      entry.lastStopSource = 'user';
       cleanupPreviewServer(id);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'stopCount');
@@ -4091,6 +4410,144 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── POST /api/branches/:id/restart — 轻量重启（不重建）──
+  //
+  // 与 /deploy 区分：/deploy 是 git pull + 重新构建镜像 + docker run（有代码
+  // 变更时用）；/restart 只对已构建好的容器做 docker restart（没 bug、只是
+  // 服务被停了，直接拉起来，秒级，不动代码）。复用 containerService
+  // .restartServiceInPlace（docker restart + 存活探测）。
+  router.post('/branches/:id/restart', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const remoteExecutor =
+      entry.executorId && registry
+        ? registry.getAll().find(n => n.id === entry.executorId && n.role !== 'embedded')
+        : null;
+    if (remoteExecutor) {
+      res.status(409).json({ error: '该分支运行在远端执行器，请使用「重新部署」' });
+      return;
+    }
+    const services = Object.values(entry.services);
+    if (services.length === 0) {
+      res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
+      return;
+    }
+    try {
+      entry.status = 'restarting';
+      for (const svc of services) svc.status = 'starting';
+      stateService.save();
+
+      const failed: string[] = [];
+      for (const svc of services) {
+        const ok = await containerService.restartServiceInPlace(svc.containerName);
+        if (ok) {
+          svc.status = 'running';
+          svc.errorMessage = undefined;
+        } else {
+          svc.status = 'error';
+          svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
+          failed.push(svc.containerName);
+        }
+      }
+
+      if (failed.length === 0) {
+        entry.status = 'running';
+        // 全部成功必须清掉历史 errorMessage，否则下游 UI 仍按失败渲染
+        // （Codex P2）。
+        entry.errorMessage = undefined;
+        entry.lastStoppedAt = undefined;
+        entry.lastStopReason = undefined;
+        entry.lastStopSource = undefined;
+        // 分支重新跑起来后必须回到 warm pool：调度器降温会把 heatState
+        // 置 cold，若不复位，getHotBranches 不计入它（cold 不算 hot），
+        // maxHotBranches 容量上限被绕过。
+        // lastAccessedAt 必须在这里显式刷新：手动重启就是一次访问，而
+        // markHot() 只在 lastAccessedAt 缺失时才补（不更新陈旧值）——被
+        // 空闲 TTL 降温过的分支其 lastAccessedAt 必然很旧，若不刷新，下一
+        // 个 scheduler tick 立刻又按"空闲超时"把它降温，手动重启等于无效
+        // （Codex P1 @ f80d33a）。先刷新再 markHot。
+        // stop 重构后 /restart 真能唤醒已降温分支，此前因容器被 rm 必失败
+        // 而掩盖了这个陈旧状态问题（Cursor Bugbot #640）。
+        entry.lastAccessedAt = new Date().toISOString();
+        schedulerService?.markHot(id);
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'restart',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+          note: '手动重新启动（docker restart，未重建代码）',
+        });
+        stateService.save();
+        res.json({ message: '所有服务已重新启动' });
+      } else {
+        entry.status = 'error';
+        entry.errorMessage = `${failed.length} 个容器重启失败：${failed.join(', ')}`;
+        stateService.appendActivityLog(entry.projectId, {
+          type: 'restart',
+          branchId: id,
+          branchName: entry.branch,
+          actor: resolveActorForActivity(req),
+          note: `重新启动部分失败（${failed.join(', ')}），建议「重新部署」`,
+        });
+        stateService.save();
+        res.status(409).json({
+          error: `${failed.length} 个容器重启失败，建议改用「重新部署」`,
+          failed,
+        });
+      }
+    } catch (err) {
+      // 兜底：未预期异常时把分支从 restarting/starting 恢复到 error，否则
+      // UI 会卡在永久"重启中"转圈，只能手动重置（Cursor Bugbot）。
+      try {
+        for (const svc of Object.values(entry.services)) {
+          if (svc.status === 'starting') svc.status = 'error';
+        }
+        entry.status = 'error';
+        entry.errorMessage = `重新启动异常：${(err as Error).message}`;
+        stateService.save();
+      } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── GET /api/branches/:id/activity-logs — 分支维度系统日志（生命周期时间线）──
+  //
+  // 复用 stateService.getActivityLogs（已按最新在前 reverse），按 branchId
+  // 过滤出本分支的 部署 / 停止 / 崩溃 / 重启 / 回收 等事件，供分支详情页
+  // 「系统日志」子页签展示"谁停的 / 何时 / 为什么"。
+  router.get('/branches/:id/activity-logs', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 100;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 100;
+    const sinceIso = typeof req.query.since === 'string' ? req.query.since : undefined;
+    // 先按 branchId 过滤再截断，否则繁忙项目里其它分支的事件会把本分支
+    // 的历史挤出 200 条上限，导致"谁停的/为什么"时间线对高频项目恰好失效
+    // （Codex review P1）。getActivityLogs 不传 limit 返回项目全部（最新在前）。
+    const all = stateService.getActivityLogs(entry.projectId, { sinceIso });
+    const matched = all.filter((e) => e.branchId === id);
+    const logs = matched.slice(0, limit);
+    // total 必须是过滤后、截断前的命中总数，否则消费方无法判断"还有没有更多"
+    // （截断后 total===logs.length 永远 ≤ limit，分页/加载更多失效）。Cursor Bugbot。
+    res.json({ branchId: id, logs, total: matched.length });
   });
 
   // ── Set default branch ──
@@ -4593,8 +5050,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 时合成一条最简记录，把 errorMessage 浮起来给 Agent / UI 看。否则用户只看到
     // 状态 'error' 没有原因，无法判断发生了什么。这条 fallback 记录带 synthetic=true
     // 标记，前端可以选择性区分对待。
-    const isFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
-    const fallbackLogs = isFallback
+    const runningServices = Object.values(branch?.services || {}).filter((svc) => svc.status === 'running');
+    const hasRecoveredRuntime = logs.length === 0 && !!branch && branch.status === 'running' && runningServices.length > 0;
+    const isErrorFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
+    const fallbackLogs = isErrorFallback
       ? [{
           id: `synthetic-${id}`,
           synthetic: true,
@@ -4612,11 +5071,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
             timestamp: branch?.lastAccessedAt || new Date().toISOString(),
           }],
         }]
+      : hasRecoveredRuntime
+        ? [{
+            type: 'build',
+            status: 'completed',
+            startedAt: branch.lastAccessedAt || branch.lastReadyAt || branch.createdAt || new Date().toISOString(),
+            finishedAt: branch.lastReadyAt || branch.lastAccessedAt || new Date().toISOString(),
+            runtimeStartedAt: branch.lastReadyAt || branch.lastAccessedAt || undefined,
+            events: [
+              {
+                step: 'runtime-recovered',
+                status: 'done',
+                title: '运行态已恢复，但原始构建记录缺失',
+                log:
+                  'CDS 当前能确认该分支容器正在运行，但没有找到本次部署的 OperationLog。' +
+                  '常见原因是部署请求/进程在最终 appendLog 前中断，或历史版本只写入 service state 而没有写入部署历史。' +
+                  '请查看容器日志作为运行证据；下一次重新部署后会生成完整构建记录。',
+                detail: {
+                  recoveredFrom: 'branch.services',
+                  runningServices: runningServices.map((svc) => ({
+                    profileId: svc.profileId,
+                    containerName: svc.containerName,
+                    hostPort: svc.hostPort,
+                  })),
+                },
+                timestamp: branch.lastReadyAt || branch.lastAccessedAt || new Date().toISOString(),
+              },
+            ],
+          }]
       : [];
 
     res.json({
       logs: logs.length > 0 ? logs : fallbackLogs,
-      logsAreSynthetic: isFallback || undefined,
+      logsAreSynthetic: (isErrorFallback || hasRecoveredRuntime) || undefined,
       branchStatus: branch?.status,
       branchErrorMessage: branch?.errorMessage,
       liveStreamHint: {
@@ -4666,11 +5153,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // appear in build logs (e.g. when a Dockerfile RUN step echoes env, or
       // when the app prints connection strings on boot). Default mask is on;
       // admin can override with ?unmask=1.
-      const masked = maskSecretsText(logs, { mask: shouldMask(req) });
+      const mask = shouldMask(req);
+      const masked = maskSecretsText(logs, { mask });
+      stateService.appendContainerLogArchive(id, {
+        projectId: entry.projectId,
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        hostPort: svc.hostPort,
+        status: svc.status,
+        source: 'container-logs-api',
+        masked: mask,
+        logs: masked,
+      });
+      stateService.save();
       res.json({ logs: masked });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  router.get('/branches/:id/container-log-archives', (req, res) => {
+    const { id } = req.params;
+    const includeLogs = req.query.includeLogs === '1';
+    const archives = stateService.getContainerLogArchives(id);
+    res.json({
+      branchId: id,
+      count: archives.length,
+      archives: archives.slice().reverse().map((entry) => includeLogs ? entry : {
+        id: entry.id,
+        branchId: entry.branchId,
+        projectId: entry.projectId,
+        profileId: entry.profileId,
+        containerName: entry.containerName,
+        hostPort: entry.hostPort,
+        status: entry.status,
+        capturedAt: entry.capturedAt,
+        source: entry.source,
+        sha256: entry.sha256,
+        byteLength: entry.byteLength,
+        lineCount: entry.lineCount,
+        masked: entry.masked,
+        message: entry.message,
+      }),
+    });
   });
 
   // ── Container log stream (SSE) — replaces polling ──
@@ -4685,10 +5210,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     initSSE(res);
 
+    const chunks: string[] = [];
     const ac = containerService.streamLogs(
       svc.containerName,
-      (chunk) => sendSSE(res, 'log', { chunk }),
-      () => { try { res.end(); } catch { /* already closed */ } },
+      (chunk) => {
+        chunks.push(chunk);
+        sendSSE(res, 'log', { chunk });
+      },
+      () => {
+        if (chunks.length > 0) {
+          const logs = maskSecretsText(chunks.join(''), { mask: shouldMask(req) });
+          stateService.appendContainerLogArchive(id, {
+            projectId: entry.projectId,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            hostPort: svc.hostPort,
+            status: svc.status,
+            source: 'container-logs-stream',
+            masked: shouldMask(req),
+            logs,
+          });
+          stateService.save();
+        }
+        try { res.end(); } catch { /* already closed */ }
+      },
     );
 
     // Client disconnect → stop docker logs -f
@@ -5173,7 +5718,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (Object.prototype.hasOwnProperty.call(svcs, removedProfileId)) {
           const svc = (svcs as any)[removedProfileId];
           if (svc?.containerName) {
-            try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+            try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
           }
           delete (svcs as any)[removedProfileId];
         }
@@ -5393,7 +5938,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 1) 停容器
     if (containerName) {
       try {
-        await containerService.stop(containerName);
+        await containerService.remove(containerName);
         steps.push({ step: `停止 ${containerName}`, ok: true });
       } catch (err) {
         steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
@@ -6348,7 +6893,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // Best-effort stop the orphan container.
             const svc = entry.services[profileId];
             if (svc?.containerName) {
-              try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+              try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
             }
             delete entry.services[profileId];
             dropped.push(profileId);
@@ -6385,8 +6930,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'cleanup',
+          message: 'captured before cleanup removes branch containers',
+        });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6478,11 +7030,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 3: stop containers + remove worktrees in parallel, then update state
       await Promise.all(orphans.map(async (entry) => {
         sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'cleanup',
+          message: 'captured before orphan cleanup removes branch containers',
+        });
 
         // Stop all containers for this orphan in parallel
         await Promise.all(
           Object.values(entry.services).map(svc =>
-            containerService.stop(svc.containerName).catch(() => { /* ok */ }),
+            containerService.remove(svc.containerName).catch(() => { /* ok */ }),
           ),
         );
         // Remove worktree
@@ -6619,7 +7178,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const entry of branches) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
-            try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+            try { await containerService.remove(svc.containerName); } catch { /* ok */ }
           }
           try {
             const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6636,7 +7195,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const infra = stateService.getInfraServicesForProject(projectFilter);
         for (const svc of infra) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
 
         // 3. Remove this project's profiles / infra / routing / env bucket
@@ -6678,7 +7237,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const entry of branches) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -6689,7 +7248,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2. Stop and remove all infra service containers (volumes preserved)
       for (const svc of state.infraServices) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
       }
 
       // 3. Clear all state (but keep the file — it will be overwritten with defaults)
@@ -8000,11 +8559,23 @@ cdscli project list --human
           svc.status = 'building';
 
           try {
+            await archiveBranchContainerLogs({
+              stateService,
+              containerService,
+              branch: entry,
+              source: 'pre-deploy-recreate',
+              profileIds: new Set([profile.id]),
+              message: 'captured before docker rm/run during import deploy',
+            });
             await containerService.runService(entry, profile, svc, (chunk) => {
               sendSSE(res, 'log', { profileId: profile.id, chunk });
             }, mergedEnv);
 
             svc.status = 'running';
+            svc.errorMessage = undefined;
+            // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
+            // （runService 直接吃 profile.*），钉住其 activeDeployMode。
+            svc.deployedMode = profile.activeDeployMode || '';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
           } catch (err) {
             svc.status = 'error';
@@ -9132,7 +9703,7 @@ cdscli project list --human
 
   // GET /api/loading-pages/cds-waiting-room/preview — system-settings preview
   // for hard-to-trigger loading screens. It intentionally reuses
-  // ProxyService.serveStartingPageV2 so opacity, canvas grid, masks, and
+  // ProxyService.serveStartingPageV2 so opacity, MagicRings canvas, masks, and
   // fallback page chrome stay byte-for-byte tied to the real preview path.
   router.get('/loading-pages/cds-waiting-room/preview', (req, res) => {
     const requestedStatus = String(req.query.status || 'building');
@@ -9176,6 +9747,16 @@ cdscli project list --human
       branch,
       String(req.query.waitingProfile || 'api'),
     );
+  });
+
+  router.get('/loading-pages/branch-gone/preview', (req, res) => {
+    const theme = String(req.query.theme || 'dark') === 'light' ? 'light' : 'dark';
+    const slug = String(req.query.branch || 'claude/removed-preview-branch');
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(buildLoadingPreviewBranchGoneHtml(slug, theme));
   });
 
   // GET /api/self-status — CDS 自身的更新状态全景
@@ -9414,6 +9995,7 @@ cdscli project list --human
     if (isSelfUpdateBusy(existingActive)) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
       sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
       res.end();
       return;
@@ -9434,6 +10016,7 @@ cdscli project list --human
       trigger: 'manual',
       actor,
     });
+    void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     const send = (step: string, status: string, title: string) => {
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
@@ -9442,6 +10025,7 @@ cdscli project list --human
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
       stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     };
 
     // 2026-05-04 流水记录:从开头捕获 fromSha + start time,所有 abort 路径
@@ -10071,6 +10655,7 @@ cdscli project list --human
     if (isSelfUpdateBusy(existingActive)) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
       sendSSE(res, 'error', { message, activeSelfUpdate: existingActive });
       res.end();
       return;
@@ -10086,12 +10671,14 @@ cdscli project list --human
       trigger: 'force-sync',
       actor,
     });
+    void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
       const level: 'info' | 'warning' | 'error' =
         status === 'error' ? 'error' : status === 'warning' ? 'warning' : 'info';
       stateService.updateSelfUpdateStep(step, { level, logText: `[${step}] ${title}` });
+      void broadcastSelfStatus().catch(() => { /* best-effort UI sync */ });
     };
 
     // 流水记录(2026-05-04):同 /api/self-update,trigger='force-sync',
@@ -10789,6 +11376,60 @@ cdscli project list --human
     res.json({ enabled, source: 'ui-override' });
   });
 
+  // ── PUT /api/scheduler/config — tune scheduler params from the UI ──
+  //
+  // Body { enabled?, idleTTLSeconds?, maxHotBranches? } — every field is
+  // optional and validated independently. Each provided field persists an
+  // override to state (survives restart) then mutates the running scheduler.
+  // Mirrors the proven /scheduler/enabled pattern; the two routes write the
+  // same state overrides so they stay consistent.
+  router.put('/scheduler/config', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler service not wired in' });
+      return;
+    }
+    const body = (req.body || {}) as {
+      enabled?: unknown;
+      idleTTLSeconds?: unknown;
+      maxHotBranches?: unknown;
+    };
+
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是 boolean' });
+      return;
+    }
+    if (body.idleTTLSeconds !== undefined) {
+      const v = body.idleTTLSeconds;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 60 || v > 86400) {
+        res.status(400).json({ error: 'idleTTLSeconds 必须是 60 到 86400 之间的整数（秒）' });
+        return;
+      }
+    }
+    if (body.maxHotBranches !== undefined) {
+      const v = body.maxHotBranches;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 100) {
+        res.status(400).json({ error: 'maxHotBranches 必须是 0 到 100 之间的整数（0=不限）' });
+        return;
+      }
+    }
+
+    if (typeof body.enabled === 'boolean') {
+      stateService.setSchedulerEnabledOverride(body.enabled);
+      schedulerService.setEnabled(body.enabled);
+    }
+    if (typeof body.idleTTLSeconds === 'number') {
+      stateService.setSchedulerIdleTTLOverride(body.idleTTLSeconds);
+      schedulerService.setIdleTTLSeconds(body.idleTTLSeconds);
+    }
+    if (typeof body.maxHotBranches === 'number') {
+      stateService.setSchedulerMaxHotOverride(body.maxHotBranches);
+      schedulerService.setMaxHotBranches(body.maxHotBranches);
+    }
+    stateService.save();
+
+    res.json({ ...schedulerService.getSnapshot(), source: 'ui-override' });
+  });
+
   router.post('/scheduler/pin/:slug', (req, res) => {
     if (!schedulerService) {
       res.status(503).json({ error: 'Scheduler not enabled' });
@@ -10884,4 +11525,201 @@ cdscli project list --human
   });
 
   return router;
+}
+
+function escapeLoadingPreviewHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+}
+
+function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'): string {
+  const safeSlug = escapeLoadingPreviewHtml(slug);
+  const isLight = theme === 'light';
+  const bg = isLight ? '#f7f7f4' : '#050407';
+  const text = isLight ? '#18181b' : '#f7f5ff';
+  const muted = isLight ? 'rgba(24,24,27,.62)' : 'rgba(245,242,255,.62)';
+  const panel = isLight ? 'rgba(255,255,255,.58)' : 'rgba(255,255,255,.035)';
+  const line = isLight ? 'rgba(24,24,27,.12)' : 'rgba(255,255,255,.12)';
+  const danger = isLight ? '#b91c1c' : '#fca5a5';
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>启动失败 · ${safeSlug}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{color-scheme:${isLight ? 'light' : 'dark'};--bg:${bg};--text:${text};--muted:${muted};--panel:${panel};--line:${line};--danger:${danger}}
+html,body{min-height:100%}
+body{min-height:100vh;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(760px 560px at 58% 48%,rgba(82,39,255,${isLight ? '.12' : '.2'}),transparent 66%),linear-gradient(90deg,${isLight ? 'rgba(247,247,244,.9),rgba(247,247,244,.34),rgba(247,247,244,.82)' : 'rgba(5,4,7,.92),rgba(5,4,7,.22),rgba(5,4,7,.82)'});z-index:1;pointer-events:none}
+body::after{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;opacity:${isLight ? '.18' : '.28'};background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:84px 84px;mask-image:radial-gradient(circle at 52% 48%,#000 0%,transparent 72%)}
+.light-pillar{position:fixed;inset:0;z-index:0;width:100%;height:100%;display:block;mix-blend-mode:${isLight ? 'multiply' : 'screen'}}
+.light-pillar.is-static{background:linear-gradient(100deg,transparent 18%,rgba(82,39,255,.38) 46%,rgba(255,159,252,.36) 54%,transparent 82%);filter:blur(18px)}
+.shell{position:relative;z-index:2;min-height:100vh;display:grid;align-items:center;padding:clamp(34px,7vw,96px)}
+.content{max-width:720px;text-shadow:0 20px 80px rgba(0,0,0,${isLight ? '.08' : '.72'})}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;color:var(--muted);font:600 11px/1 "JetBrains Mono","SFMono-Regular",monospace;letter-spacing:.28em;text-transform:uppercase}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 18px var(--danger);animation:pulse 1.7s ease-in-out infinite}
+h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:-.055em;margin-bottom:22px}
+.desc{max-width:600px;color:var(--muted);font-size:clamp(15px,1.35vw,20px);line-height:1.75;margin-bottom:28px}
+.chip{display:inline-flex;max-width:min(720px,88vw);align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--panel);backdrop-filter:blur(12px);padding:10px 15px;color:var(--danger);font:600 13px/1.5 "JetBrains Mono","SFMono-Regular",monospace;word-break:break-all}
+.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+.btn{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:10px 16px;text-decoration:none;font-size:13px;font-weight:700}
+.hint{margin-top:28px;color:var(--muted);font-size:12px}
+@keyframes pulse{0%,100%{transform:scale(.76);opacity:.62}50%{transform:scale(1.24);opacity:1}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+</style></head><body>
+<canvas class="light-pillar" id="light-pillar" aria-hidden="true"></canvas>
+<main class="shell">
+  <section class="content">
+    <div class="eyebrow">CDS Preview Failed</div>
+    <h1>启动失败</h1>
+    <p class="desc">该分支已被删除、未部署，或当前 CDS 实例没有找到可路由的运行环境。这是不可自动恢复状态，请返回控制台检查分支状态和最近停止原因。</p>
+    <div class="chip">${safeSlug}</div>
+    <div class="actions">
+      <a class="btn" href="/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+    </div>
+    <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
+  </section>
+</main>
+<script id="light-pillar-vertex" type="x-shader/x-vertex">
+attribute vec2 aPosition;
+varying vec2 vUv;
+void main(){vUv=(aPosition+1.0)*0.5;gl_Position=vec4(aPosition,0.0,1.0);}
+</script>
+<script id="light-pillar-fragment" type="x-shader/x-fragment">
+precision highp float;
+uniform float uTime;
+uniform vec2 uResolution;
+uniform vec3 uTopColor;
+uniform vec3 uBottomColor;
+uniform float uIntensity;
+uniform float uGlowAmount;
+uniform float uPillarWidth;
+uniform float uPillarHeight;
+uniform float uNoiseIntensity;
+uniform float uRotCos;
+uniform float uRotSin;
+uniform float uPillarRotCos;
+uniform float uPillarRotSin;
+uniform float uWaveSin;
+uniform float uWaveCos;
+varying vec2 vUv;
+const float STEP_MULT=1.0;
+const int MAX_ITER=80;
+const int WAVE_ITER=4;
+vec3 tanh3(vec3 x){
+  vec3 e2x=exp(2.0*x);
+  return (e2x-1.0)/(e2x+1.0);
+}
+void main(){
+  vec2 uv=(vUv*2.0-1.0)*vec2(uResolution.x/uResolution.y,1.0);
+  uv=vec2(uPillarRotCos*uv.x-uPillarRotSin*uv.y,uPillarRotSin*uv.x+uPillarRotCos*uv.y);
+  vec3 ro=vec3(0.0,0.0,-10.0);
+  vec3 rd=normalize(vec3(uv,1.0));
+  vec3 col=vec3(0.0);
+  float t=0.1;
+  for(int i=0;i<MAX_ITER;i++){
+    vec3 p=ro+rd*t;
+    p.xz=vec2(uRotCos*p.x-uRotSin*p.z,uRotSin*p.x+uRotCos*p.z);
+    vec3 q=p;
+    q.y=p.y*uPillarHeight+uTime;
+    float freq=1.0;
+    float amp=1.0;
+    for(int j=0;j<WAVE_ITER;j++){
+      q.xz=vec2(uWaveCos*q.x-uWaveSin*q.z,uWaveSin*q.x+uWaveCos*q.z);
+      q+=cos(q.zxy*freq-uTime*float(j)*2.0)*amp;
+      freq*=2.0;
+      amp*=0.5;
+    }
+    float d=length(cos(q.xz))-0.2;
+    float bound=length(p.xz)-uPillarWidth;
+    float k=4.0;
+    float h=max(k-abs(d-bound),0.0);
+    d=max(d,bound)+h*h*0.0625/k;
+    d=abs(d)*0.15+0.01;
+    float grad=clamp((15.0-p.y)/30.0,0.0,1.0);
+    col+=mix(uBottomColor,uTopColor,grad)/d;
+    t+=d*STEP_MULT;
+    if(t>50.0)break;
+  }
+  float widthNorm=uPillarWidth/3.0;
+  col=tanh3(col*uGlowAmount/widthNorm);
+  col-=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)/15.0*uNoiseIntensity;
+  gl_FragColor=vec4(col*uIntensity,1.0);
+}
+</script>
+<script>
+(function(){
+  var canvas=document.getElementById('light-pillar');
+  if(!canvas)return;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var gl=canvas.getContext('webgl',{alpha:true,antialias:false,depth:false,stencil:false});
+  if(!gl){canvas.className='light-pillar is-static';return;}
+  function source(id){var n=document.getElementById(id);return n?n.textContent:'';}
+  function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader failed');}return s;}
+  function hex(v){var r=String(v).replace('#','');var n=parseInt(r.length===3?r.replace(/(.)/g,'$1$1'):r,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
+  var program;
+  try{
+    program=gl.createProgram();
+    gl.attachShader(program,shader(gl.VERTEX_SHADER,source('light-pillar-vertex')));
+    gl.attachShader(program,shader(gl.FRAGMENT_SHADER,source('light-pillar-fragment')));
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'link failed');
+  }catch(e){canvas.className='light-pillar is-static';return;}
+  gl.useProgram(program);
+  var buffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  var pos=gl.getAttribLocation(program,'aPosition');
+  gl.enableVertexAttribArray(pos);
+  gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+  var loc={};
+  ['uTime','uResolution','uTopColor','uBottomColor','uIntensity','uGlowAmount','uPillarWidth','uPillarHeight','uNoiseIntensity','uRotCos','uRotSin','uPillarRotCos','uPillarRotSin','uWaveSin','uWaveCos'].forEach(function(name){loc[name]=gl.getUniformLocation(program,name);});
+  var top=hex('#5227FF');
+  var bottom=hex('#FF9FFC');
+  var pillarRot=25*Math.PI/180;
+  gl.uniform3f(loc.uTopColor,top[0],top[1],top[2]);
+  gl.uniform3f(loc.uBottomColor,bottom[0],bottom[1],bottom[2]);
+  gl.uniform1f(loc.uIntensity,1);
+  gl.uniform1f(loc.uGlowAmount,.002);
+  gl.uniform1f(loc.uPillarWidth,3);
+  gl.uniform1f(loc.uPillarHeight,.4);
+  gl.uniform1f(loc.uNoiseIntensity,.5);
+  gl.uniform1f(loc.uPillarRotCos,Math.cos(pillarRot));
+  gl.uniform1f(loc.uPillarRotSin,Math.sin(pillarRot));
+  gl.uniform1f(loc.uWaveSin,Math.sin(.4));
+  gl.uniform1f(loc.uWaveCos,Math.cos(.4));
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform2f(loc.uResolution,canvas.width,canvas.height);
+  }
+  function draw(t){
+    var time=reduced?0:t*.001*.3;
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(loc.uTime,time);
+    gl.uniform1f(loc.uRotCos,Math.cos(time*.3));
+    gl.uniform1f(loc.uRotSin,Math.sin(time*.3));
+    gl.drawArrays(gl.TRIANGLES,0,6);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
+</script>
+</body></html>`;
 }

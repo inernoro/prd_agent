@@ -20,6 +20,8 @@ export interface HostedSite {
   sourceRef?: string;
   cosPrefix: string;
   entryFile: string;
+  /** 自动包装的资产类型 ("pdf" / "video" / "markdown" / undefined=非包装站)；用于区分用户上传的"index.html + .pdf" 与系统自动包装的 PDF 壳子 */
+  wrappedAssetType?: string;
   siteUrl: string;
   files: HostedSiteFile[];
   totalSize: number;
@@ -39,6 +41,8 @@ export interface HostedSite {
 export interface ShareLinkItem {
   id: string;
   token: string;
+  /** 统一短链 Seq（数字 ID）；旧记录可能为 0，UI 此时退回老 /s/wp/{token} 链接 */
+  shortSeq?: number;
   siteId?: string;
   siteIds: string[];
   shareType: string;
@@ -207,7 +211,25 @@ export async function createShareLink(data: {
   description?: string;
   password?: string;
   expiresInDays?: number;
-}): Promise<ApiResponse<{ id: string; token: string; shareType: string; accessLevel: string; expiresAt?: string; shareUrl: string }>> {
+  /** 'visit' = 站点访问便捷链（公开永久、与用户分享互不复用/篡改）；缺省 = 用户分享 */
+  purpose?: string;
+}): Promise<ApiResponse<{
+  id: string;
+  token: string;
+  shareType: string;
+  accessLevel: string;
+  /** 访问密码：复用已有带密码链接时返回的是既有密码（可能与本次输入不同） */
+  password?: string;
+  expiresAt?: string;
+  /** 统一短链 Seq（>0 表示分配成功） */
+  shortSeq?: number;
+  /** 默认推荐：带分类前缀长链 /s/wp/{token}（URL 有语义、利于总管理分类） */
+  shareUrl: string;
+  /** 可选超短链：/s/{seq}（数字可枚举，须配强密码；分配失败为 null） */
+  shortShareUrl?: string | null;
+  /** 字母统一长链 /s/{token}（ShortLink 索引支持，高级选项） */
+  unifiedShareUrl?: string;
+}>> {
   return apiRequest(api.webPages.share(), { method: 'POST', body: data });
 }
 
@@ -230,6 +252,9 @@ export interface SharedSiteInfo {
   totalSize: number;
   fileCount: number;
   coverImageUrl?: string;
+  // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
+  // 不能走 siteUrl + sandbox 嵌套——会被 Chrome 屏蔽 PDF Viewer。
+  pdfAssetUrl?: string;
 }
 
 export interface ShareViewData {

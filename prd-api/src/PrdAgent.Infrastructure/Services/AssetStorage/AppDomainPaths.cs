@@ -27,6 +27,7 @@ public static class AppDomainPaths
     public const string DomainPrdAgent = "prd-agent";
     public const string DomainDefectAgent = "defect-agent";
     public const string DomainVideoAgent = "video-agent";
+    public const string DomainReportAgent = "report-agent";
     public const string DomainWorkflowAgent = "workflow-agent";
     public const string DomainTranscriptAgent = "transcript-agent";
     public const string DomainAssets = "assets";
@@ -58,7 +59,7 @@ public static class AppDomainPaths
     private static readonly HashSet<string> DomainAllow = new(StringComparer.Ordinal)
     {
         // 新域名
-        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainDefectAgent, DomainVideoAgent, DomainWorkflowAgent, DomainTranscriptAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds, DomainWebHosting, DomainDesktop,
+        DomainVisualAgent, DomainLiteraryAgent, DomainPrdAgent, DomainDefectAgent, DomainVideoAgent, DomainReportAgent, DomainWorkflowAgent, DomainTranscriptAgent, DomainAssets, DomainWatermark, DomainLogs, DomainMds, DomainWebHosting, DomainDesktop,
 #pragma warning disable CS0618 // 允许使用旧域名以保持兼容
         // 兼容旧域名
         DomainImageGen, DomainUploads, DomainLlmLogs,

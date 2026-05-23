@@ -9,6 +9,7 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 [AppOwnership(AppNames.VisualAgent, AppNames.VisualAgentDisplay, IsPrimary = true)]
 [AppOwnership(AppNames.LiteraryAgent, AppNames.LiteraryAgentDisplay)]
+[AppOwnership(AppNames.ReportAgent, AppNames.ReportAgentDisplay)]
 public class ImageGenRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -141,6 +142,11 @@ public class ImageGenRun
     /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
     /// </summary>
     public int? ArticleMarkerIndex { get; set; }
+
+    /// <summary>
+    /// 可选：周报海报场景下，关联的海报 ID。Worker 完成时会回填对应页面 ImageUrl。
+    /// </summary>
+    public string? WeeklyPosterId { get; set; }
 }
 
 public enum ImageGenRunStatus
@@ -158,10 +164,13 @@ public class ImageGenRunPlanItem
     public int Count { get; set; } = 1;
     public string? Size { get; set; }
     /// <summary>
+    /// 可选：周报海报场景下，本条 prompt 对应的页面 order。
+    /// </summary>
+    public int? TargetPageOrder { get; set; }
+    /// <summary>
     /// 用户可见的原始 prompt（不含系统前缀/风格提示词）。
     /// 保存到消息时使用此字段，避免系统提示泄漏给用户。
     /// </summary>
     public string? DisplayPrompt { get; set; }
 }
-
 

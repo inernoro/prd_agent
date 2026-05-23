@@ -727,14 +727,19 @@ write_waiting_html() {
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-.spinner{width:28px;height:28px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+.card{position:relative;overflow:hidden;max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:16px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.34),0 0 40px -24px #58a6ff}
+.card::before{content:"";position:absolute;inset:0 auto 0 -40%;width:34%;background:linear-gradient(90deg,transparent,rgba(88,166,255,.13),transparent);transform:skewX(-18deg);animation:glint 3.2s ease-in-out infinite}
+.spinner{position:relative;width:34px;height:34px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .9s linear infinite;margin:0 auto 16px;box-shadow:0 0 24px -6px #58a6ff}
+.spinner::after{content:"";position:absolute;inset:-9px;border-radius:50%;border:1px solid rgba(88,166,255,.32);animation:halo 1.7s ease-in-out infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes halo{0%,100%{opacity:.28;transform:scale(.82)}50%{opacity:1;transform:scale(1.16)}}
+@keyframes glint{0%,36%{transform:translateX(0) skewX(-18deg);opacity:0}52%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
 h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
 .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;margin-bottom:16px}
 .desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:16px}
 .kbd{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:#c9d1d9;background:#21262d;padding:2px 6px;border-radius:4px}
 .hint{font-size:12px;color:#6e7681}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style>
 </head><body>
 <div class="card">

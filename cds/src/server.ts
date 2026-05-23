@@ -383,6 +383,7 @@ export function resolveApiLabel(method: string, path: string): string {
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
     'PUT /scheduler/enabled': '启停调度器',
+    'PUT /scheduler/config': '更新调度器配置',
     'GET /strategy': '获取调度策略',
     'PUT /strategy': '更新调度策略',
     'GET /cluster/status': '获取集群状态',
@@ -463,6 +464,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
+    [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
+    [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],
     [/^POST \/branches\/(.+)\/set-default$/, '设为默认分支'],
     [/^POST \/branches\/(.+)\/reset$/, '重置分支状态'],
     [/^GET \/branches\/(.+)\/logs$/, '查看操作日志'],
@@ -653,6 +656,24 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
+    }
+    // MAP/CDS system connection long token: only allow it on Bridge routes.
+    // This token is the user-approved, long-lived authorization used by MAP
+    // after /api/cds-system/connections/authorize, so it must be able to drive
+    // Page Agent Bridge without granting broad CDS admin access.
+    if (stateService && req.path.startsWith('/api/bridge/')) {
+      const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
+      const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
+      if (connection && connection.scopes.includes('instance:read')) {
+        stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
+        return {
+          id: `cds-connection:${connection.id}`,
+          agentName: `MAP (${connection.partnerName || connection.partnerId || connection.id})`,
+          token: headerKey,
+          approvedAt: connection.activatedAt || connection.createdAt,
+          expiresAt: connection.longTokenExpiresAt || '',
+        };
+      }
     }
     // Project-scoped Agent Key (cdsp_<slugHead>_<suffix>). Matches the
     // per-project store seeded via POST /api/projects/:id/agent-keys;
@@ -1088,7 +1109,7 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.use((req, res, next) => {
-      if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
+      if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
@@ -1533,6 +1554,15 @@ export function createServer(deps: ServerDeps): express.Express {
         return next();
       }
       if (
+        (
+          (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/runtime-capacity$/.test(reqPath)) ||
+          (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/runtime-capacity\/reconcile$/.test(reqPath))
+        ) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+      if (
         /^\/api\/projects\/[^/]+\/agent-sessions(?:\/.*)?$/.test(reqPath) &&
         /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
       ) {
@@ -1949,7 +1979,9 @@ export function createServer(deps: ServerDeps): express.Express {
     const all = deps.proxyService.getProxyLog();
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
     const events = afterSeq > 0 ? all.filter(e => e.id > afterSeq) : all;
-    res.json({ events, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
+    const order = req.query.order === 'asc' ? 'asc' : 'desc';
+    const ordered = afterSeq > 0 || order === 'asc' ? events : [...events].reverse();
+    res.json({ events: ordered, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
   });
   app.get('/api/proxy-log/stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -2094,7 +2126,11 @@ export function createServer(deps: ServerDeps): express.Express {
   // 见 routes/snapshots.ts 头部注释。
   app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
   // shared-service 远程主机登记（系统级），见 routes/remote-hosts.ts 头部注释。
-  app.use('/api', createRemoteHostsRouter({ stateService: deps.stateService }));
+  app.use('/api', createRemoteHostsRouter({
+    stateService: deps.stateService,
+    containerService: deps.containerService,
+    config: deps.config,
+  }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({
     stateService: deps.stateService,
@@ -2448,6 +2484,8 @@ export function auditApiLabels(app: express.Express): string[] {
  * cds/web-legacy/, so an unmigrated link keeps working unchanged.
  */
 const MIGRATED_REACT_ROUTES: readonly string[] = [
+  '/',
+  '/login',
   '/hello',
   '/cds-settings',
   '/project-list',

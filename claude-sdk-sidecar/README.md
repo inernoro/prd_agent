@@ -1,7 +1,33 @@
 # claude-sdk-sidecar
 
-Python 进程，把 Anthropic 官方 SDK 的 Agent Loop（多轮 tool_use）包装成一个统一的
-HTTP + SSE 协议，供 prd-api 的 `claude-sdk` 执行器消费。
+Python 进程，把 Agent runtime 包装成统一的 HTTP + SSE 协议，供 prd-api 的
+`claude-sdk` 历史执行器消费。
+
+当前有两条 runtime 路径：
+
+- `legacy-sidecar`：兼容路径，使用官方 `anthropic` Python SDK + 本仓库自研
+  `agent_loop.py`；只能通过显式配置作为 fallback 使用。默认官方路径不会在 sidecar
+  启动时加载该 legacy loop，只有显式选择 `legacy-sidecar` 时才懒加载。
+- `claude-agent-sdk`：官方 Claude Agent SDK adapter spike，使用
+  `claude-agent-sdk` 的 Claude Code tools / agent loop / context management。该路径是
+  sidecar、MAP 和 CDS Agent 代码审查的默认路径；请求字段
+  `runtimeAdapter=claude-agent-sdk` 或环境变量 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk`
+  只用于显式声明和诊断。
+  当前 adapter 使用 `ClaudeSDKClient`，sidecar `/v1/agent/cancel/{runId}` 会触发
+  `client.interrupt()`。
+  默认只开放 `Read,Grep,Glob` 只读内置工具，避免 Claude Code 内置
+  `Bash/Edit/Write` 绕过 MAP 审批。确需写文件或执行命令时，显式设置
+  `CLAUDE_AGENT_SDK_ALLOWED_TOOLS=Read,Grep,Glob,Bash,Edit,Write`，并在上线前接入
+  SDK permission callback / MAP approval bridge。当前已接入 `can_use_tool` 骨架：
+  对 `Bash/Edit/Write` 会先向 MAP 创建 approval request，再等待 MAP approval。
+
+MAP/prd-api 侧也可以设置 `INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=claude-agent-sdk`，
+由 `ClaudeSidecarRouter` 把选择项透传给 sidecar。MAP 未设置时默认请求
+`claude-agent-sdk`；如果需要回退自研 loop，可显式设置
+`INFRA_AGENT_SIDECAR_RUNTIME_ADAPTER=legacy-sidecar`。sidecar 独立运行且请求未传
+`runtimeAdapter` 时，仍由 `SIDECAR_AGENT_ADAPTER` 决定；未设置则默认
+`claude-agent-sdk`。只有显式设置 `SIDECAR_AGENT_ADAPTER=legacy-sidecar` 才会走自研
+loop fallback。
 
 ## 协议
 
@@ -10,7 +36,7 @@ HTTP + SSE 协议，供 prd-api 的 `claude-sdk` 执行器消费。
 | POST | `/v1/agent/run` | SSE 流式，body 见 `app/schemas.py::SidecarRunRequest` |
 | POST | `/v1/agent/cancel/{runId}` | 取消运行 |
 | GET  | `/healthz` | 存活探针 |
-| GET  | `/readyz` | 就绪探针（探测 ANTHROPIC_API_KEY） |
+| GET  | `/readyz` | 就绪探针（探测 ANTHROPIC_API_KEY、当前 adapter、官方 SDK 包、外部 CLI 路径观测和 workspace 诊断） |
 
 所有 `/v1/*` 请求需 `Authorization: Bearer ${SIDECAR_TOKEN}`。开发期可设
 `SIDECAR_TOKEN=dev-skip` 跳过校验。
@@ -69,6 +95,105 @@ curl -N -X POST http://127.0.0.1:7400/v1/agent/run \
     "maxTurns":1
   }'
 ```
+
+官方 Claude Agent SDK adapter 冒烟：
+
+```bash
+curl -N -X POST http://127.0.0.1:7400/v1/agent/run \
+  -H 'Authorization: Bearer dev-skip' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "runId":"official-smoke-1",
+    "runtimeAdapter":"claude-agent-sdk",
+    "model":"claude-opus-4-5",
+    "systemPrompt":"只做只读检查。",
+    "messages":[{"role":"user","content":"列出当前目录下最关键的 5 个文件，不修改。"}],
+    "maxTurns":3
+  }'
+```
+
+官方 adapter 权限环境变量：
+
+```bash
+# 默认：只读
+CLAUDE_AGENT_SDK_ALLOWED_TOOLS=Read,Grep,Glob
+CLAUDE_AGENT_SDK_PERMISSION_MODE=default
+
+# 写入/命令 opt-in；必须配合 MAP 审批桥验证后再上生产
+CLAUDE_AGENT_SDK_ALLOWED_TOOLS=Read,Grep,Glob,Bash,Edit,Write
+CLAUDE_AGENT_SDK_PERMISSION_MODE=acceptEdits
+```
+
+官方 adapter 工作区准备：
+
+- 请求带 `workspaceRoot` 时，sidecar 直接把它作为 `ClaudeAgentOptions.cwd`，并要求该目录存在。
+- 请求未带 `workspaceRoot` 但带 `gitRepository` 时，sidecar 会在
+  `SIDECAR_WORKSPACES_ROOT`（默认 `/tmp/cds-agent-workspaces`）下准备 GitHub 工作区，
+  支持 `owner/repo` 或 `https://github.com/owner/repo`，再把准备好的目录作为 SDK cwd。
+- 私有 GitHub 仓库可设置 `SIDECAR_GITHUB_TOKEN`，未设置时回退读取 `GITHUB_TOKEN`。
+  token 只通过 Git 临时 config env 作为 HTTP authorization header 传给 `clone/fetch`，
+  不写入 clone URL、remote config 或 `runtime_init` 事件。
+- `gitRef` 会作为 shallow clone/fetch 的 ref；当前只支持安全字符集，不支持任意 shell 片段。
+- 同一 repo/ref 的准备过程有 sidecar 进程内异步锁，避免并发 clone/fetch 互相覆盖。
+- `readyz.adapterDiagnostics.workspacePreparation` 会暴露 workspace root、git 是否可用、支持的仓库格式、私有仓库授权是否已配置和锁策略；不会返回 token 值。
+- workspace 准备失败时，adapter 会返回 `workspace_prepare_failed`，并在事件
+  `content.workspaceErrorCode/nextActions/privateRepositoryAuthConfigured` 中区分
+  `unsupported_git_repository`、`unsupported_git_ref`、
+  `github_repository_auth_or_not_found` 等原因，便于 MAP 诊断包直接指向修复动作。
+- 这一步只负责 workspace/control-plane 准备，不接管 Claude Agent SDK 的 agent loop。
+
+官方 adapter 就绪诊断：
+
+```bash
+curl http://127.0.0.1:7400/readyz
+```
+
+`readyz.adapterDiagnostics` 会返回 `sdkInstalled`、`sdkVersion`、`claudeCliPath`、
+`claudeCliBundled`、`workspaceRootExists`、`allowedTools`、`permissionMode`、
+`builtinWriteToolsEnabled` 和 `approvalBridge`，并用 `loopOwner` / `sdkLoopEnabled` 明确当前 turn loop
+归属：`claude-agent-sdk` 表示官方 SDK loop，`sidecar-legacy-loop` 表示仍在 legacy fallback。
+如果显式回退 `legacy-sidecar`，SSE 第一条事件也会是 `runtime_init`，其中
+`content.loopOwner=sidecar-legacy-loop`、`content.sdkLoopEnabled=false`、
+`content.fallback=explicit`，确保 MAP 事件流、诊断包和 UI 都能审计这次运行没有走官方 SDK。
+默认 `claude-agent-sdk` 路径的诊断字段 `legacyLoopImport=lazy-explicit-fallback`
+表示自研 loop 没有进入默认运行路径，只作为显式 fallback 保留。
+`readyz.blockers` / `readyz.nextActions` 会直接给出缺失项和修复动作；
+默认 `SIDECAR_PROVIDER_KEY_MODE=runtime-profile-or-env` 时，不会因为 sidecar env 缺少
+`ANTHROPIC_API_KEY` 判定不可用，provider key 可由 MAP runtime profile 或请求覆盖下发。
+真正执行 run 时，官方 adapter 会在进入 Claude Agent SDK 前检查有效 provider key；
+如果 env、runtime profile、request override 都没有 key，会返回结构化
+`provider_key_missing`，并在 `content.nextActions` 中提示设置 sidecar env 或选择 MAP
+runtime profile。这个错误发生在 SDK client 创建之前，不会伪装成 SDK 执行失败。
+MAP 页面通过
+`GET /api/infra-agent-sessions/runtime-status` 读取 sidecar pool 诊断；如果
+`SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 但缺 `claude_agent_sdk` 或 workspace root 不存在，
+readyz 会返回 503，避免用户启动任务后才发现运行时不可用。
+`claudeCliPath` 只观测外部 PATH 命令；官方 Python SDK 包会携带 CLI 能力，所以 MAP 不把
+外部 `claude` 命令作为默认就绪门禁。
+
+无真实 SDK/key 的结构性测试：
+
+```bash
+python3 -m unittest discover -s claude-sdk-sidecar/tests
+```
+
+这个测试使用 fake `claude_agent_sdk`，只验证 adapter 事件映射和取消路径。
+
+官方 SDK adapter 本地 smoke：
+
+```bash
+bash claude-sdk-sidecar/smoke.sh
+```
+
+`smoke.sh` 默认以 `SIDECAR_AGENT_ADAPTER=claude-agent-sdk` 启动 sidecar。缺少
+`uvicorn` 或 `claude_agent_sdk` 时会按 `requirements.txt` 安装依赖；无
+`ANTHROPIC_API_KEY` 时不会直接跳过，而是发起一次 official adapter run 并期望看到
+`provider_key_missing` 结构化错误，证明错误发生在 SDK client 创建前且能被 MAP/UI
+稳定消费。有 `ANTHROPIC_API_KEY` 时，会继续跑真实 Anthropic 流式调用。
+
+依赖说明：官方 `claude-agent-sdk` 当前依赖链要求较新的 `pydantic`，并会通过
+`mcp` 间接引入 SSE 相关包。`requirements.txt` 已固定 `pydantic`、`starlette`
+和 `sse-starlette`，避免和 `fastapi==0.115.0` 解出不兼容组合。
 
 ## Docker
 

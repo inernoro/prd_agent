@@ -37,16 +37,29 @@ public class OfficialSkillsController : ControllerBase
     [HttpGet("{skillKey}/download")]
     public IActionResult Download(string skillKey)
     {
-        if (skillKey != OfficialSkillTemplates.FindMapSkillsKey)
+        if (skillKey is not (OfficialSkillTemplates.FindMapSkillsKey or OfficialSkillTemplates.AiDefectResolveKey))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
 
         var baseUrl = ResolveBaseUrl();
+        var version = skillKey == OfficialSkillTemplates.AiDefectResolveKey
+            ? OfficialSkillTemplates.AiDefectResolveVersion
+            : OfficialSkillTemplates.FindMapSkillsVersion;
+        var releaseDate = skillKey == OfficialSkillTemplates.AiDefectResolveKey
+            ? OfficialSkillTemplates.AiDefectResolveReleaseDate
+            : OfficialSkillTemplates.FindMapSkillsReleaseDate;
+        var skillTemplate = skillKey == OfficialSkillTemplates.AiDefectResolveKey
+            ? OfficialSkillTemplates.AiDefectResolveSkillMd
+            : OfficialSkillTemplates.FindMapSkillsSkillMd;
+        var readmeTemplate = skillKey == OfficialSkillTemplates.AiDefectResolveKey
+            ? OfficialSkillTemplates.AiDefectResolveReadme
+            : OfficialSkillTemplates.FindMapSkillsReadme;
+
         string Subst(string template) => template
             .Replace("{{BASE_URL}}", baseUrl)
-            .Replace("{{VERSION}}", OfficialSkillTemplates.FindMapSkillsVersion)
-            .Replace("{{RELEASE_DATE}}", OfficialSkillTemplates.FindMapSkillsReleaseDate);
-        var skillMd = Subst(OfficialSkillTemplates.FindMapSkillsSkillMd);
-        var readme = Subst(OfficialSkillTemplates.FindMapSkillsReadme);
+            .Replace("{{VERSION}}", version)
+            .Replace("{{RELEASE_DATE}}", releaseDate);
+        var skillMd = Subst(skillTemplate);
+        var readme = Subst(readmeTemplate);
 
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))

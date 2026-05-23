@@ -1,6 +1,6 @@
 # CDS Agent 管理员 · 指南
 
-> **版本**：v1.0 | **日期**：2026-05-14 | **状态**：开发中
+> **版本**：v1.2 | **日期**：2026-05-17 | **状态**：active（官方 SDK adapter 迁移中，商业级门禁已标注）
 
 ## 适用对象
 
@@ -38,18 +38,44 @@ deployment:stream
 
 模型运行配置是系统级资源，用户会话只选择 profile，不直接暴露 API key。
 
+命名边界：
+
+- `runtime=claude-sdk` 是历史配置名；新代码审查路径的目标 adapter 是 `claude-agent-sdk`。
+- `claude-agent-sdk` 指官方 Claude Agent SDK，由 sidecar 调用；本仓库只维护 MAP/CDS 控制面、profile、审批、事件、日志和 cancel/stream 映射。
+- `legacy-sidecar` 只作为显式 fallback，不能作为新的代码审查默认路径。
+- `fake` 只用于冒烟链路，不允许作为最终验收 runtime。
+
 必填字段：
 
 | 字段 | 说明 |
 |------|------|
 | 名称 | 用户可识别的配置名，例如 `公司 Claude 网关` |
-| runtime | `claude-sdk`、`codex-sdk` 或 `fake` |
-| baseUrl | 任意 OpenAI-compatible 或内部网关地址 |
-| model | 真实模型名，不写死 demo |
+| runtime | 历史字段值为 `claude-sdk`、`codex`、`custom` 或 `fake`；代码审查默认必须能映射到 `claude-agent-sdk` |
+| protocol/baseUrl | 代码审查默认使用 Anthropic/Claude-compatible profile；OpenAI-compatible profile 不能直接喂给 `claude-agent-sdk` |
+| model | 真实 Claude 模型名，不写死 demo |
 | API key | 加密保存，页面只显示是否已配置 |
 | 默认配置 | 没有显式选择时使用的 profile |
 
-`fake` 只用于冒烟链路，不允许作为最终验收 runtime。
+推荐配置顺序：
+
+1. 打开 `/cds-agent` 的 Runtime 调试区域。
+2. 使用后端提供的 Anthropic 官方模板创建 profile。
+3. 填入 API key，并设为默认 profile。
+4. 确认 runtime-status 显示 `compatibleWithDesiredRuntimeAdapter=true`。
+5. 再运行 S1/S2/S3 provider smoke；不要用 OpenRouter/OpenAI-compatible 默认 profile 作为商业级验收。
+
+## 生产级限制
+
+当前 CDS Agent MVP 已能完成远程巡检和 PR 验收，但管理员必须知道这些限制：
+
+| 限制 | 管理动作 |
+|------|----------|
+| 页面靠轮询刷新事件 | 验收时记录延迟，不把“页面能刷新”写成“真 SSE 已完成” |
+| provider profile 不兼容 | 先修默认 Anthropic/Claude-compatible profile；看到 `runtime_profile_incompatible` 是正确阻断 |
+| S1/S2/S3 尚未真实跑 provider | 只有配置真实 API key 后才允许宣称“能审代码、能审批、能停止” |
+| 事件默认最多 500 条 | 大任务验收必须用 afterSeq 补拉或导出证据 |
+| `repo_run_command` 180 秒上限 | 长测试需要拆分，后续补长命令后台化 |
+| 其他仓库依赖 workspace | 审其他 repo 前配置 `AGENT_WORKSPACE_ROOT`、`AGENT_WORKSPACE_GITHUB_REPOSITORY`、`AGENT_WORKSPACE_GIT_REF` |
 
 ## Hook Profile
 
@@ -79,9 +105,10 @@ Hook 用于在会话生命周期中执行固定动作：
 | 项 | 预期 |
 |----|------|
 | CDS 授权 | active，刷新后仍 active |
-| 模型配置 | 至少一个默认 profile，baseUrl/model/API key 完整 |
+| 模型配置 | 至少一个默认 Anthropic/Claude-compatible profile，model/API key 完整 |
+| 官方 SDK adapter | runtime-status 显示 `desiredRuntimeAdapter=claude-agent-sdk`、`loopOwner=claude-agent-sdk` |
 | 新建会话 | 用户页面能创建 running 会话 |
-| 发送消息 | 页面有流式输出和事件 |
+| 发送消息 | S1 只读 provider run 真实返回 assistant 消息 |
 | 工具审批 | 危险工具卡片可允许或拒绝 |
-| 停止释放 | 会话停止后资源释放，日志可查 |
+| 停止释放 | S3 Stop 后有 cancel/interrupt 证据，日志可查 |
 | PR 验收 | 远程 runtime 可巡检 `prd_agent` 并提交 PR |

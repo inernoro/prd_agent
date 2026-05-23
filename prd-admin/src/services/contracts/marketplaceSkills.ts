@@ -114,3 +114,42 @@ export type UnfavoriteMarketplaceSkillContract = (input: {
 export type DeleteMarketplaceSkillContract = (input: {
   id: string;
 }) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// === 公开分享 ===
+
+export interface MarketplaceSkillShareLinkDto {
+  token: string;
+  skillId: string;
+  skillTitle: string;
+  viewCount: number;
+  createdByName?: string | null;
+  createdAt: string;
+  expiresAt?: string | null;
+}
+
+export type CreateMarketplaceSkillShareContract = (input: {
+  id: string;
+  /** 有效天数；不传 = 永久 */
+  expiresInDays?: number;
+}) => Promise<ApiResponse<{ shareLink: MarketplaceSkillShareLinkDto; shareUrl: string }>>;
+
+/** 公开分享页返回的技能只读快照（仅公开字段，无 owner 敏感信息） */
+export interface PublicSharedSkillDto {
+  id: string;
+  title: string;
+  description: string;
+  iconEmoji: string;
+  coverImageUrl?: string | null;
+  tags: string[];
+  zipUrl: string;
+  zipSizeBytes: number;
+  originalFileName: string;
+  hasSkillMd: boolean;
+}
+
+export interface ViewSkillShareData {
+  token: string;
+  skillTitle: string;
+  createdByName?: string | null;
+  skill: PublicSharedSkillDto;
+}

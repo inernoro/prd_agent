@@ -9,6 +9,9 @@
 /** 折叠态短标签映射（2-4 字，全部精校） */
 export const SHORT_LABEL_MAP: Record<string, string> = {
   // ── 快捷操作 ─────────────────────────
+  'share-link-tester': '链接体检',
+  'my-shares': '我的分享',
+  'shares': '我的分享',
   'home': '首页',
   'index': '首页',
   'settings': '设置',

@@ -177,6 +177,7 @@ public class WorkflowExecution
 
     public string WorkflowId { get; set; } = string.Empty;
     public string WorkflowName { get; set; } = string.Empty;
+    public string TraceId { get; set; } = string.Empty;
 
     // 触发信息
     public string TriggerType { get; set; } = "manual";
@@ -217,12 +218,14 @@ public static class WorkflowExecutionStatus
 {
     public const string Queued = "queued";
     public const string Running = "running";
+    public const string WaitingApproval = "waiting_approval";
     public const string Completed = "completed";
     public const string Failed = "failed";
     public const string Cancelled = "cancelled";
     public const string Paused = "paused";
+    public const string TimedOut = "timed_out";
 
-    public static readonly string[] All = { Queued, Running, Completed, Failed, Cancelled, Paused };
+    public static readonly string[] All = { Queued, Running, WaitingApproval, Completed, Failed, Cancelled, Paused, TimedOut };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -271,6 +274,7 @@ public static class NodeExecutionStatus
 {
     public const string Pending = "pending";
     public const string Running = "running";
+    public const string WaitingApproval = "waiting_approval";
     public const string Completed = "completed";
     public const string Failed = "failed";
     public const string Skipped = "skipped";

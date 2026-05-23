@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -200,6 +202,7 @@ public class SubmissionsController : ControllerBase
     [HttpGet("public")]
     public async Task<IActionResult> ListPublicSubmissions(
         [FromQuery] string? contentType = null,
+        [FromQuery] string? ownerUserId = null,
         [FromQuery] int skip = 0,
         [FromQuery] int limit = 20)
     {
@@ -209,16 +212,65 @@ public class SubmissionsController : ControllerBase
         var filter = Builders<Submission>.Filter.Eq(x => x.IsPublic, true);
         if (!string.IsNullOrWhiteSpace(contentType))
             filter &= Builders<Submission>.Filter.Eq(x => x.ContentType, contentType);
+        if (!string.IsNullOrWhiteSpace(ownerUserId))
+            filter &= Builders<Submission>.Filter.Eq(x => x.OwnerUserId, ownerUserId);
 
         var total = await _db.Submissions.CountDocumentsAsync(filter);
-        var sort = Builders<Submission>.Sort
-            .Descending(x => x.LikeCount)
-            .Descending(x => x.CreatedAt);
+
+        // 热度排序（带时间衰减），公式权威定义见 PrdAgent.Core.Helpers.GalleryRanking。
+        // ageHours = max(0, (refNow - CreatedAt) / 3600000ms)
+        // hot      = (LikeCount*LikeWeight + ViewCount) / pow(ageHours + 2, Gravity)
+        // 末尾按 _id desc 做稳定且唯一的 tiebreaker。
+        //
+        // refNow 不直接用 $$NOW：偏移分页（$skip/$limit）下，第 1 页与第 2 页若不是
+        // 同一瞬间发起，$$NOW 不同 → 时间衰减分被不同基准重算 → 边界作品在两页间漂移，
+        // 仍会出现重复/漏项。把基准时间按 10 分钟取桶（$dateTrunc），同一 10 分钟窗口内
+        // 所有翻页请求使用完全相同的基准 → 分页稳定；排名每 10 分钟刷新一次。
+        var matchDoc = filter.Render(new RenderArgs<Submission>(
+            _db.Submissions.DocumentSerializer,
+            _db.Submissions.Settings.SerializerRegistry));
+
+        var refNowExpr = new BsonDocument("$dateTrunc", new BsonDocument
+        {
+            { "date", "$$NOW" },
+            { "unit", "minute" },
+            { "binSize", 10 },
+        });
+
+        var ageHoursExpr = new BsonDocument("$max", new BsonArray
+        {
+            0.0,
+            new BsonDocument("$divide", new BsonArray
+            {
+                new BsonDocument("$subtract", new BsonArray { refNowExpr, "$CreatedAt" }),
+                3600000.0,
+            }),
+        });
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$set", new BsonDocument("_hot", new BsonDocument("$divide", new BsonArray
+            {
+                new BsonDocument("$add", new BsonArray
+                {
+                    new BsonDocument("$multiply", new BsonArray { "$LikeCount", GalleryRanking.LikeWeight }),
+                    "$ViewCount",
+                }),
+                new BsonDocument("$pow", new BsonArray
+                {
+                    new BsonDocument("$add", new BsonArray { ageHoursExpr, 2.0 }),
+                    GalleryRanking.Gravity,
+                }),
+            }))),
+            new BsonDocument("$sort", new BsonDocument { { "_hot", -1 }, { "_id", -1 } }),
+            new BsonDocument("$skip", skip),
+            new BsonDocument("$limit", limit),
+            new BsonDocument("$unset", "_hot"),
+        };
+
         var items = await _db.Submissions
-            .Find(filter)
-            .Sort(sort)
-            .Skip(skip)
-            .Limit(limit)
+            .Aggregate<Submission>(pipeline)
             .ToListAsync();
 
         // 查询当前用户是否已点赞
@@ -282,6 +334,47 @@ public class SubmissionsController : ControllerBase
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = result }));
+    }
+
+    /// <summary>
+    /// 获取公开作品的热门创作者列表（按投稿数排序，用于头像筛选行）
+    /// </summary>
+    [HttpGet("public/creators")]
+    public async Task<IActionResult> ListPublicSubmissionCreators(
+        [FromQuery] string? contentType = null,
+        [FromQuery] int limit = 24)
+    {
+        limit = Math.Clamp(limit, 1, 60);
+
+        var filter = Builders<Submission>.Filter.Eq(x => x.IsPublic, true);
+        if (!string.IsNullOrWhiteSpace(contentType))
+            filter &= Builders<Submission>.Filter.Eq(x => x.ContentType, contentType);
+
+        var grouped = await _db.Submissions
+            .Aggregate()
+            .Match(filter)
+            .Group(x => x.OwnerUserId, g => new
+            {
+                OwnerUserId = g.Key,
+                OwnerUserName = g.First().OwnerUserName,
+                OwnerAvatarFileName = g.First().OwnerAvatarFileName,
+                SubmissionCount = g.Count(),
+            })
+            .SortByDescending(x => x.SubmissionCount)
+            .Limit(limit)
+            .ToListAsync();
+
+        var creators = grouped
+            .Where(x => !string.IsNullOrWhiteSpace(x.OwnerUserId))
+            .Select(x => new
+            {
+                ownerUserId = x.OwnerUserId,
+                ownerUserName = x.OwnerUserName,
+                ownerAvatarFileName = x.OwnerAvatarFileName,
+                submissionCount = x.SubmissionCount,
+            });
+
+        return Ok(ApiResponse<object>.Ok(new { creators }));
     }
 
     /// <summary>

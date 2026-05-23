@@ -76,6 +76,10 @@ interface ProjectSummary {
   githubLinkedAt?: string;
   githubEventPolicy?: GithubEventPolicy;
   defaultDeployModes?: Record<string, string>;
+  /** 2026-05-14: 部署成 running 后 N 分钟自动切到发布版（0=关）。 */
+  autoPublishAfterMinutes?: number;
+  /** Deprecated: 项目级自动停止已收敛到系统调度器，保存生命周期时会清零。 */
+  autoStopAfterMinutes?: number;
 }
 
 interface BuildProfileSummary {
@@ -301,7 +305,10 @@ function displayName(project: ProjectSummary): string {
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
-  return tabs.some((tab) => tab.value === hash) ? (hash as TabValue) : 'general';
+  if (tabs.some((tab) => tab.value === hash)) return hash as TabValue;
+
+  const queryTab = new URLSearchParams(window.location.search).get('tab') || '';
+  return tabs.some((tab) => tab.value === queryTab) ? (queryTab as TabValue) : 'general';
 }
 
 function formatDate(value?: string | null): string {
@@ -689,7 +696,117 @@ function RuntimeDefaultsTab({
           <span className="text-xs text-muted-foreground">已有分支请在分支详情抽屉里单独切换。</span>
         </div>
       </Section>
+
+      <AutoLifecycleSection
+        project={project}
+        projectId={projectId}
+        onSaved={onSaved}
+        onToast={onToast}
+      />
     </div>
+  );
+}
+
+/**
+ * 项目级自动生命周期策略：
+ * 启动满 N 分钟自动切到发布版（用于"调试结束后就该切到 publish"场景）。
+ *
+ * 计时锚点 = BranchEntry.lastReadyAt（容器进入 running 时打戳）。
+ * HTTP 流量不参与计时，避免长连接 / 健康检查永远刷新。
+ */
+function AutoLifecycleSection({
+  project,
+  projectId,
+  onSaved,
+  onToast,
+}: {
+  project: ProjectSummary;
+  projectId: string;
+  onSaved: (project: ProjectSummary) => void;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const initialPublish = Number(project.autoPublishAfterMinutes) || 0;
+  const [publishEnabled, setPublishEnabled] = useState(initialPublish > 0);
+  const [publishMinutes, setPublishMinutes] = useState(initialPublish > 0 ? initialPublish : 3);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const p = Number(project.autoPublishAfterMinutes) || 0;
+    setPublishEnabled(p > 0);
+    setPublishMinutes(p > 0 ? p : 3);
+  }, [project.autoPublishAfterMinutes]);
+
+  async function save(): Promise<void> {
+    setSaving(true);
+    setError('');
+    try {
+      const body: Record<string, number> = {
+        autoPublishAfterMinutes: publishEnabled ? Math.max(1, Math.floor(publishMinutes)) : 0,
+        // 旧版曾暴露第二个"自动停止"分钟值，和系统调度器职责重叠。
+        // 现在项目生命周期只保留一个用户心智：运行 X 分钟后切发布版。
+        autoStopAfterMinutes: 0,
+      };
+      const result = await apiRequest<ProjectSaveResponse>(
+        `/api/projects/${encodeURIComponent(projectId)}`,
+        // 后端只注册 PUT /api/projects/:id（无 PATCH 路由）；与本页其他
+        // 保存（默认模式 / GitHub policy / 常规）保持一致用 PUT。
+        { method: 'PUT', body },
+      );
+      onSaved(result.project);
+      onToast('自动切发布版策略已保存；下一次容器进入运行状态时开始计时');
+    } catch (err) {
+      setError(messageFromError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Section
+      title="自动切发布版"
+      description="按「部署成功（容器进入 running）后的存活时间」计时。到点后自动把分支切到发布版并重新部署；HTTP 流量不参与计时。"
+    >
+      <div className="space-y-3">
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
+          <label className="flex flex-wrap items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={publishEnabled}
+              onChange={(e) => setPublishEnabled(e.target.checked)}
+            />
+            <span className="font-medium">运行满</span>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={publishMinutes}
+              disabled={!publishEnabled}
+              onChange={(e) => setPublishMinutes(Number(e.target.value) || 1)}
+              className="h-8 w-20 rounded-md border border-input bg-background px-2 text-sm"
+            />
+            <span className="font-medium">分钟后自动切到发布版</span>
+          </label>
+          <div className="mt-1.5 ml-7 text-xs leading-5 text-muted-foreground">
+            把所有 profile 的 activeDeployMode 翻到 deployModes 里第一个匹配「发布/生产/release/publish」
+            的模式，并立即重新部署为发布版。默认建议 3 分钟。
+          </div>
+        </div>
+
+        {error ? <ErrorBlock message={error} /> : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? <Loader2 className="animate-spin" /> : <Save />}
+            保存
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            本策略是<strong>项目级</strong>，对该项目下所有分支生效。需要空闲自动停止时，请使用 CDS 系统级「调度器」。
+          </span>
+        </div>
+      </div>
+    </Section>
   );
 }
 

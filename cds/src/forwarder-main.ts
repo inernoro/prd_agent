@@ -31,6 +31,7 @@ import path from 'node:path';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute } from './forwarder/route-resolver.js';
 import type { RouteRecord } from './forwarder/types.js';
+import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',
@@ -67,7 +68,7 @@ const proxy = new ProxyHandler({
   masterPassthroughPort: MASTER_PASSTHROUGH_PORT,
   unknownHostFallbackHost: FALLBACK_PORT > 0 ? FALLBACK_HOST : undefined,
   unknownHostFallbackPort: FALLBACK_PORT > 0 ? FALLBACK_PORT : undefined,
-  waitingPageHtml: '<!doctype html><meta charset="utf-8"><title>Branch warming up</title><body style="font-family:sans-serif;padding:2rem"><h1>预览环境准备中</h1><p>分支正在启动或重新构建，几秒后自动恢复。本页面 3 秒后自动刷新。</p><script>setTimeout(()=>location.reload(),3000)</script>',
+  waitingPageHtml: buildForwarderWaitingPageHtml(),
   logger: {
     info: (m) => console.log(`[forwarder] ${m}`),
     warn: (m) => console.warn(`[forwarder] ${m}`),

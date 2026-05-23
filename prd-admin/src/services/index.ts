@@ -647,6 +647,8 @@ import type {
   ResetTeamAiSummaryPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
+  GetMyDefaultTabContract,
+  UpdateMyDefaultTabContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -741,6 +743,8 @@ import {
   resetTeamAiSummaryPromptReal,
   getMyDailyLogTagsReal,
   updateMyDailyLogTagsReal,
+  getMyDefaultTabReal,
+  updateMyDefaultTabReal,
   listPersonalSourcesReal,
   createPersonalSourceReal,
   updatePersonalSourceReal,
@@ -1185,6 +1189,8 @@ export const updateTeamAiSummaryPrompt: UpdateTeamAiSummaryPromptContract = with
 export const resetTeamAiSummaryPrompt: ResetTeamAiSummaryPromptContract = withAuth(resetTeamAiSummaryPromptReal);
 export const getMyDailyLogTags: GetMyDailyLogTagsContract = withAuth(getMyDailyLogTagsReal);
 export const updateMyDailyLogTags: UpdateMyDailyLogTagsContract = withAuth(updateMyDailyLogTagsReal);
+export const getMyDefaultTab: GetMyDefaultTabContract = withAuth(getMyDefaultTabReal);
+export const updateMyDefaultTab: UpdateMyDefaultTabContract = withAuth(updateMyDefaultTabReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
 export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
 export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);
@@ -1336,6 +1342,7 @@ export const forkWatermark: ForkWatermarkContract = withAuth(forkWatermarkReal);
 
 // 海鲜市场「技能」板块（zip 上传）
 import type {
+  CreateMarketplaceSkillShareContract,
   DeleteMarketplaceSkillContract,
   FavoriteMarketplaceSkillContract,
   ForkMarketplaceSkillContract,
@@ -1347,6 +1354,7 @@ import type {
   UploadMarketplaceSkillContract,
 } from '@/services/contracts/marketplaceSkills';
 import {
+  createMarketplaceSkillShareReal,
   deleteMarketplaceSkillReal,
   favoriteMarketplaceSkillReal,
   forkMarketplaceSkillReal,
@@ -1366,6 +1374,9 @@ export const forkMarketplaceSkill: ForkMarketplaceSkillContract = withAuth(forkM
 export const favoriteMarketplaceSkill: FavoriteMarketplaceSkillContract = withAuth(favoriteMarketplaceSkillReal);
 export const unfavoriteMarketplaceSkill: UnfavoriteMarketplaceSkillContract = withAuth(unfavoriteMarketplaceSkillReal);
 export const deleteMarketplaceSkill: DeleteMarketplaceSkillContract = withAuth(deleteMarketplaceSkillReal);
+export const createMarketplaceSkillShare: CreateMarketplaceSkillShareContract = withAuth(createMarketplaceSkillShareReal);
+export { viewSkillShare } from '@/services/real/marketplaceSkills';
+export type { ViewSkillShareData, PublicSharedSkillDto, MarketplaceSkillShareLinkDto } from '@/services/contracts/marketplaceSkills';
 
 // Agent 开放接口 API Key 管理（"接入 AI" Dialog）
 import type {
@@ -1461,10 +1472,13 @@ export {
   listWeeklyPosterTemplates,
   autopilotWeeklyPoster,
   generateWeeklyPosterPageImage,
+  generateWeeklyPosterImages,
+  getWeeklyPosterImageRun,
   listWeeklyPosterKnowledgeEntries,
 } from '@/services/real/weeklyPoster';
 export type {
   WeeklyPoster,
+  WeeklyPosterListItem,
   WeeklyPosterPage,
   WeeklyPosterStatus,
   WeeklyPosterListView,
@@ -1476,6 +1490,8 @@ export type {
   WeeklyPosterAutopilotResult,
   WeeklyPosterAutopilotInput,
   WeeklyPosterKnowledgeEntryMeta,
+  WeeklyPosterImageRun,
+  WeeklyPosterImageRunStatus,
 } from '@/services/real/weeklyPoster';
 
 // AI Toolbox 百宝箱
@@ -1492,6 +1508,7 @@ export {
   streamDirectChat,
   streamCapabilityChat,
   uploadAttachment,
+  getAttachmentMeta,
   // Session & Messages
   listToolboxSessions,
   createToolboxSession,
@@ -1533,6 +1550,7 @@ import type {
   ListExecutionsContract,
   GetExecutionContract,
   CancelExecutionContract,
+  RejectApprovalContract,
   ResumeFromNodeContract,
   ContinueExecutionContract,
   GetNodeLogsContract,
@@ -1557,6 +1575,7 @@ import {
   listExecutionsReal,
   getExecutionReal,
   cancelExecutionReal,
+  rejectApprovalReal,
   resumeFromNodeReal,
   continueExecutionReal,
   getNodeLogsReal,
@@ -1580,6 +1599,7 @@ export const executeWorkflow: ExecuteWorkflowContract = withAuth(executeWorkflow
 export const listExecutions: ListExecutionsContract = withAuth(listExecutionsReal);
 export const getExecution: GetExecutionContract = withAuth(getExecutionReal);
 export const cancelExecution: CancelExecutionContract = withAuth(cancelExecutionReal);
+export const rejectApproval: RejectApprovalContract = withAuth(rejectApprovalReal);
 export const resumeFromNode: ResumeFromNodeContract = withAuth(resumeFromNodeReal);
 export const continueExecution: ContinueExecutionContract = withAuth(continueExecutionReal);
 export const getNodeLogs: GetNodeLogsContract = withAuth(getNodeLogsReal);
@@ -1673,6 +1693,25 @@ export {
   listShareViewLogs,
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
+
+// ── 统一短链解析 + 管理 ──
+export {
+  resolveShortLink,
+  resolveShortLinkSlug,
+  listAdminShortLinks,
+  revokeAdminShortLink,
+  repairShortLinkCounter,
+} from '@/services/real/shortLinks';
+export type {
+  ShortLinkResolved,
+  ShortLinkTargetType,
+  AdminShortLinkItem,
+  AdminShortLinkShareMeta,
+} from '@/services/real/shortLinks';
+
+// ── 我的分享总管理 ──
+export { listMyShares } from '@/services/real/myShares';
+export type { MyShareItem, MyShareTargetType, MySharesResponse } from '@/services/real/myShares';
 
 // ── Public Profile 个人公开主页 ──
 export {
@@ -1775,6 +1814,7 @@ export {
   updateDocumentEntryReal as updateDocumentEntry,
   deleteDocumentEntryReal as deleteDocumentEntry,
   uploadDocumentFile,
+  replaceDocumentFile,
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,

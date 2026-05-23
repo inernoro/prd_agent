@@ -5,6 +5,7 @@ import { StreamingText } from '@/components/streaming';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { cn } from '@/lib/cn';
 import { streamDirectChat, getModelGroups, listWorkflows } from '@/services';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 import type { DirectChatMessage } from '@/services';
 import type { ModelGroup } from '@/types/modelGroup';
 import type { Workflow } from '@/services/contracts/workflowAgent';
@@ -40,6 +41,7 @@ import {
   RotateCcw,
   Upload,
   BookOpen,
+  File,
   Cpu,
   ChevronDown,
   Play,
@@ -380,11 +382,13 @@ function TestChatPanel({
   conversationStarters,
   iconHue,
   welcomeMessage,
+  knowledgeBaseIds,
 }: {
   systemPrompt: string;
   conversationStarters: string[];
   iconHue: number;
   welcomeMessage: string;
+  knowledgeBaseIds: string[];
 }) {
   const [messages, setMessages] = useState<DirectChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -422,6 +426,7 @@ function TestChatPanel({
     const unsubscribe = streamDirectChat({
       message: msg,
       history,
+      attachmentIds: knowledgeBaseIds.length > 0 ? knowledgeBaseIds : undefined,
       onText: (content) => {
         setStreamingText((prev) => prev + content);
       },
@@ -608,6 +613,60 @@ export function QuickCreateWizard() {
     enabledTools: [] as string[],
     workflowId: '',
   });
+
+  // 知识库文件（上传到 Attachment，attachmentId 写入 ToolboxItem.knowledgeBaseIds）
+  const [knowledgeFiles, setKnowledgeFiles] = useState<Array<{
+    id: string;
+    fileName: string;
+    mimeType: string;
+    size: number;
+    attachmentId?: string;
+    status: 'uploading' | 'done' | 'error';
+  }>>([]);
+  const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
+  // 上传会话令牌：换模板/空白重建会自增，使在途上传的回调失效，避免旧文件回填到新状态
+  const kbUploadSessionRef = useRef(0);
+
+  const handleKnowledgeFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    e.target.value = '';
+
+    const session = kbUploadSessionRef.current;
+    for (const file of Array.from(files)) {
+      const tempId = Math.random().toString(36).slice(2, 11);
+      setKnowledgeFiles(prev => [...prev, {
+        id: tempId,
+        fileName: file.name,
+        mimeType: file.type,
+        size: file.size,
+        status: 'uploading' as const,
+      }]);
+
+      try {
+        const result = await uploadAttachment(file);
+        if (kbUploadSessionRef.current !== session) return; // 上下文已重置，丢弃这次结果
+        if (result.success && result.data?.attachmentId) {
+          setKnowledgeFiles(prev => prev.map(f =>
+            f.id === tempId ? { ...f, attachmentId: result.data!.attachmentId, status: 'done' as const } : f
+          ));
+        } else {
+          setKnowledgeFiles(prev => prev.map(f =>
+            f.id === tempId ? { ...f, status: 'error' as const } : f
+          ));
+        }
+      } catch {
+        if (kbUploadSessionRef.current !== session) return;
+        setKnowledgeFiles(prev => prev.map(f =>
+          f.id === tempId ? { ...f, status: 'error' as const } : f
+        ));
+      }
+    }
+  };
+
+  const removeKnowledgeFile = (id: string) => {
+    setKnowledgeFiles(prev => prev.filter(f => f.id !== id));
+  };
 
   // 工作流列表
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -819,6 +878,8 @@ export function QuickCreateWizard() {
 
   const handleSelectTemplate = (template: AgentTemplate) => {
     setSelectedTemplate(template);
+    kbUploadSessionRef.current += 1;
+    setKnowledgeFiles([]);
     setForm((prev) => ({
       ...prev,
       name: template.name,
@@ -835,6 +896,8 @@ export function QuickCreateWizard() {
 
   const handleBlankCreate = () => {
     setSelectedTemplate(null);
+    kbUploadSessionRef.current += 1;
+    setKnowledgeFiles([]);
     setForm((prev) => ({
       ...prev,
       name: '',
@@ -849,6 +912,13 @@ export function QuickCreateWizard() {
     setStep(1);
   };
 
+  // 已上传完成的知识库 attachmentId（done 状态才算数）
+  const doneKnowledgeBaseIds = knowledgeFiles
+    .filter(f => f.status === 'done' && f.attachmentId)
+    .map(f => f.attachmentId!);
+  // 是否还有文件在上传中——上传未完成时禁止保存/切换，避免静默丢弃
+  const isUploadingKb = knowledgeFiles.some(f => f.status === 'uploading');
+
   const handleSwitchToFullMode = () => {
     setEditingItem({
       name: form.name,
@@ -856,6 +926,7 @@ export function QuickCreateWizard() {
       icon: form.icon,
       prompt: form.prompt,
       tags: parsedTags,
+      knowledgeBaseIds: doneKnowledgeBaseIds,
       type: 'custom',
       category: 'custom',
     });
@@ -864,6 +935,7 @@ export function QuickCreateWizard() {
 
   const handleSave = async () => {
     if (!form.name.trim() || !form.prompt.trim()) return;
+    if (isUploadingKb) return;
     setSaving(true);
     const success = await saveItem({
       name: form.name.trim(),
@@ -873,6 +945,7 @@ export function QuickCreateWizard() {
       tags: parsedTags,
       enabledTools: form.enabledTools,
       workflowId: isWorkflowEnabled ? form.workflowId : undefined,
+      knowledgeBaseIds: doneKnowledgeBaseIds,
       type: 'custom',
       category: 'custom',
     });
@@ -1331,6 +1404,7 @@ export function QuickCreateWizard() {
           conversationStarters={form.conversationStarters}
           iconHue={currentIconHue}
           welcomeMessage={form.welcomeMessage}
+          knowledgeBaseIds={doneKnowledgeBaseIds}
         />
       </Surface>
 
@@ -1462,13 +1536,66 @@ export function QuickCreateWizard() {
           <div className="flex items-center gap-2 mb-2">
             <BookOpen size={13} className="text-token-success" />
             <span className="text-token-primary text-[12px] font-semibold">知识库</span>
-            <span className="surface-state-warning text-[9px] px-1.5 py-0.5 rounded">即将上线</span>
+            {knowledgeFiles.length > 0 && (
+              <span className="surface-state-success text-[10px] px-1.5 py-0.5 rounded">
+                {knowledgeFiles.filter(f => f.status === 'done').length} 个文件
+              </span>
+            )}
           </div>
-          <div className="surface-inset p-3 rounded-lg text-center cursor-not-allowed opacity-60 border-dashed">
-            <Upload size={16} className="text-token-success mx-auto mb-1.5" />
-            <div className="text-token-muted text-[10px]">上传文档作为知识库</div>
-            <div className="text-token-muted-faint text-[9px] mt-0.5">支持 PDF、Word、TXT</div>
-          </div>
+
+          {knowledgeFiles.length > 0 && (
+            <div className="space-y-1.5 mb-2">
+              {knowledgeFiles.map((file) => (
+                <Surface
+                  variant="inset"
+                  key={file.id}
+                  className={cn(
+                    'flex items-center gap-2 px-2.5 py-1.5 rounded-lg',
+                    file.status === 'error' && 'border-[var(--status-error)]'
+                  )}
+                >
+                  <File size={12} style={{
+                    color: file.status === 'error' ? 'rgb(239, 68, 68)'
+                      : file.status === 'uploading' ? 'var(--text-muted)'
+                      : 'rgb(74, 222, 128)',
+                  }} />
+                  <span className="text-token-secondary flex-1 text-[10px] truncate">{file.fileName}</span>
+                  <span className="text-token-muted text-[9px] flex-shrink-0">
+                    {(file.size / 1024).toFixed(0)} KB
+                  </span>
+                  {file.status === 'uploading' && <MapSpinner size={10} className="flex-shrink-0" />}
+                  {file.status === 'error' && (
+                    <span className="text-token-error text-[9px] flex-shrink-0">失败</span>
+                  )}
+                  <button
+                    onClick={() => removeKnowledgeFile(file.id)}
+                    className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+                    aria-label="移除文件"
+                  >
+                    <X size={10} className="text-token-muted" />
+                  </button>
+                </Surface>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => knowledgeFileInputRef.current?.click()}
+            className="surface-inset w-full p-3 rounded-lg text-center cursor-pointer transition-all border-dashed hover:border-[var(--status-done)] group"
+          >
+            <Upload size={16} className="text-token-success mx-auto mb-1 transition-transform group-hover:scale-110" />
+            <div className="text-token-secondary text-[10px] font-medium">上传文档作为知识库</div>
+            <div className="text-token-muted-faint text-[9px] mt-0.5">支持 PDF、Word、Excel、PPT、TXT</div>
+          </button>
+          <input
+            ref={knowledgeFileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept=".pdf,.doc,.docx,.txt,.md,.json,.csv,.xlsx,.xls,.ppt,.pptx"
+            onChange={handleKnowledgeFileSelect}
+          />
         </Surface>
 
         {/* 温度调节 */}
@@ -1529,7 +1656,14 @@ export function QuickCreateWizard() {
             <span className="text-[14px] font-semibold text-token-primary">快速创建智能体</span>
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleSwitchToFullMode} className="text-[11px] gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleSwitchToFullMode}
+          disabled={isUploadingKb}
+          title={isUploadingKb ? '知识库文件上传中，请稍候' : undefined}
+          className="text-[11px] gap-1.5"
+        >
           <Settings2 size={12} />
           完整模式
         </Button>
@@ -1584,9 +1718,15 @@ export function QuickCreateWizard() {
               </Button>
             )}
             {step === 2 && (
-              <Button variant="primary" size="sm" onClick={handleSave} disabled={saving || !form.name.trim() || !form.prompt.trim()}>
-                {saving ? <MapSpinner size={13} /> : <Save size={13} />}
-                创建智能体
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSave}
+                disabled={saving || isUploadingKb || !form.name.trim() || !form.prompt.trim()}
+                title={isUploadingKb ? '知识库文件上传中，请稍候' : undefined}
+              >
+                {saving || isUploadingKb ? <MapSpinner size={13} /> : <Save size={13} />}
+                {isUploadingKb ? '上传中…' : '创建智能体'}
               </Button>
             )}
           </div>

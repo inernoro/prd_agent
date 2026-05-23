@@ -75,8 +75,16 @@ export type LeaderboardUser = {
 export type LeaderboardDimension = {
   key: string;
   name: string;
-  category: 'agent' | 'activity';
+  category: 'agent' | 'activity' | 'image';
   values: Record<string, number>;
+  /** 口径说明（怎么算的）—— 后端单一来源，前端直接渲染 */
+  description?: string;
+  /** 怎么操作会让这一项 +1 */
+  howToIncrease?: string;
+  /** 排除了哪些异常/奇异数据 */
+  anomalyNote?: string;
+  /** 缺陷列专用：每个用户的提交/解决拆解 */
+  subValues?: Record<string, { created: number; resolved: number }>;
 };
 
 export type ExecutiveLeaderboard = {
