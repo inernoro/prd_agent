@@ -20,9 +20,9 @@ export interface ChangelogFragment {
 }
 
 export interface CurrentWeekView {
-  /** YYYY-MM-DD（周一） */
+  /** YYYY-MM-DD（最早待发布碎片日期；无碎片时为今天） */
   weekStart: string;
-  /** YYYY-MM-DD（周日） */
+  /** YYYY-MM-DD（最新待发布碎片日期；无碎片时为今天） */
   weekEnd: string;
   dataSourceAvailable: boolean;
   /** 数据来源："local" / "github" / "none" */
@@ -66,6 +66,7 @@ export interface GitHubLogEntry {
   shortSha: string;
   message: string;
   authorName: string;
+  authorAvatarUrl?: string | null;
   commitTimeUtc: string;
   htmlUrl: string;
 }
@@ -80,7 +81,7 @@ export interface GitHubLogsView {
 // ============ API Calls ============
 
 /**
- * 获取本周更新（基于 changelogs/*.md 碎片，按日期倒序）
+ * 获取待发布更新（基于全部 changelogs/*.md 碎片，按日期倒序）
  * @param force 绕过服务端缓存（GitHub 路径意味着触发真实拉取）
  */
 export async function getCurrentWeekChangelog(force = false): Promise<ApiResponse<CurrentWeekView>> {

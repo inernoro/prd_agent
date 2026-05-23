@@ -226,8 +226,8 @@ describe('ProxyService', () => {
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.headers['Retry-After']).toBe('2');
       expect(written.body).toContain('启动中');
-      expect(written.body).toContain('shape-grid-bg');
-      expect(written.body).toContain('id="shape-grid"');
+      expect(written.body).toContain('magic-rings-bg');
+      expect(written.body).toContain('id="magic-rings"');
       expect(written.body).toContain('data-role="progress-estimate"');
       expect(written.body).toContain('预计启动进度');
       expect(written.body).not.toContain('magic-rings-canvas');
@@ -445,7 +445,7 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(404);
       expect(written.headers['Content-Type']).toContain('text/html');
-      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('启动失败');
       expect(written.body).toContain('missing-branch');
     });
 
@@ -471,7 +471,7 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(404);
       expect(written.headers['Content-Type']).toContain('text/html');
-      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('启动失败');
     });
   });
 

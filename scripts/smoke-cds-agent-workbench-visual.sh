@@ -6,7 +6,7 @@
 # Authenticated V1 check for /cds-agent. This script does not call the
 # model provider. It opens the real workbench in headless Chrome, injects
 # an admin JWT into the persisted auth store, waits for the current execution
-# runway/workbench signals, and captures a screenshot as visual evidence.
+# commercial workbench signals, and captures a screenshot as visual evidence.
 #
 # Required auth, choose one:
 #   SMOKE_CDS_AGENT_ACCESS_TOKEN=<jwt>
@@ -19,6 +19,7 @@
 #   SMOKE_CDS_AGENT_SCREENSHOT=/tmp/cds-agent-workbench-visual.png
 #   SMOKE_CDS_AGENT_TEXT_DUMP=/tmp/cds-agent-workbench-visual.txt
 #   SMOKE_CDS_AGENT_VISUAL_COVERAGE=/tmp/cds-agent-workbench-visual.coverage.json
+#   SMOKE_CDS_AGENT_EXPECT_TEXT=只读审查报告
 #   CHROME_BIN=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 # ============================================
 
@@ -38,6 +39,7 @@ SMOKE_CDS_AGENT_ACCESS_TOKEN="${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}"
 SMOKE_CDS_AGENT_LOGIN_USERNAME="${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}"
 SMOKE_CDS_AGENT_LOGIN_PASSWORD="${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}"
 SMOKE_CDS_AGENT_AUTH_MODE="jwt"
+SMOKE_CDS_AGENT_EXPECT_TEXT="${SMOKE_CDS_AGENT_EXPECT_TEXT:-}"
 CHROME_BIN="${CHROME_BIN:-}"
 
 find_chrome() {
@@ -134,6 +136,7 @@ const authMode = process.env.SMOKE_CDS_AGENT_AUTH_MODE || 'jwt';
 const screenshot = process.env.SMOKE_CDS_AGENT_SCREENSHOT;
 const textDump = process.env.SMOKE_CDS_AGENT_TEXT_DUMP;
 const visualCoverage = process.env.SMOKE_CDS_AGENT_VISUAL_COVERAGE;
+const expectedText = process.env.SMOKE_CDS_AGENT_EXPECT_TEXT || '';
 const userDataDir = process.env.SMOKE_CDS_AGENT_CHROME_PROFILE;
 const port = Number(process.env.SMOKE_CDS_AGENT_CDP_PORT || '9223');
 const origin = new URL(url).origin;
@@ -407,7 +410,7 @@ async function main() {
       awaitPromise: true
     });
     await send('Runtime.evaluate', {
-      expression: `sessionStorage.setItem('cds-agent:view-mode', 'pro')`,
+      expression: `sessionStorage.setItem('cds-agent:view-mode', 'simple')`,
       awaitPromise: true
     });
     await send('Page.navigate', { url });
@@ -438,8 +441,8 @@ async function main() {
     }
     await send('Runtime.evaluate', {
       expression: `(() => {
-        const nodes = Array.from(document.querySelectorAll('section, div, article'))
-          .filter((node) => (node.innerText || '').includes('CDS Runtime'))
+        const nodes = Array.from(document.querySelectorAll('textarea, input, section, div, article'))
+          .filter((node) => (node.innerText || node.placeholder || '').includes('巡检'))
           .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
         const el = nodes[0];
         if (el) {
@@ -501,37 +504,38 @@ async function waitForWorkbench(send, cdp) {
   } catch {}
   const eventSummary = cdp.eventSummary();
   const suffix = eventSummary.length ? `; events=${eventSummary.join(' | ')}` : '';
-  throw new Error(`Workbench execution runway did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}${suffix}`);
+  throw new Error(`Workbench commercial workbench did not render before timeout; lastText=${lastText.slice(0, 500).replace(/\s+/g, ' ')}${suffix}`);
 }
 
 function workbenchSignalGroups() {
   return [
-    { label: 'CDS Agent', alternatives: ['CDS Agent'] },
+    { label: 'agent workbench shell', alternatives: ['任务', 'Code 巡检'] },
     { label: 'simple mode', alternatives: ['简洁模式'] },
     { label: 'pro mode', alternatives: ['专业模式'] },
-    { label: 'refresh action', alternatives: ['刷新'] },
-    { label: 'session status', alternatives: ['会话总数', '当前执行面板'] },
-    { label: 'trace observability', alternatives: ['trace', 'traceId'] },
-    { label: 'event observability', alternatives: ['当前事件'] },
-    { label: 'tool observability', alternatives: ['工具事件'] },
-    { label: 'artifact entry', alternatives: ['可见产物', '产物入口'] },
-    { label: 'SLA dashboard', alternatives: ['SLA / 成本'] },
-    { label: 'workflow and KB readonly', alternatives: ['定时巡检 / 知识治理', 'KB 只读治理'] },
-    { label: 'governance dashboard', alternatives: ['权限 / 组织治理'] },
-    { label: 'execution chain', alternatives: ['执行链路'] },
-    { label: 'MAP session', alternatives: ['MAP 会话'] },
-    { label: 'runtime status', alternatives: ['CDS Runtime'] },
-    { label: 'worker sandbox', alternatives: ['Worker Sandbox'] },
-    { label: 'network boundary', alternatives: ['受限网络'] },
-    { label: 'provider/profile guidance', alternatives: ['选择模型', '配置默认 Claude/Anthropic runtime profile', '模型需调整'] },
-    { label: 'official SDK adapter', alternatives: ['Claude Agent SDK', 'Official Claude Agent SDK adapter', 'claude-sdk'] }
+    { label: 'task list', alternatives: ['任务'] },
+    { label: 'agent input', alternatives: ['告诉 Agent', '直接告诉 Agent', '仓库 URL，可留空使用默认 workspace', '对话模式不要求仓库'] },
+    { label: 'code review entry', alternatives: ['Code 巡检', '巡检当前仓库'] },
+    { label: 'primary run action', alternatives: ['运行', '发送'] },
+    { label: 'readiness section', alternatives: ['准备情况', '运行环境就绪', '等待模型配置'] },
+    { label: 'run progress section', alternatives: ['运行进展', '执行有效性', '当前状态'] },
+    { label: 'duration observability', alternatives: ['已经用时', '启动后开始计时'] },
+    { label: 'timeout observability', alternatives: ['超时'] },
+    { label: 'stop affordance', alternatives: ['停止'] },
+    { label: 'artifact entry', alternatives: ['产物', '证据区'] },
+    { label: 'event timeline or run summary', alternatives: ['事件时间线', '执行过程', '后台运行日志', '运行摘要'] },
+    { label: 'result/error/empty-state containment', alternatives: ['结果可复盘', '只读审查', 'Agent ·', '错误', '失败', '等待 Agent 输出', '工具不可用', '被拒绝', '还没有任务', '等待发起巡检'] },
+    { label: 'debug folded', alternatives: ['调试信息'] }
   ];
 }
 
 function missingWorkbenchSignals(text) {
-  return workbenchSignalGroups()
+  const missing = workbenchSignalGroups()
     .filter((group) => !group.alternatives.some((item) => text.includes(item)))
     .map((group) => `${group.label} (${group.alternatives.join(' / ')})`);
+  if (expectedText && !text.includes(expectedText)) {
+    missing.push(`expected content (${expectedText})`);
+  }
+  return missing;
 }
 
 main().catch((err) => {
@@ -548,6 +552,7 @@ SMOKE_CDS_AGENT_VISUAL_COVERAGE="$SMOKE_CDS_AGENT_VISUAL_COVERAGE" \
 SMOKE_CDS_AGENT_ACCESS_TOKEN="$SMOKE_CDS_AGENT_ACCESS_TOKEN" \
 SMOKE_CDS_AGENT_AUTH_USER_JSON="$auth_user_json" \
 SMOKE_CDS_AGENT_AUTH_MODE="$SMOKE_CDS_AGENT_AUTH_MODE" \
+SMOKE_CDS_AGENT_EXPECT_TEXT="$SMOKE_CDS_AGENT_EXPECT_TEXT" \
 AI_ACCESS_KEY="${AI_ACCESS_KEY:-}" \
 SMOKE_USER="$SMOKE_USER" \
 SMOKE_CDS_AGENT_CHROME_PROFILE="$tmp_dir/profile" \

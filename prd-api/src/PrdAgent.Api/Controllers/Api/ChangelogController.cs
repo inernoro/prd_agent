@@ -16,7 +16,8 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// 更新中心 - 代码级周报
 /// 数据源：仓库内的 changelogs/*.md 碎片 + CHANGELOG.md，不依赖数据库。
-/// 优先读取本地文件（dev 5 分钟缓存），找不到时自动从 GitHub 拉取（生产 24 小时缓存）。
+/// CHANGELOG.md 为已发布；changelogs/*.md 碎片为待发布。
+/// 优先读取本地文件（dev 5 分钟缓存），找不到时自动从 GitHub 拉取（生产默认 5 分钟缓存）。
 /// 仅需登录即可访问，无需特殊权限。
 /// </summary>
 [ApiController]
@@ -48,7 +49,7 @@ public class ChangelogController : ControllerBase
     }
 
     /// <summary>
-    /// 本周更新（从 changelogs/ 碎片读取，按日期倒序）
+    /// 待发布更新（从全部 changelogs/ 碎片读取，按日期倒序）
     /// </summary>
     /// <param name="force">true 时绕过服务端缓存，重新从源拉取（GitHub 路径意味着真实 API 调用）</param>
     [HttpGet("current-week")]
@@ -77,7 +78,7 @@ public class ChangelogController : ControllerBase
     [HttpGet("github-logs")]
     public async Task<IActionResult> GetGitHubLogs([FromQuery] int limit = 30, [FromQuery] bool force = false)
     {
-        if (limit <= 0 || limit > 100) limit = 30;
+        if (limit <= 0 || limit > 1000) limit = 1000;
         var view = await _reader.GetGitHubLogsAsync(limit, force).ConfigureAwait(false);
         return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view)));
     }
@@ -267,6 +268,7 @@ public class ChangelogController : ControllerBase
             ShortSha = l.ShortSha,
             Message = l.Message,
             AuthorName = l.AuthorName,
+            AuthorAvatarUrl = l.AuthorAvatarUrl,
             CommitTimeUtc = l.CommitTimeUtc.ToString("o"),
             HtmlUrl = l.HtmlUrl,
         }),
@@ -493,6 +495,7 @@ public class ChangelogController : ControllerBase
         public string ShortSha { get; set; } = string.Empty;
         public string Message { get; set; } = string.Empty;
         public string AuthorName { get; set; } = string.Empty;
+        public string? AuthorAvatarUrl { get; set; }
         public string CommitTimeUtc { get; set; } = string.Empty;
         public string HtmlUrl { get; set; } = string.Empty;
     }

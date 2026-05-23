@@ -493,6 +493,10 @@ function projectSwitcherMeta(project: ProjectSummary): string {
   return candidates.find((value) => value !== title) || '';
 }
 
+function projectEnvSettingsHref(projectId: string): string {
+  return `/settings/${encodeURIComponent(projectId)}?tab=env`;
+}
+
 function fallbackProjectSummary(projectId: string): ProjectSummary {
   return {
     id: projectId,
@@ -1200,6 +1204,9 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const noticeProject = useMemo(() => (
+    state.status === 'ok' ? state.project : projectId ? fallbackProjectSummary(projectId) : null
+  ), [projectId, state.status, state.status === 'ok' ? state.project.id : null, state.status === 'ok' ? state.project.slug : null, state.status === 'ok' ? state.project.name : null, state.status === 'ok' ? state.project.aliasName : null]);
   // 2026-05-07 wave 1.3:容量超限交互式选择停哪个分支
   const [capacityDialog, setCapacityDialog] = useState<{
     branch: BranchSummary;
@@ -1467,7 +1474,7 @@ export function BranchListPage(): JSX.Element {
   }, [projectId, state.status]);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !noticeProject) return;
     if (missingRequiredKeys.length === 0) return;
     const keys = [...missingRequiredKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -1476,15 +1483,18 @@ export function BranchListPage(): JSX.Element {
         title: '必填环境变量缺失',
         body: `${keys.length} 个必填项还没填：${keys.slice(0, 6).join(', ')}${keys.length > 6 ? ` 等 ${keys.length} 项` : ''}。deploy 会被阻止，先去项目设置补齐。`,
         tone: 'danger',
-        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        href: projectEnvSettingsHref(projectId),
         actionLabel: '立刻填写',
         source: 'env',
+        projectId,
+        projectName: displayName(noticeProject),
+        projectSlug: noticeProject.slug,
       },
     }));
-  }, [missingRequiredKeys, projectId]);
+  }, [missingRequiredKeys, noticeProject, projectId]);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !noticeProject) return;
     if (pendingEnvKeys.length === 0) return;
     const keys = [...pendingEnvKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -1493,12 +1503,15 @@ export function BranchListPage(): JSX.Element {
         title: '项目环境变量待补全',
         body: `${keys.length} 个变量仍是 TODO 占位：${keys.slice(0, 5).join(' · ')}${keys.length > 5 ? ` 等 ${keys.length} 项` : ''}。先填好再部署。`,
         tone: 'warning',
-        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        href: projectEnvSettingsHref(projectId),
         actionLabel: '前往填写',
         source: 'env',
+        projectId,
+        projectName: displayName(noticeProject),
+        projectSlug: noticeProject.slug,
       },
     }));
-  }, [pendingEnvKeys, projectId]);
+  }, [noticeProject, pendingEnvKeys, projectId]);
 
   useEffect(() => {
     if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;
@@ -1508,9 +1521,12 @@ export function BranchListPage(): JSX.Element {
         title: '数据库初始化(schema.sql)',
         body: '检测到 mysql / postgres 类基础设施。需要初始化数据库时，进入环境变量配置向导上传 schema.sql，容器首次启动会自动执行。',
         tone: 'info',
-        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        href: projectEnvSettingsHref(projectId),
         actionLabel: '上传初始化 SQL',
         source: 'schema',
+        projectId,
+        projectName: displayName(state.project),
+        projectSlug: state.project.slug,
       },
     }));
   }, [projectId, state]);

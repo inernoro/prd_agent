@@ -264,6 +264,32 @@ function profileCompatibilityBlockReason(profile: InfraAgentRuntimeProfileView |
     : 'Claude Agent SDK 路径需要 Claude/Anthropic 兼容模型；当前模型可能只适合普通 OpenAI-compatible gateway。';
 }
 
+function runtimeDiagnosticsProfileToView(
+  profile: InfraAgentRuntimeDiagnostics['defaultRuntimeProfile'] | null | undefined,
+): InfraAgentRuntimeProfileView | null {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    name: profile.name,
+    runtime: profile.runtime,
+    protocol: profile.protocol,
+    baseUrl: 'runtime-profile-secret',
+    model: profile.model,
+    resourceCpuCores: 2,
+    resourceMemoryMb: 4096,
+    timeoutSeconds: 900,
+    networkPolicy: 'restricted',
+    autoCleanupMinutes: 30,
+    hasApiKey: profile.hasApiKey,
+    isDefault: profile.isDefault,
+    createdAt: '',
+    updatedAt: '',
+    scope: 'runtime-status',
+    ownerUserId: null,
+    sharedTeamIds: null,
+  };
+}
+
 function runtimeDiscoveryBlockReason(status: InfraAgentRuntimeDiagnostics): string {
   const metrics = status.discoveryMetrics;
   if (!metrics) return '';
@@ -559,6 +585,23 @@ type LocalTimelineMessage = {
   sessionId?: string | null;
 };
 
+type SimpleRunPhase = 'idle' | 'submitting' | 'creating' | 'starting' | 'running' | 'stopping' | 'completed' | 'failed';
+
+type SimpleRunState = {
+  phase: SimpleRunPhase;
+  label: string;
+  detail?: string;
+  startedAt: number;
+  updatedAt: number;
+  sessionId?: string | null;
+  traceId?: string | null;
+  requestId?: string | null;
+  source?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  elapsedMs?: number | null;
+};
+
 type RuntimeReadinessGate = {
   label: string;
   value: string;
@@ -841,6 +884,7 @@ export default function CdsAgentPage() {
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [simpleSubmitStatus, setSimpleSubmitStatus] = useState('');
+  const [simpleRunState, setSimpleRunState] = useState<SimpleRunState | null>(null);
   const [autoScrollPaused, setAutoScrollPaused] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -891,9 +935,17 @@ export default function CdsAgentPage() {
     () => connections.find((item) => item.id === draft.connectionId) ?? connections.find((item) => item.status === 'active') ?? null,
     [connections, draft.connectionId],
   );
+  const runtimeStatusDefaultProfile = useMemo(
+    () => runtimeDiagnosticsProfileToView(runtimeStatus?.defaultRuntimeProfile),
+    [runtimeStatus?.defaultRuntimeProfile],
+  );
   const activeProfile = useMemo(
-    () => profiles.find((item) => item.id === draft.runtimeProfileId) ?? profiles.find((item) => item.isDefault) ?? profiles[0] ?? null,
-    [profiles, draft.runtimeProfileId],
+    () => profiles.find((item) => item.id === draft.runtimeProfileId)
+      ?? profiles.find((item) => item.isDefault)
+      ?? profiles[0]
+      ?? runtimeStatusDefaultProfile
+      ?? null,
+    [profiles, draft.runtimeProfileId, runtimeStatusDefaultProfile],
   );
   const anthropicOfficialProfileTemplate = useMemo(
     () => profileTemplates.find((item) => item.id === ANTHROPIC_OFFICIAL_PROFILE_TEMPLATE_ID) ?? null,
@@ -935,7 +987,8 @@ export default function CdsAgentPage() {
   const activeSessionEffectiveStatus = activeSessionRuntimeState.effectiveStatus;
   const activeSessionTimedOut = activeSessionRuntimeState.timedOut;
   const activeSessionProfile = activeSession?.runtimeProfileId
-    ? profiles.find((item) => item.id === activeSession.runtimeProfileId) ?? null
+    ? profiles.find((item) => item.id === activeSession.runtimeProfileId)
+      ?? (runtimeStatusDefaultProfile?.id === activeSession.runtimeProfileId ? runtimeStatusDefaultProfile : null)
     : activeProfile;
   const desiredRuntimeAdapterForProfile = runtimeStatus?.desiredRuntimeAdapter || '';
   const activeProfileBlockReason = profileBlockReason(activeProfile)
@@ -2407,16 +2460,11 @@ export default function CdsAgentPage() {
   function isSessionNotFoundFailure(res: { success: boolean; error?: { code?: string; message?: string } | null }) {
     const code = res.error?.code ?? '';
     const message = res.error?.message ?? '';
-    const isGatewayTransportFailure =
-      (code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE')
-      && message.includes('/messages')
-      && message.includes('HTTP 502');
     return !res.success
       && (code === 'SESSION_NOT_FOUND'
         || code === 'session_not_found'
         || code === 'connection_not_found'
         || (code === 'cds_request_failed' && message.includes('HTTP 400'))
-        || isGatewayTransportFailure
         || message.includes('会话不存在')
         || message.includes('CDS 连接不存在')
         || message.includes('session_not_found'));
@@ -2426,8 +2474,8 @@ export default function CdsAgentPage() {
     const code = res.error?.code ?? '';
     const message = res.error?.message ?? '';
     return !res.success
-      && ((code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE') && (message.includes('HTTP 502') || message.includes('/start')))
-        || (code === 'cds_request_failed' && message.includes('HTTP 400'));
+      && (((code === 'SERVER_ERROR' || code === 'SERVER_UNAVAILABLE') && (message.includes('HTTP 502') || message.includes('/start')))
+        || (code === 'cds_request_failed' && message.includes('HTTP 400')));
   }
 
   function pushLocalUserMessage(content: string, sessionId?: string | null): string {
@@ -2459,6 +2507,55 @@ export default function CdsAgentPage() {
       if (sessionId && item.sessionId && item.sessionId !== sessionId) return true;
       return item.content.trim() !== normalized;
     }));
+  }
+
+  function setSimplePhase(
+    phase: SimpleRunPhase,
+    label: string,
+    detail?: string,
+    session?: InfraAgentSessionView | null,
+    error?: { code?: string | null; message?: string | null; traceId?: string | null; requestId?: string | null; source?: string | null; elapsedMs?: number | null } | null,
+  ) {
+    const now = Date.now();
+    setSimpleRunState((prev) => ({
+      phase,
+      label,
+      detail,
+      startedAt: prev && prev.phase !== 'completed' && prev.phase !== 'failed' ? prev.startedAt : now,
+      updatedAt: now,
+      sessionId: session?.id ?? prev?.sessionId ?? null,
+      traceId: error?.traceId ?? session?.traceId ?? prev?.traceId ?? null,
+      requestId: error?.requestId ?? prev?.requestId ?? null,
+      source: error?.source ?? prev?.source ?? null,
+      errorCode: error?.code ?? null,
+      errorMessage: error?.message ?? null,
+      elapsedMs: error?.elapsedMs ?? null,
+    }));
+    setSimpleSubmitStatus(label);
+  }
+
+  function clearSimplePhaseAfterSuccess() {
+    window.setTimeout(() => {
+      setSimpleRunState((prev) => (prev?.phase === 'completed' ? null : prev));
+      setSimpleSubmitStatus('');
+    }, 3500);
+  }
+
+  function buildSimpleRunDiagnostic(state: SimpleRunState) {
+    return JSON.stringify({
+      phase: state.phase,
+      label: state.label,
+      detail: state.detail,
+      sessionId: state.sessionId,
+      traceId: state.traceId,
+      requestId: state.requestId,
+      source: state.source,
+      errorCode: state.errorCode,
+      errorMessage: state.errorMessage,
+      elapsedMs: state.elapsedMs,
+      clientElapsedMs: Date.now() - state.startedAt,
+      updatedAt: new Date(state.updatedAt).toISOString(),
+    }, null, 2);
   }
 
   async function createSession() {
@@ -2616,6 +2713,7 @@ export default function CdsAgentPage() {
     try {
       optimisticMessageId = pushLocalUserMessage(normalizedPrompt, session?.id ?? null);
       setPrompt('');
+      setSimplePhase('submitting', '请求已提交', '1 秒内已进入 CDS Agent 提交流程', session);
       setSimpleSubmitStatus(session ? '正在发送给 Agent…' : '正在创建 CDS Agent 会话…');
       const simplePrompt = simpleTaskMode === 'code'
         ? `【Code 巡检模式】请优先围绕代码仓库、文件、测试、构建和提交建议处理：\n${normalizedPrompt}`
@@ -2623,6 +2721,7 @@ export default function CdsAgentPage() {
 
       const createSimpleSession = async () => {
         const title = normalizedPrompt.slice(0, 28) || (simpleTaskMode === 'code' ? '只读代码巡检' : 'Agent 对话');
+        setSimplePhase('creating', '正在创建会话', '绑定 connection、runtime profile 与工作区信息', session);
         const createRes = await createInfraAgentSession({
           connectionId: activeConnection!.id,
           runtime: activeProfile?.runtime ?? 'claude-sdk',
@@ -2635,11 +2734,13 @@ export default function CdsAgentPage() {
           workspaceRoot: draft.workspaceRoot.trim() || undefined,
         });
         if (!createRes.success || !createRes.data?.item) {
+          setSimplePhase('failed', '创建会话失败', createRes.error?.message ?? '请检查 CDS 连接和模型配置', session, createRes.error);
           toast.error('新建会话失败', createRes.error?.message ?? '请检查 CDS 连接和模型配置');
           updateLocalMessageStatus(optimisticMessageId, 'failed');
           return null;
         }
         upsertSession(createRes.data.item);
+        setSimplePhase('creating', '会话已创建', '准备启动远程 runtime', createRes.data.item);
         return createRes.data.item;
       };
 
@@ -2649,6 +2750,7 @@ export default function CdsAgentPage() {
       }
 
       if (canStartFromStatus(session.status)) {
+        setSimplePhase('starting', '正在启动远程 runtime', 'CDS 正在准备容器、workspace 和 runtime transport', session);
         setSimpleSubmitStatus('正在启动远程 runtime…');
         const startRes = await startInfraAgentSession(session.id);
         if (!startRes.success || !startRes.data?.item) {
@@ -2658,6 +2760,7 @@ export default function CdsAgentPage() {
             if (!session) return;
             const retryStartRes = await startInfraAgentSession(session.id);
             if (!retryStartRes.success || !retryStartRes.data?.item) {
+              setSimplePhase('failed', '启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime', session, retryStartRes.error);
               toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
               updateLocalMessageStatus(optimisticMessageId, 'failed');
               await refreshDetail(session.id);
@@ -2669,6 +2772,7 @@ export default function CdsAgentPage() {
             await new Promise((resolve) => window.setTimeout(resolve, 2500));
             const retryStartRes = await startInfraAgentSession(session.id);
             if (!retryStartRes.success || !retryStartRes.data?.item) {
+              setSimplePhase('failed', '启动失败', retryStartRes.error?.message ?? 'CDS runtime 暂不可用，请稍后重试', session, retryStartRes.error);
               toast.error('启动失败', retryStartRes.error?.message ?? 'CDS runtime 暂不可用，请稍后重试');
               updateLocalMessageStatus(optimisticMessageId, 'failed');
               await refreshDetail(session.id);
@@ -2677,6 +2781,7 @@ export default function CdsAgentPage() {
             session = retryStartRes.data.item;
             upsertSession(session);
           } else {
+          setSimplePhase('failed', '启动失败', startRes.error?.message ?? '请检查 CDS runtime', session, startRes.error);
           toast.error('启动失败', startRes.error?.message ?? '请检查 CDS runtime');
           updateLocalMessageStatus(optimisticMessageId, 'failed');
           await refreshDetail(session.id);
@@ -2685,9 +2790,11 @@ export default function CdsAgentPage() {
         } else {
           session = startRes.data.item;
           upsertSession(session);
+          setSimplePhase('starting', 'runtime 已启动', '准备发送任务 prompt', session);
         }
       }
 
+      setSimplePhase('running', '正在发送任务', '等待 CDS runtime 接受 prompt 并产生首个事件', session);
       setSimpleSubmitStatus('请求已提交，等待 Agent 首个事件…');
       const messageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
       if (!messageRes.success || !messageRes.data?.item) {
@@ -2699,6 +2806,7 @@ export default function CdsAgentPage() {
             ? await startInfraAgentSession(session.id)
             : null;
           if (retryStartRes && (!retryStartRes.success || !retryStartRes.data?.item)) {
+            setSimplePhase('failed', '启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime', session, retryStartRes.error);
             toast.error('启动失败', retryStartRes.error?.message ?? '请检查 CDS runtime');
             updateLocalMessageStatus(optimisticMessageId, 'failed');
             await refreshDetail(session.id);
@@ -2708,8 +2816,10 @@ export default function CdsAgentPage() {
             session = retryStartRes.data.item;
             upsertSession(session);
           }
+          setSimplePhase('running', '正在重发任务', '旧 session 已自愈，正在向新 runtime 发送 prompt', session);
           const retryMessageRes = await sendInfraAgentMessage(session.id, buildPromptWithContext(simplePrompt, contextDraft));
           if (!retryMessageRes.success || !retryMessageRes.data?.item) {
+            setSimplePhase('failed', '发送失败', retryMessageRes.error?.message ?? '请稍后重试', session, retryMessageRes.error);
             toast.error('发送失败', retryMessageRes.error?.message ?? '请稍后重试');
             updateLocalMessageStatus(optimisticMessageId, 'failed');
             await refreshDetail(session.id);
@@ -2718,8 +2828,11 @@ export default function CdsAgentPage() {
           clearLocalUserMessages(normalizedPrompt, retryMessageRes.data.item.id);
           upsertSession(retryMessageRes.data.item);
           await refreshDetail(retryMessageRes.data.item.id);
+          setSimplePhase('completed', '请求已进入运行队列', 'Agent 已接收任务，后续结果会在当前会话流式出现', retryMessageRes.data.item);
+          clearSimplePhaseAfterSuccess();
           return;
         }
+        setSimplePhase('failed', '发送失败', messageRes.error?.message ?? '请稍后重试', session, messageRes.error);
         toast.error('发送失败', messageRes.error?.message ?? '请稍后重试');
         updateLocalMessageStatus(optimisticMessageId, 'failed');
         await refreshDetail(session.id);
@@ -2728,12 +2841,14 @@ export default function CdsAgentPage() {
       clearLocalUserMessages(normalizedPrompt, messageRes.data.item.id);
       upsertSession(messageRes.data.item);
       await refreshDetail(messageRes.data.item.id);
+      setSimplePhase('completed', '请求已进入运行队列', 'Agent 已接收任务，后续结果会在当前会话流式出现', messageRes.data.item);
+      clearSimplePhaseAfterSuccess();
     } catch (err) {
+      setSimplePhase('failed', '启动巡检失败', err instanceof Error ? err.message : '请稍后重试', session);
       toast.error('启动巡检失败', err instanceof Error ? err.message : '请稍后重试');
       updateLocalMessageStatus(optimisticMessageId, 'failed');
       if (session?.id) await refreshDetail(session.id);
     } finally {
-      setSimpleSubmitStatus('');
       setBusy(false);
     }
   }
@@ -2741,17 +2856,22 @@ export default function CdsAgentPage() {
   async function stopSession() {
     if (!activeSession) return;
     const sessionId = activeSession.id;
+    setSimplePhase('stopping', '正在停止任务', '正在通知 CDS/runtime 取消当前运行', activeSession);
     setBusy(true);
     try {
       const res = await stopInfraAgentSession(sessionId);
       if (!res.success || !res.data?.item) {
+        setSimplePhase('failed', '停止失败', res.error?.message ?? '请稍后重试', activeSession, res.error);
         toast.error('停止失败', res.error?.message ?? '请稍后重试');
         await refreshDetail(sessionId);
         return;
       }
       upsertSession(res.data.item);
       await refreshDetail(res.data.item.id);
+      setSimplePhase('completed', '任务已停止', '运行已进入 stopped/stopping，结果和事件仍可复盘', res.data.item);
+      clearSimplePhaseAfterSuccess();
     } catch (err) {
+      setSimplePhase('failed', '停止失败', err instanceof Error ? err.message : '请稍后重试', activeSession);
       toast.error('停止失败', err instanceof Error ? err.message : '请稍后重试');
       await refreshDetail(sessionId);
     } finally {
@@ -3507,6 +3627,9 @@ export default function CdsAgentPage() {
     const readinessDone = readinessChecklist.filter((item) => item.state === 'pass').length;
     const runProgressDone = runProgressChecklist.filter((item) => item.state === 'pass').length;
     const showRunProgress = Boolean(activeSession && (hasRuntimeRun || hasConversation || activeSessionTimedOut));
+    const simpleRunElapsedSeconds = simpleRunState
+      ? Math.max(0, Math.round((nowTick - simpleRunState.startedAt) / 1000))
+      : 0;
     const simpleDebugTelemetry = [
       { label: 'traceId', value: activeSession ? activeSession.traceId : '待生成' },
       { label: 'runtimeRunId', value: activeSession?.currentRuntimeRunId ?? '未启动' },
@@ -3580,6 +3703,46 @@ export default function CdsAgentPage() {
 	            : '直接告诉 Agent 你想问什么，不需要先填写仓库'}
 	          className="min-h-[72px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-base leading-relaxed text-white outline-none placeholder:text-white/34"
 	        />
+          {simpleRunState && (
+            <div
+              className="mt-2 rounded-xl px-3 py-2 text-xs"
+              style={{
+                background: simpleRunState.phase === 'failed' ? 'rgba(239,68,68,0.1)' : 'rgba(96,165,250,0.08)',
+                border: simpleRunState.phase === 'failed' ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(96,165,250,0.18)',
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="inline-flex items-center gap-2 text-white/72">
+                  {simpleRunState.phase === 'failed'
+                    ? <Square size={13} className="text-red-300/80" />
+                    : simpleRunState.phase === 'completed'
+                      ? <ShieldCheck size={13} className="text-emerald-300/80" />
+                      : <MapSpinner size={13} />}
+                  <span className="font-semibold">{simpleRunState.label}</span>
+                  <span className="text-white/38">· {formatHumanDuration(simpleRunElapsedSeconds)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void copyText('请求诊断', buildSimpleRunDiagnostic(simpleRunState))}
+                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-white/45 hover:text-white/80"
+                >
+                  <Copy size={12} /> 复制诊断
+                </button>
+              </div>
+              {simpleRunState.detail && <div className="mt-1 text-white/48">{simpleRunState.detail}</div>}
+              {simpleRunState.errorMessage && (
+                <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-lg p-2 text-[11px] leading-relaxed text-red-100/78" style={{ background: 'rgba(0,0,0,0.24)' }}>
+                  {[
+                    simpleRunState.errorCode ? `code=${simpleRunState.errorCode}` : '',
+                    simpleRunState.errorMessage,
+                    simpleRunState.traceId ? `traceId=${simpleRunState.traceId}` : '',
+                    simpleRunState.requestId ? `requestId=${simpleRunState.requestId}` : '',
+                    simpleRunState.source ? `source=${simpleRunState.source}` : '',
+                  ].filter(Boolean).join('\n')}
+                </pre>
+              )}
+            </div>
+          )}
 	        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-white/10 pt-2">
             {simpleTaskMode === 'code' ? (
               <>

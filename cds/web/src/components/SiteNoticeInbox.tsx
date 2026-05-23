@@ -11,6 +11,9 @@ export interface SiteNoticePayload {
   href?: string;
   actionLabel?: string;
   source?: string;
+  projectId?: string;
+  projectName?: string;
+  projectSlug?: string;
 }
 
 interface SiteNotice extends SiteNoticePayload {
@@ -49,6 +52,10 @@ function NoticeIcon({ source }: { source?: string }): JSX.Element {
   if (source === 'schema') return <Database className="h-4 w-4" />;
   if (source === 'env') return <TerminalSquare className="h-4 w-4" />;
   return <Settings className="h-4 w-4" />;
+}
+
+function noticeProjectLabel(notice: SiteNotice): string {
+  return notice.projectName || notice.projectSlug || notice.projectId || '';
 }
 
 export function SiteNoticeInbox(): JSX.Element {
@@ -138,6 +145,17 @@ export function SiteNoticeInbox(): JSX.Element {
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold leading-5">{notice.title}</div>
+                      {noticeProjectLabel(notice) ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+                          <span className="inline-flex max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">
+                            <span className="shrink-0">项目</span>
+                            <span className="truncate font-medium text-foreground">{noticeProjectLabel(notice)}</span>
+                          </span>
+                          {notice.projectSlug && notice.projectSlug !== noticeProjectLabel(notice) ? (
+                            <span className="truncate font-mono text-[10px]">{notice.projectSlug}</span>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">{notice.body}</div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         {notice.href ? (

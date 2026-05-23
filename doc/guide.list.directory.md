@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-05-17
+> 最后更新：2026-05-22
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -280,6 +280,9 @@
 
 - [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
+
+- [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
+  > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
 
 ### 三、指南
 
@@ -659,6 +662,9 @@
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
 
+- [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
+  > 分享链接系统的已知安全边界与待补项
+
 ### 七、周报
 
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
@@ -784,12 +790,16 @@
 - [文档技能评测·documentation-writer 样本输出](report.skill-eval-sample-diataxis) `report.skill-eval-sample-diataxis`
   > 评测报告引用的 skill 原始输出样本（Diátaxis 四象限类）
 
+- [CDS Mongo 日志拆分事故复盘（2026-05-23）](report.cds-mongo-log-split-incident-2026-05-23) `report.cds-mongo-log-split-incident-2026-05-23`
+  > CDS 控制面 cds-master 崩溃导致 502 的事故根因分析与复盘
+
 ---
 
 ## 变更历史
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-22 | 新增 | `design.defect-agent-share-skill-architecture` `debt.share-link-security` `report.cds-mongo-log-split-incident-2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
 | 2026-05-15 | 新增 | `design.cds-agent-runtime-architecture` | CDS Agent 运行时架构设计 |
 | 2026-05-15 | 新增 | `report.cds-agent-workbench-2026-05-15` `guide.cds-agent-workbench-reproduce` `guide.cds-agent-next-agent-testing` | CDS Agent A10 完成复盘、复现教程、下一代测试与涌现建议 |
 | 2026-05-14 | 新增 | `guide.cds-agent-workbench` `guide.cds-agent-admin` `design.cds-agent-api` `guide.cds-agent-runbook` | CDS Agent 完全可用文档闭环 |

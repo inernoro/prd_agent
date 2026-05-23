@@ -180,6 +180,47 @@ run_step() {
   return 1
 }
 
+cleanup_visual_session() {
+  local session_id="$1"
+  if [[ -z "$session_id" ]]; then
+    return 0
+  fi
+  if [[ "${SMOKE_CDS_AGENT_KEEP_SESSION_AFTER_VISUAL:-}" == "1" ]]; then
+    return 0
+  fi
+  printf 'Cleaning visual evidence session: %s\n' "$session_id"
+  local had_errexit=0 timeout="${SMOKE_TIMEOUT:-20}"
+  [[ "$-" == *e* ]] && had_errexit=1
+  set +e
+  if [[ -n "${AI_ACCESS_KEY:-}" ]]; then
+    curl --max-time "$timeout" --show-error --silent --fail-with-body \
+      -X POST \
+      -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+      -H "X-AI-Impersonate: ${SMOKE_USER:-admin}" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -d '{}' \
+      "$SMOKE_TEST_HOST/api/infra-agent-sessions/${session_id}/stop" \
+      >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-stop-${session_id}.json" 2>/dev/null || true
+    curl --max-time "$timeout" --show-error --silent --fail-with-body \
+      -X POST \
+      -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+      -H "X-AI-Impersonate: ${SMOKE_USER:-admin}" \
+      -H "Content-Type: application/json" \
+      -H "Accept: application/json" \
+      -d '{}' \
+      "$SMOKE_TEST_HOST/api/infra-agent-sessions/${session_id}/archive" \
+      >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-archive-${session_id}.json" 2>/dev/null || true
+  else
+    printf '{"success":false,"error":{"code":"missing_ai_access_key","message":"AI_ACCESS_KEY is required for cleanup"}}\n' \
+      >"$SMOKE_CDS_AGENT_CYCLE_DIR/session-cleanup-skipped-${session_id}.json"
+  fi
+  if (( had_errexit == 1 )); then
+    set -e
+  fi
+  return 0
+}
+
 skip_step() {
   local name="$1"
   local reason="$2"
@@ -955,6 +996,7 @@ elif [[ "$r1_report_status" == "dry_run_requires_api_key" || "$r1_report_status"
   skip_step "S1 official SDK run evidence" "blocked until R1 Anthropic/Claude-compatible profile has a CDS-managed provider secret and is promoted" "provider-gated"
   skip_step "S2/S3 approval and stop controls" "blocked until R1 Anthropic/Claude-compatible profile has a CDS-managed provider secret and is promoted" "provider-gated"
 else
+  export SMOKE_CDS_AGENT_KEEP_SESSION="${SMOKE_CDS_AGENT_KEEP_SESSION:-1}"
   run_step "s1-official-sdk-run" "S1 official SDK run evidence" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-run.sh" "provider-gated" || finish_cycle 1
   run_step "s2-s3-controls" "S2/S3 approval and stop controls" "$SCRIPT_DIR/smoke-cds-agent-official-sdk-controls.sh" "provider-gated" || finish_cycle 1
 fi
@@ -962,10 +1004,22 @@ fi
 if [[ -n "${SMOKE_CDS_AGENT_ACCESS_TOKEN:-}" \
   || ( -n "${SMOKE_CDS_AGENT_LOGIN_USERNAME:-}" && -n "${SMOKE_CDS_AGENT_LOGIN_PASSWORD:-}" ) \
   || -n "${AI_ACCESS_KEY:-}" ]]; then
+  s1_visual_session_id=""
+  if [[ -f "$SMOKE_CDS_AGENT_S1_REPORT" ]]; then
+    s1_visual_session_id=$(jq -r 'select(.status == "pass") | .sessionId // ""' "$SMOKE_CDS_AGENT_S1_REPORT" 2>/dev/null || true)
+  fi
+  if [[ -n "$s1_visual_session_id" ]]; then
+    visual_base="${SMOKE_CDS_AGENT_WORKBENCH_URL:-${SMOKE_TEST_HOST%/}/cds-agent?viewMode=simple}"
+    visual_sep="?"
+    [[ "$visual_base" == *"?"* ]] && visual_sep="&"
+    export SMOKE_CDS_AGENT_WORKBENCH_URL="${visual_base}${visual_sep}sessionId=${s1_visual_session_id}"
+    export SMOKE_CDS_AGENT_EXPECT_TEXT="${SMOKE_CDS_AGENT_EXPECT_TEXT:-只读审查}"
+  fi
   export SMOKE_CDS_AGENT_SCREENSHOT="${SMOKE_CDS_AGENT_SCREENSHOT:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.png}"
   export SMOKE_CDS_AGENT_TEXT_DUMP="${SMOKE_CDS_AGENT_TEXT_DUMP:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.txt}"
   export SMOKE_CDS_AGENT_VISUAL_COVERAGE="${SMOKE_CDS_AGENT_VISUAL_COVERAGE:-$SMOKE_CDS_AGENT_CYCLE_DIR/workbench-visual.coverage.json}"
   run_step "v1-visual" "V1 authenticated workbench visual" "$SCRIPT_DIR/smoke-cds-agent-workbench-visual.sh" "visual" || finish_cycle 1
+  cleanup_visual_session "$s1_visual_session_id"
 else
   skip_step "V1 authenticated workbench visual" "set SMOKE_CDS_AGENT_ACCESS_TOKEN, login username/password, or AI_ACCESS_KEY" "visual"
 fi

@@ -65,6 +65,7 @@ import type {
   DefectWebhookConfig,
   UserStatItem,
   ApiLogPreviewItem,
+  DefectAgentLaunch,
   DefectShareLink,
   DefectFixReport,
   DefectFixReportItem,
@@ -544,7 +545,7 @@ export const previewApiLogsReal: PreviewApiLogsContract = async () => {
 // ========== 分享管理 ==========
 
 export const createDefectShareReal: CreateDefectShareContract = async (input) => {
-  return await apiRequest<{ shareLink: DefectShareLink; shareUrl: string }>(
+  return await apiRequest<{ shareLink: DefectShareLink; shareUrl: string; agentLaunch?: DefectAgentLaunch }>(
     api.defectAgent.shares.list(),
     { method: 'POST', body: input }
   );

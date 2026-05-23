@@ -64,6 +64,7 @@ docs:
   design.defect-agent: 缺陷管理 Agent 功能设计
   design.defect-labels: 缺陷管理标签体系设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
+  design.defect-agent-share-skill-architecture: 缺陷分享与 Agent 技能修复架构
   design.literary-agent: 文学创作 Agent 文章配图功能设计
   design.multi-doc-knowledge: 多文档知识库与文档类型系统设计文档
   design.multi-doc-and-citations: 多文档上下文与引用系统重设计
@@ -249,6 +250,7 @@ docs:
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
+  debt.share-link-security: 分享链接安全债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
@@ -292,3 +294,4 @@ docs:
   report.skill-eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
   report.skill-eval-sample-technical: 文档技能评测·technical-writing 样本输出
   report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
+  report.cds-mongo-log-split-incident-2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）

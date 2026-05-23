@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowRight, Atom, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
-import Aurora from '@/components/effects/reactbits/Aurora';
+import Prism from '@/components/effects/reactbits/Prism';
 import { Button } from '@/components/ui/button';
 
 function redirectTarget(): string {
@@ -43,17 +43,22 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#04050a] text-white">
-      <div className="absolute inset-0 opacity-80">
-        <Aurora
-          colorStops={['#15233f', '#5b6ea8', '#10151f']}
-          amplitude={0.72}
-          blend={0.62}
-          speed={0.22}
+    <main className="relative min-h-screen overflow-hidden bg-[#120F17] text-white">
+      <div className="absolute inset-0">
+        <Prism
+          animationType="rotate"
+          timeScale={0.5}
+          height={3.5}
+          baseWidth={5.5}
+          scale={3.6}
+          hueShift={0}
+          colorFrequency={1}
+          noise={0}
+          glow={1}
+          transparent
         />
       </div>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_16%,rgba(255,255,255,0.12),transparent_34%),linear-gradient(180deg,rgba(4,5,10,0.32),rgba(4,5,10,0.88)_58%,#04050a)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.028)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.028)_1px,transparent_1px)] bg-[size:80px_80px] opacity-25 [mask-image:radial-gradient(circle_at_center,black,transparent_72%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(18,15,23,0.94),rgba(18,15,23,0.68)_45%,rgba(18,15,23,0.22)),linear-gradient(180deg,rgba(18,15,23,0.08),rgba(18,15,23,0.68)_82%,#120F17)]" />
 
       <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_420px]">

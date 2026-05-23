@@ -16,11 +16,25 @@ public class ApiResponse<T>
         Error = null
     };
 
-    public static ApiResponse<T> Fail(string code, string message) => new()
+    public static ApiResponse<T> Fail(
+        string code,
+        string message,
+        string? traceId = null,
+        string? requestId = null,
+        string? source = null,
+        long? elapsedMs = null) => new()
     {
         Success = false,
         Data = default,
-        Error = new ApiError { Code = code, Message = message }
+        Error = new ApiError
+        {
+            Code = code,
+            Message = message,
+            TraceId = traceId,
+            RequestId = requestId,
+            Source = source,
+            ElapsedMs = elapsedMs
+        }
     };
 }
 
@@ -31,6 +45,10 @@ public class ApiError
 {
     public string Code { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+    public string? TraceId { get; set; }
+    public string? RequestId { get; set; }
+    public string? Source { get; set; }
+    public long? ElapsedMs { get; set; }
 }
 
 /// <summary>

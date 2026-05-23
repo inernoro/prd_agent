@@ -1,3 +1,4 @@
+using System.Linq;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -47,6 +48,16 @@ public sealed class AppCallerRegistrySyncService : IHostedService
             .GroupBy(x => x.AppCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        // 预加载可用模型组，用于新 AppCaller 的 chat 自动绑定（必须与 ModelType=chat 对齐）
+        var allModelGroups = await db.ModelGroups.Find(_ => true).ToListAsync(ct);
+        var validGroupIds = new HashSet<string>(allModelGroups.Select(g => g.Id), StringComparer.Ordinal);
+        var defaultChatGroupId = PickDefaultChatModelGroupId(allModelGroups);
+        if (defaultChatGroupId == null)
+        {
+            _logger.LogWarning(
+                "[AppCallerSync] 未找到可用的 chat 模型组（需 ModelType=chat 且至少含 1 个模型），跳过 chat 自动绑定");
+        }
+
         var createdCount = 0;
         var updatedCount = 0;
         var unchangedCount = 0;
@@ -55,13 +66,24 @@ public sealed class AppCallerRegistrySyncService : IHostedService
         {
             if (!existingByCode.TryGetValue(def.AppCode, out var existing))
             {
+                var requirements = BuildDefaultRequirements(def);
+                // 新注册的 AppCaller 若需要 chat 模型，自动绑定环境中第一个可用模型组
+                if (defaultChatGroupId != null)
+                {
+                    foreach (var req in requirements.Where(r => r.ModelType == "chat"))
+                    {
+                        if (req.ModelGroupIds.Count == 0)
+                            req.ModelGroupIds.Add(defaultChatGroupId);
+                    }
+                }
+
                 var app = new LLMAppCaller
                 {
                     Id = Guid.NewGuid().ToString("N"),
                     AppCode = def.AppCode,
                     DisplayName = def.DisplayName,
                     Description = def.Description,
-                    ModelRequirements = BuildDefaultRequirements(def),
+                    ModelRequirements = requirements,
                     IsSystemDefault = true,
                     IsAutoRegistered = false,
                     TotalCalls = 0,
@@ -129,14 +151,48 @@ public sealed class AppCallerRegistrySyncService : IHostedService
                 if (existingTypes.Contains(modelType))
                     continue;
 
-                existing.ModelRequirements.Add(new AppModelRequirement
+                var newReq = new AppModelRequirement
                 {
                     ModelType = modelType,
                     Purpose = $"用于{def.DisplayName}",
                     IsRequired = true,
                     ModelGroupIds = new List<string>()
-                });
+                };
+                // 新增 chat 类型 requirement 时自动绑定环境内首个非视频 chat 模型组
+                if (defaultChatGroupId != null && string.Equals(modelType, "chat", StringComparison.OrdinalIgnoreCase))
+                {
+                    newReq.ModelGroupIds.Add(defaultChatGroupId);
+                }
+                existing.ModelRequirements.Add(newReq);
                 changed = true;
+            }
+
+            // 防御性回填：chat 的 ModelGroupIds 为空，或引用的组 ID 已从库中删除（脏数据），
+            // 自动绑定默认 chat 模型组，避免 Gateway 解析失败
+            if (defaultChatGroupId != null)
+            {
+                foreach (var req in existing.ModelRequirements
+                             .Where(r => string.Equals(r.ModelType, "chat", StringComparison.OrdinalIgnoreCase)))
+                {
+                    req.ModelGroupIds ??= new List<string>();
+                    var beforeCount = req.ModelGroupIds.Count;
+                    req.ModelGroupIds = req.ModelGroupIds.Where(id => validGroupIds.Contains(id)).Distinct().ToList();
+                    if (req.ModelGroupIds.Count == 0)
+                    {
+                        req.ModelGroupIds.Add(defaultChatGroupId);
+                        changed = true;
+                        _logger.LogInformation(
+                            "[AppCallerSync] 自动回填 chat 模型组绑定: {AppCode} (清理后 {Before}->{After}) -> {GroupId}",
+                            existing.AppCode, beforeCount, req.ModelGroupIds.Count, defaultChatGroupId);
+                    }
+                    else if (beforeCount != req.ModelGroupIds.Count)
+                    {
+                        changed = true;
+                        _logger.LogInformation(
+                            "[AppCallerSync] 移除无效 chat 模型组引用: {AppCode} 保留 {Count} 个有效 ID",
+                            existing.AppCode, req.ModelGroupIds.Count);
+                    }
+                }
             }
 
             if (!changed)
@@ -164,5 +220,32 @@ public sealed class AppCallerRegistrySyncService : IHostedService
             IsRequired = true,
             ModelGroupIds = new List<string>()
         }).ToList();
+    }
+
+    /// <summary>
+    /// 为 chat 类 AppCaller 选择默认模型组：优先 IsDefaultForType 的 chat 池，其次任意含模型的 chat 池。
+    /// 禁止用非 chat 类型的分组冒充，否则 Gateway 仍无法解析。
+    /// </summary>
+    private static string? PickDefaultChatModelGroupId(IReadOnlyList<ModelGroup> groups)
+    {
+        var chatCandidates = groups
+            .Where(g => string.Equals(g.ModelType, "chat", StringComparison.OrdinalIgnoreCase))
+            .Where(g => g.Models is { Count: > 0 })
+            .ToList();
+
+        if (chatCandidates.Count == 0)
+            return null;
+
+        var preferred = chatCandidates.FirstOrDefault(g => g.IsDefaultForType);
+        if (preferred != null)
+            return preferred.Id;
+
+        return chatCandidates
+            .Where(g => !string.Equals(g.Name, "videogen-default", StringComparison.OrdinalIgnoreCase))
+            .Where(g => g.Name?.Contains("video", StringComparison.OrdinalIgnoreCase) != true)
+            .OrderBy(g => g.Priority)
+            .Select(g => g.Id)
+            .FirstOrDefault()
+            ?? chatCandidates.OrderBy(g => g.Priority).Select(g => g.Id).FirstOrDefault();
     }
 }

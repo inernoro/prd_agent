@@ -603,6 +603,39 @@ export interface DefectShareLink {
   aiScoreCount?: number;
 }
 
+export interface DefectAgentLaunch {
+  version: string;
+  domain: string;
+  auth: {
+    type: string;
+    header: string;
+    scheme?: string;
+    env?: string;
+    fallbackHeader?: string;
+    obtainUrl?: string;
+    requiredScope?: string;
+    note?: string;
+  };
+  scope: {
+    shareToken: string;
+    shareUrl: string;
+    type: 'single' | 'project' | 'selected';
+    defectIds?: string[] | null;
+    projectId?: string | null;
+    projectName?: string | null;
+    defectCount?: number | null;
+    expiresAt: string;
+  };
+  skill: {
+    name: string;
+    minVersion: string;
+    priority: string[];
+    downloadUrl: string;
+    rule?: string;
+  };
+  prompt: string;
+}
+
 /**
  * AI 评分条目
  */
@@ -656,7 +689,7 @@ export type CreateDefectShareContract = (input: {
   projectId?: string;
   title?: string;
   expiresInDays?: number;
-}) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
+}) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string; agentLaunch?: DefectAgentLaunch }>>;
 
 export type ListDefectSharesContract = () => Promise<ApiResponse<{ items: DefectShareLink[] }>>;
 

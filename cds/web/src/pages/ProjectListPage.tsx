@@ -1,5 +1,17 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
+import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
+import goIconUrl from 'devicon/icons/go/go-original.svg';
+import javaIconUrl from 'devicon/icons/java/java-original.svg';
+import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
+import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
+import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
+import phpIconUrl from 'devicon/icons/php/php-original.svg';
+import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
+import pythonIconUrl from 'devicon/icons/python/python-original.svg';
+import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
+import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
+import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import {
   AlertTriangle,
   ArrowRight,
@@ -1234,67 +1246,28 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
+function DeviconIcon({ src }: { src: string }): JSX.Element {
+  return <img aria-hidden alt="" className="cds-project-node-icon cds-project-node-devicon" draggable={false} src={src} />;
+}
+
 function MongoIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path
-        d="M12.2 2.2c3.4 2.6 5.1 5.9 5.1 9.8 0 4.1-1.9 7.1-5 9.4-3.1-2.3-4.9-5.3-4.9-9.4 0-3.9 1.6-7.2 4.8-9.8Z"
-        fill="currentColor"
-        opacity="0.95"
-      />
-      <path d="M12.2 5.5v13.8" stroke="hsl(var(--surface-sunken))" strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
-    </svg>
-  );
+  return <DeviconIcon src={mongoIconUrl} />;
 }
 
 function RedisIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path d="M4 7.5 12 4l8 3.5-8 3.5L4 7.5Z" fill="currentColor" />
-      <path d="m4 11 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-      <path d="m4 15 8 3.5 8-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-    </svg>
-  );
+  return <DeviconIcon src={redisIconUrl} />;
 }
 
 function MysqlIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path
-        d="M4.4 14.1c2.9-6.4 8.5-7.9 15.2-6.3-2.1.8-3.6 2.2-4.6 4.2 1.9.2 3.4 1 4.4 2.4-3.6.8-7 .7-10.1-.4-1.8-.6-3.4-.6-4.9.1Z"
-        fill="currentColor"
-      />
-      <path d="M5.2 16.4c3.9 1.9 8 2.2 12.5.9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <DeviconIcon src={mysqlIconUrl} />;
 }
 
 function PostgresIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path
-        d="M6.8 5.2c1.3-1.4 3.1-2.1 5.2-2.1s3.9.7 5.2 2.1c1.2 1.3 1.8 3.2 1.8 5.4 0 2.6-.9 4.7-2.6 6.4l.8 2.8-2.9-1.1c-.7.3-1.5.4-2.3.4-2.1 0-3.9-.7-5.2-2.1C5.6 15.7 5 13.8 5 11.6s.6-4.1 1.8-6.4Z"
-        fill="currentColor"
-      />
-      <path
-        d="M8.8 10.2c.5-1.4 1.5-2.2 3.2-2.2s2.7.8 3.2 2.2M9.5 13.6c1.5.9 3.5.9 5 0"
-        fill="none"
-        stroke="hsl(var(--surface-sunken))"
-        strokeWidth="1.35"
-        strokeLinecap="round"
-        opacity="0.82"
-      />
-    </svg>
-  );
+  return <DeviconIcon src={postgresIconUrl} />;
 }
 
 function RabbitIcon(): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <path d="M7 7.5V4.2h2.8v6.1h1.8V4.2h2.8v6.1H17c1.7 0 3 1.3 3 3v4.5H4v-7.5h3Z" fill="currentColor" />
-      <path d="M7.4 15.1h9.2" stroke="hsl(var(--surface-sunken))" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
-    </svg>
-  );
+  return <DeviconIcon src={rabbitIconUrl} />;
 }
 
 function MilvusIcon(): JSX.Element {
@@ -1318,14 +1291,6 @@ function VectorDbIcon(): JSX.Element {
   );
 }
 
-function WordmarkIcon({ text }: { text: string }): JSX.Element {
-  return (
-    <span aria-hidden className="font-mono text-xs font-extrabold leading-none tracking-normal">
-      {text}
-    </span>
-  );
-}
-
 function MinioIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
@@ -1343,31 +1308,31 @@ function MinioIcon(): JSX.Element {
 }
 
 function DotnetIcon(): JSX.Element {
-  return <WordmarkIcon text=".NET" />;
+  return <DeviconIcon src={dotnetIconUrl} />;
 }
 
 function NodeIcon(): JSX.Element {
-  return <WordmarkIcon text="JS" />;
+  return <DeviconIcon src={nodeIconUrl} />;
 }
 
 function PythonIcon(): JSX.Element {
-  return <WordmarkIcon text="PY" />;
+  return <DeviconIcon src={pythonIconUrl} />;
 }
 
 function JavaIcon(): JSX.Element {
-  return <WordmarkIcon text="JV" />;
+  return <DeviconIcon src={javaIconUrl} />;
 }
 
 function GoIcon(): JSX.Element {
-  return <WordmarkIcon text="GO" />;
+  return <DeviconIcon src={goIconUrl} />;
 }
 
 function RustIcon(): JSX.Element {
-  return <WordmarkIcon text="RS" />;
+  return <DeviconIcon src={rustIconUrl} />;
 }
 
 function PhpIcon(): JSX.Element {
-  return <WordmarkIcon text="PHP" />;
+  return <DeviconIcon src={phpIconUrl} />;
 }
 
 function NacosIcon(): JSX.Element {
