@@ -324,6 +324,9 @@ public static class AdminPermissionCatalog
 
         new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
 
+        new(ProjectRouteAgentUse, "项目路由智能体", "上传方案 md，自动识别应用/模块并定位仓库 routemap 项目路径"),
+        new(ProjectRouteAgentManage, "项目路由智能体-管理", "维护公共站点说明 md 与仓库登记"),
+
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
         new(ShortLinksManage, "短链管理", "系统设置 → 查看/吊销所有用户的 /s/{seq} 短链"),

@@ -1,0 +1,124 @@
+import { apiRequest } from './apiClient';
+import type { ApiResponse } from '@/types/api';
+
+export interface ProjectRouteRepoEntry {
+  appName: string;
+  aliases: string[];
+  repoUrl: string;
+  branch: string;
+  routemapPath: string;
+  notes?: string | null;
+}
+
+export interface ProjectRouteSiteSpec {
+  id: string;
+  title: string;
+  markdownContent: string;
+  repos: ProjectRouteRepoEntry[];
+  isActive: boolean;
+  createdBy: string;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ProjectRouteResolutionStatus = 'Hit' | 'NotFound' | 'Ambiguous';
+
+export interface ProjectRouteResolution {
+  appOrModule: string;
+  repoUrl?: string | null;
+  repoAppName?: string | null;
+  projectPaths: string[];
+  reasoning?: string | null;
+  status: ProjectRouteResolutionStatus;
+}
+
+export type ProjectRoutePlanStatus = 'Queued' | 'Running' | 'Done' | 'Error';
+
+export interface ProjectRoutePlan {
+  id: string;
+  submitterId: string;
+  submitterName: string;
+  title: string;
+  attachmentId: string;
+  fileName: string;
+  extractedContent?: string | null;
+  siteSpecId?: string | null;
+  extractedApps: string[];
+  extractedModules: string[];
+  resolutions: ProjectRouteResolution[];
+  status: ProjectRoutePlanStatus;
+  errorMessage?: string | null;
+  model?: string | null;
+  modelPlatform?: string | null;
+  submittedAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+// ──────────────────────────────────────────────
+// 公共站点说明（管理员）
+// ──────────────────────────────────────────────
+
+export async function getActiveSiteSpec(): Promise<
+  ApiResponse<{ siteSpec: ProjectRouteSiteSpec | null }>
+> {
+  return apiRequest('/api/project-route-agent/site-spec');
+}
+
+export async function upsertSiteSpec(payload: {
+  title: string;
+  markdownContent: string;
+  repos: ProjectRouteRepoEntry[];
+}): Promise<ApiResponse<{ siteSpec: ProjectRouteSiteSpec; mode: 'created' | 'updated' }>> {
+  return apiRequest('/api/project-route-agent/site-spec', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+// ──────────────────────────────────────────────
+// 方案 plans
+// ──────────────────────────────────────────────
+
+export async function createPlan(
+  title: string,
+  attachmentId: string
+): Promise<ApiResponse<{ plan: ProjectRoutePlan }>> {
+  return apiRequest('/api/project-route-agent/plans', {
+    method: 'POST',
+    body: { title, attachmentId },
+  });
+}
+
+export async function listMyPlans(
+  page = 1,
+  pageSize = 50
+): Promise<
+  ApiResponse<{ items: ProjectRoutePlan[]; total: number; page: number; pageSize: number }>
+> {
+  const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  return apiRequest(`/api/project-route-agent/plans?${params}`);
+}
+
+export async function getPlan(
+  id: string
+): Promise<ApiResponse<{ plan: ProjectRoutePlan }>> {
+  return apiRequest(`/api/project-route-agent/plans/${encodeURIComponent(id)}`);
+}
+
+export async function deletePlan(
+  id: string
+): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/project-route-agent/plans/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * 分析阶段 SSE 流地址（不带 ?afterSeq；这是内联 SSE，断线就要重发）。
+ * useSseStream 会自动附 Authorization 头。
+ */
+export function getAnalyzeStreamUrl(planId: string): string {
+  return `/api/project-route-agent/plans/${encodeURIComponent(planId)}/analyze/stream`;
+}

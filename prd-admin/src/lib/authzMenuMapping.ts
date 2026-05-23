@@ -261,6 +261,8 @@ export const allPermissions: PermissionDef[] = [
   { key: 'review-agent.use', label: '产品评审智能体', description: '提交方案并查看自己的评审结果', category: 'use' },
   { key: 'review-agent.view-all', label: '产品评审智能体 - 查看全部', description: '查看所有提交记录和评审结果', category: 'read' },
   { key: 'review-agent.manage', label: '产品评审智能体 - 管理', description: '自定义评审维度配置', category: 'manage' },
+  { key: 'project-route-agent.use', label: '项目路由智能体', description: '上传方案并查看自己的路径解析结果', category: 'use' },
+  { key: 'project-route-agent.manage', label: '项目路由智能体 - 管理', description: '维护公共站点说明 + 仓库登记表', category: 'manage' },
   { key: 'pr-review.use', label: 'PR 审查智能体', description: '基于每用户 GitHub OAuth 的 PR 审查（任意团队）', category: 'use' },
   { key: 'defect-agent.use', label: '缺陷管理智能体', description: '提交和查看缺陷', category: 'use' },
   { key: 'defect-agent.manage', label: '缺陷管理智能体 - 管理', description: '设置模板、指派处理人', category: 'manage' },

@@ -109,6 +109,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PrReviewUse,
                 AdminPermissionCatalog.EmergenceAgentUse,
                 AdminPermissionCatalog.PaAgentUse,
+                AdminPermissionCatalog.ProjectRouteAgentUse,
                 // PRD Agent 读取提示词需要 settings.read，但不应默认展示"提示词管理"（前端已改为 prompts.write 才可见）
                 AdminPermissionCatalog.SettingsRead,
                 // 网页托管（基础功能，人人可用）
