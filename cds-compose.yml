@@ -104,6 +104,10 @@ services:
     labels:
       cds.path-prefix: "/api/"
       cds.readiness-path: "/health"
+      # api 静态模式 dotnet restore + build 冷启动 5-12 min；默认 ~90 s probe 必现超时。
+      # 与 admin 保持一致使用 1200 s 上限，给冷构建留足余量。
+      cds.readiness-timeout: "1200"
+      cds.readiness-interval: "3"
 
   admin:
     image: node:20-slim
