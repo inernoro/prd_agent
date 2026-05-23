@@ -368,7 +368,6 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
 | **skill-validation** | `/validate` | 输入需求描述 → 检测模糊/不完整/不可测试等 8 种气味，排查与已有功能重复，输出七维度评分报告 |
-| **product-review** | `/product-review` | 输入产品方案 Markdown → 按产品评审员口径输出 100 分制严格评分、分项依据、全局规则清单核查与修改建议 |
 | **plan-first** | `/plan-first` | 输入任务描述 → 输出实施方案和影响分析，等用户确认后才执行代码变更 |
 | **risk-matrix** | `/risk` | 输入功能变更范围 → 按 MECE 原则评估六维度风险（正确性/兼容/性能/安全/运维/体验），输出风险矩阵表 |
 | **flow-trace** | `/trace` | 输入功能名 → 追踪从前端到数据库的完整数据流和控制流，输出端到端路径图（大白话版 + 技术版） |
