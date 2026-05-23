@@ -1154,17 +1154,64 @@ ${shouldAutoRefresh ? `;(function(){
 <title>启动失败 — ${safe}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
-h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
-.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
-.desc{font-size:13px;color:#8b949e;line-height:1.6}
+	:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--danger:#fca5a5;--sync:#22c55e}
+	html,body{min-height:100%}
+	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
+	.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
+	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 52% 46%,rgba(255,255,255,.08),transparent 36%,rgba(18,15,23,.82) 100%),linear-gradient(90deg,rgba(18,15,23,.88),rgba(18,15,23,.2) 48%,rgba(18,15,23,.82));z-index:1}
+	.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
+	.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
+	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
+	.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 16px var(--danger);animation:pulse 1.8s ease-in-out infinite}
+	h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bottom:22px;max-width:100%}
+	.shiny-text{display:inline-block;background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
+	.desc{max-width:600px;color:var(--muted);font-size:clamp(15px,1.35vw,20px);line-height:1.75;margin-bottom:28px}
+	.chip{position:relative;overflow:hidden;display:inline-flex;max-width:min(720px,88vw);align-items:center;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.035);backdrop-filter:blur(12px);padding:10px 15px;color:#dde3ea;font:600 13px/1.5 "JetBrains Mono","SFMono-Regular",monospace;word-break:break-all}
+	.chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
+	.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+	.btn{border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.035);color:var(--text);padding:10px 16px;text-decoration:none;font-size:13px;font-weight:700}
+	.hint{display:flex;align-items:center;gap:18px;margin-top:28px;font-size:12px;color:var(--muted)}
+	.hint strong{color:#f5f7fa;font-weight:600}
+	.note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
+	.note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:pulse 1.55s ease-in-out infinite}
+	.shape-grid-bg.is-static{background:repeating-linear-gradient(30deg,rgba(255,255,255,.075) 0 1px,transparent 1px 34px),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
+	@keyframes pulse{0%,100%{transform:scale(.86);opacity:.64}50%{transform:scale(1.18);opacity:1}}
+	@keyframes glint{0%,38%{transform:translateX(0) skewX(-18deg);opacity:0}54%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+	@keyframes fallback-pulse{0%,100%{filter:saturate(.9) brightness(.8)}50%{filter:saturate(1.2) brightness(1.1)}}
+	@keyframes shiny-text{0%{background-position:120% 0}100%{background-position:-120% 0}}
+	@media (max-width:760px){.shell{padding:28px;display:flex;align-items:flex-end}.content{width:100%}h1{font-size:44px}.hint{align-items:flex-start;flex-direction:column}}
+	@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
 </style></head><body>
-<div class="card">
-  <h2>启动失败</h2>
-  <div class="branch">${safe}</div>
-  <div class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。<br>请确认分支名称，或回到 CDS 控制台重新部署。</div>
-</div>
+<canvas class="shape-grid-bg" id="shape-grid" aria-hidden="true"></canvas>
+<main class="shell">
+  <section class="content">
+    <div class="eyebrow">CDS Preview Failed</div>
+    <h1><span class="shiny-text">启动失败</span></h1>
+    <p class="desc">该分支在此 CDS 实例上未注册，无法自动恢复。请确认分支名称，或回到 CDS 控制台重新部署。</p>
+    <div class="chip">${safe}</div>
+    <div class="actions">
+      <a class="btn" href="/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+    </div>
+    <div class="hint">
+      <span><strong>CDS 已停止自动恢复</strong> 避免错误分支被动访问后反复部署。</span>
+      <span class="note">CDS Diagnostic Mode</span>
+    </div>
+  </section>
+</main>
+<script>
+(function(){
+  var canvas=document.getElementById('shape-grid');
+  if(!canvas)return;
+  var ctx=canvas.getContext('2d');
+  if(!ctx){canvas.className='shape-grid-bg is-static';return;}
+  var speed=0.39,size=34,offset={x:0,y:0},hexHoriz=size*1.5,hexVert=size*Math.sqrt(3);
+  function resize(){var d=Math.min(window.devicePixelRatio||1,2);canvas.width=Math.max(1,Math.floor(window.innerWidth*d));canvas.height=Math.max(1,Math.floor(window.innerHeight*d));canvas.style.width='100%';canvas.style.height='100%';ctx.setTransform(d,0,0,d,0,0)}
+  function drawHex(cx,cy,r){ctx.beginPath();for(var i=0;i<6;i+=1){var a=Math.PI/3*i,x=cx+r*Math.cos(a),y=cy+r*Math.sin(a);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.closePath()}
+  function draw(){var w=canvas.offsetWidth,h=canvas.offsetHeight;ctx.clearRect(0,0,w,h);offset.x=(offset.x-speed+hexHoriz*2)%(hexHoriz*2);offset.y=(offset.y-speed+hexVert)%hexVert;var colShift=Math.floor(offset.x/hexHoriz),ox=((offset.x%hexHoriz)+hexHoriz)%hexHoriz,oy=((offset.y%hexVert)+hexVert)%hexVert,cols=Math.ceil(w/hexHoriz)+3,rows=Math.ceil(h/hexVert)+3;ctx.lineWidth=1;ctx.strokeStyle='rgba(255,255,255,0.09)';for(var col=-2;col<cols;col+=1){for(var row=-2;row<rows;row+=1){var cx=col*hexHoriz+ox,cy=row*hexVert+((col+colShift)%2!==0?hexVert/2:0)+oy;drawHex(cx,cy,size);ctx.stroke()}}requestAnimationFrame(draw)}
+  resize();window.addEventListener('resize',resize);requestAnimationFrame(draw);
+}());
+</script>
 </body></html>`;
     res.writeHead(404, {
       'Content-Type': 'text/html; charset=utf-8',

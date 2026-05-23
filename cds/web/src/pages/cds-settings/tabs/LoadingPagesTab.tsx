@@ -66,6 +66,14 @@ const loadingPages: LoadingPage[] = [
     scenarios: branchScenarios,
   },
   {
+    id: 'branch-deploy-error',
+    name: '分支部署异常',
+    description: '分支已登记但部署失败、服务异常或容器不可用时展示，使用与启动失败一致的全屏诊断语言。',
+    icon: ServerCrash,
+    kind: 'iframe',
+    endpoint: '/api/loading-pages/cds-waiting-room/preview',
+  },
+  {
     id: 'branch-detail-loading',
     name: '分支详情加载态',
     description: '右侧分支详情抽屉读取数据时展示，避免用户误判为空白。',
@@ -132,9 +140,9 @@ export function LoadingPagesTab(): JSX.Element {
   const previewUrl = useMemo(() => {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
     const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
-    if (page.id === 'cds-waiting-room' || page.id === 'cds-waiting-room-legacy') {
-      params.set('status', scenario?.status || 'building');
-      params.set('branch', page.id === 'cds-waiting-room-legacy' ? 'shape-grid-waiting-backup' : 'reactbits-magic-rings-preview');
+    if (page.id === 'cds-waiting-room' || page.id === 'cds-waiting-room-legacy' || page.id === 'branch-deploy-error') {
+      params.set('status', page.id === 'branch-deploy-error' ? 'error' : scenario?.status || 'building');
+      params.set('branch', page.id === 'cds-waiting-room-legacy' ? 'shape-grid-waiting-backup' : page.id === 'branch-deploy-error' ? 'claude/deploy-error-preview' : 'reactbits-magic-rings-preview');
       params.set('waitingProfile', 'api');
     } else if (page.id === 'branch-gone') {
       params.set('branch', 'claude/deleted-preview-branch-demo');
@@ -228,13 +236,33 @@ export function LoadingPagesTab(): JSX.Element {
             ) : page.id === 'branch-detail-loading' ? (
               <BranchDetailLoadingSkeleton className="h-full min-h-0" />
             ) : page.id === 'preview-preparing' ? (
-              <ShapeGridSkeletonPreview tone="compact" label="预览环境准备中" />
+              <ShapeGridWaitingPreview
+                heading="预览环境准备中"
+                subtitle="CDS 正在打开新的预览窗口，并同步分支运行状态。"
+                branch="preview-handoff"
+                status="准备中"
+                services={['打开窗口', '同步状态']}
+              />
             ) : page.id === 'container-log-loading' ? (
               <ShapeGridSkeletonPreview tone="log" label="正在加载容器日志" />
             ) : page.id === 'cds-home-loading' ? (
-              <ShapeGridSkeletonPreview tone="home" label="CDS 首页正在同步项目状态" />
+              <ShapeGridWaitingPreview
+                compact
+                heading="CDS 首页加载中"
+                subtitle="正在读取项目、分支与运行状态。"
+                branch="project-list"
+                status="同步中"
+                services={['项目列表', '运行状态']}
+              />
             ) : page.id === 'common-loading-block' ? (
-              <ShapeGridSkeletonPreview tone="compact" label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'} />
+              <ShapeGridWaitingPreview
+                compact
+                heading={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'}
+                subtitle="这是普通内容区读取数据时的统一加载状态。"
+                branch="content-block"
+                status="加载中"
+                services={['请求数据', '渲染内容']}
+              />
             ) : (
               <ShapeGridSkeletonPreview label="加载中" />
             )}
@@ -242,6 +270,73 @@ export function LoadingPagesTab(): JSX.Element {
         </div>
       </div>
     </Section>
+  );
+}
+
+function ShapeGridWaitingPreview({
+  heading,
+  subtitle,
+  branch,
+  status,
+  services,
+  compact = false,
+}: {
+  heading: string;
+  subtitle: string;
+  branch: string;
+  status: string;
+  services: string[];
+  compact?: boolean;
+}): JSX.Element {
+  return (
+    <div className="relative h-full overflow-hidden bg-[#120f17] text-[#f7f5ff]">
+      <ShapeGrid
+        className="absolute inset-0 h-full w-full"
+        direction="diagonal"
+        speed={0.39}
+        squareSize={34}
+        shape="hexagon"
+        borderColor="rgba(255,255,255,0.09)"
+        hoverFillColor="rgba(255,255,255,0.035)"
+        hoverTrailAmount={0}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_620px_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
+      <main className="relative z-10 grid h-full grid-cols-[minmax(280px,720px)_minmax(0,1fr)] items-center px-[clamp(36px,6vw,92px)] py-[clamp(32px,7vw,92px)]">
+        <section className="max-w-[720px] [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
+          <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.28em] text-[#ded8ef]">
+            <span className="h-2 w-2 rounded-full bg-white shadow-[0_0_16px_rgba(255,255,255,0.72)]" />
+            CDS Waiting Room
+          </div>
+          <h1 className={cn('max-w-full leading-[0.96] tracking-normal', compact ? 'text-[clamp(34px,4.5vw,62px)]' : 'text-[clamp(42px,5.6vw,82px)]')}>
+            <span className="inline-block bg-[linear-gradient(120deg,rgba(247,245,255,0.76)_0%,rgba(247,245,255,0.76)_38%,#fff_48%,rgba(255,255,255,0.96)_52%,rgba(247,245,255,0.76)_62%,rgba(247,245,255,0.76)_100%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shiny-text_3.2s_linear_infinite]">
+              {heading}
+            </span>
+          </h1>
+          <p className="mt-6 max-w-[580px] text-[clamp(15px,1.45vw,20px)] leading-[1.75] text-white/62">{subtitle}</p>
+          <div className="mt-7 flex flex-wrap gap-3">
+            <span className="rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 font-mono text-xs text-[#dde3ea] backdrop-blur-md">{branch}</span>
+            <span className="rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs text-[#dde3ea] backdrop-blur-md">状态 · {status}</span>
+          </div>
+          <div className="mt-8 flex max-w-[620px] flex-col gap-3">
+            {services.map((service, index) => (
+              <div key={service} className="relative flex items-center gap-3 overflow-hidden border-t border-white/10 py-3 text-[15px]">
+                <span className="h-2 w-2 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
+                <span>{service} · {index === 0 ? '进行中' : '等待中'}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-7 w-[min(620px,100%)] rounded-[18px] border border-white/12 bg-white/[0.035] p-4 backdrop-blur-md">
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/70">
+              <span>预计处理进度</span>
+              <strong className="font-mono text-[15px] text-slate-50">{compact ? '42%' : '68%'}</strong>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+              <span className={cn('block h-full rounded-full bg-[linear-gradient(90deg,#fff,#9f5050)] shadow-[0_0_18px_rgba(255,255,255,0.22)]', compact ? 'w-[42%]' : 'w-[68%]')} />
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }
 
