@@ -46,50 +46,55 @@ export function Field({
 }
 
 export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.Element {
+  return <PartialLoadingPanel label={label} />;
+}
+
+function PartialLoadingPanel({
+  label,
+  detail,
+  className,
+  expanded = false,
+}: {
+  label: string;
+  detail?: ReactNode;
+  className?: string;
+  expanded?: boolean;
+}): JSX.Element {
   return (
-    <div className="cds-shape-panel flex min-h-28 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-      <ShapeGrid className="cds-shape-backdrop" speed={0.12} squareSize={34} hoverTrailAmount={0} />
-      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-      {label}
+    <div
+      className={cn(
+        'cds-shape-panel flex items-center justify-center rounded-md border border-dashed border-border text-muted-foreground',
+        expanded ? 'min-h-[320px] px-8 py-10' : 'min-h-28 px-4 py-5',
+        className,
+      )}
+    >
+      <ShapeGrid
+        className="cds-shape-backdrop"
+        speed={0.1}
+        squareSize={expanded ? 40 : 34}
+        hoverTrailAmount={0}
+      />
+      <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
+        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>{label}</span>
+        </div>
+        {detail ? (
+          <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">{detail}</p>
+        ) : null}
+      </div>
     </div>
   );
 }
 
 export function BranchDetailLoadingSkeleton({ className }: { className?: string }): JSX.Element {
   return (
-    <div
-      className={cn(
-        'relative min-h-[620px] overflow-hidden bg-[#090a0f] px-7 py-7 text-white',
-        className,
-      )}
-    >
-      <ShapeGrid
-        className="absolute inset-0 h-full w-full opacity-55"
-        direction="diagonal"
-        speed={0.39}
-        squareSize={34}
-        shape="hexagon"
-        borderColor="rgba(255,255,255,0.052)"
-        hoverFillColor="rgba(255,255,255,0.035)"
-        hoverTrailAmount={0}
-      />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_56%_44%,rgba(255,255,255,0.035),transparent_34%),linear-gradient(90deg,rgba(9,10,15,0.94),rgba(9,10,15,0.58)_46%,rgba(9,10,15,0.92))]" />
-      <div className="relative z-10 space-y-8">
-        <div className="flex flex-wrap items-center gap-5">
-          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px]" />
-          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px] opacity-90" />
-          <div className="cds-loading-skeleton-line h-[74px] w-[170px] rounded-[20px] opacity-80" />
-        </div>
-
-        <div className="cds-loading-skeleton-panel h-[min(66vh,760px)] min-h-[430px] rounded-[28px]" />
-
-        <div className="space-y-7 pb-10">
-          <div className="cds-loading-skeleton-line h-11 w-[28%] min-w-72 rounded-[18px]" />
-          <div className="cds-loading-skeleton-line h-11 w-[38%] min-w-96 rounded-[18px] opacity-88" />
-          <div className="cds-loading-skeleton-line h-11 w-[30%] min-w-80 rounded-[18px] opacity-74" />
-        </div>
-      </div>
-    </div>
+    <PartialLoadingPanel
+      className={className}
+      expanded
+      label="加载分支详情"
+      detail="正在读取分支状态、服务拓扑、最近部署记录和运行日志索引。"
+    />
   );
 }
 

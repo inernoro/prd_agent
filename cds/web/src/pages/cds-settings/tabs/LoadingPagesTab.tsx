@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
+import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
@@ -19,9 +19,22 @@ type LoadingPage = {
   description: string;
   icon: typeof Monitor;
   kind: 'iframe' | 'local';
+  scope: 'fullscreen' | 'partial';
+  outcome: 'running' | 'failed';
   endpoint?: string;
   href?: string;
   scenarios?: LoadingScenario[];
+};
+
+type LoadingPageGroup = {
+  id: 'fullscreen' | 'partial';
+  label: string;
+  description: string;
+  sections: Array<{
+    id: 'running' | 'failed';
+    label: string;
+    pages: LoadingPage[];
+  }>;
 };
 
 const branchScenarios: LoadingScenario[] = [
@@ -62,6 +75,8 @@ const loadingPages: LoadingPage[] = [
     description: '预览域名访问到构建中、启动中、热重启或上游窗口期时展示。内部细节统一收敛到此页。',
     icon: Monitor,
     kind: 'iframe',
+    scope: 'fullscreen',
+    outcome: 'running',
     endpoint: '/api/loading-pages/cds-waiting-room/preview',
     scenarios: branchScenarios,
   },
@@ -71,6 +86,8 @@ const loadingPages: LoadingPage[] = [
     description: '分支已登记但部署失败、服务异常或容器不可用时展示，使用与启动失败一致的全屏诊断语言。',
     icon: ServerCrash,
     kind: 'iframe',
+    scope: 'fullscreen',
+    outcome: 'failed',
     endpoint: '/api/loading-pages/cds-waiting-room/preview',
   },
   {
@@ -79,6 +96,8 @@ const loadingPages: LoadingPage[] = [
     description: '右侧分支详情抽屉读取数据时展示，避免用户误判为空白。',
     icon: SplitSquareVertical,
     kind: 'local',
+    scope: 'partial',
+    outcome: 'running',
   },
   {
     id: 'container-log-loading',
@@ -86,6 +105,8 @@ const loadingPages: LoadingPage[] = [
     description: '部署页读取 docker logs 时展示，避免日志区域突然空白。',
     icon: GitBranch,
     kind: 'local',
+    scope: 'partial',
+    outcome: 'running',
   },
   {
     id: 'preview-preparing',
@@ -93,6 +114,8 @@ const loadingPages: LoadingPage[] = [
     description: '点击预览后新窗口短暂出现的 CDS 全屏准备页，使用“构建等待页（备用）”的 Shape Grid 背景。',
     icon: ExternalLink,
     kind: 'local',
+    scope: 'fullscreen',
+    outcome: 'running',
   },
   {
     id: 'common-loading-block',
@@ -100,6 +123,8 @@ const loadingPages: LoadingPage[] = [
     description: '复用 LoadingBlock 的列表、详情、日志与设置加载状态，统一纳入预览。',
     icon: GitBranch,
     kind: 'local',
+    scope: 'partial',
+    outcome: 'running',
     scenarios: commonLoadingScenarios,
   },
   {
@@ -108,6 +133,17 @@ const loadingPages: LoadingPage[] = [
     description: '控制台首页或项目列表首次读取项目状态时的内容加载态，不再误用预览分支等待页。',
     icon: Home,
     kind: 'local',
+    scope: 'partial',
+    outcome: 'running',
+  },
+  {
+    id: 'common-error-block',
+    name: '局部错误提示',
+    description: '内容块请求失败时的轻量错误状态，保留网格背景和清晰前缀，不进入全屏故障页。',
+    icon: AlertCircle,
+    kind: 'local',
+    scope: 'partial',
+    outcome: 'failed',
   },
   {
     id: 'cds-waiting-room-legacy',
@@ -115,6 +151,8 @@ const loadingPages: LoadingPage[] = [
     description: '保留上一版 ShapeGrid 构建等待页，用于备用方案对照。',
     icon: Monitor,
     kind: 'iframe',
+    scope: 'fullscreen',
+    outcome: 'running',
     endpoint: '/api/loading-pages/cds-waiting-room-legacy/preview',
     scenarios: branchScenarios,
   },
@@ -124,7 +162,30 @@ const loadingPages: LoadingPage[] = [
     description: '访问已删除、未部署或不可路由的预览分支时展示，属于不可自动恢复状态。',
     icon: ServerCrash,
     kind: 'iframe',
+    scope: 'fullscreen',
+    outcome: 'failed',
     endpoint: '/api/loading-pages/branch-gone/preview',
+  },
+];
+
+const loadingPageGroups: LoadingPageGroup[] = [
+  {
+    id: 'fullscreen',
+    label: '全屏状态页',
+    description: '预览访问、启动、构建、不可恢复错误等会占满浏览器窗口的状态。',
+    sections: [
+      { id: 'running', label: '进行中 / 可恢复', pages: loadingPages.filter((page) => page.scope === 'fullscreen' && page.outcome === 'running') },
+      { id: 'failed', label: '失败 / 不可恢复', pages: loadingPages.filter((page) => page.scope === 'fullscreen' && page.outcome === 'failed') },
+    ],
+  },
+  {
+    id: 'partial',
+    label: '局部加载块',
+    description: '抽屉、列表、表单、日志等内容区域内的轻量等待或错误块。',
+    sections: [
+      { id: 'running', label: '读取中', pages: loadingPages.filter((page) => page.scope === 'partial' && page.outcome === 'running') },
+      { id: 'failed', label: '失败提示', pages: loadingPages.filter((page) => page.scope === 'partial' && page.outcome === 'failed') },
+    ],
   },
 ];
 
@@ -154,48 +215,64 @@ export function LoadingPagesTab(): JSX.Element {
   return (
     <Section
       title="加载页预览"
-      description="集中查看用户会实际遇到的 CDS 状态页。预览固定使用暗色画布，避免浅色主题下加载动效发虚。"
+      description="集中查看用户会实际遇到的 CDS 状态页。全屏状态页固定按真实暗色画布预览；局部加载块跟随当前主题。"
     >
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] pb-3">
-          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-            {loadingPages.map((item) => {
-              const Icon = item.icon;
-              const active = pageId === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setPageId(item.id);
-                    if (item.scenarios && !item.scenarios.some((entry) => entry.id === scenarioId)) {
-                      setScenarioId(item.scenarios[0]?.id || '');
-                    }
-                  }}
-                  className={cn(
-                    'inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition-colors',
-                    active
-                      ? 'border-primary/45 bg-primary/10 text-foreground'
-                      : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground hover:border-[hsl(var(--hairline-strong))] hover:text-foreground',
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  {item.name}
-                </button>
-              );
-            })}
-          </div>
-
-          <Button type="button" size="sm" variant="outline" onClick={() => setReloadKey((value) => value + 1)}>
-            <RefreshCw />刷新
-          </Button>
-          {previewUrl ? (
-            <Button asChild size="sm" variant="ghost">
-              <a href={previewUrl} target="_blank" rel="noreferrer">
-                <ExternalLink />新窗口
-              </a>
+        <div className="space-y-4 border-b border-[hsl(var(--hairline))] pb-4">
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => setReloadKey((value) => value + 1)}>
+              <RefreshCw />刷新
             </Button>
-          ) : null}
+            {previewUrl ? (
+              <Button asChild size="sm" variant="ghost">
+                <a href={previewUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink />新窗口
+                </a>
+              </Button>
+            ) : null}
+          </div>
+          {loadingPageGroups.map((group) => (
+            <div key={group.id} className="space-y-2">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <div className="text-sm font-semibold">{group.label}</div>
+                <div className="text-xs text-muted-foreground">{group.description}</div>
+              </div>
+              <div className="grid gap-2 lg:grid-cols-2">
+                {group.sections.map((section) => (
+                  <div key={`${group.id}-${section.id}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-2">
+                    <div className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{section.label}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {section.pages.map((item) => {
+                        const Icon = item.icon;
+                        const active = pageId === item.id;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setPageId(item.id);
+                              if (item.scenarios && !item.scenarios.some((entry) => entry.id === scenarioId)) {
+                                setScenarioId(item.scenarios[0]?.id || '');
+                              }
+                            }}
+                            className={cn(
+                              'inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition-colors',
+                              active
+                                ? 'border-primary/45 bg-primary/10 text-foreground'
+                                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/65 text-muted-foreground hover:border-[hsl(var(--hairline-strong))] hover:text-foreground',
+                            )}
+                          >
+                            <Icon className="h-4 w-4" />
+                            {item.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -225,7 +302,15 @@ export function LoadingPagesTab(): JSX.Element {
         </div>
 
         <div className="overflow-hidden rounded-none bg-transparent">
-          <div data-theme="dark" className="relative aspect-[16/9] min-h-[520px] w-full overflow-hidden bg-[#08070d] text-white">
+          <div
+            data-theme={page.scope === 'fullscreen' ? 'dark' : undefined}
+            className={cn(
+              'relative w-full overflow-hidden',
+              page.scope === 'fullscreen'
+                ? 'aspect-[16/9] min-h-[520px] bg-[#08070d] text-white'
+                : 'min-h-[220px] bg-transparent text-foreground',
+            )}
+          >
             {page.kind === 'iframe' ? (
               <iframe
                 key={previewUrl}
@@ -255,13 +340,13 @@ export function LoadingPagesTab(): JSX.Element {
                 services={['项目列表', '运行状态']}
               />
             ) : page.id === 'common-loading-block' ? (
-              <ShapeGridWaitingPreview
-                compact
-                heading={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'}
-                subtitle="这是普通内容区读取数据时的统一加载状态。"
-                branch="content-block"
-                status="加载中"
-                services={['请求数据', '渲染内容']}
+              <ShapeGridSkeletonPreview
+                label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'}
+              />
+            ) : page.id === 'common-error-block' ? (
+              <PartialErrorPreview
+                label="读取失败"
+                detail="请求返回异常或会话过期时，在当前内容区域内给出明确提示。"
               />
             ) : (
               <ShapeGridSkeletonPreview label="加载中" />
@@ -342,61 +427,59 @@ function ShapeGridWaitingPreview({
 
 function ShapeGridSkeletonPreview({
   label,
-  tone = 'detail',
+  tone = 'compact',
 }: {
   label: string;
   tone?: 'detail' | 'compact' | 'log' | 'home';
 }): JSX.Element {
-  const showCenterLabel = tone === 'compact' || tone === 'log' || tone === 'home';
+  const expanded = tone === 'detail' || tone === 'home';
 
   return (
-    <div className="relative h-full overflow-hidden bg-[#090a0f] text-white">
+    <div
+      className={cn(
+        'cds-shape-panel flex items-center justify-center rounded-md border border-dashed border-border text-muted-foreground',
+        expanded ? 'min-h-[320px] px-8 py-10' : 'min-h-[168px] px-4 py-5',
+      )}
+    >
       <ShapeGrid
-        className="absolute inset-0 h-full w-full"
+        className="cds-shape-backdrop"
         direction="diagonal"
-        speed={0.39}
-        squareSize={34}
-        shape="hexagon"
-        borderColor="rgba(255,255,255,0.052)"
-        hoverFillColor="rgba(255,255,255,0.035)"
+        speed={0.1}
+        squareSize={expanded ? 40 : 34}
         hoverTrailAmount={0}
       />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_55%_44%,rgba(255,255,255,0.035),transparent_36%),linear-gradient(90deg,rgba(9,10,15,0.96),rgba(9,10,15,0.62)_48%,rgba(9,10,15,0.93))]" />
-      <div className="relative z-10 h-full px-[clamp(28px,4.2vw,64px)] py-[clamp(24px,3.6vw,52px)]">
-        <div className="flex flex-wrap items-center gap-5">
-          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px]" />
-          <div className="cds-loading-skeleton-line h-[74px] w-[194px] rounded-[20px] opacity-90" />
-          <div className="cds-loading-skeleton-line h-[74px] w-[170px] rounded-[20px] opacity-80" />
+      <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
+        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
+          <span className="h-4 w-4 rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground/70 animate-spin" />
+          <span>{label}</span>
         </div>
-
-        <div
-          className={cn(
-            'cds-loading-skeleton-panel relative mt-12 rounded-[28px]',
-            tone === 'log' ? 'h-[58%]' : 'h-[64%]',
-            tone === 'home' ? 'max-w-[88%]' : 'w-full',
-          )}
-        >
-          {showCenterLabel ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="inline-flex items-center gap-3 rounded-xl border border-white/8 bg-black/12 px-5 py-3 text-[clamp(15px,1.6vw,22px)] text-white/42 backdrop-blur-sm">
-                <span className="h-5 w-5 rounded-full border-2 border-white/22 border-t-white/58 animate-spin" />
-                {label}
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-12 space-y-7 pb-4">
-          <div className="cds-loading-skeleton-line h-11 w-[28%] min-w-72 rounded-[18px]" />
-          <div className="cds-loading-skeleton-line h-11 w-[38%] min-w-96 rounded-[18px] opacity-88" />
-          <div className="cds-loading-skeleton-line h-11 w-[30%] min-w-80 rounded-[18px] opacity-74" />
-        </div>
-
-        {!showCenterLabel ? (
-          <div className="sr-only" aria-live="polite">
-            {label}
-          </div>
+        {expanded ? (
+          <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">
+            CDS 正在读取当前区域所需的数据，完成后会在原位置替换为真实内容。
+          </p>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PartialErrorPreview({ label, detail }: { label: string; detail: string }): JSX.Element {
+  return (
+    <div className="cds-shape-panel flex min-h-[168px] items-center justify-center rounded-md border border-dashed border-destructive/35 px-4 py-5 text-destructive">
+      <ShapeGrid
+        className="cds-shape-backdrop"
+        speed={0.08}
+        squareSize={34}
+        borderColor="hsl(var(--destructive) / 0.16)"
+        hoverFillColor="hsl(var(--destructive) / 0.08)"
+        hoverTrailAmount={0}
+      />
+      <div className="relative z-10 flex max-w-xl items-center gap-3">
+        <AlertCircle className="h-5 w-5 shrink-0" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">{label}</div>
+          <div className="mt-1 text-sm leading-6 text-destructive/75">{detail}</div>
+        </div>
       </div>
     </div>
   );
