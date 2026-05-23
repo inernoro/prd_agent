@@ -254,6 +254,14 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(400);
     });
 
+    it('rejects URL-like branch names before creating a worktree', async () => {
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'https/github.com/inernoro/prd_agent/pull/611',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toBe('invalid_branch_name');
+    });
+
     it('should return 409 if branch already exists', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
@@ -293,6 +301,24 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(409);
       // Error must reference the *existing* id, not the new-formula one.
       expect((res.body as any).error).toContain('"main"');
+    });
+
+    it('refuses to deploy a branch that was already stored with an invalid URL-like name', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'bad-url-branch',
+        projectId: 'default',
+        branch: 'https/github.com/inernoro/prd_agent/pull/611',
+        worktreePath: '/tmp/wt/bad-url-branch',
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/bad-url-branch/deploy');
+
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toBe('invalid_branch_name');
     });
   });
 
@@ -1099,10 +1125,9 @@ describe('Branch Routes', () => {
 
       expect(res.status).toBe(503);
       expect(res.body).toContain('CDS Waiting Room');
-      expect(res.body).toContain('shape-grid-bg');
-      expect(res.body).toContain('id="shape-grid"');
-      expect(res.body).toContain('data-shape="hexagon"');
-      expect(res.body).toContain('data-speed="0.39"');
+      expect(res.body).toContain('magic-rings-bg');
+      expect(res.body).toContain('id="magic-rings"');
+      expect(res.body).toContain('id="magic-rings-fragment"');
       expect(res.body).not.toContain('rings-orbit');
       expect(res.body).not.toContain('class="panel"');
       expect(res.body).toContain('分支环境正在构建');

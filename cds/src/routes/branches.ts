@@ -27,7 +27,7 @@ import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
-import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
@@ -2235,6 +2235,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
       }
+      if (!isAllowedCdsBranchName(branch)) {
+        res.status(400).json({
+          error: 'invalid_branch_name',
+          message: '分支名称必须是真实 Git branch，不能是 URL、PR 链接或 GitHub 页面路径。',
+        });
+        return;
+      }
 
       // P4 Part 3b: if the Dashboard passes projectId in the body, stamp
       // it on the new branch so project-scoped list queries can find it.
@@ -3151,6 +3158,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    if (!isAllowedCdsBranchName(entry.branch)) {
+      res.status(400).json({
+        error: 'invalid_branch_name',
+        message: `拒绝部署非法分支名: ${entry.branch}`,
+      });
+      return;
+    }
     {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
@@ -3971,6 +3985,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    if (!isAllowedCdsBranchName(entry.branch)) {
+      res.status(400).json({
+        error: 'invalid_branch_name',
+        message: `拒绝部署非法分支名: ${entry.branch}`,
+      });
       return;
     }
 

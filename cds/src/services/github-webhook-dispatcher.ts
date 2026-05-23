@@ -55,6 +55,26 @@ export function isSafeGitRef(ref: string): boolean {
   return true;
 }
 
+/**
+ * Product-level branch policy. This is intentionally stricter than
+ * isSafeGitRef(): a ref can be shell-safe but still be a URL/PR link
+ * accidentally pasted or pushed as a branch name. CDS should not turn
+ * those into preview environments.
+ */
+export function isAllowedCdsBranchName(ref: string): boolean {
+  if (!isSafeGitRef(ref)) return false;
+  const lower = ref.toLowerCase();
+  if (lower.startsWith('http/')) return false;
+  if (lower.startsWith('https/')) return false;
+  if (lower.startsWith('http:')) return false;
+  if (lower.startsWith('https:')) return false;
+  if (lower.includes('github.com/')) return false;
+  if (/(^|\/)pull\/\d+($|\/)/i.test(ref)) return false;
+  if (/(^|\/)pulls\/\d+($|\/)/i.test(ref)) return false;
+  if (/(^|\/)issues\/\d+($|\/)/i.test(ref)) return false;
+  return true;
+}
+
 export interface WebhookDispatchResult {
   /** Machine-readable outcome. */
   action:
@@ -675,6 +695,12 @@ export class GitHubWebhookDispatcher {
       return {
         action: 'ignored-event',
         message: `Rejected unsafe branch name from webhook: ${branchName.slice(0, 80)}`,
+      };
+    }
+    if (!isAllowedCdsBranchName(branchName)) {
+      return {
+        action: 'ignored-event',
+        message: `Rejected non-branch ref from webhook: ${branchName.slice(0, 120)}`,
       };
     }
     // commitSha must be a 40-hex git SHA. Rejecting anything else
