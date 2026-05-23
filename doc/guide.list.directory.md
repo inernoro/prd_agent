@@ -42,6 +42,9 @@
 - [私人执行助理（PA Agent）产品方案](spec.pa-agent) `spec.pa-agent`
   > PA Agent 产品定位、Phase 1 能力与路线图，可独立下载评审
 
+- [毒舌秘书：PA Agent 最小可行升级方案](spec.pa-agent-savage-upgrade) `spec.pa-agent-savage-upgrade`
+  > PA Agent 升级为毒舌秘书的最小可行方案，1-2 天内可上线，保留架构只改产品灵魂
+
 - [周报 Agent 产品需求文档](spec.report-agent) `spec.report-agent`
   > 周报 Agent v1.0 的产品需求文档
 
