@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, GitBranch, Home, LogIn, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
+import { ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerCrash, SplitSquareVertical } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
@@ -82,7 +82,7 @@ const loadingPages: LoadingPage[] = [
   {
     id: 'preview-preparing',
     name: '预览环境准备中',
-    description: '点击预览后新窗口短暂出现的 CDS 全屏准备页，和分支环境构建等待页使用同一视觉体系。',
+    description: '点击预览后新窗口短暂出现的 CDS 全屏准备页，使用“构建等待页（备用）”的 Shape Grid 背景。',
     icon: ExternalLink,
     kind: 'local',
   },
@@ -95,20 +95,11 @@ const loadingPages: LoadingPage[] = [
     scenarios: commonLoadingScenarios,
   },
   {
-    id: 'github-login',
-    name: 'GitHub 登录页',
-    description: '未登录或会话失效时进入的系统登录页。',
-    icon: LogIn,
-    kind: 'iframe',
-    endpoint: '/login.html',
-  },
-  {
     id: 'cds-home-loading',
     name: 'CDS 首页加载态',
-    description: '控制台首页或项目列表首次加载时复用分支环境正在构建的 Magic Rings 等待状态。',
+    description: '控制台首页或项目列表首次读取项目状态时的内容加载态，不再误用预览分支等待页。',
     icon: Home,
-    kind: 'iframe',
-    endpoint: '/api/loading-pages/cds-waiting-room/preview',
+    kind: 'local',
   },
   {
     id: 'cds-waiting-room-legacy',
@@ -141,9 +132,9 @@ export function LoadingPagesTab(): JSX.Element {
   const previewUrl = useMemo(() => {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
     const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
-    if (page.id === 'cds-waiting-room' || page.id === 'cds-home-loading' || page.id === 'cds-waiting-room-legacy') {
+    if (page.id === 'cds-waiting-room' || page.id === 'cds-waiting-room-legacy') {
       params.set('status', scenario?.status || 'building');
-      params.set('branch', page.id === 'cds-home-loading' ? 'cds-home-loading' : page.id === 'cds-waiting-room-legacy' ? 'shape-grid-waiting-backup' : 'reactbits-magic-rings-preview');
+      params.set('branch', page.id === 'cds-waiting-room-legacy' ? 'shape-grid-waiting-backup' : 'reactbits-magic-rings-preview');
       params.set('waitingProfile', 'api');
     } else if (page.id === 'branch-gone') {
       params.set('branch', 'claude/deleted-preview-branch-demo');
@@ -241,9 +232,9 @@ export function LoadingPagesTab(): JSX.Element {
             ) : page.id === 'container-log-loading' ? (
               <ShapeGridSkeletonPreview tone="log" label="正在加载容器日志" />
             ) : page.id === 'cds-home-loading' ? (
-              <ShapeGridSkeletonPreview tone="home" label="CDS 首页正在同步" />
+              <ShapeGridSkeletonPreview tone="home" label="CDS 首页正在同步项目状态" />
             ) : page.id === 'common-loading-block' ? (
-              <ShapeGridSkeletonPreview label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'} />
+              <ShapeGridSkeletonPreview tone="compact" label={scenario?.loadingLabel || commonLoadingScenarios[0].loadingLabel || '加载中'} />
             ) : (
               <ShapeGridSkeletonPreview label="加载中" />
             )}
@@ -261,7 +252,7 @@ function ShapeGridSkeletonPreview({
   label: string;
   tone?: 'detail' | 'compact' | 'log' | 'home';
 }): JSX.Element {
-  const showCenterLabel = tone === 'compact' || tone === 'log';
+  const showCenterLabel = tone === 'compact' || tone === 'log' || tone === 'home';
 
   return (
     <div className="relative h-full overflow-hidden bg-[#090a0f] text-white">

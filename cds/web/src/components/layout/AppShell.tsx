@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Atom, Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
+import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -295,7 +296,7 @@ function AppRail({
     <nav className="cds-rail" aria-label="主导航">
       <div className="cds-rail-brand">
         <div className="cds-rail-avatar" aria-label="CDS">
-          <Atom className="cds-rail-avatar-icon" aria-hidden />
+          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
           <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>

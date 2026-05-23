@@ -537,9 +537,25 @@
     z-index: 1;
     width: 2.4rem;
     height: 2.4rem;
-    stroke-width: 2.1;
-    animation: cds-brand-spin 16s linear infinite;
+    animation: cds-metallic-drift 8s ease-in-out infinite;
     transform-origin: center;
+  }
+
+  .cds-metallic-logo {
+    overflow: visible;
+    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.24));
+  }
+
+  .cds-metallic-logo-orbits {
+    stroke: url('#cds-metallic-logo-paint');
+    stroke-width: 3.9;
+    stroke-dasharray: 100 34;
+    animation: cds-metallic-stroke 7.5s ease-in-out infinite;
+  }
+
+  .cds-metallic-logo-core {
+    fill: url('#cds-metallic-logo-paint');
+    animation: cds-metallic-core 3.8s ease-in-out infinite;
   }
 
   .cds-rail-brand-title {
@@ -567,12 +583,48 @@
   }
 
   .cds-rail-brand:hover .cds-rail-avatar-icon {
-    animation-duration: 8s;
+    animation-duration: 4s;
   }
 
   @keyframes cds-brand-spin {
     to {
       transform: rotate(360deg);
+    }
+  }
+
+  @keyframes cds-metallic-stroke {
+    0%,
+    100% {
+      stroke-dashoffset: 0;
+      opacity: 0.88;
+      filter: saturate(0.95) brightness(0.95);
+    }
+    50% {
+      stroke-dashoffset: -84;
+      opacity: 1;
+      filter: saturate(1.18) brightness(1.18);
+    }
+  }
+
+  @keyframes cds-metallic-core {
+    0%,
+    100% {
+      transform: scale(0.9);
+      opacity: 0.72;
+    }
+    50% {
+      transform: scale(1.12);
+      opacity: 1;
+    }
+  }
+
+  @keyframes cds-metallic-drift {
+    0%,
+    100% {
+      transform: rotate(-2deg) scale(1);
+    }
+    50% {
+      transform: rotate(2deg) scale(1.04);
     }
   }
 
@@ -608,6 +660,8 @@
     .cds-rail-avatar::before,
     .cds-rail-avatar::after,
     .cds-rail-avatar-icon,
+    .cds-metallic-logo-orbits,
+    .cds-metallic-logo-core,
     .cds-rail-brand-title {
       animation: none;
     }

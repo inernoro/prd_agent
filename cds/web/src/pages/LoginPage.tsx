@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import { ArrowRight, Atom, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
+import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
 import Prism from '@/components/effects/reactbits/Prism';
+import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 
 function redirectTarget(): string {
@@ -80,7 +81,7 @@ export function LoginPage(): JSX.Element {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.06]">
-                    <Atom className="h-7 w-7" />
+                    <CdsMetallicLogo className="h-8 w-8" />
                   </span>
                   <div>
                     <div className="text-lg font-semibold">Cloud Dev Suite</div>
