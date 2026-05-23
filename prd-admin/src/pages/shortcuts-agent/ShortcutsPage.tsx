@@ -15,6 +15,9 @@ import {
   Cloud,
   ExternalLink,
   Download,
+  RefreshCw,
+  Clock,
+  Inbox,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Dialog } from '@/components/ui/Dialog';
@@ -22,6 +25,8 @@ import {
   listShortcuts,
   createShortcut,
   deleteShortcut,
+  extendShortcut,
+  listCollections,
   getBindingTargets,
   listTemplates,
   createTemplate,
@@ -30,6 +35,7 @@ import {
   type CreateShortcutInput,
   type BindingTarget,
   type ShortcutTemplateItem,
+  type ShortcutCollectionItem,
 } from '@/services/real/shortcutsAgent';
 
 // ─── Binding type labels (收藏是必备功能，绑定是附加功能) ───
@@ -65,6 +71,11 @@ export default function ShortcutsPage() {
     if (res.success) load();
   };
 
+  const handleExtend = async (id: string) => {
+    const res = await extendShortcut(id);
+    if (res.success) load();
+  };
+
   return (
     <div style={{ padding: 24, maxWidth: 960, margin: '0 auto' }}>
       {/* Header */}
@@ -93,6 +104,8 @@ export default function ShortcutsPage() {
       {/* iCloud 模板配置 */}
       <ICloudTemplatePanel />
 
+      <LiveCollectionsPanel />
+
       {/* List */}
       {loading ? (
         <MapSectionLoader />
@@ -110,7 +123,12 @@ export default function ShortcutsPage() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {shortcuts.map((s) => (
-            <ShortcutCard key={s.id} item={s} onDelete={() => handleDelete(s.id, s.name)} />
+            <ShortcutCard
+              key={s.id}
+              item={s}
+              onExtend={() => handleExtend(s.id)}
+              onDelete={() => handleDelete(s.id, s.name)}
+            />
           ))}
         </div>
       )}
@@ -325,10 +343,133 @@ function ICloudTemplatePanel() {
   );
 }
 
+// ─── Live Inbox ───
+function LiveCollectionsPanel() {
+  const [items, setItems] = useState<ShortcutCollectionItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+
+  const load = useCallback(async () => {
+    const res = await listCollections({ page: 1, pageSize: 10 });
+    if (res.success && res.data) {
+      setItems(res.data.items || []);
+      setUpdatedAt(new Date());
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(load, 3000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  return (
+    <div style={{
+      marginBottom: 16,
+      padding: 16,
+      borderRadius: 14,
+      background: 'var(--surface-card)',
+      border: '1px solid var(--border-subtle)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <Inbox size={16} style={{ color: 'var(--accent)' }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+            实时收件箱
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+            当前登录用户的快捷指令收藏记录，每 3 秒刷新一次
+          </div>
+        </div>
+        <button
+          onClick={load}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '7px 10px', borderRadius: 8,
+            border: '1px solid var(--border-subtle)',
+            background: 'transparent', color: 'var(--text-secondary)',
+            cursor: 'pointer', fontSize: 12,
+          }}
+        >
+          <RefreshCw size={13} /> 刷新
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>加载中...</div>
+      ) : items.length === 0 ? (
+        <div style={{
+          padding: '18px 12px',
+          borderRadius: 10,
+          background: 'rgba(255,255,255,0.03)',
+          color: 'var(--text-muted)',
+          fontSize: 13,
+          textAlign: 'center',
+        }}>
+          暂无分享记录。添加快捷指令后，从手机分享任意链接即可在这里看到。
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {items.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: 'rgba(255,255,255,0.035)',
+                border: '1px solid rgba(255,255,255,0.05)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{
+                  fontSize: 11,
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  background: 'rgba(52,199,89,0.12)',
+                  color: '#34c759',
+                  flexShrink: 0,
+                }}>
+                  {item.status || 'saved'}
+                </span>
+                <span style={{
+                  minWidth: 0,
+                  flex: 1,
+                  color: 'var(--text-primary)',
+                  fontSize: 13,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {item.url || item.text || '(空内容)'}
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11, flexShrink: 0 }}>
+                  {new Date(item.createdAt).toLocaleTimeString()}
+                </span>
+              </div>
+              <div style={{ marginTop: 5, color: 'var(--text-muted)', fontSize: 11 }}>
+                {item.shortcutName ? `来源：${item.shortcutName}` : '来源：快捷指令'}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {updatedAt && (
+        <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 11 }}>
+          最近刷新：{updatedAt.toLocaleTimeString()}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Shortcut Card ───
-function ShortcutCard({ item, onDelete }: { item: ShortcutItem; onDelete: () => void }) {
+function ShortcutCard({ item, onExtend, onDelete }: { item: ShortcutItem; onExtend: () => void; onDelete: () => void }) {
   const binding = BINDING_LABELS[item.bindingType] || BINDING_LABELS.collect;
   const BindingIcon = binding.icon;
+  const expiresAt = item.expiresAt ? new Date(item.expiresAt) : null;
+  const expired = !!expiresAt && expiresAt.getTime() <= Date.now();
 
   return (
     <div style={{
@@ -372,6 +513,11 @@ function ShortcutCard({ item, onDelete }: { item: ShortcutItem; onDelete: () => 
               已禁用
             </span>
           )}
+          {expired && (
+            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: '#ff3b3020', color: '#ff3b30' }}>
+              已过期
+            </span>
+          )}
         </div>
         {item.bindingTargetName && (
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -382,10 +528,22 @@ function ShortcutCard({ item, onDelete }: { item: ShortcutItem; onDelete: () => 
           <span><Smartphone size={11} /> {item.tokenPrefix}</span>
           <span>使用 {item.collectCount} 次</span>
           {item.lastUsedAt && <span>最近: {new Date(item.lastUsedAt).toLocaleDateString()}</span>}
+          {expiresAt && <span><Clock size={11} /> 到期: {expiresAt.toLocaleDateString()}</span>}
         </div>
       </div>
 
       {/* Actions */}
+      <button
+        onClick={onExtend}
+        style={{
+          padding: '8px 10px', borderRadius: 8, background: 'transparent',
+          border: '1px solid var(--border-subtle)', cursor: 'pointer', color: 'var(--text-secondary)',
+          fontSize: 12,
+        }}
+        title="延长授权 3 年"
+      >
+        延长 3 年
+      </button>
       <button
         onClick={onDelete}
         style={{
@@ -697,7 +855,7 @@ function QRCodePanel({
       </div>
 
       <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5 }}>
-        扫码后点击「下载并安装快捷指令」→ iOS 提示添加 → 完成<br />
+        扫码后按安装页提示添加快捷指令<br />
         之后在任意 App 点击分享 → 选择「{name}」即可
       </p>
     </div>

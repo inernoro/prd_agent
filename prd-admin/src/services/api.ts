@@ -1104,6 +1104,7 @@ export const api = {
     list: () => '/api/shortcuts',
     create: () => '/api/shortcuts',
     delete: (id: string) => `/api/shortcuts/${id}`,
+    extend: (id: string) => `/api/shortcuts/${id}/extend`,
     setup: (id: string) => `/api/shortcuts/${id}/setup`,
     installData: (id: string) => `/api/shortcuts/${id}/install-data`,
     bindingTargets: () => '/api/shortcuts/binding-targets',
