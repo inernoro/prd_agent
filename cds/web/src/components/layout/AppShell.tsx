@@ -44,11 +44,11 @@ type ShellAuthStatus = {
 };
 
 function shellLoginHref(mode?: string): string {
-  const file = mode === 'github' ? 'login-gh.html' : 'login.html';
+  const path = mode === 'github' ? '/login-gh.html' : '/login';
   if (window.location.port === '5173') {
-    return `${window.location.protocol}//${window.location.hostname}:9900/${file}`;
+    return `${window.location.protocol}//${window.location.hostname}:9900${path}`;
   }
-  return `/${file}`;
+  return path;
 }
 
 export function AppShell({ active = 'projects', topbar, children, wide = false }: AppShellProps): JSX.Element {

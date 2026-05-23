@@ -7,11 +7,11 @@ import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../component
 import type { AuthStatusResponse, LoadState } from '../types';
 
 function loginHref(mode?: string): string {
-  const file = mode === 'github' ? 'login-gh.html' : 'login.html';
+  const path = mode === 'github' ? '/login-gh.html' : '/login';
   if (window.location.port === '5173') {
-    return `${window.location.protocol}//${window.location.hostname}:9900/${file}`;
+    return `${window.location.protocol}//${window.location.hostname}:9900${path}`;
   }
-  return `/${file}`;
+  return path;
 }
 
 function authModeLabel(mode?: string): string {

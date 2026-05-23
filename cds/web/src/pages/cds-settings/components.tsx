@@ -122,8 +122,8 @@ export function ErrorBlock({ message }: { message: string }): JSX.Element {
 function AuthRequiredBlock(): JSX.Element {
   const loginHref =
     window.location.port === '5173'
-      ? `${window.location.protocol}//${window.location.hostname}:9900/login.html`
-      : '/login.html';
+      ? `${window.location.protocol}//${window.location.hostname}:9900/login`
+      : '/login';
 
   return (
     <div className="cds-shape-panel flex min-h-32 flex-col items-start justify-center gap-3 rounded-md border border-border px-4 py-5">

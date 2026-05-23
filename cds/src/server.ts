@@ -740,12 +740,6 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   }));
 
-  // The "web" directory now hosts the React/Vite build (cds/web/dist/), and
-  // the unmigrated original static pages live in cds/web-legacy/. Both paths
-  // are wired through installSpaFallback() below; this constant is retained
-  // only for the login-redirect helper which still serves a legacy HTML file.
-  const webDir = path.resolve(__dirname, '..', 'web-legacy');
-
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
   //   1. Dockerfile HEALTHCHECK
@@ -1617,7 +1611,8 @@ export function createServer(deps: ServerDeps): express.Express {
           ],
         });
       } else {
-        res.sendFile(path.join(webDir, 'login.html'));
+        const target = req.originalUrl || req.url || '/project-list';
+        res.redirect(302, `/login?redirect=${encodeURIComponent(target)}`);
       }
     });
 
@@ -2595,6 +2590,10 @@ export function installSpaFallback(
   app.get('/cds-settings.html', (req, res) => {
     const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
     res.redirect(301, '/cds-settings' + qs);
+  });
+  app.get('/login.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/login' + qs);
   });
   app.get('/settings.html', (req, res) => {
     const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
