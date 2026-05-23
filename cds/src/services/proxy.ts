@@ -854,7 +854,7 @@ export class ProxyService {
 	html,body{min-height:100%}
 	body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
 	.magic-rings-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
-	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(780px 560px at 50% 50%,rgba(252,66,255,.08),transparent 54%),linear-gradient(90deg,rgba(18,15,23,.9),rgba(18,15,23,.34) 48%,rgba(18,15,23,.86));z-index:1}
+	body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(780px 560px at 50% 50%,rgba(255,255,255,.08),transparent 54%),linear-gradient(90deg,rgba(18,15,23,.9),rgba(18,15,23,.34) 48%,rgba(18,15,23,.86));z-index:1}
 	.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
 	.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
 	.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
@@ -878,7 +878,7 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .estimate-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;font-size:12px;color:rgba(245,242,255,.7)}
 .estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
 .estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
-.estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#42fcff,#fc42ff);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-bar{display:block;height:100%;width:0;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#aeb4bd);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
 .estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
 .estimate-meta span{display:inline-flex;align-items:center}
 .cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
@@ -888,7 +888,7 @@ h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bott
 .hint strong{color:#f5f7fa;font-weight:600}
 .note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
 .note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
-.magic-rings-bg.is-static{background:radial-gradient(circle at 50% 50%,rgba(252,66,255,.26),transparent 12%,rgba(66,252,255,.18) 24%,transparent 42%),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
+.magic-rings-bg.is-static{background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.22),transparent 12%,rgba(174,180,189,.16) 24%,transparent 42%),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
 @keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
 @keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
 @keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
@@ -1012,8 +1012,8 @@ void main(){
   gl.vertexAttribPointer(position,2,gl.FLOAT,false,0,0);
   var loc={};
   ['uTime','uAttenuation','uLineThickness','uBaseRadius','uRadiusStep','uScaleRate','uOpacity','uNoiseAmount','uRotation','uRingGap','uFadeIn','uFadeOut','uMouseInfluence','uHoverAmount','uHoverScale','uParallax','uBurst','uResolution','uMouse','uColor','uColorTwo','uRingCount'].forEach(function(name){loc[name]=gl.getUniformLocation(program,name);});
-  var color=hex('#fc42ff');
-  var colorTwo=hex('#42fcff');
+  var color=hex('#f8fafc');
+  var colorTwo=hex('#aeb4bd');
   gl.uniform1f(loc.uAttenuation,10);
   gl.uniform1f(loc.uLineThickness,2);
   gl.uniform1f(loc.uBaseRadius,.35);
