@@ -73,6 +73,13 @@ export default function ShortcutInstallPage() {
     setStep(1);
   };
 
+  const installICloudTemplate = async () => {
+    if (!data?.iCloudUrl) return;
+    await copyConfig();
+    setStep(2);
+    window.location.href = data.iCloudUrl;
+  };
+
   if (error) {
     return (
       <div style={containerStyle}>
@@ -128,7 +135,7 @@ export default function ShortcutInstallPage() {
                 marginTop: 10,
               }}
             >
-              复制配置备用
+              复制 iCloud 模板配置
             </button>
           </>
         ) : (
@@ -145,19 +152,15 @@ export default function ShortcutInstallPage() {
             </button>
 
             {hasICloud ? (
-              <a
-                href={data.iCloudUrl}
-                onClick={() => setStep(2)}
+              <button
+                onClick={installICloudTemplate}
                 style={{
                   ...btnStyle,
-                  textDecoration: 'none',
-                  background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
-                  color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
-                  pointerEvents: step >= 1 ? 'auto' : 'none',
+                  background: '#007aff',
                 }}
               >
-                安装 iCloud 模板
-              </a>
+                复制配置并安装 iCloud 模板
+              </button>
             ) : (
               <a
                 href="shortcuts://create-shortcut"
@@ -195,17 +198,20 @@ export default function ShortcutInstallPage() {
               <StepItem n={3}>
                 任意 App 分享内容时选择「{data.name}」
               </StepItem>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8, lineHeight: 1.5 }}>
+                如改用 iCloud 模板，请先复制“iCloud 模板配置”。只复制 Token 无法完成配置。
+              </p>
             </>
           ) : hasICloud ? (
             <>
-              <StepItem n={1} done={step >= 1}>
-                点击上方「复制配置」
+              <StepItem n={1} done={step >= 2}>
+                点击「复制配置并安装 iCloud 模板」
               </StepItem>
               <StepItem n={2} done={step >= 2}>
-                点击「安装快捷指令」，在弹框中点「添加」
+                系统会把 key 和当前站点接口地址放入剪贴板
               </StepItem>
               <StepItem n={3}>
-                首次使用时会自动从剪贴板读取配置
+                添加快捷指令后首次运行，它会自动读取剪贴板配置
               </StepItem>
             </>
           ) : (

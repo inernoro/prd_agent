@@ -139,13 +139,33 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
   snapshot(): { bodyPreview?: string; bodyBytes: number };
 } {
   let bodyBytes = 0;
+  let capturedBytes = 0;
   const chunks: Buffer[] = [];
   return {
     onChunk(chunk) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-      bodyBytes += buf.length;
-      const captured = chunks.reduce((n, part) => n + part.length, 0);
-      if (captured < maxBytes) chunks.push(buf.subarray(0, maxBytes - captured));
+      if (Buffer.isBuffer(chunk)) {
+        bodyBytes += chunk.length;
+        if (capturedBytes < maxBytes) {
+          const part = chunk.subarray(0, maxBytes - capturedBytes);
+          chunks.push(part);
+          capturedBytes += part.length;
+        }
+        return;
+      }
+
+      const text = String(chunk);
+      bodyBytes += Buffer.byteLength(text, 'utf8');
+      if (capturedBytes >= maxBytes) return;
+
+      // Do not Buffer.from() the full response string. Some JSON endpoints
+      // return large strings in a single res.end(); copying the whole body
+      // just to keep an 8KB preview can spike the master heap under polling.
+      let part = Buffer.from(text.slice(0, maxBytes - capturedBytes), 'utf8');
+      while (capturedBytes + part.length > maxBytes) {
+        part = part.subarray(0, maxBytes - capturedBytes);
+      }
+      chunks.push(part);
+      capturedBytes += part.length;
     },
     snapshot() {
       const preview = redactBodyText(Buffer.concat(chunks).toString('utf8').replace(/\0/g, ''));
@@ -196,6 +216,7 @@ export class HttpLogStore {
 
   record(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
     if (!this.collection) return;
+    if (!this.shouldPersist(record)) return;
     const doc: HttpLogRecord = {
       ...record,
       _id: `${record.requestId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
@@ -219,6 +240,19 @@ export class HttpLogStore {
         // Logging must never break request handling.
         console.warn(`[http-log] write failed: ${(err as Error).message}`);
       });
+  }
+
+  private shouldPersist(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): boolean {
+    if (record.status >= 400) return true;
+    const path = (record.path || '').split('?')[0];
+    const method = (record.method || 'GET').toUpperCase();
+    if (method === 'GET' && (path === '/healthz' || path === '/readyz' || path === '/__forwarder/healthz')) {
+      return false;
+    }
+    if (method === 'GET' && (path === '/api/http-logs' || path === '/api/server-events')) {
+      return false;
+    }
+    return true;
   }
 
   async findRecent(filter: {

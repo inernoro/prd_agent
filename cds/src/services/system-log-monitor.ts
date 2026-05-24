@@ -7,13 +7,24 @@ const DEFAULT_UNITS = ['cds-master.service', 'cds-forwarder.service'];
 function severityFromJournal(priority: unknown, message: string): ServerEventSeverity {
   const p = Number(priority);
   const lower = message.toLowerCase();
-  if (p <= 3 || /fatal error|heap out of memory|allocation failed|uncaughtexception|unhandledrejection|\boom\b|panic|segmentation fault/.test(lower)) {
+  if (p <= 3 || /fatal error|heap out of memory|allocation failed|uncaughtexception|unhandledrejection|\boom\b|panic|segmentation fault|main process exited|failed with result|core-dump/.test(lower)) {
     return 'error';
   }
-  if (p === 4 || /\bwarn(?:ing)?\b| 502 | 503 |bad gateway|service unavailable|upstream error|request failed/.test(lower)) {
+  if (p === 4 || /\bwarn(?:ing)?\b| 502 | 503 |bad gateway|service unavailable|upstream error|request failed|shutdown|stopping|stopped|started/.test(lower)) {
     return 'warn';
   }
   return 'info';
+}
+
+function shouldRecordJournalMessage(severity: ServerEventSeverity, message: string): boolean {
+  if (severity !== 'info') return true;
+  const lower = message.toLowerCase();
+  if (/persistent .* enabled|listening on|worker proxy listening|started cds-|stopped cds-/.test(lower)) return true;
+  // Health checks and successful proxy lines are already covered by HTTP logs
+  // and otherwise dominate this collection under normal traffic.
+  if (/\[proxy\] get \/(healthz|readyz)\b/.test(lower)) return false;
+  if (/^\[proxy\] (get|post|put|delete|patch) /.test(lower)) return false;
+  return false;
 }
 
 function parseJournalLine(line: string): Record<string, unknown> | null {
@@ -145,9 +156,11 @@ export class SystemLogMonitor {
     const message = String(doc.MESSAGE || '').trim();
     if (!message) return;
     const unit = String(doc._SYSTEMD_UNIT || doc.SYSLOG_IDENTIFIER || '');
+    const severity = severityFromJournal(doc.PRIORITY, message);
+    if (!shouldRecordJournalMessage(severity, message)) return;
     this.store.record({
       category: 'system',
-      severity: severityFromJournal(doc.PRIORITY, message),
+      severity,
       source: 'journalctl',
       action,
       message,

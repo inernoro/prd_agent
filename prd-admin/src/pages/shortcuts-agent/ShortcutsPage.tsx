@@ -797,11 +797,24 @@ function QRCodePanel({
   installPageUrl: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [configCopied, setConfigCopied] = useState(false);
+
+  const installConfig = JSON.stringify({
+    token,
+    endpoint: `${window.location.origin}/api/shortcuts/collect`,
+    name,
+  });
 
   const copyToken = () => {
     navigator.clipboard.writeText(token);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyConfig = () => {
+    navigator.clipboard.writeText(installConfig);
+    setConfigCopied(true);
+    setTimeout(() => setConfigCopied(false), 2000);
   };
 
   return (
@@ -832,7 +845,29 @@ function QRCodePanel({
         background: 'var(--surface-card)', border: '1px solid var(--border-subtle)',
       }}>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
-          Token（仅显示一次，请妥善保管）
+          安装配置（iCloud 模板需要复制这一整段，不是只复制 Token）
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <code style={{
+            flex: 1, fontSize: 11, color: 'var(--text-primary)',
+            wordBreak: 'break-all', fontFamily: 'monospace',
+          }}>
+            {installConfig}
+          </code>
+          <button
+            onClick={copyConfig}
+            style={{
+              padding: 6, borderRadius: 6, background: 'none',
+              border: '1px solid var(--border-subtle)', cursor: 'pointer',
+              color: configCopied ? '#34c759' : 'var(--text-muted)',
+            }}
+            title="复制安装配置"
+          >
+            {configCopied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+          Token（排查用，单独复制它不能完成 iCloud 模板配置）
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <code style={{

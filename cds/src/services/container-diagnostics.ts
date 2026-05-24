@@ -119,6 +119,22 @@ function shouldCaptureDiagnostics(action: string): boolean {
     || (normalized.startsWith('health_status') && !normalized.includes('healthy'));
 }
 
+function shouldRecordDockerEvent(action: string): boolean {
+  const normalized = action.toLowerCase();
+  if (normalized.startsWith('exec_') || normalized === 'attach') return false;
+  return normalized === 'create'
+    || normalized === 'start'
+    || normalized === 'stop'
+    || normalized === 'die'
+    || normalized === 'kill'
+    || normalized === 'oom'
+    || normalized === 'destroy'
+    || normalized === 'restart'
+    || normalized === 'pause'
+    || normalized === 'unpause'
+    || normalized.startsWith('health_status');
+}
+
 export class DockerEventMonitor {
   private child: ChildProcess | null = null;
   private stopping = false;
@@ -213,6 +229,7 @@ export class DockerEventMonitor {
     }
 
     const action = String(evt.Action || evt.status || 'unknown');
+    if (!shouldRecordDockerEvent(action)) return;
     const attrs = (evt.Actor?.Attributes && typeof evt.Actor.Attributes === 'object')
       ? evt.Actor.Attributes as Record<string, string>
       : {};

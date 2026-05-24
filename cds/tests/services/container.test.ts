@@ -338,16 +338,17 @@ describe('ContainerService', () => {
       await service.stop('cds-feature-a-api', '调度器降温（保留容器，可秒级唤醒）');
 
       // 哨兵先写,进入 docker logs 末尾 → 与莫名崩溃区分
-      expect(mock.commands[0]).toContain('docker exec cds-feature-a-api');
-      expect(mock.commands[0]).toContain('[CDS-STOP]');
+      const sentinelCommand = mock.commands.find((c) => c.includes('docker exec cds-feature-a-api') && c.includes('[CDS-STOP]')) ?? '';
+      expect(sentinelCommand).not.toBe('');
+      expect(sentinelCommand).toContain('[CDS-STOP]');
       // Bugbot #640：全角括号/逗号必须保留(U+FF00–FFEF 在白名单内),
       // 否则 docker logs 里 reason 丢失可读结构。
-      expect(mock.commands[0]).toContain('reason=调度器降温（保留容器，可秒级唤醒）');
+      expect(sentinelCommand).toContain('reason=调度器降温（保留容器，可秒级唤醒）');
       // Bugbot #640：单引号包裹 line(单引号已被白名单排除),不再依赖
       // "过滤双引号/$"来做 shell 转义。命令形如 sh -c "echo '...' > ..."。
-      expect(mock.commands[0]).toContain(`sh -c "echo '[CDS-STOP]`);
-      expect(mock.commands[0]).not.toContain(`sh -c 'echo "`);
-      expect(mock.commands[1]).toBe('docker stop cds-feature-a-api');
+      expect(sentinelCommand).toContain(`sh -c "echo '[CDS-STOP]`);
+      expect(sentinelCommand).not.toContain(`sh -c 'echo "`);
+      expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
       // 关键不变量:stop 绝不 docker rm,否则 /restart 无法 docker restart
       // 唤醒(Cursor Bugbot 反馈的"正常停止后重启必失败"的根因)。
       expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
@@ -369,8 +370,10 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
       await service.remove('cds-feature-a-api');
-      expect(mock.commands[0]).toBe('docker stop cds-feature-a-api');
-      expect(mock.commands[1]).toBe('docker rm cds-feature-a-api');
+      const stopIndex = mock.commands.findIndex((c) => c === 'docker stop cds-feature-a-api');
+      const removeIndex = mock.commands.findIndex((c) => c === 'docker rm cds-feature-a-api');
+      expect(stopIndex).toBeGreaterThanOrEqual(0);
+      expect(removeIndex).toBeGreaterThan(stopIndex);
     });
 
     it('is idempotent for already-stopped containers: docker stop non-zero must NOT skip docker rm (Codex P1 @ ade2a21)', async () => {

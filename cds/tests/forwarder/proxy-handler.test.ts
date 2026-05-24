@@ -819,7 +819,7 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body).toContain('<script');
   });
 
-  it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + 错误响应(JSON 含 hint,HTML 含 准备中)', async () => {
+  it('[C-5.1] upstream connect 拒绝(端口未开)→ 503 + 错误响应(JSON 含 hint,HTML 含等待页)', async () => {
     // 用一个一定关闭的端口
     const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: 1, weight: 100 };
     const f = await startForwarder(() => route);
@@ -832,7 +832,7 @@ describe('ProxyHandler — 故障与降级', () => {
     // 浏览器客户端(Accept: text/html) → 友好 HTML
     const rh = await clientReq(f.port, { headers: { accept: 'text/html' } });
     expect(rh.status).toBe(503);
-    expect(rh.body).toContain('准备中');
+    expect(rh.body).toContain('分支环境正在构建');
     expect(rh.body).toContain('location.reload');
   });
 

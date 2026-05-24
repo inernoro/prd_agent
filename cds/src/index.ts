@@ -493,6 +493,9 @@ if (process.env.CDS_USE_FORWARDER === '1') {
 // ── Graceful shutdown controller ──
 // SIGTERM/self-update 触发 master 退出前,drain SSE / abort worker run / flush mongo。
 const gracefulShutdownController = createGracefulShutdownController();
+let dashboardHttpServer: http.Server | null = null;
+let workerHttpServer: http.Server | null = null;
+let shutdownInProgress = false;
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
@@ -1267,7 +1270,22 @@ janitorService.setRemoveFn(async (slug: string) => {
 //
 // graceful-shutdown 接 SSE drain + worker abort + mongo flush。
 // 本函数做 scheduler/janitor.stop() + mongo close 收尾。
+async function closeHttpServerForShutdown(server: http.Server | null, label: string): Promise<void> {
+  if (!server || !server.listening) return;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => server.close(() => resolve())),
+      new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+    ]);
+    console.log(`[shutdown] ${label} listener closed`);
+  } catch (err) {
+    console.warn(`[shutdown] ${label} listener close failed: ${(err as Error).message}`);
+  }
+}
+
 async function shutdown(signal: string): Promise<void> {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
@@ -1282,6 +1300,7 @@ async function shutdown(signal: string): Promise<void> {
     const pendingWritesPath = path.join(config.repoRoot, 'cds', '.cds', 'pending-writes.json');
     const snap = await gracefulShutdownController.runShutdown({
       signal: signal === 'SIGTERM' ? 'SIGTERM' : signal === 'SIGINT' ? 'SIGINT' : 'manual',
+      httpServer: dashboardHttpServer ?? undefined,
       pendingWritesPath,
       onForceKill: (s) => console.error('[shutdown] forced kill snapshot:', JSON.stringify(s)),
     });
@@ -1291,6 +1310,7 @@ async function shutdown(signal: string): Promise<void> {
   } catch (err) {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
+  await closeHttpServerForShutdown(workerHttpServer, 'worker');
   if (activeMongoHandle) {
     try {
       const timeout = new Promise((_, reject) =>
@@ -1327,6 +1347,7 @@ async function shutdown(signal: string): Promise<void> {
       console.warn(`[shutdown] server event log store teardown failed: ${(err as Error).message}`);
     }
   }
+  process.exit(signal === 'SIGINT' ? 130 : 0);
 }
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.on('SIGINT', () => { void shutdown('SIGINT'); });
@@ -2365,7 +2386,7 @@ function listenWithRetry(
   port: number,
   label: string,
   onSuccess: () => void,
-  opts: { force?: boolean; optional?: boolean } = {},
+  opts: { force?: boolean; optional?: boolean; onServer?: (server: http.Server) => void } = {},
 ) {
   const MAX_ATTEMPTS = 5;
   // Track success so a late-arriving retry setTimeout doesn't call
@@ -2383,6 +2404,7 @@ function listenWithRetry(
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
       onSuccess();
     });
+    opts.onServer?.(s as http.Server);
     s.on('error', (err: Error & { code?: string }) => {
       if (listening) return; // same late-retry guard after listening flipped
       if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
@@ -2551,7 +2573,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     console.log(`  State store: ${stateStorageLabel()}`);
     console.log(`  Repo root:  ${config.repoRoot}`);
     console.log('');
-  }, { force: true });
+  }, { force: true, onServer: (server) => { dashboardHttpServer = server; } });
 
   // ── Bridge activity tracking ──
   bridgeService.onActivity((branchId, action) => {
@@ -2587,7 +2609,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     console.log(`  Worker proxy listening on :${config.workerPort}`);
     console.log(`  Route via X-Branch header or configure routing rules in dashboard.`);
     console.log('');
-  }, { optional: true });
+  }, { optional: true, onServer: (server) => { workerHttpServer = server; } });
 
   // ── Always-on scheduler router (standalone + scheduler modes) ──
   //
