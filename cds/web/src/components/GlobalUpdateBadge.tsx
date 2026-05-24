@@ -164,14 +164,6 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       initialShaRef.current = payload.headSha;
     }
 
-    if (initialShaRef.current && payload.headSha && payload.headSha !== initialShaRef.current) {
-      setState({
-        kind: 'updated',
-        fromSha: initialShaRef.current,
-        toSha: payload.headSha,
-      });
-      return;
-    }
     if (payload.activeSelfUpdate && !payload.activeSelfUpdate.interrupted) {
       const startedMs = Date.parse(payload.activeSelfUpdate.startedAt);
       const lastTickMs = payload.activeSelfUpdate.lastTickAt ? Date.parse(payload.activeSelfUpdate.lastTickAt) : Number.NaN;
@@ -185,6 +177,14 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         step: payload.activeSelfUpdate.step,
         title: payload.activeSelfUpdate.logTail?.[payload.activeSelfUpdate.logTail.length - 1]?.text,
         staleSeconds: staleSeconds && staleSeconds >= 10 ? staleSeconds : undefined,
+      });
+      return;
+    }
+    if (initialShaRef.current && payload.headSha && payload.headSha !== initialShaRef.current) {
+      setState({
+        kind: 'updated',
+        fromSha: initialShaRef.current,
+        toSha: payload.headSha,
       });
       return;
     }
