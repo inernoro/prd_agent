@@ -89,6 +89,12 @@ interface BranchSummary {
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
+  builder?: {
+    name: string;
+    email?: string;
+    login?: string;
+    avatarUrl?: string;
+  };
   previewSlug?: string;
   githubCommitSha?: string;
   githubRepoFullName?: string;
@@ -441,6 +447,56 @@ function sortOldestRunning(left: BranchSummary, right: BranchSummary): number {
   const leftTime = new Date(left.lastAccessedAt || left.lastDeployAt || left.createdAt || 0).getTime() || 0;
   const rightTime = new Date(right.lastAccessedAt || right.lastDeployAt || right.createdAt || 0).getTime() || 0;
   return leftTime - rightTime;
+}
+
+type BranchVisualRole = 'main' | 'master' | 'environment' | 'regular';
+
+const ENVIRONMENT_BRANCH_ORDER = ['dev', 'develop', 'development', 'staging', 'stage', 'test', 'qa', 'prod', 'production'];
+
+function normalizedBranchName(value: string): string {
+  return value.trim().replace(/^refs\/heads\//, '').replace(/^origin\//, '').toLowerCase();
+}
+
+function branchVisualRole(branchName: string): BranchVisualRole {
+  const name = normalizedBranchName(branchName);
+  if (name === 'main') return 'main';
+  if (name === 'master') return 'master';
+  if (ENVIRONMENT_BRANCH_ORDER.includes(name)) return 'environment';
+  return 'regular';
+}
+
+function branchSortRank(branchName: string): number {
+  const name = normalizedBranchName(branchName);
+  if (name === 'main') return 0;
+  if (name === 'master') return 1;
+  const envIndex = ENVIRONMENT_BRANCH_ORDER.indexOf(name);
+  return envIndex >= 0 ? 10 + envIndex : 100;
+}
+
+function branchRoleCardClass(role: BranchVisualRole): string {
+  switch (role) {
+    case 'main':
+      return 'border-emerald-400/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_16px_34px_-28px_rgba(52,211,153,0.85)]';
+    case 'master':
+      return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_16px_34px_-28px_rgba(34,211,238,0.8)]';
+    case 'environment':
+      return 'border-amber-400/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_16px_34px_-30px_rgba(251,191,36,0.72)]';
+    default:
+      return '';
+  }
+}
+
+function branchRoleIconClass(role: BranchVisualRole): string {
+  switch (role) {
+    case 'main':
+      return 'text-emerald-400';
+    case 'master':
+      return 'text-cyan-400';
+    case 'environment':
+      return 'text-amber-400';
+    default:
+      return 'text-sky-500';
+  }
 }
 
 function formatBytesFromMB(value?: number): string {
@@ -1452,6 +1508,9 @@ export function BranchListPage(): JSX.Element {
       ? branches.filter((b) => (b.tags || []).includes(activeTagFilter))
       : branches;
     return filtered.slice().sort((left, right) => {
+      const leftRank = branchSortRank(left.branch);
+      const rightRank = branchSortRank(right.branch);
+      if (leftRank !== rightRank) return leftRank - rightRank;
       if (isErrored(left) !== isErrored(right)) return isErrored(left) ? -1 : 1;
       if (!!left.isFavorite !== !!right.isFavorite) return left.isFavorite ? -1 : 1;
       return score(right) - score(left);
@@ -3498,6 +3557,9 @@ function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
+  const role = branchVisualRole(branch.branch);
+  const roleCardClass = branchRoleCardClass(role);
+  const roleIconClass = branchRoleIconClass(role);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
@@ -3509,10 +3571,16 @@ function BranchCard({
   const [tagDraftError, setTagDraftError] = useState('');
   const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [builderAvatarFailed, setBuilderAvatarFailed] = useState(false);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
   const dimWholeCard = !isRunning && !isError && !isInterim;
+  const builderLabel = branch.builder?.name || branch.builder?.login || '未知构建者';
+  const builderTitle = branch.builder
+    ? `构建者: ${builderLabel}${branch.builder.email ? ` <${branch.builder.email}>` : ''}`
+    : '构建者: 未知';
+  const builderInitial = (builderLabel.trim().charAt(0) || '?').toUpperCase();
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3523,6 +3591,9 @@ function BranchCard({
       setAiPanelOpen(false);
     }
   }, [aiPanelOpen, isAiOperated]);
+  useEffect(() => {
+    setBuilderAvatarFailed(false);
+  }, [branch.builder?.avatarUrl]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -3549,7 +3620,7 @@ function BranchCard({
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
+      } ${roleCardClass} ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -3983,7 +4054,24 @@ function BranchCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
-          <GitBranch className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-4 w-4 shrink-0 text-sky-500' : 'h-4 w-4 shrink-0 text-sky-500'} />
+          <div
+            className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+            title={builderTitle}
+            aria-label={builderTitle}
+          >
+            {branch.builder?.avatarUrl && !builderAvatarFailed ? (
+              <img
+                src={branch.builder.avatarUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setBuilderAvatarFailed(true)}
+              />
+            ) : (
+              <span>{builderInitial}</span>
+            )}
+          </div>
+          <GitBranch className={`${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 ' : ''}h-4 w-4 shrink-0 ${roleIconClass}`} />
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
         </div>
         {/*

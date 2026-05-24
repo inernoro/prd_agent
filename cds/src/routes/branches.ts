@@ -193,6 +193,29 @@ function isSyntheticCdsManagedRuntimeBranch(
   return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
 }
 
+function githubLoginFromCommitEmail(email: string): string | null {
+  const normalized = email.trim().toLowerCase();
+  const match = normalized.match(/^(?:(?:\d+)\+)?([a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?)@users\.noreply\.github\.com$/i);
+  return match?.[1] || null;
+}
+
+function buildCommitBuilder(name?: string, email?: string): {
+  name: string;
+  email?: string;
+  login?: string;
+  avatarUrl?: string;
+} | undefined {
+  const cleanName = (name || '').trim();
+  const cleanEmail = (email || '').trim();
+  if (!cleanName && !cleanEmail) return undefined;
+  const login = cleanEmail ? githubLoginFromCommitEmail(cleanEmail) : null;
+  return {
+    name: cleanName || login || cleanEmail,
+    ...(cleanEmail ? { email: cleanEmail } : {}),
+    ...(login ? { login, avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=64` } : {}),
+  };
+}
+
 function isAiActivityLog(entry: ProjectActivityLog): boolean {
   const actor = entry.actor || '';
   return entry.type === 'ai-occupy'
@@ -2248,7 +2271,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         try {
           const result = await shell.exec(
-            'git log -1 --format=%h%n%s',
+            'git log -1 --format=%h%n%s%n%an%n%ae',
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
@@ -2259,6 +2282,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: lines[0] || '',
             subject: lines[1] || '',
+            builder: buildCommitBuilder(lines[2], lines[3]),
             previewSlug,
             deployRuntime,
           };
