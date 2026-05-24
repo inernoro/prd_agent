@@ -14,7 +14,6 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import { QuickConnectPanel } from './QuickConnectPanel';
-import { MarketplaceSideRail } from './MarketplaceSideRail';
 import { Button } from '@/components/design/Button';
 import {
   CONFIG_TYPE_REGISTRY,
@@ -152,11 +151,6 @@ export const MarketplacePage: React.FC = () => {
   const showSkillControls = categoryFilter === 'skill';
   // 去掉"全部"，技能排第一
   const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
-  // 各分类条目数（左侧栏概览导航用）
-  const categoryCounts = useMemo(
-    () => Object.fromEntries(Object.entries(dataByType).map(([k, v]) => [k, v.length])),
-    [dataByType],
-  );
 
   return (
     <div
@@ -308,80 +302,65 @@ export const MarketplacePage: React.FC = () => {
         </div>
       </div>
 
-      {/* ── 左侧常驻栏 + 卡片内容区（左栏撑满高度，随页面变长而变长） ── */}
-      <div className="relative z-10 marketplace-content-wrap">
-        <MarketplaceSideRail
-          counts={categoryCounts}
-          categories={filterOptions}
-          categoryFilter={categoryFilter}
-          onSelectCategory={updateTypeFilter}
-          skillTags={skillTags}
-          tagFilter={tagFilter}
-          onSelectTag={(t) => setTagFilter((prev) => (prev === t ? '' : t))}
-          showTags={showSkillControls}
-          onUpload={() => setUploadOpen(true)}
-          loading={loading}
-        />
-
-        <div className="marketplace-main">
-          {/* 兼容 Agent 提示（findmapskills 协议适用于所有支持工具调用的 Agent） */}
-          {categoryFilter === 'skill' && (
-            <div className="marketplace-compat-banner">
-              <span className="marketplace-compat-label">通过「接入 AI」一键安装到：</span>
-              <span className="marketplace-compat-agent">Claude Code</span>
-              <span className="marketplace-compat-dot">·</span>
-              <span className="marketplace-compat-agent">Cursor</span>
-              <span className="marketplace-compat-dot">·</span>
-              <span className="marketplace-compat-agent">Gemini CLI</span>
-              <span className="marketplace-compat-dot">·</span>
-              <span className="marketplace-compat-agent">Codex</span>
-              <span className="marketplace-compat-dot">·</span>
-              <span className="marketplace-compat-agent-muted">任何支持 MCP / API Key 的 Agent</span>
-            </div>
-          )}
-
-          {loading ? (
-            <MapSectionLoader />
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-3">
-              <Store size={48} className="text-token-muted opacity-50" />
-              <div className="text-sm text-token-muted">
-                {searchKeyword
-                  ? '没有找到匹配的配置'
-                  : tagFilter
-                    ? `没有带 #${tagFilter} 的配置`
-                    : categoryFilter === 'skill'
-                      ? '还没有人上传技能，第一个就是你'
-                      : '暂无公开配置'}
-              </div>
-              {categoryFilter === 'skill' && (
-                <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
-                  <UploadCloud size={13} />
-                  上传第一个技能包
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div
-              className="grid gap-4"
-              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}
-            >
-              {filtered.map((item) => (
-                <MarketplaceCard
-                  key={`${item.type}-${item.data.id}`}
-                  item={item}
-                  onFork={handleFork}
-                  onEdit={(selected) => {
-                    if (selected.type !== 'skill') return;
-                    setEditingSkill(selected.data as MarketplaceSkillDto);
-                  }}
-                  currentUserId={currentUserId}
-                  forking={forkingId === item.data.id}
-                />
-              ))}
-            </div>
-          )}
+      {/* ── 兼容 Agent 提示（findmapskills 协议适用于所有支持工具调用的 Agent） ── */}
+      {categoryFilter === 'skill' && (
+        <div className="marketplace-compat-banner">
+          <span className="marketplace-compat-label">通过「接入 AI」一键安装到：</span>
+          <span className="marketplace-compat-agent">Claude Code</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent">Cursor</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent">Gemini CLI</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent">Codex</span>
+          <span className="marketplace-compat-dot">·</span>
+          <span className="marketplace-compat-agent-muted">任何支持 MCP / API Key 的 Agent</span>
         </div>
+      )}
+
+      {/* ── 卡片内容区 ── */}
+      <div className="relative pt-4 pb-6 px-4">
+        {loading ? (
+          <MapSectionLoader />
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <Store size={48} className="text-token-muted opacity-50" />
+            <div className="text-sm text-token-muted">
+              {searchKeyword
+                ? '没有找到匹配的配置'
+                : tagFilter
+                  ? `没有带 #${tagFilter} 的配置`
+                  : categoryFilter === 'skill'
+                    ? '还没有人上传技能，第一个就是你'
+                    : '暂无公开配置'}
+            </div>
+            {categoryFilter === 'skill' && (
+              <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
+                <UploadCloud size={13} />
+                上传第一个技能包
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div
+            className="grid gap-4"
+            style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', maxWidth: '1400px', margin: '0 auto' }}
+          >
+            {filtered.map((item) => (
+              <MarketplaceCard
+                key={`${item.type}-${item.data.id}`}
+                item={item}
+                onFork={handleFork}
+                onEdit={(selected) => {
+                  if (selected.type !== 'skill') return;
+                  setEditingSkill(selected.data as MarketplaceSkillDto);
+                }}
+                currentUserId={currentUserId}
+                forking={forkingId === item.data.id}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {quickConnectOpen && createPortal(
