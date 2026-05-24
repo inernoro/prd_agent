@@ -3,27 +3,17 @@ import {
   GLYPH_SIZE,
   buildGlyphInner,
   glyphFilterSeed,
-  glyphGlow,
-  resolveGlyphStyle,
 } from '@/lib/skillGlyphRegistry';
 
 /**
- * 官方技能卡的「手绘古典线描」标志。
+ * 技能卡图标：黑色手绘抽象线条 + 少量陶土橙锚点（纸张/炭黑/陶土编辑气质）。
  *
- * - 形态/色相由 tags 命中 skillGlyphRegistry 决定，无匹配回退名字哈希
- * - feTurbulence + feDisplacementMap 做轻度手绘抖线，drop-shadow 暖光
- * - hover「绽放」靠 CSS（父级 .mkt-card:hover .skill-glyph .ink），见 surface.css
- * - 视口懒渲染：滚进视口才挂 SVG 滤镜，避免一屏几十张卡同时跑 turbulence 拖慢
+ * - 内容由 skillGlyphRegistry 生成：优先专属象形符号，否则哈希抽象兜底
+ * - feTurbulence 轻度做旧成手绘抖线；无辉光、无多彩（唯一陶土色只在锚点圆点）
+ * - 视口懒渲染：滚进视口才挂 SVG 滤镜，避免一屏几十张卡同时跑 turbulence
+ * - 安静悬浮：陶土锚点轻微放大（CSS，见 surface.css）
  */
-export function SkillGlyph({
-  seed,
-  tags,
-  className,
-}: {
-  seed: string;
-  tags?: string[];
-  className?: string;
-}) {
+export function SkillGlyph({ seed, className }: { seed: string; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -43,9 +33,8 @@ export function SkillGlyph({
     return () => io.disconnect();
   }, [visible]);
 
-  const style = resolveGlyphStyle(seed, tags);
   const filterId = `skill-glyph-${glyphFilterSeed(seed)}`;
-  const inner = buildGlyphInner(seed, style);
+  const inner = buildGlyphInner(seed);
 
   return (
     <div ref={ref} className={`skill-glyph-wrap ${className ?? ''}`}>
@@ -56,13 +45,12 @@ export function SkillGlyph({
           height={GLYPH_SIZE}
           viewBox={`0 0 ${GLYPH_SIZE} ${GLYPH_SIZE}`}
           xmlns="http://www.w3.org/2000/svg"
-          style={{ ['--glyphGlow' as string]: glyphGlow(style) }}
         >
           <defs>
-            <filter id={filterId} x="-25%" y="-25%" width="150%" height="150%">
+            <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.02"
+                baseFrequency="0.018"
                 numOctaves={2}
                 seed={glyphFilterSeed(seed)}
                 result="n"
@@ -70,18 +58,14 @@ export function SkillGlyph({
               <feDisplacementMap
                 in="SourceGraphic"
                 in2="n"
-                scale={1.4}
+                scale={1.1}
                 xChannelSelector="R"
                 yChannelSelector="G"
               />
             </filter>
           </defs>
-          {/* 内容是确定性哈希生成的纯几何（无任何用户文本注入），dangerouslySetInnerHTML 安全 */}
-          <g
-            className="ink"
-            filter={`url(#${filterId})`}
-            dangerouslySetInnerHTML={{ __html: inner }}
-          />
+          {/* 确定性哈希生成的纯几何（无用户文本注入），dangerouslySetInnerHTML 安全 */}
+          <g filter={`url(#${filterId})`} dangerouslySetInnerHTML={{ __html: inner }} />
         </svg>
       )}
     </div>

@@ -28,3 +28,4 @@
 | fix | prd-api | Open API 官方注入加 includeCatalogWhenUnfiltered=false：无搜索词不注入目录技能，避免 AI list/分页/轮询被 15 个官方占满 budget 翻不到社区技能；Web 仍全展示（归「官方推荐」行）|
 | feat | prd-admin | 社区 skill 无封面也用 SkillGlyph（哈希形态，不传 tags 故无精英徽章），拉平与官方卡的视觉；社区卡 hover 同样「绽放」 |
 | feat | prd-api | /tags 端点合并官方 catalog 的 tag（精英/开放接口等），用户可按「精英」筛出 laowang 等 |
+| feat | prd-admin | 海鲜市场改编辑气质：技能图标重做为炭黑手绘抽象线条 + 陶土锚点圆点（8 个专属象形符号 + 哈希抽象兜底），技能图标区背景走暖米灰纸底 #F0EEE6，市场页背景走暖白纸张 #FAF9F5；去辉光/去多彩，悬浮仅陶土锚点轻微放大。仅改背景+技能背景，不动卡片结构/工具栏 |

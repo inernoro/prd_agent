@@ -23,7 +23,6 @@ import {
 import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
 import SpotlightCard from '@/components/reactbits/SpotlightCard';
 import { SkillGlyph } from './SkillGlyph';
-import { resolveGlyphStyle, glyphCardGlow, glyphWarmBg } from '@/lib/skillGlyphRegistry';
 import { SkillDetailModal } from './SkillDetailModal';
 import { useSkillShare } from './useSkillShare';
 
@@ -361,23 +360,18 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     </>
   );
 
-  // ── 官方技能 → 手绘古典线描标志（上半 banner）+ glass 信息条（下半）
+  // ── 官方技能 → 炭黑手绘线条标志（上半 banner 走纸张底）+ glass 信息条（下半）
+  // seed 用 skill.id（official-{key}），让 SkillGlyph 能按 key 匹配专属象形符号
   if (isOfficial) {
     const skill = item.data as MarketplaceSkill;
-    const glyphSeed = skill.title || skill.id;
-    const glyphStyle = resolveGlyphStyle(glyphSeed, tags);
     return (
       <div
         className="mkt-card mkt-card-official-glyph"
         onClick={handleCardClick}
-        style={{
-          ['--warm' as string]: glyphWarmBg(glyphStyle),
-          ['--glow' as string]: glyphCardGlow(glyphStyle),
-          cursor: item.type === 'skill' ? 'pointer' : undefined,
-        }}
+        style={{ cursor: item.type === 'skill' ? 'pointer' : undefined }}
       >
         <div className="mkt-card-glyph-banner">
-          <SkillGlyph seed={glyphSeed} tags={tags} />
+          <SkillGlyph seed={skill.id} />
         </div>
         {cardBody}
       </div>

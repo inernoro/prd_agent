@@ -157,9 +157,10 @@ export const MarketplacePage: React.FC = () => {
     <div
       className="marketplace-page relative min-h-screen overflow-auto"
       style={{
+        // 「背景」：暖白纸张（编辑气质）。自定义市场背景图时叠一层纸色蒙版，保证纸张基调。
         background: marketplaceBgUrl
-          ? `linear-gradient(rgba(8, 10, 16, 0.78), rgba(8, 10, 16, 0.90)), url("${marketplaceBgUrl}") center / cover no-repeat`
-          : 'transparent',
+          ? `linear-gradient(rgba(250, 249, 245, 0.88), rgba(250, 249, 245, 0.94)), url("${marketplaceBgUrl}") center / cover no-repeat`
+          : '#FAF9F5',
       }}
     >
       <div className="relative z-10">
