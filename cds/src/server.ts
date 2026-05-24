@@ -1103,6 +1103,7 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.use((req, res, next) => {
+      if (req.path === '/') return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       if (req.path === '/api/cds-system/connections/authorize'
