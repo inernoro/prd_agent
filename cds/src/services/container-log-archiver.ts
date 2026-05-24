@@ -2,6 +2,7 @@ import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import type { BranchEntry, ContainerLogArchiveEntry } from '../types.js';
 import { maskSecrets as maskSecretsText } from './secret-masker.js';
+import { normalizeLogText, type ServerEventLogSink } from './server-event-log-store.js';
 
 export interface ArchiveBranchContainerLogsOptions {
   stateService: StateService;
@@ -11,6 +12,7 @@ export interface ArchiveBranchContainerLogsOptions {
   profileIds?: Set<string>;
   tailLines?: number;
   message?: string;
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 /**
@@ -32,6 +34,7 @@ export async function archiveBranchContainerLogs(
     profileIds,
     tailLines = 500,
     message,
+    serverEventLogStore,
   } = options;
 
   const archived: ContainerLogArchiveEntry[] = [];
@@ -41,6 +44,21 @@ export async function archiveBranchContainerLogs(
   for (const [profileId, svc] of services) {
     try {
       const raw = await containerService.getLogs(svc.containerName, tailLines);
+      const maskedLogs = maskSecretsText(raw, { mask: true });
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: source === 'crash-detected' || source === 'deploy-error' ? 'error' : 'warn',
+        source: 'container-log-archiver',
+        action: 'container.logs.archived',
+        message: message || `archived container logs from ${source}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        logs: normalizeLogText(maskedLogs, tailLines),
+        details: { archiveSource: source, hostPort: svc.hostPort },
+      });
       archived.push(stateService.appendContainerLogArchive(branch.id, {
         projectId: branch.projectId,
         profileId,
@@ -49,10 +67,24 @@ export async function archiveBranchContainerLogs(
         status: svc.status,
         source,
         masked: true,
-        logs: maskSecretsText(raw, { mask: true }),
+        logs: maskedLogs,
         message,
       }));
     } catch (err) {
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: 'error',
+        source: 'container-log-archiver',
+        action: 'container.logs.archive-failed',
+        message: message || `failed to archive container logs from ${source}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        error: { message: (err as Error)?.message || String(err) },
+        details: { archiveSource: source, hostPort: svc.hostPort },
+      });
       archived.push(stateService.appendContainerLogArchive(branch.id, {
         projectId: branch.projectId,
         profileId,

@@ -6,6 +6,12 @@ import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug } from './preview-slug.js';
+import {
+  createBodyCapture,
+  createRequestId,
+  redactHeaders,
+  type HttpLogSink,
+} from './http-log-store.js';
 
 /**
  * 代理转发事件 —— 每一次经过 worker port 的请求都会生成一条。
@@ -69,6 +75,7 @@ export class ProxyService {
   private proxyLogBuffer: ProxyLogEvent[] = [];
   private proxyLogSeq = 0;
   private onProxyLog: ((evt: ProxyLogEvent) => void) | null = null;
+  private httpLogStore: HttpLogSink | null = null;
 
   constructor(
     private readonly stateService: StateService,
@@ -103,6 +110,10 @@ export class ProxyService {
   /** Subscribe to live proxy events (for the SSE endpoint). */
   setOnProxyLog(fn: ((evt: ProxyLogEvent) => void) | null): void {
     this.onProxyLog = fn;
+  }
+
+  setHttpLogStore(store: HttpLogSink | null): void {
+    this.httpLogStore = store;
   }
 
   /** Snapshot of the ring buffer — used by `GET /api/proxy-log`. */
@@ -1609,6 +1620,48 @@ ${shouldAutoRefresh ? `;(function(){
     branchCtx?: { branchId: string; branchName: string; trackAccess?: boolean; profileId?: string },
   ): void {
     const proxyStart = Date.now();
+    const requestId = String(clientReq.headers['x-cds-request-id'] || '').trim() || createRequestId();
+    clientReq.headers['x-cds-request-id'] = requestId;
+    if (typeof clientRes.setHeader === 'function') {
+      clientRes.setHeader('X-CDS-Request-Id', requestId);
+    }
+    const requestCapture = createBodyCapture();
+    if (typeof clientReq.on === 'function') {
+      clientReq.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    }
+    const logHttp = (
+      status: number,
+      response: { bodyPreview?: string; bodyBytes?: number } = {},
+      outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
+      error?: { code?: string; message?: string },
+    ) => {
+      this.httpLogStore?.record({
+        layer: 'master-proxy',
+        requestId,
+        method: clientReq.method || 'GET',
+        protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
+        host: String(clientReq.headers.host || ''),
+        path: clientReq.url || '/',
+        status,
+        durationMs: Date.now() - proxyStart,
+        outcome: outcome || (status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok'),
+        remoteAddr: (clientReq.headers['cf-connecting-ip'] as string)
+          || (clientReq.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+          || clientReq.socket?.remoteAddress,
+        branchId: branchCtx?.branchId ?? null,
+        profileId: branchCtx?.profileId ?? null,
+        upstream,
+        request: {
+          headers: redactHeaders(clientReq.headers),
+          ...requestCapture.snapshot(),
+        },
+        response: {
+          headers: redactHeaders(clientRes.getHeaders() as Record<string, unknown>),
+          ...response,
+        },
+        error,
+      });
+    };
     const url = new URL(upstream);
     const options: http.RequestOptions = {
       hostname: url.hostname,
@@ -1617,6 +1670,7 @@ ${shouldAutoRefresh ? `;(function(){
       method: clientReq.method,
       headers: {
         ...clientReq.headers,
+        'x-cds-request-id': requestId,
         host: `${url.hostname}:${url.port}`,
       },
     };
@@ -1705,6 +1759,10 @@ ${shouldAutoRefresh ? `;(function(){
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
         stream.on('end', () => {
           let body = Buffer.concat(chunks).toString('utf-8');
+          const responseForLog = {
+            bodyPreview: body.slice(0, 8 * 1024),
+            bodyBytes: Buffer.byteLength(body, 'utf8'),
+          };
           const widget = buildWidgetScript(branchCtx.branchId, branchCtx.branchName);
 
           // Inject before </body> if present, otherwise append
@@ -1721,6 +1779,7 @@ ${shouldAutoRefresh ? `;(function(){
           headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
           clientRes.writeHead(statusCode, headers);
           clientRes.end(body);
+          logHttp(statusCode, responseForLog);
         });
         stream.on('error', () => {
           // Decompression failed — passthrough original response without injection
@@ -1728,16 +1787,40 @@ ${shouldAutoRefresh ? `;(function(){
             clientRes.writeHead(statusCode, proxyRes.headers);
             clientRes.end();
           }
+          logHttp(statusCode, {}, 'upstream-error', { message: 'html decompression failed' });
         });
       } else {
         // Non-HTML or non-2xx: passthrough as-is (compressed, chunked, etc.)
         clientRes.writeHead(statusCode, headers);
+        const reqUrl = clientReq.url || '/';
+        const shouldLogApiFailure = statusCode >= 400 && (reqUrl.startsWith('/api/') || reqUrl.startsWith('/_cds/api/'));
+        let bodyBytes = 0;
+        const previewChunks: Buffer[] = [];
+        proxyRes.on('data', (chunk: Buffer | string) => {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+          bodyBytes += buf.length;
+          const captured = previewChunks.reduce((n, part) => n + part.length, 0);
+          if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
+        });
+        proxyRes.on('end', () => {
+          const bodyPreview = Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
+          if (shouldLogApiFailure) {
+            console.warn(
+              `[proxy] api upstream ${statusCode}: ${clientReq.method || 'GET'} ${reqUrl} → ${upstream} (host=${clientReq.headers.host || ''}, branch=${branchCtx?.branchId || 'unknown'}, requestId=${String(proxyRes.headers['x-cds-request-id'] || clientReq.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${String(contentType || '-')})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,
+            );
+          }
+          logHttp(statusCode, { bodyPreview: bodyPreview || undefined, bodyBytes });
+        });
         proxyRes.pipe(clientRes, { end: true });
       }
     });
 
     proxyReq.on('error', (err: NodeJS.ErrnoException) => {
       console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
+      logHttp(502, {}, err.code === 'ETIMEDOUT' ? 'timeout' : 'upstream-error', {
+        code: err.code,
+        message: err.message,
+      });
       // 转发日志：明确记录上游错误类型，方便用户看到"502 但服务器无日志"时的真实原因
       const codeHintMap: Record<string, string> = {
         ECONNREFUSED: '上游端口未监听 — 容器可能还没启动完，或服务崩溃了。查 container logs。',

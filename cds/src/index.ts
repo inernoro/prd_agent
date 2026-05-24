@@ -32,6 +32,10 @@ import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
+import { httpLogStoreFromEnv } from './services/http-log-store.js';
+import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import { DockerEventMonitor } from './services/container-diagnostics.js';
+import { SystemLogMonitor } from './services/system-log-monitor.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -253,6 +257,24 @@ try {
 // (CDS_STORAGE_MODE). You can mix them freely: e.g. state=json + auth=mongo.
 // See doc/guide.cds-env.md §3 and doc/design.cds-fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
+const activeHttpLogStore = httpLogStoreFromEnv();
+if (activeHttpLogStore) {
+  try {
+    await activeHttpLogStore.init();
+    console.log('  [http-log] persistent request logging enabled (collection=cds_http_logs)');
+  } catch (err) {
+    console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
+  }
+}
+const activeServerEventLogStore = serverEventLogStoreFromEnv();
+if (activeServerEventLogStore) {
+  try {
+    await activeServerEventLogStore.init();
+    console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
+  } catch (err) {
+    console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
+  }
+}
 
 async function initAuthStore(): Promise<void> {
   const authBackend = (process.env.CDS_AUTH_BACKEND || 'memory').toLowerCase();
@@ -426,9 +448,12 @@ const containerService = new ContainerService(shell, config, {
   // 短别名启发式比对(profile.id 形如 `mysql-mdimp`,projectId 是
   // `defd4695ab5f`,slug 才是 `mdimp`)。adapter 把 slug 暴露给容器层。
   getProjectSlug: (projectId) => stateService.getProject(projectId)?.slug,
-});
+}, activeServerEventLogStore);
+const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogStore);
+const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
+proxyService.setHttpLogStore(activeHttpLogStore);
 const bridgeService = new BridgeService();
 
 // ── Forwarder route publisher (B'.2-forwarder, 2026-05-08) ──
@@ -537,6 +562,7 @@ schedulerService.setCoolFn(async (slug: string) => {
     containerService,
     branch,
     source: 'scheduler-stop',
+    serverEventLogStore: activeServerEventLogStore,
     message: 'captured after scheduler cooling stop preserved containers',
   });
   branch.status = 'idle';
@@ -692,6 +718,7 @@ const autoLifecycleService = new AutoLifecycleService(
         containerService,
         branch,
         source: 'auto-lifecycle-stop',
+        serverEventLogStore: activeServerEventLogStore,
         message: 'captured after auto-lifecycle stop preserved containers',
       });
       branch.status = 'idle';
@@ -982,6 +1009,7 @@ janitorService.setRemoveFn(async (slug: string) => {
           containerService,
           branch,
           source: 'boot-reconcile',
+          serverEventLogStore: activeServerEventLogStore,
           message: `captured when CDS boot reconciled stale in-flight status=${prev}`,
         });
         staleInFlight++;
@@ -1077,6 +1105,7 @@ janitorService.setRemoveFn(async (slug: string) => {
             branch,
             source: 'crash-detected',
             profileIds: new Set([profileId]),
+            serverEventLogStore: activeServerEventLogStore,
             message: reason,
           });
           stateService.save();
@@ -1098,6 +1127,24 @@ janitorService.setRemoveFn(async (slug: string) => {
           continue;
         }
         const startRes = await shell.exec(`docker start ${found.containerName}`);
+        activeServerEventLogStore?.record({
+          category: 'container',
+          severity: startRes.exitCode === 0 ? 'info' : 'error',
+          source: 'auto-restart',
+          action: startRes.exitCode === 0 ? 'app.auto-restart.completed' : 'app.auto-restart.failed',
+          message: `auto-restart docker start ${found.containerName} attempt ${att.count + 1}`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId,
+          containerName: found.containerName,
+          command: {
+            name: 'docker start',
+            exitCode: startRes.exitCode,
+            stdoutPreview: startRes.stdout,
+            stderrPreview: startRes.stderr,
+          },
+          details: { attempt: att.count + 1, maxRetries: MAX_RETRIES },
+        });
         if (startRes.exitCode === 0) {
           console.log(`[auto-restart] app ${found.containerName} 已重启(attempt ${att.count + 1})`);
           restartAttempts.delete(attemptKey);
@@ -1140,6 +1187,23 @@ janitorService.setRemoveFn(async (slug: string) => {
         continue;
       }
       const startRes = await shell.exec(`docker start ${svc.containerName}`);
+      activeServerEventLogStore?.record({
+        category: 'container',
+        severity: startRes.exitCode === 0 ? 'info' : 'error',
+        source: 'auto-restart',
+        action: startRes.exitCode === 0 ? 'infra.auto-restart.completed' : 'infra.auto-restart.failed',
+        message: `auto-restart docker start infra ${svc.containerName} attempt ${att.count + 1}`,
+        projectId: svc.projectId,
+        serviceId: svc.id,
+        containerName: svc.containerName,
+        command: {
+          name: 'docker start',
+          exitCode: startRes.exitCode,
+          stdoutPreview: startRes.stdout,
+          stderrPreview: startRes.stderr,
+        },
+        details: { attempt: att.count + 1, maxRetries: MAX_RETRIES },
+      });
       if (startRes.exitCode === 0) {
         console.log(`[auto-restart] infra ${svc.containerName} 已重启(attempt ${att.count + 1})`);
         restartAttempts.delete(attemptKey);
@@ -1158,6 +1222,8 @@ janitorService.setRemoveFn(async (slug: string) => {
   // /api/_internal/promote 后通过 onPromote hook 再启动。这避免双 daemon 同时
   // 写 mongo 状态(scheduler 会改 heatState、janitor 会移 worktree)。
   function startBackgroundServices(): void {
+    dockerEventMonitor.start();
+    void systemLogMonitor.start();
     if (schedulerService.isEnabled()) {
       for (const b of stateService.getAllBranches()) {
         if (b.heatState === undefined && b.status === 'running') {
@@ -1181,6 +1247,8 @@ janitorService.setRemoveFn(async (slug: string) => {
     startAutoRestartLoop();
   }
   function stopBackgroundServices(): void {
+    dockerEventMonitor.stop();
+    systemLogMonitor.stop();
     schedulerService.stop();
     janitorService.stop();
     autoLifecycleService.stop();
@@ -1201,6 +1269,8 @@ janitorService.setRemoveFn(async (slug: string) => {
 // 本函数做 scheduler/janitor.stop() + mongo close 收尾。
 async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
+  dockerEventMonitor.stop();
+  systemLogMonitor.stop();
   schedulerService.stop();
   janitorService.stop();
   // 2026-05-14 Cursor Bugbot Medium 修复：shutdown() 直接逐个 stop，
@@ -1239,6 +1309,22 @@ async function shutdown(signal: string): Promise<void> {
       console.log('[shutdown] mongo flushed + closed');
     } catch (err) {
       console.warn(`[shutdown] mongo teardown failed: ${(err as Error).message}`);
+    }
+  }
+  if (activeHttpLogStore) {
+    try {
+      await activeHttpLogStore.close();
+      console.log('[shutdown] http log store flushed + closed');
+    } catch (err) {
+      console.warn(`[shutdown] http log store teardown failed: ${(err as Error).message}`);
+    }
+  }
+  if (activeServerEventLogStore) {
+    try {
+      await activeServerEventLogStore.close();
+      console.log('[shutdown] server event log store flushed + closed');
+    } catch (err) {
+      console.warn(`[shutdown] server event log store teardown failed: ${(err as Error).message}`);
     }
   }
 }
@@ -2230,6 +2316,8 @@ const app = createServer({
   stateFile,
   authStore: activeAuthStore,
   gracefulShutdown: gracefulShutdownController,
+  httpLogStore: activeHttpLogStore,
+  serverEventLogStore: activeServerEventLogStore,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

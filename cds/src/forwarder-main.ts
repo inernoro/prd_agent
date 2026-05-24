@@ -32,6 +32,7 @@ import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute } from './forwarder/route-resolver.js';
 import type { RouteRecord } from './forwarder/types.js';
 import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
+import { httpLogStoreFromEnv } from './services/http-log-store.js';
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',
@@ -62,6 +63,17 @@ const FALLBACK_HOST = process.env.CDS_UNKNOWN_HOST_FALLBACK_HOST ?? '127.0.0.1';
 const FALLBACK_PORT_RAW = process.env.CDS_UNKNOWN_HOST_FALLBACK_PORT ?? process.env.CDS_WORKER_PORT ?? '5500';
 const FALLBACK_PORT = Number.parseInt(FALLBACK_PORT_RAW, 10);
 
+let activeHttpLogStore = httpLogStoreFromEnv();
+if (activeHttpLogStore) {
+  try {
+    await activeHttpLogStore.init();
+    console.log('[forwarder] persistent HTTP request logging enabled (collection=cds_http_logs)');
+  } catch (err) {
+    activeHttpLogStore = null;
+    console.warn(`[forwarder] HTTP request logging disabled: ${(err as Error).message}`);
+  }
+}
+
 const proxy = new ProxyHandler({
   upstreamTimeoutMs: 30_000,
   masterPassthroughHost: MASTER_PASSTHROUGH_HOST,
@@ -69,6 +81,7 @@ const proxy = new ProxyHandler({
   unknownHostFallbackHost: FALLBACK_PORT > 0 ? FALLBACK_HOST : undefined,
   unknownHostFallbackPort: FALLBACK_PORT > 0 ? FALLBACK_PORT : undefined,
   waitingPageHtml: buildForwarderWaitingPageHtml(),
+  httpLogStore: activeHttpLogStore,
   logger: {
     info: (m) => console.log(`[forwarder] ${m}`),
     warn: (m) => console.warn(`[forwarder] ${m}`),
@@ -212,7 +225,14 @@ function shutdown(signal: string): void {
   console.log(`[forwarder] received ${signal}, draining...`);
   server.close(() => {
     proxy.destroy();
-    process.exit(0);
+    const done = () => process.exit(0);
+    if (!activeHttpLogStore) {
+      done();
+      return;
+    }
+    void activeHttpLogStore.close()
+      .catch((err) => console.warn(`[forwarder] HTTP log store close failed: ${(err as Error).message}`))
+      .finally(done);
   });
   setTimeout(() => {
     console.warn('[forwarder] graceful shutdown timed out, forcing exit');

@@ -37,6 +37,7 @@ import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
+import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -1122,6 +1123,8 @@ export interface RouterDeps {
    * build status. Absent when CDS_GITHUB_APP_* env vars aren't set.
    */
   githubApp?: GitHubAppClient;
+  /** Persistent diagnostics sink for container/docker lifecycle and log captures. */
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -1135,6 +1138,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     registry,
     getClusterStrategy,
     githubApp,
+    serverEventLogStore,
   } = deps;
 
   const router = Router();
@@ -3052,6 +3056,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         containerService,
         branch: entry,
         source: 'branch-delete',
+        serverEventLogStore,
         message: 'captured before branch delete removes containers',
       });
 
@@ -3578,6 +3583,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               branch: entry,
               source: 'pre-deploy-recreate',
               profileIds: new Set([profile.id]),
+              serverEventLogStore,
               message: 'captured before docker rm/run during branch deploy',
             });
 
@@ -4078,6 +4084,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           branch: entry,
           source: 'pre-deploy-recreate',
           profileIds: new Set([profile.id]),
+          serverEventLogStore,
           message: 'captured before docker rm/run during single service deploy',
         });
         await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
@@ -4410,6 +4417,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         containerService,
         branch: entry,
         source: 'manual-stop',
+        serverEventLogStore,
         message: 'captured after user stop preserved containers',
       });
       entry.status = 'idle';
@@ -5186,6 +5194,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         masked: mask,
         logs: masked,
       });
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: 'info',
+        source: 'container-logs-api',
+        action: 'container.logs.read',
+        message: `container logs read via API for ${svc.containerName}`,
+        projectId: entry.projectId,
+        branchId: id,
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        logs: normalizeLogText(masked, 500),
+        details: { masked: mask, hostPort: svc.hostPort },
+      });
       stateService.save();
       res.json({ logs: masked });
     } catch (err) {
@@ -5250,6 +5272,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
             source: 'container-logs-stream',
             masked: shouldMask(req),
             logs,
+          });
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'info',
+            source: 'container-logs-stream',
+            action: 'container.logs.stream-closed',
+            message: `container log stream closed for ${svc.containerName}`,
+            projectId: entry.projectId,
+            branchId: id,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            status: svc.status,
+            logs: normalizeLogText(logs, 200),
+            details: { masked: shouldMask(req), hostPort: svc.hostPort },
           });
           stateService.save();
         }
@@ -6956,6 +6992,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           containerService,
           branch: entry,
           source: 'cleanup',
+          serverEventLogStore,
           message: 'captured before cleanup removes branch containers',
         });
         for (const svc of Object.values(entry.services)) {
@@ -7056,6 +7093,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           containerService,
           branch: entry,
           source: 'cleanup',
+          serverEventLogStore,
           message: 'captured before orphan cleanup removes branch containers',
         });
 
@@ -8586,6 +8624,7 @@ cdscli project list --human
               branch: entry,
               source: 'pre-deploy-recreate',
               profileIds: new Set([profile.id]),
+              serverEventLogStore,
               message: 'captured before docker rm/run during import deploy',
             });
             await containerService.runService(entry, profile, svc, (chunk) => {
