@@ -16,6 +16,8 @@ import {
 } from '../updater/active-update-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
+const PORT_ALLOC_SCAN_SPAN = 40_000;
+const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 const SYSTEM_PROJECT_ID = '__system__';
@@ -805,7 +807,7 @@ export class StateService {
 
   // ── Port allocation ──
 
-  allocatePort(portStart: number): number {
+  allocatePort(portStart: number, extraUsedPorts?: ReadonlySet<number>): number {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
@@ -815,10 +817,20 @@ export class StateService {
     for (const svc of this.state.infraServices || []) {
       if (svc.hostPort) usedPorts.add(svc.hostPort);
     }
-    let port = portStart + this.state.nextPortIndex;
-    while (usedPorts.has(port)) port++;
-    this.state.nextPortIndex++;
-    return port;
+    for (const port of extraUsedPorts || []) {
+      if (Number.isInteger(port) && port > 0) usedPorts.add(port);
+    }
+
+    const span = Math.max(1, Math.min(PORT_ALLOC_SCAN_SPAN, 65535 - portStart));
+    const sequence = Math.max(0, this.state.nextPortIndex || 0);
+    for (let i = 0; i < span; i++) {
+      const offset = ((sequence + i) * PORT_ALLOC_STRIDE) % span;
+      const port = portStart + offset;
+      if (usedPorts.has(port)) continue;
+      this.state.nextPortIndex = sequence + i + 1;
+      return port;
+    }
+    throw new Error(`没有可用端口：扫描范围 ${portStart}-${portStart + span - 1} 已全部占用`);
   }
 
   // ── Routing rules ──

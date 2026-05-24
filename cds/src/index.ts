@@ -369,10 +369,9 @@ if (config.reposBase) {
 
 // ── Services ──
 // P4 Part 18 (G1.2): WorktreeService is stateless; every call passes
-// the repoRoot explicitly. The bootstrap path and the proxy auto-build
-// path pass `config.repoRoot` (legacy single-repo behavior); the
-// multi-project deploy path resolves per-project via
-// StateService.getProjectRepoRoot().
+// the repoRoot explicitly. Deploy/bootstrap paths choose the correct
+// repository root explicitly; preview requests are not allowed to create
+// worktrees or containers.
 const worktreeService = new WorktreeService(shell);
 
 // ── FU-04: flat → per-project worktree layout migration ──
@@ -449,7 +448,129 @@ const containerService = new ContainerService(shell, config, {
   // `defd4695ab5f`,slug 才是 `mdimp`)。adapter 把 slug 暴露给容器层。
   getProjectSlug: (projectId) => stateService.getProject(projectId)?.slug,
 }, activeServerEventLogStore);
-const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogStore);
+
+function allBranchServicesInactive(branch: { services?: Record<string, { status?: string }> }): boolean {
+  return Object.values(branch.services || {}).every((item) =>
+    item.status !== 'running' &&
+    item.status !== 'starting' &&
+    item.status !== 'building' &&
+    item.status !== 'restarting'
+  );
+}
+
+function dockerLifecycleReason(event: {
+  action: string;
+  containerName?: string;
+  status?: string;
+  exitCode?: number;
+  oomKilled?: boolean;
+  attrs: Record<string, string>;
+}): { source: 'crash' | 'system'; nextServiceStatus: 'error' | 'stopped'; nextBranchStatus: 'error' | 'idle'; reason: string } {
+  const action = String(event.action || '').toLowerCase();
+  const exitCode = Number.isFinite(event.exitCode) ? event.exitCode : undefined;
+  const exitText = exitCode !== undefined ? ` exitCode=${exitCode}` : '';
+  const oom = event.oomKilled ? ' OOMKilled=true' : '';
+  const actor = event.attrs?.signal ? ` signal=${event.attrs.signal}` : '';
+  const name = event.containerName || 'unknown-container';
+  if (event.oomKilled || action === 'oom') {
+    return {
+      source: 'crash',
+      nextServiceStatus: 'error',
+      nextBranchStatus: 'error',
+      reason: `容器 OOM 被系统杀死：${name}${exitText}${oom}`,
+    };
+  }
+  if (action === 'die') {
+    const normalExit = exitCode === 0 || exitCode === 143 || exitCode === 137;
+    return {
+      source: normalExit ? 'system' : 'crash',
+      nextServiceStatus: normalExit ? 'stopped' : 'error',
+      nextBranchStatus: normalExit ? 'idle' : 'error',
+      reason: `Docker die 事件：${name}${exitText}${oom}${actor}`,
+    };
+  }
+  if (action === 'kill') {
+    return {
+      source: 'crash',
+      nextServiceStatus: 'error',
+      nextBranchStatus: 'error',
+      reason: `容器被 docker kill：${name}${exitText}${actor}`,
+    };
+  }
+  return {
+    source: 'system',
+    nextServiceStatus: 'stopped',
+    nextBranchStatus: 'idle',
+    reason: `容器被 Docker destroy/remove：${name}${exitText}${oom}`,
+  };
+}
+
+const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogStore, async (event) => {
+  const action = String(event.action || '').toLowerCase();
+  if (!['die', 'kill', 'destroy', 'oom'].includes(action)) return;
+  if (!event.branchId || !event.profileId || !event.containerName) return;
+  const branch = stateService.getBranch(event.branchId);
+  const svc = branch?.services?.[event.profileId];
+  if (!branch || !svc || svc.containerName !== event.containerName) return;
+  const previousStatus = svc.status;
+  if (!['running', 'starting', 'building', 'restarting'].includes(String(previousStatus || ''))) return;
+
+  const classified = dockerLifecycleReason(event);
+  svc.status = classified.nextServiceStatus;
+  svc.errorMessage = classified.reason;
+  if (allBranchServicesInactive(branch)) {
+    branch.status = classified.nextBranchStatus;
+    branch.errorMessage = classified.nextBranchStatus === 'error' ? classified.reason : undefined;
+  }
+  branch.lastStoppedAt = new Date().toISOString();
+  branch.lastStopReason = classified.reason;
+  branch.lastStopSource = classified.source;
+  if (classified.source === 'crash') {
+    stateService.incrementBranchStat(branch.id, 'stopCount');
+  }
+  try {
+    stateService.appendActivityLog(branch.projectId, {
+      type: classified.source === 'crash' ? 'crash' : 'stop',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: 'docker-events',
+      note: classified.reason,
+    });
+  } catch { /* activity log is best-effort */ }
+  stateService.save();
+  branchEvents.emitEvent({
+    type: 'branch.status',
+    payload: {
+      branchId: branch.id,
+      projectId: branch.projectId,
+      status: branch.status,
+      branch,
+      ts: nowIso(),
+    },
+  });
+  activeServerEventLogStore?.record({
+    category: 'container',
+    severity: classified.source === 'crash' ? 'error' : 'warn',
+    source: 'docker-events-state-sync',
+    action: classified.source === 'crash' ? 'app.external-stop.crash-synced' : 'app.external-stop.synced',
+    message: classified.reason,
+    projectId: branch.projectId,
+    branchId: branch.id,
+    profileId: event.profileId,
+    containerName: event.containerName,
+    status: svc.status,
+    details: {
+      action,
+      previousStatus,
+      nextStatus: svc.status,
+      branchStatus: branch.status,
+      exitCode: event.exitCode,
+      oomKilled: event.oomKilled,
+      dockerStatus: event.status,
+      reason: 'sync-cds-state-after-docker-lifecycle-event',
+    },
+  });
+});
 const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
@@ -538,8 +659,8 @@ let shutdownInProgress = false;
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
 // coolFn: stop all containers of a branch but keep the branch entry in state.
-// The next request to this branch will trigger the existing auto-build path,
-// which re-runs docker run and brings the services back to HOT.
+// A later explicit deploy/webhook/cdscli action can bring it back to HOT;
+// passive preview requests must only show state and must not start containers.
 schedulerService.setCoolFn(async (slug: string) => {
   const branch = stateService.getBranch(slug);
   if (!branch) return;
@@ -945,6 +1066,23 @@ janitorService.setRemoveFn(async (slug: string) => {
             svc.status = 'running';
           } else if (wasStatus === 'running' || wasStatus === 'starting') {
             // 持久态认为在跑但容器已退出 → 真·异常退出，标 error
+            activeServerEventLogStore?.record({
+              category: 'container',
+              severity: 'error',
+              source: 'startup-reconcile',
+              action: 'app.reconcile.exited',
+              message: `state says ${wasStatus} but Docker container is not running: ${svc.containerName}`,
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId,
+              containerName: svc.containerName,
+              status: 'stopped',
+              details: {
+                previousStatus: wasStatus,
+                nextStatus: 'error',
+                reason: 'exited-container-on-startup',
+              },
+            });
             svc.status = 'error';
             svc.errorMessage = '容器异常退出，疑似崩溃，需重新部署';
           } else if (wasStatus === 'error') {
@@ -963,6 +1101,22 @@ janitorService.setRemoveFn(async (slug: string) => {
           appContainers.delete(key);
         } else if (svc.status === 'running') {
           // State says running but container is gone
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'startup-reconcile',
+            action: 'app.reconcile.missing',
+            message: `state says running but Docker container is missing: ${svc.containerName}`,
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId,
+            containerName: svc.containerName,
+            details: {
+              previousStatus: svc.status,
+              nextStatus: 'error',
+              reason: 'missing-container-on-startup',
+            },
+          });
           svc.status = 'error';
           svc.errorMessage = '容器已丢失，需重新部署';
           appReconciled++;
@@ -973,6 +1127,18 @@ janitorService.setRemoveFn(async (slug: string) => {
     // Log orphan app containers
     for (const [key, info] of appContainers) {
       console.warn(`  [app] Orphan container detected: ${info.containerName} (${key}). Not managed by current state.`);
+      activeServerEventLogStore?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'startup-reconcile',
+        action: 'app.reconcile.orphan',
+        message: `Docker container exists but is not managed by current state: ${info.containerName}`,
+        branchId: info.branchId,
+        profileId: info.profileId,
+        containerName: info.containerName,
+        status: info.running ? 'running' : 'stopped',
+        details: { key, reason: 'orphan-container-on-startup' },
+      });
     }
 
     if (appReconciled > 0) {
@@ -1818,465 +1984,42 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   res.end(html);
 }
 
-// Auto-build: when a request hits an unbuilt branch
-proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
-  const url = new URL(_req.url || '/', `http://${_req.headers.host || 'localhost'}`);
+// Preview requests must never create worktrees or containers. Containers may only
+// be started by webhook dispatch, explicit dashboard deploy, or cdscli.
+proxyService.setOnAutoBuild(async (branchSlug, req, res) => {
+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const isSSE = url.searchParams.get('sse') === '1';
+  const message = `预览访问不会自动启动容器。分支 "${branchSlug}" 只能通过 webhook、手动部署或 cdscli 启动。`;
 
-  // Browser request (no ?sse=1): decide up-front between the transit page
-  // (branch exists → build will kick off) and the friendly "gone" page
-  // (branch nowhere to be found — deleted, typo, never deployed). Doing the
-  // remote existence check here avoids the old UX where the user waited
-  // through a spinner just to see "远程仓库中未找到分支" — or worse, landed
-  // on a raw Chrome 400 when the SSE connection was never established.
+  activeServerEventLogStore?.record({
+    category: 'container',
+    severity: 'warn',
+    source: 'proxy-auto-build',
+    action: 'app.auto-build.blocked.disabled',
+    message,
+    branchId: branchSlug,
+    details: {
+      requestedSlug: branchSlug,
+      host: req.headers.host || null,
+      url: req.url || null,
+      sse: isSSE,
+      reason: 'preview-auto-build-disabled',
+    },
+  });
+
   if (!isSSE) {
-    // Skip remote check when the branch already exists locally (deploy in
-    // progress, or just-created with status=running) — the transit page
-    // will handle it via the SSE path.
-    const localBranch = stateService.getBranch(branchSlug);
-    let displayName = localBranch?.branch || branchSlug;
-    if (!localBranch) {
-      const autoRepoRoot = config.repoRoot;
-      const projectSlugs = (stateService.getProjects?.() ?? [])
-        .filter((p) => !p.legacyFlag && p.slug)
-        .map((p) => p.slug as string);
-      let foundRemote = false;
-      try {
-        if (await worktreeService.branchExists(autoRepoRoot, branchSlug)) {
-          foundRemote = true;
-          displayName = branchSlug;
-        } else {
-          const suffixMatch = await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug);
-          const slugMatch = suffixMatch || await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug);
-          const previewSlugMatch = slugMatch || await worktreeService.findBranchByPreviewSlug(autoRepoRoot, branchSlug, projectSlugs);
-          if (previewSlugMatch) {
-            foundRemote = true;
-            displayName = previewSlugMatch;
-          }
-        }
-      } catch {
-        foundRemote = false;
-      }
-      if (!foundRemote) {
-        serveBranchGonePage(branchSlug, _req, res);
-        return;
-      }
-    }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
-    res.end(buildTransitPageHtml(displayName));
+    serveBranchGonePage(branchSlug, req, res);
     return;
   }
 
-  // ── SSE mode: stream build events ──
-  const branch = stateService.getBranch(branchSlug);
-
-  // Race condition: if a build is already in progress for this slug,
-  // add this response as a listener and wait for the first build to finish
-  const existingLock = buildLocks.get(branchSlug);
-  if (existingLock || branch?.status === 'building') {
-    if (existingLock) {
-      // Subscribe this response to receive SSE events from the ongoing build
-      existingLock.listeners.push(res);
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      });
-      try { res.write(`event: step\ndata: ${JSON.stringify({ step: 'wait', status: 'running', title: `分支 "${branchSlug}" 正在构建中，等待完成...` })}\n\n`); } catch { /* */ }
-      // The build promise will resolve/reject and the finally block will end this response
-      existingLock.promise.then(() => {
-        try {
-          res.write(`event: complete\ndata: ${JSON.stringify({ message: `分支 "${branchSlug}" 已就绪` })}\n\n`);
-        } catch { /* */ }
-        res.end();
-      }).catch((err) => {
-        try {
-          res.write(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
-        } catch { /* */ }
-        res.end();
-      });
-      return;
-    }
-
-    // Building but no lock (stale state) — send SSE error so transit page shows status
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.write(`event: step\ndata: ${JSON.stringify({ step: 'wait', status: 'running', title: `分支 "${branchSlug}" 正在构建中...` })}\n\n`);
-    // Poll until building finishes
-    const poll = setInterval(() => {
-      const b = stateService.getBranch(branchSlug);
-      if (!b || b.status !== 'building') {
-        clearInterval(poll);
-        if (b?.status === 'running') {
-          try { res.write(`event: complete\ndata: ${JSON.stringify({ message: `分支 "${branchSlug}" 已就绪` })}\n\n`); } catch { /* */ }
-        } else {
-          try { res.write(`event: error\ndata: ${JSON.stringify({ message: b?.errorMessage || '构建状态异常' })}\n\n`); } catch { /* */ }
-        }
-        res.end();
-      }
-    }, 2000);
-    return;
-  }
-
-  // P4 Part 18 (G1.2): auto-build path stays on the legacy single
-  // repo root. Subdomain-triggered auto-build predates multi-project;
-  // new projects must be created explicitly via POST /projects + clone.
-  const autoRepoRoot = config.repoRoot;
-
-  // Check if remote branch exists
-  const exists = await worktreeService.branchExists(autoRepoRoot, branchSlug);
-  // Also try suffix matching and common patterns
-  const candidates = [branchSlug, `feature/${branchSlug}`, `fix/${branchSlug}`];
-  let resolvedBranch: string | null = null;
-
-  if (exists) {
-    resolvedBranch = branchSlug;
-  } else {
-    for (const candidate of candidates) {
-      if (await worktreeService.branchExists(autoRepoRoot, candidate)) {
-        resolvedBranch = candidate;
-        break;
-      }
-    }
-  }
-
-  // If still not found, try suffix matching against all remote branches
-  if (!resolvedBranch) {
-    resolvedBranch = await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug);
-  }
-
-  // If still not found, try slug matching (e.g. slug "claude-fix-xxx" → branch "claude/fix-xxx")
-  if (!resolvedBranch) {
-    resolvedBranch = await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug);
-  }
-
-  // Last resort: forward-match the slug as a v1 / v2 / v3 preview URL slug.
-  // Handles cases like host `audio-upload-asr-tgr1f-claude-prd-agent.miduo.org`
-  // where the slug embeds the project name plus a slash-bearing branch ref.
-  if (!resolvedBranch) {
-    const projectSlugs = (stateService.getProjects?.() ?? [])
-      .filter((p) => !p.legacyFlag && p.slug)
-      .map((p) => p.slug as string);
-    if (projectSlugs.length > 0) {
-      resolvedBranch = await worktreeService.findBranchByPreviewSlug(
-        autoRepoRoot, branchSlug, projectSlugs);
-    }
-  }
-
-  if (!resolvedBranch) {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.write(`event: error\ndata: ${JSON.stringify({ message: `远程仓库中未找到分支 "${branchSlug}"` })}\n\n`);
-    res.end();
-    return;
-  }
-
-  // Recompute slug from the actual resolved branch name
-  const finalSlug = StateService.slugify(resolvedBranch);
-
-  // SSE: stream build progress
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-
-  const listeners: http.ServerResponse[] = [];
-
-  const sendEvent = (event: string, data: unknown) => {
-    const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    try { res.write(msg); } catch { /* */ }
-    // Also broadcast to waiting listeners
-    for (const listener of listeners) {
-      try { listener.write(msg); } catch { /* */ }
-    }
-  };
-
-  // Register build lock(s). Track every key we register so the finally
-  // block can clean them all up — the set can grow inside the try
-  // block when an existing entry resolved via findBranchByProjectAndName
-  // is stored under a canonical id different from finalSlug/branchSlug.
-  // PR #498 review (2026-04-26): without this tracking, the entry.id
-  // lock at line 1064 leaks indefinitely.
-  const lockKeys = new Set<string>([finalSlug]);
-  let resolveLock: () => void;
-  let rejectLock: (err: Error) => void;
-  const lockPromise = new Promise<void>((resolve, reject) => {
-    resolveLock = resolve;
-    rejectLock = reject;
-  });
-  buildLocks.set(finalSlug, { promise: lockPromise, listeners });
-  if (finalSlug !== branchSlug) {
-    buildLocks.set(branchSlug, { promise: lockPromise, listeners });
-    lockKeys.add(branchSlug);
-  }
-
-  // Track the actual id under which the branch entry lives so the
-  // catch block can flip status='error' on deploy failure. For
-  // non-legacy projects this is `${slug}-${finalSlug}`, NOT finalSlug —
-  // looking up by finalSlug there returns undefined and the entry
-  // stays stuck in 'building' forever (PR #498 review fix).
-  let resolvedEntryId: string | null = null;
-
-  try {
-    // FU-04 follow-up (2026-04-24): resolve the real project that owns
-    // `autoRepoRoot` before creating any entry. The original code hard-
-    // coded projectId='default', which broke after the legacy-cleanup
-    // rename flow: once 'default' → 'prd-agent', new subdomain hits
-    // would mint an orphan branch pointing at a project id that no
-    // longer exists ("加载项目失败 HTTP 404" + permanent "检测到遗留
-    // default" banner). Resolution is centralised in StateService to
-    // keep this decision testable.
-    const ownerProject = stateService.resolveProjectForAutoBuild(autoRepoRoot);
-    if (!ownerProject) {
-      // PR #498 second-round review (Bugbot): the early return originally
-      // dropped through finally without ever settling lockPromise. Any
-      // concurrent SSE listener that subscribed via the dedup branch at
-      // line 917 would hang forever waiting on `existingLock.promise`.
-      // Reject so those listeners' `.catch` writes an SSE error and
-      // closes their response cleanly. The throw also unifies the error
-      // accounting with the rest of the try block — the catch below
-      // will sendEvent('error') and the finally tears down the locks.
-      throw new Error(
-        `无法为分支 "${resolvedBranch}" 定位所属项目（存在多个项目且都设置了 repoPath）。请在 Dashboard 里显式创建分支。`,
-      );
-    }
-
-    // Align the id formula + lookup with branches.ts / webhook dispatcher.
-    const slugPrefix = ownerProject.legacyFlag ? '' : `${ownerProject.slug}-`;
-    const canonicalId = `${slugPrefix}${finalSlug}`;
-    let entry =
-      stateService.getBranch(canonicalId) ??
-      stateService.findBranchByProjectAndName(ownerProject.id, resolvedBranch);
-    // Lock the entry id (existing) or canonicalId (about-to-be-created)
-    // so the catch path can mark the right entry as 'error' and the
-    // finally path tears every lock down.
-    resolvedEntryId = entry?.id ?? canonicalId;
-    if (entry && !buildLocks.has(entry.id)) {
-      // Re-register the build lock under the entry's canonical id so
-      // concurrent hits using either slug share the same lock.
-      buildLocks.set(entry.id, { promise: lockPromise, listeners });
-      lockKeys.add(entry.id);
-    }
-    if (!buildLocks.has(canonicalId)) {
-      // Same for the to-be-created path: register early so the catch
-      // path can locate the entry by canonicalId and so a stop/redeploy
-      // racing the worktree create sees the lock.
-      buildLocks.set(canonicalId, { promise: lockPromise, listeners });
-      lockKeys.add(canonicalId);
-    }
-    if (!entry) {
-      sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
-      await shell.exec(`mkdir -p "${config.worktreeBase}/${ownerProject.id}"`);
-      const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, ownerProject.id, canonicalId);
-      await worktreeService.create(autoRepoRoot, resolvedBranch, worktreePath);
-
-      entry = {
-        id: canonicalId,
-        projectId: ownerProject.id,
-        branch: resolvedBranch,
-        worktreePath,
-        services: {},
-        status: 'building',
-        createdAt: new Date().toISOString(),
-      };
-      stateService.addBranch(entry);
-      stateService.save();
-      sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
-    }
-
-    // Fast path: 已有 entry 且所有服务状态都是 running 时跳过重建。历史上这里
-    // 是无条件 entry.status='building' + 全量 docker rm -f && docker run，导致
-    // 用户每次访问预览域名都触发一次"销毁并重建容器"——画面上看到的
-    // "正在构建 api" 就是这个。proxy 在 status==='running' 时直接路由到容器，
-    // 不会调到 onAutoBuild；落到这里多半是：① entry 是被 fallback 路径
-    // (findBranchByProjectAndName) 翻出来的、proxy 的 v3/v1/v2 三档 slug 都
-    // miss；② 状态被外部置成 stopped/error。前者直接复用即可，后者也应该走
-    // 显式 redeploy 而不是被一次浏览访问触发全量重建。
-    const allServicesRunning =
-      Object.keys(entry.services).length > 0 &&
-      Object.values(entry.services).every((s) => s.status === 'running');
-    if (entry.status === 'running' && allServicesRunning) {
-      entry.lastAccessedAt = new Date().toISOString();
-      stateService.save();
-      sendEvent('step', {
-        step: 'reuse',
-        status: 'done',
-        title: `分支 "${finalSlug}" 已在运行，跳过重建`,
-      });
-      sendEvent('complete', {
-        message: `分支 "${finalSlug}" 已就绪，可以打开预览`,
-      });
-      resolveLock!();
-      return;
-    }
-
-    entry.status = 'building';
-    stateService.save();
-    branchEvents.emitEvent({
-      type: 'branch.status',
-      payload: {
-        branchId: entry.id,
-        projectId: entry.projectId,
-        status: entry.status,
-        branch: entry,
-        ts: nowIso(),
-      },
-    });
-
-    // Build only this branch's project's profiles. Earlier this used
-    // the global `getBuildProfiles()`, which meant a subdomain-preview
-    // request for a default-project branch would iterate EVERY project's
-    // profiles (creating cross-project service entries + running the
-    // wrong containers). Confirmed root cause of the "构建配置 X 缺少
-    // command 字段" error when a fork project had a half-specified
-    // profile. See `isolation-bug` note in changelogs/.
-    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
-    for (const profile of profiles) {
-      sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
-
-      if (!entry.services[profile.id]) {
-        const hostPort = stateService.allocatePort(config.portStart);
-        entry.services[profile.id] = {
-          profileId: profile.id,
-          containerName: `cds-${entry.id}-${profile.id}`,
-          hostPort,
-          status: 'building',
-        };
-        stateService.save();
-      }
-
-      const svc = entry.services[profile.id];
-      svc.status = 'building';
-      stateService.save();
-      branchEvents.emitEvent({
-        type: 'branch.status',
-        payload: {
-          branchId: entry.id,
-          projectId: entry.projectId,
-          status: entry.status,
-          branch: entry,
-          ts: nowIso(),
-        },
-      });
-
-      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user
-      // custom env. Scoped by the deploying branch's project so a
-      // JWT_SECRET in project A never leaks into project B.
-      const cdsEnv = stateService.getCdsEnvVars(entry.projectId || 'default');
-      const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
-      const mergedEnv = { ...cdsEnv, ...customEnv };
-      await containerService.runService(entry, profile, svc, (chunk) => {
-        sendEvent('log', { profileId: profile.id, chunk });
-      }, mergedEnv);
-
-      // Gate 'running' on readiness probe — container alive isn't enough.
-      // See .claude/rules/cds-auto-deploy.md. Auto-build path does not block
-      // on HTTP probes (users tapping a cold subdomain want the loading page,
-      // not a long SSE stream) but TCP readiness is cheap and closes the
-      // window where the host port is bound but not yet accepting.
-      svc.status = 'starting';
-      stateService.save();
-      const ready = await containerService.waitForReadiness(
-        svc.hostPort,
-        profile.readinessProbe,
-        (info) => sendEvent('probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error }),
-      );
-      if (ready) {
-        svc.status = 'running';
-        svc.errorMessage = undefined;
-        sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
-      } else {
-        svc.status = 'error';
-        svc.errorMessage = '就绪探测超时';
-        sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 就绪探测超时 :${svc.hostPort}` });
-      }
-    }
-
-    // Aggregate overall branch state from the per-service status so a
-    // readiness-timeout on any service doesn't silently resolve as 'running'.
-    const svcStatuses = Object.values(entry.services).map(s => s.status);
-    const anyError = svcStatuses.some(s => s === 'error');
-    const anyStarting = svcStatuses.some(s => s === 'starting');
-    const anyRunning = svcStatuses.some(s => s === 'running');
-    const failedReasons = Object.entries(entry.services)
-      .filter(([, s]) => s.status === 'error')
-      .map(([id, s]) => `${id}: ${s.errorMessage || '构建失败'}`);
-    entry.status = anyError
-      ? 'error'
-      : anyStarting && !anyRunning
-        ? 'starting'
-        : anyRunning
-          ? 'running'
-          : 'error';
-    entry.errorMessage = anyError ? failedReasons.join('\n') || '构建失败' : undefined;
-    entry.lastAccessedAt = new Date().toISOString();
-    stateService.save();
-    branchEvents.emitEvent({
-      type: 'branch.status',
-      payload: {
-        branchId: entry.id,
-        projectId: entry.projectId,
-        status: entry.status,
-        branch: entry,
-        ts: nowIso(),
-      },
-    });
-
-    if (anyError) {
-      const message = `分支 "${finalSlug}" 构建失败：${entry.errorMessage || '请查看构建日志'}`;
-      sendEvent('error', { message });
-      rejectLock!(new Error(message));
-      return;
-    }
-
-    sendEvent('complete', {
-      message: `分支 "${finalSlug}" 已就绪，可以打开预览`,
-    });
-    resolveLock!();
-  } catch (err) {
-    // Look up by the canonical id we tracked through the try block,
-    // not finalSlug — for non-legacy projects the entry lives under
-    // `${slug}-${finalSlug}` and looking up by finalSlug returns
-    // undefined, leaving the entry stuck in 'building' forever.
-    // Fall back to finalSlug for the "failed before resolving project"
-    // case where resolvedEntryId is still null.
-    const entry = stateService.getBranch(resolvedEntryId ?? finalSlug);
-    if (entry) {
-      entry.status = 'error';
-      entry.errorMessage = (err as Error).message;
-      stateService.save();
-      branchEvents.emitEvent({
-        type: 'branch.status',
-        payload: {
-          branchId: entry.id,
-          projectId: entry.projectId,
-          status: entry.status,
-          branch: entry,
-          ts: nowIso(),
-        },
-      });
-    }
-    sendEvent('error', { message: (err as Error).message });
-    rejectLock!(err as Error);
-  } finally {
-    // Tear down every lock we registered (including the canonicalId /
-    // entry.id locks added inside the try block once we resolved the
-    // project — without this they leak and block future concurrent
-    // auto-build requests for the same entry id).
-    for (const key of lockKeys) buildLocks.delete(key);
-    res.end();
-  }
+  res.write(`event: error\ndata: ${JSON.stringify({ code: 'preview_auto_build_disabled', message })}\n\n`);
+  res.end();
 });
 
 // ── Executor registry (needed BEFORE createServer so the branch router's

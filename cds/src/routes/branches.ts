@@ -981,6 +981,83 @@ function isPortConflictError(err: unknown): boolean {
   return /port is already allocated|bind: address already in use|address already in use|EADDRINUSE/i.test(text);
 }
 
+function parseListenPorts(output: string): Set<number> {
+  const ports = new Set<number>();
+  for (const line of output.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 4) continue;
+    const local = parts[3];
+    const match = local.match(/:(\d+)$/);
+    if (!match) continue;
+    const port = Number(match[1]);
+    if (Number.isInteger(port) && port > 0 && port <= 65535) ports.add(port);
+  }
+  return ports;
+}
+
+async function collectListeningPorts(shell: IShellExecutor): Promise<Set<number>> {
+  const result = await shell.exec('ss -H -ltn').catch(() => null);
+  if (!result || result.exitCode !== 0) return new Set();
+  return parseListenPorts(result.stdout);
+}
+
+interface RunServiceWithPortRetryOptions {
+  stateService: StateService;
+  shell: IShellExecutor;
+  config: CdsConfig;
+  containerService: ContainerService;
+  serverEventLogStore?: ServerEventLogSink | null;
+  entry: BranchEntry;
+  profile: BuildProfile;
+  service: ServiceState;
+  customEnv?: Record<string, string>;
+  onOutput?: (chunk: string) => void;
+  onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
+}
+
+async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await options.containerService.runService(
+        options.entry,
+        options.profile,
+        options.service,
+        options.onOutput,
+        options.customEnv,
+      );
+      return;
+    } catch (err) {
+      if (!isPortConflictError(err) || attempt === maxAttempts) throw err;
+      const oldPort = options.service.hostPort;
+      const listeningPorts = await collectListeningPorts(options.shell);
+      listeningPorts.add(oldPort);
+      const newPort = options.stateService.allocatePort(options.config.portStart, listeningPorts);
+      options.service.hostPort = newPort;
+      options.service.errorMessage = undefined;
+      options.stateService.save();
+      options.serverEventLogStore?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'port-allocator',
+        action: 'app.port-conflict.reallocated',
+        message: `host port ${oldPort} was occupied; retrying ${options.service.containerName} on ${newPort}`,
+        projectId: options.entry.projectId,
+        branchId: options.entry.id,
+        profileId: options.profile.id,
+        containerName: options.service.containerName,
+        details: {
+          oldPort,
+          newPort,
+          attempt,
+          reason: 'docker-run-port-conflict',
+        },
+      });
+      options.onPortChanged?.({ oldPort, newPort, attempt });
+    }
+  }
+}
+
 /**
  * Result of a single smoke-all.sh run — surface area shared between the
  * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
@@ -1226,7 +1303,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return current;
       } catch (err) {
         if (!isPortConflictError(err) || attempt === 4) throw err;
-        const nextPort = stateService.allocatePort(config.portStart);
+        const nextPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         stateService.updateInfraService(current.id, { hostPort: nextPort }, projectId);
         stateService.save();
         const updated = stateService.getInfraServiceForProjectAndId(projectId, current.id);
@@ -3519,10 +3596,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         timestamp: new Date().toISOString(),
       });
 
-      // ── Pre-allocate ports synchronously (before parallel execution) ──
+      // ── Pre-allocate ports (before parallel execution) ──
+      const liveUsedPorts = await collectListeningPorts(shell);
       for (const profile of profiles) {
         if (!entry.services[profile.id]) {
-          const hostPort = stateService.allocatePort(config.portStart);
+          const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
+          liveUsedPorts.add(hostPort);
           entry.services[profile.id] = {
             profileId: profile.id,
             containerName: `cds-${id}-${profile.id}`,
@@ -3605,21 +3684,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
               timestamp: new Date().toISOString(),
             });
 
-            await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
-              sendSSE(res, 'log', { profileId: profile.id, chunk });
-              for (const line of chunk.split('\n')) {
-                if (line.trim()) {
-                  logDeploy(id, line);
-                  // Also store container output in operation log for historical viewing
-                  opLog.events.push({
-                    step: `log-${profile.id}`,
-                    status: 'info',
-                    title: line.trim(),
-                    timestamp: new Date().toISOString(),
-                  });
+            await runServiceWithPortRetry({
+              stateService,
+              shell,
+              config,
+              containerService,
+              serverEventLogStore,
+              entry,
+              profile: effectiveProfile,
+              service: svc,
+              customEnv: mergedEnv,
+              onPortChanged: ({ oldPort, newPort, attempt }) => {
+                logEvent({
+                  step: `port-${profile.id}`,
+                  status: 'warning',
+                  title: `${effectiveProfile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`,
+                  detail: { oldPort, newPort, attempt },
+                  timestamp: new Date().toISOString(),
+                });
+              },
+              onOutput: (chunk) => {
+                sendSSE(res, 'log', { profileId: profile.id, chunk });
+                for (const line of chunk.split('\n')) {
+                  if (line.trim()) {
+                    logDeploy(id, line);
+                    // Also store container output in operation log for historical viewing
+                    opLog.events.push({
+                      step: `log-${profile.id}`,
+                      status: 'info',
+                      title: line.trim(),
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
                 }
-              }
-            }, mergedEnv);
+              },
+            });
 
             // Phase 1 passed (container alive). Enter 'starting' and gate the
             // transition to 'running' on either a startup-log signal or an
@@ -4063,7 +4162,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
-        const hostPort = stateService.allocatePort(config.portStart);
+        const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         entry.services[profile.id] = {
           profileId: profile.id,
           containerName: `cds-${id}-${profile.id}`,
@@ -4087,12 +4186,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
           serverEventLogStore,
           message: 'captured before docker rm/run during single service deploy',
         });
-        await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
-          sendSSE(res, 'log', { profileId: profile.id, chunk });
-          for (const line of chunk.split('\n')) {
-            if (line.trim()) logDeploy(id, line);
-          }
-        }, mergedEnv);
+        await runServiceWithPortRetry({
+          stateService,
+          shell,
+          config,
+          containerService,
+          serverEventLogStore,
+          entry,
+          profile: effectiveProfile,
+          service: svc,
+          customEnv: mergedEnv,
+          onPortChanged: ({ oldPort, newPort, attempt }) => {
+            logEvent({
+              step: `port-${profile.id}`,
+              status: 'warning',
+              title: `${effectiveProfile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`,
+              detail: { oldPort, newPort, attempt },
+              timestamp: new Date().toISOString(),
+            });
+          },
+          onOutput: (chunk) => {
+            sendSSE(res, 'log', { profileId: profile.id, chunk });
+            for (const line of chunk.split('\n')) {
+              if (line.trim()) logDeploy(id, line);
+            }
+          },
+        });
 
         // Enter 'starting' and gate transition on startup signal + readiness
         // probe (TCP+HTTP). Prevents the 502 window between `docker run` exit
@@ -4620,7 +4739,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     // Allocate a new port
-    const port = stateService.allocatePort(config.portStart);
+    const port = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
     // P4 Part 17 (G2 fix): scope by branch project so the path-prefix
     // proxy only routes to profiles owned by this project.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
@@ -7515,7 +7634,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
-      const hostPort = stateService.allocatePort(config.portStart);
+      const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
       // Container name must be globally unique in Docker. Legacy project
       // keeps the bare `cds-infra-<id>` format for back-compat (existing
       // running containers match). Non-legacy projects get the project
@@ -8594,7 +8713,9 @@ cdscli project list --human
         // Pre-allocate ports
         for (const profile of profiles) {
           if (!entry.services[profile.id]) {
-            const hostPort = stateService.allocatePort(config.portStart);
+            const liveUsedPorts = await collectListeningPorts(shell);
+            const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
+            liveUsedPorts.add(hostPort);
             entry.services[profile.id] = {
               profileId: profile.id,
               // PR #498 round-3 review (Bugbot): container name must
@@ -8627,9 +8748,23 @@ cdscli project list --human
               serverEventLogStore,
               message: 'captured before docker rm/run during import deploy',
             });
-            await containerService.runService(entry, profile, svc, (chunk) => {
-              sendSSE(res, 'log', { profileId: profile.id, chunk });
-            }, mergedEnv);
+            await runServiceWithPortRetry({
+              stateService,
+              shell,
+              config,
+              containerService,
+              serverEventLogStore,
+              entry,
+              profile,
+              service: svc,
+              customEnv: mergedEnv,
+              onPortChanged: ({ oldPort, newPort }) => {
+                send(`port-${profile.id}`, 'warning', `${profile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`);
+              },
+              onOutput: (chunk) => {
+                sendSSE(res, 'log', { profileId: profile.id, chunk });
+              },
+            });
 
             svc.status = 'running';
             svc.errorMessage = undefined;

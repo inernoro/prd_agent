@@ -143,6 +143,18 @@ export class DockerEventMonitor {
   constructor(
     private readonly shell: IShellExecutor,
     private readonly store: ServerEventLogSink | null | undefined,
+    private readonly onManagedEvent?: (event: {
+      action: string;
+      containerName?: string;
+      branchId?: string;
+      profileId?: string;
+      serviceId?: string;
+      attrs: Record<string, string>;
+      status?: string;
+      exitCode?: number;
+      oomKilled?: boolean;
+      inspect?: Record<string, unknown>;
+    }) => void | Promise<void>,
   ) {}
 
   start(): void {
@@ -270,5 +282,32 @@ export class DockerEventMonitor {
       logs: diagnostics.logs,
       error: diagnostics.error,
     });
+
+    try {
+      await this.onManagedEvent?.({
+        action,
+        containerName,
+        branchId,
+        profileId,
+        serviceId,
+        attrs,
+        status: typeof state?.status === 'string' ? state.status : attrs.exitCode ? 'exited' : undefined,
+        exitCode: Number.isFinite(Number(state?.exitCode ?? attrs.exitCode)) ? Number(state?.exitCode ?? attrs.exitCode) : undefined,
+        oomKilled: typeof state?.oomKilled === 'boolean' ? state.oomKilled : action.toLowerCase().includes('oom') || undefined,
+        inspect: diagnostics.inspect,
+      });
+    } catch (err) {
+      this.store.record({
+        category: 'docker',
+        severity: 'warn',
+        source: 'docker-events',
+        action: 'state-sync.failed',
+        message: `docker event state sync failed: ${(err as Error).message}`,
+        branchId: branchId || null,
+        profileId: profileId || null,
+        serviceId: serviceId || null,
+        containerName: containerName || null,
+      });
+    }
   }
 }
