@@ -116,6 +116,10 @@
 }
 
 @layer components {
+  .cds-floating-lines-demo {
+    filter: brightness(1.35) saturate(1.18) contrast(1.04);
+  }
+
   /*
    * Global micro-motion: every interactive surface animates color / bg /
    * border / shadow over ~150ms ease-out. This is what gives the app its
