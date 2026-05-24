@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
-import Prism from '@/components/effects/reactbits/Prism';
+import FloatingLines from '@/components/effects/reactbits/FloatingLines';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 
@@ -46,20 +46,25 @@ export function LoginPage(): JSX.Element {
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#120F17] text-white">
       <div className="absolute inset-0">
-        <Prism
-          animationType="rotate"
-          timeScale={0.5}
-          height={3.5}
-          baseWidth={5.5}
-          scale={3.6}
-          hueShift={0}
-          colorFrequency={1}
-          noise={0}
-          glow={1}
-          transparent
+        <FloatingLines
+          linesGradient={['#5227FF', '#FF9FFC', '#B19EEF']}
+          enabledWaves={['top', 'middle', 'bottom']}
+          lineCount={[10, 16, 20]}
+          lineDistance={[8, 6, 4]}
+          topWavePosition={{ x: 10, y: 0.5, rotate: -0.4 }}
+          middleWavePosition={{ x: 5, y: 0, rotate: 0.2 }}
+          bottomWavePosition={{ x: 2, y: -0.7, rotate: 0.4 }}
+          interactive
+          parallax
+          parallaxStrength={0.18}
+          animationSpeed={1}
+          bendRadius={5}
+          bendStrength={-0.5}
+          mouseDamping={0.05}
+          mixBlendMode="screen"
         />
       </div>
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(18,15,23,0.94),rgba(18,15,23,0.68)_45%,rgba(18,15,23,0.22)),linear-gradient(180deg,rgba(18,15,23,0.08),rgba(18,15,23,0.68)_82%,#120F17)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.52)_45%,rgba(18,15,23,0.12)),linear-gradient(180deg,rgba(18,15,23,0.05),rgba(18,15,23,0.62)_82%,#120F17)]" />
 
       <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_420px]">

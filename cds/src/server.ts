@@ -2657,6 +2657,7 @@ export function auditApiLabels(app: express.Express): string[] {
 const MIGRATED_REACT_ROUTES: readonly string[] = [
   '/',
   '/login',
+  '/preview-preparing',
   '/hello',
   '/cds-settings',
   '/project-list',

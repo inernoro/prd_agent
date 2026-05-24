@@ -921,249 +921,25 @@ function eventMessage(event: string, data: unknown): string {
 }
 
 /**
- * F17 fix (2026-05-02 onboarding UAT): the preview-tab pre-load placeholder
- * was a single flat line of text ("CDS is preparing the preview...") which
- * violates user contract #31 ("non-text / CDS-branded loading"). This is
- * the only opportunity to brand the transition since `about:blank` is
- * cross-origin (we can't render React into it) and we own the document for
- * exactly one frame before navigating away.
- *
- * Implementation strategy:
- *   - Inline SVG logo + CSS keyframes pulse animation (no external assets)
- *   - Theme-aware: read parent `data-theme` to pick light/dark palette so
- *     the pre-load tab matches what the user is looking at
- *   - Brand wordmark "CDS" + Chinese subtitle so the user instantly knows
- *     which tool opened the tab (avoids "wait, what's CDS again?")
- *   - Status text is small, secondary — the spinning animation carries the
- *     "we're working" signal, not the literal sentence
- *
- * Constraints we cannot work around:
- *   - `about:blank` has no CSS context — must inline literal colors, not
- *     CSS variables. We use the same hex values as our `--bg-base` /
- *     `--text-primary` token pairs (see cds/web/src/index.css).
- *   - No emojis (rule #0)
- *   - Cross-origin / cookie isolation: cannot use sessionStorage from the
- *     parent window to remember user theme preference here, so we read
- *     `parent.document.documentElement.dataset.theme` directly while we
- *     still have same-origin access to the parent.
+ * Opens the short-lived preview transition page in the new window before the
+ * target preview URL is known. Keep this route-based so the real handoff and
+ * the settings preview share the same ReactBits Hyperspeed surface.
  */
-function openPreviewPlaceholder(): PreviewTarget {
-  const target = window.open('about:blank', '_blank');
+function openPreviewPlaceholder(branchName = 'preview-handoff'): PreviewTarget {
+  const params = new URLSearchParams({ branch: branchName, t: String(Date.now()) });
+  const target = window.open(`/preview-preparing?${params.toString()}`, '_blank');
   if (!target) return null;
   try {
     target.opener = null;
-
-    target.document.title = 'CDS · 预览环境准备中';
-
-    // Replace the entire <head> + <body> in one shot — we own this document
-    // for the time between window.open() and target.location.href = url.
-    target.document.body.innerHTML = '';
-    target.document.head.innerHTML = `
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>CDS · 预览环境准备中</title>
-      <style>
-        * { box-sizing: border-box; }
-        html, body {
-          margin: 0;
-          padding: 0;
-          height: 100%;
-          background: #090a0f;
-          color: #f8fafc;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-          overflow: hidden;
-        }
-        #shape-grid {
-          position: fixed;
-          inset: 0;
-          width: 100%;
-          height: 100%;
-          opacity: .58;
-        }
-        .veil {
-          position: fixed;
-          inset: 0;
-          pointer-events: none;
-          background:
-            radial-gradient(circle at 55% 44%, rgba(255,255,255,.035), transparent 36%),
-            linear-gradient(90deg, rgba(9,10,15,.96), rgba(9,10,15,.62) 48%, rgba(9,10,15,.93));
-        }
-        .stage {
-          position: relative;
-          z-index: 1;
-          display: flex;
-          flex-direction: column;
-          min-height: 100vh;
-          padding: clamp(28px, 4.2vw, 64px);
-        }
-        .top {
-          display: flex;
-          gap: 20px;
-          flex-wrap: wrap;
-        }
-        .block {
-          position: relative;
-          overflow: hidden;
-          border: 1px solid rgba(255,255,255,.045);
-          background:
-            linear-gradient(90deg, transparent, rgba(255,255,255,.035), transparent),
-            rgba(31,35,42,.74);
-          background-size: 220% 100%, 100% 100%;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
-          animation: shimmer 2.4s ease-in-out infinite;
-        }
-        .top .block {
-          width: 194px;
-          height: 74px;
-          border-radius: 20px;
-        }
-        .hero {
-          width: 100%;
-          height: min(64vh, 760px);
-          min-height: 430px;
-          margin-top: 48px;
-          border-radius: 28px;
-        }
-        .center {
-          position: absolute;
-          inset: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .label {
-          display: inline-flex;
-          align-items: center;
-          gap: 12px;
-          border: 1px solid rgba(255,255,255,.08);
-          border-radius: 12px;
-          background: rgba(0,0,0,.12);
-          padding: 12px 20px;
-          color: rgba(255,255,255,.46);
-          font-size: clamp(15px, 1.6vw, 22px);
-          backdrop-filter: blur(8px);
-        }
-        .spinner {
-          width: 20px;
-          height: 20px;
-          border-radius: 999px;
-          border: 2px solid rgba(255,255,255,.22);
-          border-top-color: rgba(255,255,255,.58);
-          animation: spin .8s linear infinite;
-        }
-        .lines {
-          margin-top: 48px;
-          display: grid;
-          gap: 28px;
-        }
-        .lines .block {
-          height: 44px;
-          border-radius: 18px;
-        }
-        .lines .block:nth-child(1) { width: min(360px, 28vw); }
-        .lines .block:nth-child(2) { width: min(520px, 38vw); opacity: .88; }
-        .lines .block:nth-child(3) { width: min(410px, 30vw); opacity: .74; }
-        @keyframes shimmer {
-          0%, 100% { background-position: 160% 0, 0 0; }
-          50% { background-position: -60% 0, 0 0; }
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
-      </style>
-    `;
-
-    const stage = target.document.createElement('div');
-    stage.className = 'stage';
-    stage.innerHTML = `
-      <canvas id="shape-grid" aria-hidden="true"></canvas>
-      <div class="veil" aria-hidden="true"></div>
-      <div class="top" aria-hidden="true">
-        <div class="block"></div>
-        <div class="block"></div>
-        <div class="block"></div>
-      </div>
-      <div class="block hero" role="status" aria-live="polite">
-        <div class="center">
-          <div class="label"><span class="spinner"></span>预览环境准备中</div>
-        </div>
-      </div>
-      <div class="lines" aria-hidden="true">
-        <div class="block"></div>
-        <div class="block"></div>
-        <div class="block"></div>
-      </div>
-    `;
-    target.document.body.appendChild(stage);
-
-    const script = target.document.createElement('script');
-    script.textContent = `
-      (function(){
-        var canvas = document.getElementById('shape-grid');
-        var ctx = canvas && canvas.getContext ? canvas.getContext('2d') : null;
-        if (!ctx) return;
-        var speed = 0.39, size = 34, hexHoriz = size * 1.5, hexVert = size * Math.sqrt(3);
-        var offset = { x: 0, y: 0 };
-        function resize(){
-          var dpr = Math.min(window.devicePixelRatio || 1, 2);
-          canvas.width = Math.max(1, Math.floor(canvas.offsetWidth * dpr));
-          canvas.height = Math.max(1, Math.floor(canvas.offsetHeight * dpr));
-          ctx.setTransform(dpr,0,0,dpr,0,0);
-        }
-        function drawHex(cx, cy){
-          ctx.beginPath();
-          for (var i=0;i<6;i++){
-            var angle = Math.PI / 3 * i;
-            var x = cx + size * Math.cos(angle);
-            var y = cy + size * Math.sin(angle);
-            if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-          }
-          ctx.closePath();
-        }
-        function frame(){
-          var w = canvas.offsetWidth, h = canvas.offsetHeight;
-          ctx.clearRect(0,0,w,h);
-          var wrapX = hexHoriz * 2, wrapY = hexVert;
-          offset.x = (offset.x - speed + wrapX) % wrapX;
-          offset.y = (offset.y - speed + wrapY) % wrapY;
-          var colShift = Math.floor(offset.x / hexHoriz);
-          var ox = ((offset.x % hexHoriz) + hexHoriz) % hexHoriz;
-          var oy = ((offset.y % hexVert) + hexVert) % hexVert;
-          var cols = Math.ceil(w / hexHoriz) + 3;
-          var rows = Math.ceil(h / hexVert) + 3;
-          ctx.strokeStyle = 'rgba(255,255,255,0.052)';
-          for (var col=-2; col<cols; col++){
-            for (var row=-2; row<rows; row++){
-              var cx = col * hexHoriz + ox;
-              var cy = row * hexVert + (((col + colShift) % 2) !== 0 ? hexVert / 2 : 0) + oy;
-              drawHex(cx, cy);
-              ctx.stroke();
-            }
-          }
-          requestAnimationFrame(frame);
-        }
-        resize();
-        window.addEventListener('resize', resize);
-        frame();
-      })();
-    `;
-    target.document.body.appendChild(script);
   } catch {
-    // The window still exists; navigation below can continue. Fall back to
-    // the cheap text placeholder so something is on screen during the
-    // hop in case the styled DOM injection failed (e.g. CSP weirdness).
-    try {
-      target.document.body.innerHTML
-        = '<div style="padding:24px;font-family:system-ui,sans-serif">CDS · 正在准备预览…</div>';
-    } catch {
-      /* ignore */
-    }
+    // Some browsers can deny opener mutation after window creation.
   }
   return target;
 }
 
 function navigatePreview(target: PreviewTarget, url: string): void {
   if (target && !target.closed) {
-    target.location.href = url;
+    target.location.replace(url);
     return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');
@@ -1171,7 +947,7 @@ function navigatePreview(target: PreviewTarget, url: string): void {
 
 function closePreviewTarget(target: PreviewTarget): void {
   try {
-    if (target && !target.closed && target.location.href === 'about:blank') target.close();
+    if (target && !target.closed && target.location.pathname === '/preview-preparing') target.close();
   } catch {
     // ignore cross-origin or already-closed windows
   }
@@ -1837,12 +1613,12 @@ export function BranchListPage(): JSX.Element {
         setToast(`${branch.branch} 还未运行`);
         return;
       }
-      const target = openPreviewPlaceholder();
+      const target = openPreviewPlaceholder(branch.branch);
       await deployBranch(branch, true, target);
       return;
     }
 
-    const target = openPreviewPlaceholder();
+    const target = openPreviewPlaceholder(branch.branch);
     await openRunningPreview(branch, target);
   }, [deployBranch, openRunningPreview, state]);
 

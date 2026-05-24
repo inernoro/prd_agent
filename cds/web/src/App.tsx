@@ -7,6 +7,7 @@ import { CdsSettingsPage } from '@/pages/CdsSettingsPage';
 import { HelloPage } from '@/pages/HelloPage';
 import { HomePage } from '@/pages/HomePage';
 import { LoginPage } from '@/pages/LoginPage';
+import { PreviewPreparingPage } from '@/pages/PreviewPreparingPage';
 import { ProjectListPage } from '@/pages/ProjectListPage';
 import { ProjectSettingsPage } from '@/pages/ProjectSettingsPage';
 
@@ -59,6 +60,7 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
  * Currently migrated:
  *   /                       CDS marketing/control-plane home
  *   /login                  React basic-auth login page
+ *   /preview-preparing      Preview-window handoff loading page
  *   /hello                  Foundation demo page (Tailwind / theme / API / Dialog)
  *   /cds-settings           CDS system settings
  *   /project-list           Project list
@@ -75,6 +77,7 @@ export function App(): JSX.Element {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
           <Route path="/hello" element={<HelloPage />} />
           <Route path="/cds-settings" element={<CdsSettingsPage />} />
           <Route path="/project-list" element={<ProjectListPage />} />

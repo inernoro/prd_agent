@@ -4,6 +4,7 @@ import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerC
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { BranchDetailLoadingSkeleton, Section } from '@/pages/cds-settings/components';
+import { PreviewPreparingSurface } from '@/pages/PreviewPreparingPage';
 import { cn } from '@/lib/utils';
 
 type LoadingScenario = {
@@ -111,7 +112,7 @@ const loadingPages: LoadingPage[] = [
   {
     id: 'preview-preparing',
     name: '预览环境准备中',
-    description: '点击预览后新窗口短暂出现的 CDS 全屏准备页，使用“构建等待页（备用）”的 Shape Grid 背景。',
+    description: '点击预览后新窗口短暂出现的 CDS 全屏准备页，与真实新窗口共用 Hyperspeed 背景。',
     icon: ExternalLink,
     kind: 'local',
     scope: 'fullscreen',
@@ -321,12 +322,9 @@ export function LoadingPagesTab(): JSX.Element {
             ) : page.id === 'branch-detail-loading' ? (
               <BranchDetailLoadingSkeleton className="h-full min-h-0" />
             ) : page.id === 'preview-preparing' ? (
-              <ShapeGridWaitingPreview
-                heading="预览环境准备中"
-                subtitle="CDS 正在打开新的预览窗口，并同步分支运行状态。"
+              <PreviewPreparingSurface
                 branch="preview-handoff"
                 status="准备中"
-                services={['打开窗口', '同步状态']}
               />
             ) : page.id === 'container-log-loading' ? (
               <ShapeGridSkeletonPreview tone="log" label="正在加载容器日志" />
