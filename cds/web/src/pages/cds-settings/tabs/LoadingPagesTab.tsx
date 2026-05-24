@@ -43,7 +43,12 @@ const branchScenarios: LoadingScenario[] = [
   { id: 'building', label: '构建中', status: 'building' },
   { id: 'starting', label: '启动中', status: 'starting' },
   { id: 'restarting', label: '热重启', status: 'restarting' },
+];
+
+const failedBranchScenarios: LoadingScenario[] = [
   { id: 'error', label: '启动失败', status: 'error' },
+  { id: 'idle', label: '分支当前未运行', status: 'idle' },
+  { id: 'stopping', label: '正在停止 / 不可达', status: 'stopping' },
 ];
 
 const commonLoadingScenarios: LoadingScenario[] = [
@@ -85,12 +90,13 @@ const loadingPages: LoadingPage[] = [
   {
     id: 'branch-deploy-error',
     name: '分支部署异常',
-    description: '分支已登记但部署失败、服务异常或容器不可用时展示，使用与启动失败一致的全屏诊断语言。',
+    description: '分支已登记但部署失败、未运行、正在停止、服务异常或容器不可用时展示。只要不是等待会自然完成，就使用失败背景。',
     icon: ServerCrash,
     kind: 'iframe',
     scope: 'fullscreen',
     outcome: 'failed',
     endpoint: '/api/loading-pages/cds-waiting-room/preview',
+    scenarios: failedBranchScenarios,
   },
   {
     id: 'branch-detail-loading',
@@ -204,8 +210,15 @@ export function LoadingPagesTab(): JSX.Element {
     if (page.kind !== 'iframe' || !page.endpoint) return '';
     const params = new URLSearchParams({ theme: 'dark', t: String(reloadKey) });
     if (page.id === 'cds-waiting-room' || page.id === 'cds-waiting-room-legacy' || page.id === 'branch-deploy-error') {
-      params.set('status', page.id === 'branch-deploy-error' ? 'error' : scenario?.status || 'building');
-      params.set('branch', page.id === 'cds-waiting-room-legacy' ? 'shape-grid-waiting-backup' : page.id === 'branch-deploy-error' ? 'claude/deploy-error-preview' : 'reactbits-magic-rings-preview');
+      params.set('status', scenario?.status || (page.id === 'branch-deploy-error' ? 'error' : 'building'));
+      params.set(
+        'branch',
+        page.id === 'cds-waiting-room-legacy'
+          ? 'shape-grid-waiting-backup'
+          : page.id === 'branch-deploy-error'
+            ? 'claude/unreachable-preview'
+            : 'reactbits-magic-rings-preview',
+      );
       params.set('waitingProfile', 'api');
     } else if (page.id === 'branch-gone') {
       params.set('branch', 'claude/deleted-preview-branch-demo');

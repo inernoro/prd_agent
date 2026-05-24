@@ -554,10 +554,23 @@ export class ProxyService {
     const upstream = this.resolveUpstream(branch.id, profileId);
 
     if (!upstream) {
-      // No upstream URL resolvable — branch record exists but host port is
-      // unallocated / executor lost. Still prefer the waiting page over 502
-      // so the user sees the branch context instead of a blank gateway error.
-      this.serveBranchStatusResponse(req, res, branchSlug, branch, profileId);
+      // No upstream URL resolvable means the browser cannot ever reach the
+      // intended app from this request. It is not a recoverable waiting state.
+      if (this.isHtmlNavigationRequest(req)) {
+        this.serveDeployErrorLightPillarPage(
+          res,
+          this.displayBranchName(branchSlug, branch),
+          profileId
+            ? `服务 "${profileId}" 当前没有可代理的运行入口。请回到 CDS 控制台检查容器状态、端口分配与最近停止原因。`
+            : '当前分支没有可代理的运行入口。请回到 CDS 控制台检查容器状态、端口分配与最近停止原因。',
+          {
+            heading: '预览入口不可达',
+            description: 'CDS 找到了该分支记录，但当前请求没有可用的上游运行环境。这不是等待会自动完成的状态，请回到控制台处理后重新部署。',
+          },
+        );
+        return;
+      }
+      this.servePreviewUnavailableResource(req, res, branchSlug, branch, profileId);
       return;
     }
 
@@ -796,13 +809,72 @@ export class ProxyService {
     }));
   }
 
-  private serveDeployErrorLightPillarPage(res: http.ServerResponse, displayBranch: string, errorMessage?: string): void {
+  private isRecoverablePreviewStatus(status: string | undefined): boolean {
+    return status === 'building' || status === 'starting' || status === 'restarting';
+  }
+
+  private failureCopyForBranch(branch: BranchEntry): { heading: string; description: string; detail?: string } | null {
+    const status = String(branch.status || '');
+    if (this.isRecoverablePreviewStatus(status) || status === 'running') return null;
+    if (status === 'idle' || status === 'stopping') {
+      return {
+        heading: '分支当前未运行',
+        description: '该分支当前没有可用的预览运行环境。预览访问不会自动重新部署，请回到 CDS 控制台确认日志后手动重新部署。',
+        detail: branch.errorMessage || branch.lastStopReason,
+      };
+    }
+    if (status === 'error') {
+      return {
+        heading: '分支部署出现异常',
+        description: '该分支已经进入 CDS，但部署过程失败、服务异常，或当前没有可用的运行环境。请回到控制台检查分支状态、容器日志和最近停止原因。',
+        detail: branch.errorMessage || branch.lastStopReason,
+      };
+    }
+    return {
+      heading: '预览入口不可达',
+      description: 'CDS 找到了该分支记录，但当前状态无法到达真实页面。这不是等待会自动完成的状态，请回到控制台处理后重新部署。',
+      detail: branch.errorMessage || branch.lastStopReason,
+    };
+  }
+
+  private failureCopyForService(service: BranchEntry['services'][string] | undefined, profileId: string): { heading: string; description: string; detail?: string } | null {
+    const status = String(service?.status || '');
+    if (!service || this.isRecoverablePreviewStatus(status) || status === 'running') return null;
+    if (status === 'idle' || status === 'stopped' || status === 'stopping') {
+      return {
+        heading: '服务当前未运行',
+        description: `目标服务 "${profileId}" 当前没有可用容器。预览访问不会自动启动它，请回到 CDS 控制台检查停止原因后手动重新部署。`,
+        detail: service.errorMessage,
+      };
+    }
+    if (status === 'error') {
+      return {
+        heading: '服务部署出现异常',
+        description: `目标服务 "${profileId}" 已进入失败状态，无法到达真实页面。请回到控制台查看容器日志、构建日志和最近停止原因。`,
+        detail: service.errorMessage,
+      };
+    }
+    return {
+      heading: '预览入口不可达',
+      description: `目标服务 "${profileId}" 当前状态无法到达真实页面。这不是等待会自动完成的状态，请回到控制台处理后重新部署。`,
+      detail: service.errorMessage,
+    };
+  }
+
+  private serveDeployErrorLightPillarPage(
+    res: http.ServerResponse,
+    displayBranch: string,
+    errorMessage?: string,
+    opts: { heading?: string; description?: string } = {},
+  ): void {
     const safeBranch = this.escapeHtml(displayBranch);
+    const safeHeading = this.escapeHtml(opts.heading || '分支部署出现异常');
+    const safeDescription = this.escapeHtml(opts.description || '该分支已经进入 CDS，但部署过程失败、服务异常，或当前没有可用的运行环境。请回到控制台检查分支状态、容器日志和最近停止原因。');
     const safeError = errorMessage ? this.escapeHtml(errorMessage).slice(0, 420) : '';
     const html = `<!DOCTYPE html>
 <html lang="zh-CN"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>分支部署出现异常 · ${safeBranch}</title>
+<title>${safeHeading} · ${safeBranch}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{color-scheme:dark;--bg:#050407;--text:#f7f5ff;--muted:rgba(245,242,255,.62);--panel:rgba(255,255,255,.035);--line:rgba(255,255,255,.12);--danger:#fca5a5}
@@ -830,8 +902,8 @@ h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:0;margin-bott
 <main class="shell">
   <section class="content">
     <div class="eyebrow">CDS Preview Failed</div>
-    <h1>分支部署出现异常</h1>
-    <p class="desc">该分支已经进入 CDS，但部署过程失败、服务异常，或当前没有可用的运行环境。请回到控制台检查分支状态、容器日志和最近停止原因。</p>
+    <h1>${safeHeading}</h1>
+    <p class="desc">${safeDescription}</p>
     <div class="chip">${safeBranch}</div>
     ${safeError ? `<div class="err">${safeError}</div>` : ''}
     <div class="actions">
@@ -986,8 +1058,15 @@ void main(){
   serveStartingPageV2(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
     const displayBranch = this.displayBranchName(branchSlug, branch);
-    if (branch.status === 'error') {
-      this.serveDeployErrorLightPillarPage(res, displayBranch, branch.errorMessage);
+    const waitingService = waitingProfileId ? branch.services?.[waitingProfileId] : undefined;
+    const serviceFailure = waitingProfileId ? this.failureCopyForService(waitingService, waitingProfileId) : null;
+    const branchFailure = this.failureCopyForBranch(branch);
+    const failureCopy = branchFailure || serviceFailure;
+    if (failureCopy) {
+      this.serveDeployErrorLightPillarPage(res, displayBranch, failureCopy.detail, {
+        heading: failureCopy.heading,
+        description: failureCopy.description,
+      });
       return;
     }
     const progress = this.estimateWaitingProgress(branch, waitingProfileId);
