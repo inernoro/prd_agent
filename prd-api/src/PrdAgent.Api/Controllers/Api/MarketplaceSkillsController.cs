@@ -145,8 +145,14 @@ public class MarketplaceSkillsController : ControllerBase
             .Project(x => x.Tags)
             .ToListAsync(ct);
 
+        // 合并官方目录的 tag（含「精英」「开放接口」等），否则官方专属 tag 不在筛选标签云里，
+        // 用户没法按「精英」筛出 laowang。findmapskills 的 tag 一并并入。
+        var officialTags = OfficialSkillCatalog.All.SelectMany(e => e.Tags ?? new List<string>())
+            .Concat(new[] { "精英", "技能", "开放接口" });
+
         var distinct = allTags
             .SelectMany(x => x ?? new List<string>())
+            .Concat(officialTags)
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .Select(t => t.Trim())
             .GroupBy(t => t)

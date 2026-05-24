@@ -2627,12 +2627,14 @@
   transform-origin: center;
   transition: transform .7s cubic-bezier(.22, 1, .36, 1), opacity .4s ease;
 }
-/* 悬浮「绽放」：轻微旋转 + 放大 + 提亮 */
-.mkt-card-official-glyph:hover .skill-glyph .ink {
+/* 悬浮「绽放」：轻微旋转 + 放大 + 提亮（官方卡 + 社区无封面卡都生效）*/
+.mkt-card-official-glyph:hover .skill-glyph .ink,
+.mkt-card:hover .skill-glyph .ink {
   opacity: 1;
   transform: rotate(-4deg) scale(1.07);
 }
 @media (prefers-reduced-motion: reduce) {
   .skill-glyph .ink { transition: opacity .3s ease; }
-  .mkt-card-official-glyph:hover .skill-glyph .ink { transform: none; }
+  .mkt-card-official-glyph:hover .skill-glyph .ink,
+  .mkt-card:hover .skill-glyph .ink { transform: none; }
 }

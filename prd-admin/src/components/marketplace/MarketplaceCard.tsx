@@ -211,8 +211,16 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
         <img src={coverUrl} alt={displayName} className="mkt-card-bg-img" />
       )}
 
-      {/* Icon centred in the upper area (no cover, non-official) */}
-      {!coverUrl && !isOfficial && (
+      {/* 社区 skill 无封面 → 也走 SkillGlyph（哈希形态，不传 tags 故不会出现精英徽章，
+          精英留给官方）。拉平视觉，社区卡不再比官方寒酸。 */}
+      {!coverUrl && !isOfficial && item.type === 'skill' && (
+        <div className="mkt-card-glyph-banner">
+          <SkillGlyph seed={displayName} />
+        </div>
+      )}
+
+      {/* 非 skill 类型（prompt/refImage/watermark）无封面 → 保留类型 lucide 图标 */}
+      {!coverUrl && !isOfficial && item.type !== 'skill' && (
         <div
           className="mkt-card-icon-zone"
           style={{
