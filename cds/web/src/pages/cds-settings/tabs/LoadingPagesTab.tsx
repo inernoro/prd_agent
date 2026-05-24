@@ -3,6 +3,7 @@ import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerC
 
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { BranchDetailLoadingSkeleton, Section } from '@/pages/cds-settings/components';
 import { PreviewPreparingSurface } from '@/pages/PreviewPreparingPage';
 import { cn } from '@/lib/utils';
@@ -387,7 +388,7 @@ function ShapeGridWaitingPreview({
       <main className="relative z-10 grid h-full grid-cols-[minmax(280px,720px)_minmax(0,1fr)] items-center px-[clamp(36px,6vw,92px)] py-[clamp(32px,7vw,92px)]">
         <section className="max-w-[720px] [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
           <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.28em] text-[#ded8ef]">
-            <span className="h-2 w-2 rounded-full bg-white shadow-[0_0_16px_rgba(255,255,255,0.72)]" />
+            <CdsLogoLoader size="sm" className="text-[#f7f5ff]" />
             CDS Waiting Room
           </div>
           <h1 className={cn('max-w-full leading-[0.96] tracking-normal', compact ? 'text-[clamp(34px,4.5vw,62px)]' : 'text-[clamp(42px,5.6vw,82px)]')}>
@@ -447,10 +448,11 @@ function ShapeGridSkeletonPreview({
         hoverTrailAmount={0}
       />
       <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
-        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <span className="h-4 w-4 rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground/70 animate-spin" />
-          <span>{label}</span>
-        </div>
+        <CdsLogoLoader
+          label={label}
+          size={expanded ? 'md' : 'sm'}
+          className="text-sm font-medium text-muted-foreground"
+        />
         {expanded ? (
           <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">
             CDS 正在读取当前区域所需的数据，完成后会在原位置替换为真实内容。

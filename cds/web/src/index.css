@@ -512,12 +512,22 @@
   .cds-rail-avatar::before {
     content: '';
     position: absolute;
-    inset: 0.2rem;
+    inset: 0.18rem;
     border-radius: 999px;
-    border: 1px solid hsl(var(--foreground) / 0.18);
-    border-top-color: hsl(var(--primary) / 0.72);
-    border-right-color: transparent;
+    background:
+      conic-gradient(
+        from 42deg,
+        transparent 0deg,
+        transparent 252deg,
+        hsl(var(--primary) / 0.78) 274deg,
+        hsl(25 95% 58% / 0.84) 288deg,
+        transparent 306deg,
+        transparent 360deg
+      );
+    -webkit-mask: radial-gradient(circle, transparent 0 67%, #000 68% 74%, transparent 75%);
+    mask: radial-gradient(circle, transparent 0 67%, #000 68% 74%, transparent 75%);
     animation: cds-brand-orbit 6s linear infinite;
+    opacity: 0.9;
     pointer-events: none;
   }
 
@@ -547,15 +557,48 @@
   }
 
   .cds-metallic-logo-orbits {
-    stroke: url('#cds-metallic-logo-paint');
     stroke-width: 3.9;
     stroke-dasharray: 100 34;
     animation: cds-metallic-stroke 7.5s ease-in-out infinite;
   }
 
   .cds-metallic-logo-core {
-    fill: url('#cds-metallic-logo-paint');
     animation: cds-metallic-core 3.8s ease-in-out infinite;
+  }
+
+  .cds-logo-loader {
+    color: currentColor;
+    vertical-align: middle;
+  }
+
+  .cds-logo-loader-mark {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    color: currentColor;
+    filter: drop-shadow(0 0 10px hsl(var(--primary) / 0.2));
+  }
+
+  .cds-logo-loader-mark::before {
+    content: '';
+    position: absolute;
+    inset: -0.45em;
+    border-radius: 999px;
+    background:
+      radial-gradient(circle, hsl(var(--primary) / 0.16), transparent 58%),
+      conic-gradient(from 210deg, transparent 0 70%, hsl(var(--primary) / 0.42) 78%, hsl(25 95% 58% / 0.68) 86%, transparent 93% 100%);
+    -webkit-mask: radial-gradient(circle, transparent 0 57%, #000 58% 68%, transparent 69%);
+    mask: radial-gradient(circle, transparent 0 57%, #000 58% 68%, transparent 69%);
+    animation: cds-brand-orbit 4.8s linear infinite;
+    opacity: 0.82;
+  }
+
+  .cds-logo-loader .cds-metallic-logo {
+    position: relative;
+    z-index: 1;
+    animation: cds-metallic-drift 6.5s ease-in-out infinite;
   }
 
   .cds-rail-brand-title {
@@ -662,6 +705,8 @@
     .cds-rail-avatar-icon,
     .cds-metallic-logo-orbits,
     .cds-metallic-logo-core,
+    .cds-logo-loader-mark::before,
+    .cds-logo-loader .cds-metallic-logo,
     .cds-rail-brand-title {
       animation: none;
     }

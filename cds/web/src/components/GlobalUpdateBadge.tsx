@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -615,7 +616,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           aria-label="点击立即重试"
           title="点击立即重试 self-status"
         >
-          <Loader2 className="h-12 w-12 animate-spin text-white" />
+          <CdsLogoLoader size="xl" className="text-white" />
           <div className="mt-4 text-base font-semibold text-white">CDS 重启中 · {restartingElapsed}s</div>
           <div className="mt-1 text-xs text-white/70">点击立即重试 / 等待自动恢复</div>
         </div>
@@ -755,7 +756,7 @@ function visualForState(
       const stepText = state.title || state.step || '等待后端返回进度';
       const staleText = state.staleSeconds ? ` · ${state.staleSeconds}s 无新心跳` : '';
       return {
-        icon: <Loader2 className="h-4 w-4 animate-spin" />,
+        icon: <CdsLogoLoader size="sm" />,
         label: `${triggerLabel}进行中 ${elapsed}s · ${truncate(stepText, 42)}${staleText}`,
         title: 'CDS 正在执行 self-update。点击打开更新与重启查看完整流水。',
         bgClass: 'bg-amber-50 dark:bg-amber-950/30',
@@ -769,7 +770,7 @@ function visualForState(
     case 'restarting': {
       const elapsed = Math.floor((Date.now() - state.sinceMs) / 1000);
       return {
-        icon: <Loader2 className="h-4 w-4 animate-spin" />,
+        icon: <CdsLogoLoader size="sm" />,
         label: `CDS 不可达 ${elapsed}s · 可能正在重启…`,
         title: 'self-status 流断开。点击主动重试一次(SSE 也在自动 3 秒一次重连)。',
         bgClass: 'bg-blue-50 dark:bg-blue-950/30',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -2821,7 +2822,7 @@ function VariablesPanel({
   if (state.status === 'idle' || state.status === 'loading') {
     return (
       <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
         正在读取该分支的生效环境变量…
       </section>
     );
@@ -3404,7 +3405,7 @@ function MetricsPanel({
   if (state.status === 'idle' || state.status === 'loading') {
     return (
       <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
         正在采集 docker stats…
       </section>
     );

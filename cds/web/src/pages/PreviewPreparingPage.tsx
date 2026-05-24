@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import Hyperspeed from '@/components/effects/reactbits/Hyperspeed';
 import { hyperspeedPresets } from '@/components/effects/reactbits/HyperspeedPresets';
 import { cn } from '@/lib/utils';
@@ -29,7 +30,7 @@ export function PreviewPreparingSurface({
       >
         <section className="max-w-[760px] [text-shadow:0_2px_34px_rgba(0,0,0,0.72)]">
           <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.28em] text-white/68">
-            <span className="h-2 w-2 rounded-full bg-cyan-200 shadow-[0_0_18px_rgba(125,211,252,0.85)]" />
+            <CdsLogoLoader size="sm" className="text-cyan-100" />
             CDS Preview Transit
           </div>
           <h1 className={cn('leading-[0.96] tracking-normal text-white/86', compact ? 'text-[clamp(38px,5vw,68px)]' : 'text-[clamp(54px,8vw,116px)]')}>

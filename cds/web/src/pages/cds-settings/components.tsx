@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ShapeGrid from '@/components/effects/ShapeGrid';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { cn } from '@/lib/utils';
 
 export function Section({
@@ -75,10 +76,11 @@ function PartialLoadingPanel({
         hoverTrailAmount={0}
       />
       <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
-        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span>{label}</span>
-        </div>
+        <CdsLogoLoader
+          label={label}
+          size={expanded ? 'md' : 'sm'}
+          className="text-sm font-medium text-muted-foreground"
+        />
         {detail ? (
           <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">{detail}</p>
         ) : null}
