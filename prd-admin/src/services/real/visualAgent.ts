@@ -24,6 +24,7 @@ import type {
   RefreshVisualAgentWorkspaceCoverContract,
   UploadImageAssetContract,
   CreateWorkspaceImageGenRunContract,
+  ReconcileWorkspaceCanvasContract,
   ImageAsset,
   VisualAgentCanvas,
   VisualAgentMessage,
@@ -258,6 +259,13 @@ export const createWorkspaceImageGenRunReal: CreateWorkspaceImageGenRunContract 
     method: 'POST',
     headers,
     body: input,
+  });
+};
+
+export const reconcileVisualAgentWorkspaceCanvasReal: ReconcileWorkspaceCanvasContract = async ({ id, dryRun }) => {
+  const qs = dryRun ? '?dryRun=true' : '';
+  return await apiRequest(`${api.visualAgent.imageMaster.workspaces.canvasReconcile(encodeURIComponent(id))}${qs}`, {
+    method: 'POST',
   });
 };
 

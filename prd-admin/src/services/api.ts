@@ -342,6 +342,7 @@ export const api = {
         viewport: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/viewport`,
         messages: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/messages`,
         canvas: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas`,
+        canvasReconcile: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas/reconcile`,
         assets: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/assets`,
         asset: (id: string, assetId: string) => `/api/visual-agent/image-master/workspaces/${id}/assets/${assetId}`,
         imageGenRuns: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/image-gen/runs`,
