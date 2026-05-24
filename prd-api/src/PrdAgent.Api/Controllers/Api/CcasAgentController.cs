@@ -304,16 +304,16 @@ public class CcasAgentController : ControllerBase
 
         // 拒绝 stub 占位模型：CDS 灰度环境默认生图池可能只挂了 stub，
         // 让用户拿到绿色占位图当成真实结果是产品级误导，必须在这里显式报错。
+        // 注意：用 400 而非 502，避免 Cloudflare 对 origin 5xx 默认替换成自己的错误页（用户看不到具体提示）。
         var actualModel = (resolution.ActualModel ?? string.Empty).Trim();
         var actualPlatformName = (resolution.ActualPlatformName ?? string.Empty).Trim();
         if (actualModel.Contains("stub", StringComparison.OrdinalIgnoreCase)
             || actualPlatformName.Contains("Stub", StringComparison.OrdinalIgnoreCase))
         {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    $"当前生图模型解析到开发桩（model={actualModel}, platform={actualPlatformName}），" +
-                    $"无法生成真实素材图。请管理员到「模型管理 → 模型池」给 AppCallerCode " +
-                    $"`{appCallerCode}` 绑定一个真实生图模型池（推荐：seedream / dall-e-3 / sd-xl 等）。"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"当前生图模型解析到开发桩（model={actualModel}, platform={actualPlatformName}），" +
+                $"无法生成真实素材图。请管理员到「模型管理 → 模型池」给 AppCallerCode " +
+                $"`{appCallerCode}` 绑定一个真实生图模型池（推荐：seedream / dall-e-3 / sd-xl 等）。"));
         }
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
