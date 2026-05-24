@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Library,
   Plus,
@@ -23,6 +23,9 @@ import {
   Bookmark,
   Users,
   ArrowUpRight,
+  Wand2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -74,7 +77,9 @@ import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { ReprocessDrawer } from './ReprocessDrawer';
+import { ReprocessRunHost } from './ReprocessRunHost';
 import { ViewersDrawer } from './ViewersDrawer';
+import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -518,6 +523,35 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     loadEntries();
   }, [loadStore, loadEntries]);
 
+  // ── 文档再加工：页面级任务中枢（关抽屉 / 刷新都不丢） ──
+  const reprocessRuns = useReprocessRunStore((s) => s.runs);
+  const dismissRun = useReprocessRunStore((s) => s.dismissRun);
+  // 本知识库下的所有再加工任务（pill 渲染用）
+  const storeRuns = useMemo(
+    () => Object.values(reprocessRuns)
+      .filter((r) => r.storeId === storeId)
+      .sort((a, b) => b.startedAt - a.startedAt),
+    [reprocessRuns, storeId],
+  );
+  // 源文档 → 进度（文件树 chip 用）
+  const reprocessingMap = useMemo(
+    () => selectStreamingByEntry(reprocessRuns, storeId),
+    [reprocessRuns, storeId],
+  );
+
+  // Host 报告任务到达终态：完成则刷新文件树 + 选中新文档（与抽屉是否开着无关）
+  const handleReprocessCompleted = useCallback((status: 'done' | 'failed', outputEntryId?: string) => {
+    if (status === 'done' && outputEntryId) {
+      void loadEntries();
+      setSelectedEntryId(outputEntryId);
+      // 兜底再刷一次：兼容 DB 副本同步延迟
+      setTimeout(() => { void loadEntries(); }, 1500);
+      toast.success('文档加工完成', '已保存为新文档');
+    } else if (status === 'failed') {
+      toast.error('文档加工失败', '可在任务卡片查看原因');
+    }
+  }, [loadEntries]);
+
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
     setUploading(true);
@@ -887,6 +921,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
           onReplaceFile={handleReplaceFile}
+          reprocessingMap={reprocessingMap}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -947,18 +982,71 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         )}
       </AnimatePresence>
 
+      {/* 文档再加工：无 UI 的 SSE 宿主（每个进行中任务一个，与抽屉解耦） */}
+      {storeRuns
+        .filter((r) => r.status === 'streaming')
+        .map((r) => (
+          <ReprocessRunHost key={r.runId} runId={r.runId} onCompleted={handleReprocessCompleted} />
+        ))}
+
+      {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开 */}
+      {storeRuns.length > 0 && (
+        <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px' }}>
+          {storeRuns.map((r) => {
+            const isRunning = r.status === 'streaming';
+            const accent = r.status === 'done'
+              ? 'rgba(74,222,128,0.95)'
+              : r.status === 'failed'
+                ? 'rgba(248,113,113,0.95)'
+                : 'rgba(96,165,250,0.95)';
+            return (
+              <div
+                key={r.runId}
+                className="surface-popover flex items-center gap-2.5 rounded-[12px] border border-token-subtle px-3 py-2.5 cursor-pointer"
+                title="点击展开查看进度"
+                onClick={() => setReprocessTarget({ id: r.sourceEntryId, title: r.sourceTitle })}
+              >
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px]"
+                  style={{ background: 'rgba(255,255,255,0.05)', color: accent }}>
+                  {r.status === 'done'
+                    ? <CheckCircle2 size={14} />
+                    : r.status === 'failed'
+                      ? <AlertCircle size={14} />
+                      : <MapSpinner size={14} />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[11px] font-semibold text-token-primary">{r.sourceTitle}</p>
+                  <p className="truncate text-[10px] text-token-muted">
+                    {isRunning
+                      ? `${r.phase} · ${Math.round(r.progress)}%`
+                      : r.status === 'done' ? '加工完成' : '加工失败'}
+                  </p>
+                </div>
+                {isRunning ? (
+                  <Wand2 size={12} className="flex-shrink-0 text-token-muted" />
+                ) : (
+                  <button
+                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
+                    title="移除"
+                    onClick={(e) => { e.stopPropagation(); dismissRun(r.runId); }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* 文档再加工抽屉 */}
       <AnimatePresence>
         {reprocessTarget && (
           <ReprocessDrawer
             entryId={reprocessTarget.id}
             entryTitle={reprocessTarget.title}
+            storeId={storeId}
             onClose={() => setReprocessTarget(null)}
-            onDone={(newId) => {
-              void loadEntries();
-              setSelectedEntryId(newId);
-              setTimeout(() => { void loadEntries(); }, 1500);
-            }}
           />
         )}
       </AnimatePresence>

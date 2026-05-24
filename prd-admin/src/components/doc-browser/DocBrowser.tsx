@@ -83,6 +83,8 @@ export type DocBrowserProps = {
   onReprocess?: (entryId: string) => void;
   /** 点击"替换文件"时触发（仅文件条目显示）。原地替换内容，保留 Id/标签/主文档。 */
   onReplaceFile?: (entryId: string) => void;
+  /** 正在再加工的源文档 → 进度(0-100)。提供时对应行显示"加工中 N%"chip。 */
+  reprocessingMap?: Record<string, number>;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
@@ -520,6 +522,7 @@ function TreeNode({
   showUpdatedTime,
   contentFirstLines,
   contentMatchIds,
+  reprocessingMap,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
@@ -538,6 +541,7 @@ function TreeNode({
   showUpdatedTime: boolean;
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
+  reprocessingMap?: Record<string, number>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
@@ -551,6 +555,7 @@ function TreeNode({
   const isPinned = pinnedEntryIds.has(entry.id);
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
+  const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
   const [dragOver, setDragOver] = useState(false);
 
   return (
@@ -639,6 +644,22 @@ function TreeNode({
           }}>
           {displayTitle}
         </span>
+
+        {/* 再加工进行中：源文档行显示"加工中 N%"——关闭抽屉后仍可见 */}
+        {reprocessing !== undefined && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
+            style={{
+              background: 'rgba(59,130,246,0.12)',
+              color: 'rgba(96,165,250,0.95)',
+              border: '1px solid rgba(59,130,246,0.25)',
+            }}
+            title="正在再加工"
+          >
+            <MapSpinner size={9} />
+            加工中 {Math.round(reprocessing)}%
+          </span>
+        )}
 
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
@@ -763,6 +784,7 @@ function TreeNode({
           showUpdatedTime={showUpdatedTime}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
+          reprocessingMap={reprocessingMap}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
@@ -841,6 +863,7 @@ export function DocBrowser({
   onGenerateSubtitle,
   onReprocess,
   onReplaceFile,
+  reprocessingMap,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -1481,6 +1504,7 @@ export function DocBrowser({
               showUpdatedTime={showUpdatedTime}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
+              reprocessingMap={reprocessingMap}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
