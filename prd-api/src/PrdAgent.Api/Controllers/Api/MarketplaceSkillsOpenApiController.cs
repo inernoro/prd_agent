@@ -95,7 +95,9 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         var resolvedLimit = limit is > 0 and <= 200 ? limit : 50;
 
         // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）置顶，从 DB 少查对应条数
-        var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag);
+        // Open API（AI）：无搜索词时不注入目录技能，避免 list/分页/轮询被官方占满 budget、
+        // 翻不到社区技能；只有 keyword/tag 命中时官方才出现（保证可被搜到）。findmapskills 仍 bootstrap。
+        var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: false);
         var dbLimit = Math.Max(resolvedLimit - officialDtos.Count, 0);
 
         var items = dbLimit > 0

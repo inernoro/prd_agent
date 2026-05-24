@@ -24,3 +24,5 @@
 | chore | prd-api | 官方技能打包改 INCLUDE 精选白名单（15 个可移植技能）+ 完整目录打包（v2 catalog，单文件 96KB 上限），剔除绑死本仓库基础设施的内部技能 |
 | fix | prd-api | 官方技能给中文友好备注名（DISPLAY_NAME map），卡片不再裸显英文 key |
 | fix | prd-admin | 官方技能 zip 预览改用 skill.zipUrl 直连（同源 AllowAnonymous 完整 zip），修复 official-* 走 authed zip-content 代理查 DB 落空导致的 404 / 直开 401 |
+| fix | prd-api | 官方目录 DTO createdAt 用固定发布日期（曾误用 DateTime.UtcNow → findmapskills AI 的 sort=new 轮询每次误报 14 个新技能、最新排序乱序）|
+| fix | prd-api | Open API 官方注入加 includeCatalogWhenUnfiltered=false：无搜索词不注入目录技能，避免 AI list/分页/轮询被 15 个官方占满 budget 翻不到社区技能；Web 仍全展示（归「官方推荐」行）|

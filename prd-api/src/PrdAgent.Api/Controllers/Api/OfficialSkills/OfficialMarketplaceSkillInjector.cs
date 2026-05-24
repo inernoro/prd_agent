@@ -154,12 +154,14 @@ public static class OfficialMarketplaceSkillInjector
             ownerUserId = "official",
             ownerUserName = "PrdAgent 官方",
             ownerUserAvatar = (string?)null,
-            createdAt = DateTime.UtcNow,
-            updatedAt = DateTime.UtcNow,
+            // 固定发布日期，绝不能用 DateTime.UtcNow —— 否则 findmapskills AI 的
+            // 「sort=new + createdAt>cursor」轮询每次都误报这些为新技能；"最新"排序也会乱
+            createdAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+            updatedAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
         };
     }
 
-    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag)
+    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag, bool includeWhenUnfiltered)
     {
         if (!string.IsNullOrWhiteSpace(tag))
             return (e.Tags ?? new List<string>()).Any(t => string.Equals(t, tag.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -170,14 +172,19 @@ public static class OfficialMarketplaceSkillInjector
                 || (e.Description ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
                 || (e.Tags ?? new List<string>()).Any(t => t.Contains(k, StringComparison.OrdinalIgnoreCase));
         }
-        return true;
+        // 无 keyword/tag：Web 浏览全展示；Open API（AI）不注入，避免每次列表/轮询被官方淹没
+        return includeWhenUnfiltered;
     }
 
     /// <summary>
-    /// 构造全部官方条目 DTO（findmapskills 在前，其余目录技能随后），用于 List prepend。
-    /// keyword/tag 用于筛选；为空则全返回。
+    /// 构造官方条目 DTO（findmapskills 在前，其余目录技能随后），用于 List prepend。
+    /// keyword/tag 筛选。<paramref name="includeCatalogWhenUnfiltered"/>：
+    ///   Web 传 true（无搜索词也全展示官方推荐）；
+    ///   Open API 传 false（无搜索词时目录技能不注入，只有 keyword/tag 命中才出现，
+    ///   防止 AI 每次 list/分页/轮询都被 15 个官方占满 budget、翻不到社区技能）。
+    /// findmapskills 始终按 ShouldInject 注入（它是 AI 的 bootstrap 入口）。
     /// </summary>
-    public static List<object> BuildAllDtos(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId, string? keyword, string? tag)
+    public static List<object> BuildAllDtos(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId, string? keyword, string? tag, bool includeCatalogWhenUnfiltered)
     {
         var baseUrl = request.ResolveServerUrl(config);
         var list = new List<object>();
@@ -185,7 +192,7 @@ public static class OfficialMarketplaceSkillInjector
             list.Add(BuildFindMapSkillsDto(baseUrl, currentUserId));
         foreach (var e in OfficialSkillCatalog.All)
         {
-            if (CatalogMatches(e, keyword, tag))
+            if (CatalogMatches(e, keyword, tag, includeCatalogWhenUnfiltered))
                 list.Add(BuildCatalogDto(e, baseUrl));
         }
         return list;
