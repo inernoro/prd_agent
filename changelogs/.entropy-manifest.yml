@@ -66,3 +66,8 @@ processed:
   - 2026-05-10_pa-agent-appcaller-startup-sync.md
   - 2026-05-10_pa-agent-llm-binding-fix.md
   - 2026-05-10_pa-agent-merge-from-main.md
+  - 2026-05-10_pa-agent-prompt-format-fix.md
+  - 2026-05-10_pa-agent-savage-secretary.md
+  - 2026-05-13_streaming-text-maxtailchars.md
+  - 2026-05-13_streaming-text-unify-batch1.md
+  - 2026-05-13_streaming-text-unify-batch2.md
