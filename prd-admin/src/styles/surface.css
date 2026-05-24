@@ -2595,9 +2595,14 @@
   border-radius: inherit;
 }
 
-/* ─── 技能图标区（SkillGlyph）：纸张 / 炭黑 / 陶土 编辑气质 ──────────────
- * 「技能背景」走暖米灰纸底，炭黑手绘线条 + 陶土锚点才看得清；
- * 无辉光、无多彩、无重框。官方与社区无封面卡共用。 */
+/* ─── 技能图标区（SkillGlyph）：v6 游戏技能图标 ─────────────────────────
+ * 暖彩手绘线条 + 六边技能槽框，深色卡片上一层暖色径向辉光衬底。
+ * 官方与社区无封面卡共用。 */
+.mkt-card-official-glyph {
+  background:
+    radial-gradient(78% 60% at 50% 8%, var(--warm), transparent 70%),
+    var(--bg-elevated);
+}
 .mkt-card-glyph-banner {
   position: absolute;
   top: 0; left: 0; right: 0;
@@ -2606,9 +2611,6 @@
   place-items: center;
   z-index: 1;
   pointer-events: none;
-  /* 暖米灰纸底（唯一让炭黑线条可见的前提）*/
-  background: #F0EEE6;
-  border-bottom: 1px solid #E2DFD5;
 }
 .skill-glyph-wrap {
   width: 92px; height: 92px;
@@ -2617,19 +2619,21 @@
 .skill-glyph {
   display: block;
   overflow: visible;
+  filter: drop-shadow(0 0 5px var(--glyphGlow));
 }
-/* 安静悬浮：仅陶土锚点圆点轻微放大，无旋转无辉光 */
-.skill-glyph .dot {
-  transform-box: fill-box;
+.skill-glyph .ink { opacity: .92; transition: opacity .4s ease; }
+.mkt-card-official-glyph:hover .skill-glyph .ink,
+.mkt-card:hover .skill-glyph .ink { opacity: 1; }
+/* 悬浮：技能槽框缓缓旋转（符号本身不转）—— 像游戏点亮技能 */
+.skill-glyph .frame {
+  transform-box: view-box;
   transform-origin: center;
-  transition: transform .35s ease;
+  transition: transform .7s cubic-bezier(.22, 1, .36, 1);
 }
-.mkt-card-official-glyph:hover .skill-glyph .dot,
-.mkt-card:hover .skill-glyph .dot {
-  transform: scale(1.35);
-}
+.mkt-card-official-glyph:hover .skill-glyph .frame,
+.mkt-card:hover .skill-glyph .frame { transform: rotate(15deg); }
 @media (prefers-reduced-motion: reduce) {
-  .skill-glyph .dot { transition: none; }
-  .mkt-card-official-glyph:hover .skill-glyph .dot,
-  .mkt-card:hover .skill-glyph .dot { transform: none; }
+  .skill-glyph .frame { transition: none; }
+  .mkt-card-official-glyph:hover .skill-glyph .frame,
+  .mkt-card:hover .skill-glyph .frame { transform: none; }
 }

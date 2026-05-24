@@ -3,15 +3,16 @@ import {
   GLYPH_SIZE,
   buildGlyphInner,
   glyphFilterSeed,
+  glyphGlow,
 } from '@/lib/skillGlyphRegistry';
 
 /**
- * 技能卡图标：黑色手绘抽象线条 + 少量陶土橙锚点（纸张/炭黑/陶土编辑气质）。
+ * 技能卡图标（v6 游戏技能图标）：暖彩手绘线条 + 六边技能槽框 + 专属/哈希符号。
  *
- * - 内容由 skillGlyphRegistry 生成：优先专属象形符号，否则哈希抽象兜底
- * - feTurbulence 轻度做旧成手绘抖线；无辉光、无多彩（唯一陶土色只在锚点圆点）
+ * - 内容由 skillGlyphRegistry 生成（含框 + 符号）
+ * - feTurbulence 轻度做旧成手绘抖线，暖色辉光（drop-shadow）
  * - 视口懒渲染：滚进视口才挂 SVG 滤镜，避免一屏几十张卡同时跑 turbulence
- * - 安静悬浮：陶土锚点轻微放大（CSS，见 surface.css）
+ * - 悬浮：技能槽框缓缓旋转（CSS，见 surface.css），像游戏点亮技能
  */
 export function SkillGlyph({ seed, className }: { seed: string; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -45,12 +46,13 @@ export function SkillGlyph({ seed, className }: { seed: string; className?: stri
           height={GLYPH_SIZE}
           viewBox={`0 0 ${GLYPH_SIZE} ${GLYPH_SIZE}`}
           xmlns="http://www.w3.org/2000/svg"
+          style={{ ['--glyphGlow' as string]: glyphGlow(seed) }}
         >
           <defs>
-            <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%">
+            <filter id={filterId} x="-30%" y="-30%" width="160%" height="160%">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.018"
+                baseFrequency="0.02"
                 numOctaves={2}
                 seed={glyphFilterSeed(seed)}
                 result="n"
@@ -58,14 +60,14 @@ export function SkillGlyph({ seed, className }: { seed: string; className?: stri
               <feDisplacementMap
                 in="SourceGraphic"
                 in2="n"
-                scale={1.1}
+                scale={1.3}
                 xChannelSelector="R"
                 yChannelSelector="G"
               />
             </filter>
           </defs>
           {/* 确定性哈希生成的纯几何（无用户文本注入），dangerouslySetInnerHTML 安全 */}
-          <g filter={`url(#${filterId})`} dangerouslySetInnerHTML={{ __html: inner }} />
+          <g className="ink" filter={`url(#${filterId})`} dangerouslySetInnerHTML={{ __html: inner }} />
         </svg>
       )}
     </div>

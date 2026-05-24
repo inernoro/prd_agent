@@ -23,6 +23,7 @@ import {
 import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
 import SpotlightCard from '@/components/reactbits/SpotlightCard';
 import { SkillGlyph } from './SkillGlyph';
+import { glyphWarmBg, glyphCardGlow } from '@/lib/skillGlyphRegistry';
 import { SkillDetailModal } from './SkillDetailModal';
 import { useSkillShare } from './useSkillShare';
 
@@ -368,7 +369,11 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
       <div
         className="mkt-card mkt-card-official-glyph"
         onClick={handleCardClick}
-        style={{ cursor: item.type === 'skill' ? 'pointer' : undefined }}
+        style={{
+          ['--warm' as string]: glyphWarmBg(skill.id),
+          ['--glow' as string]: glyphCardGlow(skill.id),
+          cursor: item.type === 'skill' ? 'pointer' : undefined,
+        }}
       >
         <div className="mkt-card-glyph-banner">
           <SkillGlyph seed={skill.id} />
