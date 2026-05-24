@@ -108,18 +108,15 @@ public class MarketplaceSkillsController : ControllerBase
             _ => query.SortByDescending(x => x.DownloadCount).ThenByDescending(x => x.CreatedAt)
         };
 
-        // 官方条目要占 1 格 → 从 DB 少查 1 条，保证总长严格 <= 200 硬上限
-        var willInject = OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag);
-        var dbLimit = willInject ? 199 : 200;
+        // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）永远置顶
+        var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag);
+        // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限
+        var dbLimit = Math.Max(200 - officialDtos.Count, 0);
 
         var items = await query.Limit(dbLimit).ToListAsync(ct);
         var dtos = items.Select(s => ToDto(s, userId)).Cast<object>().ToList();
 
-        // 虚拟注入官方 findmapskills 到首位（筛选条件命中时）
-        if (willInject)
-        {
-            dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId));
-        }
+        dtos.InsertRange(0, officialDtos);
 
         return Ok(ApiResponse<object>.Ok(new { items = dtos }));
     }
@@ -691,10 +688,13 @@ public class MarketplaceSkillsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
 
-        // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL
+        // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL（按 id 解析具体技能）
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
         {
-            return Ok(ApiResponse<object>.Ok(OfficialMarketplaceSkillInjector.BuildForkResponse(Request, _config, userId)));
+            var resp = OfficialMarketplaceSkillInjector.BuildForkResponseById(id, Request, _config, userId);
+            if (resp == null)
+                return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "官方技能不存在"));
+            return Ok(ApiResponse<object>.Ok(resp));
         }
 
         var skill = await _db.MarketplaceSkills.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
@@ -728,9 +728,9 @@ public class MarketplaceSkillsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
 
-        // 官方虚拟条目：幂等 no-op，返回未变化的虚拟 DTO（与 Fork 分支保持对称）
+        // 官方虚拟条目：幂等 no-op，返回未变化的虚拟 DTO（按 id 解析具体技能）
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
-            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId) }));
+            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildDtoById(id, Request, _config, userId) }));
 
         var result = await _db.MarketplaceSkills.UpdateOneAsync(
             x => x.Id == id && x.IsPublic,
@@ -752,7 +752,7 @@ public class MarketplaceSkillsController : ControllerBase
 
         // 官方虚拟条目：同上幂等 no-op
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
-            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId) }));
+            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildDtoById(id, Request, _config, userId) }));
 
         var result = await _db.MarketplaceSkills.UpdateOneAsync(
             x => x.Id == id,

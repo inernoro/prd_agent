@@ -19,3 +19,6 @@
 | feat | prd-admin | 官方技能卡改用自研 SkillGlyph（手绘古典线描）替代 reactbits PixelCard：暖彩线描 + feTurbulence 手绘抖线 + 暖光，三形态（罗盘/植物/星图）按 tag 命中 skillGlyphRegistry 决定、无 tag 回退名字哈希；视口懒渲染防 turbulence 拖慢；移除 vendored PixelCard + officialSkillPalette |
 | feat | prd-admin | SkillGlyph 新增「精英」金色八角徽章形态（emblem），tag=精英 触发；skillGlyphRegistry 补全 工具/需求/技能 等 tag 归类 |
 | chore | prd-admin | 官方技能打包：单主标签策略 + TAG_OVERRIDE 手工修正（老王=精英、findmapskills=技能+精英 等）+ 排除清单（qa-ledger/cn-brief-summary 等纯输出格式类不进市场） |
+| feat | prd-api | 官方技能全量上架：OfficialSkillCatalog 读内嵌 JSON 注入 14 个精选技能（findmapskills 仍特殊处理）；csproj 内嵌目录；List/Fork/GetById/Favorite 全 touchpoint 按 official-{key} 解析；OfficialSkillsController.Download 从目录打完整 zip（含 reference/scripts 全部文本文件）|
+| feat | prd-admin | 海鲜市场拆「官方推荐」+「社区上传」两区，官方置顶不挤瀑布流埋没用户上传 |
+| chore | prd-api | 官方技能打包改 INCLUDE 精选白名单（15 个可移植技能）+ 完整目录打包（v2 catalog，单文件 96KB 上限），剔除绑死本仓库基础设施的内部技能 |

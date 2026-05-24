@@ -51,7 +51,7 @@ public static class OfficialMarketplaceSkillInjector
             previewUrl = (string?)null,
             previewSource = (string?)null,
             previewHostedSiteId = (string?)null,
-            tags = new List<string> { "官方", "开放接口", "findmapskills" },
+            tags = new List<string> { "精英", "技能", "开放接口" },
             zipUrl,
             zipSizeBytes = 0L,
             originalFileName = "findmapskills.zip",
@@ -111,6 +111,114 @@ public static class OfficialMarketplaceSkillInjector
             downloadUrl = zipUrl,
             fileName = "findmapskills.zip",
             item = dto,
+        };
+    }
+
+    // ======================================================================
+    // 目录（catalog）驱动的其余官方技能 —— findmapskills 仍走上面的特殊路径
+    // ======================================================================
+
+    public static string OfficialIdFor(string key) => OfficialIdPrefix + key;
+
+    /// <summary>从 official-{key} 反解出 catalog key（findmapskills 的虚拟 id 返回其 key）。</summary>
+    public static string KeyFromId(string id)
+    {
+        if (string.IsNullOrEmpty(id) || !id.StartsWith(OfficialIdPrefix, StringComparison.Ordinal))
+            return string.Empty;
+        var key = id.Substring(OfficialIdPrefix.Length);
+        return key == "findmapskills" ? OfficialSkillTemplates.FindMapSkillsKey : key;
+    }
+
+    private static object BuildCatalogDto(OfficialSkillCatalog.SkillEntry e, string baseUrl)
+    {
+        var zipUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{e.Key}/download";
+        return new
+        {
+            Id = OfficialIdFor(e.Key),
+            Title = e.Title,
+            Description = e.Description,
+            iconEmoji = "✦",
+            coverImageUrl = (string?)null,
+            previewUrl = (string?)null,
+            previewSource = (string?)null,
+            previewHostedSiteId = (string?)null,
+            tags = e.Tags ?? new List<string>(),
+            zipUrl,
+            zipSizeBytes = 0L,
+            originalFileName = $"{e.Key}.zip",
+            hasSkillMd = true,
+            downloadCount = 0,
+            favoriteCount = 0,
+            isFavoritedByCurrentUser = false,
+            forkCount = 0,
+            ownerUserId = "official",
+            ownerUserName = "PrdAgent 官方",
+            ownerUserAvatar = (string?)null,
+            createdAt = DateTime.UtcNow,
+            updatedAt = DateTime.UtcNow,
+        };
+    }
+
+    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag)
+    {
+        if (!string.IsNullOrWhiteSpace(tag))
+            return (e.Tags ?? new List<string>()).Any(t => string.Equals(t, tag.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var k = keyword.Trim();
+            return (e.Title ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
+                || (e.Description ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
+                || (e.Tags ?? new List<string>()).Any(t => t.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 构造全部官方条目 DTO（findmapskills 在前，其余目录技能随后），用于 List prepend。
+    /// keyword/tag 用于筛选；为空则全返回。
+    /// </summary>
+    public static List<object> BuildAllDtos(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId, string? keyword, string? tag)
+    {
+        var baseUrl = request.ResolveServerUrl(config);
+        var list = new List<object>();
+        if (ShouldInject(keyword, tag))
+            list.Add(BuildFindMapSkillsDto(baseUrl, currentUserId));
+        foreach (var e in OfficialSkillCatalog.All)
+        {
+            if (CatalogMatches(e, keyword, tag))
+                list.Add(BuildCatalogDto(e, baseUrl));
+        }
+        return list;
+    }
+
+    /// <summary>按 official-{key} 解析单个官方 DTO；找不到返回 null。</summary>
+    public static object? BuildDtoById(string id, Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId)
+    {
+        var key = KeyFromId(id);
+        if (string.IsNullOrEmpty(key)) return null;
+        var baseUrl = request.ResolveServerUrl(config);
+        if (key == OfficialSkillTemplates.FindMapSkillsKey)
+            return BuildFindMapSkillsDto(baseUrl, currentUserId);
+        var entry = OfficialSkillCatalog.Find(key);
+        return entry == null ? null : BuildCatalogDto(entry, baseUrl);
+    }
+
+    /// <summary>按 official-{key} 构造 fork 下载响应；找不到返回 null。</summary>
+    public static object? BuildForkResponseById(string id, Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId)
+    {
+        var key = KeyFromId(id);
+        if (string.IsNullOrEmpty(key)) return null;
+        var baseUrl = request.ResolveServerUrl(config);
+        if (key == OfficialSkillTemplates.FindMapSkillsKey)
+            return BuildForkResponse(baseUrl, currentUserId);
+        var entry = OfficialSkillCatalog.Find(key);
+        if (entry == null) return null;
+        var zipUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{entry.Key}/download";
+        return new
+        {
+            downloadUrl = zipUrl,
+            fileName = $"{entry.Key}.zip",
+            item = BuildCatalogDto(entry, baseUrl),
         };
     }
 }

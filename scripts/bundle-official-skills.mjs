@@ -12,7 +12,7 @@
 // 技能内容有变 / 新增技能时重跑本脚本并提交产物。
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -20,8 +20,32 @@ const ROOT = join(__dirname, '..');
 const SKILLS_DIR = join(ROOT, '.claude', 'skills');
 const OUT_FILE = join(ROOT, 'prd-api', 'src', 'PrdAgent.Api', 'OfficialSkills', 'official-skills.generated.json');
 
-// SKILL.md 内容上限（防止个别超长技能把 JSON 撑爆；预览/摘要够用）
-const MAX_SKILL_MD = 16000;
+// 单文件上限（超大文本截断防 JSON 爆）
+const MAX_FILE_BYTES = 96 * 1024;
+// 只打包文本文件（其余跳过；技能目前全是文本）
+const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.yml', '.yaml', '.sh', '.ts', '.tsx', '.js', '.mjs', '.gitignore']);
+
+// ── 精选 INCLUDE 白名单（用户敲定：只放真正可移植、外部用户能跑的技能）─────────
+// 不在表里的不进市场（文件保留，Claude Code 仍用）。新增可对外技能往这里加 key。
+// 排除原则：绑死本仓库基础设施（CDS/cdscli/本平台 API/本仓库开发流程）的一律不放。
+// 注：findmapskills 不在此列 —— 它由 OfficialSkillTemplates 特殊处理（版本号 +
+// {{BASE_URL}} 占位替换），catalog 只管其余可移植技能，避免重复/降低改动风险。
+const INCLUDE = new Set([
+  'laowang',                 // 精英·米多文化人格
+  'technical-documentation', // 通用技术文档写作
+  'ui-ux-pro-max',           // 通用 UI/UX 设计智能
+  'risk-matrix',             // 通用风险评估
+  'skill-validation',        // 通用需求验证
+  'human-verify',            // 通用代码人工审查方法论
+  'theme-transition',        // 通用前端主题切换动效
+  'remotion-scene-codegen',  // 通用 Remotion 视频场景生成
+  'create-skill-file',       // 通用 SKILL.md 创建
+  'find-skills',             // 通用技能发现
+  'code-hygiene',            // 通用代码卫生方法论
+  'conflict-resolution',     // 通用 git 冲突解决
+  'acceptance-checklist',    // 通用 UAT 清单
+  'task-handoff-checklist',  // 通用交接清单
+]);
 
 // ── tag 分类启发式 ────────────────────────────────────────────────────────
 // 与 prd-admin/src/lib/skillGlyphRegistry.ts 的 TAG_STYLE_GROUPS 对齐：
@@ -49,12 +73,33 @@ const TAG_OVERRIDE = {
   'ui-ux-pro-max': ['创意'],
 };
 
-// 排除清单：不进海鲜市场（文件保留，Claude Code 仍用）。先放保守的「纯输出格式 / 纯元」类。
-// 要清更多就往这里加 key；要全放就清空。
-const EXCLUDE = new Set([
-  'qa-ledger',         // 对话台账：输出格式约定，非独立产品
-  'cn-brief-summary',  // 200 字总结：输出格式约定
-]);
+// 递归收集技能目录下的全部文本文件（用于打包完整 zip，而非只 SKILL.md）
+function collectFiles(skillDir) {
+  const out = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      const st = statSync(full);
+      if (st.isDirectory()) { walk(full); continue; }
+      const dot = name.lastIndexOf('.');
+      const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
+      // .gitignore 这种无扩展名特殊处理
+      const isText = TEXT_EXT.has(ext) || name === '.gitignore';
+      if (!isText) continue;
+      let content = readFileSync(full, 'utf8');
+      let truncated = false;
+      if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
+        content = content.slice(0, MAX_FILE_BYTES) + '\n\n…(已截断，完整版见仓库)';
+        truncated = true;
+      }
+      out.push({ path: relative(skillDir, full).split('\\').join('/'), content, truncated });
+    }
+  };
+  walk(skillDir);
+  // SKILL.md 排最前，其余字母序
+  out.sort((a, b) => (a.path === 'SKILL.md' ? -1 : b.path === 'SKILL.md' ? 1 : a.path.localeCompare(b.path)));
+  return out;
+}
 
 function parseFrontmatter(md) {
   // 取首个 --- ... --- 块里的 name / description（description 可能是多行 > 折叠）
@@ -112,37 +157,43 @@ function main() {
     console.error(`[bundle-official-skills] 找不到 ${SKILLS_DIR}`);
     process.exit(1);
   }
-  const dirs = readdirSync(SKILLS_DIR).filter((d) => {
+  // 只打包 INCLUDE 白名单里、且目录真实存在 + 有 SKILL.md 的技能
+  const dirs = [...INCLUDE].filter((d) => {
     const p = join(SKILLS_DIR, d);
-    return statSync(p).isDirectory() && existsSync(join(p, 'SKILL.md')) && !EXCLUDE.has(d);
+    return existsSync(p) && statSync(p).isDirectory() && existsSync(join(p, 'SKILL.md'));
   }).sort();
+
+  const missing = [...INCLUDE].filter((d) => !dirs.includes(d));
+  if (missing.length) console.warn(`[bundle-official-skills] 警告：INCLUDE 里这些技能目录不存在，已跳过: ${missing.join(', ')}`);
 
   const skills = [];
   for (const key of dirs) {
-    const mdPath = join(SKILLS_DIR, key, 'SKILL.md');
-    let md = readFileSync(mdPath, 'utf8');
+    const skillDir = join(SKILLS_DIR, key);
+    const files = collectFiles(skillDir);
+    const md = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
     const { name, description } = parseFrontmatter(md);
-    if (md.length > MAX_SKILL_MD) md = md.slice(0, MAX_SKILL_MD) + '\n\n…(内容已截断，完整版见仓库 .claude/skills)';
     const title = name || key;
     skills.push({
       key,
       title,
       description: shortDesc(description, title),
       tags: deriveTags(key, name, description),
-      skillMd: md,
+      files, // 完整目录（含 SKILL.md + reference/ + scripts/ 等文本文件）
     });
   }
 
   const out = {
-    version: 1,
+    version: 2,
     generatedAt: new Date().toISOString(),
     count: skills.length,
     skills,
   };
   writeFileSync(OUT_FILE, JSON.stringify(out, null, 2) + '\n', 'utf8');
   console.log(`[bundle-official-skills] 写出 ${skills.length} 个官方技能 → ${OUT_FILE}`);
-  // 打印 tag 分配速览，方便人工校对
-  for (const s of skills) console.log(`  ${s.key.padEnd(26)} [${s.tags.join(', ')}]  ${s.title}`);
+  for (const s of skills) {
+    const trunc = s.files.filter((f) => f.truncated).length;
+    console.log(`  ${s.key.padEnd(24)} [${s.tags.join(', ')}]  ${s.files.length} 文件${trunc ? ` (${trunc} 截断)` : ''}  ${s.title}`);
+  }
 }
 
 main();
