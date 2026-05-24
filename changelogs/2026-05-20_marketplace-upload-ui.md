@@ -22,3 +22,5 @@
 | feat | prd-api | 官方技能全量上架：OfficialSkillCatalog 读内嵌 JSON 注入 14 个精选技能（findmapskills 仍特殊处理）；csproj 内嵌目录；List/Fork/GetById/Favorite 全 touchpoint 按 official-{key} 解析；OfficialSkillsController.Download 从目录打完整 zip（含 reference/scripts 全部文本文件）|
 | feat | prd-admin | 海鲜市场拆「官方推荐」+「社区上传」两区，官方置顶不挤瀑布流埋没用户上传 |
 | chore | prd-api | 官方技能打包改 INCLUDE 精选白名单（15 个可移植技能）+ 完整目录打包（v2 catalog，单文件 96KB 上限），剔除绑死本仓库基础设施的内部技能 |
+| fix | prd-api | 官方技能给中文友好备注名（DISPLAY_NAME map），卡片不再裸显英文 key |
+| fix | prd-admin | 官方技能 zip 预览改用 skill.zipUrl 直连（同源 AllowAnonymous 完整 zip），修复 official-* 走 authed zip-content 代理查 DB 落空导致的 404 / 直开 401 |

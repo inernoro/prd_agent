@@ -1,11 +1,11 @@
 {
   "version": 2,
-  "generatedAt": "2026-05-24T17:17:01.195Z",
+  "generatedAt": "2026-05-24T18:15:49.327Z",
   "count": 14,
   "skills": [
     {
       "key": "acceptance-checklist",
-      "title": "acceptance-checklist",
+      "title": "acceptance-checklist · 真人验收清单",
       "description": "Generates a step-by-step user acceptance test (UAT) checklist that a real human executes by hand, with expected results and failure playbooks at every checkpoint. Covers CLI + Web UI scenarios, sup…",
       "tags": [
         "创意"
@@ -30,7 +30,7 @@
     },
     {
       "key": "code-hygiene",
-      "title": "code-hygiene",
+      "title": "code-hygiene · 代码卫生体检",
       "description": "Audits code for post-migration residue and technical debt across 10 dimensions (dead fields, dead branches, compat shims, naming artifacts, redundant params/types, stale comments, migration guards,…",
       "tags": [
         "分析"
@@ -50,7 +50,7 @@
     },
     {
       "key": "conflict-resolution",
-      "title": "conflict-resolution",
+      "title": "conflict-resolution · Git 冲突解决",
       "description": "Merges the main branch into the current feature branch before a PR, resolving conflicts on behalf of the developer.",
       "tags": [
         "工具"
@@ -65,7 +65,7 @@
     },
     {
       "key": "create-skill-file",
-      "title": "create-skill-file",
+      "title": "create-skill-file · 技能文件生成",
       "description": "Creates and evaluates Claude Code SKILL.md files following Anthropic best practices. Generates well-structured skills with correct frontmatter, progressive disclosure, and quality validation. Trigg…",
       "tags": [
         "技能"
@@ -85,7 +85,7 @@
     },
     {
       "key": "find-skills",
-      "title": "find-skills",
+      "title": "find-skills · 技能发现",
       "description": "Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest in extending capabilities. This…",
       "tags": [
         "技能"
@@ -100,7 +100,7 @@
     },
     {
       "key": "human-verify",
-      "title": "human-verify",
+      "title": "human-verify · 多视角人工验证",
       "description": "Multi-perspective code verification that simulates human review. Combines adversarial debate (Devil's Advocate), reverse verification, boundary testing, and user scenario simulation to catch issues…",
       "tags": [
         "分析"
@@ -120,7 +120,7 @@
     },
     {
       "key": "laowang",
-      "title": "laowang",
+      "title": "老王 · 米多解决问题五步法",
       "description": "老王智能体——米多文化的化身。当用户表达\"任务太难\"、\"卡住了\"、\"不知道怎么办\"、\"理不清头绪\"、\"任务太多搞不定\"、\"求助老王\"、\"找老王\"、\"老王帮我\"、\"/laowang\"等困境信号时主动触发， 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）帮用户拆解任务。 风格强硬直率，奉行\"回归常识、以终为始、贡献论英雄\"，坚决反对软骨病/玻璃心/巨…",
       "tags": [
         "精英"
@@ -135,7 +135,7 @@
     },
     {
       "key": "remotion-scene-codegen",
-      "title": "remotion-scene-codegen",
+      "title": "remotion-scene-codegen · 视频场景代码生成",
       "description": "Provides Remotion knowledge context for video scene code generation. Supplies the LLM Gateway with Remotion API references, animation utilities, reusable component libraries, and scene design princ…",
       "tags": [
         "创意"
@@ -150,7 +150,7 @@
     },
     {
       "key": "risk-matrix",
-      "title": "risk-matrix",
+      "title": "risk-matrix · MECE 风险评估",
       "description": "Performs MECE-based risk assessment on feature changes, evaluating probability and impact across non-overlapping dimensions to produce actionable risk reports.",
       "tags": [
         "分析"
@@ -165,7 +165,7 @@
     },
     {
       "key": "skill-validation",
-      "title": "skill-validation",
+      "title": "skill-validation · 需求七维度评分",
       "description": "Validates new feature requirements before development begins. Combines requirement smell detection (ambiguity, incompleteness, untestability), deduplication against existing features, and multi-dim…",
       "tags": [
         "创意"
@@ -180,7 +180,7 @@
     },
     {
       "key": "task-handoff-checklist",
-      "title": "task-handoff-checklist",
+      "title": "task-handoff-checklist · 任务交接清单",
       "description": "Generates structured handoff reports after completing development tasks. Scans changes across 8 dimensions (navigation, documentation, rules, workflows, testing, risks, code quality, follow-ups) to…",
       "tags": [
         "分析"
@@ -205,7 +205,7 @@
     },
     {
       "key": "technical-documentation",
-      "title": "technical-documentation",
+      "title": "technical-documentation · 技术文档模板",
       "description": "Unified documentation writing skill. Combines Diataxis framework workflow, technical templates (spec/architecture/runbook/API), and user-facing templates (quick-start/how-to/FAQ/tutorial). Use for …",
       "tags": [
         "创意"
@@ -220,7 +220,7 @@
     },
     {
       "key": "theme-transition",
-      "title": "theme-transition",
+      "title": "theme-transition · 主题切换水波纹动效",
       "description": "为任意前端项目添加主题切换圆形过渡动效（View Transition API + clip-path 水波纹扩散）。适用于 React/Vanilla/Tauri 等技术栈，含完整 CSS、JS 代码与降级方案。触发词：\"主题过渡\"、\"皮肤切换动效\"、\"theme transition\"、\"ripple theme\"、\"/theme-transition\"。",
       "tags": [
         "创意"
@@ -235,7 +235,7 @@
     },
     {
       "key": "ui-ux-pro-max",
-      "title": "ui-ux-pro-max",
+      "title": "UI/UX Pro Max · 设计智能",
       "description": "UI/UX design intelligence. 67 styles, 96 palettes, 57 font pairings, 25 charts, 13 stacks (React, Next.js, Vue, Svelte, SwiftUI, React Native, Flutter, Tailwind, shadcn/ui). Actions: plan, build, c…",
       "tags": [
         "创意"

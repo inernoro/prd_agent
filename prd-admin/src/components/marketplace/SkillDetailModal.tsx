@@ -91,8 +91,15 @@ export function SkillDetailModal({
 
         {/* Body */}
         <div className="flex-1" style={{ minHeight: 0 }}>
+          {/* 官方技能：zipUrl 是同源 AllowAnonymous 的 /api/official-skills/{key}/download
+              （后端动态打完整 zip），直接用，不走需要鉴权 + 查 DB 的 zip-content 代理（官方不在 DB）。
+              用户技能：zipUrl 是 COS/R2 外链，走同源代理避开 CORS。 */}
           <SkillContentBrowser
-            zipUrl={`/api/marketplace/skills/${skill.id}/zip-content`}
+            zipUrl={
+              skill.ownerUserId === 'official'
+                ? skill.zipUrl
+                : `/api/marketplace/skills/${skill.id}/zip-content`
+            }
             sizeBytes={skill.zipSizeBytes}
           />
         </div>

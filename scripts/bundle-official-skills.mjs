@@ -47,6 +47,25 @@ const INCLUDE = new Set([
   'task-handoff-checklist',  // 通用交接清单
 ]);
 
+// 友好显示名（key → 中文备注名）。缺省用 frontmatter name（多为英文 key）。
+// 卡片标题展示这个，像 findmapskills 那样「英文 · 中文一句话」。
+const DISPLAY_NAME = {
+  'acceptance-checklist': 'acceptance-checklist · 真人验收清单',
+  'code-hygiene': 'code-hygiene · 代码卫生体检',
+  'conflict-resolution': 'conflict-resolution · Git 冲突解决',
+  'create-skill-file': 'create-skill-file · 技能文件生成',
+  'find-skills': 'find-skills · 技能发现',
+  'human-verify': 'human-verify · 多视角人工验证',
+  'laowang': '老王 · 米多解决问题五步法',
+  'remotion-scene-codegen': 'remotion-scene-codegen · 视频场景代码生成',
+  'risk-matrix': 'risk-matrix · MECE 风险评估',
+  'skill-validation': 'skill-validation · 需求七维度评分',
+  'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',
+  'technical-documentation': 'technical-documentation · 技术文档模板',
+  'theme-transition': 'theme-transition · 主题切换水波纹动效',
+  'ui-ux-pro-max': 'UI/UX Pro Max · 设计智能',
+};
+
 // ── tag 分类启发式 ────────────────────────────────────────────────────────
 // 与 prd-admin/src/lib/skillGlyphRegistry.ts 的 TAG_STYLE_GROUPS 对齐：
 //   工程/工具/运维 → 罗盘   创意/内容/设计 → 植物   分析/数据/报告 → 星图   精英 → 金色徽章
@@ -172,7 +191,7 @@ function main() {
     const files = collectFiles(skillDir);
     const md = readFileSync(join(skillDir, 'SKILL.md'), 'utf8');
     const { name, description } = parseFrontmatter(md);
-    const title = name || key;
+    const title = DISPLAY_NAME[key] || name || key;
     skills.push({
       key,
       title,
