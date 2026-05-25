@@ -5,7 +5,7 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -81,8 +81,18 @@ export type DocBrowserProps = {
   onGenerateSubtitle?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
+  onShareEntry?: (entryId: string) => void;
+  /** 指定后：当该 entry 被选中且内容加载完成时自动进入编辑态（新建文档免再点一次「编辑」） */
+  autoEditEntryId?: string;
+  /** autoEdit 已被消费的回调（清除一次性标记） */
+  onAutoEditConsumed?: () => void;
   /** 点击"替换文件"时触发（仅文件条目显示）。原地替换内容，保留 Id/标签/主文档。 */
   onReplaceFile?: (entryId: string) => void;
+  /** 正在再加工的源文档 → 进度(0-100)。提供时对应行显示"加工中 N%"chip。 */
+  reprocessingMap?: Record<string, number>;
+  /** 已被「单篇分享」的文档 id 集合。命中的行显示黄色"已分享"标识（点击可查看/复制链接）。 */
+  sharedEntryIds?: Set<string>;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
@@ -159,7 +169,7 @@ function formatMetaTime(iso?: string): string {
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
-  onGenerateSubtitle, onReprocess, onReplaceFile,
+  onGenerateSubtitle, onReprocess, onShareEntry, onReplaceFile,
   onClose,
 }: {
   x: number;
@@ -174,6 +184,7 @@ function ContextMenu({
   onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
+  onShareEntry?: (entryId: string) => void;
   onReplaceFile?: (entryId: string) => void;
   onClose: () => void;
 }) {
@@ -189,6 +200,7 @@ function ContextMenu({
 
   const showSubtitle = canGenerateSubtitle(entry) && !!onGenerateSubtitle;
   const showReprocess = canReprocess(entry) && !!onReprocess;
+  const showShare = !entry.isFolder && !!onShareEntry;
 
   return (
     <div ref={menuRef} className="surface-popover fixed z-50 min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
@@ -208,7 +220,15 @@ function ContextMenu({
           再加工
         </button>
       )}
-      {(showSubtitle || showReprocess) && (
+      {showShare && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          onClick={() => { onShareEntry!(entry.id); onClose(); }}>
+          <Share2 size={12} />
+          分享
+        </button>
+      )}
+      {(showSubtitle || showReprocess || showShare) && (
         <div className="my-1 border-t border-token-subtle" />
       )}
       {onRename && (
@@ -520,9 +540,12 @@ function TreeNode({
   showUpdatedTime,
   contentFirstLines,
   contentMatchIds,
+  reprocessingMap,
+  sharedEntryIds,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
+  onShareEntry,
   onMoveEntry,
   onOpenSubscription,
 }: {
@@ -538,9 +561,12 @@ function TreeNode({
   showUpdatedTime: boolean;
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
+  reprocessingMap?: Record<string, number>;
+  sharedEntryIds?: Set<string>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
+  onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
 }) {
@@ -551,6 +577,8 @@ function TreeNode({
   const isPinned = pinnedEntryIds.has(entry.id);
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
+  const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
+  const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
   return (
@@ -639,6 +667,38 @@ function TreeNode({
           }}>
           {displayTitle}
         </span>
+
+        {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
+        {isShared && (
+          <span
+            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold cursor-pointer"
+            style={{
+              background: 'rgba(234,179,8,0.14)',
+              color: 'rgba(234,179,8,0.95)',
+              border: '1px solid rgba(234,179,8,0.32)',
+            }}
+            title="已分享 · 点击查看或复制链接"
+          >
+            <Share2 size={9} /> 已分享
+          </span>
+        )}
+
+        {/* 再加工进行中：源文档行显示"加工中 N%"——关闭抽屉后仍可见 */}
+        {reprocessing !== undefined && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
+            style={{
+              background: 'rgba(59,130,246,0.12)',
+              color: 'rgba(96,165,250,0.95)',
+              border: '1px solid rgba(59,130,246,0.25)',
+            }}
+            title="正在再加工"
+          >
+            <MapSpinner size={9} />
+            加工中 {Math.round(reprocessing)}%
+          </span>
+        )}
 
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
@@ -763,9 +823,12 @@ function TreeNode({
           showUpdatedTime={showUpdatedTime}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
+          reprocessingMap={reprocessingMap}
+          sharedEntryIds={sharedEntryIds}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
+          onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
         />
@@ -840,7 +903,12 @@ export function DocBrowser({
   onOpenSubscription,
   onGenerateSubtitle,
   onReprocess,
+  onShareEntry,
+  autoEditEntryId,
+  onAutoEditConsumed,
   onReplaceFile,
+  reprocessingMap,
+  sharedEntryIds,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -1184,6 +1252,22 @@ export function DocBrowser({
     }
   }, [selectedEntryId, loadEntryContent, entries]);
 
+  // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
+  useEffect(() => {
+    if (!autoEditEntryId || selectedEntryId !== autoEditEntryId || contentLoading) return;
+    // 必须确认当前 preview 已是该 entry 的内容，否则会把上一篇的旧正文带进新文档
+    // （selectedEntryId 刚切换那一帧 contentLoading 仍为 false，preview 还是旧的）——Bugbot 报告
+    if (!loadedContentKey || !loadedContentKey.startsWith(autoEditEntryId + ':')) return;
+    const entry = entries.find(e => e.id === autoEditEntryId);
+    if (!entry || entry.isFolder) return;
+    const cfg = getFileTypeConfig(entry.title, entry.contentType);
+    if (cfg.editable && onSaveContent) {
+      setEditContent(preview?.text ?? '');
+      setEditMode(true);
+    }
+    onAutoEditConsumed?.();
+  }, [autoEditEntryId, selectedEntryId, contentLoading, loadedContentKey, preview, entries, onSaveContent, onAutoEditConsumed]);
+
   // 内容版本键变化时强制退出编辑态：
   // loadedContentKey = `${entryId}:${updatedAt}`。当"同一个 entry"的 updatedAt
   // 变了（左侧右键"替换文件"覆盖当前选中文档 / 外部更新），loadEntryContent
@@ -1481,9 +1565,12 @@ export function DocBrowser({
               showUpdatedTime={showUpdatedTime}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
+              reprocessingMap={reprocessingMap}
+              sharedEntryIds={sharedEntryIds}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
+              onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
             />
@@ -1858,6 +1945,7 @@ export function DocBrowser({
           onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
+          onShareEntry={onShareEntry}
           onReplaceFile={onReplaceFile}
           onClose={() => setContextMenu(null)}
         />

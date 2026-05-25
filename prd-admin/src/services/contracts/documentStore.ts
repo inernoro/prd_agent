@@ -52,6 +52,9 @@ export type DocumentStoreShareLink = {
   token: string;
   storeId: string;
   storeName: string;
+  /** 非空 = 单篇文档分享；空 = 整库分享 */
+  entryId?: string;
+  entryTitle?: string;
   title?: string;
   description?: string;
   viewCount: number;
@@ -61,6 +64,27 @@ export type DocumentStoreShareLink = {
   createdAt: string;
   expiresAt?: string;
   isRevoked: boolean;
+};
+
+/** 公开分享视图（/s/lib/:token 拉取，匿名可访问） */
+export type DocStoreShareView = {
+  token: string;
+  title?: string;
+  description?: string;
+  createdByName?: string;
+  /** 非空 = 单篇文档分享 */
+  entryId?: string;
+  entryTitle?: string;
+  store: {
+    id: string;
+    name: string;
+    description?: string;
+    primaryEntryId?: string;
+    pinnedEntryIds?: string[];
+    documentCount: number;
+    likeCount: number;
+    viewCount: number;
+  };
 };
 
 export type DocumentEntry = {
@@ -160,6 +184,8 @@ export type SubscriptionDetail = {
 
 export type DocumentStoreWithPreview = DocumentStore & {
   recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
+  /** 是否存在「整库级」有效分享（用于卡片标黄） */
+  hasActiveShare?: boolean;
 };
 
 /** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */
@@ -239,7 +265,7 @@ export type ListDocumentEntriesContract = (
   page?: number,
   pageSize?: number,
   keyword?: string,
-) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number }>>;
+) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[] }>>;
 
 export type UpdateDocumentEntryContract = (
   entryId: string,

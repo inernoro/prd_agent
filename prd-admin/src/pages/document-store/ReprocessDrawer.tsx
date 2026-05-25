@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Wand2, X, CheckCircle2, AlertCircle, Sparkle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
@@ -7,35 +7,50 @@ import { StreamingText } from '@/components/streaming';
 import SplitText from '@/components/reactbits/SplitText';
 import CountUp from '@/components/reactbits/CountUp';
 import BlurText from '@/components/reactbits/BlurText';
-import { useSseStream } from '@/lib/useSseStream';
-import { api } from '@/services/api';
-import { listReprocessTemplates, startReprocess, getAgentRun } from '@/services';
-import type { ReprocessTemplate, DocumentStoreAgentRun } from '@/services/contracts/documentStore';
+import { listReprocessTemplates, startReprocess } from '@/services';
+import type { ReprocessTemplate } from '@/services/contracts/documentStore';
+import { useReprocessRunStore } from '@/stores/reprocessRunStore';
 import { toast } from '@/lib/toast';
 
 export type ReprocessDrawerProps = {
   entryId: string;
   entryTitle: string;
+  storeId: string;
   onClose: () => void;
-  onDone?: (outputEntryId: string) => void;
 };
 
-type Stage = 'picking' | 'streaming' | 'done' | 'failed';
-
-export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: ReprocessDrawerProps) {
-  const [stage, setStage] = useState<Stage>('picking');
+/**
+ * 文档再加工抽屉 —— 现在只负责「选模板 → 发起任务」和「展开查看进度」。
+ *
+ * SSE 订阅 + 完成副作用已上提到 reprocessRunStore + ReprocessRunHost，本抽屉
+ * 退化为 store 的展开视图：开始后只读 store.runs[runId] 渲染进度/打字，关闭
+ * 抽屉不再 abort 任务（Host 在页面层继续跑），刷新后再点开能直接续看。
+ */
+export function ReprocessDrawer({ entryId, entryTitle, storeId, onClose }: ReprocessDrawerProps) {
+  // 'picking' = 选模板；'running' = 已发起，展示 store 里的进度
+  const [stage, setStage] = useState<'picking' | 'running'>('picking');
   const [templates, setTemplates] = useState<ReprocessTemplate[] | null>(null);
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [loadingTemplates, setLoadingTemplates] = useState(true);
-
   const [runId, setRunId] = useState<string | null>(null);
-  const [run, setRun] = useState<DocumentStoreAgentRun | null>(null);
-  const [streamedText, setStreamedText] = useState('');
-  const [phase, setPhase] = useState('排队中');
-  const [progress, setProgress] = useState(0);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const streamedTextRef = useRef('');
+  // 防止「开始加工」请求在途时被二次点击 → 创建重复任务
+  const [submitting, setSubmitting] = useState(false);
+
+  const startRun = useReprocessRunStore((s) => s.startRun);
+  const run = useReprocessRunStore((s) => (runId ? s.runs[runId] : undefined));
+
+  // 复用：仅当该源文档有【进行中】任务时才直接展开续看（关抽屉又点开 / 刷新后重进）。
+  // done / failed 不复用——否则重开抽屉会卡在旧结果页，无法再发起新的再加工。
+  useEffect(() => {
+    const existing = Object.values(useReprocessRunStore.getState().runs)
+      .filter((r) => r.sourceEntryId === entryId && r.status === 'streaming')
+      .sort((a, b) => b.startedAt - a.startedAt)[0];
+    if (existing) {
+      setRunId(existing.runId);
+      setStage('running');
+    }
+  }, [entryId]);
 
   // 加载模板列表
   useEffect(() => {
@@ -53,105 +68,39 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
     })();
   }, []);
 
-  // SSE stream
-  const streamUrl = useMemo(
-    () => (runId ? `${api.documentStore.stores.agentRunStream(runId)}?afterSeq=0` : ''),
-    [runId],
-  );
-
-  const { start, abort } = useSseStream({
-    url: streamUrl,
-    onEvent: {
-      chunk: (data) => {
-        const d = data as { text?: string };
-        if (d.text) {
-          streamedTextRef.current += d.text;
-          setStreamedText(streamedTextRef.current);
-        }
-      },
-      progress: (data) => {
-        const d = data as { progress?: number; phase?: string };
-        if (typeof d.progress === 'number') setProgress(d.progress);
-        if (d.phase) setPhase(d.phase);
-      },
-      done: (data) => {
-        setStage('done');
-        setProgress(100);
-        setPhase('完成');
-        const d = data as { outputEntryId?: string; generatedText?: string };
-        if (d.generatedText) {
-          streamedTextRef.current = d.generatedText;
-          setStreamedText(d.generatedText);
-        }
-        if (d.outputEntryId) {
-          onDone?.(d.outputEntryId);
-          toast.success('文档加工完成', '已保存为新文档');
-        }
-      },
-      error: (data) => {
-        const d = data as { message?: string };
-        setStage('failed');
-        setErrorMessage(d.message ?? '未知错误');
-      },
-    },
-    onError: (msg) => {
-      setStage('failed');
-      setErrorMessage(msg);
-    },
-  });
-
-  // runId 就绪后启动 SSE + 拉一次 run 当前状态（兜底）
-  const refreshRun = useCallback(async (rid: string) => {
-    const res = await getAgentRun(rid);
-    if (res.success) {
-      setRun(res.data);
-      if (res.data.generatedText && res.data.generatedText.length > streamedTextRef.current.length) {
-        streamedTextRef.current = res.data.generatedText;
-        setStreamedText(res.data.generatedText);
-      }
-      if (res.data.status === 'done') {
-        setStage('done');
-        if (res.data.outputEntryId) onDone?.(res.data.outputEntryId);
-      } else if (res.data.status === 'failed') {
-        setStage('failed');
-        setErrorMessage(res.data.errorMessage ?? '任务失败');
-      }
-    }
-  }, [onDone]);
-
-  useEffect(() => {
-    if (!runId) return;
-    void start();
-    void refreshRun(runId);
-    return () => abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId]);
-
   const handleStart = useCallback(async () => {
+    if (submitting) return;
     if (!selectedKey) return;
     if (selectedKey === 'custom' && !customPrompt.trim()) {
       toast.warning('请输入自定义提示词');
       return;
     }
-    setStage('streaming');
-    streamedTextRef.current = '';
-    setStreamedText('');
     // 模板模式下：customPrompt 作为额外指令上送（后端会拼接到模板 systemPrompt 末尾）
     // 自定义模式下：customPrompt 是主 prompt
     const trimmed = customPrompt.trim();
+    setSubmitting(true);
     const res = await startReprocess(entryId, {
       templateKey: selectedKey,
       customPrompt: trimmed || undefined,
     });
     if (!res.success) {
-      setStage('failed');
-      setErrorMessage(res.error?.message ?? '启动任务失败');
+      setSubmitting(false);
+      toast.error('启动任务失败', res.error?.message);
       return;
     }
+    startRun({ runId: res.data.runId, storeId, sourceEntryId: entryId, sourceTitle: entryTitle });
     setRunId(res.data.runId);
-  }, [entryId, selectedKey, customPrompt]);
+    setStage('running');
+  }, [submitting, entryId, entryTitle, storeId, selectedKey, customPrompt, startRun]);
 
   const selectedTemplate = templates?.find((t) => t.key === selectedKey);
+
+  // 展示态（来自 store，关抽屉不影响真实任务）
+  const status = run?.status ?? 'streaming';
+  const phase = run?.phase ?? '排队中';
+  const progress = run?.progress ?? 0;
+  const streamedText = run?.streamedText ?? '';
+  const errorMessage = run?.errorMessage;
 
   return (
     <motion.div
@@ -293,7 +242,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                   delay={20}
                 />
                 <AnimatePresence mode="wait">
-                  {stage === 'done' ? (
+                  {status === 'done' ? (
                     <motion.span
                       key="done"
                       initial={{ scale: 0.7, opacity: 0 }}
@@ -304,7 +253,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                       <CheckCircle2 size={10} />
                       <SplitText text="完成" tag="span" delay={40} duration={0.4} from={{ opacity: 0, y: 8 }} to={{ opacity: 1, y: 0 }} />
                     </motion.span>
-                  ) : stage === 'failed' ? (
+                  ) : status === 'failed' ? (
                     <motion.span
                       key="failed"
                       initial={{ scale: 0.9, opacity: 0 }}
@@ -330,11 +279,11 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                   animate={{ width: `${progress}%` }}
                   transition={{ type: 'spring', stiffness: 80, damping: 20 }}
                   style={{
-                    background: stage === 'failed'
+                    background: status === 'failed'
                       ? 'linear-gradient(90deg, rgba(239,68,68,0.6), rgba(248,113,113,0.9))'
                       : 'linear-gradient(90deg, rgba(59,130,246,0.6), rgba(96,165,250,0.9))',
                   }}/>
-                {stage === 'done' && (
+                {status === 'done' && (
                   <motion.div
                     className="absolute inset-y-0 w-12 pointer-events-none"
                     initial={{ x: '-100%' }}
@@ -355,17 +304,17 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
               {/* 实时打字区 */}
               <div className="surface-code mt-2 max-h-[50vh] min-h-[280px] overflow-y-auto rounded-[10px] p-4 font-mono text-[12px] leading-relaxed text-token-primary whitespace-pre-wrap">
                 {streamedText ? (
-                  <StreamingText text={streamedText} streaming={stage === 'streaming'} mode="blur" />
+                  <StreamingText text={streamedText} streaming={status === 'streaming'} mode="blur" />
                 ) : (
                   <span className="text-token-muted">等待 LLM 输出…</span>
                 )}
-                {stage === 'streaming' && !streamedText && (
+                {status === 'streaming' && !streamedText && (
                   <span className="inline-block w-1 h-3 ml-0.5 align-middle"
                     style={{ background: 'rgba(96,165,250,0.8)', animation: 'pulse 1s ease-in-out infinite' }} />
                 )}
               </div>
 
-              {stage === 'failed' && errorMessage && (
+              {status === 'failed' && errorMessage && (
                 <div className="p-3 rounded-[10px] text-[11px] break-all"
                   style={{
                     background: 'rgba(239,68,68,0.08)',
@@ -376,7 +325,7 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
                 </div>
               )}
 
-              {stage === 'done' && run?.outputEntryId && (
+              {status === 'done' && run?.outputEntryId && (
                 <div className="p-3 rounded-[10px] text-[11px]"
                   style={{
                     background: 'rgba(34,197,94,0.06)',
@@ -399,19 +348,19 @@ export function ReprocessDrawer({ entryId, entryTitle, onClose, onDone }: Reproc
           {stage === 'picking' ? (
             <>
               <Button variant="primary" size="md"
-                disabled={!selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
+                disabled={submitting || !selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
                 onClick={handleStart}>
-                <Wand2 size={14} /> 开始加工
+                <Wand2 size={14} /> {submitting ? '提交中…' : '开始加工'}
               </Button>
               <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
             </>
           ) : (
             <>
               <span className="text-[11px] text-token-muted">
-                {stage === 'streaming' ? '正在加工，可关闭抽屉后台继续' : ''}
+                {status === 'streaming' ? '正在加工，可关闭抽屉后台继续' : ''}
               </span>
               <Button variant="ghost" size="sm" onClick={onClose}>
-                {stage === 'done' || stage === 'failed' ? '关闭' : '后台运行'}
+                {status === 'done' || status === 'failed' ? '关闭' : '后台运行'}
               </Button>
             </>
           )}

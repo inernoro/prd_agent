@@ -311,12 +311,40 @@ export async function listMyLikedDocumentStores() {
   );
 }
 
-/** 创建分享链接 */
-export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number }) {
+/** 创建分享链接（entryId 非空 = 单篇文档分享） */
+export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number; entryId?: string }) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreShareLink>(
     api.documentStore.stores.shareLinks(storeId),
     { method: 'POST', body: { ...input, expiresInDays: input.expiresInDays ?? 0 } },
   );
+}
+
+/** 解析公开分享视图（匿名可访问，必须 auth:false 否则未登录访客被前端拦成"未登录"） */
+export async function getDocStoreShareView(token: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocStoreShareView>(
+    api.documentStore.stores.publicShare(token),
+    { method: 'GET', auth: false },
+  );
+}
+
+/** 列出分享范围内的文档（匿名；单篇分享只返回该篇） */
+export async function listDocStoreShareEntries(token: string) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
+    api.documentStore.stores.publicShareEntries(token),
+    { method: 'GET', auth: false },
+  );
+}
+
+/** 读取分享范围内某篇文档正文（匿名） */
+export async function getDocStoreShareEntryContent(token: string, entryId: string) {
+  return await apiRequest<{
+    entryId: string;
+    title: string;
+    content: string | null;
+    contentType: string;
+    fileUrl: string | null;
+    hasContent: boolean;
+  }>(api.documentStore.stores.publicShareEntryContent(token, entryId), { method: 'GET', auth: false });
 }
 
 /** 列出分享链接 */

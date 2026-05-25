@@ -63,6 +63,7 @@ const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage')
 // 全屏路由的子路由组件（NAV_REGISTRY 已注册了主路由，这些是 sub-route 专用）
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
 const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
+const LibraryShareViewPage = lazy(() => import('@/pages/library/LibraryShareViewPage').then(m => ({ default: m.LibraryShareViewPage })));
 const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
 const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
 const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
@@ -190,6 +191,7 @@ export default function App() {
         <Route path="/u/:username" element={<PublicProfilePage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
         <Route path="/s/skill/:token" element={<SkillShareViewPage />} />
+        <Route path="/s/lib/:token" element={<LibraryShareViewPage />} />
         {/* 统一短链 /s/{seq}（数字）— 兼容所有分享系统，老链接继续走上方专属路由 */}
         <Route path="/s/:slug" element={<ShortLinkRouter />} />
 
