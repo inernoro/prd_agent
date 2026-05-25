@@ -507,6 +507,10 @@ export interface BranchEntry {
    */
   githubRepoFullName?: string;
   githubCommitSha?: string;
+  /** GitHub user login that triggered the latest webhook touching this branch. */
+  githubSenderLogin?: string;
+  /** Original GitHub avatar URL from webhook payload.sender.avatar_url. */
+  githubSenderAvatarUrl?: string;
   githubCheckRunId?: number;
   githubInstallationId?: number;
   /**
@@ -1233,6 +1237,8 @@ export interface GithubWebhookDelivery {
   commitMessage?: string;
   /** 触发者 GitHub login(payload.sender.login) */
   actor?: string;
+  /** 触发者 GitHub 原始头像 URL(payload.sender.avatar_url) */
+  actorAvatarUrl?: string;
   /** GitHub repository owner / org,用于白名单筛选和一键加入 */
   githubOwner?: string;
   /** GitHub App 白名单判定。blocked 表示已验签但未进入业务 dispatch。 */

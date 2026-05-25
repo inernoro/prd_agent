@@ -64,7 +64,8 @@ export interface BranchUpdatedPayload {
   projectId?: string;
   /** 变化后的关键可视字段(仅前端会展示的子集,避免把敏感 env 带出去) */
   patch: Partial<Pick<BranchEntry,
-    'branch' | 'githubRepoFullName' | 'githubCommitSha' |
+    'branch' | 'services' | 'status' | 'errorMessage' |
+    'githubRepoFullName' | 'githubCommitSha' | 'githubSenderLogin' | 'githubSenderAvatarUrl' |
     'githubPrNumber' | 'pinnedCommit' | 'tags' | 'notes' |
     'isFavorite' | 'isColorMarked' | 'subdomainAliases'>>;
   ts: string;

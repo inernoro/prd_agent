@@ -10,6 +10,7 @@ import { LoginPage } from '@/pages/LoginPage';
 import { PreviewPreparingPage } from '@/pages/PreviewPreparingPage';
 import { ProjectListPage } from '@/pages/ProjectListPage';
 import { ProjectSettingsPage } from '@/pages/ProjectSettingsPage';
+import { reportDashboardRenderError } from '@/lib/client-diagnostics';
 
 class DashboardErrorBoundary extends Component<{ children: ReactNode }, { message: string | null }> {
   state = { message: null };
@@ -22,6 +23,7 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
     // Keep the dashboard debuggable without crashing the whole React tree.
     // eslint-disable-next-line no-console
     console.error('[cds-dashboard] render failed', error, info.componentStack);
+    reportDashboardRenderError(error, info.componentStack || undefined);
   }
 
   render(): ReactNode {

@@ -216,6 +216,34 @@ function buildCommitBuilder(name?: string, email?: string): {
   };
 }
 
+function buildGithubSenderBuilder(branch: BranchEntry): {
+  name: string;
+  login?: string;
+  avatarUrl?: string;
+} | undefined {
+  const login = (branch.githubSenderLogin || '').trim();
+  const avatarUrl = (branch.githubSenderAvatarUrl || '').trim();
+  if (!login && !avatarUrl) return undefined;
+  return {
+    name: login || 'GitHub',
+    ...(login ? { login } : {}),
+    ...(avatarUrl ? { avatarUrl } : {}),
+  };
+}
+
+function mergeBuilderAvatar(
+  builder: { name: string; email?: string; login?: string; avatarUrl?: string } | undefined,
+  fallback: { name: string; login?: string; avatarUrl?: string } | undefined,
+): { name: string; email?: string; login?: string; avatarUrl?: string } | undefined {
+  if (!builder) return fallback;
+  if (builder.avatarUrl || !fallback?.avatarUrl) return builder;
+  return {
+    ...builder,
+    login: builder.login || fallback.login,
+    avatarUrl: fallback.avatarUrl,
+  };
+}
+
 function isAiActivityLog(entry: ProjectActivityLog): boolean {
   const actor = entry.actor || '';
   return entry.type === 'ai-occupy'
@@ -2265,6 +2293,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
             subject: '',
+            builder: buildGithubSenderBuilder(b),
             previewSlug,
             deployRuntime,
           };
@@ -2276,13 +2305,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           );
           const lines = result.stdout.trim().split('\n');
           const derivedAi = aiActivityByBranch.get(b.id);
+          const commitBuilder = buildCommitBuilder(lines[2], lines[3]);
           return {
             ...b,
             aiOpCount: b.aiOpCount || derivedAi?.count,
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: lines[0] || '',
             subject: lines[1] || '',
-            builder: buildCommitBuilder(lines[2], lines[3]),
+            builder: mergeBuilderAvatar(commitBuilder, buildGithubSenderBuilder(b)),
             previewSlug,
             deployRuntime,
           };
@@ -2294,6 +2324,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
             subject: '',
+            builder: buildGithubSenderBuilder(b),
             previewSlug,
             deployRuntime,
           };
@@ -2330,6 +2361,90 @@ export function createBranchRouter(deps: RouterDeps): Router {
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
       tabTitleEnabled: stateService.isTabTitleEnabled(),
+    });
+  });
+
+  router.post('/branches/cleanup-damaged-containers', async (req, res) => {
+    const projectFilter = resolveProjectIdParam(req.query.project);
+    const branches = Object.values(stateService.getState().branches).filter(
+      (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
+    );
+    const runningNames = await containerService.getRunningContainerNames();
+    const removed: Array<{ branchId: string; branch: string; profileId: string; containerName: string }> = [];
+    const skippedRunning: Array<{ branchId: string; profileId: string; containerName: string }> = [];
+    const changedBranchIds = new Set<string>();
+
+    for (const branch of branches) {
+      for (const [profileId, svc] of Object.entries(branch.services || {})) {
+        if (!svc.containerName) continue;
+        if (
+          runningNames.has(svc.containerName)
+          || svc.status === 'running'
+          || svc.status === 'building'
+          || svc.status === 'starting'
+          || svc.status === 'restarting'
+        ) {
+          skippedRunning.push({ branchId: branch.id, profileId, containerName: svc.containerName });
+          continue;
+        }
+
+        await containerService.remove(svc.containerName).catch(() => undefined);
+        delete branch.services[profileId];
+        removed.push({ branchId: branch.id, branch: branch.branch, profileId, containerName: svc.containerName });
+        changedBranchIds.add(branch.id);
+      }
+
+      if (changedBranchIds.has(branch.id)) {
+        if (Object.keys(branch.services || {}).length === 0) {
+          branch.status = 'idle';
+          branch.errorMessage = undefined;
+        } else {
+          reconcileBranchStatus(branch);
+          if (branch.status !== 'error') branch.errorMessage = undefined;
+        }
+      }
+    }
+
+    if (removed.length > 0) {
+      stateService.save();
+      for (const branchId of changedBranchIds) {
+        const branch = stateService.getBranch(branchId);
+        if (!branch) continue;
+        branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId,
+            projectId: branch.projectId,
+            patch: {
+              services: branch.services,
+              status: branch.status,
+              errorMessage: branch.errorMessage,
+            },
+            ts: nowIso(),
+          },
+        });
+      }
+    }
+
+    serverEventLogStore?.record({
+      category: 'container',
+      severity: removed.length > 0 ? 'warn' : 'info',
+      source: 'bulk-damaged-container-cleanup',
+      action: 'app.damaged-containers.cleanup',
+      message: `cleaned ${removed.length} non-running damaged container(s)${projectFilter ? ` for project ${projectFilter}` : ''}`,
+      projectId: projectFilter || null,
+      details: {
+        removed,
+        skippedRunning,
+      },
+    });
+
+    res.json({
+      ok: true,
+      removedCount: removed.length,
+      skippedRunningCount: skippedRunning.length,
+      removed,
+      skippedRunning,
     });
   });
 

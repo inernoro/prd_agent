@@ -205,6 +205,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       commitSha?: string;
       commitMessage?: string;
       actor?: string;
+      actorAvatarUrl?: string;
       githubOwner?: string;
       githubWhitelistDecision?: GithubWebhookDelivery['githubWhitelistDecision'];
       githubWhitelistCommentPosted?: boolean;
@@ -328,7 +329,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         head_commit?: { id?: string; message?: string };
         after?: string;
         pull_request?: { head?: { sha?: string; ref?: string }; title?: string };
-        sender?: { login?: string };
+        sender?: { login?: string; avatar_url?: string };
       };
       outcome.repoFullName = p.repository?.full_name;
       outcome.githubOwner = ownerFromRepoFullName(p.repository?.full_name) || p.installation?.account?.login;
@@ -337,6 +338,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       outcome.commitSha = sha ? sha.slice(0, 7) : undefined;
       outcome.commitMessage = (p.head_commit?.message || p.pull_request?.title || '').slice(0, 200);
       outcome.actor = p.sender?.login;
+      outcome.actorAvatarUrl = p.sender?.avatar_url;
       // payload 截断到 4KB(详情面板可展开)
       const payloadStr = JSON.stringify(payload);
       outcome.payloadSnippet = payloadStr.length > 4096 ? payloadStr.slice(0, 4096) + '…[truncated]' : payloadStr;

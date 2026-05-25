@@ -98,6 +98,13 @@ function makeToken(user: string, pass: string): string {
   return crypto.createHash('sha256').update(`cds:${user}:${pass}`).digest('hex');
 }
 
+function shortText(value: unknown, max = 1200): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
 /**
  * Walk the Express router stack and collect every path string registered.
  * Used by /healthz to verify critical SPA routes are actually mounted —
@@ -1035,6 +1042,32 @@ export function createServer(deps: ServerDeps): express.Express {
       });
     });
     next();
+  });
+
+  app.post('/api/client-events', (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+    const type = shortText(body.type, 80) || 'client-event';
+    const message = shortText(body.message) || 'CDS dashboard client event';
+    const pathValue = shortText(body.path, 300);
+    deps.serverEventLogStore?.record({
+      category: 'system',
+      severity: type === 'render-error' ? 'error' : 'warn',
+      source: 'dashboard-client',
+      action: `app.frontend.${type}`,
+      message,
+      requestId: (res.locals as { cdsRequestId?: string }).cdsRequestId || (req as any).cdsRequestId || null,
+      error: {
+        message,
+      },
+      details: {
+        path: pathValue,
+        userAgent: shortText(body.userAgent, 300),
+        timestamp: shortText(body.timestamp, 80),
+        stack: shortText(body.stack, 3000),
+        componentStack: shortText(body.componentStack, 3000),
+      },
+    });
+    res.status(202).json({ ok: true });
   });
 
   // ── Switch domain middleware (before auth) ──

@@ -163,7 +163,7 @@ export interface GitHubPushEvent {
   }>;
   size?: number;
   distinct_size?: number;
-  sender?: { login: string };
+  sender?: { login: string; avatar_url?: string };
 }
 
 export interface GitHubInstallationEvent {
@@ -189,6 +189,7 @@ export interface GitHubCheckRunEvent {
   };
   repository?: { full_name: string };
   installation?: { id: number };
+  sender?: { login?: string; avatar_url?: string };
 }
 
 export interface GitHubPullRequestEvent {
@@ -205,6 +206,7 @@ export interface GitHubPullRequestEvent {
   };
   repository?: { full_name: string };
   installation?: { id: number };
+  sender?: { login?: string; avatar_url?: string };
 }
 
 /**
@@ -655,6 +657,8 @@ export class GitHubWebhookDispatcher {
           githubPrNumber: event.pull_request.number,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
           githubRepoFullName: repoFullName,
+          githubSenderLogin: event.sender?.login,
+          githubSenderAvatarUrl: event.sender?.avatar_url,
         });
         this.deps.stateService.save();
       }
@@ -754,6 +758,8 @@ export class GitHubWebhookDispatcher {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubRepoFullName: repoFullName,
           githubCommitSha: commitSha,
+          githubSenderLogin: event.sender?.login,
+          githubSenderAvatarUrl: event.sender?.avatar_url,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
         });
         this.deps.stateService.save();
@@ -846,6 +852,8 @@ export class GitHubWebhookDispatcher {
     this.deps.stateService.updateBranchGithubMeta(branchId, {
       githubRepoFullName: repoFullName,
       githubCommitSha: commitSha,
+      githubSenderLogin: event.sender?.login,
+      githubSenderAvatarUrl: event.sender?.avatar_url,
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
     });
     this.deps.stateService.save();
@@ -870,6 +878,8 @@ export class GitHubWebhookDispatcher {
             patch: {
               githubRepoFullName: updatedEntry.githubRepoFullName,
               githubCommitSha: updatedEntry.githubCommitSha,
+              githubSenderLogin: updatedEntry.githubSenderLogin,
+              githubSenderAvatarUrl: updatedEntry.githubSenderAvatarUrl,
             },
             ts: nowIso(),
           },

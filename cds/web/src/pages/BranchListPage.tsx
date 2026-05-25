@@ -51,6 +51,7 @@ import {
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
+import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
@@ -98,6 +99,9 @@ interface BranchSummary {
   previewSlug?: string;
   githubCommitSha?: string;
   githubRepoFullName?: string;
+  githubPrNumber?: number;
+  githubSenderLogin?: string;
+  githubSenderAvatarUrl?: string;
   tags?: string[];
   isFavorite?: boolean;
   isColorMarked?: boolean;
@@ -185,22 +189,7 @@ interface FocusBranchEventDetail {
   branchId?: string;
 }
 
-interface HostStatsResponse {
-  mem: {
-    totalMB: number;
-    freeMB: number;
-    usedPercent: number;
-  };
-  cpu: {
-    cores: number;
-    loadAvg1: number;
-    loadAvg5: number;
-    loadAvg15: number;
-    loadPercent: number;
-  };
-  uptimeSeconds: number;
-  timestamp: string;
-}
+type HostStatsResponse = NormalizedHostStats;
 
 interface ExecutorNodeSummary {
   id: string;
@@ -497,6 +486,20 @@ function branchRoleIconClass(role: BranchVisualRole): string {
     default:
       return 'text-sky-500';
   }
+}
+
+function shortCommitSha(branch: BranchSummary): string {
+  const sha = branch.commitSha || branch.githubCommitSha || '';
+  return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 7) : '';
+}
+
+function builderHandle(branch: BranchSummary): string {
+  const login = branch.builder?.login?.trim();
+  if (login) return `@${login}`;
+  const sender = branch.githubSenderLogin?.trim();
+  if (sender) return `@${sender}`;
+  const name = branch.builder?.name?.trim();
+  return name ? `@${name}` : '';
 }
 
 function formatBytesFromMB(value?: number): string {
@@ -1029,6 +1032,7 @@ export function BranchListPage(): JSX.Element {
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
+  const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
@@ -1239,9 +1243,14 @@ export function BranchListPage(): JSX.Element {
 
   const refreshHostStats = useCallback(async () => {
     try {
-      const data = await apiRequest<HostStatsResponse>('/api/host-stats', {
+      const raw = await apiRequest<unknown>('/api/host-stats', {
         headers: { 'X-CDS-Poll': 'true' },
       });
+      const data = normalizeHostStats(raw);
+      if (!data) {
+        setHostStats({ status: 'error', message: '主机状态返回格式异常，已阻止页面崩溃' });
+        return;
+      }
       setHostStats({ status: 'ok', data });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1495,6 +1504,15 @@ export function BranchListPage(): JSX.Element {
     }
     return targets;
   }, [branches]);
+  const damagedContainerCount = useMemo(() => branches.reduce((count, branch) => (
+    count + Object.values(branch.services || {}).filter((service) => (
+      Boolean(service.containerName)
+      && service.status !== 'running'
+      && service.status !== 'building'
+      && service.status !== 'starting'
+      && service.status !== 'restarting'
+    )).length
+  ), 0), [branches]);
   // Branches displayed in the grid: favorites first, then by recent activity.
   // We no longer expose status filters or compact toggles in the list itself
   // (the search dropdown and per-card status pill cover those needs).
@@ -2041,6 +2059,31 @@ export function BranchListPage(): JSX.Element {
     }
   }, [appendActionLog, failedDeployTargets, projectId, redeployFailedRunning, refresh, setAction]);
 
+  const cleanupDamagedContainers = useCallback(async (): Promise<void> => {
+    if (cleanupDamagedRunning) return;
+    if (damagedContainerCount === 0) {
+      setToast('当前项目没有未运行的损坏容器');
+      return;
+    }
+    setCleanupDamagedRunning(true);
+    try {
+      const result = await apiRequest<{ removedCount?: number; skippedRunningCount?: number }>(
+        `/api/branches/cleanup-damaged-containers?project=${encodeURIComponent(projectId)}`,
+        { method: 'POST' },
+      );
+      const removed = result.removedCount || 0;
+      setToast(removed > 0
+        ? `已删除 ${removed} 个未运行的损坏容器`
+        : '没有可删除的损坏容器，运行中的容器已保留');
+      await refresh(false);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setToast(message);
+    } finally {
+      setCleanupDamagedRunning(false);
+    }
+  }, [cleanupDamagedRunning, damagedContainerCount, projectId, refresh]);
+
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -2459,10 +2502,20 @@ export function BranchListPage(): JSX.Element {
                 size="sm"
                 onClick={() => void redeployFailedContainers()}
                 disabled={redeployFailedRunning || failedDeployTargets.length === 0}
-                title={failedDeployTargets.length > 0 ? `按队列重部署 ${failedDeployTargets.length} 个失败容器` : '当前没有失败容器'}
+                title={failedDeployTargets.length > 0 ? `按队列重新部署 ${failedDeployTargets.length} 个失败目标` : '当前没有失败目标'}
               >
                 {redeployFailedRunning ? <Loader2 className="animate-spin" /> : <RotateCw />}
-                重部署失败{failedDeployTargets.length > 0 ? ` ${failedDeployTargets.length}` : ''}
+                一键重部署{failedDeployTargets.length > 0 ? ` ${failedDeployTargets.length}` : ''}
+              </Button>
+              <Button
+                variant={damagedContainerCount > 0 ? 'outline' : 'ghost'}
+                size="sm"
+                onClick={() => void cleanupDamagedContainers()}
+                disabled={cleanupDamagedRunning || damagedContainerCount === 0}
+                title={damagedContainerCount > 0 ? `删除 ${damagedContainerCount} 个未运行的损坏容器；不会删除分支或工作区` : '当前没有未运行的损坏容器'}
+              >
+                {cleanupDamagedRunning ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                清理损坏{damagedContainerCount > 0 ? ` ${damagedContainerCount}` : ''}
               </Button>
               <Button
                 variant="ghost"
@@ -3566,6 +3619,8 @@ function BranchCard({
   const aiState = aiOperationState(branch, now);
   const isAiOperated = aiState.visible;
   const isAiActive = aiState.active;
+  const recentAiAgent = activityEvents.find((event) => event.agent)?.agent || '';
+  const aiTitle = recentAiAgent ? `${aiState.title}\n最近 Agent: ${recentAiAgent}` : aiState.title;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
@@ -3576,11 +3631,16 @@ function BranchCard({
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
   const dimWholeCard = !isRunning && !isError && !isInterim;
-  const builderLabel = branch.builder?.name || branch.builder?.login || '未知构建者';
+  const builderLabel = branch.builder?.name || branch.builder?.login || branch.githubSenderLogin || '';
+  const builderAvatarUrl = branch.builder?.avatarUrl || branch.githubSenderAvatarUrl || '';
   const builderTitle = branch.builder
     ? `构建者: ${builderLabel}${branch.builder.email ? ` <${branch.builder.email}>` : ''}`
-    : '构建者: 未知';
-  const builderInitial = (builderLabel.trim().charAt(0) || '?').toUpperCase();
+    : branch.githubSenderLogin
+      ? `推送者: @${branch.githubSenderLogin}`
+      : '推送者: 未知（暂无 webhook sender / commit author 元数据）';
+  const builderInitial = builderLabel ? (builderLabel.trim().charAt(0) || '?').toUpperCase() : '?';
+  const footerBuilder = builderHandle(branch);
+  const footerSha = shortCommitSha(branch);
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3593,7 +3653,7 @@ function BranchCard({
   }, [aiPanelOpen, isAiOperated]);
   useEffect(() => {
     setBuilderAvatarFailed(false);
-  }, [branch.builder?.avatarUrl]);
+  }, [builderAvatarUrl]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -3661,11 +3721,19 @@ function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
+              {branch.githubPrNumber ? (
+                <span
+                  className="inline-flex h-5 shrink-0 items-center rounded border border-violet-400/35 bg-violet-400/10 px-1.5 text-[10px] font-semibold text-violet-300"
+                  title={`关联 GitHub PR #${branch.githubPrNumber}`}
+                >
+                  PR #{branch.githubPrNumber}
+                </span>
+              ) : null}
               {isAiOperated ? (
                 <button
                   type="button"
                   className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-semibold transition-colors ${aiBadgeClass(aiState.status)}`}
-                  title={aiState.title}
+                  title={aiTitle}
                   aria-expanded={aiPanelOpen}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -3735,6 +3803,11 @@ function BranchCard({
             <div className="flex min-w-0 items-center gap-2 font-semibold">
               <Bot className={`h-4 w-4 ${isAiActive ? 'text-sky-300' : aiState.status === 'timeout' ? 'text-amber-300' : 'text-muted-foreground'}`} />
               <span className="truncate">{aiState.label}</span>
+              {recentAiAgent ? (
+                <span className="max-w-[120px] truncate rounded border border-sky-400/25 bg-sky-400/10 px-1.5 py-0.5 text-[10px] text-sky-300">
+                  {recentAiAgent}
+                </span>
+              ) : null}
             </div>
             <button
               type="button"
@@ -3767,6 +3840,10 @@ function BranchCard({
             <div className="flex justify-between gap-3">
               <span>记录次数</span>
               <span className="text-foreground">{branch.aiOpCount || activityEvents.length || 1}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>最近 Agent</span>
+              <span className="min-w-0 max-w-[180px] truncate text-foreground">{recentAiAgent || '-'}</span>
             </div>
           </div>
           <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2 leading-5 text-muted-foreground">
@@ -4059,9 +4136,9 @@ function BranchCard({
             title={builderTitle}
             aria-label={builderTitle}
           >
-            {branch.builder?.avatarUrl && !builderAvatarFailed ? (
+            {builderAvatarUrl && !builderAvatarFailed ? (
               <img
-                src={branch.builder.avatarUrl}
+                src={builderAvatarUrl}
                 alt=""
                 className="h-full w-full object-cover"
                 referrerPolicy="no-referrer"
@@ -4072,6 +4149,16 @@ function BranchCard({
             )}
           </div>
           <GitBranch className={`${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 ' : ''}h-4 w-4 shrink-0 ${roleIconClass}`} />
+          {footerBuilder ? (
+            <span className="max-w-[92px] shrink-0 truncate text-xs font-medium text-foreground/75" title={builderTitle}>
+              {footerBuilder}
+            </span>
+          ) : null}
+          {footerSha ? (
+            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
+              {footerSha}
+            </span>
+          ) : null}
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
         </div>
         {/*
@@ -4100,7 +4187,7 @@ function BranchCard({
                     : isAiOperated
                       ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                     : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                  title={isAiOperated ? `${aiState.label} · 打开 AI 操作面板` : '预览'}
+                  title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
                   aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
                 >
                   {isAiOperated ? <Bot /> : <Eye />}
@@ -4123,7 +4210,7 @@ function BranchCard({
                 }
                 : onPreview}
               disabled={busy}
-              title={isAiOperated ? `${aiState.label} · 打开 AI 操作面板` : '预览'}
+              title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
               aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
             >
               {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
