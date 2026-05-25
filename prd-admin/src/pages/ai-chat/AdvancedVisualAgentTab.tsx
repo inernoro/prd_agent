@@ -2646,21 +2646,72 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     reconcileStuckCanvasRef.current = reconcileStuckCanvas;
   }, [reconcileStuckCanvas]);
 
-  // Watchdog：定期检查画布上卡住的 running / 无图 error 占位，统一走 workspace 级对账自动恢复或标记失败
+  // Watchdog：定期检查画布上卡住的 running / 无图 error 占位并自动恢复。
+  // 两条路径缺一不可：
+  //  A) 有 runId 的占位 → 直查 run 状态同步本地。覆盖"SSE 掉线但 worker 已成功"的 desync：
+  //     此时 server 画布已是 done，workspace 对账只扫 server 端仍卡死的元素、扫不到它，
+  //     必须靠直查 run 把本地从 running 拉成 done（否则本地永远转圈）。
+  //  B) 无 runId 的占位（历史孤儿）→ 走 workspace 级对账（按 TargetCanvasKey 反查）。
   useEffect(() => {
     const WATCHDOG_INTERVAL = 15_000; // 每 15 秒检查一次
-    const STALE_THRESHOLD = 45_000; // 占位超过 45 秒未出结果即触发对账（旧值 120s 过长）
+    const STALE_THRESHOLD = 45_000; // 占位超过 45 秒未出结果即触发恢复（旧值 120s 过长）
 
     const tid = window.setInterval(() => {
       const items = canvasRef.current;
-      const stale = items.some(
+      const stale = items.filter(
         (el) =>
           (el.status === 'running' || (el.status === 'error' && !el.src)) &&
           el.createdAt &&
           Date.now() - el.createdAt > STALE_THRESHOLD
       );
-      if (!stale) return;
-      void reconcileStuckCanvasRef.current();
+      if (stale.length === 0) return;
+
+      const wid0 = workspaceIdRef.current;
+
+      // A) 有 runId 的卡死元素：直查 run 真实状态，同步本地（覆盖 SSE 掉线 desync）
+      for (const el of stale) {
+        if (!el.runId) continue;
+        const runId = el.runId;
+        const key = el.key;
+        void getImageGenRun({ runId, includeItems: true, includeImages: true })
+          .then((res) => {
+            if (workspaceIdRef.current !== wid0) return; // 防串台：已切换 workspace
+            if (!res.success || !res.data?.run) return;
+            const run = res.data.run;
+            if (run.status === 'Completed') {
+              const it = res.data.items?.find((i) => i.url);
+              if (it?.url) {
+                const u = it.url;
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === key && x.status === 'running'
+                      ? { ...x, status: 'done', kind: 'image', src: u, originalSrc: u, syncStatus: 'synced' as const }
+                      : x
+                  )
+                );
+              } else {
+                setCanvas((prev) =>
+                  prev.map((x) => (x.key === key && x.status === 'running' ? { ...x, status: 'error', errorMessage: '生成完成但无图片数据' } : x))
+                );
+              }
+            } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+              const errItem = res.data.items?.find((i) => i.errorMessage);
+              const msg = run.status === 'Cancelled' ? '已取消' : (errItem?.errorMessage || '生成失败');
+              setCanvas((prev) =>
+                prev.map((x) => (x.key === key && x.status === 'running' ? { ...x, status: 'error', errorMessage: msg } : x))
+              );
+            }
+            // Queued/Running：后端仍在处理，保留占位
+          })
+          .catch(() => {
+            // 查询失败，下次 watchdog 再试
+          });
+      }
+
+      // B) 无 runId 的卡死元素（历史孤儿）→ workspace 级对账
+      if (stale.some((el) => !el.runId)) {
+        void reconcileStuckCanvasRef.current();
+      }
     }, WATCHDOG_INTERVAL);
 
     return () => window.clearInterval(tid);

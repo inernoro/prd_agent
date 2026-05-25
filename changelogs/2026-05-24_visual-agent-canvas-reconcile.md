@@ -8,3 +8,4 @@
 | fix | prd-admin | runId 立即落盘改为保存成功后才更新已存标记，失败时让 debounce 重试，避免误判已存导致 runId 永不落库 |
 | fix | prd-admin | SSE 流结束查询到 run 已失败/取消时展示真实失败原因，不再一律误报"超时" |
 | fix | prd-admin | 加载/看门狗对账增加 workspace 切换防串台守卫，避免异步响应套到别的 workspace 画布 |
+| fix | prd-admin | 看门狗恢复对 runId 占位的直查 run 同步（修复 SSE 掉线但 worker 已成功时 server 已 done、对账扫不到导致本地永久转圈的 desync），无 runId 孤儿仍走 workspace 对账 |
