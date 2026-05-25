@@ -278,6 +278,11 @@ public class MongoDbContext
     public IMongoCollection<DocumentInlineComment> DocumentInlineComments => _database.GetCollection<DocumentInlineComment>("document_inline_comments");
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
 
+    // Team 团队（跨应用协作单位：网页托管 + 知识库共用）
+    public IMongoCollection<Team> Teams => _database.GetCollection<Team>("teams");
+    public IMongoCollection<TeamMember> TeamMembers => _database.GetCollection<TeamMember>("team_members");
+    public IMongoCollection<TeamActivityLog> TeamActivityLogs => _database.GetCollection<TeamActivityLog>("team_activity_logs");
+
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
@@ -1272,6 +1277,41 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // ========== Team 团队索引 ==========
+
+        // Teams：按邀请码查询（兑换路径）
+        Teams.Indexes.CreateOne(new CreateIndexModel<Team>(
+            Builders<Team>.IndexKeys.Ascending(x => x.InviteCode),
+            new CreateIndexOptions { Name = "idx_teams_invite_code" }));
+
+        // TeamMembers：(TeamId, UserId) 唯一；按 UserId 查"我的团队"
+        try
+        {
+            TeamMembers.Indexes.CreateOne(new CreateIndexModel<TeamMember>(
+                Builders<TeamMember>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_team_members_team_user", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        TeamMembers.Indexes.CreateOne(new CreateIndexModel<TeamMember>(
+            Builders<TeamMember>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_team_members_user" }));
+
+        // TeamActivityLogs：按 (TeamId, CreatedAt desc) 拉时间线
+        TeamActivityLogs.Indexes.CreateOne(new CreateIndexModel<TeamActivityLog>(
+            Builders<TeamActivityLog>.IndexKeys.Ascending(x => x.TeamId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_team_activity_team_created" }));
+
+        // HostedSites / DocumentStores：SharedTeamIds 多值索引（团队作用域过滤）
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.SharedTeamIds),
+            new CreateIndexOptions { Name = "idx_hosted_sites_shared_teams" }));
+        DocumentStores.Indexes.CreateOne(new CreateIndexModel<DocumentStore>(
+            Builders<DocumentStore>.IndexKeys.Ascending(x => x.SharedTeamIds),
+            new CreateIndexOptions { Name = "idx_document_stores_shared_teams" }));
 
         // ========== Report Agent 周报管理索引 ==========
 

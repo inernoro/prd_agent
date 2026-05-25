@@ -47,6 +47,12 @@ public class DocumentEntry
     /// <summary>上传/创建者 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
+    /// <summary>创建者显示名（冗余，团队条目顶部展示用；旧条目为空时走 users/by-ids 兜底）</summary>
+    public string? CreatedByName { get; set; }
+
+    /// <summary>创建者头像文件名（冗余，团队条目顶部展示用；旧条目为空时走 users/by-ids 兜底）</summary>
+    public string? CreatedByAvatarFileName { get; set; }
+
     /// <summary>最近一次更新者 UserId（为空时表示尚未有单独更新记录）</summary>
     public string? UpdatedBy { get; set; }
 

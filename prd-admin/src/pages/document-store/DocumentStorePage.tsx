@@ -32,6 +32,8 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { useTeamStore } from '@/stores/teamStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
 import {
@@ -62,7 +64,11 @@ import {
   revokeDocStoreShareLink,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  setStoreTeams,
 } from '@/services';
+import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
@@ -1328,8 +1334,11 @@ export function DocumentStorePage() {
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
   const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
   const [loading, setLoading] = useState(true);
+  // 我的 / 团队 作用域（默认我的；仅 mine 标签生效）
+  const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
+  const [shareTeamTarget, setShareTeamTarget] = useState<{ id: string; name: string; teamIds: string[] } | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -1337,10 +1346,10 @@ export function DocumentStorePage() {
 
   const loadStores = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentStoresWithPreview(1, 50);
+    const res = await listDocumentStoresWithPreview(1, 50, { scope: teamScope.scope, teamId: teamScope.teamId });
     if (res.success) setStores(res.data.items);
     setLoading(false);
-  }, []);
+  }, [teamScope]);
 
   const loadFavorites = useCallback(async () => {
     setLoading(true);
@@ -1399,14 +1408,21 @@ export function DocumentStorePage() {
         icon={<Library size={14} />}
         actions={
           tab === 'mine' ? (
-            <Button
-              variant="primary"
-              size="xs"
-              data-tour-id="document-store-create"
-              onClick={() => setShowCreate(true)}
-            >
-              <Plus size={13} /> 新建空间
-            </Button>
+            <div className="flex items-center gap-2">
+              <TeamScopeBar
+                moduleKey="document-store"
+                value={teamScope}
+                onChange={setTeamScope}
+              />
+              <Button
+                variant="primary"
+                size="xs"
+                data-tour-id="document-store-create"
+                onClick={() => setShowCreate(true)}
+              >
+                <Plus size={13} /> 新建空间
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -1525,6 +1541,18 @@ export function DocumentStorePage() {
                               </span>
                             )}
                           </div>
+                          {/* 团队作用域：顶部显示创建者头像 + 昵称 */}
+                          {teamScope.scope === 'team' && (s as DocumentStoreWithPreview).ownerName && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <UserAvatar
+                                src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
+                                className="w-3.5 h-3.5 rounded-full"
+                              />
+                              <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                                {(s as DocumentStoreWithPreview).ownerName}
+                              </span>
+                            </div>
+                          )}
                           {s.description ? (
                             <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
                               {s.description}
@@ -1537,16 +1565,28 @@ export function DocumentStorePage() {
                         </div>
                       </div>
                       {tab === 'mine' && (
-                        <button
-                          className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          title="编辑名称与标签"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
-                          }}
-                          style={{ color: 'rgba(59,130,246,0.7)' }}>
-                          <Pencil size={11} />
-                        </button>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="分享到团队"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
+                            }}
+                            style={{ color: 'rgba(59,130,246,0.7)' }}>
+                            <Users size={11} />
+                          </button>
+                          <button
+                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="编辑名称与标签"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
+                            }}
+                            style={{ color: 'rgba(59,130,246,0.7)' }}>
+                            <Pencil size={11} />
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -1661,6 +1701,19 @@ export function DocumentStorePage() {
           onSaved={(patch) => {
             setStores(prev => prev.map(x => x.id === editTarget.id ? { ...x, name: patch.name, tags: patch.tags } : x));
           }}
+        />
+      )}
+
+      {shareTeamTarget && (
+        <ShareToTeamDialog
+          title={`分享「${shareTeamTarget.name}」到团队`}
+          initialTeamIds={shareTeamTarget.teamIds}
+          onConfirm={async (teamIds) => {
+            await setStoreTeams(shareTeamTarget.id, teamIds);
+            setStores(prev => prev.map(x => x.id === shareTeamTarget.id ? { ...x, sharedTeamIds: teamIds } : x));
+            setShareTeamTarget(null);
+          }}
+          onClose={() => setShareTeamTarget(null)}
         />
       )}
     </div>

@@ -24,8 +24,12 @@ import {
   listShareViewLogs,
   listDocumentStores,
   addDocumentEntry,
+  setSiteTeams,
 } from '@/services';
-import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem } from '@/services/real/webPages';
+import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
+import { useTeamStore } from '@/stores/teamStore';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 
@@ -62,8 +66,11 @@ import {
   Replace,
   AlertTriangle,
   Folder,
+  Users,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 // ─── Utility ───
@@ -197,6 +204,10 @@ export default function WebPagesPage() {
   const [sites, setSites] = useState<HostedSite[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  // 我的 / 团队 作用域（默认我的）
+  const initialScope = useTeamStore.getState().getScope('web-hosting');
+  const [teamScope, setTeamScope] = useState<TeamScope>(initialScope);
+  const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
   const [keyword, setKeyword] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -232,6 +243,7 @@ export default function WebPagesPage() {
   // 拖文件到卡片触发的"替换网页"二次确认（非 null 时弹出确认框）
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
+  const [showShareToTeam, setShowShareToTeam] = useState(false);
 
   // ─── Load ───
 
@@ -244,13 +256,16 @@ export default function WebPagesPage() {
       sourceType: activeSourceType || undefined,
       sort,
       limit: 200,
+      scope: teamScope.scope,
+      teamId: teamScope.teamId,
     });
     if (res.success) {
       setSites(res.data.items);
       setTotal(res.data.total);
+      setOwnerCards(res.data.owners ?? {});
     }
     setLoading(false);
-  }, [keyword, activeFolder, activeTag, activeSourceType, sort]);
+  }, [keyword, activeFolder, activeTag, activeSourceType, sort, teamScope]);
 
   const loadMeta = useCallback(async () => {
     const [fRes, tRes] = await Promise.all([listSiteFolders(), listSiteTags()]);
@@ -426,6 +441,7 @@ export default function WebPagesPage() {
             selected={selectedIds.has(site.id)}
             fresh={freshIds.has(site.id)}
             shared={sharedSiteIds.has(site.id)}
+            ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
@@ -573,6 +589,12 @@ export default function WebPagesPage() {
       {/* Toolbar */}
       <GlassCard className="p-3">
         <div className="flex flex-wrap items-center gap-3">
+          {/* 我的 / 团队 切换 + 管理团队 */}
+          <TeamScopeBar
+            moduleKey="web-hosting"
+            value={teamScope}
+            onChange={(next) => { setTeamScope(next); setSelectedIds(new Set()); }}
+          />
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -722,6 +744,7 @@ export default function WebPagesPage() {
           <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>已选 {selectedIds.size} 项</span>
             <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
+            <Button size="xs" variant="secondary" onClick={() => setShowShareToTeam(true)}><Users size={12} className="mr-1" /> 分享到团队</Button>
             <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
             <Button size="xs" variant="ghost" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
           </div>
@@ -855,6 +878,23 @@ export default function WebPagesPage() {
         <TransferToLibraryDialog
           site={libraryTargetSite}
           onClose={() => setLibraryTargetSite(null)}
+        />
+      )}
+
+      {showShareToTeam && (
+        <ShareToTeamDialog
+          title={`分享到团队（已选 ${selectedIds.size} 项）`}
+          onConfirm={async (teamIds) => {
+            const ids = [...selectedIds];
+            for (const id of ids) {
+              await setSiteTeams(id, teamIds);
+            }
+            setShowShareToTeam(false);
+            setSelectedIds(new Set());
+            toast.success('已分享到团队', `${ids.length} 个站点已更新团队分享`);
+            load();
+          }}
+          onClose={() => setShowShareToTeam(false)}
         />
       )}
     </div>
@@ -1058,11 +1098,12 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
+function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
   shared?: boolean;
+  ownerCard?: SiteOwnerCard;
   onSelect: () => void;
   onTogglePublic: () => void;
   onEdit: () => void;
@@ -1285,6 +1326,17 @@ function SiteCard({ site, selected, fresh, shared, onSelect, onTogglePublic, onE
             <span className="flex items-center gap-0.5"><HardDrive size={11} />{fmtSize(site.totalSize)}</span>
             {site.folder && <span className="flex items-center gap-0.5"><FolderOpen size={11} />{site.folder}</span>}
           </div>
+
+          {/* 团队作用域：左下角显示创建者头像 + 昵称 */}
+          {ownerCard && (
+            <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+              <UserAvatar
+                src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })}
+                className="w-4 h-4 rounded-full"
+              />
+              <span className="truncate">{ownerCard.displayName}</span>
+            </div>
+          )}
 
           {site.tags.length > 0 && (
             <div className="mt-auto flex max-h-[20px] flex-wrap items-center gap-1 overflow-hidden">

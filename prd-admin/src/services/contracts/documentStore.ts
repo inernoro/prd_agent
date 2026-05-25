@@ -17,6 +17,8 @@ export type DocumentStore = {
   viewCount: number;
   favoriteCount: number;
   coverImageUrl?: string;
+  /** 分享到的团队 ID 列表（仅知识库消费） */
+  sharedTeamIds?: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -186,6 +188,10 @@ export type DocumentStoreWithPreview = DocumentStore & {
   recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
   /** 是否存在「整库级」有效分享（用于卡片标黄） */
   hasActiveShare?: boolean;
+  /** 团队作用域下后端附带的创建者昵称（卡片顶部成员归属展示） */
+  ownerName?: string;
+  /** 团队作用域下后端附带的创建者头像文件名 */
+  ownerAvatarFileName?: string;
 };
 
 /** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */

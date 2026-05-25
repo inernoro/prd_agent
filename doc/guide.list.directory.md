@@ -668,6 +668,9 @@
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项
 
+- [团队（网页托管 + 知识库）债务台账](debt.team-feature) `debt.team-feature`
+  > 团队 wave 1 已知边界：回收站未做 / KB 次要端点仍 owner-only / 公共团队仅留字段 / 邀请链接路由 / 旧条目头像兜底
+
 ### 七、周报
 
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`

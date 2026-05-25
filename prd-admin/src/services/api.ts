@@ -1081,6 +1081,7 @@ export const api = {
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
+    setTeams: (id: string) => `/api/web-pages/${id}/teams`,
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
@@ -1137,6 +1138,7 @@ export const api = {
       listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      setTeams: (storeId: string) => `/api/document-store/stores/${storeId}/teams`,
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
       rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
@@ -1190,6 +1192,19 @@ export const api = {
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
+  },
+  // ============ 团队（跨应用协作单位：网页托管 + 知识库共用） ============
+  teams: {
+    list: () => '/api/teams',
+    create: () => '/api/teams',
+    detail: (id: string) => `/api/teams/${id}`,
+    members: (id: string) => `/api/teams/${id}/members`,
+    member: (id: string, userId: string) => `/api/teams/${id}/members/${userId}`,
+    inviteCode: (id: string) => `/api/teams/${id}/invite-code`,
+    join: () => '/api/teams/join',
+    activity: (id: string) => `/api/teams/${id}/activity`,
+    searchUsers: () => '/api/teams/search-users',
+    userCards: () => '/api/teams/user-cards',
   },
 
   // ============ Changelog 更新中心（代码级周报） ============

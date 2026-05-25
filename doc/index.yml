@@ -252,6 +252,7 @@ docs:
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.share-link-security: 分享链接安全债务台账
+  debt.team-feature: 团队（网页托管 + 知识库）债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告

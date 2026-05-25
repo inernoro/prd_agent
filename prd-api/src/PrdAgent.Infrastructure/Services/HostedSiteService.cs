@@ -15,6 +15,8 @@ public class HostedSiteService : IHostedSiteService
     private readonly IAssetStorage _storage;
     private readonly IShortLinkService _shortLinks;
     private readonly ISharePasswordService _sharePwd;
+    private readonly ITeamService _teams;
+    private readonly ITeamActivityService _teamActivity;
     private readonly ILogger<HostedSiteService> _logger;
 
     // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
@@ -65,13 +67,29 @@ public class HostedSiteService : IHostedSiteService
         IAssetStorage storage,
         IShortLinkService shortLinks,
         ISharePasswordService sharePwd,
+        ITeamService teams,
+        ITeamActivityService teamActivity,
         ILogger<HostedSiteService> logger)
     {
         _db = db;
         _storage = storage;
         _shortLinks = shortLinks;
         _sharePwd = sharePwd;
+        _teams = teams;
+        _teamActivity = teamActivity;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 站点访问过滤：自己拥有的，或分享到「我所在团队」的。
+    /// myTeamIds 为空时退化为纯 owner 过滤（个人路径零回退）。
+    /// </summary>
+    private static FilterDefinition<HostedSite> OwnerOrMemberFilter(string userId, List<string> myTeamIds)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        var owner = fb.Eq(x => x.OwnerUserId, userId);
+        if (myTeamIds.Count == 0) return owner;
+        return fb.Or(owner, fb.AnyIn(x => x.SharedTeamIds, myTeamIds));
     }
 
     // ─────────────────────────────────────────────
@@ -203,7 +221,12 @@ public class HostedSiteService : IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default)
     {
-        var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        // 决策 10：团队成员可替换团队内站点内容
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var fbR = Builders<HostedSite>.Filter;
+        var site = await _db.HostedSites
+            .Find(fbR.And(fbR.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds)))
+            .FirstOrDefaultAsync(ct);
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
 
@@ -287,16 +310,33 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<HostedSite?> GetByIdAsync(string siteId, string userId, CancellationToken ct)
     {
-        return await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var fb = Builders<HostedSite>.Filter;
+        var filter = fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds));
+        return await _db.HostedSites.Find(filter).FirstOrDefaultAsync(ct);
     }
 
     public async Task<(List<HostedSite> Items, long Total)> ListAsync(
         string userId, string? keyword, string? folder,
         string? tag, string? sourceType, string sort,
-        int skip, int limit, CancellationToken ct)
+        int skip, int limit, string? scope, string? teamId, CancellationToken ct)
     {
         var fb = Builders<HostedSite>.Filter;
-        var filter = fb.Eq(x => x.OwnerUserId, userId);
+        FilterDefinition<HostedSite> filter;
+
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        {
+            // 团队作用域：必须是我所在的团队，且站点已分享到该团队
+            var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+            if (!myTeamIds.Contains(teamId))
+                return (new List<HostedSite>(), 0);
+            filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+        }
+        else
+        {
+            // 个人作用域：与改动前字节一致
+            filter = fb.Eq(x => x.OwnerUserId, userId);
+        }
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -379,18 +419,31 @@ public class HostedSiteService : IHostedSiteService
 
         updates.Add(ub.Set(x => x.UpdatedAt, DateTime.UtcNow));
 
-        var result = await _db.HostedSites.UpdateOneAsync(
-            x => x.Id == siteId && x.OwnerUserId == userId,
-            ub.Combine(updates), cancellationToken: ct);
+        // 决策 10：团队成员全员可编辑团队内容
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var fb = Builders<HostedSite>.Filter;
+        var filter = fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds));
 
+        var result = await _db.HostedSites.UpdateOneAsync(filter, ub.Combine(updates), cancellationToken: ct);
         if (result.MatchedCount == 0) return null;
 
-        return await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        var updated = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        if (updated != null && updated.SharedTeamIds.Count > 0)
+        {
+            await _teamActivity.LogForTeamsAsync(
+                updated.SharedTeamIds, TeamAppKey.WebHosting, userId,
+                TeamActivityAction.SiteUpdated, "site", updated.Id, updated.Title, ct);
+        }
+        return updated;
     }
 
     public async Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct)
     {
-        var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var fb = Builders<HostedSite>.Filter;
+        var site = await _db.HostedSites
+            .Find(fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds)))
+            .FirstOrDefaultAsync(ct);
         if (site == null) return false;
 
         foreach (var f in site.Files)
@@ -400,15 +453,26 @@ public class HostedSiteService : IHostedSiteService
         }
 
         await _db.HostedSites.DeleteOneAsync(x => x.Id == siteId, ct);
+        // 个人分享链接清理仍按创建者本人（团队成员不应删别人的分享链接）
         await _db.WebPageShareLinks.DeleteManyAsync(x => x.SiteId == siteId && x.CreatedBy == userId, ct);
 
+        if (site.SharedTeamIds.Count > 0)
+        {
+            await _teamActivity.LogForTeamsAsync(
+                site.SharedTeamIds, TeamAppKey.WebHosting, userId,
+                TeamActivityAction.SiteDeleted, "site", site.Id, site.Title, ct);
+        }
         return true;
     }
 
     public async Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct)
     {
-        var sites = await _db.HostedSites.Find(
-            x => siteIds.Contains(x.Id) && x.OwnerUserId == userId).ToListAsync(ct);
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var fb = Builders<HostedSite>.Filter;
+        var idFilter = fb.In(x => x.Id, siteIds);
+        var sites = await _db.HostedSites
+            .Find(fb.And(idFilter, OwnerOrMemberFilter(userId, myTeamIds)))
+            .ToListAsync(ct);
 
         foreach (var site in sites)
         foreach (var f in site.Files)
@@ -417,12 +481,43 @@ public class HostedSiteService : IHostedSiteService
             catch (Exception ex) { _logger.LogWarning(ex, "批量删除 COS 文件失败: {CosKey}", f.CosKey); }
         }
 
-        var result = await _db.HostedSites.DeleteManyAsync(
-            x => siteIds.Contains(x.Id) && x.OwnerUserId == userId, ct);
+        var deletableIds = sites.Select(s => s.Id).ToList();
+        if (deletableIds.Count == 0) return 0;
+
+        var result = await _db.HostedSites.DeleteManyAsync(fb.In(x => x.Id, deletableIds), ct);
         await _db.WebPageShareLinks.DeleteManyAsync(
-            x => siteIds.Contains(x.SiteId!) && x.CreatedBy == userId, ct);
+            x => deletableIds.Contains(x.SiteId!) && x.CreatedBy == userId, ct);
 
         return result.DeletedCount;
+    }
+
+    public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
+    {
+        // 只有 owner 能改「分享到哪些团队」（分享出去是所有权动作）
+        var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+
+        // 只保留我确实所属的团队，避免分享到不存在 / 越权的团队
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var sanitized = teamIds.Where(t => myTeamIds.Contains(t)).Distinct().ToList();
+        var added = sanitized.Except(site.SharedTeamIds).ToList();
+
+        await _db.HostedSites.UpdateOneAsync(
+            x => x.Id == siteId,
+            Builders<HostedSite>.Update
+                .Set(x => x.SharedTeamIds, sanitized)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        if (added.Count > 0)
+        {
+            await _teamActivity.LogForTeamsAsync(
+                added, TeamAppKey.WebHosting, userId,
+                TeamActivityAction.SiteShared, "site", site.Id, site.Title, ct);
+        }
+
+        site.SharedTeamIds = sanitized;
+        return site;
     }
 
     // ─────────────────────────────────────────────
@@ -483,10 +578,14 @@ public class HostedSiteService : IHostedSiteService
         if (allIds.Count == 0)
             throw new ArgumentException("至少选择一个站点");
 
-        var ownedCount = await _db.HostedSites.CountDocumentsAsync(
-            x => allIds.Contains(x.Id) && x.OwnerUserId == userId, cancellationToken: ct);
-        if (ownedCount != allIds.Count)
-            throw new UnauthorizedAccessException("包含非自己的站点");
+        // 决策 10：团队成员可为团队内站点创建分享链接（owner 或 我所在团队已共享的）
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var fbShare = Builders<HostedSite>.Filter;
+        var accessibleCount = await _db.HostedSites.CountDocumentsAsync(
+            fbShare.And(fbShare.In(x => x.Id, allIds), OwnerOrMemberFilter(userId, myTeamIds)),
+            cancellationToken: ct);
+        if (accessibleCount != allIds.Count)
+            throw new UnauthorizedAccessException("包含非自己或非团队的站点");
 
         // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
         // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；
