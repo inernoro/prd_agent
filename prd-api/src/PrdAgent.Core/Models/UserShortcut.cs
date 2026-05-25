@@ -51,6 +51,9 @@ public class UserShortcut
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 
+    /// <summary>授权过期时间；旧数据为空表示尚未设置过期策略</summary>
+    public DateTime? ExpiresAt { get; set; }
+
     /// <summary>最后使用时间</summary>
     public DateTime? LastUsedAt { get; set; }
 

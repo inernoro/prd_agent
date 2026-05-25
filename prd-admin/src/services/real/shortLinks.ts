@@ -57,6 +57,29 @@ export async function resolveShortLink(seq: number | string): Promise<ApiRespons
   }
 }
 
+/**
+ * P1 URL 统一：按任意 slug 解析短链（纯数字 → Seq，字母 → Token）。
+ *
+ * 前端 ShortLinkRouter `/s/:slug` 调本端点替代 resolveShortLink，让 /s/{seq} 和 /s/{token}
+ * 两种 URL 形态都能命中同一入口；旧 resolveShortLink 仅做向后兼容暂留。
+ */
+export async function resolveShortLinkSlug(slug: string): Promise<ApiResponse<ShortLinkResolved>> {
+  const url = joinUrl(getApiBaseUrl(), api.shortLinks.resolveSlug(slug));
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    return (await res.json()) as ApiResponse<ShortLinkResolved>;
+  } catch {
+    return {
+      success: false,
+      data: null as never,
+      error: { code: 'NETWORK_ERROR', message: '网络请求失败' },
+    };
+  }
+}
+
 // ── 管理员：列表 / 吊销 / 修复 counter ────────────────────────────
 
 export interface AdminShortLinkItem {

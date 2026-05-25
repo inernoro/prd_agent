@@ -46,3 +46,28 @@ processed:
   - 2026-05-13_cds-web-pnpm-build-approval.md
   - 2026-05-13_changelog-tabs-rename.md
   - 2026-05-13_dockdrag-defer-preventdefault.md
+  - 2026-05-13_document-store-rename-and-iframe.md
+  - 2026-05-13_fresh-animation-baseline-fix.md
+  - 2026-05-13_fresh-animation-event-driven.md
+  - 2026-05-13_hide-reprocess-for-reference.md
+  - 2026-05-13_markdown-xss-and-ext-list.md
+  - 2026-05-13_notification-overlap-fix.md
+  - 2026-05-13_notification-ux-batch.md
+  - 2026-05-13_poster-list-perf-and-badge.md
+  - 2026-05-13_reprocess-button-order.md
+  - 2026-05-13_resource-preview.md
+  - 2026-05-13_review-scoring-consistency.md
+  - 2026-05-13_short-link-admin.md
+  - 2026-05-13_short-share-links.md
+  - 2026-05-13_streaming-text-followup-r2.md
+  - 2026-05-13_streaming-text-general-capability.md
+  - 2026-04-18_pa-agent.md
+  - 2026-05-10_pa-agent-appcaller-chat-pick.md
+  - 2026-05-10_pa-agent-appcaller-startup-sync.md
+  - 2026-05-10_pa-agent-llm-binding-fix.md
+  - 2026-05-10_pa-agent-merge-from-main.md
+  - 2026-05-10_pa-agent-prompt-format-fix.md
+  - 2026-05-10_pa-agent-savage-secretary.md
+  - 2026-05-13_streaming-text-maxtailchars.md
+  - 2026-05-13_streaming-text-unify-batch1.md
+  - 2026-05-13_streaming-text-unify-batch2.md

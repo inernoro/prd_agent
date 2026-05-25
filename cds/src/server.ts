@@ -40,6 +40,14 @@ import type { BridgeService } from './services/bridge.js';
 import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 import type { GracefulShutdownController } from './services/graceful-shutdown.js';
+import {
+  bodyPreviewFromUnknown,
+  createBodyCapture,
+  createRequestId,
+  redactHeaders,
+  type HttpLogSink,
+} from './services/http-log-store.js';
+import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,6 +88,10 @@ export interface ServerDeps {
    * worker abort 完成后再退出。
    */
   gracefulShutdown?: GracefulShutdownController;
+  /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
+  httpLogStore?: HttpLogSink | null;
+  /** Optional persistent diagnostics logger for container/docker/system events. */
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -315,6 +327,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cache/purge': '清空缓存目录',
     'GET /proxy-log': '查看转发日志',
     'GET /proxy-log/stream': '订阅转发日志流',
+    'GET /http-logs': '查看 HTTP 请求日志',
+    'GET /server-events': '查看服务器/容器事件日志',
     'GET /config-snapshots': '列出配置快照',
     'POST /config-snapshots': '手动保存配置快照',
     'GET /destructive-ops': '列出破坏性操作',
@@ -740,12 +754,6 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   }));
 
-  // The "web" directory now hosts the React/Vite build (cds/web/dist/), and
-  // the unmigrated original static pages live in cds/web-legacy/. Both paths
-  // are wired through installSpaFallback() below; this constant is retained
-  // only for the login-redirect helper which still serves a legacy HTML file.
-  const webDir = path.resolve(__dirname, '..', 'web-legacy');
-
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
   //   1. Dockerfile HEALTHCHECK
@@ -942,6 +950,93 @@ export function createServer(deps: ServerDeps): express.Express {
     });
   });
 
+  // Assign a request id before auth so 401/403/400 responses are also
+  // traceable from browser Network details and systemd logs.
+  app.use('/api', (req, res, next) => {
+    const existing = String(req.headers['x-cds-request-id'] || '').trim();
+    const requestId = existing || createRequestId();
+    (req as any).cdsRequestId = requestId;
+    res.locals.cdsRequestId = requestId;
+    if (!res.getHeader('X-CDS-Request-Id')) {
+      res.setHeader('X-CDS-Request-Id', requestId);
+    }
+    res.once('finish', () => {
+      if (res.statusCode < 400) return;
+      if ((res.locals as { cdsActivityLogged?: boolean }).cdsActivityLogged) return;
+      // eslint-disable-next-line no-console
+      console.warn('[api] request failed before activity middleware', {
+        requestId,
+        method: req.method,
+        path: req.originalUrl || req.url,
+        status: res.statusCode,
+        remoteAddr: (req.headers['cf-connecting-ip'] as string)
+          || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+          || req.ip
+          || req.socket?.remoteAddress,
+        referer: req.headers['referer'] || req.headers['origin'],
+        userAgent: req.headers['user-agent'],
+      });
+    });
+    next();
+  });
+
+  // Persistent HTTP log for master/dashboard requests. This intentionally
+  // writes one Mongo document per request, never an array inside cds_state.
+  app.use((req, res, next) => {
+    const requestId =
+      (req as any).cdsRequestId
+      || String(req.headers['x-cds-request-id'] || '').trim()
+      || createRequestId();
+    (req as any).cdsRequestId = requestId;
+    res.locals.cdsRequestId = requestId;
+    if (!res.getHeader('X-CDS-Request-Id')) {
+      res.setHeader('X-CDS-Request-Id', requestId);
+    }
+
+    const start = Date.now();
+    const responseCapture = createBodyCapture();
+    const origWrite = res.write.bind(res);
+    const origEnd = res.end.bind(res);
+    (res as any).write = function (chunk: unknown, ...args: unknown[]) {
+      if (chunk != null) responseCapture.onChunk(chunk as Buffer | string);
+      return origWrite(chunk as never, ...(args as never[]));
+    };
+    (res as any).end = function (chunk?: unknown, ...args: unknown[]) {
+      if (chunk != null) responseCapture.onChunk(chunk as Buffer | string);
+      return origEnd(chunk as never, ...(args as never[]));
+    };
+
+    res.once('finish', () => {
+      const status = res.statusCode || 0;
+      const reqBody = bodyPreviewFromUnknown(req.body);
+      const respBody = responseCapture.snapshot();
+      deps.httpLogStore?.record({
+        layer: 'master',
+        requestId,
+        method: req.method || 'GET',
+        protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
+        host: String(req.headers.host || ''),
+        path: req.originalUrl || req.url || '/',
+        status,
+        durationMs: Date.now() - start,
+        outcome: status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok',
+        remoteAddr: (req.headers['cf-connecting-ip'] as string)
+          || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+          || req.ip
+          || req.socket?.remoteAddress,
+        request: {
+          headers: redactHeaders(req.headers),
+          ...reqBody,
+        },
+        response: {
+          headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
+          ...respBody,
+        },
+      });
+    });
+    next();
+  });
+
   // ── Switch domain middleware (before auth) ──
   const switchDomain = deps.config.switchDomain?.toLowerCase();
   if (switchDomain) {
@@ -1109,7 +1204,8 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.use((req, res, next) => {
-      if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
+      if (req.path === '/') return next();
+      if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
@@ -1617,7 +1713,8 @@ export function createServer(deps: ServerDeps): express.Express {
           ],
         });
       } else {
-        res.sendFile(path.join(webDir, 'login.html'));
+        const target = req.originalUrl || req.url || '/project-list';
+        res.redirect(302, `/login?redirect=${encodeURIComponent(target)}`);
       }
     });
 
@@ -1979,7 +2076,9 @@ export function createServer(deps: ServerDeps): express.Express {
     const all = deps.proxyService.getProxyLog();
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
     const events = afterSeq > 0 ? all.filter(e => e.id > afterSeq) : all;
-    res.json({ events, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
+    const order = req.query.order === 'asc' ? 'asc' : 'desc';
+    const ordered = afterSeq > 0 || order === 'asc' ? events : [...events].reverse();
+    res.json({ events: ordered, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
   });
   app.get('/api/proxy-log/stream', (req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -1992,6 +2091,60 @@ export function createServer(deps: ServerDeps): express.Express {
       try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
     }, 30_000);
     req.on('close', () => { proxyLogClients.delete(res); clearInterval(heartbeat); });
+  });
+
+  app.get('/api/http-logs', async (req, res) => {
+    const reader = deps.httpLogStore?.findRecent;
+    if (!reader) {
+      res.json({ logs: [], total: 0, message: 'HTTP 持久化日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_HTTP_LOGS_ENABLED=0。' });
+      return;
+    }
+    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const minStatus = Number.parseInt(String(req.query.minStatus || ''), 10) || undefined;
+    const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
+    const host = typeof req.query.host === 'string' ? req.query.host : undefined;
+    const layerRaw = typeof req.query.layer === 'string' ? req.query.layer : undefined;
+    const layer = layerRaw === 'master' || layerRaw === 'master-proxy' || layerRaw === 'forwarder'
+      ? layerRaw
+      : undefined;
+    const logs = await reader.call(deps.httpLogStore, { limit, requestId, host, layer, minStatus });
+    res.json({ logs, total: logs.length });
+  });
+
+  app.get('/api/server-events', async (req, res) => {
+    const reader = deps.serverEventLogStore?.findRecent;
+    if (!reader) {
+      res.json({ events: [], total: 0, message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。' });
+      return;
+    }
+    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const categoryRaw = typeof req.query.category === 'string' ? req.query.category : undefined;
+    const category = categoryRaw === 'container' || categoryRaw === 'docker' || categoryRaw === 'system'
+      ? categoryRaw as ServerEventCategory
+      : undefined;
+    const severityRaw = typeof req.query.severity === 'string' ? req.query.severity : undefined;
+    const severity = severityRaw === 'info' || severityRaw === 'warn' || severityRaw === 'error'
+      ? severityRaw as ServerEventSeverity
+      : undefined;
+    const minSeverityRaw = typeof req.query.minSeverity === 'string' ? req.query.minSeverity : undefined;
+    const minSeverity = minSeverityRaw === 'info' || minSeverityRaw === 'warn' || minSeverityRaw === 'error'
+      ? minSeverityRaw as ServerEventSeverity
+      : undefined;
+    const events = await reader.call(deps.serverEventLogStore, {
+      limit,
+      category,
+      severity,
+      minSeverity,
+      source: typeof req.query.source === 'string' ? req.query.source : undefined,
+      action: typeof req.query.action === 'string' ? req.query.action : undefined,
+      containerName: typeof req.query.containerName === 'string' ? req.query.containerName : undefined,
+      branchId: typeof req.query.branchId === 'string' ? req.query.branchId : undefined,
+      profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
+      projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
+      requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
+      since: typeof req.query.since === 'string' ? req.query.since : undefined,
+    });
+    res.json({ events, total: events.length });
   });
 
   // ── API activity tracking middleware (before routes, after auth) ──
@@ -2007,7 +2160,10 @@ export function createServer(deps: ServerDeps): express.Express {
     const start = Date.now();
     const origEnd = res.end.bind(res);
     const aiSession = (req as any)._aiSession as ApprovedAiSession | undefined;
-    const requestId = crypto.randomUUID().slice(0, 8);
+    const requestId =
+      (res.locals as { cdsRequestId?: string }).cdsRequestId
+      || (req as any).cdsRequestId
+      || crypto.randomUUID().slice(0, 8);
     res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
@@ -2094,6 +2250,22 @@ export function createServer(deps: ServerDeps): express.Express {
         referer: req.headers['referer'] || req.headers['origin'],
       };
       broadcastActivity(event);
+      if (event.status >= 400) {
+        (res.locals as { cdsActivityLogged?: boolean }).cdsActivityLogged = true;
+        // eslint-disable-next-line no-console
+        console.warn('[api] request failed', {
+          requestId: event.requestId,
+          method: event.method,
+          path: event.path,
+          query: event.query,
+          status: event.status,
+          durationMs: event.duration,
+          errorSummary: event.errorSummary,
+          remoteAddr: event.remoteAddr,
+          referer: event.referer,
+          userAgent: event.userAgent,
+        });
+      }
       return origEnd(...args);
     };
     next();
@@ -2295,6 +2467,7 @@ export function createServer(deps: ServerDeps): express.Express {
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──
@@ -2482,6 +2655,9 @@ export function auditApiLabels(app: express.Express): string[] {
  * cds/web-legacy/, so an unmigrated link keeps working unchanged.
  */
 const MIGRATED_REACT_ROUTES: readonly string[] = [
+  '/',
+  '/login',
+  '/preview-preparing',
   '/hello',
   '/cds-settings',
   '/project-list',
@@ -2591,6 +2767,10 @@ export function installSpaFallback(
   app.get('/cds-settings.html', (req, res) => {
     const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
     res.redirect(301, '/cds-settings' + qs);
+  });
+  app.get('/login.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/login' + qs);
   });
   app.get('/settings.html', (req, res) => {
     const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';

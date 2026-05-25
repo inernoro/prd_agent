@@ -53,4 +53,32 @@ public class ShortLinksController : ControllerBase
             createdAt = link.CreatedAt,
         }));
     }
+
+    /// <summary>
+    /// P1 URL 统一：按任意 slug（纯数字 = Seq；其它 = Token）解析短链。
+    /// 前端 ShortLinkRouter `/s/:slug` 用本端点替代纯数字版，支持字母 token 的统一路径。
+    /// </summary>
+    [HttpGet("resolve/{slug}")]
+    public async Task<IActionResult> ResolveSlug(string slug, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "短链不存在"));
+
+        ShortLink? link;
+        if (long.TryParse(slug, out var seq))
+            link = await _shortLinks.ResolveAsync(seq, ct);
+        else
+            link = await _shortLinks.ResolveByTokenAsync(slug, ct);
+
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "短链不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            seq = link.Seq,
+            targetType = link.TargetType,
+            token = link.TargetId,
+            createdAt = link.CreatedAt,
+        }));
+    }
 }

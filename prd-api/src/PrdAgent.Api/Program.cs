@@ -202,6 +202,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
 // 统一短链路由（所有分享系统共用 /s/{seq}）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IShortLinkService, PrdAgent.Infrastructure.Services.ShortLinkService>();
+// 分享链接密码安全统一服务（PBKDF2 + FixedTimeEquals + 失败锁），网页/周报/知识库/工作流共用
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISharePasswordService, PrdAgent.Infrastructure.Services.SharePasswordService>();
 
 // Visual Agent 多图组合服务（图片描述提取 + 多图意图解析）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.VisualAgent.IImageDescriptionService, PrdAgent.Infrastructure.Services.VisualAgent.ImageDescriptionService>();
@@ -279,8 +281,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
-// 应用调用者同步：已移除自动启动同步，改为管理后台手动点击「初始化应用」触发
-// builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
+// 应用调用者同步：启动时增量注册代码中的 AppCaller（含 pa-agent.chat::chat），并自动回填 chat 模型组
+// 管理后台「初始化应用」仍可全量对齐；二者互补，新 Agent 无需人工点初始化
+builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
 
 // 邮件通道服务
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmailIntentDetector, PrdAgent.Infrastructure.Services.Email.EmailIntentDetector>();

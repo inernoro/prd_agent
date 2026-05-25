@@ -27,7 +27,7 @@ import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
-import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
@@ -36,6 +36,8 @@ import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { ProxyService } from '../services/proxy.js';
+import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
+import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -189,6 +191,29 @@ function isSyntheticCdsManagedRuntimeBranch(
 ): boolean {
   if (project?.kind !== 'shared-service') return false;
   return branch.branch === 'cds-managed-runtime' && branch.githubCommitSha === 'cds-managed-runtime';
+}
+
+function githubLoginFromCommitEmail(email: string): string | null {
+  const normalized = email.trim().toLowerCase();
+  const match = normalized.match(/^(?:(?:\d+)\+)?([a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?)@users\.noreply\.github\.com$/i);
+  return match?.[1] || null;
+}
+
+function buildCommitBuilder(name?: string, email?: string): {
+  name: string;
+  email?: string;
+  login?: string;
+  avatarUrl?: string;
+} | undefined {
+  const cleanName = (name || '').trim();
+  const cleanEmail = (email || '').trim();
+  if (!cleanName && !cleanEmail) return undefined;
+  const login = cleanEmail ? githubLoginFromCommitEmail(cleanEmail) : null;
+  return {
+    name: cleanName || login || cleanEmail,
+    ...(cleanEmail ? { email: cleanEmail } : {}),
+    ...(login ? { login, avatarUrl: `https://github.com/${encodeURIComponent(login)}.png?size=64` } : {}),
+  };
 }
 
 function isAiActivityLog(entry: ProjectActivityLog): boolean {
@@ -979,6 +1004,83 @@ function isPortConflictError(err: unknown): boolean {
   return /port is already allocated|bind: address already in use|address already in use|EADDRINUSE/i.test(text);
 }
 
+function parseListenPorts(output: string): Set<number> {
+  const ports = new Set<number>();
+  for (const line of output.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 4) continue;
+    const local = parts[3];
+    const match = local.match(/:(\d+)$/);
+    if (!match) continue;
+    const port = Number(match[1]);
+    if (Number.isInteger(port) && port > 0 && port <= 65535) ports.add(port);
+  }
+  return ports;
+}
+
+async function collectListeningPorts(shell: IShellExecutor): Promise<Set<number>> {
+  const result = await shell.exec('ss -H -ltn').catch(() => null);
+  if (!result || result.exitCode !== 0) return new Set();
+  return parseListenPorts(result.stdout);
+}
+
+interface RunServiceWithPortRetryOptions {
+  stateService: StateService;
+  shell: IShellExecutor;
+  config: CdsConfig;
+  containerService: ContainerService;
+  serverEventLogStore?: ServerEventLogSink | null;
+  entry: BranchEntry;
+  profile: BuildProfile;
+  service: ServiceState;
+  customEnv?: Record<string, string>;
+  onOutput?: (chunk: string) => void;
+  onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
+}
+
+async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  const maxAttempts = 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await options.containerService.runService(
+        options.entry,
+        options.profile,
+        options.service,
+        options.onOutput,
+        options.customEnv,
+      );
+      return;
+    } catch (err) {
+      if (!isPortConflictError(err) || attempt === maxAttempts) throw err;
+      const oldPort = options.service.hostPort;
+      const listeningPorts = await collectListeningPorts(options.shell);
+      listeningPorts.add(oldPort);
+      const newPort = options.stateService.allocatePort(options.config.portStart, listeningPorts);
+      options.service.hostPort = newPort;
+      options.service.errorMessage = undefined;
+      options.stateService.save();
+      options.serverEventLogStore?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'port-allocator',
+        action: 'app.port-conflict.reallocated',
+        message: `host port ${oldPort} was occupied; retrying ${options.service.containerName} on ${newPort}`,
+        projectId: options.entry.projectId,
+        branchId: options.entry.id,
+        profileId: options.profile.id,
+        containerName: options.service.containerName,
+        details: {
+          oldPort,
+          newPort,
+          attempt,
+          reason: 'docker-run-port-conflict',
+        },
+      });
+      options.onPortChanged?.({ oldPort, newPort, attempt });
+    }
+  }
+}
+
 /**
  * Result of a single smoke-all.sh run — surface area shared between the
  * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
@@ -1121,6 +1223,8 @@ export interface RouterDeps {
    * build status. Absent when CDS_GITHUB_APP_* env vars aren't set.
    */
   githubApp?: GitHubAppClient;
+  /** Persistent diagnostics sink for container/docker lifecycle and log captures. */
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -1134,6 +1238,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     registry,
     getClusterStrategy,
     githubApp,
+    serverEventLogStore,
   } = deps;
 
   const router = Router();
@@ -1161,6 +1266,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const [profileId, svc] of services) {
       try {
         const raw = await containerService.getLogs(svc.containerName, tailLines);
+        const maskedLogs = maskSecretsText(raw, { mask: true });
+        stateService.appendContainerLogArchive(entry.id, {
+          projectId: entry.projectId,
+          profileId,
+          containerName: svc.containerName,
+          hostPort: svc.hostPort,
+          status: svc.status,
+          source,
+          masked: true,
+          logs: maskedLogs,
+        });
         snapshots.push({
           profileId,
           containerName: svc.containerName,
@@ -1169,7 +1285,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           capturedAt: new Date().toISOString(),
           tailLines,
           source,
-          logs: maskSecretsText(raw, { mask: true }),
+          logs: maskedLogs,
         });
       } catch (err) {
         snapshots.push({
@@ -1210,7 +1326,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return current;
       } catch (err) {
         if (!isPortConflictError(err) || attempt === 4) throw err;
-        const nextPort = stateService.allocatePort(config.portStart);
+        const nextPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         stateService.updateInfraService(current.id, { hostPort: nextPort }, projectId);
         stateService.save();
         const updated = stateService.getInfraServiceForProjectAndId(projectId, current.id);
@@ -2155,7 +2271,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         try {
           const result = await shell.exec(
-            'git log -1 --format=%h%n%s',
+            'git log -1 --format=%h%n%s%n%an%n%ae',
             { cwd: b.worktreePath, timeout: 5000 },
           );
           const lines = result.stdout.trim().split('\n');
@@ -2166,6 +2282,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: lines[0] || '',
             subject: lines[1] || '',
+            builder: buildCommitBuilder(lines[2], lines[3]),
             previewSlug,
             deployRuntime,
           };
@@ -2221,6 +2338,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const { branch, projectId } = req.body as { branch?: string; projectId?: string };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
+        return;
+      }
+      if (!isAllowedCdsBranchName(branch)) {
+        res.status(400).json({
+          error: 'invalid_branch_name',
+          message: '分支名称必须是真实 Git branch，不能是 URL、PR 链接或 GitHub 页面路径。',
+        });
         return;
       }
 
@@ -3028,6 +3152,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch: entry,
+        source: 'branch-delete',
+        serverEventLogStore,
+        message: 'captured before branch delete removes containers',
+      });
+
       // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
@@ -3129,6 +3262,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    if (!isAllowedCdsBranchName(entry.branch)) {
+      res.status(400).json({
+        error: 'invalid_branch_name',
+        message: `拒绝部署非法分支名: ${entry.branch}`,
+      });
       return;
     }
     {
@@ -3480,10 +3620,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         timestamp: new Date().toISOString(),
       });
 
-      // ── Pre-allocate ports synchronously (before parallel execution) ──
+      // ── Pre-allocate ports (before parallel execution) ──
+      const liveUsedPorts = await collectListeningPorts(shell);
       for (const profile of profiles) {
         if (!entry.services[profile.id]) {
-          const hostPort = stateService.allocatePort(config.portStart);
+          const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
+          liveUsedPorts.add(hostPort);
           entry.services[profile.id] = {
             profileId: profile.id,
             containerName: `cds-${id}-${profile.id}`,
@@ -3538,6 +3680,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
           try {
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+            await archiveBranchContainerLogs({
+              stateService,
+              containerService,
+              branch: entry,
+              source: 'pre-deploy-recreate',
+              profileIds: new Set([profile.id]),
+              serverEventLogStore,
+              message: 'captured before docker rm/run during branch deploy',
+            });
 
             // ── Trace: resolved CDS_* env vars for this service ──
             const cdsVars: Record<string, string> = {};
@@ -3557,21 +3708,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
               timestamp: new Date().toISOString(),
             });
 
-            await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
-              sendSSE(res, 'log', { profileId: profile.id, chunk });
-              for (const line of chunk.split('\n')) {
-                if (line.trim()) {
-                  logDeploy(id, line);
-                  // Also store container output in operation log for historical viewing
-                  opLog.events.push({
-                    step: `log-${profile.id}`,
-                    status: 'info',
-                    title: line.trim(),
-                    timestamp: new Date().toISOString(),
-                  });
+            await runServiceWithPortRetry({
+              stateService,
+              shell,
+              config,
+              containerService,
+              serverEventLogStore,
+              entry,
+              profile: effectiveProfile,
+              service: svc,
+              customEnv: mergedEnv,
+              onPortChanged: ({ oldPort, newPort, attempt }) => {
+                logEvent({
+                  step: `port-${profile.id}`,
+                  status: 'warning',
+                  title: `${effectiveProfile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`,
+                  detail: { oldPort, newPort, attempt },
+                  timestamp: new Date().toISOString(),
+                });
+              },
+              onOutput: (chunk) => {
+                sendSSE(res, 'log', { profileId: profile.id, chunk });
+                for (const line of chunk.split('\n')) {
+                  if (line.trim()) {
+                    logDeploy(id, line);
+                    // Also store container output in operation log for historical viewing
+                    opLog.events.push({
+                      step: `log-${profile.id}`,
+                      status: 'info',
+                      title: line.trim(),
+                      timestamp: new Date().toISOString(),
+                    });
+                  }
                 }
-              }
-            }, mergedEnv);
+              },
+            });
 
             // Phase 1 passed (container alive). Enter 'starting' and gate the
             // transition to 'running' on either a startup-log signal or an
@@ -3945,6 +4116,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    if (!isAllowedCdsBranchName(entry.branch)) {
+      res.status(400).json({
+        error: 'invalid_branch_name',
+        message: `拒绝部署非法分支名: ${entry.branch}`,
+      });
+      return;
+    }
 
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
@@ -4008,7 +4186,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
-        const hostPort = stateService.allocatePort(config.portStart);
+        const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
         entry.services[profile.id] = {
           profileId: profile.id,
           containerName: `cds-${id}-${profile.id}`,
@@ -4023,12 +4201,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
-        await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
-          sendSSE(res, 'log', { profileId: profile.id, chunk });
-          for (const line of chunk.split('\n')) {
-            if (line.trim()) logDeploy(id, line);
-          }
-        }, mergedEnv);
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'pre-deploy-recreate',
+          profileIds: new Set([profile.id]),
+          serverEventLogStore,
+          message: 'captured before docker rm/run during single service deploy',
+        });
+        await runServiceWithPortRetry({
+          stateService,
+          shell,
+          config,
+          containerService,
+          serverEventLogStore,
+          entry,
+          profile: effectiveProfile,
+          service: svc,
+          customEnv: mergedEnv,
+          onPortChanged: ({ oldPort, newPort, attempt }) => {
+            logEvent({
+              step: `port-${profile.id}`,
+              status: 'warning',
+              title: `${effectiveProfile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`,
+              detail: { oldPort, newPort, attempt },
+              timestamp: new Date().toISOString(),
+            });
+          },
+          onOutput: (chunk) => {
+            sendSSE(res, 'log', { profileId: profile.id, chunk });
+            for (const line of chunk.split('\n')) {
+              if (line.trim()) logDeploy(id, line);
+            }
+          },
+        });
 
         // Enter 'starting' and gate transition on startup signal + readiness
         // probe (TCP+HTTP). Prevents the 502 window between `docker run` exit
@@ -4348,6 +4555,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         svc.status = 'stopped';
       }
+      await archiveBranchContainerLogs({
+        stateService,
+        containerService,
+        branch: entry,
+        source: 'manual-stop',
+        serverEventLogStore,
+        message: 'captured after user stop preserved containers',
+      });
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
@@ -4548,7 +4763,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     // Allocate a new port
-    const port = stateService.allocatePort(config.portStart);
+    const port = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
     // P4 Part 17 (G2 fix): scope by branch project so the path-prefix
     // proxy only routes to profiles owned by this project.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
@@ -5007,8 +5222,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 时合成一条最简记录，把 errorMessage 浮起来给 Agent / UI 看。否则用户只看到
     // 状态 'error' 没有原因，无法判断发生了什么。这条 fallback 记录带 synthetic=true
     // 标记，前端可以选择性区分对待。
-    const isFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
-    const fallbackLogs = isFallback
+    const runningServices = Object.values(branch?.services || {}).filter((svc) => svc.status === 'running');
+    const hasRecoveredRuntime = logs.length === 0 && !!branch && branch.status === 'running' && runningServices.length > 0;
+    const isErrorFallback = logs.length === 0 && branch?.status === 'error' && !!branch.errorMessage;
+    const fallbackLogs = isErrorFallback
       ? [{
           id: `synthetic-${id}`,
           synthetic: true,
@@ -5026,11 +5243,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
             timestamp: branch?.lastAccessedAt || new Date().toISOString(),
           }],
         }]
+      : hasRecoveredRuntime
+        ? [{
+            type: 'build',
+            status: 'completed',
+            startedAt: branch.lastAccessedAt || branch.lastReadyAt || branch.createdAt || new Date().toISOString(),
+            finishedAt: branch.lastReadyAt || branch.lastAccessedAt || new Date().toISOString(),
+            runtimeStartedAt: branch.lastReadyAt || branch.lastAccessedAt || undefined,
+            events: [
+              {
+                step: 'runtime-recovered',
+                status: 'done',
+                title: '运行态已恢复，但原始构建记录缺失',
+                log:
+                  'CDS 当前能确认该分支容器正在运行，但没有找到本次部署的 OperationLog。' +
+                  '常见原因是部署请求/进程在最终 appendLog 前中断，或历史版本只写入 service state 而没有写入部署历史。' +
+                  '请查看容器日志作为运行证据；下一次重新部署后会生成完整构建记录。',
+                detail: {
+                  recoveredFrom: 'branch.services',
+                  runningServices: runningServices.map((svc) => ({
+                    profileId: svc.profileId,
+                    containerName: svc.containerName,
+                    hostPort: svc.hostPort,
+                  })),
+                },
+                timestamp: branch.lastReadyAt || branch.lastAccessedAt || new Date().toISOString(),
+              },
+            ],
+          }]
       : [];
 
     res.json({
       logs: logs.length > 0 ? logs : fallbackLogs,
-      logsAreSynthetic: isFallback || undefined,
+      logsAreSynthetic: (isErrorFallback || hasRecoveredRuntime) || undefined,
       branchStatus: branch?.status,
       branchErrorMessage: branch?.errorMessage,
       liveStreamHint: {
@@ -5080,11 +5325,63 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // appear in build logs (e.g. when a Dockerfile RUN step echoes env, or
       // when the app prints connection strings on boot). Default mask is on;
       // admin can override with ?unmask=1.
-      const masked = maskSecretsText(logs, { mask: shouldMask(req) });
+      const mask = shouldMask(req);
+      const masked = maskSecretsText(logs, { mask });
+      stateService.appendContainerLogArchive(id, {
+        projectId: entry.projectId,
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        hostPort: svc.hostPort,
+        status: svc.status,
+        source: 'container-logs-api',
+        masked: mask,
+        logs: masked,
+      });
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: 'info',
+        source: 'container-logs-api',
+        action: 'container.logs.read',
+        message: `container logs read via API for ${svc.containerName}`,
+        projectId: entry.projectId,
+        branchId: id,
+        profileId: svc.profileId,
+        containerName: svc.containerName,
+        status: svc.status,
+        logs: normalizeLogText(masked, 500),
+        details: { masked: mask, hostPort: svc.hostPort },
+      });
+      stateService.save();
       res.json({ logs: masked });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  router.get('/branches/:id/container-log-archives', (req, res) => {
+    const { id } = req.params;
+    const includeLogs = req.query.includeLogs === '1';
+    const archives = stateService.getContainerLogArchives(id);
+    res.json({
+      branchId: id,
+      count: archives.length,
+      archives: archives.slice().reverse().map((entry) => includeLogs ? entry : {
+        id: entry.id,
+        branchId: entry.branchId,
+        projectId: entry.projectId,
+        profileId: entry.profileId,
+        containerName: entry.containerName,
+        hostPort: entry.hostPort,
+        status: entry.status,
+        capturedAt: entry.capturedAt,
+        source: entry.source,
+        sha256: entry.sha256,
+        byteLength: entry.byteLength,
+        lineCount: entry.lineCount,
+        masked: entry.masked,
+        message: entry.message,
+      }),
+    });
   });
 
   // ── Container log stream (SSE) — replaces polling ──
@@ -5099,10 +5396,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     initSSE(res);
 
+    const chunks: string[] = [];
     const ac = containerService.streamLogs(
       svc.containerName,
-      (chunk) => sendSSE(res, 'log', { chunk }),
-      () => { try { res.end(); } catch { /* already closed */ } },
+      (chunk) => {
+        chunks.push(chunk);
+        sendSSE(res, 'log', { chunk });
+      },
+      () => {
+        if (chunks.length > 0) {
+          const logs = maskSecretsText(chunks.join(''), { mask: shouldMask(req) });
+          stateService.appendContainerLogArchive(id, {
+            projectId: entry.projectId,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            hostPort: svc.hostPort,
+            status: svc.status,
+            source: 'container-logs-stream',
+            masked: shouldMask(req),
+            logs,
+          });
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'info',
+            source: 'container-logs-stream',
+            action: 'container.logs.stream-closed',
+            message: `container log stream closed for ${svc.containerName}`,
+            projectId: entry.projectId,
+            branchId: id,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            status: svc.status,
+            logs: normalizeLogText(logs, 200),
+            details: { masked: shouldMask(req), hostPort: svc.hostPort },
+          });
+          stateService.save();
+        }
+        try { res.end(); } catch { /* already closed */ }
+      },
     );
 
     // Client disconnect → stop docker logs -f
@@ -6799,6 +7130,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'cleanup',
+          serverEventLogStore,
+          message: 'captured before cleanup removes branch containers',
+        });
         for (const svc of Object.values(entry.services)) {
           try { await containerService.remove(svc.containerName); } catch { /* ok */ }
         }
@@ -6892,6 +7231,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Step 3: stop containers + remove worktrees in parallel, then update state
       await Promise.all(orphans.map(async (entry) => {
         sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
+        await archiveBranchContainerLogs({
+          stateService,
+          containerService,
+          branch: entry,
+          source: 'cleanup',
+          serverEventLogStore,
+          message: 'captured before orphan cleanup removes branch containers',
+        });
 
         // Stop all containers for this orphan in parallel
         await Promise.all(
@@ -7311,7 +7658,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
-      const hostPort = stateService.allocatePort(config.portStart);
+      const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
       // Container name must be globally unique in Docker. Legacy project
       // keeps the bare `cds-infra-<id>` format for back-compat (existing
       // running containers match). Non-legacy projects get the project
@@ -8390,7 +8737,9 @@ cdscli project list --human
         // Pre-allocate ports
         for (const profile of profiles) {
           if (!entry.services[profile.id]) {
-            const hostPort = stateService.allocatePort(config.portStart);
+            const liveUsedPorts = await collectListeningPorts(shell);
+            const hostPort = stateService.allocatePort(config.portStart, liveUsedPorts);
+            liveUsedPorts.add(hostPort);
             entry.services[profile.id] = {
               profileId: profile.id,
               // PR #498 round-3 review (Bugbot): container name must
@@ -8414,9 +8763,32 @@ cdscli project list --human
           svc.status = 'building';
 
           try {
-            await containerService.runService(entry, profile, svc, (chunk) => {
-              sendSSE(res, 'log', { profileId: profile.id, chunk });
-            }, mergedEnv);
+            await archiveBranchContainerLogs({
+              stateService,
+              containerService,
+              branch: entry,
+              source: 'pre-deploy-recreate',
+              profileIds: new Set([profile.id]),
+              serverEventLogStore,
+              message: 'captured before docker rm/run during import deploy',
+            });
+            await runServiceWithPortRetry({
+              stateService,
+              shell,
+              config,
+              containerService,
+              serverEventLogStore,
+              entry,
+              profile,
+              service: svc,
+              customEnv: mergedEnv,
+              onPortChanged: ({ oldPort, newPort }) => {
+                send(`port-${profile.id}`, 'warning', `${profile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`);
+              },
+              onOutput: (chunk) => {
+                sendSSE(res, 'log', { profileId: profile.id, chunk });
+              },
+            });
 
             svc.status = 'running';
             svc.errorMessage = undefined;
@@ -9594,6 +9966,32 @@ cdscli project list --human
       branch,
       String(req.query.waitingProfile || 'api'),
     );
+  });
+
+  router.get('/loading-pages/cds-waiting-room-legacy/preview', (req, res) => {
+    const requestedStatus = String(req.query.status || 'building');
+    const allowedStatuses = new Set(['idle', 'building', 'starting', 'running', 'restarting', 'stopping', 'error']);
+    const status = allowedStatuses.has(requestedStatus) ? requestedStatus : 'building';
+    res.writeHead(503, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Retry-After': '2',
+    });
+    res.end(buildLegacyWaitingPreviewHtml(
+      String(req.query.branch || 'shape-grid-waiting-backup'),
+      status,
+      String(req.query.waitingProfile || 'api'),
+    ));
+  });
+
+  router.get('/loading-pages/branch-gone/preview', (req, res) => {
+    const theme = String(req.query.theme || 'dark') === 'light' ? 'light' : 'dark';
+    const slug = String(req.query.branch || 'claude/removed-preview-branch');
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(buildLoadingPreviewBranchGoneHtml(slug, theme));
   });
 
   // GET /api/self-status — CDS 自身的更新状态全景
@@ -11362,4 +11760,374 @@ cdscli project list --human
   });
 
   return router;
+}
+
+function escapeLoadingPreviewHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+}
+
+function buildLegacyWaitingPreviewHtml(branch: string, status: string, waitingProfile: string): string {
+  const safeBranch = escapeLoadingPreviewHtml(branch);
+  const safeWaitingProfile = escapeLoadingPreviewHtml(waitingProfile);
+  const stageLabel = (value: string): string => {
+    switch (value) {
+      case 'building': return '构建中';
+      case 'starting': return '启动中';
+      case 'restarting': return '重启中';
+      case 'running': return '已就绪';
+      case 'error': return '失败';
+      case 'stopping': return '停止中';
+      case 'stopped': return '已停止';
+      default: return '待命';
+    }
+  };
+  const heading = status === 'error'
+    ? '分支部署出现异常'
+    : status === 'idle'
+      ? '分支当前未运行'
+      : status === 'restarting'
+        ? '分支环境正在热重启'
+        : status === 'building'
+          ? '分支环境正在构建'
+          : '分支正在刷新中';
+  const subheading = status === 'error'
+    ? 'CDS 已保留当前状态，请返回控制台查看日志与容器输出。'
+    : status === 'idle'
+      ? '预览访问不会自动重新部署。请回到 CDS 控制台确认日志后手动重新部署。'
+      : `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`;
+  const serviceStatus = status === 'error' ? 'error' : status === 'idle' ? 'idle' : status === 'running' ? 'running' : 'starting';
+  const progressPercent = status === 'error' ? 42 : status === 'running' ? 96 : status === 'idle' ? 12 : status === 'starting' ? 86 : 68;
+  const services = ['api', 'admin'].map((profileId) => {
+    const label = `${profileId} · ${stageLabel(serviceStatus)}${profileId === waitingProfile ? '（正在等待此服务就绪）' : ''}`;
+    const color = serviceStatus === 'error' ? '#fca5a5' : serviceStatus === 'running' ? '#f8fafc' : serviceStatus === 'idle' ? '#6b7280' : '#dbe4ee';
+    return `<div class="svc" data-profile="${profileId}"><span class="svc-dot" style="--svc-color:${color}">●</span><span>${label}</span></div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${heading} · ${safeBranch}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{color-scheme:dark;--muted:rgba(245,242,255,.62);--text:#f7f5ff;--error:#fca5a5;--sync:#22c55e}
+html,body{min-height:100%}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#120f17;color:var(--text);min-height:100vh;overflow:hidden}
+.shape-grid-bg{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0;background:#120f17}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 620px at 52% 46%,rgba(255,255,255,.08),transparent 36%,rgba(18,15,23,.82) 100%),linear-gradient(90deg,rgba(18,15,23,.88),rgba(18,15,23,.2) 48%,rgba(18,15,23,.82));z-index:1}
+.shell{position:relative;z-index:2;min-height:100vh;width:100%;padding:clamp(32px,7vw,92px);display:grid;align-items:center;grid-template-columns:minmax(280px,780px) minmax(0,1fr)}
+.content{max-width:780px;text-shadow:0 2px 30px rgba(0,0,0,.72)}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:#ded8ef;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 16px rgba(255,255,255,.72);animation:pulse 1.8s ease-in-out infinite}
+h1{font-size:clamp(42px,5.6vw,82px);line-height:.96;letter-spacing:0;margin-bottom:22px;max-width:100%}
+.shiny-text{display:inline-block;color:rgba(247,245,255,.78);background:linear-gradient(120deg,rgba(247,245,255,.76) 0%,rgba(247,245,255,.76) 38%,#fff 48%,rgba(255,255,255,.96) 52%,rgba(247,245,255,.76) 62%,rgba(247,245,255,.76) 100%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shiny-text 3.2s linear infinite;text-shadow:none}
+.subtitle{max-width:580px;font-size:clamp(15px,1.45vw,20px);line-height:1.75;color:var(--muted);margin-bottom:28px}
+.meta{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
+.chip{position:relative;overflow:hidden;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.035);backdrop-filter:blur(10px);font-size:12px;color:#dde3ea}
+.chip::after{content:"";position:absolute;inset:-60% auto -60% -40%;width:42%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.18),transparent);transform:skewX(-18deg);animation:glint 3.6s ease-in-out infinite}
+.branch{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;word-break:break-all}
+.services{display:flex;flex-direction:column;gap:12px;margin:0 0 28px;max-width:620px}
+.svc{position:relative;overflow:hidden;display:flex;align-items:center;gap:12px;padding:13px 0;border-top:1px solid rgba(245,242,255,.13);font-size:15px;line-height:1.5}
+.svc::after{content:"";position:absolute;left:-35%;top:0;bottom:0;width:34%;background:linear-gradient(90deg,transparent,rgba(245,242,255,.14),transparent);transform:skewX(-18deg);animation:svc-glint 3.2s ease-in-out infinite}
+.svc:nth-child(2)::after{animation-delay:.42s}
+.svc-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;color:transparent;background:var(--svc-color);box-shadow:0 0 14px var(--svc-color);animation:svc-pulse 1.55s ease-in-out infinite}
+.svc:nth-child(2) .svc-dot{animation-delay:.22s}
+.estimate{width:min(620px,100%);margin:-8px 0 28px;padding:15px 16px;border:1px solid rgba(245,242,255,.12);border-radius:18px;background:rgba(255,255,255,.035);backdrop-filter:blur(12px)}
+.estimate-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;font-size:12px;color:rgba(245,242,255,.7)}
+.estimate-top strong{font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:15px;color:#f8fafc}
+.estimate-track{height:5px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden}
+.estimate-bar{display:block;height:100%;width:${progressPercent}%;border-radius:inherit;background:linear-gradient(90deg,#ffffff,#9f5050);box-shadow:0 0 18px rgba(255,255,255,.22);transition:width .45s ease}
+.estimate-meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:rgba(245,242,255,.52)}
+.cds-tip{width:min(620px,100%);margin:-8px 0 28px;color:rgba(245,242,255,.54);font-size:12px;line-height:1.65}
+.cds-tip strong{color:rgba(245,242,255,.82);font-weight:700}
+.hint{display:flex;align-items:center;gap:18px;font-size:12px;color:var(--muted)}
+.hint strong{color:#f5f7fa;font-weight:600}
+.note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
+.note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
+.shape-grid-bg.is-static{background:repeating-linear-gradient(30deg,rgba(255,255,255,.075) 0 1px,transparent 1px 34px),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
+@keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
+@keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
+@keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+@keyframes glint{0%,38%{transform:translateX(0) skewX(-18deg);opacity:0}54%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
+@keyframes fallback-pulse{0%,100%{filter:saturate(.9) brightness(.8)}50%{filter:saturate(1.2) brightness(1.1)}}
+@keyframes shiny-text{0%{background-position:120% 0}100%{background-position:-120% 0}}
+@media (max-width:760px){.shell{padding:28px;display:flex;align-items:flex-end}.content{width:100%}h1{font-size:44px}.subtitle{font-size:14px}.hint{align-items:flex-start;flex-direction:column}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+</style></head><body>
+<canvas class="shape-grid-bg" id="shape-grid" aria-hidden="true" data-speed="0.39" data-size="34" data-shape="hexagon"></canvas>
+<main class="shell">
+  <section class="content">
+    <div class="eyebrow">CDS Waiting Room</div>
+    <h1><span class="shiny-text">${heading}</span></h1>
+    <p class="subtitle">${subheading}</p>
+    <div class="meta">
+      <span class="chip branch">${safeBranch}</span>
+      <span class="chip">分支状态 · ${stageLabel(status)}</span>
+    </div>
+    <div class="services">${services}</div>
+    <div class="estimate">
+      <div class="estimate-top"><span>预计构建进度</span><strong>${progressPercent}%</strong></div>
+      <div class="estimate-track"><span class="estimate-bar"></span></div>
+      <div class="estimate-meta"><span>置信度 高</span><span>基于 2 个服务状态与构建日志估算</span></div>
+    </div>
+    <p class="cds-tip"><strong>CDS 小提示：</strong><span>构建完成后还会等待服务健康检查稳定，再切入真实页面。</span></p>
+    <div class="hint">
+      <span><strong>后台同步</strong> 每 2 秒检查一次服务状态，就绪后再进入真实页面。</span>
+      <span class="note">CDS Live Sync</span>
+    </div>
+  </section>
+</main>
+<script>
+(function(){
+  var canvas=document.getElementById('shape-grid');
+  if(!canvas)return;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var ctx=canvas.getContext('2d');
+  if(!ctx){canvas.className='shape-grid-bg is-static';return;}
+  var speed=0.39,size=34,offset={x:0,y:0};
+  var hexHoriz=size*1.5,hexVert=size*Math.sqrt(3);
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    ctx.setTransform(d,0,0,d,0,0);
+  }
+  function drawHex(cx,cy,r){
+    ctx.beginPath();
+    for(var i=0;i<6;i+=1){
+      var angle=Math.PI/3*i;
+      var x=cx+r*Math.cos(angle);
+      var y=cy+r*Math.sin(angle);
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+  }
+  function draw(){
+    var width=canvas.offsetWidth,height=canvas.offsetHeight;
+    ctx.clearRect(0,0,width,height);
+    offset.x=(offset.x-(reduced?0:speed)+hexHoriz*2)%(hexHoriz*2);
+    offset.y=(offset.y-(reduced?0:speed)+hexVert)%hexVert;
+    var colShift=Math.floor(offset.x/hexHoriz);
+    var offsetX=((offset.x%hexHoriz)+hexHoriz)%hexHoriz;
+    var offsetY=((offset.y%hexVert)+hexVert)%hexVert;
+    var cols=Math.ceil(width/hexHoriz)+3;
+    var rows=Math.ceil(height/hexVert)+3;
+    ctx.lineWidth=1;
+    ctx.strokeStyle='rgba(255,255,255,0.09)';
+    for(var col=-2;col<cols;col+=1){
+      for(var row=-2;row<rows;row+=1){
+        var cx=col*hexHoriz+offsetX;
+        var cy=row*hexVert+((col+colShift)%2!==0?hexVert/2:0)+offsetY;
+        drawHex(cx,cy,size);
+        ctx.stroke();
+      }
+    }
+    var gradient=ctx.createRadialGradient(width*0.54,height*0.46,0,width*0.54,height*0.46,Math.sqrt(width*width+height*height)/2);
+    gradient.addColorStop(0,'rgba(255,255,255,0.02)');
+    gradient.addColorStop(0.5,'rgba(18,15,23,0.14)');
+    gradient.addColorStop(1,'rgba(18,15,23,0.72)');
+    ctx.fillStyle=gradient;
+    ctx.fillRect(0,0,width,height);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
+</script>
+</body></html>`;
+}
+
+function buildLoadingPreviewBranchGoneHtml(slug: string, theme: 'dark' | 'light'): string {
+  const safeSlug = escapeLoadingPreviewHtml(slug);
+  const isLight = theme === 'light';
+  const bg = isLight ? '#f7f7f4' : '#050407';
+  const text = isLight ? '#18181b' : '#f7f5ff';
+  const muted = isLight ? 'rgba(24,24,27,.62)' : 'rgba(245,242,255,.62)';
+  const panel = isLight ? 'rgba(255,255,255,.58)' : 'rgba(255,255,255,.035)';
+  const line = isLight ? 'rgba(24,24,27,.12)' : 'rgba(255,255,255,.12)';
+  const danger = isLight ? '#b91c1c' : '#fca5a5';
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>启动失败 · ${safeSlug}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{color-scheme:${isLight ? 'light' : 'dark'};--bg:${bg};--text:${text};--muted:${muted};--panel:${panel};--line:${line};--danger:${danger}}
+html,body{min-height:100%}
+body{min-height:100vh;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(760px 560px at 58% 48%,rgba(82,39,255,${isLight ? '.12' : '.2'}),transparent 66%),linear-gradient(90deg,${isLight ? 'rgba(247,247,244,.9),rgba(247,247,244,.34),rgba(247,247,244,.82)' : 'rgba(5,4,7,.92),rgba(5,4,7,.22),rgba(5,4,7,.82)'});z-index:1;pointer-events:none}
+body::after{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;opacity:${isLight ? '.18' : '.28'};background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:84px 84px;mask-image:radial-gradient(circle at 52% 48%,#000 0%,transparent 72%)}
+.light-pillar{position:fixed;inset:0;z-index:0;width:100%;height:100%;display:block;mix-blend-mode:${isLight ? 'multiply' : 'screen'}}
+.light-pillar.is-static{background:linear-gradient(100deg,transparent 18%,rgba(82,39,255,.38) 46%,rgba(255,159,252,.36) 54%,transparent 82%);filter:blur(18px)}
+.shell{position:relative;z-index:2;min-height:100vh;display:grid;align-items:center;padding:clamp(34px,7vw,96px)}
+.content{max-width:720px;text-shadow:0 20px 80px rgba(0,0,0,${isLight ? '.08' : '.72'})}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;color:var(--muted);font:600 11px/1 "JetBrains Mono","SFMono-Regular",monospace;letter-spacing:.28em;text-transform:uppercase}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--danger);box-shadow:0 0 18px var(--danger);animation:pulse 1.7s ease-in-out infinite}
+h1{font-size:clamp(42px,5.5vw,78px);line-height:.96;letter-spacing:-.055em;margin-bottom:22px}
+.desc{max-width:600px;color:var(--muted);font-size:clamp(15px,1.35vw,20px);line-height:1.75;margin-bottom:28px}
+.chip{display:inline-flex;max-width:min(720px,88vw);align-items:center;border:1px solid var(--line);border-radius:999px;background:var(--panel);backdrop-filter:blur(12px);padding:10px 15px;color:var(--danger);font:600 13px/1.5 "JetBrains Mono","SFMono-Regular",monospace;word-break:break-all}
+.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+.btn{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);padding:10px 16px;text-decoration:none;font-size:13px;font-weight:700}
+.hint{margin-top:28px;color:var(--muted);font-size:12px}
+@keyframes pulse{0%,100%{transform:scale(.76);opacity:.62}50%{transform:scale(1.24);opacity:1}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+</style></head><body>
+<canvas class="light-pillar" id="light-pillar" aria-hidden="true"></canvas>
+<main class="shell">
+  <section class="content">
+    <div class="eyebrow">CDS Preview Failed</div>
+    <h1>启动失败</h1>
+    <p class="desc">该分支已被删除、未部署，或当前 CDS 实例没有找到可路由的运行环境。这是不可自动恢复状态，请返回控制台检查分支状态和最近停止原因。</p>
+    <div class="chip">${safeSlug}</div>
+    <div class="actions">
+      <a class="btn" href="/project-list">返回 CDS 控制台</a>
+      <a class="btn" href="/cds-settings#loading-pages">查看加载页预览</a>
+    </div>
+    <div class="hint">CDS 会优先保留可诊断信息，避免把访问者带到空白或浏览器原生错误页。</div>
+  </section>
+</main>
+<script id="light-pillar-vertex" type="x-shader/x-vertex">
+attribute vec2 aPosition;
+varying vec2 vUv;
+void main(){vUv=(aPosition+1.0)*0.5;gl_Position=vec4(aPosition,0.0,1.0);}
+</script>
+<script id="light-pillar-fragment" type="x-shader/x-fragment">
+precision highp float;
+uniform float uTime;
+uniform vec2 uResolution;
+uniform vec3 uTopColor;
+uniform vec3 uBottomColor;
+uniform float uIntensity;
+uniform float uGlowAmount;
+uniform float uPillarWidth;
+uniform float uPillarHeight;
+uniform float uNoiseIntensity;
+uniform float uRotCos;
+uniform float uRotSin;
+uniform float uPillarRotCos;
+uniform float uPillarRotSin;
+uniform float uWaveSin;
+uniform float uWaveCos;
+varying vec2 vUv;
+const float STEP_MULT=1.0;
+const int MAX_ITER=80;
+const int WAVE_ITER=4;
+vec3 tanh3(vec3 x){
+  vec3 e2x=exp(2.0*x);
+  return (e2x-1.0)/(e2x+1.0);
+}
+void main(){
+  vec2 uv=(vUv*2.0-1.0)*vec2(uResolution.x/uResolution.y,1.0);
+  uv=vec2(uPillarRotCos*uv.x-uPillarRotSin*uv.y,uPillarRotSin*uv.x+uPillarRotCos*uv.y);
+  vec3 ro=vec3(0.0,0.0,-10.0);
+  vec3 rd=normalize(vec3(uv,1.0));
+  vec3 col=vec3(0.0);
+  float t=0.1;
+  for(int i=0;i<MAX_ITER;i++){
+    vec3 p=ro+rd*t;
+    p.xz=vec2(uRotCos*p.x-uRotSin*p.z,uRotSin*p.x+uRotCos*p.z);
+    vec3 q=p;
+    q.y=p.y*uPillarHeight+uTime;
+    float freq=1.0;
+    float amp=1.0;
+    for(int j=0;j<WAVE_ITER;j++){
+      q.xz=vec2(uWaveCos*q.x-uWaveSin*q.z,uWaveSin*q.x+uWaveCos*q.z);
+      q+=cos(q.zxy*freq-uTime*float(j)*2.0)*amp;
+      freq*=2.0;
+      amp*=0.5;
+    }
+    float d=length(cos(q.xz))-0.2;
+    float bound=length(p.xz)-uPillarWidth;
+    float k=4.0;
+    float h=max(k-abs(d-bound),0.0);
+    d=max(d,bound)+h*h*0.0625/k;
+    d=abs(d)*0.15+0.01;
+    float grad=clamp((15.0-p.y)/30.0,0.0,1.0);
+    col+=mix(uBottomColor,uTopColor,grad)/d;
+    t+=d*STEP_MULT;
+    if(t>50.0)break;
+  }
+  float widthNorm=uPillarWidth/3.0;
+  col=tanh3(col*uGlowAmount/widthNorm);
+  col-=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)/15.0*uNoiseIntensity;
+  gl_FragColor=vec4(col*uIntensity,1.0);
+}
+</script>
+<script>
+(function(){
+  var canvas=document.getElementById('light-pillar');
+  if(!canvas)return;
+  var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var gl=canvas.getContext('webgl',{alpha:true,antialias:false,depth:false,stencil:false});
+  if(!gl){canvas.className='light-pillar is-static';return;}
+  function source(id){var n=document.getElementById(id);return n?n.textContent:'';}
+  function shader(type,src){var s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){throw new Error(gl.getShaderInfoLog(s)||'shader failed');}return s;}
+  function hex(v){var r=String(v).replace('#','');var n=parseInt(r.length===3?r.replace(/(.)/g,'$1$1'):r,16);return [(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
+  var program;
+  try{
+    program=gl.createProgram();
+    gl.attachShader(program,shader(gl.VERTEX_SHADER,source('light-pillar-vertex')));
+    gl.attachShader(program,shader(gl.FRAGMENT_SHADER,source('light-pillar-fragment')));
+    gl.linkProgram(program);
+    if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program)||'link failed');
+  }catch(e){canvas.className='light-pillar is-static';return;}
+  gl.useProgram(program);
+  var buffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  var pos=gl.getAttribLocation(program,'aPosition');
+  gl.enableVertexAttribArray(pos);
+  gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+  var loc={};
+  ['uTime','uResolution','uTopColor','uBottomColor','uIntensity','uGlowAmount','uPillarWidth','uPillarHeight','uNoiseIntensity','uRotCos','uRotSin','uPillarRotCos','uPillarRotSin','uWaveSin','uWaveCos'].forEach(function(name){loc[name]=gl.getUniformLocation(program,name);});
+  var top=hex('#5227FF');
+  var bottom=hex('#FF9FFC');
+  var pillarRot=25*Math.PI/180;
+  gl.uniform3f(loc.uTopColor,top[0],top[1],top[2]);
+  gl.uniform3f(loc.uBottomColor,bottom[0],bottom[1],bottom[2]);
+  gl.uniform1f(loc.uIntensity,1);
+  gl.uniform1f(loc.uGlowAmount,.002);
+  gl.uniform1f(loc.uPillarWidth,3);
+  gl.uniform1f(loc.uPillarHeight,.4);
+  gl.uniform1f(loc.uNoiseIntensity,.5);
+  gl.uniform1f(loc.uPillarRotCos,Math.cos(pillarRot));
+  gl.uniform1f(loc.uPillarRotSin,Math.sin(pillarRot));
+  gl.uniform1f(loc.uWaveSin,Math.sin(.4));
+  gl.uniform1f(loc.uWaveCos,Math.cos(.4));
+  function resize(){
+    var d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.max(1,Math.floor(window.innerWidth*d));
+    canvas.height=Math.max(1,Math.floor(window.innerHeight*d));
+    canvas.style.width='100%';
+    canvas.style.height='100%';
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform2f(loc.uResolution,canvas.width,canvas.height);
+  }
+  function draw(t){
+    var time=reduced?0:t*.001*.3;
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(loc.uTime,time);
+    gl.uniform1f(loc.uRotCos,Math.cos(time*.3));
+    gl.uniform1f(loc.uRotSin,Math.sin(time*.3));
+    gl.drawArrays(gl.TRIANGLES,0,6);
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+}());
+</script>
+</body></html>`;
 }

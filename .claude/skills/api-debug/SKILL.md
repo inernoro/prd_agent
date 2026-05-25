@@ -34,8 +34,8 @@ The API uses AI Access Key authentication:
 # 本地开发
 http://localhost:5000
 
-# 预览环境（分支名 / 替换为 -，转小写）
-https://{branch-slug}.miduo.org
+# 预览环境（v3：{tail}-{prefix}-{projectSlug}.miduo.org，统一走 cdscli 不要手拼）
+python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 # 预览环境 Cloudflare 干扰时（通过 CDS container-exec）
 http://localhost:5000  (容器内)

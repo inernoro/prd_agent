@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
-import { Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownToLine, Clock, Copy, ExternalLink, Loader2, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { PhaseKey } from '@/lib/deploymentPhases';
+import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import type { BranchDeploymentItem } from '@/components/BranchDetailDrawer';
 import { type PhaseLogState, type InlineContainerLogControls } from './PhaseTree';
 
@@ -35,20 +36,43 @@ function HighlightedLogBlock({
   logs,
   maxLines,
   className = '',
+  autoScrollToBottom = false,
 }: {
   logs: string;
   maxLines?: number;
   className?: string;
+  autoScrollToBottom?: boolean;
 }): JSX.Element {
-  const text = maxLines ? lastLines(logs, maxLines) : logs;
+  const displayLogs = normalizeContainerLogsForDisplay(logs);
+  const text = maxLines ? lastLines(displayLogs, maxLines) : displayLogs;
   const lines = text.split(/\r?\n/);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const scrollToBottom = () => {
+    const el = viewportRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
+  useEffect(() => {
+    if (autoScrollToBottom) scrollToBottom();
+  }, [autoScrollToBottom, text]);
+  const hasHeightClass = /\bh-(?:full|\[|[0-9])/.test(className);
   return (
-    <div className={`overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 font-mono text-[11px] leading-5 ${className}`}>
-      {lines.map((line, index) => (
-        <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
-          {line || ' '}
-        </div>
-      ))}
+    <div className={`relative min-h-0 ${hasHeightClass ? className : `h-full ${className}`}`}>
+      <button
+        type="button"
+        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[11px] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
+        onClick={scrollToBottom}
+        title="跳到容器日志底部"
+      >
+        <ArrowDownToLine className="h-3 w-3" />
+        底部
+      </button>
+      <div ref={viewportRef} className="h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[11px] leading-5">
+        {lines.map((line, index) => (
+          <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
+            {line || ' '}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -77,6 +101,13 @@ function PrimaryContainerLogPanel({
   const hasTabs = !!(containerLogControls && containerLogControls.services.length > 1);
   const [maximized, setMaximized] = useState(false);
   const logs = state?.status === 'ok' ? (state.logs || '') : '';
+  /*
+   * Inline logs are a preview, not the full terminal. Keep roughly 20 readable
+   * rows so the deployment history below remains visible; the modal keeps the
+   * complete scrollable log.
+   */
+  const logViewportClass = 'h-[424px]';
+  const emptyLogStateClass = `${logViewportClass} flex items-center justify-center`;
 
   return (
     <section className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
@@ -124,36 +155,36 @@ function PrimaryContainerLogPanel({
       ) : null}
       <div className="min-h-0 flex-1 overflow-hidden p-2">
         {!state ? (
-          <div className="rounded border border-dashed border-[hsl(var(--hairline))] px-3 py-6 text-center text-xs text-muted-foreground">
+          <div className={`${emptyLogStateClass} rounded border border-dashed border-[hsl(var(--hairline))] px-3 text-center text-xs text-muted-foreground`}>
             还没有容器日志。容器进入 running 后这里会显示 docker logs 的最后若干行。
           </div>
         ) : state.status === 'loading' ? (
-          <div className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] px-3 py-3 text-xs text-muted-foreground">
+          <div className={`${emptyLogStateClass} gap-2 rounded border border-[hsl(var(--hairline))] px-3 text-xs text-muted-foreground`}>
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             正在加载容器日志…
           </div>
         ) : state.status === 'error' ? (
-          <div className="rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className={`${emptyLogStateClass} rounded border border-destructive/30 bg-destructive/10 px-3 text-center text-xs text-destructive`}>
             {state.message || '容器日志加载失败'}
           </div>
         ) : !state.logs || !state.logs.trim() ? (
-          <div className="rounded border border-[hsl(var(--hairline))] px-3 py-3 text-xs text-muted-foreground">
+          <div className={`${emptyLogStateClass} rounded border border-[hsl(var(--hairline))] px-3 text-center text-xs text-muted-foreground`}>
             容器尚未输出任何日志（多半是进程在监听端口前就退出了）。
           </div>
         ) : (
-          <HighlightedLogBlock logs={state.logs} maxLines={220} className="max-h-[560px] min-h-[280px]" />
+          <HighlightedLogBlock logs={state.logs} maxLines={220} className={logViewportClass} autoScrollToBottom />
         )}
       </div>
       {maximized ? (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6"
+          className="fixed inset-0 z-[80] flex items-stretch justify-stretch bg-black/70 p-3"
           role="dialog"
           aria-modal="true"
           aria-label="完整容器日志"
           onClick={() => setMaximized(false)}
         >
           <div
-            className="flex h-[min(86vh,920px)] w-[min(92vw,1280px)] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl"
+            className="flex h-full w-full flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
             <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
@@ -218,7 +249,7 @@ function PrimaryContainerLogPanel({
                   {state.message || '容器日志加载失败'}
                 </div>
               ) : logs.trim() ? (
-                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" />
+                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" autoScrollToBottom />
               ) : (
                 <div className="rounded border border-[hsl(var(--hairline))] px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无容器日志。
@@ -301,6 +332,14 @@ function formatDuration(ms: number): string {
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
+function formatRuntimeDuration(deployment: BranchDeploymentItem, now: number): string {
+  if (!deployment.runtimeStartedAt) {
+    return deployment.status === 'running' ? '未就绪' : '未记录';
+  }
+  const end = deployment.runtimeEndedAt || now;
+  return formatDuration(end - deployment.runtimeStartedAt);
+}
+
 export function ActiveDeployment({
   deployment,
   branchErrorMessage,
@@ -312,7 +351,8 @@ export function ActiveDeployment({
 }: ActiveDeploymentProps): JSX.Element {
   const displayStatus = effectiveDeploymentStatus(deployment, branchErrorMessage);
 
-  const duration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
+  const deployDuration = formatDuration((deployment.finishedAt || now) - deployment.startedAt);
+  const runtimeDuration = formatRuntimeDuration(deployment, now);
   const isError = displayStatus === 'error';
 
   return (
@@ -329,20 +369,29 @@ export function ActiveDeployment({
         {deployment.commitSha ? (
           <span className="font-mono text-xs text-muted-foreground">{deployment.commitSha.slice(0, 7)}</span>
         ) : null}
-        <span
-          className={`ml-auto inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
-            displayStatus === 'running'
-              ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
-              : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
-          }`}
-          title={displayStatus === 'running' ? '本次部署已持续时间' : '本次部署耗时'}
-        >
-          <Clock className="h-3.5 w-3.5" />
-          {displayStatus === 'running' ? '已用' : '耗时'} {duration}
-        </span>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
+              displayStatus === 'running'
+                ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+            }`}
+            title="从开始部署到部署动作完成的耗时；运行中时显示当前已用时间"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            部署耗时 {deployDuration}
+          </span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1 font-mono text-xs font-semibold text-muted-foreground"
+            title="从容器通过启动/就绪判断后开始计算；没有就绪事件时显示未就绪或未记录"
+          >
+            <Clock className="h-3.5 w-3.5" />
+            运行时间 {runtimeDuration}
+          </span>
+        </div>
       </header>
 
-      <div className="px-5 py-4" style={{ minHeight: 360 }}>
+      <div className="px-5 py-4">
         <PrimaryContainerLogPanel
           containerLogsByPhase={containerLogsByPhase}
           containerLogControls={containerLogControls}

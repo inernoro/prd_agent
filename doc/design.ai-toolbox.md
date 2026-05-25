@@ -1,6 +1,8 @@
 # AI 百宝箱 (AI Toolbox) · 设计
 
-> **版本**：v1.0 | **日期**：2026-02-03 | **状态**：已实现
+> **版本**：v1.1 | **日期**：2026-05-22 | **状态**：已实现
+>
+> v1.1 更新：新增 3.7 节，记录智能体级文档知识库已落地（Attachment 全文注入），RAG 检索仍为 P2。
 
 ## 一、管理摘要
 
@@ -477,7 +479,7 @@ public class PluginCapability
 | **Database Query** | 查询业务数据库 | P2 |
 | **Email Sender** | 发送邮件通知 | P2 |
 | **Webhook** | 调用外部 API | P2 |
-| **Knowledge Base** | 查询知识库（RAG） | P2 |
+| **Knowledge Base** | 语义检索 / RAG（文档级全文注入已落地，见 3.7；此处特指 RAG 检索插件） | P2 |
 
 #### 3.5.3 MCP 协议支持
 
@@ -568,6 +570,40 @@ public class Workflow : IForkable
     }
 }
 ```
+
+---
+
+### 3.7 知识库（智能体级文档注入）
+
+> 状态：**文档级知识库已落地**（2026-05-22，PR #652）；语义检索 / RAG 仍为 P2（见 `doc/debt.knowledge-base.md`）。
+
+#### 3.7.1 当前能力
+
+自定义智能体可绑定一组文档作为「知识库」，对话时文档全文会被注入 system prompt，让智能体基于私有资料回答。
+
+- **数据落点**：`ToolboxItem.KnowledgeBaseIds`（`List<string>`，指向 `attachments` 集合的 `attachmentId`）
+- **上传通道**：`POST /api/v1/attachments`（multipart），返回 `attachmentId`；后端抽取 `Attachment.ExtractedText`
+- **注入逻辑**：`AiToolboxController` direct-chat 读取绑定文档的 `ExtractedText`，以「## 知识库参考资料」段拼进 system prompt（图片走 vision，文本走全文拼接）
+- **双入口**：
+  - 快速创建向导第 3 步「测试调优」右侧「知识库」区块
+  - 完整模式编辑器（`ToolEditor`）「能力增强」Tab 的知识库区块
+- **单一数据源**：编辑器中已有 KB 与新上传统一进 `knowledgeFiles` 列表，保存时去重；删除即不保存
+- **保存前可验证**：向导测试对话把绑定文档作为 `attachmentId` 传给 direct-chat，无需保存即可看到知识库效果
+
+#### 3.7.2 带来的好处
+
+| 维度 | 改进 |
+|------|------|
+| 零代码配置 | 产品/运营无需写 prompt，上传文档即让智能体「读过」私有资料 |
+| 回答可控 | 智能体基于指定文档回答，减少凭空发挥；对照实验中无 KB 的智能体会明确回答「不知道」 |
+| 即配即测 | 向导内测试对话即时反映知识库，保存前就能验证效果 |
+| 复用既有设施 | 直接复用 Attachment 上传 + 文本抽取，未额外引入存储/解析栈 |
+
+#### 3.7.3 已知边界（详见 debt.knowledge-base.md）
+
+- 全文注入，无 chunk / embedding / 相似度检索 —— 文档多或大会撑爆 token（RAG 为 P2）
+- 与「文档空间」（`document_stores`）是两套并存模型，暂未打通（K-1）
+- 二进制文档抽取能力受 `ExtractedText` 抽取器限制（Excel/CSV 按纯文本）
 
 ---
 

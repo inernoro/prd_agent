@@ -978,6 +978,13 @@ function NodeArtifactRow({ artifact, onPreview }: { artifact: ExecutionArtifact;
         </span>
       )}
       {cdsRun && (
+        <>
+          <span
+            className="hidden max-w-[180px] truncate rounded px-1.5 py-0.5 text-cyan-300/80 md:inline-flex"
+            title={`${cdsRun.gitRepository || '默认 workspace'} · ${cdsRun.gitRef || 'main'} · trace ${cdsRun.traceId || '未上报'}`}
+          >
+            {cdsRun.gitRepository || '默认 workspace'} · {cdsRun.gitRef || 'main'}
+          </span>
         <a
           href={cdsRun.workbenchPath}
           target="_blank"
@@ -988,6 +995,7 @@ function NodeArtifactRow({ artifact, onPreview }: { artifact: ExecutionArtifact;
           <ExternalLink className="w-3 h-3" />
           CDS 面板
         </a>
+        </>
       )}
       {artifact.tags?.includes('auto-generated') && (
         <span className="text-[8px] px-1 py-0.5 rounded bg-purple-500/10 text-purple-400">透传</span>
@@ -1028,14 +1036,17 @@ function readCdsAgentApproval(artifact: ExecutionArtifact): { sessionId: string;
   }
 }
 
-function readCdsAgentRunHandle(artifact: ExecutionArtifact): { sessionId: string; workbenchPath: string } | null {
+function readCdsAgentRunHandle(artifact: ExecutionArtifact): { sessionId: string; workbenchPath: string; traceId?: string; gitRepository?: string; gitRef?: string } | null {
   if (artifact.slotId !== 'cds-agent-run' || !artifact.inlineContent) return null;
   try {
-    const data = JSON.parse(artifact.inlineContent) as { kind?: string; sessionId?: string; workbenchPath?: string };
+    const data = JSON.parse(artifact.inlineContent) as { kind?: string; sessionId?: string; workbenchPath?: string; traceId?: string; gitRepository?: string; gitRef?: string };
     if (data.kind !== 'cds-agent-workflow-run' || !data.sessionId) return null;
     return {
       sessionId: data.sessionId,
       workbenchPath: data.workbenchPath || `/cds-agent?sessionId=${encodeURIComponent(data.sessionId)}`,
+      traceId: data.traceId,
+      gitRepository: data.gitRepository,
+      gitRef: data.gitRef,
     };
   } catch {
     return null;

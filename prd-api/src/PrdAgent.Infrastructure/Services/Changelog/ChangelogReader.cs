@@ -59,7 +59,7 @@ public sealed class ChangelogRelease
 }
 
 /// <summary>
-/// "本周更新" 视图（基于 changelogs 碎片）
+/// "待发布" 视图（基于 changelogs 碎片）
 /// </summary>
 public sealed class CurrentWeekView
 {
@@ -94,6 +94,7 @@ public sealed class GitHubLogEntry
     public string ShortSha { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string AuthorName { get; set; } = string.Empty;
+    public string? AuthorAvatarUrl { get; set; }
     public DateTime CommitTimeUtc { get; set; }
     public string HtmlUrl { get; set; } = string.Empty;
 }
@@ -114,7 +115,7 @@ public sealed class GitHubLogsView
 ///
 /// 数据源策略（按优先级）：
 /// 1. 本地文件（仓库内）：dev 模式快速命中，5 分钟缓存
-/// 2. GitHub Contents API + raw.githubusercontent.com：生产 Docker 模式，24 小时缓存
+/// 2. GitHub Contents API + raw.githubusercontent.com：生产 Docker 模式，默认 5 分钟缓存
 ///
 /// 本地查找顺序：
 /// - 配置项 Changelog:RootPath（绝对路径）
@@ -128,7 +129,8 @@ public sealed class GitHubLogsView
 /// - Changelog:GitHubApiBase = "https://api.github.com"
 /// - Changelog:GitHubRawBase = "https://raw.githubusercontent.com"
 /// - Changelog:GitHubToken   = ""          （可选，提升速率限制）
-/// - Changelog:CacheTtlHours = 24          （GitHub 路径的缓存 TTL）
+/// - Changelog:CacheTtlMinutes = 5         （GitHub 路径的缓存 TTL）
+/// - Changelog:CacheTtlHours = 24          （兼容旧配置；仅显式配置时生效）
 /// </summary>
 public interface IChangelogReader
 {
@@ -149,6 +151,8 @@ public sealed class ChangelogReader : IChangelogReader
     private const string CacheKeyReleases = "changelog:releases";
     private const string CacheKeyGitHubLogs = "changelog:github-logs";
     private static readonly TimeSpan LocalCacheTtl = TimeSpan.FromMinutes(5);
+
+    private static readonly TimeSpan GitHubLogsCacheTtl = TimeSpan.FromMinutes(2);
 
     // 文件名格式：YYYY-MM-DD_<short>.md
     private static readonly Regex FragmentFileNameRegex =
@@ -269,7 +273,7 @@ public sealed class ChangelogReader : IChangelogReader
 
     public async Task<GitHubLogsView> GetGitHubLogsAsync(int limit, bool force = false)
     {
-        if (limit <= 0 || limit > 100) limit = 30;
+        if (limit <= 0 || limit > 1000) limit = 1000;
         var cacheKey = $"{CacheKeyGitHubLogs}:{limit}";
         if (!force && _cache.TryGetValue(cacheKey, out GitHubLogsView? cached) && cached != null)
         {
@@ -353,12 +357,11 @@ public sealed class ChangelogReader : IChangelogReader
 
     private CurrentWeekView BuildCurrentWeekViewFromLocal()
     {
-        var weekStart = ComputeWeekStart();
-        var weekEnd = weekStart.AddDays(6);
+        var dateRange = ComputeUnreleasedDateRange(null);
         var view = new CurrentWeekView
         {
-            WeekStart = weekStart,
-            WeekEnd = weekEnd,
+            WeekStart = dateRange.start,
+            WeekEnd = dateRange.end,
             Source = "local",
             FetchedAt = DateTime.UtcNow,
         };
@@ -381,7 +384,6 @@ public sealed class ChangelogReader : IChangelogReader
                 var fileName = Path.GetFileName(file);
                 var date = ParseFragmentDate(fileName);
                 if (date == null) continue;
-                if (date < weekStart || date > weekEnd) continue;
 
                 string content;
                 try { content = File.ReadAllText(file); }
@@ -402,21 +404,8 @@ public sealed class ChangelogReader : IChangelogReader
             _logger.LogError(ex, "[Changelog] 扫描 changelogs/ 目录失败");
         }
 
-        var changelogPath = Path.Combine(root, "CHANGELOG.md");
-        if (File.Exists(changelogPath))
-        {
-            try
-            {
-                var changelogText = File.ReadAllText(changelogPath);
-                MergeChangelogMarkdownIntoCurrentWeek(view, changelogText, weekStart, weekEnd);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[Changelog] 读取 CHANGELOG.md 补全本周更新失败");
-            }
-        }
-
         view.Fragments = SortFragments(view.Fragments);
+        ApplyUnreleasedDateRange(view);
         return view;
     }
 
@@ -499,9 +488,19 @@ public sealed class ChangelogReader : IChangelogReader
 
     private TimeSpan GetGitHubCacheTtl()
     {
-        var hours = _config.GetValue<int?>("Changelog:CacheTtlHours") ?? 24;
-        if (hours <= 0) hours = 24;
-        return TimeSpan.FromHours(hours);
+        var minutes = _config.GetValue<int?>("Changelog:CacheTtlMinutes");
+        if (minutes.HasValue && minutes.Value > 0)
+        {
+            return TimeSpan.FromMinutes(minutes.Value);
+        }
+
+        var hours = _config.GetValue<int?>("Changelog:CacheTtlHours");
+        if (hours.HasValue && hours.Value > 0)
+        {
+            return TimeSpan.FromHours(hours.Value);
+        }
+
+        return TimeSpan.FromMinutes(5);
     }
 
     private string BuildCommitHtmlUrl(string sha)
@@ -574,6 +573,7 @@ public sealed class ChangelogReader : IChangelogReader
     {
         try
         {
+            var since = DateTime.UtcNow.AddDays(-7);
             var startInfo = new ProcessStartInfo
             {
                 FileName = "git",
@@ -589,7 +589,8 @@ public sealed class ChangelogReader : IChangelogReader
             {
                 startInfo.ArgumentList.Add(branch!);
             }
-            startInfo.ArgumentList.Add($"-n{limit}");
+            startInfo.ArgumentList.Add($"-n{Math.Clamp(limit, 30, 1000)}");
+            startInfo.ArgumentList.Add($"--since={since:O}");
             startInfo.ArgumentList.Add("--date=iso-strict");
             // %cI：提交者时间，与 GitHub commits API 的 committer.date 对齐（%aI 为作者时间，rebase 后易不一致）
             startInfo.ArgumentList.Add("--pretty=format:%H%x1f%cI%x1f%an%x1f%s%x1e");
@@ -631,17 +632,19 @@ public sealed class ChangelogReader : IChangelogReader
                 {
                     continue;
                 }
+                if (committedAtUtc < since) continue;
                 result.Add(new GitHubLogEntry
                 {
                     Sha = sha,
                     ShortSha = sha.Length > 7 ? sha[..7] : sha,
                     Message = message,
                     AuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName,
+                    AuthorAvatarUrl = null,
                     CommitTimeUtc = committedAtUtc,
                     HtmlUrl = BuildCommitHtmlUrl(sha),
                 });
             }
-            return result;
+            return result.OrderByDescending(l => l.CommitTimeUtc).ToList();
         }
         catch (Exception ex)
         {
@@ -704,12 +707,11 @@ public sealed class ChangelogReader : IChangelogReader
 
     private async Task<CurrentWeekView> BuildCurrentWeekViewFromGitHubAsync()
     {
-        var weekStart = ComputeWeekStart();
-        var weekEnd = weekStart.AddDays(6);
+        var dateRange = ComputeUnreleasedDateRange(null);
         var view = new CurrentWeekView
         {
-            WeekStart = weekStart,
-            WeekEnd = weekEnd,
+            WeekStart = dateRange.start,
+            WeekEnd = dateRange.end,
             Source = "github",
             FetchedAt = DateTime.UtcNow,
         };
@@ -725,13 +727,11 @@ public sealed class ChangelogReader : IChangelogReader
 
         view.DataSourceAvailable = true;
 
-        // 仅保留本周日期范围内的文件，避免下载 100+ 个文件
         var filtered = new List<(string name, DateOnly date)>();
         foreach (var name in allNames)
         {
             var date = ParseFragmentDate(name);
             if (date == null) continue;
-            if (date < weekStart || date > weekEnd) continue;
             filtered.Add((name, date.Value));
         }
 
@@ -756,20 +756,8 @@ public sealed class ChangelogReader : IChangelogReader
             if (fragment != null) AddCurrentWeekEntries(view, fragment.FileName, fragment.Date, fragment.Entries);
         }
 
-        try
-        {
-            var changelogText = await FetchRawFileAsync(client, "CHANGELOG.md").ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(changelogText))
-            {
-                MergeChangelogMarkdownIntoCurrentWeek(view, changelogText, weekStart, weekEnd);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Changelog] GitHub CHANGELOG.md 补全本周更新失败");
-        }
-
         view.Fragments = SortFragments(view.Fragments);
+        ApplyUnreleasedDateRange(view);
         return view;
     }
 
@@ -838,81 +826,128 @@ public sealed class ChangelogReader : IChangelogReader
         var repo = GetGitHubRepo();
         var branch = GetGitHubBranch();
         var apiBase = GetGitHubApiBase();
-        var url = $"{apiBase}/repos/{owner}/{repo}/commits?sha={branch}&per_page={limit}";
+        var since = DateTime.UtcNow.AddDays(-7);
+        var max = Math.Clamp(limit, 30, 1000);
+        var page = 1;
+        var reachedOlderThanWindow = false;
 
-        using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
-        using var resp = await client.SendAsync(req).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode)
+        while (!reachedOlderThanWindow && view.Logs.Count < max && page <= 10)
         {
-            _logger.LogWarning("[Changelog] GitHub Commits API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
-            view.DataSourceAvailable = false;
-            return view;
+            var sinceIso = Uri.EscapeDataString(since.ToString("o", CultureInfo.InvariantCulture));
+            var url = $"{apiBase}/repos/{owner}/{repo}/commits?sha={branch}&since={sinceIso}&per_page=100&page={page}";
+
+            using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
+            using var resp = await client.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[Changelog] GitHub Commits API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
+                view.DataSourceAvailable = false;
+                return view;
+            }
+
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                view.DataSourceAvailable = false;
+                return view;
+            }
+
+            var pageItems = doc.RootElement.EnumerateArray().ToList();
+            if (pageItems.Count == 0)
+            {
+                break;
+            }
+
+            foreach (var item in pageItems)
+            {
+                var entry = ParseGitHubCommitItem(item);
+                if (entry == null) continue;
+                if (entry.CommitTimeUtc < since)
+                {
+                    reachedOlderThanWindow = true;
+                    continue;
+                }
+
+                view.Logs.Add(entry);
+                if (view.Logs.Count >= max) break;
+            }
+
+            page++;
         }
 
-        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array)
-        {
-            view.DataSourceAvailable = false;
-            return view;
-        }
-
-        foreach (var item in doc.RootElement.EnumerateArray())
-        {
-            var sha = item.TryGetProperty("sha", out var shaProp) ? shaProp.GetString() : null;
-            var htmlUrl = item.TryGetProperty("html_url", out var htmlUrlProp) ? htmlUrlProp.GetString() : null;
-            if (!item.TryGetProperty("commit", out var commitEl)) continue;
-            var message = commitEl.TryGetProperty("message", out var messageProp) ? messageProp.GetString() : null;
-            string? authorName = null;
-            JsonElement authorEl = default;
-            var hasAuthor = commitEl.TryGetProperty("author", out authorEl);
-            if (hasAuthor)
-            {
-                authorName = authorEl.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
-            }
-            authorName ??= commitEl.TryGetProperty("committer", out var committerEl) &&
-                           committerEl.TryGetProperty("name", out var committerNameProp)
-                ? committerNameProp.GetString()
-                : null;
-            string? committedAtIso = null;
-            if (commitEl.TryGetProperty("committer", out var commitCommitterEl) &&
-                commitCommitterEl.TryGetProperty("date", out var dateProp))
-            {
-                committedAtIso = dateProp.GetString();
-            }
-            committedAtIso ??= hasAuthor && authorEl.TryGetProperty("date", out var authorDateProp)
-                ? authorDateProp.GetString()
-                : null;
-
-            if (string.IsNullOrWhiteSpace(sha) || string.IsNullOrWhiteSpace(committedAtIso))
-            {
-                continue;
-            }
-            if (!DateTime.TryParse(
-                    committedAtIso,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                    out var committedAtUtc))
-            {
-                continue;
-            }
-
-            var firstLine = (message ?? string.Empty)
-                .Split('\n', 2, StringSplitOptions.TrimEntries)[0]
-                .Trim();
-            view.Logs.Add(new GitHubLogEntry
-            {
-                Sha = sha,
-                ShortSha = sha.Length > 7 ? sha[..7] : sha,
-                Message = string.IsNullOrWhiteSpace(firstLine) ? "(no message)" : firstLine,
-                AuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName,
-                CommitTimeUtc = committedAtUtc,
-                HtmlUrl = string.IsNullOrWhiteSpace(htmlUrl) ? BuildCommitHtmlUrl(sha) : htmlUrl!,
-            });
-        }
-
+        view.Logs = view.Logs
+            .GroupBy(l => l.Sha, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderByDescending(l => l.CommitTimeUtc)
+            .ToList();
         view.DataSourceAvailable = true;
         return view;
+    }
+
+    private GitHubLogEntry? ParseGitHubCommitItem(JsonElement item)
+    {
+        var sha = item.TryGetProperty("sha", out var shaProp) ? shaProp.GetString() : null;
+        var htmlUrl = item.TryGetProperty("html_url", out var htmlUrlProp) ? htmlUrlProp.GetString() : null;
+        if (!item.TryGetProperty("commit", out var commitEl)) return null;
+        var message = commitEl.TryGetProperty("message", out var messageProp) ? messageProp.GetString() : null;
+        string? authorName = null;
+        string? avatarUrl = null;
+        JsonElement authorEl = default;
+        var hasCommitAuthor = commitEl.TryGetProperty("author", out authorEl);
+        if (hasCommitAuthor)
+        {
+            authorName = authorEl.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
+        }
+
+        if (item.TryGetProperty("author", out var githubAuthorEl) && githubAuthorEl.ValueKind == JsonValueKind.Object)
+        {
+            avatarUrl = githubAuthorEl.TryGetProperty("avatar_url", out var avatarProp) ? avatarProp.GetString() : null;
+            authorName = githubAuthorEl.TryGetProperty("login", out var loginProp) && !string.IsNullOrWhiteSpace(loginProp.GetString())
+                ? loginProp.GetString()
+                : authorName;
+        }
+
+        authorName ??= commitEl.TryGetProperty("committer", out var committerEl) &&
+                       committerEl.TryGetProperty("name", out var committerNameProp)
+            ? committerNameProp.GetString()
+            : null;
+        string? committedAtIso = null;
+        if (commitEl.TryGetProperty("committer", out var commitCommitterEl) &&
+            commitCommitterEl.TryGetProperty("date", out var dateProp))
+        {
+            committedAtIso = dateProp.GetString();
+        }
+        committedAtIso ??= hasCommitAuthor && authorEl.TryGetProperty("date", out var authorDateProp)
+            ? authorDateProp.GetString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(sha) || string.IsNullOrWhiteSpace(committedAtIso))
+        {
+            return null;
+        }
+        if (!DateTime.TryParse(
+                committedAtIso,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var committedAtUtc))
+        {
+            return null;
+        }
+
+        var firstLine = (message ?? string.Empty)
+            .Split('\n', 2, StringSplitOptions.TrimEntries)[0]
+            .Trim();
+        return new GitHubLogEntry
+        {
+            Sha = sha,
+            ShortSha = sha.Length > 7 ? sha[..7] : sha,
+            Message = string.IsNullOrWhiteSpace(firstLine) ? "(no message)" : firstLine,
+            AuthorName = string.IsNullOrWhiteSpace(authorName) ? "unknown" : authorName,
+            AuthorAvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl,
+            CommitTimeUtc = committedAtUtc,
+            HtmlUrl = string.IsNullOrWhiteSpace(htmlUrl) ? BuildCommitHtmlUrl(sha) : htmlUrl!,
+        };
     }
 
     /// <summary>commit 条目：UTC 时间 + 按 CN(UTC+8) 换算出的日期（用于匹配 CHANGELOG ### 日期段）</summary>
@@ -986,6 +1021,25 @@ public sealed class ChangelogReader : IChangelogReader
         {
             return (utcNow + TimeSpan.FromHours(8)).DateTime;
         }
+    }
+
+    private static (DateOnly start, DateOnly end) ComputeUnreleasedDateRange(IEnumerable<ChangelogFragment>? fragments)
+    {
+        var dates = fragments?.Select(f => f.Date).ToList();
+        if (dates is { Count: > 0 })
+        {
+            return (dates.Min(), dates.Max());
+        }
+
+        var today = DateOnly.FromDateTime(GetChinaNow());
+        return (today, today);
+    }
+
+    private static void ApplyUnreleasedDateRange(CurrentWeekView view)
+    {
+        var range = ComputeUnreleasedDateRange(view.Fragments);
+        view.WeekStart = range.start;
+        view.WeekEnd = range.end;
     }
 
     private static void MergeChangelogMarkdownIntoCurrentWeek(

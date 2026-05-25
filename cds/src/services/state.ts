@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -16,6 +16,8 @@ import {
 } from '../updater/active-update-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
+const PORT_ALLOC_SCAN_SPAN = 40_000;
+const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 const SYSTEM_PROJECT_ID = '__system__';
@@ -88,6 +90,7 @@ function emptyState(): CdsState {
     branches: {},
     nextPortIndex: 0,
     logs: {},
+    containerLogArchives: {},
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
@@ -220,6 +223,7 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
@@ -803,7 +807,7 @@ export class StateService {
 
   // ── Port allocation ──
 
-  allocatePort(portStart: number): number {
+  allocatePort(portStart: number, extraUsedPorts?: ReadonlySet<number>): number {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
@@ -813,10 +817,20 @@ export class StateService {
     for (const svc of this.state.infraServices || []) {
       if (svc.hostPort) usedPorts.add(svc.hostPort);
     }
-    let port = portStart + this.state.nextPortIndex;
-    while (usedPorts.has(port)) port++;
-    this.state.nextPortIndex++;
-    return port;
+    for (const port of extraUsedPorts || []) {
+      if (Number.isInteger(port) && port > 0) usedPorts.add(port);
+    }
+
+    const span = Math.max(1, Math.min(PORT_ALLOC_SCAN_SPAN, 65535 - portStart));
+    const sequence = Math.max(0, this.state.nextPortIndex || 0);
+    for (let i = 0; i < span; i++) {
+      const offset = ((sequence + i) * PORT_ALLOC_STRIDE) % span;
+      const port = portStart + offset;
+      if (usedPorts.has(port)) continue;
+      this.state.nextPortIndex = sequence + i + 1;
+      return port;
+    }
+    throw new Error(`没有可用端口：扫描范围 ${portStart}-${portStart + span - 1} 已全部占用`);
   }
 
   // ── Routing rules ──
@@ -904,6 +918,34 @@ export class StateService {
 
   getLogs(branchId: string): OperationLog[] {
     return this.state.logs[branchId] || [];
+  }
+
+  appendContainerLogArchive(branchId: string, entry: Omit<ContainerLogArchiveEntry, 'id' | 'branchId' | 'capturedAt' | 'sha256' | 'byteLength' | 'lineCount'> & {
+    capturedAt?: string;
+    logs: string;
+  }): ContainerLogArchiveEntry {
+    if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
+    if (!this.state.containerLogArchives[branchId]) {
+      this.state.containerLogArchives[branchId] = [];
+    }
+    const capturedAt = entry.capturedAt || new Date().toISOString();
+    const logs = entry.logs || '';
+    const archived: ContainerLogArchiveEntry = {
+      ...entry,
+      id: `${branchId}:${capturedAt}:${this.state.containerLogArchives[branchId].length + 1}`,
+      branchId,
+      capturedAt,
+      sha256: crypto.createHash('sha256').update(logs).digest('hex'),
+      byteLength: Buffer.byteLength(logs, 'utf8'),
+      lineCount: logs ? logs.split(/\r?\n/).length : 0,
+      logs,
+    };
+    this.state.containerLogArchives[branchId].push(archived);
+    return archived;
+  }
+
+  getContainerLogArchives(branchId: string): ContainerLogArchiveEntry[] {
+    return (this.state.containerLogArchives || {})[branchId] || [];
   }
 
   removeLogs(branchId: string): void {

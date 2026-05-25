@@ -5,11 +5,12 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
 import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
@@ -516,6 +517,7 @@ function TreeNode({
   folderPrimaryMap,
   expandedFolders,
   useContentTitle,
+  showUpdatedTime,
   contentFirstLines,
   contentMatchIds,
   onToggleFolder,
@@ -533,6 +535,7 @@ function TreeNode({
   folderPrimaryMap: Map<string, string>;
   expandedFolders: Set<string>;
   useContentTitle: boolean;
+  showUpdatedTime: boolean;
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
   onToggleFolder: (id: string) => void;
@@ -652,6 +655,16 @@ function TreeNode({
           </span>
         )}
 
+        {/* 更新时间副标题：由"显示设置 → 显示更新时间"开关控制，默认关 */}
+        {!isFolder && showUpdatedTime && entry.updatedAt && (
+          <RelativeTime
+            value={entry.updatedAt}
+            refreshIntervalMs={0}
+            className="text-[9.5px] tabular-nums flex-shrink-0 text-token-muted"
+            title={`最后更新：${new Date(entry.updatedAt).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+          />
+        )}
+
         {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
         {!isFolder && contentMatchIds.has(entry.id) && (
           <span
@@ -747,6 +760,7 @@ function TreeNode({
           folderPrimaryMap={folderPrimaryMap}
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
+          showUpdatedTime={showUpdatedTime}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
           onToggleFolder={onToggleFolder}
@@ -841,6 +855,11 @@ export function DocBrowser({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [useContentTitle, setUseContentTitle] = useState(true);
+  const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(
+    () => sessionStorage.getItem('doc-browser-show-updated-time') === '1',
+  );
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -855,6 +874,11 @@ export function DocBrowser({
     return saved ? parseInt(saved, 10) : 280;
   });
   const [resizing, setResizing] = useState(false);
+  // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const resizeBaseLeftRef = useRef(0);
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
@@ -913,12 +937,13 @@ export function DocBrowser({
   useEffect(() => {
     if (!resizing) return;
     const handleMove = (e: MouseEvent) => {
-      const newWidth = Math.min(560, Math.max(200, e.clientX - 20));
+      // 以拖拽开始时量出的侧栏真实左边界为基准，宽度 = 鼠标 X - 左边界，1:1 跟手
+      const newWidth = Math.min(560, Math.max(200, e.clientX - resizeBaseLeftRef.current));
       setSidebarWidth(newWidth);
     };
     const handleUp = () => {
       setResizing(false);
-      sessionStorage.setItem('doc-browser-sidebar-width', String(sidebarWidth));
+      sessionStorage.setItem('doc-browser-sidebar-width', String(sidebarWidthRef.current));
     };
     document.addEventListener('mousemove', handleMove);
     document.addEventListener('mouseup', handleUp);
@@ -930,7 +955,7 @@ export function DocBrowser({
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [resizing, sidebarWidth]);
+  }, [resizing]);
 
   // 从 entries 的 metadata 中构建每个文件夹的主文档映射
   const folderPrimaryMap = useMemo(() => {
@@ -1004,6 +1029,16 @@ export function DocBrowser({
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showAddMenu]);
+
+  // 显示设置菜单 click outside
+  useEffect(() => {
+    if (!showSettingsMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) setShowSettingsMenu(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showSettingsMenu]);
 
   // 搜索过滤（本地 title 搜索 + 可选后端内容搜索）
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
@@ -1216,7 +1251,7 @@ export function DocBrowser({
     <div className="surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]" style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
-      <div className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
+      <div ref={sidebarRef} className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
         style={{
           width: `${sidebarWidth}px`,
           minHeight: 0,
@@ -1224,7 +1259,7 @@ export function DocBrowser({
 
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
         <div className="surface-panel-header space-y-2.5 px-3 py-3">
-          {/* 标题模式切换（正文标题/文件名）— 保留 */}
+          {/* 标题模式切换（正文标题/文件名）+ 显示设置 */}
           <div className="flex items-center justify-between">
             <button
               onClick={() => setUseContentTitle(!useContentTitle)}
@@ -1233,6 +1268,35 @@ export function DocBrowser({
               {useContentTitle ? <ToggleRight size={12} className="text-token-accent" /> : <ToggleLeft size={12} />}
               {useContentTitle ? '正文标题' : '文件名'}
             </button>
+            <div ref={settingsMenuRef} className="relative">
+              <button
+                onClick={() => setShowSettingsMenu(v => !v)}
+                className="flex cursor-pointer items-center gap-1 rounded-[7px] px-1.5 py-0.5 text-[10px] text-token-muted transition-colors hover-bg-soft"
+                title="显示设置">
+                <Settings size={11} className={showUpdatedTime ? 'text-token-accent' : ''} />
+                显示
+              </button>
+              {showSettingsMenu && (
+                <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover:bg-white/6">
+                    <input
+                      type="checkbox"
+                      checked={showUpdatedTime}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setShowUpdatedTime(next);
+                        sessionStorage.setItem('doc-browser-show-updated-time', next ? '1' : '0');
+                      }}
+                      className="h-3 w-3 cursor-pointer accent-current"
+                    />
+                    显示更新时间
+                  </label>
+                  <div className="px-2 py-1 text-[10px] text-token-muted">
+                    显示每条目最后变更时间，鼠标悬停查看精确时间和作者。
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="flex gap-1.5">
@@ -1414,6 +1478,7 @@ export function DocBrowser({
               folderPrimaryMap={folderPrimaryMap}
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
+              showUpdatedTime={showUpdatedTime}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
               onToggleFolder={toggleFolder}
@@ -1451,7 +1516,11 @@ export function DocBrowser({
         {/* 拖拽调整宽度的把手 */}
         <div
           className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
-          onMouseDown={(e) => { e.preventDefault(); setResizing(true); }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+            setResizing(true);
+          }}
           style={{ zIndex: 10 }}
         >
           <div
@@ -1513,22 +1582,26 @@ export function DocBrowser({
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
                 if (!sel || sel.isFolder) return null;
+                // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
+                // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
                 return (
                   <div className="ml-auto flex items-center gap-3 min-w-0">
                     <span
                       className="text-[10px] whitespace-nowrap"
                       style={{ color: 'var(--text-muted)' }}
-                      title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`}
                     >
-                      更新于 {formatMetaTime(sel.updatedAt)}
+                      更新于 <RelativeTime value={sel.updatedAt} fallback="未知时间" title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`} />
                     </span>
-                    <span
-                      className="text-[10px] truncate max-w-[160px]"
-                      style={{ color: 'var(--text-muted)' }}
-                      title={`更新者：${sel.updatedByName || '未知用户'}`}
-                    >
-                      更新者 {sel.updatedByName || '未知用户'}
-                    </span>
+                    {/* 作者未知时不显示「更新者 未知用户」，减少噪音 */}
+                    {sel.updatedByName && (
+                      <span
+                        className="text-[10px] truncate max-w-[160px]"
+                        style={{ color: 'var(--text-muted)' }}
+                        title={`更新者：${sel.updatedByName}`}
+                      >
+                        更新者 {sel.updatedByName}
+                      </span>
+                    )}
                   </div>
                 );
               })()}

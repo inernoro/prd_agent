@@ -39,15 +39,21 @@ public class OfficialSkillsController : ControllerBase
     {
         var baseUrl = ResolveBaseUrl();
 
-        // findmapskills：特殊处理（版本号 + {{BASE_URL}} 占位替换）
-        if (skillKey == OfficialSkillTemplates.FindMapSkillsKey)
+        // 模板类官方技能（findmapskills / ai-defect-resolve）：占位替换 + SKILL.md/README
+        if (skillKey == OfficialSkillTemplates.FindMapSkillsKey || skillKey == OfficialSkillTemplates.AiDefectResolveKey)
         {
+            var isDefect = skillKey == OfficialSkillTemplates.AiDefectResolveKey;
+            var version = isDefect ? OfficialSkillTemplates.AiDefectResolveVersion : OfficialSkillTemplates.FindMapSkillsVersion;
+            var releaseDate = isDefect ? OfficialSkillTemplates.AiDefectResolveReleaseDate : OfficialSkillTemplates.FindMapSkillsReleaseDate;
+            var skillTemplate = isDefect ? OfficialSkillTemplates.AiDefectResolveSkillMd : OfficialSkillTemplates.FindMapSkillsSkillMd;
+            var readmeTemplate = isDefect ? OfficialSkillTemplates.AiDefectResolveReadme : OfficialSkillTemplates.FindMapSkillsReadme;
+
             string Subst(string template) => template
                 .Replace("{{BASE_URL}}", baseUrl)
-                .Replace("{{VERSION}}", OfficialSkillTemplates.FindMapSkillsVersion)
-                .Replace("{{RELEASE_DATE}}", OfficialSkillTemplates.FindMapSkillsReleaseDate);
-            var skillMd = Subst(OfficialSkillTemplates.FindMapSkillsSkillMd);
-            var readme = Subst(OfficialSkillTemplates.FindMapSkillsReadme);
+                .Replace("{{VERSION}}", version)
+                .Replace("{{RELEASE_DATE}}", releaseDate);
+            var skillMd = Subst(skillTemplate);
+            var readme = Subst(readmeTemplate);
 
             using var ms = new MemoryStream();
             using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))

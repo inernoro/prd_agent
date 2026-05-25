@@ -33,7 +33,34 @@ export async function apiRequest<T = unknown>(
 ): Promise<T> {
   const { method = 'GET', body, signal, headers } = options;
   const url = path.startsWith('/') ? path : `/${path}`;
+  const init: RequestInit = buildRequestInit(method, body, signal, headers);
 
+  const first = await fetchAndParse(url, init);
+  if (first.res.ok) return first.parsed as T;
+
+  const shouldRetryViaCdsPassthrough =
+    method === 'GET' &&
+    url.startsWith('/api/') &&
+    !url.startsWith('/_cds/') &&
+    !first.requestId &&
+    hasNoReadableError(first.parsed);
+
+  if (shouldRetryViaCdsPassthrough) {
+    const retryUrl = `/_cds${url}`;
+    const retry = await fetchAndParse(retryUrl, init);
+    if (retry.res.ok) return retry.parsed as T;
+    throwApiError(method, retryUrl, retry.res, retry.parsed, retry.requestId);
+  }
+
+  throwApiError(method, url, first.res, first.parsed, first.requestId);
+}
+
+function buildRequestInit(
+  method: NonNullable<ApiOptions['method']>,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  headers: Record<string, string> | undefined
+): RequestInit {
   const init: RequestInit = {
     method,
     credentials: 'include',
@@ -45,7 +72,13 @@ export async function apiRequest<T = unknown>(
     (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
+  return init;
+}
 
+async function fetchAndParse(
+  url: string,
+  init: RequestInit
+): Promise<{ res: Response; parsed: unknown; requestId?: string }> {
   const res = await fetch(url, init);
   const text = await res.text();
   let parsed: unknown = text;
@@ -56,27 +89,43 @@ export async function apiRequest<T = unknown>(
       // leave as text
     }
   }
+  const requestId = res.headers.get('x-cds-request-id') || undefined;
+  return { res, parsed, requestId };
+}
 
-  if (!res.ok) {
-    const requestId = res.headers.get('x-cds-request-id') || undefined;
-    const details: string[] = [];
-    if (typeof parsed === 'object' && parsed !== null) {
-      const body = parsed as Record<string, unknown>;
-      for (const key of ['message', 'detail', 'hint', 'error']) {
-        const value = body[key];
-        if (typeof value === 'string' && value.trim() && !details.includes(value.trim())) {
-          details.push(value.trim());
-        }
+function hasNoReadableError(parsed: unknown): boolean {
+  if (typeof parsed === 'string') return parsed.trim().length === 0;
+  if (!parsed || typeof parsed !== 'object') return true;
+  const body = parsed as Record<string, unknown>;
+  return !['message', 'detail', 'hint', 'error'].some((key) => {
+    const value = body[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+function throwApiError(
+  method: string,
+  url: string,
+  res: Response,
+  parsed: unknown,
+  requestId: string | undefined
+): never {
+  const details: string[] = [];
+  if (typeof parsed === 'object' && parsed !== null) {
+    const body = parsed as Record<string, unknown>;
+    for (const key of ['message', 'detail', 'hint', 'error']) {
+      const value = body[key];
+      if (typeof value === 'string' && value.trim() && !details.includes(value.trim())) {
+        details.push(value.trim());
       }
-    } else if (typeof parsed === 'string' && parsed.trim()) {
-      details.push(parsed.trim().slice(0, 240));
     }
-    const reason = details.length
-      ? details.join(' · ')
-      : '服务拒绝了请求，但没有返回可读错误原因；请在 HTTP 活动详情里用 requestId 追踪。';
-    const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
-    const message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
-    throw new ApiError(res.status, parsed, message, requestId);
+  } else if (typeof parsed === 'string' && parsed.trim()) {
+    details.push(parsed.trim().slice(0, 240));
   }
-  return parsed as T;
+  const reason = details.length
+    ? details.join(' · ')
+    : '服务拒绝了请求，但没有返回可读错误原因；请在 HTTP 活动详情里用 requestId 追踪。';
+  const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
+  const message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
+  throw new ApiError(res.status, parsed, message, requestId);
 }

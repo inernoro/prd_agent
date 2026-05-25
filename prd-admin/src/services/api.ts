@@ -650,6 +650,10 @@ export const api = {
       get: () => '/api/report-agent/my/daily-log-tags',
       update: () => '/api/report-agent/my/daily-log-tags',
     },
+    defaultTab: {
+      get: () => '/api/report-agent/my/default-tab',
+      update: () => '/api/report-agent/my/default-tab',
+    },
     personalStats: () => '/api/report-agent/my/stats',
     teamWorkflow: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow`,
     teamWorkflowRun: (teamId: string) => `/api/report-agent/teams/${teamId}/workflow/run`,
@@ -1092,12 +1096,15 @@ export const api = {
   // ============ 统一短链解析 ============
   shortLinks: {
     resolve: (seq: string | number) => `/api/short-links/${seq}`,
+    // P1 URL 统一：接受任意 slug（纯数字 → Seq，其它 → Token）走同一端点
+    resolveSlug: (slug: string) => `/api/short-links/resolve/${encodeURIComponent(slug)}`,
   },
   // ============ 快捷指令 ============
   shortcuts: {
     list: () => '/api/shortcuts',
     create: () => '/api/shortcuts',
     delete: (id: string) => `/api/shortcuts/${id}`,
+    extend: (id: string) => `/api/shortcuts/${id}/extend`,
     setup: (id: string) => `/api/shortcuts/${id}/setup`,
     installData: (id: string) => `/api/shortcuts/${id}/install-data`,
     bindingTargets: () => '/api/shortcuts/binding-targets',

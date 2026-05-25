@@ -377,7 +377,14 @@ describe('Server route ordering (regression)', () => {
     expect(settingsNoProject.status).toBe(302);
     expect(settingsNoProject.body).toContain('/project-list');
 
-    // 10. Unmigrated paths still resolve to the legacy SPA shell, not React.
+    // 10. The old basic-auth login filename is retired; it must never serve
+    // the legacy HTML file or fall through to the legacy SPA shell.
+    const loginRedirect = await request(server, '/login.html?redirect=%2Fcds-settings');
+    expect(loginRedirect.status).toBe(301);
+    expect(loginRedirect.body).toContain('/login?redirect=%2Fcds-settings');
+    expect(loginRedirect.body).not.toContain('DASHBOARD');
+
+    // 11. Unmigrated paths still resolve to the legacy SPA shell, not React.
     const legacy = await request(server, '/some/legacy/route');
     expect(legacy.body).toContain('DASHBOARD');
     expect(legacy.body).not.toContain('REACT_BUNDLE');

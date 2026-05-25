@@ -970,11 +970,163 @@ public class UsersController : ControllerBase
         await _db.Users.UpdateOneAsync(u => u.UserId == uid, Builders<User>.Update.Set(u => u.DisplayName, name), cancellationToken: ct);
         _logger.LogInformation("User {UserId} displayName updated by admin", uid);
 
+        // 级联更新所有冗余姓名快照字段（周报域）：用户改名后保持各处展示一致
+        // 使用 CancellationToken.None，避免客户端断开导致级联中断（server-authority 原则）
+        var cascadeCt = CancellationToken.None;
+
+        var teamLeaderUpdate = await _db.ReportTeams.UpdateManyAsync(
+            Builders<ReportTeam>.Filter.Eq(t => t.LeaderUserId, uid),
+            Builders<ReportTeam>.Update.Set(t => t.LeaderName, name).Set(t => t.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: cascadeCt);
+
+        var teamMemberUpdate = await _db.ReportTeamMembers.UpdateManyAsync(
+            Builders<ReportTeamMember>.Filter.Eq(m => m.UserId, uid),
+            Builders<ReportTeamMember>.Update.Set(m => m.UserName, name),
+            cancellationToken: cascadeCt);
+
+        var reportAuthorUpdate = await _db.WeeklyReports.UpdateManyAsync(
+            Builders<WeeklyReport>.Filter.Eq(r => r.UserId, uid),
+            Builders<WeeklyReport>.Update.Set(r => r.UserName, name),
+            cancellationToken: cascadeCt);
+
+        var reportReviewerUpdate = await _db.WeeklyReports.UpdateManyAsync(
+            Builders<WeeklyReport>.Filter.Eq(r => r.ReviewedBy, uid),
+            Builders<WeeklyReport>.Update.Set(r => r.ReviewedByName, name),
+            cancellationToken: cascadeCt);
+
+        var reportReturnerUpdate = await _db.WeeklyReports.UpdateManyAsync(
+            Builders<WeeklyReport>.Filter.Eq(r => r.ReturnedBy, uid),
+            Builders<WeeklyReport>.Update.Set(r => r.ReturnedByName, name),
+            cancellationToken: cascadeCt);
+
+        var dailyLogUpdate = await _db.ReportDailyLogs.UpdateManyAsync(
+            Builders<ReportDailyLog>.Filter.Eq(d => d.UserId, uid),
+            Builders<ReportDailyLog>.Update.Set(d => d.UserName, name),
+            cancellationToken: cascadeCt);
+
+        var likeUpdate = await _db.ReportLikes.UpdateManyAsync(
+            Builders<ReportLike>.Filter.Eq(l => l.UserId, uid),
+            Builders<ReportLike>.Update.Set(l => l.UserName, name),
+            cancellationToken: cascadeCt);
+
+        var viewUpdate = await _db.ReportViewEvents.UpdateManyAsync(
+            Builders<ReportViewEvent>.Filter.Eq(v => v.UserId, uid),
+            Builders<ReportViewEvent>.Update.Set(v => v.UserName, name),
+            cancellationToken: cascadeCt);
+
+        _logger.LogInformation(
+            "User {UserId} displayName cascade: teamLeader={TL}, teamMember={TM}, reportAuthor={RA}, reviewer={RV}, returner={RT}, dailyLog={DL}, like={LK}, view={VW}",
+            uid,
+            teamLeaderUpdate.ModifiedCount, teamMemberUpdate.ModifiedCount,
+            reportAuthorUpdate.ModifiedCount, reportReviewerUpdate.ModifiedCount,
+            reportReturnerUpdate.ModifiedCount, dailyLogUpdate.ModifiedCount,
+            likeUpdate.ModifiedCount, viewUpdate.ModifiedCount);
+
         return Ok(ApiResponse<UserDisplayNameUpdateResponse>.Ok(new UserDisplayNameUpdateResponse
         {
             UserId = uid,
             DisplayName = name,
             UpdatedAt = DateTime.UtcNow
+        }));
+    }
+
+    /// <summary>
+    /// 一次性回填所有周报域的冗余姓名快照字段，将其对齐到 User 表当前 DisplayName。
+    /// 用于历史数据修复 —— 早期改名未触发级联导致快照与 User 表不一致。
+    /// </summary>
+    [HttpPost("backfill-display-names")]
+    public async Task<IActionResult> BackfillDisplayNames(CancellationToken ct)
+    {
+        var users = await _db.Users.Find(_ => true).ToListAsync(ct);
+        long teamLeaderModified = 0;
+        long teamMemberModified = 0;
+        long reportAuthorModified = 0;
+        long reportReviewerModified = 0;
+        long reportReturnerModified = 0;
+        long dailyLogModified = 0;
+        long likeModified = 0;
+        long viewModified = 0;
+
+        foreach (var u in users)
+        {
+            var name = (u.DisplayName ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            var uid = u.UserId;
+
+            teamLeaderModified += (await _db.ReportTeams.UpdateManyAsync(
+                Builders<ReportTeam>.Filter.And(
+                    Builders<ReportTeam>.Filter.Eq(t => t.LeaderUserId, uid),
+                    Builders<ReportTeam>.Filter.Ne(t => t.LeaderName, name)),
+                Builders<ReportTeam>.Update.Set(t => t.LeaderName, name).Set(t => t.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct)).ModifiedCount;
+
+            teamMemberModified += (await _db.ReportTeamMembers.UpdateManyAsync(
+                Builders<ReportTeamMember>.Filter.And(
+                    Builders<ReportTeamMember>.Filter.Eq(m => m.UserId, uid),
+                    Builders<ReportTeamMember>.Filter.Ne(m => m.UserName, name)),
+                Builders<ReportTeamMember>.Update.Set(m => m.UserName, name),
+                cancellationToken: ct)).ModifiedCount;
+
+            reportAuthorModified += (await _db.WeeklyReports.UpdateManyAsync(
+                Builders<WeeklyReport>.Filter.And(
+                    Builders<WeeklyReport>.Filter.Eq(r => r.UserId, uid),
+                    Builders<WeeklyReport>.Filter.Ne(r => r.UserName, name)),
+                Builders<WeeklyReport>.Update.Set(r => r.UserName, name),
+                cancellationToken: ct)).ModifiedCount;
+
+            reportReviewerModified += (await _db.WeeklyReports.UpdateManyAsync(
+                Builders<WeeklyReport>.Filter.And(
+                    Builders<WeeklyReport>.Filter.Eq(r => r.ReviewedBy, uid),
+                    Builders<WeeklyReport>.Filter.Ne(r => r.ReviewedByName, name)),
+                Builders<WeeklyReport>.Update.Set(r => r.ReviewedByName, name),
+                cancellationToken: ct)).ModifiedCount;
+
+            reportReturnerModified += (await _db.WeeklyReports.UpdateManyAsync(
+                Builders<WeeklyReport>.Filter.And(
+                    Builders<WeeklyReport>.Filter.Eq(r => r.ReturnedBy, uid),
+                    Builders<WeeklyReport>.Filter.Ne(r => r.ReturnedByName, name)),
+                Builders<WeeklyReport>.Update.Set(r => r.ReturnedByName, name),
+                cancellationToken: ct)).ModifiedCount;
+
+            dailyLogModified += (await _db.ReportDailyLogs.UpdateManyAsync(
+                Builders<ReportDailyLog>.Filter.And(
+                    Builders<ReportDailyLog>.Filter.Eq(d => d.UserId, uid),
+                    Builders<ReportDailyLog>.Filter.Ne(d => d.UserName, name)),
+                Builders<ReportDailyLog>.Update.Set(d => d.UserName, name),
+                cancellationToken: ct)).ModifiedCount;
+
+            likeModified += (await _db.ReportLikes.UpdateManyAsync(
+                Builders<ReportLike>.Filter.And(
+                    Builders<ReportLike>.Filter.Eq(l => l.UserId, uid),
+                    Builders<ReportLike>.Filter.Ne(l => l.UserName, name)),
+                Builders<ReportLike>.Update.Set(l => l.UserName, name),
+                cancellationToken: ct)).ModifiedCount;
+
+            viewModified += (await _db.ReportViewEvents.UpdateManyAsync(
+                Builders<ReportViewEvent>.Filter.And(
+                    Builders<ReportViewEvent>.Filter.Eq(v => v.UserId, uid),
+                    Builders<ReportViewEvent>.Filter.Ne(v => v.UserName, name)),
+                Builders<ReportViewEvent>.Update.Set(v => v.UserName, name),
+                cancellationToken: ct)).ModifiedCount;
+        }
+
+        _logger.LogWarning(
+            "BackfillDisplayNames executed: users={U} teamLeader={TL} teamMember={TM} reportAuthor={RA} reviewer={RV} returner={RT} dailyLog={DL} like={LK} view={VW}",
+            users.Count, teamLeaderModified, teamMemberModified,
+            reportAuthorModified, reportReviewerModified, reportReturnerModified,
+            dailyLogModified, likeModified, viewModified);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            scannedUsers = users.Count,
+            teamLeaderModified,
+            teamMemberModified,
+            reportAuthorModified,
+            reportReviewerModified,
+            reportReturnerModified,
+            dailyLogModified,
+            likeModified,
+            viewModified,
         }));
     }
 

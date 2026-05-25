@@ -161,6 +161,13 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(month / 12)} 年前`;
 }
 
+function formatAbsoluteTime(iso: string): string {
+  if (!iso) return '';
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return iso;
+  return new Date(ts).toLocaleString();
+}
+
 /** "1.3s" / "12s" / "1m23s" / "2m05s" — runStartedAt 倒数用 */
 function formatElapsed(ms: number): string {
   if (ms <= 0) return '0s';
@@ -659,7 +666,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         appendRunLine(title);
       });
       setRunState((current) => (current === 'error' ? 'error' : 'success'));
-      onToast(`${label} 已提交`);
+      onToast(`${label} 已提交，正在等待 CDS 验证`);
       void loadSelfStatus();
       // 2026-05-04 fix(用户反馈"显示已提交重启,但实际未重启"):
       // SSE 'done' 只代表后端发起了 process.exit + spawn,不代表新进程**真起来了**。
@@ -742,10 +749,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm font-medium">当前分支</span>
                       <CodePill>{branchState.data.current || '-'}</CodePill>
-                      {branchState.data.commitHash ? <CodePill>{branchState.data.commitHash}</CodePill> : null}
                     </div>
                     <div className="mt-2 text-sm leading-6 text-muted-foreground">
-                      更新会先 fetch,再切到目标分支并对齐 origin,自动校验通过后重启 CDS。
+                      选择目标分支后更新；默认使用当前分支。
                     </div>
                   </div>
                   <Button type="button" variant="outline" onClick={() => void loadBranches()}>
@@ -761,9 +767,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   <label className="block space-y-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium">目标分支</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {visibleBranches.length} 个候选 · 按更新时间倒序 · 标记表示该分支动过 cds/
-                      </span>
+                      {visibleBranches.length > 1 ? (
+                        <span className="text-[11px] text-muted-foreground">
+                          {visibleBranches.length} 个候选 · 按更新时间倒序
+                        </span>
+                      ) : null}
                     </div>
                     <div ref={pickerWrapRef} className="relative">
                       <input
@@ -1020,50 +1028,40 @@ function SelfUpdateStatusPanel({
     );
   }
   const data = state.data;
+  const remoteAheadSubjects = Array.isArray(data.remoteAheadSubjects) ? data.remoteAheadSubjects : [];
+  const selfUpdateHistory = Array.isArray(data.selfUpdateHistory) ? data.selfUpdateHistory : [];
+  const remoteAheadCount = Number.isFinite(data.remoteAheadCount) ? data.remoteAheadCount : 0;
+  const localAheadCount = Number.isFinite(data.localAheadCount) ? data.localAheadCount : 0;
+  const headSha = data.headSha || '';
   const aheadColor =
-    data.remoteAheadCount === 0
+    remoteAheadCount === 0
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
       : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-  // 用户反馈 2026-05-06:"现在版本和最新版本差多少 / 差距在哪里"。
-  // 一句话总结:本地 SHA · 远端最新 SHA · 落后 N commit。chip 之上,扫一眼定位。
-  const remoteHeadSha = data.remoteAheadSubjects[0]?.sha;
-  const showVersionSummary = data.fetchOk && (data.headSha || remoteHeadSha);
 
   return (
     <div className="rounded-md border border-border bg-card px-4 py-3">
-      {showVersionSummary ? (
-        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <span className="text-muted-foreground">本地</span>
-          <CodePill>{data.headSha || '-'}</CodePill>
-          <span className="text-muted-foreground">→</span>
-          <span className="text-muted-foreground">远端最新</span>
-          <CodePill>{remoteHeadSha || data.headSha || '-'}</CodePill>
-          {data.remoteAheadCount > 0 ? (
-            <span className="font-semibold text-amber-700 dark:text-amber-300">
-              落后 {data.remoteAheadCount} 个 commit
-            </span>
-          ) : (
-            <span className="font-semibold text-emerald-700 dark:text-emerald-300">已是最新</span>
-          )}
-        </div>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
-        {/* GitHub 远端状态 chip */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="text-sm text-muted-foreground">当前版本</span>
+        <CodePill>{headSha || '-'}</CodePill>
+        {data.headIso ? (
+          <span className="text-xs text-muted-foreground" title={formatAbsoluteTime(data.headIso)}>
+            代码更新于 {formatRelativeTime(data.headIso)}
+          </span>
+        ) : null}
         <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${aheadColor}`}>
           <GitBranch className="h-3.5 w-3.5" />
           {data.fetchOk
-            ? data.remoteAheadCount === 0
+            ? remoteAheadCount === 0
               ? `已与 origin/${data.currentBranch} 同步`
-              : `GitHub 领先 ${data.remoteAheadCount} 个 commit`
+              : `GitHub 领先 ${remoteAheadCount} 个 commit`
             : 'fetch 失败 / 远端不可达'}
         </span>
-        {data.localAheadCount > 0 ? (
+        {localAheadCount > 0 ? (
           <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
-            本地领先 {data.localAheadCount} 个 commit(host 上有未推送提交)
+            本地领先 {localAheadCount} 个 commit
           </span>
         ) : null}
 
-        {/* 上次更新 chip */}
         {data.lastSelfUpdate ? (
           <button
             type="button"
@@ -1074,16 +1072,14 @@ function SelfUpdateStatusPanel({
             <RotateCw className="h-3.5 w-3.5" />
             上次更新 · {formatRelativeTime(data.lastSelfUpdate.ts)} · {selfUpdateStatusLabel(data.lastSelfUpdate.status)}
           </button>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-0.5 text-xs text-muted-foreground">
-            尚无自更新记录
-          </span>
-        )}
+        ) : null}
 
         <div className="ml-auto flex items-center gap-2">
-          <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory} disabled={(data.selfUpdateHistory || []).length === 0}>
-            历史(最近 {Math.min((data.selfUpdateHistory || []).length, 20)} 条)
-          </Button>
+          {selfUpdateHistory.length > 0 ? (
+            <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory}>
+              历史 {Math.min(selfUpdateHistory.length, 20)}
+            </Button>
+          ) : null}
           <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
             <RefreshCw />
             刷新
@@ -1092,19 +1088,19 @@ function SelfUpdateStatusPanel({
       </div>
 
       {/* 远端领先时,展开显示前 5 条新 commit subject 让用户秒判断「值不值得更新」 */}
-      {data.fetchOk && data.remoteAheadCount > 0 && data.remoteAheadSubjects.length > 0 ? (
+      {data.fetchOk && remoteAheadCount > 0 && remoteAheadSubjects.length > 0 ? (
         <div className="mt-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
           <div className="text-xs font-medium text-muted-foreground">远端领先的 commit:</div>
           <ul className="mt-1.5 space-y-1 text-xs">
-            {data.remoteAheadSubjects.map((c) => (
+            {remoteAheadSubjects.map((c) => (
               <li key={c.sha} className="flex items-start gap-2">
                 <CodePill>{c.sha}</CodePill>
                 <span className="min-w-0 flex-1 truncate" title={c.subject}>{c.subject}</span>
                 <span className="shrink-0 text-muted-foreground">{formatRelativeTime(c.date)}</span>
               </li>
             ))}
-            {data.remoteAheadCount > data.remoteAheadSubjects.length ? (
-              <li className="text-muted-foreground">… 还有 {data.remoteAheadCount - data.remoteAheadSubjects.length} 个</li>
+            {remoteAheadCount > remoteAheadSubjects.length ? (
+              <li className="text-muted-foreground">… 还有 {remoteAheadCount - remoteAheadSubjects.length} 个</li>
             ) : null}
           </ul>
         </div>

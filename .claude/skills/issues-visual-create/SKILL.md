@@ -91,7 +91,7 @@ description: 手动触发创建一个视觉验收子 issue。输入"要测什么
 [已创建] #N — [visual-test] xxx
 URL: https://github.com/inernoro/prd_agent/issues/N
 Label: visual-test:pending
-预览: https://{slug}.miduo.org/
+预览: <python3 .claude/skills/cds/cli/cdscli.py --human preview-url 的输出>
 执行者 Agent 应在 N 分钟内接单。如超时请检查 label 订阅。
 ```
 

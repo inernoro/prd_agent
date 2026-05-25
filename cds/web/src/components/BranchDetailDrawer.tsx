@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
+import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import type { PhaseLogState } from '@/components/deployment/PhaseTree';
 
 /*
@@ -47,6 +49,8 @@ interface BranchDetailData {
   githubCommitSha?: string;
   githubPrNumber?: number;
   lastDeployAt?: string;
+  lastAccessedAt?: string;
+  lastReadyAt?: string;
   /** 2026-05-14: 最近一次停止的时间戳与原因，drawer 顶部用它解释"分支变灰"。 */
   lastStoppedAt?: string;
   lastStopReason?: string;
@@ -226,6 +230,8 @@ type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' 
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+const DETAIL_LOG_VIEWPORT_CLASS = 'h-[424px] overflow-auto';
+const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading-6 text-muted-foreground';
 
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
@@ -706,6 +712,7 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [loading, setLoading] = useState(false);
+  const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
   // Phase A — Variables tab(2026-05-04)
@@ -1231,6 +1238,46 @@ export function BranchDetailDrawer({
     }
   }, [branchId]);
 
+  const refreshCurrentPanel = useCallback(async () => {
+    if (!branchId || headerRefreshing) return;
+    setHeaderRefreshing(true);
+    try {
+      await load();
+      if (activeTab === 'logs') {
+        if (logsMode === 'system') {
+          await loadSystemLogs();
+        } else if (logsMode === 'webhook') {
+          await loadTriggerLogs();
+        } else if (logsMode === 'container' && selectedServiceId) {
+          await loadServiceLogs(selectedServiceId);
+        }
+      } else if (activeTab === 'variables') {
+        await loadEnv();
+      } else if (activeTab === 'metrics') {
+        await loadMetrics();
+      }
+      onToast?.('已刷新当前分支面板');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      onToast?.(`刷新失败:${message}`);
+    } finally {
+      setHeaderRefreshing(false);
+    }
+  }, [
+    activeTab,
+    branchId,
+    headerRefreshing,
+    load,
+    loadEnv,
+    loadMetrics,
+    loadServiceLogs,
+    loadSystemLogs,
+    loadTriggerLogs,
+    logsMode,
+    onToast,
+    selectedServiceId,
+  ]);
+
   const visibleDeployments = useMemo(() => {
     const scoped = deployments.filter((item) => item.branchId === branchId);
     return scoped.sort((left, right) => right.startedAt - left.startedAt);
@@ -1510,27 +1557,57 @@ export function BranchDetailDrawer({
           </div>
           <div className="flex items-center gap-1">
             {githubPrHref ? (
-              <Button asChild variant="ghost" size="icon" title={`打开 GitHub PR #${branch?.githubPrNumber}`} aria-label="打开 GitHub PR">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="text-violet-600 hover:bg-violet-500/10 hover:text-violet-700 dark:text-violet-300 dark:hover:text-violet-200"
+                title={`打开 GitHub PR #${branch?.githubPrNumber}`}
+                aria-label="打开 GitHub PR"
+              >
                 <a href={githubPrHref} target="_blank" rel="noreferrer">
                   <GitPullRequest />
                 </a>
               </Button>
-            ) : null}
+            ) : (
+              <Button variant="ghost" size="icon" disabled title="没有关联 GitHub PR" aria-label="没有关联 GitHub PR">
+                <GitPullRequest />
+              </Button>
+            )}
             {githubBranchHref ? (
-              <Button asChild variant="ghost" size="icon" title="打开 GitHub 分支" aria-label="打开 GitHub 分支">
+              <Button
+                asChild
+                variant="ghost"
+                size="icon"
+                className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                title="打开 GitHub 分支"
+                aria-label="打开 GitHub 分支"
+              >
                 <a href={githubBranchHref} target="_blank" rel="noreferrer">
                   <GitBranch />
                 </a>
               </Button>
-            ) : null}
+            ) : (
+              <Button variant="ghost" size="icon" disabled title="没有关联 GitHub 分支" aria-label="没有关联 GitHub 分支">
+                <GitBranch />
+              </Button>
+            )}
             <Button asChild variant="ghost" size="sm" title="完整页面">
               <a href={fullPageHref}>
                 <ExternalLink />
                 完整页面
               </a>
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => void load()} title="刷新" aria-label="刷新">
-              <RefreshCw />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void refreshCurrentPanel()}
+              disabled={headerRefreshing}
+              title={headerRefreshing ? '正在刷新当前面板' : '刷新当前面板'}
+              aria-label={headerRefreshing ? '正在刷新当前面板' : '刷新当前面板'}
+            >
+              <RefreshCw className={headerRefreshing ? 'animate-spin' : undefined} />
+              {headerRefreshing ? '刷新中' : '刷新'}
             </Button>
             <Button variant="ghost" size="icon" onClick={onClose} title="关闭" aria-label="关闭">
               <X />
@@ -1539,13 +1616,16 @@ export function BranchDetailDrawer({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
-          {loading && !branch ? <LoadingBlock label="加载分支详情" /> : null}
+          {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <>
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
+                  const recoveredRuntimeWithoutDeployLog =
+                    branch.status === 'running' && !branch.lastDeployAt && Boolean(branch.lastReadyAt || branch.lastAccessedAt);
+                  const displayedDeployCount = Math.max(branch.deployCount || 0, recoveredRuntimeWithoutDeployLog ? 1 : 0);
                   return (
                     <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1555,8 +1635,12 @@ export function BranchDetailDrawer({
                         <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
                       </div>
                       <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-                        <span>最近部署：{formatDeployTimestamp(branch.lastDeployAt)}</span>
-                        <span>部署次数：{branch.deployCount || 0}</span>
+                        <span>
+                          最近部署：{formatDeployTimestamp(
+                            branch.lastDeployAt || (branch.status === 'running' ? branch.lastReadyAt || branch.lastAccessedAt : undefined),
+                          )}
+                        </span>
+                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''}</span>
                         <span>停止次数：{branch.stopCount || 0}</span>
                       </div>
                       {/*
@@ -1592,22 +1676,26 @@ export function BranchDetailDrawer({
                     </div>
                   );
                 })()}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                  {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
-                  <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
+                <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                    {branch.commitSha ? <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                    <span className="text-xs text-muted-foreground">服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}</span>
+                    {branch.subject ? (
+                      <span className="min-w-[220px] flex-1 truncate text-sm leading-6 text-muted-foreground" title={branch.subject}>
+                        {branch.subject}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/*
+                    Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
+                    绿点旁边没有 URL"):running 时显眼显示 production 域名,
+                    hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
+                  */}
+                  {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
+                    <PreviewUrlChip url={previewUrl} />
+                  ) : null}
                 </div>
-                {/*
-                  Production URL chip (Week 4.8 Round 4b, 用户主诉求"运行中
-                  绿点旁边没有 URL"):running 时显眼显示 production 域名,
-                  hover 出复制按钮,点击在新窗口打开。失败/未运行时不渲染。
-                */}
-                {(branch.status === 'running' || branchStatus === 'running') && previewUrl ? (
-                  <PreviewUrlChip url={previewUrl} />
-                ) : null}
-                {branch.subject ? (
-                  <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{branch.subject}</p>
-                ) : null}
                 {currentFailureReason ? (
                   <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1815,9 +1903,9 @@ export function BranchDetailDrawer({
                       <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
-                        {services.length > 1 ? (
-                          <div className="flex gap-2 overflow-x-auto border-b border-[hsl(var(--hairline))] px-4 py-3">
-                            {services.map((svc) => (
+                        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+                          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                            {(services.length > 0 ? services : []).map((svc) => (
                               <button
                                 key={svc.profileId}
                                 type="button"
@@ -1834,7 +1922,8 @@ export function BranchDetailDrawer({
                               </button>
                             ))}
                           </div>
-                        ) : null}
+                          <CopyServiceLogsButton service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                        </div>
                         <ServiceLogsPanel service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
                       </>
                     )}
@@ -2169,11 +2258,11 @@ function systemLogTypeMeta(type: string): { label: string; cls: string } {
 }
 
 function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: string }): JSX.Element {
-  if (state.status === 'loading') return <div className="px-4 py-6 text-sm text-muted-foreground">加载系统日志…</div>;
+  if (state.status === 'loading') return <div className={DETAIL_LOG_EMPTY_CLASS}>加载系统日志…</div>;
   if (state.status === 'error') {
-    return <div className="px-4 py-6 text-sm text-destructive">加载失败：{state.message}</div>;
+    return <div className={`${DETAIL_LOG_EMPTY_CLASS} text-destructive`}>加载失败：{state.message}</div>;
   }
-  if (state.status === 'idle') return <div className="px-4 py-6 text-sm text-muted-foreground">切换到此页签后加载。</div>;
+  if (state.status === 'idle') return <div className={DETAIL_LOG_EMPTY_CLASS}>切换到此页签后加载。</div>;
   const q = query.trim().toLowerCase();
   const rows = (q
     ? state.logs.filter((e) =>
@@ -2183,13 +2272,13 @@ function SystemLogsPanel({ state, query }: { state: SystemLogsState; query: stri
     : state.logs);
   if (rows.length === 0) {
     return (
-      <div className="px-4 py-6 text-sm text-muted-foreground">
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
         {q ? '没有匹配的系统日志。' : '本分支还没有生命周期事件记录。部署 / 停止 / 崩溃 / 回收发生后会在这里显示。'}
       </div>
     );
   }
   return (
-    <div className="divide-y divide-[hsl(var(--hairline))]">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} divide-y divide-[hsl(var(--hairline))]`}>
       {rows.map((e) => {
         const meta = systemLogTypeMeta(e.type);
         return (
@@ -2305,17 +2394,21 @@ function TriggerLogsPanel({
   onLoadMore?: () => void;
 }): JSX.Element {
   if (state.status === 'idle' || state.status === 'loading') {
-    return <LoadingBlock label="加载 Webhook 日志" />;
+    return (
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
+        <LoadingBlock label="加载 Webhook 日志" />
+      </div>
+    );
   }
   if (state.status === 'error') {
-    return <div className="p-5"><ErrorBlock message={state.message} /></div>;
+    return <div className={`${DETAIL_LOG_EMPTY_CLASS} items-start py-5`}><ErrorBlock message={state.message} /></div>;
   }
 
   const rows = state.deliveries.filter((item) => textMatchesQuery(triggerLogSearchText(item), query));
   if (rows.length === 0) {
     const origin = branchOriginInsight(branch);
     return (
-      <div className="space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground">
+      <div className={`${DETAIL_LOG_VIEWPORT_CLASS} space-y-3 px-5 py-8 text-sm leading-6 text-muted-foreground`}>
         <div>
           {query
             ? '没有匹配的 Webhook 日志。'
@@ -2336,7 +2429,7 @@ function TriggerLogsPanel({
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="mb-3 flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
         <span>匹配 {state.filteredTotal}</span>
         <span>全量 {state.total}</span>
@@ -2455,13 +2548,13 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
             {selection.message ? <span className="min-w-0 truncate">{selection.message}</span> : null}
           </div>
         </div>
-        <div className="max-h-[560px] overflow-auto">
+        <div className={DETAIL_LOG_VIEWPORT_CLASS}>
           <div className="grid grid-cols-[150px_minmax(0,1fr)] border-b border-[hsl(var(--hairline))] px-4 py-2 text-xs font-medium text-muted-foreground">
             <span>Time</span>
             <span>Message</span>
           </div>
           {rows.length === 0 ? (
-            <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的构建日志。' : '这条部署还没有日志。'}</div>
+            <div className={DETAIL_LOG_EMPTY_CLASS}>{query ? '没有匹配的构建日志。' : '这条部署还没有日志。'}</div>
           ) : (
             <div className="divide-y divide-[hsl(var(--hairline))]">
               {rows.map((row) => (
@@ -2496,11 +2589,11 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
     });
 
   if (rows.length === 0) {
-    return <div className="px-5 py-8 text-sm text-muted-foreground">{query ? '没有匹配的构建日志。' : '还没有构建记录。'}</div>;
+    return <div className={DETAIL_LOG_EMPTY_CLASS}>{query ? '没有匹配的构建日志。' : '还没有构建记录。'}</div>;
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="space-y-2">
         {rows.map((row) => (
           <div key={row.key} className={`rounded-md border px-3 py-2 ${row.status === 'error' ? 'border-destructive/35 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'}`}>
@@ -2523,10 +2616,56 @@ function ServiceLogsPanel({
   service: ServiceState | null;
   state: ServiceLogsState;
 }): JSX.Element {
-  const [copied, setCopied] = useState(false);
   const logs = state.status === 'ok' ? (state.logs || '') : '';
   const isCurrent = service && state.profileId === service.profileId;
   const displayLogs = isCurrent ? logs : '';
+  const visibleLogs = normalizeContainerLogsForDisplay(displayLogs);
+  const serviceLogViewportClass = 'min-h-0 flex-1 overflow-auto';
+
+  if (!service) {
+    return <div className={DETAIL_LOG_EMPTY_CLASS}>选择一个服务查看容器日志。</div>;
+  }
+
+  return (
+    <div className="h-[424px] min-w-0 overflow-hidden p-4 pt-3">
+      <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
+        <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+          <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-muted-foreground">
+            <span>容器详情日志</span>
+            {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
+          </div>
+          {service.errorMessage ? (
+            <div className="mb-2 shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+              {service.errorMessage}
+            </div>
+          ) : null}
+          {state.status === 'error' && isCurrent ? (
+            <div className={`${serviceLogViewportClass} flex items-center justify-center rounded-md border border-destructive/30 bg-destructive/10 px-3 text-center text-xs leading-5 text-destructive`}>
+              {state.message}
+            </div>
+          ) : (
+            <pre className={`${serviceLogViewportClass} overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground`}>
+              {state.status === 'loading' && isCurrent
+                ? '正在读取 docker logs...'
+                : visibleLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
+            </pre>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyServiceLogsButton({
+  service,
+  state,
+}: {
+  service: ServiceState | null;
+  state: ServiceLogsState;
+}): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const isCurrent = service && state.profileId === service.profileId;
+  const logs = state.status === 'ok' && isCurrent ? normalizeContainerLogsForDisplay(state.logs || '') : '';
 
   async function copyLogs(): Promise<void> {
     if (!service) return;
@@ -2535,7 +2674,7 @@ function ServiceLogsPanel({
       service.containerName,
       service.errorMessage ? `error: ${service.errorMessage}` : '',
       '',
-      displayLogs,
+      logs,
     ].filter(Boolean).join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -2546,59 +2685,16 @@ function ServiceLogsPanel({
     }
   }
 
-  if (!service) {
-    return <div className="p-5 text-sm text-muted-foreground">选择一个服务查看容器日志。</div>;
-  }
-
   return (
-    <div className="min-w-0 p-4">
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
-        <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold">{service.profileId}</span>
-                <span className={`shrink-0 rounded border px-2 py-0.5 text-[11px] ${statusClass(service.status)}`}>{statusLabel(service.status)}</span>
-              </div>
-              <div className="mt-1 flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
-                <span>:{service.hostPort || '?'}</span>
-                <span className="min-w-0 truncate">{service.containerName}</span>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => void copyLogs()}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copied ? '已复制' : '复制'}
-            </button>
-          </div>
-          {service.errorMessage ? (
-            <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-              {service.errorMessage}
-            </div>
-          ) : null}
-        </div>
-        <div className="px-4 py-3">
-          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span>容器详情日志</span>
-            {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
-          </div>
-          {state.status === 'error' && isCurrent ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
-              {state.message}
-            </div>
-          ) : (
-            <pre className="max-h-[420px] min-h-[260px] overflow-auto whitespace-pre-wrap rounded-md border border-[hsl(var(--hairline))] bg-black/35 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
-              {state.status === 'loading' && isCurrent
-                ? '正在读取 docker logs...'
-                : displayLogs || '暂无容器日志。若容器不存在或已被清理，请重新部署该服务。'}
-            </pre>
-          )}
-        </div>
-      </div>
-    </div>
+    <button
+      type="button"
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+      onClick={() => void copyLogs()}
+      disabled={!service}
+    >
+      <Copy className="h-3.5 w-3.5" />
+      {copied ? '已复制' : '复制'}
+    </button>
   );
 }
 
@@ -2613,14 +2709,14 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
 
   if (rows.length === 0) {
     return (
-      <div className="px-5 py-8 text-sm leading-6 text-muted-foreground">
+      <div className={DETAIL_LOG_EMPTY_CLASS}>
         {query ? '没有匹配的 HTTP 访问日志。' : '还没有捕获到这个分支的 HTTP 请求。打开预览后，请求会出现在这里。'}
       </div>
     );
   }
 
   return (
-    <div className="max-h-[560px] overflow-auto p-3">
+    <div className={`${DETAIL_LOG_VIEWPORT_CLASS} p-3`}>
       <div className="space-y-2">
         {rows.map((event, index) => {
           const ok = (event.status || 0) < 400;
@@ -2726,7 +2822,7 @@ function VariablesPanel({
   if (state.status === 'idle' || state.status === 'loading') {
     return (
       <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
         正在读取该分支的生效环境变量…
       </section>
     );
@@ -3309,7 +3405,7 @@ function MetricsPanel({
   if (state.status === 'idle' || state.status === 'loading') {
     return (
       <section className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
-        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
         正在采集 docker stats…
       </section>
     );

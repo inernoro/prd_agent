@@ -53,6 +53,9 @@ public class DailyLogItem
 
     /// <summary>条目创建时间（UTC）</summary>
     public DateTime? CreatedAt { get; set; }
+
+    /// <summary>Todo 完成时间（仅 category=todo 时有意义；非空表示已完成）</summary>
+    public DateTime? CompletedAt { get; set; }
 }
 
 /// <summary>

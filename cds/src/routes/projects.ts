@@ -322,9 +322,14 @@ interface ProjectStats {
   runningServiceCount: number;
   appServices: Array<{
     id: string;
+    name?: string;
     branch: string;
     status?: string;
     runningCount?: number;
+    dockerImage?: string;
+    command?: string;
+    workDir?: string;
+    containerPort?: number;
   }>;
   infraServiceCount: number;
   runningInfraServiceCount: number;
@@ -422,6 +427,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     let runningServiceCount = 0;
     let lastDeployedAt: string | null = null;
     const appServiceMap = new Map<string, ProjectStats['appServices'][number]>();
+    const profilesById = new Map(stateService.getBuildProfilesForProject(project.id).map((profile) => [profile.id, profile]));
     const infra = stateService.getInfraServicesForProject(project.id);
     const runningInfra = infra.filter((service) => service.status === 'running').length;
     for (const b of branches) {
@@ -436,11 +442,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           if (existing) {
             existing.runningCount = (existing.runningCount || 1) + 1;
           } else {
+            const profile = profilesById.get(service.profileId);
             appServiceMap.set(service.profileId, {
               id: service.profileId,
+              name: profile?.name,
               branch: b.branch,
               status: service.status,
               runningCount: 1,
+              dockerImage: profile?.dockerImage,
+              command: profile?.command,
+              workDir: profile?.workDir,
+              containerPort: profile?.containerPort,
             });
           }
         }

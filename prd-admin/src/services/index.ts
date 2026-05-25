@@ -647,6 +647,8 @@ import type {
   ResetTeamAiSummaryPromptContract,
   GetMyDailyLogTagsContract,
   UpdateMyDailyLogTagsContract,
+  GetMyDefaultTabContract,
+  UpdateMyDefaultTabContract,
   ListPersonalSourcesContract,
   CreatePersonalSourceContract,
   UpdatePersonalSourceContract,
@@ -741,6 +743,8 @@ import {
   resetTeamAiSummaryPromptReal,
   getMyDailyLogTagsReal,
   updateMyDailyLogTagsReal,
+  getMyDefaultTabReal,
+  updateMyDefaultTabReal,
   listPersonalSourcesReal,
   createPersonalSourceReal,
   updatePersonalSourceReal,
@@ -1185,6 +1189,8 @@ export const updateTeamAiSummaryPrompt: UpdateTeamAiSummaryPromptContract = with
 export const resetTeamAiSummaryPrompt: ResetTeamAiSummaryPromptContract = withAuth(resetTeamAiSummaryPromptReal);
 export const getMyDailyLogTags: GetMyDailyLogTagsContract = withAuth(getMyDailyLogTagsReal);
 export const updateMyDailyLogTags: UpdateMyDailyLogTagsContract = withAuth(updateMyDailyLogTagsReal);
+export const getMyDefaultTab: GetMyDefaultTabContract = withAuth(getMyDefaultTabReal);
+export const updateMyDefaultTab: UpdateMyDefaultTabContract = withAuth(updateMyDefaultTabReal);
 export const listPersonalSources: ListPersonalSourcesContract = withAuth(listPersonalSourcesReal);
 export const createPersonalSource: CreatePersonalSourceContract = withAuth(createPersonalSourceReal);
 export const updatePersonalSource: UpdatePersonalSourceContract = withAuth(updatePersonalSourceReal);
@@ -1502,6 +1508,7 @@ export {
   streamDirectChat,
   streamCapabilityChat,
   uploadAttachment,
+  getAttachmentMeta,
   // Session & Messages
   listToolboxSessions,
   createToolboxSession,
@@ -1690,6 +1697,7 @@ export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInf
 // ── 统一短链解析 + 管理 ──
 export {
   resolveShortLink,
+  resolveShortLinkSlug,
   listAdminShortLinks,
   revokeAdminShortLink,
   repairShortLinkCounter,
@@ -1700,6 +1708,10 @@ export type {
   AdminShortLinkItem,
   AdminShortLinkShareMeta,
 } from '@/services/real/shortLinks';
+
+// ── 我的分享总管理 ──
+export { listMyShares } from '@/services/real/myShares';
+export type { MyShareItem, MyShareTargetType, MySharesResponse } from '@/services/real/myShares';
 
 // ── Public Profile 个人公开主页 ──
 export {

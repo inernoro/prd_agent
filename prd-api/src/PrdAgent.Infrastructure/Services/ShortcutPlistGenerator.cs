@@ -12,7 +12,7 @@ namespace PrdAgent.Infrastructure.Services;
 public static class ShortcutPlistGenerator
 {
     /// <summary>当前快捷指令模板版本，更新模板逻辑时递增</summary>
-    public const int CurrentVersion = 2;
+        public const int CurrentVersion = 3;
 
     /// <summary>
     /// 生成预嵌入 token 的 .shortcut 文件（直接下载模式，兜底用）
@@ -89,8 +89,9 @@ public static class ShortcutPlistGenerator
             SetVariableFromPreviousAction("SavedConfig", "文件"),
 
             // If SavedConfig has value → 跳到主逻辑
-            // If SavedConfig is empty → 从剪贴板读取配置
-            IfVariableHasNoValue("SavedConfig"),
+            // Otherwise → 从剪贴板读取配置
+            IfVariableHasAnyValue("SavedConfig"),
+            Otherwise(),
 
             // ══════════════════════════════════════
             // 首次运行：从剪贴板读取配置
@@ -113,8 +114,10 @@ public static class ShortcutPlistGenerator
             GetDictionaryValue("token", "ParsedConfig"),
             SetVariableFromPreviousAction("CheckToken", "词典值"),
 
-            // If token is empty → show error
-            IfVariableHasNoValue("CheckToken"),
+            // If token exists → continue
+            // Otherwise → show error
+            IfVariableHasAnyValue("CheckToken"),
+            Otherwise(),
             ShowAlert("剪贴板中没有有效配置。\n\n请返回安装页，点击「复制配置」，再重新运行此快捷指令。", "配置无效"),
             ExitShortcut(),
             EndIf(),
@@ -472,18 +475,28 @@ public static class ShortcutPlistGenerator
         );
     }
 
-    /// <summary>If variable has no value (is empty)</summary>
-    private static XElement IfVariableHasNoValue(string variableName)
+    /// <summary>If variable has any value.</summary>
+    private static XElement IfVariableHasAnyValue(string variableName)
     {
         return new XElement("dict",
             Key("WFWorkflowActionIdentifier"), Str("is.workflow.actions.conditional"),
             Key("WFWorkflowActionParameters"), new XElement("dict",
                 Key("WFControlFlowMode"), Int(0),
-                Key("WFCondition"), Int(100), // 100 = "does not have any value"
+                Key("WFCondition"), Int(100),
                 Key("WFInput"), new XElement("dict",
                     Key("Type"), Str("Variable"),
                     Key("Variable"), VariableAttachment("Variable", variableName)
                 )
+            )
+        );
+    }
+
+    private static XElement Otherwise()
+    {
+        return new XElement("dict",
+            Key("WFWorkflowActionIdentifier"), Str("is.workflow.actions.conditional"),
+            Key("WFWorkflowActionParameters"), new XElement("dict",
+                Key("WFControlFlowMode"), Int(1)
             )
         );
     }
@@ -556,9 +569,12 @@ public static class ShortcutPlistGenerator
     private static XElement GetFileFromShortcutsFolder(string fileName)
     {
         var paramsDict = new XElement("dict",
+            Key("WFFileStorageService"), Str("iCloud Drive"),
+            Key("WFShowFilePicker"), new XElement("false"),
+            Key("SelectMultiple"), new XElement("false"),
             Key("WFFileErrorIfNotFound"), new XElement("false")
         );
-        foreach (var el in TextTokenString("WFFilePath", fileName))
+        foreach (var el in TextTokenString("WFGetFilePath", fileName))
             paramsDict.Add(el);
 
         return new XElement("dict",
@@ -572,7 +588,8 @@ public static class ShortcutPlistGenerator
     {
         var paramsDict = new XElement("dict",
             Key("WFAskWhereToSave"), new XElement("false"),
-            Key("WFFileOverwrite"), new XElement("true")
+            Key("WFFileStorageService"), Str("iCloud Drive"),
+            Key("WFSaveFileOverwrite"), new XElement("true")
         );
         foreach (var el in TextTokenString("WFFileDestinationPath", fileName))
             paramsDict.Add(el);

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Atom, Check, ChevronDown, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
+import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -36,12 +37,28 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
+type ShellAuthStatus = {
+  enabled?: boolean;
+  mode?: string;
+  logoutEndpoint?: string | null;
+};
+
+function shellLoginHref(mode?: string): string {
+  const path = mode === 'github' ? '/login-gh.html' : '/login';
+  if (window.location.port === '5173') {
+    return `${window.location.protocol}//${window.location.hostname}:9900${path}`;
+  }
+  return path;
+}
+
 export function AppShell({ active = 'projects', topbar, children, wide = false }: AppShellProps): JSX.Element {
   /*
    * Global Cmd/Ctrl+K → CommandPalette opens. Mounting it here means every
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
@@ -59,9 +76,48 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
     };
   }, []);
 
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch('/api/auth/status', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      signal: ctrl.signal,
+    })
+      .then((res) => res.ok ? res.json() as Promise<ShellAuthStatus> : null)
+      .then((data) => setAuthStatus(data))
+      .catch((err: unknown) => {
+        if ((err as DOMException)?.name === 'AbortError') return;
+        setAuthStatus(null);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const logout = async (): Promise<void> => {
+    const endpoint = authStatus?.logoutEndpoint;
+    if (!endpoint) return;
+    setLogoutState('running');
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      window.location.href = shellLoginHref(authStatus.mode);
+    } catch {
+      setLogoutState('error');
+      window.setTimeout(() => setLogoutState('idle'), 3000);
+    }
+  };
+
   return (
     <div className="cds-app-shell">
-      <AppRail active={active} />
+      <AppRail
+        active={active}
+        canLogout={Boolean(authStatus?.logoutEndpoint)}
+        logoutState={logoutState}
+        onLogout={() => { void logout(); }}
+      />
       <div className="flex min-w-0 flex-col">
         {topbar}
         <main className={cn('cds-main', wide ? 'cds-main--wide' : null)}>
@@ -86,15 +142,28 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
 function FloatingThemeToggle(): JSX.Element {
   const { theme, mode, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const [toast, setToast] = useState('');
   // 2026-05-07 用户反馈"右上角按钮被皮肤挡住":悬浮按钮 z-[70] 盖在 TopBar
   // nav buttons(z 默认)上,导致"运维"等按钮被遮挡。降到 z-[5] 让 nav 按钮
   // 在上层;同时挪到右下角避开 TopBar 区域,跟 GlobalUpdateBadge(也在底部)
   // 不重叠靠水平错开(theme 在 right-3,update badge 在 left)。
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const modeLabel = (next: 'light' | 'dark' | 'system'): string => {
+    if (next === 'system') return `自动/${theme === 'dark' ? '黑天' : '白天'}`;
+    return next === 'dark' ? '黑天' : '白天';
+  };
+
   const changeTheme = (
     next: 'light' | 'dark' | 'system',
     event: React.MouseEvent<HTMLButtonElement> | React.PointerEvent<HTMLButtonElement>,
   ): void => {
     setOpen(false);
+    setToast(modeLabel(next));
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!document.startViewTransition || prefersReduced) {
       applyThemeMode(next);
@@ -125,6 +194,10 @@ function FloatingThemeToggle(): JSX.Element {
     }).catch(() => { /* best-effort effect */ });
   };
 
+  const toggleLightDark = (event: React.MouseEvent<HTMLButtonElement>): void => {
+    changeTheme(theme === 'dark' ? 'light' : 'dark', event);
+  };
+
   const items = [
     { mode: 'light' as const, label: '白天', icon: Sun },
     { mode: 'dark' as const, label: '黑天', icon: Moon },
@@ -132,7 +205,20 @@ function FloatingThemeToggle(): JSX.Element {
   ];
 
   return (
-    <div className="fixed bottom-3 right-3 z-[60]">
+    <div
+      className="fixed bottom-3 right-3 z-[60]"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      {toast ? (
+        <div className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 py-1 text-xs font-medium text-foreground shadow-lg">
+          {toast}
+        </div>
+      ) : null}
       {open ? (
         <div className="absolute bottom-full right-0 mb-2 w-32 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-1 shadow-2xl">
           {items.map((item) => {
@@ -143,14 +229,6 @@ function FloatingThemeToggle(): JSX.Element {
                 key={item.mode}
                 type="button"
                 className={`flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground'}`}
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  changeTheme(item.mode, event);
-                }}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  changeTheme(item.mode, event);
-                }}
                 onClick={(event) => {
                   event.preventDefault();
                   changeTheme(item.mode, event);
@@ -167,7 +245,7 @@ function FloatingThemeToggle(): JSX.Element {
       <Button
         variant="ghost"
         size="icon"
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggleLightDark}
         aria-label="切换主题"
         title={`切换主题(当前: ${mode === 'system' ? `自动/${theme === 'dark' ? '黑天' : '白天'}` : theme === 'dark' ? '黑天' : '白天'})`}
         className="h-9 w-9 rounded-full bg-[hsl(var(--surface-raised))]/80 backdrop-blur shadow-md hover:bg-[hsl(var(--surface-raised))]"
@@ -203,18 +281,26 @@ export function PaletteHint(): JSX.Element {
   );
 }
 
-function AppRail({ active }: { active: AppNavKey }): JSX.Element {
+function AppRail({
+  active,
+  canLogout,
+  logoutState,
+  onLogout,
+}: {
+  active: AppNavKey;
+  canLogout: boolean;
+  logoutState: 'idle' | 'running' | 'error';
+  onLogout: () => void;
+}): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       <div className="cds-rail-brand">
         <div className="cds-rail-avatar" aria-label="CDS">
-          <Atom className="cds-rail-avatar-icon" aria-hidden />
+          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
           <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
-          <div className="cds-rail-brand-subtitle mt-0.5">Projects</div>
         </div>
-        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
       </div>
 
       <div className="cds-rail-section">
@@ -240,6 +326,21 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
       </a>
       </div>
       <div className="flex-1" />
+      {canLogout ? (
+        <button
+          type="button"
+          className="cds-rail-item cds-rail-item--danger"
+          onClick={onLogout}
+          disabled={logoutState === 'running'}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          <LogOut />
+          <span>
+            {logoutState === 'running' ? '退出中' : logoutState === 'error' ? '退出失败' : 'Logout'}
+          </span>
+        </button>
+      ) : null}
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
           标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}

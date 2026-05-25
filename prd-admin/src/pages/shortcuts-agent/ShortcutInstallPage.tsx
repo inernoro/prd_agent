@@ -7,6 +7,8 @@ interface InstallData {
   icon: string;
   color: string;
   token: string;
+  downloadUrl?: string;
+  canDownloadSigned?: boolean;
   iCloudUrl?: string;
   serverUrl: string;
 }
@@ -15,9 +17,10 @@ interface InstallData {
  * 公开安装引导页 — iPhone 扫码后打开此页面
  * 路由: /s/shortcut/:id?t=scs-xxx
  *
- * 两种模式:
- * - 有 iCloud 模板: 复制配置 → 安装 iCloud 模板 → 首次运行自动绑定
- * - 无 iCloud 模板: 复制配置 → 手动创建快捷指令（3 步引导）
+ * 安装优先级:
+ * - 签名 .shortcut 下载: token 已内置，扫码后直接安装
+ * - iCloud 模板: 复制配置后安装模板
+ * - 手动配置: 最后兜底
  */
 export default function ShortcutInstallPage() {
   const { id } = useParams<{ id: string }>();
@@ -70,6 +73,13 @@ export default function ShortcutInstallPage() {
     setStep(1);
   };
 
+  const installICloudTemplate = async () => {
+    if (!data?.iCloudUrl) return;
+    await copyConfig();
+    setStep(2);
+    window.location.href = data.iCloudUrl;
+  };
+
   if (error) {
     return (
       <div style={containerStyle}>
@@ -92,6 +102,7 @@ export default function ShortcutInstallPage() {
     );
   }
 
+  const canDownloadSigned = !!data.canDownloadSigned && !!data.downloadUrl;
   const hasICloud = !!data.iCloudUrl;
 
   return (
@@ -104,74 +115,106 @@ export default function ShortcutInstallPage() {
           PrdAgent 快捷指令
         </div>
 
-        {/* ── Step 1: 复制配置 ── */}
-        <button
-          onClick={copyConfig}
-          style={{
-            ...btnStyle,
-            background: step >= 1 ? '#34c759' : '#007aff',
-            marginBottom: 10,
-          }}
-        >
-          {step >= 1 ? '✅ 配置已复制到剪贴板' : '📋 复制配置到剪贴板'}
-        </button>
-
-        {/* ── Step 2: 安装 ── */}
-        {hasICloud ? (
-          // 有 iCloud 模板 → 直接跳转安装
-          <a
-            href={data.iCloudUrl}
-            onClick={() => setStep(2)}
-            style={{
-              ...btnStyle,
-              textDecoration: 'none',
-              background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
-              color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
-              pointerEvents: step >= 1 ? 'auto' : 'none',
-            }}
-          >
-            📲 安装快捷指令
-          </a>
+        {canDownloadSigned ? (
+          <>
+            <a
+              href={data.downloadUrl}
+              onClick={() => setStep(2)}
+              style={{
+                ...btnStyle,
+                textDecoration: 'none',
+                background: '#007aff',
+              }}
+            >
+              安装签名快捷指令
+            </a>
+            <button
+              onClick={copyConfig}
+              style={{
+                ...secondaryBtnStyle,
+                marginTop: 10,
+              }}
+            >
+              复制 iCloud 模板配置
+            </button>
+          </>
         ) : (
-          // 无 iCloud 模板 → 打开快捷指令 App
-          <a
-            href="shortcuts://"
-            onClick={() => setStep(2)}
-            style={{
-              ...btnStyle,
-              textDecoration: 'none',
-              background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
-              color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
-              pointerEvents: step >= 1 ? 'auto' : 'none',
-            }}
-          >
-            📲 打开「快捷指令」App
-          </a>
-        )}
+          <>
+            <button
+              onClick={copyConfig}
+              style={{
+                ...btnStyle,
+                background: step >= 1 ? '#34c759' : '#007aff',
+                marginBottom: 10,
+              }}
+            >
+              {step >= 1 ? '配置已复制到剪贴板' : '复制配置到剪贴板'}
+            </button>
 
-        {step < 1 && (
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
-            请先复制配置
-          </p>
+            {hasICloud ? (
+              <button
+                onClick={installICloudTemplate}
+                style={{
+                  ...btnStyle,
+                  background: '#007aff',
+                }}
+              >
+                复制配置并安装 iCloud 模板
+              </button>
+            ) : (
+              <a
+                href="shortcuts://create-shortcut"
+                onClick={() => setStep(2)}
+                style={{
+                  ...btnStyle,
+                  textDecoration: 'none',
+                  background: step >= 1 ? '#007aff' : 'rgba(255,255,255,0.12)',
+                  color: step >= 1 ? '#fff' : 'rgba(255,255,255,0.4)',
+                  pointerEvents: step >= 1 ? 'auto' : 'none',
+                }}
+              >
+                打开快捷指令编辑器
+              </a>
+            )}
+
+            {step < 1 && (
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
+                请先复制配置
+              </p>
+            )}
+          </>
         )}
 
         {/* ── 操作说明 ── */}
         <div style={{ marginTop: 20, textAlign: 'left' }}>
-          {hasICloud ? (
-            // iCloud 模式说明
+          {canDownloadSigned ? (
             <>
-              <StepItem n={1} done={step >= 1}>
-                点击上方「复制配置」
+              <StepItem n={1} done={step >= 2}>
+                点击「安装签名快捷指令」
               </StepItem>
-              <StepItem n={2} done={step >= 2}>
-                点击「安装快捷指令」，在弹框中点「添加」
+              <StepItem n={2}>
+                在 iOS 弹窗中添加到「快捷指令」
               </StepItem>
               <StepItem n={3}>
-                首次使用时会自动从剪贴板读取配置
+                任意 App 分享内容时选择「{data.name}」
+              </StepItem>
+              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8, lineHeight: 1.5 }}>
+                如改用 iCloud 模板，请先复制“iCloud 模板配置”。只复制 Token 无法完成配置。
+              </p>
+            </>
+          ) : hasICloud ? (
+            <>
+              <StepItem n={1} done={step >= 2}>
+                点击「复制配置并安装 iCloud 模板」
+              </StepItem>
+              <StepItem n={2} done={step >= 2}>
+                系统会把 key 和当前站点接口地址放入剪贴板
+              </StepItem>
+              <StepItem n={3}>
+                添加快捷指令后首次运行，它会自动读取剪贴板配置
               </StepItem>
             </>
           ) : (
-            // 手动创建说明
             <>
               <StepItem n={1} done={step >= 1}>
                 点击上方「复制配置」
@@ -206,7 +249,7 @@ export default function ShortcutInstallPage() {
           borderTop: '1px solid rgba(255,255,255,0.06)',
           fontSize: 12, color: 'rgba(255,255,255,0.4)',
         }}>
-          ✅ 分享菜单一键收藏 &nbsp;&nbsp; ✅ 系统通知反馈 &nbsp;&nbsp; ✅ 自动版本检查
+          分享菜单一键收藏 &nbsp;&nbsp; 系统通知反馈 &nbsp;&nbsp; 自动版本检查
         </div>
       </div>
     </div>
@@ -314,4 +357,10 @@ const btnStyle: React.CSSProperties = {
   color: '#fff',
   textAlign: 'center',
   boxSizing: 'border-box',
+};
+
+const secondaryBtnStyle: React.CSSProperties = {
+  ...btnStyle,
+  background: 'rgba(255,255,255,0.1)',
+  color: 'rgba(255,255,255,0.72)',
 };

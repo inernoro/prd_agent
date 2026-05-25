@@ -179,7 +179,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
               <div className="flex items-center gap-2">
                 <Sparkles size={14} style={{ color: 'var(--accent-gold, #fbbf24)' }} />
                 <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  本周更新
+                  待发布更新
                 </span>
                 {currentWeek?.weekStart && (
                   <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>

@@ -9,6 +9,8 @@ import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
+import { collectContainerDiagnostics } from './container-diagnostics.js';
+import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from './server-event-log-store.js';
 
 /**
  * 项目级 docker network 解析器接口。
@@ -330,7 +332,41 @@ export class ContainerService {
      * 这个参数走兜底分支。
      */
     private readonly networkResolver?: ProjectNetworkResolver,
+    private readonly serverEventLogStore?: ServerEventLogSink | null,
   ) {}
+
+  private recordContainerEvent(record: {
+    severity: ServerEventSeverity;
+    source: string;
+    action: string;
+    message?: string;
+    projectId?: string | null;
+    branchId?: string | null;
+    profileId?: string | null;
+    serviceId?: string | null;
+    containerName?: string | null;
+    status?: string | null;
+    exitCode?: number | null;
+    oomKilled?: boolean | null;
+    inspect?: Record<string, unknown>;
+    logs?: ServerEventRecord['logs'];
+    command?: { name?: string; exitCode?: number; stdoutPreview?: string; stderrPreview?: string };
+    error?: { code?: string; message?: string };
+    details?: Record<string, unknown>;
+  }): void {
+    this.serverEventLogStore?.record({
+      category: 'container',
+      ...record,
+    });
+  }
+
+  private async captureContainerDiagnostics(containerName: string, tailLines = 200): Promise<{
+    inspect?: Record<string, unknown>;
+    logs?: ServerEventRecord['logs'];
+    error?: { message: string };
+  }> {
+    return collectContainerDiagnostics(this.shell, containerName, tailLines);
+  }
 
   /**
    * 解析特定项目的 docker network 名称。Week 4.9 多项目网络隔离：
@@ -533,7 +569,23 @@ export class ContainerService {
     await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
 
     // Remove any existing container
-    await this.shell.exec(`docker rm -f ${service.containerName}`);
+    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
+    this.recordContainerEvent({
+      severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
+      source: 'cds-container-service',
+      action: 'app.pre-run-rm',
+      message: `pre-run cleanup for ${service.containerName}`,
+      projectId: entry.projectId,
+      branchId: entry.id,
+      profileId: profile.id,
+      containerName: service.containerName,
+      command: {
+        name: 'docker rm -f',
+        exitCode: preRunRemove.exitCode,
+        stdoutPreview: preRunRemove.stdout,
+        stderrPreview: preRunRemove.stderr,
+      },
+    });
 
     const srcMount = path.join(entry.worktreePath, profile.workDir);
     const containerWorkDir = profile.containerWorkDir || '/app';
@@ -786,13 +838,79 @@ export class ContainerService {
 
       const result = await this.shell.exec(runCmd);
       if (result.exitCode !== 0) {
+        this.recordContainerEvent({
+          severity: 'error',
+          source: 'cds-container-service',
+          action: 'app.run.failed',
+          message: `docker run failed for ${service.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          containerName: service.containerName,
+          command: {
+            name: 'docker run',
+            exitCode: result.exitCode,
+            stdoutPreview: result.stdout,
+            stderrPreview: result.stderr,
+          },
+          details: {
+            image: profile.dockerImage,
+            hostPort: service.hostPort,
+            containerPort: profile.containerPort,
+            network,
+          },
+        });
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
+      this.recordContainerEvent({
+        severity: 'info',
+        source: 'cds-container-service',
+        action: 'app.run.started',
+        message: `docker run started ${service.containerName}`,
+        projectId: entry.projectId,
+        branchId: entry.id,
+        profileId: profile.id,
+        containerName: service.containerName,
+        command: {
+          name: 'docker run',
+          exitCode: result.exitCode,
+          stdoutPreview: result.stdout,
+          stderrPreview: result.stderr,
+        },
+        details: {
+          image: profile.dockerImage,
+          hostPort: service.hostPort,
+          containerPort: profile.containerPort,
+          network,
+        },
+      });
 
       // Phase 1: Liveness — verify the container process hasn't crashed immediately.
       // docker run -d returns immediately; the process inside may crash shortly after.
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
-      await this.waitForContainerAlive(service.containerName, onOutput);
+      try {
+        await this.waitForContainerAlive(service.containerName, onOutput);
+      } catch (err) {
+        const diagnostics = await this.captureContainerDiagnostics(service.containerName, 300);
+        const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
+        this.recordContainerEvent({
+          severity: 'error',
+          source: 'cds-container-service',
+          action: 'app.early-exit',
+          message: (err as Error).message,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: profile.id,
+          containerName: service.containerName,
+          status: typeof state?.status === 'string' ? state.status : undefined,
+          exitCode: Number.isFinite(Number(state?.exitCode)) ? Number(state?.exitCode) : undefined,
+          oomKilled: typeof state?.oomKilled === 'boolean' ? state.oomKilled : undefined,
+          inspect: diagnostics.inspect,
+          logs: diagnostics.logs,
+          error: diagnostics.error || { message: (err as Error).message },
+        });
+        throw err;
+      }
     } finally {
       this.removeEnvFile(envFilePath);
     }
@@ -1024,19 +1142,61 @@ export class ContainerService {
     const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'cds-container-service',
+        action: 'container.restart.missing',
+        message: `container ${containerName} missing before docker restart`,
+        containerName,
+        command: { name: 'docker inspect', exitCode: inspect.exitCode, stdoutPreview: inspect.stdout, stderrPreview: inspect.stderr },
+      });
       return false;
     }
     onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
     const result = await this.shell.exec(`docker restart ${containerName}`);
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
+      const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
+      this.recordContainerEvent({
+        severity: 'error',
+        source: 'cds-container-service',
+        action: 'container.restart.failed',
+        message: `docker restart failed for ${containerName}`,
+        containerName,
+        command: { name: 'docker restart', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
+        inspect: diagnostics.inspect,
+        logs: diagnostics.logs,
+        error: diagnostics.error,
+      });
       return false;
     }
     try {
       await this.waitForContainerAlive(containerName, onOutput);
+      const diagnostics = await this.captureContainerDiagnostics(containerName, 80);
+      this.recordContainerEvent({
+        severity: 'info',
+        source: 'cds-container-service',
+        action: 'container.restart.completed',
+        message: `docker restart completed for ${containerName}`,
+        containerName,
+        command: { name: 'docker restart', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
+        inspect: diagnostics.inspect,
+        logs: diagnostics.logs,
+      });
       return true;
     } catch (err) {
       onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
+      const diagnostics = await this.captureContainerDiagnostics(containerName, 300);
+      this.recordContainerEvent({
+        severity: 'error',
+        source: 'cds-container-service',
+        action: 'container.restart.early-exit',
+        message: (err as Error).message,
+        containerName,
+        inspect: diagnostics.inspect,
+        logs: diagnostics.logs,
+        error: diagnostics.error || { message: (err as Error).message },
+      });
       return false;
     }
   }
@@ -1086,8 +1246,36 @@ export class ContainerService {
    * 请改用 remove()。
    */
   async stop(containerName: string, reason = 'cds-stop'): Promise<void> {
+    const before = await this.captureContainerDiagnostics(containerName, 80);
+    this.recordContainerEvent({
+      severity: 'info',
+      source: 'cds-container-service',
+      action: 'container.stop.requested',
+      message: `CDS requested docker stop for ${containerName}: ${reason}`,
+      containerName,
+      inspect: before.inspect,
+      logs: before.logs,
+      details: { reason },
+    });
     await this.writeStopSentinel(containerName, reason);
-    await this.shell.exec(`docker stop ${containerName}`);
+    const result = await this.shell.exec(`docker stop ${containerName}`);
+    const after = await this.captureContainerDiagnostics(containerName, 120);
+    const state = after.inspect?.state as Record<string, unknown> | undefined;
+    this.recordContainerEvent({
+      severity: result.exitCode === 0 ? 'info' : 'error',
+      source: 'cds-container-service',
+      action: 'container.stop.completed',
+      message: `docker stop completed for ${containerName}: ${reason}`,
+      containerName,
+      status: typeof state?.status === 'string' ? state.status : undefined,
+      exitCode: Number.isFinite(Number(state?.exitCode)) ? Number(state?.exitCode) : undefined,
+      oomKilled: typeof state?.oomKilled === 'boolean' ? state.oomKilled : undefined,
+      command: { name: 'docker stop', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
+      inspect: after.inspect,
+      logs: after.logs,
+      error: after.error,
+      details: { reason },
+    });
   }
 
   /**
@@ -1097,8 +1285,32 @@ export class ContainerService {
    * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
    */
   async remove(containerName: string): Promise<void> {
-    await this.shell.exec(`docker stop ${containerName}`);
-    await this.shell.exec(`docker rm ${containerName}`);
+    const before = await this.captureContainerDiagnostics(containerName, 300);
+    this.recordContainerEvent({
+      severity: 'warn',
+      source: 'cds-container-service',
+      action: 'container.remove.requested',
+      message: `CDS requested docker stop/rm for ${containerName}`,
+      containerName,
+      inspect: before.inspect,
+      logs: before.logs,
+      error: before.error,
+    });
+    const stopResult = await this.shell.exec(`docker stop ${containerName}`);
+    const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    this.recordContainerEvent({
+      severity: rmResult.exitCode === 0 ? 'info' : 'error',
+      source: 'cds-container-service',
+      action: 'container.remove.completed',
+      message: `docker rm completed for ${containerName}`,
+      containerName,
+      command: {
+        name: 'docker stop && docker rm',
+        exitCode: rmResult.exitCode,
+        stdoutPreview: `${stopResult.stdout || ''}${rmResult.stdout || ''}`,
+        stderrPreview: `${stopResult.stderr || ''}${rmResult.stderr || ''}`,
+      },
+    });
   }
 
   async isRunning(containerName: string): Promise<boolean> {
@@ -1190,7 +1402,7 @@ export class ContainerService {
   }
 
   async getLogs(containerName: string, tail = 500): Promise<string> {
-    const result = await this.shell.exec(`docker logs --tail ${tail} ${containerName}`);
+    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`);
     return combinedOutput(result);
   }
 
@@ -1205,7 +1417,7 @@ export class ContainerService {
     tail = 200,
   ): AbortController {
     const ac = new AbortController();
-    const child = spawn('docker', ['logs', '-f', '--tail', String(tail), containerName], {
+    const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const forward = (data: Buffer) => {
@@ -1330,6 +1542,17 @@ export class ContainerService {
         // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        this.recordContainerEvent({
+          severity: 'info',
+          source: 'cds-container-service',
+          action: 'infra.reuse-running',
+          message: `infra container already running: ${service.containerName}`,
+          projectId: service.projectId,
+          serviceId: service.id,
+          containerName: service.containerName,
+          status: dockerStatus,
+          details: { image: service.dockerImage, hostPort: service.hostPort, containerPort: service.containerPort, network },
+        });
         return;
       }
       // 存在但 stopped/exited/created —— 用 docker start 唤醒
@@ -1337,10 +1560,46 @@ export class ContainerService {
       if (startResult.exitCode === 0) {
         // 同样:wake 后保证 network attach
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
+        this.recordContainerEvent({
+          severity: 'info',
+          source: 'cds-container-service',
+          action: 'infra.start-existing.completed',
+          message: `docker start completed for infra ${service.containerName}`,
+          projectId: service.projectId,
+          serviceId: service.id,
+          containerName: service.containerName,
+          command: { name: 'docker start', exitCode: startResult.exitCode, stdoutPreview: startResult.stdout, stderrPreview: startResult.stderr },
+          inspect: diagnostics.inspect,
+          logs: diagnostics.logs,
+        });
         return;
       }
       // 唤醒失败（image 升级 / 命令行变了）—— fallback：删了重建
-      await this.shell.exec(`docker rm -f ${service.containerName}`);
+      const diagnostics = await this.captureContainerDiagnostics(service.containerName, 200);
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'cds-container-service',
+        action: 'infra.start-existing.failed',
+        message: `docker start failed for infra ${service.containerName}; fallback to rm/run`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        command: { name: 'docker start', exitCode: startResult.exitCode, stdoutPreview: startResult.stdout, stderrPreview: startResult.stderr },
+        inspect: diagnostics.inspect,
+        logs: diagnostics.logs,
+      });
+      const rmResult = await this.shell.exec(`docker rm -f ${service.containerName}`);
+      this.recordContainerEvent({
+        severity: rmResult.exitCode === 0 ? 'warn' : 'error',
+        source: 'cds-container-service',
+        action: 'infra.fallback-rm',
+        message: `fallback docker rm -f for infra ${service.containerName}`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        command: { name: 'docker rm -f', exitCode: rmResult.exitCode, stdoutPreview: rmResult.stdout, stderrPreview: rmResult.stderr },
+      });
     }
 
     // Build volume flags (named volumes + bind mounts)
@@ -1412,14 +1671,60 @@ export class ContainerService {
 
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {
+      this.recordContainerEvent({
+        severity: 'error',
+        source: 'cds-container-service',
+        action: 'infra.run.failed',
+        message: `docker run failed for infra ${service.containerName}`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        command: { name: 'docker run', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
+        details: { image: service.dockerImage, hostPort: service.hostPort, containerPort: service.containerPort, network },
+      });
       throw new Error(`启动基础设施服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
     }
+    this.recordContainerEvent({
+      severity: 'info',
+      source: 'cds-container-service',
+      action: 'infra.run.started',
+      message: `docker run started infra ${service.containerName}`,
+      projectId: service.projectId,
+      serviceId: service.id,
+      containerName: service.containerName,
+      command: { name: 'docker run', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
+      details: { image: service.dockerImage, hostPort: service.hostPort, containerPort: service.containerPort, network },
+    });
   }
 
   /** Stop and remove an infrastructure service container */
   async stopInfraService(containerName: string): Promise<void> {
-    await this.shell.exec(`docker stop ${containerName}`);
-    await this.shell.exec(`docker rm ${containerName}`);
+    const before = await this.captureContainerDiagnostics(containerName, 300);
+    this.recordContainerEvent({
+      severity: 'warn',
+      source: 'cds-container-service',
+      action: 'infra.remove.requested',
+      message: `CDS requested infra stop/rm for ${containerName}`,
+      containerName,
+      inspect: before.inspect,
+      logs: before.logs,
+      error: before.error,
+    });
+    const stopResult = await this.shell.exec(`docker stop ${containerName}`);
+    const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    this.recordContainerEvent({
+      severity: rmResult.exitCode === 0 ? 'info' : 'error',
+      source: 'cds-container-service',
+      action: 'infra.remove.completed',
+      message: `docker rm completed for infra ${containerName}`,
+      containerName,
+      command: {
+        name: 'docker stop && docker rm',
+        exitCode: rmResult.exitCode,
+        stdoutPreview: `${stopResult.stdout || ''}${rmResult.stdout || ''}`,
+        stderrPreview: `${stopResult.stderr || ''}${rmResult.stderr || ''}`,
+      },
+    });
   }
 
   /**

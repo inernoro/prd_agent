@@ -139,8 +139,26 @@ public class WebPageShareLink
     /// <summary>访问级别：public = 任何人 | password = 需密码</summary>
     public string AccessLevel { get; set; } = "public";
 
-    /// <summary>访问密码（AccessLevel = password 时有效）</summary>
+    /// <summary>
+    /// 明文密码 —— 仅旧分享和创建时"按密码去重"使用。
+    /// 新分享统一以 PasswordHash + PasswordSalt 存储；校验路径优先 Hash，
+    /// 仅在 PasswordHash 为空时回退到本字段（向后兼容存量数据）。
+    /// </summary>
     public string? Password { get; set; }
+
+    /// <summary>密码 Hash (PBKDF2-SHA256, base64)。新分享必填；旧分享为空时走明文回退路径</summary>
+    public string? PasswordHash { get; set; }
+
+    /// <summary>密码盐 (16 bytes base64)。与 PasswordHash 配对，缺一个就视为旧分享</summary>
+    public string? PasswordSalt { get; set; }
+
+    /// <summary>
+    /// 最近 N 次尝试时间戳（滑动窗口速率限制专用，单位 UTC）。
+    /// 不按 IP 锁定 —— 容器/反向代理下 IP 不可靠，且公司局域网 NAT 出口同 IP，
+    /// 一人输错会让所有同事被锁。改用 per-shareLink 滑动窗口：1 分钟内 ≥ 10 次尝试就拒绝。
+    /// 窗口自然滚动过期，不需要任何"解锁"操作；列表只保留近 1 分钟内的条目，长度恒定。
+    /// </summary>
+    public List<DateTime> RecentAttempts { get; set; } = new();
 
     public long ViewCount { get; set; }
     public DateTime? LastViewedAt { get; set; }

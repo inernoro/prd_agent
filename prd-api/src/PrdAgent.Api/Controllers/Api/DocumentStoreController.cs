@@ -2255,6 +2255,16 @@ public class DocumentStoreController : ControllerBase
         };
         await _db.DocumentStoreShareLinks.InsertOneAsync(link);
 
+        // 注意：知识库分享目前没有可用的前端展示页（App.tsx 无 /library/share/:token 路由，
+        // ShortLinkRouter 对 document_store 走 UnsupportedTargetError）。因此暂不注册 ShortLink
+        // 数字短链，避免对外暴露打不开的 /s/{seq} 链接。待补齐 /library/share/:token 视图后
+        // 再纳入短链体系（详见 doc/debt.share-link-security.md）。
+        // 前端 DocumentStorePage 历史用 /library/share/{token}（自己拼），此处不返回 url 字段。
+
+        // 返回完整 DocumentStoreShareLink，保持前端 DocumentStoreShareLink 类型契约不变
+        //（前端 DocumentStorePage prepend 到 list 后会渲染 viewCount/createdAt/isRevoked，
+        //  缺字段会回归；且前端自己用 token 拼 /library/share/{token}，不依赖后端 url 字段）
+        // ShortLink 已通过上面 AllocateAsync 注册，分享总管理 / 体检页另行查询，不靠此返回值。
         return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
     }
 

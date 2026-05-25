@@ -191,13 +191,18 @@ describe('ProxyService', () => {
       return { res, written };
     }
 
-    function addBranch(id: string, status: 'running' | 'starting' | 'building' | 'idle' | 'error' | 'restarting' | 'stopping', services: Record<string, { profileId: string; status: string }> = {}) {
+    function addBranch(
+      id: string,
+      status: 'running' | 'starting' | 'building' | 'idle' | 'error' | 'restarting' | 'stopping',
+      services: Record<string, { profileId: string; status: string }> = {},
+      branchName = id,
+    ) {
       const svcState: Record<string, any> = {};
       for (const [k, v] of Object.entries(services)) {
         svcState[k] = { profileId: v.profileId, containerName: `cds-${id}-${k}`, hostPort: 9000, status: v.status };
       }
       stateService.addBranch({
-        id, branch: id, worktreePath: `/tmp/${id}`,
+        id, branch: branchName, worktreePath: `/tmp/${id}`,
         services: svcState, status, createdAt: new Date().toISOString(),
       });
       stateService.save();
@@ -221,9 +226,11 @@ describe('ProxyService', () => {
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.headers['Retry-After']).toBe('2');
       expect(written.body).toContain('启动中');
-      expect(written.body).toContain('magic-rings-canvas');
+      expect(written.body).toContain('magic-rings-bg');
       expect(written.body).toContain('id="magic-rings"');
-      expect(written.body).not.toContain('shape-grid-bg');
+      expect(written.body).toContain('data-role="progress-estimate"');
+      expect(written.body).toContain('预计启动进度');
+      expect(written.body).not.toContain('magic-rings-canvas');
       expect(written.body).not.toContain('rings-orbit');
       expect(written.body).not.toContain('class="panel"');
       expect(written.body).toContain('/_cds/waiting-status');
@@ -236,7 +243,7 @@ describe('ProxyService', () => {
       addBranch('my-branch', 'running', {
         api: { profileId: 'api', status: 'running' },
         admin: { profileId: 'admin', status: 'starting' },
-      });
+      }, 'feature/my-branch');
 
       const req = makeReq({ host: 'my-branch.preview.test', accept: 'application/json' }, '/_cds/waiting-status?profile=admin');
       const { res, written } = makeRes();
@@ -244,9 +251,20 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(200);
       expect(written.headers['Content-Type']).toContain('application/json');
-      const payload = JSON.parse(written.body) as { ready: boolean; status: string; waitingProfileId: string; services: Array<{ profileId: string; status: string }> };
+      const payload = JSON.parse(written.body) as {
+        ready: boolean;
+        status: string;
+        branch: string;
+        branchSlug: string;
+        progress: { percent: number; confidence: string };
+        waitingProfileId: string;
+        services: Array<{ profileId: string; status: string }>;
+      };
       expect(payload.ready).toBe(false);
       expect(payload.status).toBe('running');
+      expect(payload.branch).toBe('feature/my-branch');
+      expect(payload.branchSlug).toBe('my-branch');
+      expect(payload.progress.percent).toBeGreaterThan(0);
       expect(payload.waitingProfileId).toBe('admin');
       expect(payload.services).toContainEqual({ profileId: 'admin', status: 'starting' });
     });
@@ -427,7 +445,7 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(404);
       expect(written.headers['Content-Type']).toContain('text/html');
-      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('启动失败');
       expect(written.body).toContain('missing-branch');
     });
 
@@ -453,7 +471,7 @@ describe('ProxyService', () => {
 
       expect(written.statusCode).toBe(404);
       expect(written.headers['Content-Type']).toContain('text/html');
-      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('启动失败');
     });
   });
 

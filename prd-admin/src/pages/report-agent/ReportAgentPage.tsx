@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { FileText, Users, Settings, RefreshCw, CalendarCheck } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -10,8 +9,11 @@ import { useAuthStore } from '@/stores/authStore';
 import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
+import { DailyLogInline } from './components/DailyLogInline';
 import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
 import { ThemeControl, type ColorScheme } from './components/ThemeControl';
+import { getMyDefaultTab } from '@/services';
+import type { DefaultTabKey } from '@/services/contracts/reportAgent';
 
 const ZOOM_STORAGE_KEY = 'report-agent:zoom';
 const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
@@ -90,27 +92,57 @@ export default function ReportAgentPage() {
     void loadAll();
   }, [loadAll]);
 
-  // 每次"从外部进入"本页面都强制按团队成员关系校准默认 Tab:
-  // - 有任意团队成员关系(Leader 或成员)→ 落在「团队」Tab
-  // - 没有任何团队关系 → 落在「周报」Tab
-  // 用 location.key 跟踪路由进入事件 — 同一组件实例内的 setActiveTab 不改 key,
-  // 因此用户在会话内主动切换 Tab 不会被反复拉回。
-  const location = useLocation();
-  const lastLandedKeyRef = useRef<string | null>(null);
+  // 自定义登录页偏好仅在「从外部进入」时应用一次：
+  //   - 用户在周报 Agent 内部 navigate（如打开周报详情子路由 → back 回来）：保持当前 tab，不强制跳转
+  //   - 用户从其他 Agent / 首页 / 直接刷新进入 `/report-agent`：应用偏好
+  // 用 sessionStorage 标记本次浏览会话已经登录过周报 Agent，离开 `/report-agent` 主路径（包含所有子路由）时清除。
+  // 这样能精确区分「外部进入」与「内部跳转/back」，避免 location.key 每次 navigate 变化导致的误触发。
+  const [defaultTabPref, setDefaultTabPref] = useState<DefaultTabKey | null | undefined>(undefined);
   useEffect(() => {
-    // 必须等 teams 真正拉过才能判定 hasTeamWorkspace,不能看 loading
-    // (loading 在 loadReports 内部就被错误置 false,此时 teams 可能还没到位 — 旧逻辑漏判的根因)
+    void (async () => {
+      const res = await getMyDefaultTab();
+      if (res.success && res.data) {
+        setDefaultTabPref(res.data.tab ?? null);
+      } else {
+        setDefaultTabPref(null);
+      }
+    })();
+  }, []);
+  useEffect(() => {
     if (!teamsLoaded) return;
-    if (lastLandedKeyRef.current === location.key) return;
-    lastLandedKeyRef.current = location.key;
-    setActiveTab(hasTeamWorkspace ? 'team' : 'report');
-  }, [location.key, teamsLoaded, hasTeamWorkspace, setActiveTab]);
+    if (defaultTabPref === undefined) return; // 等偏好拉完
+    if (typeof window === 'undefined') return;
+    const SESSION_KEY = 'report-agent:session-landed';
+    const landed = window.sessionStorage.getItem(SESSION_KEY) === '1';
+    if (landed) return; // 本会话已经登录过周报 Agent，保持当前 tab（处理子路由 back 等内部跳转）
+    window.sessionStorage.setItem(SESSION_KEY, '1');
+    if (defaultTabPref) {
+      setActiveTab(defaultTabPref);
+    } else {
+      setActiveTab(hasTeamWorkspace ? 'team' : 'report');
+    }
+  }, [teamsLoaded, hasTeamWorkspace, setActiveTab, defaultTabPref]);
+
+  // 离开周报 Agent（包括所有子路由 `/report-agent/*`）时清除会话标记，
+  // 这样用户从其他 Agent 切回来才会再次被视为「外部进入」并应用偏好。
+  useEffect(() => {
+    return () => {
+      if (typeof window === 'undefined') return;
+      // unmount 时 react-router 已切到新 location；只有真正离开 /report-agent 主路径或子路由时才清除。
+      // 用 `=== '/report-agent' || startsWith('/report-agent/')` 严格匹配，避免 /report-agent2 等假阳性命中。
+      const pn = window.location.pathname;
+      const stillInReportAgent = pn === '/report-agent' || pn.startsWith('/report-agent/');
+      if (!stillInReportAgent) {
+        window.sessionStorage.removeItem('report-agent:session-landed');
+      }
+    };
+  }, []);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
     const oldToNew: Record<string, string> = {
       'my-reports': 'report',
-      'daily-log': 'report',
+      'daily-log': 'dailyLog',
       'my-sources': 'settings',
       'trends': 'report',
       'templates': 'settings',
@@ -132,6 +164,7 @@ export default function ReportAgentPage() {
 
   const tabItems = useMemo(() => {
     const items = [
+      { key: 'dailyLog', label: '日常记录', icon: <CalendarCheck size={14} /> },
       { key: 'report', label: '周报', icon: <FileText size={14} /> },
     ];
     if (hasTeamWorkspace) {
@@ -190,6 +223,7 @@ export default function ReportAgentPage() {
         className="flex-1 min-h-0"
         style={{ zoom: ZOOM_SCALE[zoom] }}
       >
+        {currentTab === 'dailyLog' && <DailyLogInline />}
         {currentTab === 'report' && <ReportMainView />}
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}

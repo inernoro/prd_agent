@@ -7,12 +7,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>CDS · Cloud Dev Suite</title>
     <script>
-      // Bootstrap theme before paint to avoid FOUC. SessionStorage per
-      // .claude/rules/no-localstorage.md (also applies to CDS for consistency
-      // with the rest of the prd_agent monorepo).
+      // Bootstrap theme before paint to avoid FOUC. Theme is a browser-level
+      // preference, so keep it in localStorage and migrate the old session key.
       (function () {
         try {
-          var mode = sessionStorage.getItem('cds_theme') || 'system';
+          var stored = localStorage.getItem('cds_theme');
+          var legacy = sessionStorage.getItem('cds_theme');
+          var mode = stored || legacy || 'system';
+          if (!stored && (legacy === 'light' || legacy === 'dark' || legacy === 'system')) {
+            localStorage.setItem('cds_theme', legacy);
+            sessionStorage.removeItem('cds_theme');
+          }
           var t = mode === 'system'
             ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
             : mode;

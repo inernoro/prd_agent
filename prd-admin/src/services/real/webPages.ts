@@ -223,10 +223,12 @@ export async function createShareLink(data: {
   expiresAt?: string;
   /** 统一短链 Seq（>0 表示分配成功） */
   shortSeq?: number;
-  /** 推荐短链：/s/{seq}（分配失败时退回 /s/wp/{token}） */
+  /** 默认推荐：带分类前缀长链 /s/wp/{token}（URL 有语义、利于总管理分类） */
   shareUrl: string;
-  /** 老版长链，永远可用，用于向后兼容 */
-  legacyShareUrl: string;
+  /** 可选超短链：/s/{seq}（数字可枚举，须配强密码；分配失败为 null） */
+  shortShareUrl?: string | null;
+  /** 字母统一长链 /s/{token}（ShortLink 索引支持，高级选项） */
+  unifiedShareUrl?: string;
 }>> {
   return apiRequest(api.webPages.share(), { method: 'POST', body: data });
 }

@@ -15,6 +15,10 @@ export type ErrorCode =
 export type ApiError = {
   code: ErrorCode;
   message: string;
+  traceId?: string | null;
+  requestId?: string | null;
+  source?: string | null;
+  elapsedMs?: number | null;
 };
 
 export type ApiResponse<T> =

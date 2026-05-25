@@ -45,9 +45,13 @@ class FakeCollection implements IMongoCollection {
 }
 class FakeHandle implements IMongoHandle {
   public readonly collection = new FakeCollection();
+  public readonly fragments = new FakeCollection();
+  public readonly logRecords = new FakeCollection();
   public pingResult = true;
   async connect() { /* */ }
   stateCollection() { return this.collection; }
+  stateFragmentCollection() { return this.fragments; }
+  stateLogRecordCollection() { return this.logRecords; }
   async close() { /* */ }
   async ping() { return this.pingResult; }
 }

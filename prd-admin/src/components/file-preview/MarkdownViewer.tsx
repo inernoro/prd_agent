@@ -99,10 +99,10 @@ export function MarkdownViewer({ content }: { content: string }) {
     [slugger],
   );
   return (
-    // F2：文档站观感——更大行距、克制的最大宽度（长行不利阅读）、底部留白
+    // F2：文档站观感——更大行距、自适应宽度（窄屏占满，宽屏给到 1180 上限避免长行不利阅读）、底部留白
     <div
       className="prose-invert text-[14px]"
-      style={{ lineHeight: 1.78, maxWidth: '860px', paddingBottom: '96px' }}
+      style={{ lineHeight: 1.78, maxWidth: 'min(100%, 1180px)', paddingBottom: '96px' }}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}

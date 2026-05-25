@@ -4,10 +4,12 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Globalization;
 using System.Security.Claims;
@@ -97,6 +99,8 @@ public class ReportAgentController : ControllerBase
     private readonly TeamSummaryService _teamSummaryService;
     private readonly ReportWebhookService _webhookService;
     private readonly DailyLogPolishService _polishService;
+    private readonly ISharePasswordService _sharePwd;
+    private readonly IShortLinkService _shortLinks;
 
     public ReportAgentController(
         MongoDbContext db,
@@ -108,7 +112,9 @@ public class ReportAgentController : ControllerBase
         ReportNotificationService notificationService,
         TeamSummaryService teamSummaryService,
         ReportWebhookService webhookService,
-        DailyLogPolishService polishService)
+        DailyLogPolishService polishService,
+        ISharePasswordService sharePwd,
+        IShortLinkService shortLinks)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -120,6 +126,8 @@ public class ReportAgentController : ControllerBase
         _teamSummaryService = teamSummaryService;
         _webhookService = webhookService;
         _polishService = polishService;
+        _sharePwd = sharePwd;
+        _shortLinks = shortLinks;
     }
 
     #region Helpers
@@ -2314,6 +2322,8 @@ public class ReportAgentController : ControllerBase
         /// <summary>计划目标 ISO 周（1-53，仅 Todo 有效）</summary>
         public int? PlanWeekNumber { get; set; }
         public DateTime? CreatedAt { get; set; }
+        /// <summary>Todo 完成时间（仅 Todo 有效；非空表示已完成）</summary>
+        public DateTime? CompletedAt { get; set; }
     }
 
     public class CreateDataSourceRequest
@@ -2399,7 +2409,8 @@ public class ReportAgentController : ControllerBase
                 DurationMinutes = i.DurationMinutes,
                 PlanWeekYear = planWeekYear,
                 PlanWeekNumber = planWeekNumber,
-                CreatedAt = i.CreatedAt ?? now
+                CreatedAt = i.CreatedAt ?? now,
+                CompletedAt = isTodo ? i.CompletedAt : null
             });
         }
 
@@ -2959,7 +2970,7 @@ public class ReportAgentController : ControllerBase
     #region My Daily Log Tags
 
     /// <summary>
-    /// 获取我的日常记录自定义标签
+    /// 获取我的日常记录标签偏好（自定义标签 + 标签排序 + 默认勾选）
     /// </summary>
     [HttpGet("my/daily-log-tags")]
     public async Task<IActionResult> GetMyDailyLogTags(CancellationToken ct)
@@ -2970,11 +2981,19 @@ public class ReportAgentController : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         var tags = NormalizeDailyLogCustomTags(prefs?.ReportAgentPreferences?.DailyLogCustomTags);
-        return Ok(ApiResponse<object>.Ok(new { items = tags }));
+        var tagOrder = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogTagOrder);
+        var defaultTags = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogDefaultTags);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = tags,
+            tagOrder,
+            defaultTags,
+        }));
     }
 
     /// <summary>
-    /// 更新我的日常记录自定义标签
+    /// 更新我的日常记录标签偏好（自定义标签 + 标签排序 + 默认勾选）。
+    /// items 必传；tagOrder / defaultTags 传 null 表示不改，传 [] 表示清空。
     /// </summary>
     [HttpPut("my/daily-log-tags")]
     public async Task<IActionResult> UpdateMyDailyLogTags([FromBody] UpdateMyDailyLogTagsRequest req, CancellationToken ct)
@@ -2991,13 +3010,76 @@ public class ReportAgentController : ControllerBase
             .Set(x => x.ReportAgentPreferences!.DailyLogCustomTags, normalizedTags)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
+        if (req?.TagOrder != null)
+        {
+            var normalizedOrder = NormalizeDailyLogTagList(req.TagOrder);
+            update = update.Set(x => x.ReportAgentPreferences!.DailyLogTagOrder, normalizedOrder);
+        }
+
+        if (req?.DefaultTags != null)
+        {
+            var normalizedDefaults = NormalizeDailyLogTagList(req.DefaultTags);
+            update = update.Set(x => x.ReportAgentPreferences!.DailyLogDefaultTags, normalizedDefaults);
+        }
+
         await _db.UserPreferences.UpdateOneAsync(
             x => x.UserId == userId,
             update,
             new UpdateOptions { IsUpsert = true },
             ct);
 
-        return Ok(ApiResponse<object>.Ok(new { items = normalizedTags }));
+        var prefs = await _db.UserPreferences.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = normalizedTags,
+            tagOrder = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogTagOrder),
+            defaultTags = NormalizeDailyLogTagList(prefs?.ReportAgentPreferences?.DailyLogDefaultTags),
+        }));
+    }
+
+    private static readonly HashSet<string> AllowedDefaultTabs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "dailyLog", "report", "team", "settings",
+    };
+
+    /// <summary>
+    /// 获取我的「登录后默认 Tab」偏好。返回 tab 字段（可能为 null，表示未设置走默认逻辑）。
+    /// </summary>
+    [HttpGet("my/default-tab")]
+    public async Task<IActionResult> GetMyDefaultTab(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var prefs = await _db.UserPreferences
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var tab = prefs?.ReportAgentPreferences?.DefaultTab;
+        return Ok(ApiResponse<object>.Ok(new { tab }));
+    }
+
+    /// <summary>
+    /// 更新我的「登录后默认 Tab」偏好。tab 仅接受 dailyLog/report/team/settings；其它值（含 null）按未设置处理。
+    /// </summary>
+    [HttpPut("my/default-tab")]
+    public async Task<IActionResult> UpdateMyDefaultTab([FromBody] UpdateMyDefaultTabRequest req, CancellationToken ct)
+    {
+        string? normalized = null;
+        if (!string.IsNullOrWhiteSpace(req?.Tab) && AllowedDefaultTabs.Contains(req!.Tab!))
+        {
+            normalized = req.Tab;
+        }
+
+        var userId = GetUserId();
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.ReportAgentPreferences!.DefaultTab, normalized)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        return Ok(ApiResponse<object>.Ok(new { tab = normalized }));
     }
 
     private static List<string> NormalizeDailyLogCustomTags(IEnumerable<string>? tags)
@@ -3008,6 +3090,26 @@ public class ReportAgentController : ControllerBase
         {
             var tag = (raw ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (seen.Add(tag))
+                result.Add(tag);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// 规范化标签 key 列表（用于 tagOrder / defaultTags 字段）：去空白、去重（保序）、单 key 长度受 MaxDailyLogCustomTagLength 限制。
+    /// </summary>
+    private static List<string> NormalizeDailyLogTagList(IEnumerable<string>? tags)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var raw in tags ?? Enumerable.Empty<string>())
+        {
+            var tag = (raw ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+            if (tag.Length > MaxDailyLogCustomTagLength)
                 continue;
             if (seen.Add(tag))
                 result.Add(tag);
@@ -4900,6 +5002,8 @@ public class ReportAgentController : ControllerBase
         var wn = req.WeekNumber > 0 ? req.WeekNumber : ISOWeek.GetWeekOfYear(now);
 
         var trimmedPwd = string.IsNullOrWhiteSpace(req.Password) ? null : req.Password.Trim();
+        // 新分享同时写明文（展示给分享者）+ Hash/Salt（校验主路径，旧分享 fallback 走明文）
+        var pwdHash = trimmedPwd != null ? (SharePasswordHash?)_sharePwd.Hash(trimmedPwd) : null;
         var share = new ReportShareLink
         {
             TeamId = id,
@@ -4908,6 +5012,8 @@ public class ReportAgentController : ControllerBase
             WeekNumber = wn,
             AccessLevel = string.IsNullOrEmpty(trimmedPwd) ? ReportShareAccessLevel.Public : ReportShareAccessLevel.Password,
             Password = trimmedPwd,
+            PasswordHash = pwdHash?.Hash,
+            PasswordSalt = pwdHash?.Salt,
             ExpiresAt = req.ExpiresInDays > 0 ? now.AddDays(req.ExpiresInDays) : null,
             CreatedBy = userId,
             CreatedByName = username,
@@ -4915,13 +5021,29 @@ public class ReportAgentController : ControllerBase
 
         await _db.ReportShareLinks.InsertOneAsync(share);
 
+        // P1 URL 统一：注册到全局 ShortLink 索引，让 /s/{token} 和 /s/{seq} 都能查到
+        long shortSeq = 0;
+        try
+        {
+            shortSeq = await _shortLinks.AllocateAsync(ShortLinkTargetTypes.Report, share.Token);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "为周报分享 {ShareId} 分配短链 seq 失败，仅返回长链", share.Id);
+        }
+
         return Ok(ApiResponse<object>.Ok(new
         {
             share.Id,
             share.Token,
             share.AccessLevel,
             share.ExpiresAt,
+            // 默认带分类前缀长链：URL 有语义，利于分享总管理面板按类型分类
             shareUrl = $"/s/report-team/{share.Token}",
+            // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；shortSeq=0（未注册）时两者都
+            // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
+            shortShareUrl = shortSeq > 0 ? $"/s/{shortSeq}" : null,
+            unifiedShareUrl = shortSeq > 0 ? $"/s/{share.Token}" : null,
         }));
     }
 
@@ -4989,9 +5111,38 @@ public class ReportAgentController : ControllerBase
 
         if (!isTeamMember && share.AccessLevel == ReportShareAccessLevel.Password)
         {
+            // 速率限制：per-shareLink 滑动窗口，1 分钟 ≥ 10 次拒绝（不绑 IP，容器/NAT 友好）
+            var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
+            if (!rl.Allowed)
+            {
+                await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id,
+                    Builders<ReportShareLink>.Update.Set(s => s.RecentAttempts, rl.PrunedAttempts));
+                var sec = (int)Math.Ceiling(rl.RetryAfter.TotalSeconds);
+                Response.Headers["Retry-After"] = sec.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", $"尝试过于频繁，请 {sec} 秒后再试"));
+            }
+            // 无论对错都记录尝试时间戳
+            await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id,
+                Builders<ReportShareLink>.Update.Set(s => s.RecentAttempts, rl.PrunedAttempts));
+
             var providedPwd = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
-            if (string.IsNullOrEmpty(providedPwd) || providedPwd != share.Password)
+            if (string.IsNullOrEmpty(providedPwd))
                 return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "需要访问密码"));
+
+            bool ok;
+            if (!string.IsNullOrEmpty(share.PasswordHash) && !string.IsNullOrEmpty(share.PasswordSalt))
+                ok = _sharePwd.Verify(providedPwd, share.PasswordHash, share.PasswordSalt);
+            else
+                // 旧分享回退：明文恒时比对，避免按字符短路泄露前缀
+                ok = _sharePwd.ConstantTimeStringEquals(providedPwd, share.Password ?? string.Empty);
+
+            if (!ok)
+                return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "需要访问密码"));
+
+            // 密码正确清空窗口，合法用户不被自己的历史失败拖累
+            if (rl.PrunedAttempts.Count > 0)
+                await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id,
+                    Builders<ReportShareLink>.Update.Set(s => s.RecentAttempts, new List<DateTime>()));
         }
 
         // 记录访问
@@ -5156,6 +5307,16 @@ public class UpdateMyAiSourceRequest
 public class UpdateMyDailyLogTagsRequest
 {
     public List<string>? Items { get; set; }
+    /// <summary>标签呈现顺序（系统 category key + 自定义标签名称）；选填，传 null 表示不改</summary>
+    public List<string>? TagOrder { get; set; }
+    /// <summary>默认勾选的标签（系统 category key + 自定义标签名称）；选填，传 null 表示不改</summary>
+    public List<string>? DefaultTags { get; set; }
+}
+
+public class UpdateMyDefaultTabRequest
+{
+    /// <summary>合法值：dailyLog / report / team / settings；其它值（含 null/空串）按未设置处理</summary>
+    public string? Tab { get; set; }
 }
 
 public class UpdateMyAiReportPromptRequest

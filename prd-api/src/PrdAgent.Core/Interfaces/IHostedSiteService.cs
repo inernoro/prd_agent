@@ -119,6 +119,8 @@ public class ShareViewResult
     public List<SharedSiteInfo> Sites { get; set; } = new();
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试（驱动倒计时 UI）</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class SaveSharedSiteResult
@@ -128,6 +130,8 @@ public class SaveSharedSiteResult
     public List<HostedSite> Sites { get; set; } = new();
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class SharedSiteInfo

@@ -31,6 +31,8 @@ import path from 'node:path';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute } from './forwarder/route-resolver.js';
 import type { RouteRecord } from './forwarder/types.js';
+import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
+import { httpLogStoreFromEnv } from './services/http-log-store.js';
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',
@@ -61,13 +63,25 @@ const FALLBACK_HOST = process.env.CDS_UNKNOWN_HOST_FALLBACK_HOST ?? '127.0.0.1';
 const FALLBACK_PORT_RAW = process.env.CDS_UNKNOWN_HOST_FALLBACK_PORT ?? process.env.CDS_WORKER_PORT ?? '5500';
 const FALLBACK_PORT = Number.parseInt(FALLBACK_PORT_RAW, 10);
 
+let activeHttpLogStore = httpLogStoreFromEnv();
+if (activeHttpLogStore) {
+  try {
+    await activeHttpLogStore.init();
+    console.log('[forwarder] persistent HTTP request logging enabled (collection=cds_http_logs)');
+  } catch (err) {
+    activeHttpLogStore = null;
+    console.warn(`[forwarder] HTTP request logging disabled: ${(err as Error).message}`);
+  }
+}
+
 const proxy = new ProxyHandler({
   upstreamTimeoutMs: 30_000,
   masterPassthroughHost: MASTER_PASSTHROUGH_HOST,
   masterPassthroughPort: MASTER_PASSTHROUGH_PORT,
   unknownHostFallbackHost: FALLBACK_PORT > 0 ? FALLBACK_HOST : undefined,
   unknownHostFallbackPort: FALLBACK_PORT > 0 ? FALLBACK_PORT : undefined,
-  waitingPageHtml: '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Branch warming up</title><style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{position:relative;overflow:hidden;width:min(460px,100%);border:1px solid #30363d;border-radius:16px;background:#161b22;padding:32px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.34),0 0 40px -24px #58a6ff}.card:before{content:"";position:absolute;inset:0 auto 0 -40%;width:34%;background:linear-gradient(90deg,transparent,rgba(88,166,255,.13),transparent);transform:skewX(-18deg);animation:glint 3.2s ease-in-out infinite}.spinner{position:relative;width:34px;height:34px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .9s linear infinite;margin:0 auto 16px;box-shadow:0 0 24px -6px #58a6ff}.spinner:after{content:"";position:absolute;inset:-9px;border-radius:50%;border:1px solid rgba(88,166,255,.32);animation:halo 1.7s ease-in-out infinite}h1{font-size:18px;color:#f0f6fc}p{font-size:13px;line-height:1.7;color:#8b949e}@keyframes spin{to{transform:rotate(360deg)}}@keyframes halo{0%,100%{opacity:.28;transform:scale(.82)}50%{opacity:1;transform:scale(1.16)}}@keyframes glint{0%,36%{transform:translateX(0) skewX(-18deg);opacity:0}52%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}@media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important}}</style><body><main class="card"><div class="spinner"></div><h1>预览环境准备中</h1><p>分支正在启动或重新构建，几秒后自动恢复。本页面 3 秒后自动刷新。</p></main><script>setTimeout(()=>location.reload(),3000)</script>',
+  waitingPageHtml: buildForwarderWaitingPageHtml(),
+  httpLogStore: activeHttpLogStore,
   logger: {
     info: (m) => console.log(`[forwarder] ${m}`),
     warn: (m) => console.warn(`[forwarder] ${m}`),
@@ -211,7 +225,14 @@ function shutdown(signal: string): void {
   console.log(`[forwarder] received ${signal}, draining...`);
   server.close(() => {
     proxy.destroy();
-    process.exit(0);
+    const done = () => process.exit(0);
+    if (!activeHttpLogStore) {
+      done();
+      return;
+    }
+    void activeHttpLogStore.close()
+      .catch((err) => console.warn(`[forwarder] HTTP log store close failed: ${(err as Error).message}`))
+      .finally(done);
   });
   setTimeout(() => {
     console.warn('[forwarder] graceful shutdown timed out, forcing exit');

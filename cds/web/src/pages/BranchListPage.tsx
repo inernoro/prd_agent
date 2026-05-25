@@ -89,6 +89,12 @@ interface BranchSummary {
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
+  builder?: {
+    name: string;
+    email?: string;
+    login?: string;
+    avatarUrl?: string;
+  };
   previewSlug?: string;
   githubCommitSha?: string;
   githubRepoFullName?: string;
@@ -172,6 +178,11 @@ interface ActivityEvent {
   remoteAddr?: string;
   referer?: string;
   userAgent?: string;
+}
+
+interface FocusBranchEventDetail {
+  projectId?: string;
+  branchId?: string;
 }
 
 interface HostStatsResponse {
@@ -274,6 +285,12 @@ type BranchAction = {
 
 type PreviewTarget = Window | null;
 type ActivityTypeFilter = 'all' | 'api' | 'web' | 'ai';
+
+type FailedDeployTarget = {
+  branch: BranchSummary;
+  profileId?: string;
+  label: string;
+};
 
 type HostStatsState =
   | { status: 'loading' }
@@ -432,6 +449,56 @@ function sortOldestRunning(left: BranchSummary, right: BranchSummary): number {
   return leftTime - rightTime;
 }
 
+type BranchVisualRole = 'main' | 'master' | 'environment' | 'regular';
+
+const ENVIRONMENT_BRANCH_ORDER = ['dev', 'develop', 'development', 'staging', 'stage', 'test', 'qa', 'prod', 'production'];
+
+function normalizedBranchName(value: string): string {
+  return value.trim().replace(/^refs\/heads\//, '').replace(/^origin\//, '').toLowerCase();
+}
+
+function branchVisualRole(branchName: string): BranchVisualRole {
+  const name = normalizedBranchName(branchName);
+  if (name === 'main') return 'main';
+  if (name === 'master') return 'master';
+  if (ENVIRONMENT_BRANCH_ORDER.includes(name)) return 'environment';
+  return 'regular';
+}
+
+function branchSortRank(branchName: string): number {
+  const name = normalizedBranchName(branchName);
+  if (name === 'main') return 0;
+  if (name === 'master') return 1;
+  const envIndex = ENVIRONMENT_BRANCH_ORDER.indexOf(name);
+  return envIndex >= 0 ? 10 + envIndex : 100;
+}
+
+function branchRoleCardClass(role: BranchVisualRole): string {
+  switch (role) {
+    case 'main':
+      return 'border-emerald-400/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_16px_34px_-28px_rgba(52,211,153,0.85)]';
+    case 'master':
+      return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_16px_34px_-28px_rgba(34,211,238,0.8)]';
+    case 'environment':
+      return 'border-amber-400/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_16px_34px_-30px_rgba(251,191,36,0.72)]';
+    default:
+      return '';
+  }
+}
+
+function branchRoleIconClass(role: BranchVisualRole): string {
+  switch (role) {
+    case 'main':
+      return 'text-emerald-400';
+    case 'master':
+      return 'text-cyan-400';
+    case 'environment':
+      return 'text-amber-400';
+    default:
+      return 'text-sky-500';
+  }
+}
+
 function formatBytesFromMB(value?: number): string {
   if (!value || value <= 0) return '未知';
   if (value >= 1024) return `${Math.round(value / 102.4) / 10} GB`;
@@ -457,14 +524,15 @@ function deployFailureMessage(branch?: BranchSummary): string {
   if (!branch) return '';
   const failedServices = Object.values(branch.services || {}).filter((svc) => svc.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return '';
+  const label = branchIssueLabel(branch);
   const serviceNames = failedServices.map((svc) => svc.profileId).join(', ');
-  if (branch.errorMessage) return `应用代码错误：${branch.errorMessage}`;
+  if (branch.errorMessage) return `${label}：${branch.errorMessage}`;
   const serviceErrors = failedServices
     .map((svc) => svc.errorMessage ? `${svc.profileId}: ${svc.errorMessage}` : '')
     .filter(Boolean);
-  if (serviceErrors.length > 0) return `应用代码错误：${serviceErrors.join('；')}`;
-  if (serviceNames) return `应用代码错误：${serviceNames} 启动失败`;
-  return '应用代码错误：分支进入异常状态';
+  if (serviceErrors.length > 0) return `${label}：${serviceErrors.join('；')}`;
+  if (serviceNames) return `${label}：${serviceNames} 启动失败`;
+  return `${label}：分支进入异常状态`;
 }
 
 function projectIdFromQuery(): string {
@@ -479,6 +547,10 @@ function projectSwitcherMeta(project: ProjectSummary): string {
   const title = displayName(project);
   const candidates = [project.slug, project.githubRepoFullName, project.id].filter(Boolean) as string[];
   return candidates.find((value) => value !== title) || '';
+}
+
+function projectEnvSettingsHref(projectId: string): string {
+  return `/settings/${encodeURIComponent(projectId)}?tab=env`;
 }
 
 function fallbackProjectSummary(projectId: string): ProjectSummary {
@@ -528,22 +600,75 @@ function formatElapsedSecondsFrom(since: string | undefined | null, now: number)
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function aiOperationState(branch: BranchSummary, now: number): { active: boolean; history: boolean; label: string; title: string } {
+type AiOperationStatus = 'none' | 'active' | 'timeout' | 'released';
+
+function formatLocalDateTime(value?: string | null): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '-';
+  return date.toLocaleString();
+}
+
+function aiOperationState(branch: BranchSummary, now: number): {
+  active: boolean;
+  visible: boolean;
+  history: boolean;
+  status: AiOperationStatus;
+  label: string;
+  title: string;
+  lastAt?: string;
+  timeoutAt?: string;
+  relative: string;
+} {
   const lastAt = branch.lastAiOccupantAt || null;
   const lastAtMs = lastAt ? new Date(lastAt).getTime() : Number.NaN;
   const hasValidLastAt = Number.isFinite(lastAtMs);
   const active = hasValidLastAt && now - lastAtMs <= AI_ACTIVE_TTL_MS;
+  const visible = active;
   const history = active || (branch.aiOpCount || 0) > 0 || hasValidLastAt;
+  const timeoutAt = hasValidLastAt ? new Date(lastAtMs + AI_ACTIVE_TTL_MS).toISOString() : undefined;
   const relative = hasValidLastAt ? formatRelativeTime(lastAt, '未知时间') : '';
+  const status: AiOperationStatus = !history
+    ? 'none'
+    : active
+      ? 'active'
+      : branch.status === 'idle'
+        ? 'released'
+        : 'timeout';
+  const label = status === 'active'
+    ? 'AI 正在操作'
+    : status === 'timeout'
+      ? 'AI 已超时'
+      : status === 'released'
+        ? 'AI 已释放'
+        : '无 AI 操作';
   const count = branch.aiOpCount ? ` · ${branch.aiOpCount} 次` : '';
   return {
     active,
+    visible,
     history,
-    label: active ? 'AI 正在操作' : 'AI 操作过',
+    status,
+    label,
     title: history
-      ? `${active ? 'AI 正在操作' : 'AI 操作过'}${relative ? ` · 最近 ${relative}` : ''}${count}`
+      ? `${label}${relative ? ` · 最近 ${relative}` : ''}${count}`
       : '无 AI 操作记录',
+    lastAt: lastAt || undefined,
+    timeoutAt,
+    relative,
   };
+}
+
+function aiBadgeClass(status: AiOperationStatus): string {
+  switch (status) {
+    case 'active':
+      return 'border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15';
+    case 'timeout':
+      return 'border-amber-400/45 bg-amber-400/10 text-amber-300 hover:bg-amber-400/15';
+    case 'released':
+      return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground hover:text-foreground';
+    default:
+      return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+  }
 }
 
 function branchBusySince(branch: BranchSummary, action?: BranchAction): string | undefined {
@@ -599,25 +724,102 @@ function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: st
   };
 }
 
-function branchIssueLabel(branch: BranchSummary): string {
+// 错误归责分类(2026-05-21)
+//   - cds-runtime: CDS 自己该擦的屁股,容器在 docker 层消失/镜像拉不到/forwarder 挂了/磁盘满了
+//                  这些都不是应用代码的错,标红与应用代码错误区分开
+//   - app-code:    应用启动后崩了/找不到依赖/健康检查不通过/进程 exit code 非零
+//                  这是业务侧自查,CDS 不该自动 redeploy 替它擦
+//   - deploy-config: 端口冲突/OOM/资源不足,介于两者之间,通常调配额可解决
+//   - unknown:     未匹配到关键词
+type BranchIssueCategory = 'cds-runtime' | 'app-code' | 'deploy-config' | 'unknown';
+
+const BRANCH_ISSUE_LABELS: Record<BranchIssueCategory, string> = {
+  'cds-runtime': 'CDS 运行时错误',
+  'app-code': '应用代码错误',
+  'deploy-config': '部署配置错误',
+  'unknown': '未分类错误',
+};
+
+function branchIssueCategory(branch: BranchSummary): BranchIssueCategory {
   const text = [
     branch.errorMessage || '',
     ...Object.values(branch.services || {}).map((service) => service.errorMessage || ''),
   ].join('\n').toLowerCase();
-  if (/cds|forwarder|proxy|调度|scheduler|docker daemon|no space|capacity|容量|磁盘|内存/.test(text)) {
-    return 'CDS 环境异常';
+  if (!text.trim()) return 'unknown';
+
+  // CDS 运行时(容器丢失/CDS 重启中断/镜像拉取/调度器/forwarder/磁盘容量)
+  if (
+    /容器已丢失|cds 重启|cds重启|上一次部署|forwarder|proxy|调度|scheduler|docker daemon|no space|磁盘|capacity|容量|镜像.*(拉取|pull)|image.*(not found|pull access|manifest unknown|repository does not exist)|network.*(unreachable|超时)/.test(text)
+  ) {
+    return 'cds-runtime';
   }
-  return '应用代码错误';
+
+  // 部署配置(端口冲突 / OOM / 资源不足)
+  // 端口冲突文案与后端 isPortConflictError(src/routes/branches.ts) 对齐:
+  // docker 报 'port is already allocated',内核报 'address already in use'/EADDRINUSE
+  if (/eaddrinuse|address already in use|port is already allocated|端口被占用|端口.*(占用|冲突)|oomkilled|out of memory|cannot allocate memory|内存超限/.test(text)) {
+    return 'deploy-config';
+  }
+
+  // 应用代码(异常退出/缺依赖/启动失败/健康检查)
+  if (
+    /容器异常退出|容器.*启动后退出|疑似崩溃|exit\s*(code|ed with code)?\s*[:=]?\s*\d+|cannot find module|module not found|module_not_found|启动信号超时|健康检查.*超时|health.*(check.*timeout|probe failed)|readiness probe failed/.test(text)
+  ) {
+    return 'app-code';
+  }
+
+  return 'unknown';
+}
+
+function branchIssueLabel(branch: BranchSummary): string {
+  return BRANCH_ISSUE_LABELS[branchIssueCategory(branch)];
 }
 
 function branchIssueClass(branch: BranchSummary): string {
-  return branchIssueLabel(branch) === 'CDS 环境异常'
-    ? 'border-destructive/40 bg-destructive/15 text-destructive font-semibold'
-    : 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold';
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') {
+    return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
+  }
+  if (category === 'app-code') {
+    return 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold';
+  }
+  if (category === 'deploy-config') {
+    return 'border-orange-500/45 bg-orange-500/10 text-orange-700 dark:text-orange-300 font-semibold';
+  }
+  return 'border-muted-foreground/30 bg-muted/30 text-muted-foreground font-semibold';
 }
 
 function branchIssueRailClass(branch: BranchSummary): string {
-  return branchIssueLabel(branch) === 'CDS 环境异常' ? 'bg-destructive' : 'bg-amber-500';
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') return 'bg-destructive';
+  if (category === 'app-code') return 'bg-amber-500';
+  if (category === 'deploy-config') return 'bg-orange-500';
+  return 'bg-muted-foreground/40';
+}
+
+// 错误卡片整体描边/底色/光晕 —— 必须与 badge/rail 同一 category 配色,
+// 否则胶囊显橙(deploy-config)/灰(unknown)而卡片边框还是琥珀,视觉割裂。
+function branchIssueCardClass(branch: BranchSummary): string {
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') {
+    return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]';
+  }
+  if (category === 'app-code') {
+    return 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]';
+  }
+  if (category === 'deploy-config') {
+    return 'border-orange-500/55 bg-orange-500/5 ring-1 ring-orange-500/20 shadow-[0_4px_16px_-4px_rgba(249,115,22,0.32)]';
+  }
+  return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_4px_16px_-4px_rgba(100,116,139,0.28)]';
+}
+
+// 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
+function branchIssueHintTextClass(branch: BranchSummary): string {
+  const category = branchIssueCategory(branch);
+  if (category === 'cds-runtime') return 'text-destructive/80';
+  if (category === 'app-code') return 'text-amber-700/90 dark:text-amber-300/90';
+  if (category === 'deploy-config') return 'text-orange-700/90 dark:text-orange-300/90';
+  return 'text-muted-foreground';
 }
 
 function statusLabel(status: BranchSummary['status'] | ServiceState['status']): string {
@@ -775,205 +977,25 @@ function eventMessage(event: string, data: unknown): string {
 }
 
 /**
- * F17 fix (2026-05-02 onboarding UAT): the preview-tab pre-load placeholder
- * was a single flat line of text ("CDS is preparing the preview...") which
- * violates user contract #31 ("non-text / CDS-branded loading"). This is
- * the only opportunity to brand the transition since `about:blank` is
- * cross-origin (we can't render React into it) and we own the document for
- * exactly one frame before navigating away.
- *
- * Implementation strategy:
- *   - Inline SVG logo + CSS keyframes pulse animation (no external assets)
- *   - Theme-aware: read parent `data-theme` to pick light/dark palette so
- *     the pre-load tab matches what the user is looking at
- *   - Brand wordmark "CDS" + Chinese subtitle so the user instantly knows
- *     which tool opened the tab (avoids "wait, what's CDS again?")
- *   - Status text is small, secondary — the spinning animation carries the
- *     "we're working" signal, not the literal sentence
- *
- * Constraints we cannot work around:
- *   - `about:blank` has no CSS context — must inline literal colors, not
- *     CSS variables. We use the same hex values as our `--bg-base` /
- *     `--text-primary` token pairs (see cds/web/src/index.css).
- *   - No emojis (rule #0)
- *   - Cross-origin / cookie isolation: cannot use sessionStorage from the
- *     parent window to remember user theme preference here, so we read
- *     `parent.document.documentElement.dataset.theme` directly while we
- *     still have same-origin access to the parent.
+ * Opens the short-lived preview transition page in the new window before the
+ * target preview URL is known. Keep this route-based so the real handoff and
+ * the settings preview share the same ReactBits Hyperspeed surface.
  */
-function openPreviewPlaceholder(): PreviewTarget {
-  const target = window.open('about:blank', '_blank');
+function openPreviewPlaceholder(branchName = 'preview-handoff'): PreviewTarget {
+  const params = new URLSearchParams({ branch: branchName, t: String(Date.now()) });
+  const target = window.open(`/preview-preparing?${params.toString()}`, '_blank');
   if (!target) return null;
   try {
     target.opener = null;
-
-    // Detect theme from the parent document so the pre-load page matches
-    // the user's current CDS dashboard look. Default to dark when unknown.
-    const parentTheme = document.documentElement.getAttribute('data-theme');
-    const isLight = parentTheme === 'light';
-
-    const palette = isLight
-      ? { bg: '#f8f2ed', surface: '#ffffff', primary: '#2a1f19', muted: '#7c6f64', accent: '#d97706' }
-      : { bg: '#0f1014', surface: '#131314', primary: '#e8e8ec', muted: '#9ca3af', accent: '#fbbf24' };
-
-    target.document.title = 'CDS · 正在准备预览';
-
-    // Replace the entire <head> + <body> in one shot — we own this document
-    // for the time between window.open() and target.location.href = url.
-    target.document.body.innerHTML = '';
-    target.document.head.innerHTML = `
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width,initial-scale=1">
-      <title>CDS · 正在准备预览</title>
-      <style>
-        html, body {
-          margin: 0;
-          padding: 0;
-          height: 100%;
-          background: ${palette.bg};
-          color: ${palette.primary};
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-          overflow: hidden;
-        }
-        .stage {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          min-height: 100vh;
-          gap: 32px;
-        }
-        .logo {
-          width: 96px;
-          height: 96px;
-          position: relative;
-        }
-        .logo svg {
-          width: 100%;
-          height: 100%;
-          display: block;
-        }
-        .ring-outer {
-          fill: none;
-          stroke: ${palette.accent};
-          stroke-width: 3;
-          stroke-linecap: round;
-          stroke-dasharray: 60 220;
-          transform-origin: center;
-          animation: rotateRing 1.6s linear infinite;
-        }
-        .ring-inner {
-          fill: none;
-          stroke: ${palette.accent};
-          stroke-width: 2;
-          stroke-linecap: round;
-          stroke-dasharray: 40 140;
-          transform-origin: center;
-          animation: rotateRing 2.4s linear infinite reverse;
-          opacity: 0.55;
-        }
-        .wordmark {
-          fill: ${palette.primary};
-          font-size: 28px;
-          font-weight: 700;
-          font-family: "SF Mono", Menlo, ui-monospace, monospace;
-          letter-spacing: 1px;
-          dominant-baseline: central;
-          text-anchor: middle;
-        }
-        @keyframes rotateRing {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        .meta {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 6px;
-        }
-        .title {
-          font-size: 15px;
-          font-weight: 500;
-          color: ${palette.primary};
-          letter-spacing: 2px;
-        }
-        .subtitle {
-          font-size: 12px;
-          color: ${palette.muted};
-          letter-spacing: 0.5px;
-        }
-        .progress-track {
-          width: 240px;
-          height: 3px;
-          border-radius: 999px;
-          background: ${isLight ? '#efe7df' : 'rgba(255,255,255,0.08)'};
-          overflow: hidden;
-          position: relative;
-        }
-        .progress-fill {
-          position: absolute;
-          inset: 0;
-          width: 30%;
-          background: linear-gradient(90deg, transparent, ${palette.accent}, transparent);
-          animation: slideTrack 1.8s ease-in-out infinite;
-        }
-        @keyframes slideTrack {
-          0%   { transform: translateX(-110%); }
-          100% { transform: translateX(380%); }
-        }
-        .footer {
-          position: fixed;
-          bottom: 24px;
-          left: 0; right: 0;
-          text-align: center;
-          font-size: 11px;
-          color: ${palette.muted};
-          letter-spacing: 1px;
-          opacity: 0.7;
-        }
-      </style>
-    `;
-
-    // Body: spinning ring + CDS wordmark + status row + branded footer.
-    // Why all-SVG instead of <img>: avoids any external network request
-    // racing the navigation that's about to happen on the next tick.
-    const stage = target.document.createElement('div');
-    stage.className = 'stage';
-    stage.innerHTML = `
-      <div class="logo" role="img" aria-label="CDS preparing preview">
-        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-          <circle class="ring-outer" cx="50" cy="50" r="46" />
-          <circle class="ring-inner" cx="50" cy="50" r="34" />
-          <text class="wordmark" x="50" y="51">CDS</text>
-        </svg>
-      </div>
-      <div class="meta">
-        <div class="title">正在准备预览</div>
-        <div class="subtitle">Cloud Dev Suite · preparing preview</div>
-      </div>
-      <div class="progress-track" aria-hidden="true">
-        <div class="progress-fill"></div>
-      </div>
-      <div class="footer">CDS · cds.miduo.org</div>
-    `;
-    target.document.body.appendChild(stage);
   } catch {
-    // The window still exists; navigation below can continue. Fall back to
-    // the cheap text placeholder so something is on screen during the
-    // hop in case the styled DOM injection failed (e.g. CSP weirdness).
-    try {
-      target.document.body.innerHTML
-        = '<div style="padding:24px;font-family:system-ui,sans-serif">CDS · 正在准备预览…</div>';
-    } catch {
-      /* ignore */
-    }
+    // Some browsers can deny opener mutation after window creation.
   }
   return target;
 }
 
 function navigatePreview(target: PreviewTarget, url: string): void {
   if (target && !target.closed) {
-    target.location.href = url;
+    target.location.replace(url);
     return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');
@@ -981,7 +1003,7 @@ function navigatePreview(target: PreviewTarget, url: string): void {
 
 function closePreviewTarget(target: PreviewTarget): void {
   try {
-    if (target && !target.closed && target.location.href === 'about:blank') target.close();
+    if (target && !target.closed && target.location.pathname === '/preview-preparing') target.close();
   } catch {
     // ignore cross-origin or already-closed windows
   }
@@ -996,6 +1018,7 @@ export function BranchListPage(): JSX.Element {
   // 用户从搜索下拉选中已有分支时,使用稳定选中态标记卡片。
   // 不再用短暂 pulse + 计时器,避免分支流刷新/列表重排时动画被吃掉。
   const [highlightedBranchId, setHighlightedBranchId] = useState<string | null>(null);
+  const [highlightPulseBranchId, setHighlightPulseBranchId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [actions, setActions] = useState<Record<string, BranchAction>>({});
   const [actionClock, setActionClock] = useState(Date.now());
@@ -1005,6 +1028,7 @@ export function BranchListPage(): JSX.Element {
   const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
+  const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [remoteBranchesLoading, setRemoteBranchesLoading] = useState(false);
   // 项目切换器 — Week 4.8 Round 4d:Crumb 上的项目名变成 1 步切换的 dropdown
   // 不阻塞首屏加载;失败默默静默(降级到只显示项目列表入口)
@@ -1012,6 +1036,9 @@ export function BranchListPage(): JSX.Element {
   const [executorAction, setExecutorAction] = useState<Record<string, string>>({});
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [opsDrawerOpen, setOpsDrawerOpen] = useState(false);
+  const noticeProject = useMemo(() => (
+    state.status === 'ok' ? state.project : projectId ? fallbackProjectSummary(projectId) : null
+  ), [projectId, state.status, state.status === 'ok' ? state.project.id : null, state.status === 'ok' ? state.project.slug : null, state.status === 'ok' ? state.project.name : null, state.status === 'ok' ? state.project.aliasName : null]);
   // 2026-05-07 wave 1.3:容量超限交互式选择停哪个分支
   const [capacityDialog, setCapacityDialog] = useState<{
     branch: BranchSummary;
@@ -1028,6 +1055,7 @@ export function BranchListPage(): JSX.Element {
   const [bulkTagError, setBulkTagError] = useState('');
   const branchSearchRef = useRef<HTMLDivElement | null>(null);
   const actionRef = useRef<Record<string, BranchAction>>({});
+  const highlightPulseTimerRef = useRef<number | null>(null);
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
   const previewQueryConsumedRef = useRef(false);
 
@@ -1278,7 +1306,7 @@ export function BranchListPage(): JSX.Element {
   }, [projectId, state.status]);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !noticeProject) return;
     if (missingRequiredKeys.length === 0) return;
     const keys = [...missingRequiredKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -1287,15 +1315,18 @@ export function BranchListPage(): JSX.Element {
         title: '必填环境变量缺失',
         body: `${keys.length} 个必填项还没填：${keys.slice(0, 6).join(', ')}${keys.length > 6 ? ` 等 ${keys.length} 项` : ''}。deploy 会被阻止，先去项目设置补齐。`,
         tone: 'danger',
-        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        href: projectEnvSettingsHref(projectId),
         actionLabel: '立刻填写',
         source: 'env',
+        projectId,
+        projectName: displayName(noticeProject),
+        projectSlug: noticeProject.slug,
       },
     }));
-  }, [missingRequiredKeys, projectId]);
+  }, [missingRequiredKeys, noticeProject, projectId]);
 
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !noticeProject) return;
     if (pendingEnvKeys.length === 0) return;
     const keys = [...pendingEnvKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -1304,12 +1335,15 @@ export function BranchListPage(): JSX.Element {
         title: '项目环境变量待补全',
         body: `${keys.length} 个变量仍是 TODO 占位：${keys.slice(0, 5).join(' · ')}${keys.length > 5 ? ` 等 ${keys.length} 项` : ''}。先填好再部署。`,
         tone: 'warning',
-        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        href: projectEnvSettingsHref(projectId),
         actionLabel: '前往填写',
         source: 'env',
+        projectId,
+        projectName: displayName(noticeProject),
+        projectSlug: noticeProject.slug,
       },
     }));
-  }, [pendingEnvKeys, projectId]);
+  }, [noticeProject, pendingEnvKeys, projectId]);
 
   useEffect(() => {
     if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;
@@ -1319,9 +1353,12 @@ export function BranchListPage(): JSX.Element {
         title: '数据库初始化(schema.sql)',
         body: '检测到 mysql / postgres 类基础设施。需要初始化数据库时，进入环境变量配置向导上传 schema.sql，容器首次启动会自动执行。',
         tone: 'info',
-        href: `/settings/${encodeURIComponent(projectId)}#env`,
+        href: projectEnvSettingsHref(projectId),
         actionLabel: '上传初始化 SQL',
         source: 'schema',
+        projectId,
+        projectName: displayName(state.project),
+        projectSlug: state.project.slug,
       },
     }));
   }, [projectId, state]);
@@ -1435,6 +1472,29 @@ export function BranchListPage(): JSX.Element {
     () => branches.filter((branch) => selectedBranchIds.includes(branch.id)),
     [branches, selectedBranchIds],
   );
+  const failedDeployTargets = useMemo<FailedDeployTarget[]>(() => {
+    const targets: FailedDeployTarget[] = [];
+    for (const branch of branches) {
+      const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
+      if (failedServices.length > 0) {
+        for (const service of failedServices) {
+          targets.push({
+            branch,
+            profileId: service.profileId,
+            label: `${branch.branch} / ${service.profileId}`,
+          });
+        }
+        continue;
+      }
+      if (branch.status === 'error') {
+        targets.push({
+          branch,
+          label: `${branch.branch} / 全部分支服务`,
+        });
+      }
+    }
+    return targets;
+  }, [branches]);
   // Branches displayed in the grid: favorites first, then by recent activity.
   // We no longer expose status filters or compact toggles in the list itself
   // (the search dropdown and per-card status pill cover those needs).
@@ -1448,6 +1508,9 @@ export function BranchListPage(): JSX.Element {
       ? branches.filter((b) => (b.tags || []).includes(activeTagFilter))
       : branches;
     return filtered.slice().sort((left, right) => {
+      const leftRank = branchSortRank(left.branch);
+      const rightRank = branchSortRank(right.branch);
+      if (leftRank !== rightRank) return leftRank - rightRank;
       if (isErrored(left) !== isErrored(right)) return isErrored(left) ? -1 : 1;
       if (!!left.isFavorite !== !!right.isFavorite) return left.isFavorite ? -1 : 1;
       return score(right) - score(left);
@@ -1609,12 +1672,12 @@ export function BranchListPage(): JSX.Element {
         setToast(`${branch.branch} 还未运行`);
         return;
       }
-      const target = openPreviewPlaceholder();
+      const target = openPreviewPlaceholder(branch.branch);
       await deployBranch(branch, true, target);
       return;
     }
 
-    const target = openPreviewPlaceholder();
+    const target = openPreviewPlaceholder(branch.branch);
     await openRunningPreview(branch, target);
   }, [deployBranch, openRunningPreview, state]);
 
@@ -1895,6 +1958,89 @@ export function BranchListPage(): JSX.Element {
     }
   }, [refresh, setAction]);
 
+  const redeployFailedContainers = useCallback(async (): Promise<void> => {
+    if (redeployFailedRunning) return;
+    if (failedDeployTargets.length === 0) {
+      setToast('当前项目没有失败容器');
+      return;
+    }
+
+    setRedeployFailedRunning(true);
+    try {
+      const startedAt = Date.now();
+      const startedIso = new Date().toISOString();
+      const total = failedDeployTargets.length;
+      let successCount = 0;
+      let failedCount = 0;
+      const failedLabels: string[] = [];
+
+      setToast(`开始队列重部署失败容器：${total} 个`);
+
+      for (let index = 0; index < failedDeployTargets.length; index += 1) {
+        const target = failedDeployTargets[index];
+        const { branch, profileId } = target;
+        const label = `${index + 1}/${total} ${target.label}`;
+        let ok = true;
+
+        setAction(branch.id, createAction('deploy', `队列重部署 ${label}`));
+        try {
+          const endpoint = profileId
+            ? `/api/branches/${encodeURIComponent(branch.id)}/deploy/${encodeURIComponent(profileId)}`
+            : `/api/branches/${encodeURIComponent(branch.id)}/deploy`;
+          await postSse(endpoint, {}, (event, data) => {
+            appendActionLog(branch.id, eventMessage(event, data));
+            if (event === 'complete' && typeof data === 'object' && data !== null && 'ok' in data) {
+              ok = Boolean((data as { ok?: unknown }).ok);
+            }
+            if (event === 'error') ok = false;
+          });
+
+          if (ok) {
+            successCount += 1;
+            setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', `队列重部署完成 ${label}`, 'success'));
+          } else {
+            failedCount += 1;
+            failedLabels.push(target.label);
+            setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', `队列重部署仍失败 ${label}`, 'error'));
+          }
+        } catch (err) {
+          failedCount += 1;
+          const message = err instanceof ApiError ? err.message : String(err);
+          failedLabels.push(`${target.label}: ${message}`);
+          setAction(branch.id, finishAction(actionRef.current[branch.id], 'deploy', message, 'error'));
+        }
+      }
+
+      try {
+        await refresh(false);
+      } catch {
+        // The queue has already run; a transient list refresh failure should not
+        // prevent the completion notice from being written.
+      }
+
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const noticeTone = failedCount > 0 ? 'warning' : 'info';
+      const failedText = failedLabels.length > 0
+        ? `；仍失败：${failedLabels.slice(0, 5).join('、')}${failedLabels.length > 5 ? ` 等 ${failedLabels.length} 个` : ''}`
+        : '';
+      const noticeId = `branch:${projectId}:redeploy-failed:${startedIso}`;
+      window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
+        detail: {
+          id: noticeId,
+          title: '失败容器重部署队列已完成',
+          body: `共 ${total} 个，成功 ${successCount} 个，失败 ${failedCount} 个，耗时 ${elapsedSec}s${failedText}`,
+          tone: noticeTone,
+          href: `/branches/${encodeURIComponent(projectId)}`,
+          actionLabel: '查看分支',
+          source: 'ops',
+        },
+      }));
+      setToast(`失败容器重部署完成：成功 ${successCount}/${total}${failedCount ? `，失败 ${failedCount}` : ''}`);
+    } finally {
+      setRedeployFailedRunning(false);
+    }
+  }, [appendActionLog, failedDeployTargets, projectId, redeployFailedRunning, refresh, setAction]);
+
   const runBulkAction = useCallback(async (
     label: string,
     branchList: BranchSummary[],
@@ -1963,11 +2109,40 @@ export function BranchListPage(): JSX.Element {
   // 选择其它分支,比临时动画更符合"这是你刚选中的面板"的用户心智。
   const focusBranchCard = useCallback((branchId: string): void => {
     setHighlightedBranchId(branchId);
+    if (highlightPulseTimerRef.current) {
+      window.clearTimeout(highlightPulseTimerRef.current);
+      highlightPulseTimerRef.current = null;
+    }
+    setHighlightPulseBranchId(null);
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      requestAnimationFrame(() => {
+        setHighlightPulseBranchId(branchId);
+        highlightPulseTimerRef.current = window.setTimeout(() => {
+          setHighlightPulseBranchId((current) => (current === branchId ? null : current));
+          highlightPulseTimerRef.current = null;
+        }, 900);
+      });
     });
   }, []);
+
+  useEffect(() => () => {
+    if (highlightPulseTimerRef.current) window.clearTimeout(highlightPulseTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const onFocusBranch = (event: Event): void => {
+      const detail = (event as CustomEvent<FocusBranchEventDetail>).detail || {};
+      if (!detail.branchId || detail.projectId !== projectId) return;
+      const branch = branches.find((item) => item.id === detail.branchId);
+      if (!branch) return;
+      setActiveTagFilter(null);
+      focusBranchCard(branch.id);
+    };
+    window.addEventListener('cds:focus-branch', onFocusBranch);
+    return () => window.removeEventListener('cds:focus-branch', onFocusBranch);
+  }, [branches, focusBranchCard, projectId]);
 
   /*
    * Add a remote branch and start its deployment WITHOUT opening a
@@ -2280,6 +2455,16 @@ export function BranchListPage(): JSX.Element {
                 </a>
               </Button>
               <Button
+                variant={failedDeployTargets.length > 0 ? 'outline' : 'ghost'}
+                size="sm"
+                onClick={() => void redeployFailedContainers()}
+                disabled={redeployFailedRunning || failedDeployTargets.length === 0}
+                title={failedDeployTargets.length > 0 ? `按队列重部署 ${failedDeployTargets.length} 个失败容器` : '当前没有失败容器'}
+              >
+                {redeployFailedRunning ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                重部署失败{failedDeployTargets.length > 0 ? ` ${failedDeployTargets.length}` : ''}
+              </Button>
+              <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setOpsDrawerOpen(true)}
@@ -2398,6 +2583,10 @@ export function BranchListPage(): JSX.Element {
                     now={actionClock}
                     projectId={projectId}
                     highlighted={highlightedBranchId === branch.id}
+                    highlightPulse={highlightPulseBranchId === branch.id}
+                    activityEvents={activityEvents
+                      .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
+                      .slice(0, 5)}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
                     onPreview={() => void openPreview(branch, true)}
@@ -3287,6 +3476,8 @@ function BranchCard({
   now,
   capacityWarning,
   highlighted,
+  highlightPulse,
+  activityEvents = [],
   activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -3310,6 +3501,7 @@ function BranchCard({
   action?: BranchAction;
   now: number;
   capacityWarning?: string;
+  activityEvents?: ActivityEvent[];
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
@@ -3319,6 +3511,7 @@ function BranchCard({
   // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
   // 稳定选中态 + 自动滚到可视区。详见 focusBranchCard / index.css。
   highlighted?: boolean;
+  highlightPulse?: boolean;
   // 当前激活的标签过滤(给 chip 高亮显示用)
   activeTagFilter?: string | null;
   onSelect?: () => void;
@@ -3364,25 +3557,43 @@ function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
+  const role = branchVisualRole(branch.branch);
+  const roleCardClass = branchRoleCardClass(role);
+  const roleIconClass = branchRoleIconClass(role);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
   const aiState = aiOperationState(branch, now);
-  const isAiOperated = aiState.history;
+  const isAiOperated = aiState.visible;
   const isAiActive = aiState.active;
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagDraftError, setTagDraftError] = useState('');
   const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [builderAvatarFailed, setBuilderAvatarFailed] = useState(false);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
   const dimWholeCard = !isRunning && !isError && !isInterim;
+  const builderLabel = branch.builder?.name || branch.builder?.login || '未知构建者';
+  const builderTitle = branch.builder
+    ? `构建者: ${builderLabel}${branch.builder.email ? ` <${branch.builder.email}>` : ''}`
+    : '构建者: 未知';
+  const builderInitial = (builderLabel.trim().charAt(0) || '?').toUpperCase();
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [tagEditorOpen]);
+  useEffect(() => {
+    if (!isAiOperated && aiPanelOpen) {
+      setAiPanelOpen(false);
+    }
+  }, [aiPanelOpen, isAiOperated]);
+  useEffect(() => {
+    setBuilderAvatarFailed(false);
+  }, [branch.builder?.avatarUrl]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -3403,15 +3614,13 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
         isError
-          ? branchIssueLabel(branch) === 'CDS 环境异常'
-            ? 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]'
-            : 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]'
+          ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''}`}
+      } ${roleCardClass} ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -3453,13 +3662,21 @@ function BranchCard({
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
               {isAiOperated ? (
-                <span
-                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border border-sky-400/45 bg-sky-400/10 px-1.5 text-[10px] font-semibold text-sky-300 ${isAiActive ? '' : 'opacity-75'}`}
+                <button
+                  type="button"
+                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-semibold transition-colors ${aiBadgeClass(aiState.status)}`}
                   title={aiState.title}
+                  aria-expanded={aiPanelOpen}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setTagEditorOpen(false);
+                    setTagDeleteTarget(null);
+                    setAiPanelOpen((current) => !current);
+                  }}
                 >
                   <Bot className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-1 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
                   AI
-                </span>
+                </button>
               ) : null}
               {/*
                 2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
@@ -3502,6 +3719,116 @@ function BranchCard({
           />
         </div>
       </header>
+
+      {aiPanelOpen && isAiOperated ? (
+        <div
+          className="absolute right-4 top-14 z-[130] w-[min(340px,calc(100%-32px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-3 text-xs shadow-2xl"
+          role="dialog"
+          aria-label={`${branch.branch} AI 操作记录`}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === 'Escape') setAiPanelOpen(false);
+          }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 font-semibold">
+              <Bot className={`h-4 w-4 ${isAiActive ? 'text-sky-300' : aiState.status === 'timeout' ? 'text-amber-300' : 'text-muted-foreground'}`} />
+              <span className="truncate">{aiState.label}</span>
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+              onClick={() => setAiPanelOpen(false)}
+              aria-label="关闭 AI 操作面板"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="grid gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2 text-muted-foreground">
+            <div className="flex justify-between gap-3">
+              <span>最近操作</span>
+              <span className="text-foreground">{aiState.relative || '-'}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>最后时间</span>
+              <span className="font-mono">{formatLocalDateTime(aiState.lastAt)}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>租约超时</span>
+              <span className="font-mono">{formatLocalDateTime(aiState.timeoutAt)}</span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>结束判定</span>
+              <span className="text-foreground">
+                {aiState.status === 'active' ? '租约内' : aiState.status === 'timeout' ? '租约超时' : '已释放'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span>记录次数</span>
+              <span className="text-foreground">{branch.aiOpCount || activityEvents.length || 1}</span>
+            </div>
+          </div>
+          <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-2 leading-5 text-muted-foreground">
+            {aiState.status === 'active'
+              ? '当前仍在 AI 租约窗口内；如果超时前没有续租，会自动降级为已超时。'
+              : aiState.status === 'timeout'
+                ? '超过租约窗口后没有新的 AI 续租记录，按已超时处理。'
+                : '当前分支未处于 AI 活跃窗口，视为 AI 已释放。'}
+          </div>
+          <div className="mt-3">
+            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">最近 AI 记录</div>
+            {activityEvents.length > 0 ? (
+              <div className="max-h-32 space-y-1 overflow-auto pr-1">
+                {activityEvents.map((event) => (
+                  <div key={event.id} className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded border px-1 py-0.5 font-mono ${activityStatusClass(event.status)}`}>{event.status}</span>
+                      <span className="min-w-0 flex-1 truncate text-foreground">{activityLabel(event)}</span>
+                      <span className="font-mono text-muted-foreground">{formatDuration(event.duration)}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{activitySourceLabel(event)}</span>
+                      <span>{formatShortTime(event.ts)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded border border-dashed border-[hsl(var(--hairline))] px-2 py-2 text-muted-foreground">
+                暂无细分活动；当前只拿到分支级 AI 占用时间与次数。
+              </div>
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setAiPanelOpen(false);
+                onDetail();
+              }}
+            >
+              打开详情
+            </Button>
+            {isRunning ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setAiPanelOpen(false);
+                  onPreview();
+                }}
+              >
+                <ExternalLink />
+                人工预览
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/* 状态/服务 chip 行 — wrap 不 nowrap,所有 port 全部显示(无 +N 折叠)。
           用户反馈 2026-05-06:
@@ -3727,7 +4054,24 @@ function BranchCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
-          <GitBranch className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-4 w-4 shrink-0 text-sky-500' : 'h-4 w-4 shrink-0 text-sky-500'} />
+          <div
+            className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+            title={builderTitle}
+            aria-label={builderTitle}
+          >
+            {branch.builder?.avatarUrl && !builderAvatarFailed ? (
+              <img
+                src={branch.builder.avatarUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={() => setBuilderAvatarFailed(true)}
+              />
+            ) : (
+              <span>{builderInitial}</span>
+            )}
+          </div>
+          <GitBranch className={`${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 ' : ''}h-4 w-4 shrink-0 ${roleIconClass}`} />
           <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
         </div>
         {/*
@@ -3756,8 +4100,8 @@ function BranchCard({
                     : isAiOperated
                       ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                     : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                  title={isAiOperated ? `${aiState.label} · 预览` : '预览'}
-                  aria-label={isAiOperated ? `${aiState.label}，预览` : '预览'}
+                  title={isAiOperated ? `${aiState.label} · 打开 AI 操作面板` : '预览'}
+                  aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
                 >
                   {isAiOperated ? <Bot /> : <Eye />}
                 </Button>
@@ -3772,10 +4116,15 @@ function BranchCard({
                 : isAiOperated
                   ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
                 : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-              onClick={onPreview}
+              onClick={isAiOperated
+                ? (event) => {
+                  event.stopPropagation();
+                  setAiPanelOpen((current) => !current);
+                }
+                : onPreview}
               disabled={busy}
-              title={isAiOperated ? `${aiState.label} · 预览` : '预览'}
-              aria-label={isAiOperated ? `${aiState.label}，预览` : '预览'}
+              title={isAiOperated ? `${aiState.label} · 打开 AI 操作面板` : '预览'}
+              aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
             >
               {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
             </Button>
@@ -3901,11 +4250,7 @@ function BranchFailureHint({
   const message = deployFailureMessage(branch) || '分支处于异常状态';
   return (
     <div
-      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${
-        branchIssueLabel(branch) === 'CDS 环境异常'
-          ? 'text-destructive/80'
-          : 'text-amber-700/90 dark:text-amber-300/90'
-      }`}
+      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${branchIssueHintTextClass(branch)}`}
       title={message}
     >
       <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />

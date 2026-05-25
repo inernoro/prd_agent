@@ -478,8 +478,10 @@ public class WebPagesController : ControllerBase
                 req.Password, req.ExpiresInDays,
                 purpose: req.Purpose == "visit" ? "visit" : "share");
 
-            // 优先返回新短链 /s/{seq}；如分配失败（ShortSeq=0），退回老链接 /s/wp/{token}
-            var hasShort = share.ShortSeq > 0;
+            // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
+            //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
+            //   - 用户只在主动选「超短链」时才用纯数字 /s/{seq}
+            //   - 字母统一长链 /s/{token} 仍然可用（ShortLink 全局索引支持），但不主推
             return Ok(ApiResponse<object>.Ok(new
             {
                 share.Id,
@@ -489,8 +491,11 @@ public class WebPagesController : ControllerBase
                 share.Password,
                 share.ExpiresAt,
                 share.ShortSeq,
-                shareUrl = hasShort ? $"/s/{share.ShortSeq}" : $"/s/wp/{share.Token}",
-                legacyShareUrl = $"/s/wp/{share.Token}",
+                shareUrl = $"/s/wp/{share.Token}",
+                // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
+                // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
+                shortShareUrl = share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : null,
+                unifiedShareUrl = share.ShortSeq > 0 ? $"/s/{share.Token}" : null,
             }));
         }
         catch (ArgumentException ex)
@@ -538,6 +543,12 @@ public class WebPagesController : ControllerBase
 
         if (result.Error != null)
         {
+            if (result.HttpStatus == 429)
+            {
+                if (result.RetryAfterSeconds is { } ra && ra > 0)
+                    Response.Headers["Retry-After"] = ra.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", result.Error));
+            }
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
@@ -574,6 +585,12 @@ public class WebPagesController : ControllerBase
 
         if (result.Error != null)
         {
+            if (result.HttpStatus == 429)
+            {
+                if (result.RetryAfterSeconds is { } ra && ra > 0)
+                    Response.Headers["Retry-After"] = ra.ToString();
+                return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", result.Error));
+            }
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),

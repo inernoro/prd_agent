@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ShapeGrid from '@/components/effects/ShapeGrid';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { cn } from '@/lib/utils';
 
 export function Section({
@@ -46,12 +47,56 @@ export function Field({
 }
 
 export function LoadingBlock({ label = '加载中' }: { label?: string }): JSX.Element {
+  return <PartialLoadingPanel label={label} />;
+}
+
+function PartialLoadingPanel({
+  label,
+  detail,
+  className,
+  expanded = false,
+}: {
+  label: string;
+  detail?: ReactNode;
+  className?: string;
+  expanded?: boolean;
+}): JSX.Element {
   return (
-    <div className="cds-shape-panel flex min-h-28 items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
-      <ShapeGrid className="cds-shape-backdrop" speed={0.12} squareSize={34} hoverTrailAmount={0} />
-      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-      {label}
+    <div
+      className={cn(
+        'cds-shape-panel flex items-center justify-center rounded-md border border-dashed border-border text-muted-foreground',
+        expanded ? 'min-h-[320px] px-8 py-10' : 'min-h-28 px-4 py-5',
+        className,
+      )}
+    >
+      <ShapeGrid
+        className="cds-shape-backdrop"
+        speed={0.1}
+        squareSize={expanded ? 40 : 34}
+        hoverTrailAmount={0}
+      />
+      <div className={cn('relative z-10 flex items-center', expanded ? 'max-w-xl flex-col gap-3 text-center' : 'gap-2')}>
+        <CdsLogoLoader
+          label={label}
+          size={expanded ? 'md' : 'sm'}
+          className="text-sm font-medium text-muted-foreground"
+        />
+        {detail ? (
+          <p className="max-w-lg text-sm leading-6 text-muted-foreground/75">{detail}</p>
+        ) : null}
+      </div>
     </div>
+  );
+}
+
+export function BranchDetailLoadingSkeleton({ className }: { className?: string }): JSX.Element {
+  return (
+    <PartialLoadingPanel
+      className={className}
+      expanded
+      label="加载分支详情"
+      detail="正在读取分支状态、服务拓扑、最近部署记录和运行日志索引。"
+    />
   );
 }
 
@@ -79,8 +124,8 @@ export function ErrorBlock({ message }: { message: string }): JSX.Element {
 function AuthRequiredBlock(): JSX.Element {
   const loginHref =
     window.location.port === '5173'
-      ? `${window.location.protocol}//${window.location.hostname}:9900/login.html`
-      : '/login.html';
+      ? `${window.location.protocol}//${window.location.hostname}:9900/login`
+      : '/login';
 
   return (
     <div className="cds-shape-panel flex min-h-32 flex-col items-start justify-center gap-3 rounded-md border border-border px-4 py-5">
