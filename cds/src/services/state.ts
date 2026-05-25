@@ -1276,6 +1276,7 @@ export class StateService {
     updates: {
       githubRepoFullName?: string;
       githubCommitSha?: string;
+      lastPushAt?: string;
       githubSenderLogin?: string;
       githubSenderAvatarUrl?: string;
       githubCheckRunId?: number;
@@ -1292,6 +1293,7 @@ export class StateService {
     // check-run ids after marking them as neutral on GitHub).
     if ('githubRepoFullName' in updates) branch.githubRepoFullName = updates.githubRepoFullName;
     if ('githubCommitSha' in updates) branch.githubCommitSha = updates.githubCommitSha;
+    if ('lastPushAt' in updates) branch.lastPushAt = updates.lastPushAt;
     if ('githubSenderLogin' in updates) branch.githubSenderLogin = updates.githubSenderLogin;
     if ('githubSenderAvatarUrl' in updates) branch.githubSenderAvatarUrl = updates.githubSenderAvatarUrl;
     if ('githubCheckRunId' in updates) branch.githubCheckRunId = updates.githubCheckRunId;

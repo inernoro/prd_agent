@@ -84,6 +84,7 @@ interface BranchSummary {
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
   createdAt: string;
+  lastPushAt?: string;
   lastAccessedAt?: string;
   lastPullAt?: string;
   lastDeployAt?: string;
@@ -433,8 +434,8 @@ function capacityMessage(
 }
 
 function sortOldestRunning(left: BranchSummary, right: BranchSummary): number {
-  const leftTime = new Date(left.lastAccessedAt || left.lastDeployAt || left.createdAt || 0).getTime() || 0;
-  const rightTime = new Date(right.lastAccessedAt || right.lastDeployAt || right.createdAt || 0).getTime() || 0;
+  const leftTime = new Date(left.lastAccessedAt || left.lastDeployAt || left.lastPushAt || left.createdAt || 0).getTime() || 0;
+  const rightTime = new Date(right.lastAccessedAt || right.lastDeployAt || right.lastPushAt || right.createdAt || 0).getTime() || 0;
   return leftTime - rightTime;
 }
 
@@ -500,6 +501,12 @@ function builderHandle(branch: BranchSummary): string {
   if (sender) return `@${sender}`;
   const name = branch.builder?.name?.trim();
   return name ? `@${name}` : '';
+}
+
+function githubAvatarUrlFromHandle(value?: string): string {
+  const handle = (value || '').trim().replace(/^@/, '');
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i.test(handle)) return '';
+  return `https://github.com/${encodeURIComponent(handle)}.png?size=64`;
 }
 
 function formatBytesFromMB(value?: number): string {
@@ -676,7 +683,7 @@ function aiBadgeClass(status: AiOperationStatus): string {
 
 function branchBusySince(branch: BranchSummary, action?: BranchAction): string | undefined {
   if (action?.status === 'running') return new Date(action.startedAt).toISOString();
-  return branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt;
+  return branch.lastAccessedAt || branch.lastDeployAt || branch.lastPushAt || branch.createdAt;
 }
 
 function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: string): { label: string; text: string; title: string } {
@@ -704,6 +711,22 @@ function branchTimeBadge(branch: BranchSummary, now = Date.now(), busySince?: st
       label: '部署',
       text: '未完成',
       title: branch.errorMessage || '最近一次部署未完成，详情见分支面板',
+    };
+  }
+  const pushMs = branch.lastPushAt ? Date.parse(branch.lastPushAt) : 0;
+  const deployAttemptMs = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
+  const deploySuccessMs = branch.lastDeployAt ? Date.parse(branch.lastDeployAt) : 0;
+  const deployedMs = Math.max(deployAttemptMs || 0, deploySuccessMs || 0);
+  if (branch.lastPushAt && pushMs > deployedMs) {
+    const deployPart = branch.lastDeployAt
+      ? `；最近成功部署: ${branch.lastDeployAt}`
+      : branch.lastAccessedAt
+        ? `；最近部署尝试: ${branch.lastAccessedAt}`
+        : '';
+    return {
+      label: '最近推送',
+      text: formatRelativeTime(branch.lastPushAt),
+      title: `GitHub push 到达 CDS: ${branch.lastPushAt}${deployPart}`,
     };
   }
   if (branch.lastAccessedAt) {
@@ -1517,7 +1540,12 @@ export function BranchListPage(): JSX.Element {
   // We no longer expose status filters or compact toggles in the list itself
   // (the search dropdown and per-card status pill cover those needs).
   const sortedBranches = useMemo(() => {
-    const score = (branch: BranchSummary) => new Date(branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt || 0).getTime() || 0;
+    const score = (branch: BranchSummary) => Math.max(
+      Date.parse(branch.lastPushAt || '') || 0,
+      Date.parse(branch.lastAccessedAt || '') || 0,
+      Date.parse(branch.lastDeployAt || '') || 0,
+      Date.parse(branch.createdAt || '') || 0,
+    );
     // 2026-05-04 排序优先级:失败/异常 > 收藏 > 最近活跃。失败分支必须置顶,
     // 否则 14 个分支卡均权重渲染,异常分支淹没,接班场景要肉眼扫一遍。
     const isErrored = (b: BranchSummary): boolean => b.status === 'error';
@@ -3632,7 +3660,9 @@ function BranchCard({
   // 中间态保持正常亮度让 loading 动画清晰可见。
   const dimWholeCard = !isRunning && !isError && !isInterim;
   const builderLabel = branch.builder?.name || branch.builder?.login || branch.githubSenderLogin || '';
-  const builderAvatarUrl = branch.builder?.avatarUrl || branch.githubSenderAvatarUrl || '';
+  const builderAvatarUrl = branch.builder?.avatarUrl
+    || branch.githubSenderAvatarUrl
+    || githubAvatarUrlFromHandle(branch.builder?.login || branch.githubSenderLogin || branch.builder?.name);
   const builderTitle = branch.builder
     ? `构建者: ${builderLabel}${branch.builder.email ? ` <${branch.builder.email}>` : ''}`
     : branch.githubSenderLogin

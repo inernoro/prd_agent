@@ -507,6 +507,8 @@ export interface BranchEntry {
    */
   githubRepoFullName?: string;
   githubCommitSha?: string;
+  /** Time when CDS last accepted a GitHub push/check metadata update for this branch. */
+  lastPushAt?: string;
   /** GitHub user login that triggered the latest webhook touching this branch. */
   githubSenderLogin?: string;
   /** Original GitHub avatar URL from webhook payload.sender.avatar_url. */

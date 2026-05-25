@@ -48,6 +48,7 @@ interface BranchDetailData {
   githubRepoFullName?: string;
   githubCommitSha?: string;
   githubPrNumber?: number;
+  lastPushAt?: string;
   lastDeployAt?: string;
   lastAccessedAt?: string;
   lastReadyAt?: string;
@@ -481,6 +482,7 @@ function buildLlmFailurePrompt(
     branch.githubRepoFullName ? `GitHub仓库: ${branch.githubRepoFullName}` : '',
     branch.githubCommitSha ? `GitHub提交: ${branch.githubCommitSha}` : '',
     branch.commitSha ? `当前提交: ${branch.commitSha}` : '',
+    branch.lastPushAt ? `最近推送: ${branch.lastPushAt}` : '',
     branch.lastDeployAt ? `最近成功部署: ${branch.lastDeployAt}` : '',
     '',
     '## 失败摘要',
@@ -1636,12 +1638,14 @@ export function BranchDetailDrawer({
                       </div>
                       <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
                         <span>
+                          最近推送：{formatDeployTimestamp(branch.lastPushAt)}
+                        </span>
+                        <span>
                           最近部署：{formatDeployTimestamp(
-                            branch.lastDeployAt || (branch.status === 'running' ? branch.lastReadyAt || branch.lastAccessedAt : undefined),
+                            branch.lastDeployAt,
                           )}
                         </span>
-                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''}</span>
-                        <span>停止次数：{branch.stopCount || 0}</span>
+                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''} · 停止次数：{branch.stopCount || 0}</span>
                       </div>
                       {/*
                         2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。

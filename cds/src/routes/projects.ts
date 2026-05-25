@@ -310,10 +310,10 @@ export function assertProjectAccess(
  * - branchCount: total branches in the project (including cold / error)
  * - runningBranchCount: branches with at least one running service
  * - runningServiceCount: sum of services in `running` state across branches
- * - lastDeployedAt: max(lastAccessedAt) across branches; BranchEntry
- *   updates lastAccessedAt on deploy completion (branches.ts:1210/1366),
- *   so this is a good "latest deploy" proxy. null when no branch ever
- *   deployed. Cached values from state.json — not a live docker check.
+ * - lastDeployedAt: max(lastDeployAt) across branches. Do not use
+ *   lastAccessedAt here: it is a deploy-attempt/LRU clock and can move
+ *   without a successful deploy. null when no branch has a success stamp.
+ *   Cached values from state.json — not a live docker check.
  */
 interface ProjectStats {
   branchCount: number;
@@ -457,8 +457,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           }
         }
       }
-      if (b.lastAccessedAt && (!lastDeployedAt || b.lastAccessedAt > lastDeployedAt)) {
-        lastDeployedAt = b.lastAccessedAt;
+      if (b.lastDeployAt && (!lastDeployedAt || b.lastDeployAt > lastDeployedAt)) {
+        lastDeployedAt = b.lastDeployAt;
       }
     }
     return {

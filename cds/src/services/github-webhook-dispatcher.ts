@@ -715,6 +715,7 @@ export class GitHubWebhookDispatcher {
     }
     const commitSha = event.after;
     const repoFullName = event.repository.full_name;
+    const receivedAt = nowIso();
 
     const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
     if (!project) {
@@ -758,6 +759,7 @@ export class GitHubWebhookDispatcher {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubRepoFullName: repoFullName,
           githubCommitSha: commitSha,
+          lastPushAt: receivedAt,
           githubSenderLogin: event.sender?.login,
           githubSenderAvatarUrl: event.sender?.avatar_url,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
@@ -773,8 +775,9 @@ export class GitHubWebhookDispatcher {
               patch: {
                 githubRepoFullName: updatedEntry.githubRepoFullName,
                 githubCommitSha: updatedEntry.githubCommitSha,
+                lastPushAt: updatedEntry.lastPushAt,
               },
-              ts: nowIso(),
+              ts: receivedAt,
             },
           });
         }
@@ -852,6 +855,7 @@ export class GitHubWebhookDispatcher {
     this.deps.stateService.updateBranchGithubMeta(branchId, {
       githubRepoFullName: repoFullName,
       githubCommitSha: commitSha,
+      lastPushAt: receivedAt,
       githubSenderLogin: event.sender?.login,
       githubSenderAvatarUrl: event.sender?.avatar_url,
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
@@ -878,10 +882,11 @@ export class GitHubWebhookDispatcher {
             patch: {
               githubRepoFullName: updatedEntry.githubRepoFullName,
               githubCommitSha: updatedEntry.githubCommitSha,
+              lastPushAt: updatedEntry.lastPushAt,
               githubSenderLogin: updatedEntry.githubSenderLogin,
               githubSenderAvatarUrl: updatedEntry.githubSenderAvatarUrl,
             },
-            ts: nowIso(),
+            ts: receivedAt,
           },
         });
       }

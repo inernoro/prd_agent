@@ -199,6 +199,11 @@ function githubLoginFromCommitEmail(email: string): string | null {
   return match?.[1] || null;
 }
 
+function githubLoginFromCommitName(name: string): string | null {
+  const normalized = name.trim();
+  return /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i.test(normalized) ? normalized : null;
+}
+
 function buildCommitBuilder(name?: string, email?: string): {
   name: string;
   email?: string;
@@ -208,7 +213,7 @@ function buildCommitBuilder(name?: string, email?: string): {
   const cleanName = (name || '').trim();
   const cleanEmail = (email || '').trim();
   if (!cleanName && !cleanEmail) return undefined;
-  const login = cleanEmail ? githubLoginFromCommitEmail(cleanEmail) : null;
+  const login = cleanEmail ? githubLoginFromCommitEmail(cleanEmail) : githubLoginFromCommitName(cleanName);
   return {
     name: cleanName || login || cleanEmail,
     ...(cleanEmail ? { email: cleanEmail } : {}),

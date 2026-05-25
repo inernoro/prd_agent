@@ -50,6 +50,7 @@ interface BranchSummary {
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
   createdAt: string;
+  lastPushAt?: string;
   lastAccessedAt?: string;
   lastDeployAt?: string;
   lastStoppedAt?: string;
@@ -1288,10 +1289,11 @@ export function BranchDetailPage(): JSX.Element {
                 </CardHeader>
                 <CardContent className="space-y-4 p-5 pt-0">
                   <p className="text-sm leading-6 text-muted-foreground">{state.branch.subject || '暂无提交摘要'}</p>
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <MetricTile label="服务数" value={services.length} />
                     <MetricTile label="部署次数" value={state.branch.deployCount || 0} />
-                    <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt || state.branch.lastAccessedAt)} />
+                    <MetricTile label="最近推送" value={formatDate(state.branch.lastPushAt)} />
+                    <MetricTile label="最近部署" value={formatDate(state.branch.lastDeployAt)} />
                   </div>
                   {/*
                     2026-05-14 Cursor Bugbot Medium：lastStoppedAt 为历史戳，
