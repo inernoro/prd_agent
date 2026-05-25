@@ -93,10 +93,14 @@ export const useReprocessRunStore = create<ReprocessRunState>()(
       name: 'reprocess-run-store',
       // 严格遵守 no-localstorage 规则
       storage: createJSONStorage(() => sessionStorage),
-      // streamedText 可能很大，不持久化；刷新后由 Host 重连补齐
+      // streaming 的 streamedText 不持久化（刷新后 Host 用 afterSeq=0 重放补齐）；
+      // 但 done/failed 的终态 run 不会再挂 Host，必须保留 streamedText，否则刷新后
+      // 重开抽屉会看到「已完成但正文空白」（Bugbot 报告）。
       partialize: (s) => ({
         runs: Object.fromEntries(
-          Object.entries(s.runs).map(([id, r]) => [id, { ...r, streamedText: '' }]),
+          Object.entries(s.runs).map(([id, r]) =>
+            [id, r.status === 'streaming' ? { ...r, streamedText: '' } : r],
+          ),
         ),
       }),
     },

@@ -59,11 +59,9 @@ export function ReprocessRunHost({
         });
         finish('done', d.outputEntryId);
       },
-      error: (data) => {
-        const d = data as { message?: string };
-        patchRun(runId, { status: 'failed', errorMessage: d.message ?? '未知错误' });
-        finish('failed');
-      },
+      // 注意：SSE 的 error 事件由 useSseStream 内置分发给 onError（已做 message ||
+      // errorMessage || '出错' 提取），这里不再单独挂 onEvent.error，否则会用更弱的
+      // 文案二次覆盖 errorMessage（Bugbot 报告）。
     },
     onError: (msg) => {
       patchRun(runId, { status: 'failed', errorMessage: msg });

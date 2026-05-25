@@ -1255,6 +1255,9 @@ export function DocBrowser({
   // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
   useEffect(() => {
     if (!autoEditEntryId || selectedEntryId !== autoEditEntryId || contentLoading) return;
+    // 必须确认当前 preview 已是该 entry 的内容，否则会把上一篇的旧正文带进新文档
+    // （selectedEntryId 刚切换那一帧 contentLoading 仍为 false，preview 还是旧的）——Bugbot 报告
+    if (!loadedContentKey || !loadedContentKey.startsWith(autoEditEntryId + ':')) return;
     const entry = entries.find(e => e.id === autoEditEntryId);
     if (!entry || entry.isFolder) return;
     const cfg = getFileTypeConfig(entry.title, entry.contentType);
@@ -1263,7 +1266,7 @@ export function DocBrowser({
       setEditMode(true);
     }
     onAutoEditConsumed?.();
-  }, [autoEditEntryId, selectedEntryId, contentLoading, preview, entries, onSaveContent, onAutoEditConsumed]);
+  }, [autoEditEntryId, selectedEntryId, contentLoading, loadedContentKey, preview, entries, onSaveContent, onAutoEditConsumed]);
 
   // 内容版本键变化时强制退出编辑态：
   // loadedContentKey = `${entryId}:${updatedAt}`。当"同一个 entry"的 updatedAt

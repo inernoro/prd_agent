@@ -563,19 +563,30 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   }, [loadStore, loadEntries]);
 
   // ── 文档再加工：页面级任务中枢（关抽屉 / 刷新都不丢） ──
-  const reprocessRuns = useReprocessRunStore((s) => s.runs);
   const dismissRun = useReprocessRunStore((s) => s.dismissRun);
-  // 本知识库下的所有再加工任务（pill 渲染用）
+  // 只订阅一个【不含 streamedText】的签名串：状态/阶段/进度(取整)/标题等。
+  // 这样 SSE 文本 chunk（最高频、只改 streamedText）不会触发本页 + 整棵文件树重渲染，
+  // 仅在进度等真实变化时才更新（Bugbot 性能报告）。打字内容由抽屉自身订阅渲染。
+  const reprocessSig = useReprocessRunStore((s) =>
+    Object.values(s.runs)
+      .filter((r) => r.storeId === storeId)
+      .map((r) => `${r.runId}|${r.status}|${r.phase}|${Math.round(r.progress)}|${r.sourceEntryId}|${r.sourceTitle}|${r.outputEntryId ?? ''}`)
+      .sort()
+      .join('~~'),
+  );
+  // 本知识库下的所有再加工任务（pill 渲染用）——按签名记忆，引用稳定
   const storeRuns = useMemo(
-    () => Object.values(reprocessRuns)
+    () => Object.values(useReprocessRunStore.getState().runs)
       .filter((r) => r.storeId === storeId)
       .sort((a, b) => b.startedAt - a.startedAt),
-    [reprocessRuns, storeId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reprocessSig, storeId],
   );
   // 源文档 → 进度（文件树 chip 用）
   const reprocessingMap = useMemo(
-    () => selectStreamingByEntry(reprocessRuns, storeId),
-    [reprocessRuns, storeId],
+    () => selectStreamingByEntry(useReprocessRunStore.getState().runs, storeId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reprocessSig, storeId],
   );
 
   // Host 报告任务到达终态：完成则刷新文件树 + 选中新文档（与抽屉是否开着无关）

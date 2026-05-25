@@ -34,14 +34,17 @@ export function ReprocessDrawer({ entryId, entryTitle, storeId, onClose }: Repro
   const [customPrompt, setCustomPrompt] = useState('');
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [runId, setRunId] = useState<string | null>(null);
+  // 防止「开始加工」请求在途时被二次点击 → 创建重复任务
+  const [submitting, setSubmitting] = useState(false);
 
   const startRun = useReprocessRunStore((s) => s.startRun);
   const run = useReprocessRunStore((s) => (runId ? s.runs[runId] : undefined));
 
-  // 复用：若该源文档已有任务（关了抽屉又点开 / 刷新后重进），直接展开续看
+  // 复用：仅当该源文档有【进行中】任务时才直接展开续看（关抽屉又点开 / 刷新后重进）。
+  // done / failed 不复用——否则重开抽屉会卡在旧结果页，无法再发起新的再加工。
   useEffect(() => {
     const existing = Object.values(useReprocessRunStore.getState().runs)
-      .filter((r) => r.sourceEntryId === entryId)
+      .filter((r) => r.sourceEntryId === entryId && r.status === 'streaming')
       .sort((a, b) => b.startedAt - a.startedAt)[0];
     if (existing) {
       setRunId(existing.runId);
@@ -66,6 +69,7 @@ export function ReprocessDrawer({ entryId, entryTitle, storeId, onClose }: Repro
   }, []);
 
   const handleStart = useCallback(async () => {
+    if (submitting) return;
     if (!selectedKey) return;
     if (selectedKey === 'custom' && !customPrompt.trim()) {
       toast.warning('请输入自定义提示词');
@@ -74,18 +78,20 @@ export function ReprocessDrawer({ entryId, entryTitle, storeId, onClose }: Repro
     // 模板模式下：customPrompt 作为额外指令上送（后端会拼接到模板 systemPrompt 末尾）
     // 自定义模式下：customPrompt 是主 prompt
     const trimmed = customPrompt.trim();
+    setSubmitting(true);
     const res = await startReprocess(entryId, {
       templateKey: selectedKey,
       customPrompt: trimmed || undefined,
     });
     if (!res.success) {
+      setSubmitting(false);
       toast.error('启动任务失败', res.error?.message);
       return;
     }
     startRun({ runId: res.data.runId, storeId, sourceEntryId: entryId, sourceTitle: entryTitle });
     setRunId(res.data.runId);
     setStage('running');
-  }, [entryId, entryTitle, storeId, selectedKey, customPrompt, startRun]);
+  }, [submitting, entryId, entryTitle, storeId, selectedKey, customPrompt, startRun]);
 
   const selectedTemplate = templates?.find((t) => t.key === selectedKey);
 
@@ -342,9 +348,9 @@ export function ReprocessDrawer({ entryId, entryTitle, storeId, onClose }: Repro
           {stage === 'picking' ? (
             <>
               <Button variant="primary" size="md"
-                disabled={!selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
+                disabled={submitting || !selectedKey || (selectedKey === 'custom' && !customPrompt.trim())}
                 onClick={handleStart}>
-                <Wand2 size={14} /> 开始加工
+                <Wand2 size={14} /> {submitting ? '提交中…' : '开始加工'}
               </Button>
               <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
             </>
