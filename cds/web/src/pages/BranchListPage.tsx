@@ -496,6 +496,56 @@ function githubAvatarUrlFromHandle(value?: string): string {
   return `https://github.com/${encodeURIComponent(handle)}.png?size=64`;
 }
 
+type AvatarLoadStatus = 'idle' | 'loading' | 'loaded' | 'failed';
+
+const AVATAR_CACHE_STORAGE_KEY = 'cds.branch.avatarLoadStatus.v1';
+const AVATAR_CACHE_MAX_ENTRIES = 160;
+const avatarLoadStatusCache = new Map<string, AvatarLoadStatus>();
+
+function readAvatarStorage(): Record<string, { status: 'loaded' | 'failed'; ts: number }> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(AVATAR_CACHE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAvatarStorage(
+  url: string,
+  status: 'loaded' | 'failed',
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const next = readAvatarStorage();
+    next[url] = { status, ts: Date.now() };
+    const entries = Object.entries(next).sort((a, b) => b[1].ts - a[1].ts).slice(0, AVATAR_CACHE_MAX_ENTRIES);
+    window.localStorage.setItem(AVATAR_CACHE_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // localStorage may be blocked or full; in-memory cache still avoids same-session flicker.
+  }
+}
+
+function cachedAvatarStatus(url: string): AvatarLoadStatus {
+  if (!url) return 'failed';
+  const memory = avatarLoadStatusCache.get(url);
+  if (memory) return memory;
+  const stored = readAvatarStorage()[url]?.status;
+  if (stored) {
+    avatarLoadStatusCache.set(url, stored);
+    return stored;
+  }
+  return 'idle';
+}
+
+function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
+  if (!url) return;
+  avatarLoadStatusCache.set(url, status);
+  writeAvatarStorage(url, status);
+}
+
 function formatBytesFromMB(value?: number): string {
   if (!value || value <= 0) return '未知';
   if (value >= 1024) return `${Math.round(value / 102.4) / 10} GB`;
@@ -3640,7 +3690,6 @@ function BranchCard({
   const [tagDraftError, setTagDraftError] = useState('');
   const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
-  const [builderAvatarFailed, setBuilderAvatarFailed] = useState(false);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
@@ -3657,6 +3706,7 @@ function BranchCard({
   const builderInitial = builderLabel ? (builderLabel.trim().charAt(0) || '?').toUpperCase() : '?';
   const footerBuilder = builderHandle(branch);
   const footerSha = shortCommitSha(branch);
+  const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3668,7 +3718,7 @@ function BranchCard({
     }
   }, [aiPanelOpen, isAiOperated]);
   useEffect(() => {
-    setBuilderAvatarFailed(false);
+    setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
@@ -4152,14 +4202,23 @@ function BranchCard({
               className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
               aria-label={builderTitle}
             >
-              <span className="absolute inset-0 flex items-center justify-center">{builderInitial}</span>
-              {builderAvatarUrl && !builderAvatarFailed ? (
+              <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+                {builderInitial}
+              </span>
+              {builderAvatarUrl && builderAvatarStatus !== 'failed' ? (
                 <img
                   src={builderAvatarUrl}
                   alt=""
                   className="relative h-full w-full object-cover"
                   referrerPolicy="no-referrer"
-                  onError={() => setBuilderAvatarFailed(true)}
+                  onLoad={() => {
+                    rememberAvatarStatus(builderAvatarUrl, 'loaded');
+                    setBuilderAvatarStatus('loaded');
+                  }}
+                  onError={() => {
+                    rememberAvatarStatus(builderAvatarUrl, 'failed');
+                    setBuilderAvatarStatus('failed');
+                  }}
                 />
               ) : null}
             </div>
