@@ -91,6 +91,8 @@ export type DocBrowserProps = {
   onReplaceFile?: (entryId: string) => void;
   /** 正在再加工的源文档 → 进度(0-100)。提供时对应行显示"加工中 N%"chip。 */
   reprocessingMap?: Record<string, number>;
+  /** 已被「单篇分享」的文档 id 集合。命中的行显示黄色"已分享"标识（点击可查看/复制链接）。 */
+  sharedEntryIds?: Set<string>;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
@@ -539,9 +541,11 @@ function TreeNode({
   contentFirstLines,
   contentMatchIds,
   reprocessingMap,
+  sharedEntryIds,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
+  onShareEntry,
   onMoveEntry,
   onOpenSubscription,
 }: {
@@ -558,9 +562,11 @@ function TreeNode({
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
   reprocessingMap?: Record<string, number>;
+  sharedEntryIds?: Set<string>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
+  onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
 }) {
@@ -572,6 +578,7 @@ function TreeNode({
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
   const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
+  const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
   return (
@@ -660,6 +667,22 @@ function TreeNode({
           }}>
           {displayTitle}
         </span>
+
+        {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
+        {isShared && (
+          <span
+            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold cursor-pointer"
+            style={{
+              background: 'rgba(234,179,8,0.14)',
+              color: 'rgba(234,179,8,0.95)',
+              border: '1px solid rgba(234,179,8,0.32)',
+            }}
+            title="已分享 · 点击查看或复制链接"
+          >
+            <Share2 size={9} /> 已分享
+          </span>
+        )}
 
         {/* 再加工进行中：源文档行显示"加工中 N%"——关闭抽屉后仍可见 */}
         {reprocessing !== undefined && (
@@ -801,9 +824,11 @@ function TreeNode({
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
           reprocessingMap={reprocessingMap}
+          sharedEntryIds={sharedEntryIds}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
+          onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
         />
@@ -883,6 +908,7 @@ export function DocBrowser({
   onAutoEditConsumed,
   onReplaceFile,
   reprocessingMap,
+  sharedEntryIds,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -1537,9 +1563,11 @@ export function DocBrowser({
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
               reprocessingMap={reprocessingMap}
+              sharedEntryIds={sharedEntryIds}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
+              onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
             />

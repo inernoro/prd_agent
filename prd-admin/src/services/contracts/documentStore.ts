@@ -184,6 +184,8 @@ export type SubscriptionDetail = {
 
 export type DocumentStoreWithPreview = DocumentStore & {
   recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
+  /** 是否存在「整库级」有效分享（用于卡片标黄） */
+  hasActiveShare?: boolean;
 };
 
 /** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */
@@ -263,7 +265,7 @@ export type ListDocumentEntriesContract = (
   page?: number,
   pageSize?: number,
   keyword?: string,
-) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number }>>;
+) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[] }>>;
 
 export type UpdateDocumentEntryContract = (
   entryId: string,

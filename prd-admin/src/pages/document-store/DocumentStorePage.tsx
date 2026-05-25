@@ -427,50 +427,76 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
             </p>
           ) : (
             <div className="space-y-2">
-              {links.map(link => (
-                <div key={link.id} className={`surface-row rounded-[10px] p-3 ${link.isRevoked ? 'opacity-50' : ''}`}>
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate text-[12px] font-semibold text-token-primary">
-                        {link.title || '未命名分享'}
+              {links.map(link => {
+                const fullUrl = `${window.location.origin}/s/lib/${link.token}`;
+                return (
+                  <div
+                    key={link.id}
+                    className={`surface-row rounded-[10px] p-3 ${link.isRevoked ? 'opacity-60' : ''}`}
+                    style={link.isRevoked ? undefined : {
+                      // 已分享出去 = 标黄（左侧黄条 + 淡黄底），一眼区分「分享中 / 已撤销」
+                      borderLeft: '3px solid rgba(234,179,8,0.85)',
+                      background: 'rgba(234,179,8,0.06)',
+                    }}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {!link.isRevoked && (
+                          <span
+                            className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                            style={{ background: 'rgba(234,179,8,0.16)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.3)' }}>
+                            已分享
+                          </span>
+                        )}
+                        <span className="truncate text-[12px] font-semibold text-token-primary">
+                          {link.title || (link.entryId ? (link.entryTitle || '文档分享') : '整库分享')}
+                        </span>
                       </div>
-                      <div className="mt-0.5 truncate font-mono text-[10px] text-token-muted">
-                        /s/lib/{link.token}
+                      <div className="flex items-center gap-3 text-[10px] text-token-muted flex-shrink-0">
+                        <span className="flex items-center gap-1">
+                          <Eye size={9} /> {link.viewCount}
+                        </span>
+                        {link.expiresAt && (
+                          <span className="flex items-center gap-1">
+                            <Calendar size={9} />
+                            {new Date(link.expiresAt).toLocaleDateString()} 过期
+                          </span>
+                        )}
                       </div>
                     </div>
-                    {!link.isRevoked && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
+
+                    {link.isRevoked ? (
+                      // 已撤销：链接失效，明示状态（不再提供复制）
+                      <div className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 truncate font-mono text-[11px] text-token-muted line-through">
+                          {fullUrl}
+                        </span>
+                        <span className="text-[11px] font-semibold text-token-error flex-shrink-0">已撤销</span>
+                      </div>
+                    ) : (
+                      // 有效：完整链接直接平铺可选中 + 醒目「复制」，撤销降为次要操作
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={fullUrl}
+                          readOnly
+                          onFocus={(e) => e.currentTarget.select()}
+                          className="prd-field h-8 flex-1 min-w-0 rounded-[8px] px-3 font-mono text-[11px] outline-none"
+                        />
                         <button
                           onClick={() => copyLink(link.token)}
-                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
-                          title="复制链接">
-                          <Copy size={12} />
+                          className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold flex-shrink-0">
+                          <Copy size={11} /> 复制
                         </button>
                         <button
                           onClick={() => handleRevoke(link.id)}
-                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-token-error hover:bg-white/6"
-                          title="撤销">
-                          <Trash2 size={12} />
+                          className="flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors hover:text-token-error flex-shrink-0"
+                          title="撤销此分享（撤销后链接立即失效）">
+                          <Trash2 size={11} /> 撤销
                         </button>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-[10px] text-token-muted">
-                    <span className="flex items-center gap-1">
-                      <Eye size={9} /> {link.viewCount}
-                    </span>
-                    {link.expiresAt && (
-                      <span className="flex items-center gap-1">
-                        <Calendar size={9} />
-                        {new Date(link.expiresAt).toLocaleDateString()} 过期
-                      </span>
-                    )}
-                    {link.isRevoked && (
-                      <span className="text-token-error">已撤销</span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -487,6 +513,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
+  const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
@@ -522,7 +550,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const loadEntries = useCallback(async () => {
     setLoading(true);
     const res = await listDocumentEntries(storeId, 1, 200);
-    if (res.success) setEntries(res.data.items);
+    if (res.success) {
+      setEntries(res.data.items);
+      setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+    }
     setLoading(false);
   }, [storeId]);
 
@@ -938,6 +969,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           onAutoEditConsumed={() => setAutoEditEntryId(undefined)}
           onReplaceFile={handleReplaceFile}
           reprocessingMap={reprocessingMap}
+          sharedEntryIds={sharedEntryIds}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -1469,9 +1501,19 @@ export function DocumentStorePage() {
                           <Library size={16} style={{ color: 'rgba(59,130,246,0.85)' }} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {s.name}
-                          </h3>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              {s.name}
+                            </h3>
+                            {s.hasActiveShare && (
+                              <span
+                                className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                                style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
+                                title="该知识库已对外分享">
+                                <Share2 size={9} /> 已分享
+                              </span>
+                            )}
+                          </div>
                           {s.description ? (
                             <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
                               {s.description}

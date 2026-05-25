@@ -490,7 +490,20 @@ public class DocumentStoreController : ControllerBase
             .Limit(pageSize)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+        // 标黄用：本批文档里哪些存在「单篇」有效分享（未撤销 + 未过期）
+        // 过期判定放内存做，规避可空 DateTime 进 Mongo 表达式树
+        var now = DateTime.UtcNow;
+        var pageEntryIds = items.Where(e => !e.IsFolder).Select(e => e.Id).ToHashSet();
+        var storeShareLinks = await _db.DocumentStoreShareLinks
+            .Find(l => l.StoreId == storeId && !l.IsRevoked)
+            .ToListAsync();
+        var sharedEntryIds = storeShareLinks
+            .Where(l => !string.IsNullOrEmpty(l.EntryId) && (l.ExpiresAt == null || l.ExpiresAt > now) && pageEntryIds.Contains(l.EntryId!))
+            .Select(l => l.EntryId!)
+            .Distinct()
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
     }
 
     /// <summary>获取文档条目详情</summary>
@@ -1462,6 +1475,17 @@ public class DocumentStoreController : ControllerBase
         var storeIds = stores.Select(s => s.Id).ToList();
         var entriesByStore = await LoadRecentEntriesByStoreAsync(storeIds);
 
+        // 标黄用：哪些库存在「整库级」有效分享（未撤销 + 未过期 + EntryId 为空）
+        // 过期/为空判定放内存做，避免可空 DateTime 进 Mongo 表达式树的边界问题
+        var now = DateTime.UtcNow;
+        var activeStoreLinks = await _db.DocumentStoreShareLinks
+            .Find(l => storeIds.Contains(l.StoreId) && !l.IsRevoked)
+            .ToListAsync();
+        var sharedStoreIds = activeStoreLinks
+            .Where(l => string.IsNullOrEmpty(l.EntryId) && (l.ExpiresAt == null || l.ExpiresAt > now))
+            .Select(l => l.StoreId)
+            .ToHashSet();
+
         var items = stores.Select(s => new
         {
             s.Id,
@@ -1476,6 +1500,7 @@ public class DocumentStoreController : ControllerBase
             s.DocumentCount,
             s.CreatedAt,
             s.UpdatedAt,
+            hasActiveShare = sharedStoreIds.Contains(s.Id),
             recentEntries = entriesByStore.GetValueOrDefault(s.Id, new()),
         }).ToList();
 
