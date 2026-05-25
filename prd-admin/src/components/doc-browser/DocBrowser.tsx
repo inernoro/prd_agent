@@ -5,7 +5,7 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -81,6 +81,12 @@ export type DocBrowserProps = {
   onGenerateSubtitle?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
+  onShareEntry?: (entryId: string) => void;
+  /** 指定后：当该 entry 被选中且内容加载完成时自动进入编辑态（新建文档免再点一次「编辑」） */
+  autoEditEntryId?: string;
+  /** autoEdit 已被消费的回调（清除一次性标记） */
+  onAutoEditConsumed?: () => void;
   /** 点击"替换文件"时触发（仅文件条目显示）。原地替换内容，保留 Id/标签/主文档。 */
   onReplaceFile?: (entryId: string) => void;
   /** 正在再加工的源文档 → 进度(0-100)。提供时对应行显示"加工中 N%"chip。 */
@@ -161,7 +167,7 @@ function formatMetaTime(iso?: string): string {
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
-  onGenerateSubtitle, onReprocess, onReplaceFile,
+  onGenerateSubtitle, onReprocess, onShareEntry, onReplaceFile,
   onClose,
 }: {
   x: number;
@@ -176,6 +182,7 @@ function ContextMenu({
   onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
+  onShareEntry?: (entryId: string) => void;
   onReplaceFile?: (entryId: string) => void;
   onClose: () => void;
 }) {
@@ -191,6 +198,7 @@ function ContextMenu({
 
   const showSubtitle = canGenerateSubtitle(entry) && !!onGenerateSubtitle;
   const showReprocess = canReprocess(entry) && !!onReprocess;
+  const showShare = !entry.isFolder && !!onShareEntry;
 
   return (
     <div ref={menuRef} className="surface-popover fixed z-50 min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
@@ -210,7 +218,15 @@ function ContextMenu({
           再加工
         </button>
       )}
-      {(showSubtitle || showReprocess) && (
+      {showShare && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          onClick={() => { onShareEntry!(entry.id); onClose(); }}>
+          <Share2 size={12} />
+          分享
+        </button>
+      )}
+      {(showSubtitle || showReprocess || showShare) && (
         <div className="my-1 border-t border-token-subtle" />
       )}
       {onRename && (
@@ -862,6 +878,9 @@ export function DocBrowser({
   onOpenSubscription,
   onGenerateSubtitle,
   onReprocess,
+  onShareEntry,
+  autoEditEntryId,
+  onAutoEditConsumed,
   onReplaceFile,
   reprocessingMap,
   emptyState,
@@ -1206,6 +1225,19 @@ export function DocBrowser({
       }
     }
   }, [selectedEntryId, loadEntryContent, entries]);
+
+  // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
+  useEffect(() => {
+    if (!autoEditEntryId || selectedEntryId !== autoEditEntryId || contentLoading) return;
+    const entry = entries.find(e => e.id === autoEditEntryId);
+    if (!entry || entry.isFolder) return;
+    const cfg = getFileTypeConfig(entry.title, entry.contentType);
+    if (cfg.editable && onSaveContent) {
+      setEditContent(preview?.text ?? '');
+      setEditMode(true);
+    }
+    onAutoEditConsumed?.();
+  }, [autoEditEntryId, selectedEntryId, contentLoading, preview, entries, onSaveContent, onAutoEditConsumed]);
 
   // 内容版本键变化时强制退出编辑态：
   // loadedContentKey = `${entryId}:${updatedAt}`。当"同一个 entry"的 updatedAt
@@ -1882,6 +1914,7 @@ export function DocBrowser({
           onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
+          onShareEntry={onShareEntry}
           onReplaceFile={onReplaceFile}
           onClose={() => setContextMenu(null)}
         />

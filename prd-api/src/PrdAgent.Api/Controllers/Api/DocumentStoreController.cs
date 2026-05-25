@@ -1988,35 +1988,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在或所在知识库未公开"));
 
-        string? content = null;
-        string? title = null;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null) { content = doc.RawContent; title = doc.Title; }
-        }
-        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
-            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
-        }
-
-        string? fileUrl = null;
-        if (!string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
-            fileUrl = att?.Url;
-        }
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            entryId = entry.Id,
-            title = title ?? entry.Title,
-            content,
-            contentType = entry.ContentType,
-            fileUrl,
-            hasContent = !string.IsNullOrEmpty(content),
-        }));
+        return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
     }
 
     /// <summary>点赞知识库</summary>
@@ -2242,11 +2214,27 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
+        // 单篇文档分享：校验 entry 属于本知识库，快照标题
+        string? entryId = null;
+        string? entryTitle = null;
+        if (!string.IsNullOrWhiteSpace(request.EntryId))
+        {
+            var entry = await _db.DocumentEntries.Find(e => e.Id == request.EntryId && e.StoreId == storeId).FirstOrDefaultAsync();
+            if (entry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "要分享的文档不存在或不属于该知识库"));
+            if (entry.IsFolder)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目录不支持单独分享"));
+            entryId = entry.Id;
+            entryTitle = entry.Title;
+        }
+
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var link = new DocumentStoreShareLink
         {
             StoreId = storeId,
             StoreName = store.Name,
+            EntryId = entryId,
+            EntryTitle = entryTitle,
             Title = request.Title?.Trim(),
             Description = request.Description?.Trim(),
             CreatedBy = userId,
@@ -2334,6 +2322,9 @@ public class DocumentStoreController : ControllerBase
             link.Title,
             link.Description,
             link.CreatedByName,
+            // 单篇文档分享时非 null，前端据此只展示该篇而非整库
+            entryId = link.EntryId,
+            entryTitle = link.EntryTitle,
             store = new
             {
                 store.Id,
@@ -2346,6 +2337,96 @@ public class DocumentStoreController : ControllerBase
                 store.ViewCount,
             },
         }));
+    }
+
+    /// <summary>列出分享链接对应知识库的文档（匿名，token 门禁；单篇分享只返回该篇）</summary>
+    [HttpGet("public/share/{token}/entries")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListShareEntries(string token)
+    {
+        var link = await ResolveActiveShareLinkAsync(token);
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+
+        List<DocumentEntry> items;
+        if (!string.IsNullOrEmpty(link.EntryId))
+        {
+            // 单篇分享：只暴露该篇
+            items = await _db.DocumentEntries.Find(e => e.Id == link.EntryId && e.StoreId == link.StoreId).ToListAsync();
+        }
+        else
+        {
+            items = await _db.DocumentEntries.Find(e => e.StoreId == link.StoreId)
+                .SortByDescending(e => e.IsFolder)
+                .ThenByDescending(e => e.CreatedAt)
+                .Limit(500)
+                .ToListAsync();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+    }
+
+    /// <summary>读取分享链接内某篇文档的正文（匿名，token 门禁 + entry 必须属于该库/单篇）</summary>
+    [HttpGet("public/share/{token}/entries/{entryId}/content")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetShareEntryContent(string token, string entryId)
+    {
+        var link = await ResolveActiveShareLinkAsync(token);
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+
+        // 单篇分享只能读那一篇；整库分享必须是该库内的条目
+        if (!string.IsNullOrEmpty(link.EntryId) && entryId != link.EntryId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档不在分享范围内"));
+
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId && e.StoreId == link.StoreId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
+
+        return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
+    }
+
+    /// <summary>解析有效（未撤销/未过期）的分享链接，找不到返回 null</summary>
+    private async Task<DocumentStoreShareLink?> ResolveActiveShareLinkAsync(string token)
+    {
+        var link = await _db.DocumentStoreShareLinks.Find(l => l.Token == token).FirstOrDefaultAsync();
+        if (link == null || link.IsRevoked) return null;
+        if (link.ExpiresAt.HasValue && link.ExpiresAt.Value < DateTime.UtcNow) return null;
+        return link;
+    }
+
+    /// <summary>构造单篇文档正文 payload（公开库 / 分享 token 两条路径共用）</summary>
+    private async Task<object> BuildEntryContentPayloadAsync(DocumentEntry entry)
+    {
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null) { content = doc.RawContent; title = doc.Title; }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
+        }
+
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+
+        return new
+        {
+            entryId = entry.Id,
+            title = title ?? entry.Title,
+            content,
+            contentType = entry.ContentType,
+            fileUrl,
+            hasContent = !string.IsNullOrEmpty(content),
+        };
     }
 
     // ─────────────────────────────────────────────
@@ -2884,6 +2965,9 @@ public class CreateShareLinkRequest
 
     /// <summary>过期天数（0 表示永不过期）</summary>
     public int ExpiresInDays { get; set; }
+
+    /// <summary>单篇文档分享：DocumentEntry.Id；不传 = 分享整个知识库</summary>
+    public string? EntryId { get; set; }
 }
 
 public class LogViewRequest

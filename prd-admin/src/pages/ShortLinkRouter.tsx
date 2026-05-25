@@ -126,9 +126,8 @@ function renderTarget(targetType: ShortLinkTargetType, token: string) {
       // 技能分享历史专用路由
       return <Navigate to={`/s/skill/${token}`} replace />;
     case 'document_store':
-      // 知识库分享没有可用 SPA 路由（App.tsx 无 /library/share/:token），
-      // 不 Navigate 到死路，显式 UnsupportedTargetError 告知（debt -1 项待补 view）
-      return <UnsupportedTargetError targetType={targetType} />;
+      // 知识库 / 单篇文档分享，统一展示页 /s/lib/:token（LibraryShareViewPage）
+      return <Navigate to={`/s/lib/${token}`} replace />;
     case 'workflow':
       // 工作流没有专用 ViewPage SPA 路由，历史一直走 /s/{token} 走本 Router；
       // 显示 Unsupported 让用户知道路径，避免跳转到不存在的地址造成静默 404

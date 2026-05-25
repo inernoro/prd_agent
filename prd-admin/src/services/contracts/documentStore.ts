@@ -52,6 +52,9 @@ export type DocumentStoreShareLink = {
   token: string;
   storeId: string;
   storeName: string;
+  /** 非空 = 单篇文档分享；空 = 整库分享 */
+  entryId?: string;
+  entryTitle?: string;
   title?: string;
   description?: string;
   viewCount: number;
@@ -61,6 +64,27 @@ export type DocumentStoreShareLink = {
   createdAt: string;
   expiresAt?: string;
   isRevoked: boolean;
+};
+
+/** 公开分享视图（/s/lib/:token 拉取，匿名可访问） */
+export type DocStoreShareView = {
+  token: string;
+  title?: string;
+  description?: string;
+  createdByName?: string;
+  /** 非空 = 单篇文档分享 */
+  entryId?: string;
+  entryTitle?: string;
+  store: {
+    id: string;
+    name: string;
+    description?: string;
+    primaryEntryId?: string;
+    pinnedEntryIds?: string[];
+    documentCount: number;
+    likeCount: number;
+    viewCount: number;
+  };
 };
 
 export type DocumentEntry = {

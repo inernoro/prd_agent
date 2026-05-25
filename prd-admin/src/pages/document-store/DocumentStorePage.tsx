@@ -291,12 +291,16 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
 }
 
 // ── 分享对话框（创建短链 + 列表 + 撤销） ──
-function ShareDialog({ storeId, storeName, isPublic, onClose }: {
+function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClose }: {
   storeId: string;
   storeName: string;
   isPublic: boolean;
+  /** 非空 = 分享单篇文档而非整库 */
+  entryId?: string;
+  entryTitle?: string;
   onClose: () => void;
 }) {
+  const isDocShare = Boolean(entryId);
   const [links, setLinks] = useState<DocumentStoreShareLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -314,7 +318,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
 
   const handleCreate = async () => {
     setCreating(true);
-    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays });
+    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays, entryId });
     if (res.success) {
       setLinks(prev => [res.data, ...prev]);
       setTitle('');
@@ -335,7 +339,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
   };
 
   const copyLink = (token: string) => {
-    const url = `${window.location.origin}/library/share/${token}`;
+    const url = `${window.location.origin}/s/lib/${token}`;
     navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
   };
 
@@ -351,7 +355,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
               <Share2 size={15} />
             </div>
             <span className="text-[15px] font-semibold text-token-primary">
-              分享「{storeName}」
+              {isDocShare ? `分享文档「${entryTitle ?? ''}」` : `分享「${storeName}」`}
             </span>
           </div>
           <button onClick={onClose}
@@ -360,8 +364,8 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
           </button>
         </div>
 
-        {/* 公开访问直链 */}
-        {isPublic && (
+        {/* 公开访问直链（整库公开时；单篇分享不适用） */}
+        {isPublic && !isDocShare && (
           <div className="surface-inset mb-5 rounded-[12px] p-4">
             <div className="flex items-center gap-2 mb-2">
               <Globe size={12} className="text-token-accent" />
@@ -431,7 +435,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
                         {link.title || '未命名分享'}
                       </div>
                       <div className="mt-0.5 truncate font-mono text-[10px] text-token-muted">
-                        /library/share/{link.token}
+                        /s/lib/{link.token}
                       </div>
                     </div>
                     {!link.isRevoked && (
@@ -495,6 +499,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
   const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 当前打开的「单篇文档分享」目标（null = 未打开） */
+  const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
+  const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>(undefined);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -756,7 +764,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     if (res.success) {
       setEntries(prev => [res.data, ...prev]);
       setSelectedEntryId(res.data.id);
-      toast.success('已创建文档，点击编辑按钮开始写作');
+      // 新建文档默认直接进入编辑态，省去用户再点一次「编辑」
+      setAutoEditEntryId(res.data.id);
+      toast.success('已创建文档，开始写作吧');
     } else {
       toast.error('创建失败', res.error?.message);
     }
@@ -920,6 +930,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
+          onShareEntry={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setDocShareTarget({ id, title: entry.title });
+          }}
+          autoEditEntryId={autoEditEntryId}
+          onAutoEditConsumed={() => setAutoEditEntryId(undefined)}
           onReplaceFile={handleReplaceFile}
           reprocessingMap={reprocessingMap}
           loading={loading}
@@ -927,10 +943,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             <div className="flex-1 flex flex-col items-center justify-center py-16">
               <FolderOpen size={44} className="mb-5 text-token-muted opacity-30" />
               <p className="mb-1 text-[14px] font-semibold text-token-primary">还没有文档</p>
-              <p className="mb-6 text-[12px] text-token-muted">上传文档到这个空间，或直接拖拽文件到页面</p>
-              <Button variant="primary" size="md" onClick={() => fileInputRef.current?.click()}>
-                <Upload size={15} /> 上传第一个文档
-              </Button>
+              <p className="mb-6 text-[12px] text-token-muted">新建一篇空白文档直接写，或上传 / 拖拽文件到页面</p>
+              <div className="flex items-center gap-2.5">
+                <Button variant="primary" size="md" onClick={handleCreateDocument}>
+                  <FileText size={15} /> 新建文档
+                </Button>
+                <Button variant="secondary" size="md" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={15} /> 上传文档
+                </Button>
+              </div>
             </div>
           }
         />
@@ -952,6 +973,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           storeName={store.name}
           isPublic={store.isPublic}
           onClose={() => setShowShareDialog(false)}
+        />
+      )}
+
+      {/* 单篇文档分享对话框（来自文件树右键「分享」） */}
+      {docShareTarget && (
+        <ShareDialog
+          storeId={storeId}
+          storeName={store.name}
+          isPublic={store.isPublic}
+          entryId={docShareTarget.id}
+          entryTitle={docShareTarget.title}
+          onClose={() => setDocShareTarget(null)}
         />
       )}
 

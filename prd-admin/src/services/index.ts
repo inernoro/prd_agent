@@ -1856,6 +1856,9 @@ export {
   createShareLink as createDocStoreShareLink,
   listShareLinks as listDocStoreShareLinks,
   revokeShareLink as revokeDocStoreShareLink,
+  getDocStoreShareView,
+  listDocStoreShareEntries,
+  getDocStoreShareEntryContent,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,
@@ -1865,6 +1868,7 @@ export type {
   PublicDocumentStore,
   PublicStoreDetail,
   DocumentStoreShareLink,
+  DocStoreShareView,
   CreateDocumentStoreInput,
   AddDocumentEntryInput,
   DocumentSyncLogEntry,
