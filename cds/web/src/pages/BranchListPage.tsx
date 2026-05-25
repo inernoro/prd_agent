@@ -476,19 +476,6 @@ function branchRoleCardClass(role: BranchVisualRole): string {
   }
 }
 
-function branchRoleIconClass(role: BranchVisualRole): string {
-  switch (role) {
-    case 'main':
-      return 'text-emerald-400';
-    case 'master':
-      return 'text-cyan-400';
-    case 'environment':
-      return 'text-amber-400';
-    default:
-      return 'text-sky-500';
-  }
-}
-
 function shortCommitSha(branch: BranchSummary): string {
   const sha = branch.commitSha || branch.githubCommitSha || '';
   return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 7) : '';
@@ -3640,7 +3627,6 @@ function BranchCard({
   const runtime = branchRuntimeBadge(branch);
   const role = branchVisualRole(branch.branch);
   const roleCardClass = branchRoleCardClass(role);
-  const roleIconClass = branchRoleIconClass(role);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
   const issueClass = isError ? branchIssueClass(branch) : '';
   const issueRailClass = isError ? branchIssueRailClass(branch) : '';
@@ -4160,36 +4146,37 @@ function BranchCard({
           }
         }}
       >
-        <div className="flex min-w-0 items-center gap-2 pr-2 text-muted-foreground">
-          <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-            title={builderTitle}
-            aria-label={builderTitle}
-          >
-            {builderAvatarUrl && !builderAvatarFailed ? (
-              <img
-                src={builderAvatarUrl}
-                alt=""
-                className="h-full w-full object-cover"
-                referrerPolicy="no-referrer"
-                onError={() => setBuilderAvatarFailed(true)}
-              />
-            ) : (
-              <span>{builderInitial}</span>
-            )}
+        <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
+          <div className="flex w-11 shrink-0 flex-col items-center gap-1" title={builderTitle}>
+            <div
+              className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+              aria-label={builderTitle}
+            >
+              <span className="absolute inset-0 flex items-center justify-center">{builderInitial}</span>
+              {builderAvatarUrl && !builderAvatarFailed ? (
+                <img
+                  src={builderAvatarUrl}
+                  alt=""
+                  className="relative h-full w-full object-cover"
+                  referrerPolicy="no-referrer"
+                  onError={() => setBuilderAvatarFailed(true)}
+                />
+              ) : null}
+            </div>
+            {footerBuilder ? (
+              <span className="block max-w-full truncate text-center text-[10px] font-medium leading-none text-foreground/70">
+                {footerBuilder}
+              </span>
+            ) : null}
           </div>
-          <GitBranch className={`${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 ' : ''}h-4 w-4 shrink-0 ${roleIconClass}`} />
-          {footerBuilder ? (
-            <span className="max-w-[92px] shrink-0 truncate text-xs font-medium text-foreground/75" title={builderTitle}>
-              {footerBuilder}
-            </span>
-          ) : null}
-          {footerSha ? (
-            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
-              {footerSha}
-            </span>
-          ) : null}
-          <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {footerSha ? (
+              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
+                {footerSha}
+              </span>
+            ) : null}
+            <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
+          </div>
         </div>
         {/*
           重设计(2026-05-04 用户主诉求):
