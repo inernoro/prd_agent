@@ -704,6 +704,21 @@ public class ImageGenRunWorker : BackgroundService
             status = nextStatus.ToString(),
             endedAt = DateTime.UtcNow
         }, ct);
+
+        // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
+        // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
+        if (nextStatus is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled
+            && !string.IsNullOrWhiteSpace(run.WorkspaceId)
+            && !string.IsNullOrWhiteSpace(run.TargetCanvasKey))
+        {
+            var errItem = await _db.ImageGenRunItems
+                .Find(x => x.RunId == run.Id && x.ErrorMessage != null && x.ErrorMessage != "")
+                .FirstOrDefaultAsync(ct);
+            var errMsg = nextStatus == ImageGenRunStatus.Cancelled
+                ? "已取消"
+                : (string.IsNullOrWhiteSpace(errItem?.ErrorMessage) ? "生成失败" : errItem!.ErrorMessage!);
+            await TryMarkWorkspaceCanvasErrorAsync(run, errMsg, ct);
+        }
     }
 
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)
@@ -1157,6 +1172,56 @@ public class ImageGenRunWorker : BackgroundService
             }
 
             var nextJson = root.ToJsonString(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var now = DateTime.UtcNow;
+            var res = await _db.ImageMasterCanvases.UpdateOneAsync(
+                x => x.Id == canvas.Id && x.UpdatedAt == canvas.UpdatedAt,
+                Builders<ImageMasterCanvas>.Update.Set(x => x.PayloadJson, nextJson).Set(x => x.UpdatedAt, now),
+                cancellationToken: ct);
+            if (res.ModifiedCount > 0) return;
+        }
+    }
+
+    /// <summary>
+    /// 失败/取消兜底：把 TargetCanvasKey 对应的画布占位元素从 running 翻成 error。
+    /// 只动仍是占位（无 src 且非 done）的元素，绝不覆盖已成功回填的图片。
+    /// </summary>
+    private async Task TryMarkWorkspaceCanvasErrorAsync(ImageGenRun run, string errorMessage, CancellationToken ct)
+    {
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        var key = (run.TargetCanvasKey ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(key)) return;
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var canvas = await _db.ImageMasterCanvases.Find(x => x.WorkspaceId == wid).FirstOrDefaultAsync(ct);
+            if (canvas == null) return;
+            var raw = (canvas.PayloadJson ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(raw)) return;
+
+            JsonNode? root;
+            try { root = JsonNode.Parse(raw); } catch { return; }
+            var elements = root?["elements"] as JsonArray;
+            if (elements == null) return;
+
+            JsonObject? target = null;
+            foreach (var n in elements)
+            {
+                if (n is not JsonObject o) continue;
+                var k = (o["id"]?.GetValue<string>() ?? o["key"]?.GetValue<string>() ?? string.Empty).Trim();
+                if (string.Equals(k, key, StringComparison.Ordinal)) { target = o; break; }
+            }
+            // 元素已被删除：不复活；已成功（done 或有 src）：不覆盖。
+            if (target == null) return;
+            var st = (target["status"]?.GetValue<string>() ?? string.Empty).Trim();
+            var hasSrc = !string.IsNullOrWhiteSpace(target["src"]?.GetValue<string>());
+            if (st == "done" || hasSrc) return;
+            if (st == "error") return; // 已是 error，无需重复写
+
+            target["status"] = "error";
+            target["errorMessage"] = string.IsNullOrWhiteSpace(errorMessage) ? "生成失败" : errorMessage;
+            target["syncStatus"] = "failed";
+
+            var nextJson = root!.ToJsonString(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
             var now = DateTime.UtcNow;
             var res = await _db.ImageMasterCanvases.UpdateOneAsync(
                 x => x.Id == canvas.Id && x.UpdatedAt == canvas.UpdatedAt,

@@ -113,6 +113,7 @@ import type {
   DeleteVisualAgentWorkspaceAssetContract,
   UpdateVisualAgentWorkspaceContract,
   CreateWorkspaceImageGenRunContract,
+  ReconcileWorkspaceCanvasContract,
 } from '@/services/contracts/visualAgent';
 import type {
   CreateDesktopAssetKeyContract,
@@ -384,6 +385,7 @@ import {
   deleteVisualAgentWorkspaceAssetReal,
   updateVisualAgentWorkspaceReal,
   createWorkspaceImageGenRunReal,
+  reconcileVisualAgentWorkspaceCanvasReal,
   generateArticleMarkersReal,
   extractArticleMarkersReal,
   exportArticleReal,
@@ -975,6 +977,7 @@ export const saveVisualAgentWorkspaceViewport: SaveVisualAgentWorkspaceViewportC
 export const uploadVisualAgentWorkspaceAsset: UploadVisualAgentWorkspaceAssetContract = withAuth(uploadVisualAgentWorkspaceAssetReal);
 export const deleteVisualAgentWorkspaceAsset: DeleteVisualAgentWorkspaceAssetContract = withAuth(deleteVisualAgentWorkspaceAssetReal);
 export const createWorkspaceImageGenRun: CreateWorkspaceImageGenRunContract = withAuth(createWorkspaceImageGenRunReal);
+export const reconcileVisualAgentWorkspaceCanvas: ReconcileWorkspaceCanvasContract = withAuth(reconcileVisualAgentWorkspaceCanvasReal);
 export const refreshVisualAgentWorkspaceCover: RefreshVisualAgentWorkspaceCoverContract = withAuth(refreshVisualAgentWorkspaceCoverReal);
 
 export const generateVisualAgentWorkspaceTitle = generateVisualAgentWorkspaceTitleReal;
