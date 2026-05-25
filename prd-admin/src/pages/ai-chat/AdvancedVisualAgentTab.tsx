@@ -2620,6 +2620,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const workspaceIdRef = useRef(workspaceId);
   workspaceIdRef.current = workspaceId;
 
+  // 拿到 runId 后立即把含 runId 的画布落盘（不等 debounce）：避免用户在 debounce 刷盘前关页/切走，
+  // 导致占位落库缺 runId。三条生图路径（主生成 / 快捷操作 / 草图）统一复用，避免只在主路径补 runId。
+  const persistRunIdImmediately = useCallback(
+    (key: string, runId: string) => {
+      void (async () => {
+        try {
+          const next = (canvasRef.current ?? []).map((x) => (x.key === key ? { ...x, runId } : x));
+          const built = canvasToPersistedV1(next);
+          const json = JSON.stringify(built.state);
+          if (json !== lastSavedJsonRef.current) {
+            const r = await saveVisualAgentWorkspaceCanvas({
+              id: workspaceId,
+              schemaVersion: PERSIST_SCHEMA_VERSION,
+              payloadJson: json,
+              idempotencyKey: `runIdSave_${key}_${runId}`,
+            });
+            // 仅保存成功才更新已存标记：失败保留旧标记让 debounce 重试，避免误判已存导致 runId 永不落库。
+            if (r.success) {
+              lastSavedJsonRef.current = json;
+              lastSaveAtRef.current = Date.now();
+            }
+          }
+        } catch {
+          // 立即保存失败不阻断生成；debounce 自动保存仍会兜底
+        }
+      })();
+    },
+    [workspaceId]
+  );
+
   // 画布对账兜底：按 run.TargetCanvasKey 反查真实结果，修复 running / 无图 error 的卡死占位。
   // 关键：后端按"画布元素 id == TargetCanvasKey"匹配，不依赖前端 runId，
   // 因此能拯救历史上 runId 未落库的孤儿占位（详见 backend ReconcileWorkspaceCanvas）。
@@ -2668,7 +2698,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       const wid0 = workspaceIdRef.current;
 
-      // A) 有 runId 的卡死元素：直查 run 真实状态，同步本地（覆盖 SSE 掉线 desync）
+      // A) 有 runId 的卡死元素：直查 run 真实状态，同步本地（覆盖 SSE 掉线 desync）。
+      //    healable 同时含 running 与"无图 error"：transient SSE/查询失败可能把仍在生成的占位误标 error，
+      //    待 run 实际 Completed 时必须能从 error 翻回 done，否则会卡在 error 直到刷新。
+      const healable = (x: CanvasImageItem) => x.status === 'running' || (x.status === 'error' && !x.src);
       for (const el of stale) {
         if (!el.runId) continue;
         const runId = el.runId;
@@ -2684,8 +2717,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 const u = it.url;
                 setCanvas((prev) =>
                   prev.map((x) =>
-                    x.key === key && x.status === 'running'
-                      ? { ...x, status: 'done', kind: 'image', src: u, originalSrc: u, syncStatus: 'synced' as const }
+                    x.key === key && healable(x)
+                      ? { ...x, status: 'done', kind: 'image', src: u, originalSrc: u, syncStatus: 'synced' as const, syncError: null }
                       : x
                   )
                 );
@@ -3936,33 +3969,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 保存 runId 到画布元素，用于刷新页面后同步状态
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
-
-      // 立即持久化含 runId 的画布（不等 debounce）：避免拿到 runId 后用户立刻关页/切走，
-      // 导致占位落库时缺 runId 而无法被刷新恢复。注：对账兜底按 TargetCanvasKey 反查不依赖此项，
-      // 但补上 runId 能让 watchdog/刷新走更快的 in-session 路径。
-      void (async () => {
-        try {
-          const next = (canvasRef.current ?? []).map((x) => (x.key === key ? { ...x, runId } : x));
-          const built = canvasToPersistedV1(next);
-          const json = JSON.stringify(built.state);
-          if (json !== lastSavedJsonRef.current) {
-            const r = await saveVisualAgentWorkspaceCanvas({
-              id: workspaceId,
-              schemaVersion: PERSIST_SCHEMA_VERSION,
-              payloadJson: json,
-              idempotencyKey: `runIdSave_${key}_${runId}`,
-            });
-            // 仅在保存成功后才更新已存标记：失败则保持旧标记，让 debounce 自动保存重试，
-            // 避免"标记已存但实际没存进 runId"导致刷新后占位再次成孤儿。
-            if (r.success) {
-              lastSavedJsonRef.current = json;
-              lastSaveAtRef.current = Date.now();
-            }
-          }
-        } catch {
-          // 立即保存失败不阻断生成；debounce 自动保存仍会兜底
-        }
-      })();
+      // 立即落盘含 runId 的画布（不等 debounce），三条生图路径统一复用
+      persistRunIdImmediately(key, runId);
 
       // 可选：订阅进度并实时替换（关闭页面也没关系，服务端会最终回填）
       const ac = new AbortController();
@@ -4266,6 +4274,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
         const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
+        persistRunIdImmediately(key, runId);
 
         // 订阅 SSE 流
         const ac = new AbortController();
@@ -4362,7 +4371,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
       }
     },
-    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg],
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg, persistRunIdImmediately],
   );
 
   /** 快捷操作栏：点击内置/DIY 操作 */
@@ -9064,6 +9073,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             // 订阅 Run 事件流
             const runId = runRes.data.runId;
             setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, runId } : x));
+            persistRunIdImmediately(genKey, runId);
             const sketchAc = new AbortController();
             void streamImageGenRunWithRetry({
               runId,
