@@ -4,3 +4,7 @@
 | fix | prd-admin | 拿到 runId 后立即持久化画布（不等 debounce），避免关页/切走导致占位丢失 runId 成为孤儿 |
 | fix | prd-admin | 看门狗改走 workspace 级对账（覆盖无 runId 占位）+ 阈值 120s 降到 45s；加载即对账修复历史卡死占位 |
 | fix | prd-admin | 视觉创作三处生图 SSE 订阅补齐 maxAttempts=20（原默认 10，慢任务过早放弃） |
+| fix | prd-admin | 画布本地序列化器补齐 runId 往返持久化（此前 canvasToPersistedV1/persistedV1ToCanvas 从不存取 runId，是占位丢 runId 成孤儿的真正根因） |
+| fix | prd-admin | runId 立即落盘改为保存成功后才更新已存标记，失败时让 debounce 重试，避免误判已存导致 runId 永不落库 |
+| fix | prd-admin | SSE 流结束查询到 run 已失败/取消时展示真实失败原因，不再一律误报"超时" |
+| fix | prd-admin | 加载/看门狗对账增加 workspace 切换防串台守卫，避免异步响应套到别的 workspace 画布 |
