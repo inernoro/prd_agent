@@ -286,11 +286,13 @@ export function ToolEditor() {
   };
 
   const handleKnowledgeFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
+    // e.target.files 是 live FileList，必须先快照成数组；e.target.value='' 会就地清空它
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
     e.target.value = '';
 
-    for (const file of Array.from(files)) {
+    for (const file of files) {
       const tempId = Math.random().toString(36).slice(2, 11);
       const entry = {
         id: tempId,

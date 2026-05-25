@@ -21,6 +21,9 @@ import {
   type MarketplaceSkill,
 } from '@/lib/marketplaceTypes';
 import { favoriteMarketplaceSkill, unfavoriteMarketplaceSkill } from '@/services';
+import SpotlightCard from '@/components/reactbits/SpotlightCard';
+import { SkillGlyph } from './SkillGlyph';
+import { glyphWarmBg, glyphCardGlow } from '@/lib/skillGlyphRegistry';
 import { SkillDetailModal } from './SkillDetailModal';
 import { useSkillShare } from './useSkillShare';
 
@@ -196,28 +199,28 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  return (
-    <div
-      ref={cardRef}
-      className={`mkt-card${coverUrl ? ' has-cover' : ''}`}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      onClick={() => {
-        if (item.type === 'skill' && !detailOpen) setDetailOpen(true);
-      }}
-      style={{
-        backgroundImage: cardGradient,
-        ['--glow' as string]: ra(color.bg, 0.45),
-        cursor: item.type === 'skill' ? 'pointer' : undefined,
-      }}
-    >
-      {/* Full-bleed cover image (when available) */}
-      {coverUrl && (
+  const handleCardClick = () => {
+    if (item.type === 'skill' && !detailOpen) setDetailOpen(true);
+  };
+
+  // 共享的卡片内部内容 —— 由不同 wrapper（SpotlightCard / PixelCard）外包
+  const cardBody = (
+    <>
+      {/* Full-bleed cover image (when available, non-official only) */}
+      {coverUrl && !isOfficial && (
         <img src={coverUrl} alt={displayName} className="mkt-card-bg-img" />
       )}
 
-      {/* Icon centred in the upper area (no cover) */}
-      {!coverUrl && (
+      {/* 社区 skill 无封面 → 也走 SkillGlyph（哈希形态，不传 tags 故不会出现精英徽章，
+          精英留给官方）。拉平视觉，社区卡不再比官方寒酸。 */}
+      {!coverUrl && !isOfficial && item.type === 'skill' && (
+        <div className="mkt-card-glyph-banner">
+          <SkillGlyph seed={displayName} />
+        </div>
+      )}
+
+      {/* 非 skill 类型（prompt/refImage/watermark）无封面 → 保留类型 lucide 图标 */}
+      {!coverUrl && !isOfficial && item.type !== 'skill' && (
         <div
           className="mkt-card-icon-zone"
           style={{
@@ -355,7 +358,52 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
           onClose={() => setDetailOpen(false)}
         />
       )}
-    </div>
+    </>
+  );
+
+  // ── 官方技能 → 炭黑手绘线条标志（上半 banner 走纸张底）+ glass 信息条（下半）
+  // seed 用 skill.id（official-{key}），让 SkillGlyph 能按 key 匹配专属象形符号
+  if (isOfficial) {
+    const skill = item.data as MarketplaceSkill;
+    return (
+      <div
+        className="mkt-card mkt-card-official-glyph"
+        onClick={handleCardClick}
+        style={{
+          ['--warm' as string]: glyphWarmBg(skill.id),
+          ['--glow' as string]: glyphCardGlow(skill.id),
+          cursor: item.type === 'skill' ? 'pointer' : undefined,
+        }}
+      >
+        <div className="mkt-card-glyph-banner">
+          <SkillGlyph seed={skill.id} />
+        </div>
+        {cardBody}
+      </div>
+    );
+  }
+
+  // ── 普通技能 / 其他配置 → SpotlightCard 包裹（光晕跟手）
+  return (
+    <SpotlightCard
+      className="mkt-card-spotlight-wrap !p-0 !rounded-[14px] !border-0 !bg-transparent !h-[210px] !block"
+      spotlightColor="rgba(255, 255, 255, 0.18)"
+    >
+      <div
+        ref={cardRef}
+        className={`mkt-card${coverUrl ? ' has-cover' : ''}`}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleCardClick}
+        style={{
+          backgroundImage: cardGradient,
+          ['--glow' as string]: ra(color.bg, 0.45),
+          cursor: item.type === 'skill' ? 'pointer' : undefined,
+        }}
+      >
+        {cardBody}
+      </div>
+    </SpotlightCard>
   );
 };
 

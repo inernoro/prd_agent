@@ -28,6 +28,16 @@ export default [
     },
   },
   {
+    // 第三方 vendor 目录（reactbits 等 MIT 库的 copy-paste 源码）保持原样，
+    // 不强制项目级 lint 规则；如需修改请走 wrapper，详见 reactbits/LICENSE.md。
+    files: ['src/components/reactbits/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/ban-ts-comment': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+    },
+  },
+  {
     ignores: ['dist', 'node_modules'],
   },
 ];

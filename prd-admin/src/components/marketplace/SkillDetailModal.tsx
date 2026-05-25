@@ -45,16 +45,13 @@ export function SkillDetailModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col rounded-xl border"
+        className="surface-popover flex flex-col rounded-xl"
         style={{
           width: '82vw',
           maxWidth: '1400px',
           height: '85vh',
           maxHeight: '85vh',
-          background: 'var(--bg-card)',
-          borderColor: 'var(--border-subtle)',
           color: 'var(--text-primary)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
         }}
       >
         {/* Header */}
@@ -94,7 +91,17 @@ export function SkillDetailModal({
 
         {/* Body */}
         <div className="flex-1" style={{ minHeight: 0 }}>
-          <SkillContentBrowser zipUrl={skill.zipUrl} sizeBytes={skill.zipSizeBytes} />
+          {/* 官方技能：zipUrl 是同源 AllowAnonymous 的 /api/official-skills/{key}/download
+              （后端动态打完整 zip），直接用，不走需要鉴权 + 查 DB 的 zip-content 代理（官方不在 DB）。
+              用户技能：zipUrl 是 COS/R2 外链，走同源代理避开 CORS。 */}
+          <SkillContentBrowser
+            zipUrl={
+              skill.ownerUserId === 'official'
+                ? skill.zipUrl
+                : `/api/marketplace/skills/${skill.id}/zip-content`
+            }
+            sizeBytes={skill.zipSizeBytes}
+          />
         </div>
       </div>
     </div>

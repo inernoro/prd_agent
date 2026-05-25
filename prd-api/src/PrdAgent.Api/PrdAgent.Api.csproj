@@ -38,6 +38,11 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 官方技能目录（scripts/bundle-official-skills.mjs 生成），内嵌供 OfficialSkillCatalog 读取 -->
+    <EmbeddedResource Include="OfficialSkills/official-skills.generated.json" />
+  </ItemGroup>
+
 </Project>
 
 
