@@ -445,7 +445,9 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
         // call to this same CDS instance.
         const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config, stateService);
         try {
+          markWebhookDeployDispatch(stateService, request.branchId, request.commitSha, 'dispatching');
           await dispatcherFn(request.branchId, request.commitSha);
+          markWebhookDeployDispatch(stateService, request.branchId, request.commitSha, 'accepted');
           outcome.deployDispatched = true;
         } catch (err) {
           const message = (err as Error).message;
@@ -917,12 +919,53 @@ function drainResponseBody(res: Response): void {
   }
 }
 
+function markWebhookDeployDispatch(
+  stateService: StateService,
+  branchId: string,
+  commitSha: string,
+  status: 'dispatching' | 'accepted' | 'failed',
+  message?: string,
+): void {
+  const branch = stateService.getBranch(branchId);
+  if (!branch) return;
+  const ts = new Date().toISOString();
+  branch.lastDeployDispatchAt = ts;
+  branch.lastDeployDispatchCommitSha = commitSha;
+  branch.lastDeployDispatchSource = 'webhook';
+  branch.lastDeployDispatchStatus = status;
+  branch.lastDeployDispatchError = status === 'failed' ? message : undefined;
+  const title = status === 'failed'
+    ? 'Webhook 部署派发失败'
+    : status === 'accepted'
+      ? 'Webhook 部署请求已被部署端点接收'
+      : 'Webhook 正在派发部署请求';
+  stateService.appendLog(branchId, {
+    type: 'build',
+    startedAt: ts,
+    finishedAt: status === 'dispatching' ? undefined : ts,
+    status: status === 'failed' ? 'error' : status === 'accepted' ? 'completed' : 'running',
+    events: [{
+      step: 'webhook-dispatch',
+      status: status === 'failed' ? 'error' : status === 'accepted' ? 'done' : 'running',
+      title,
+      log: message,
+      detail: { commitSha, source: 'webhook', dispatchStatus: status },
+      timestamp: ts,
+    }],
+  });
+  stateService.save();
+}
+
 function markWebhookDeployDispatchFailed(stateService: StateService, branchId: string, message: string): void {
   const branch = stateService.getBranch(branchId);
   if (!branch) return;
   const ts = new Date().toISOString();
   branch.status = 'error';
   branch.errorMessage = `Webhook 部署未启动: ${message}`;
+  branch.lastDeployDispatchAt = ts;
+  branch.lastDeployDispatchSource = 'webhook';
+  branch.lastDeployDispatchStatus = 'failed';
+  branch.lastDeployDispatchError = message;
   const opLog: OperationLog = {
     type: 'build',
     startedAt: ts,

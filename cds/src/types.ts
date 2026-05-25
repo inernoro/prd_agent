@@ -509,6 +509,16 @@ export interface BranchEntry {
   githubCommitSha?: string;
   /** Time when CDS last accepted a GitHub push/check metadata update for this branch. */
   lastPushAt?: string;
+  /** Time when CDS last accepted/attempted to dispatch a deploy request. */
+  lastDeployDispatchAt?: string;
+  /** Commit SHA attached to the last deploy dispatch request. */
+  lastDeployDispatchCommitSha?: string;
+  /** Source that created the last deploy dispatch request. */
+  lastDeployDispatchSource?: 'webhook' | 'manual' | 'system';
+  /** Whether the last deploy dispatch was accepted by the deploy endpoint. */
+  lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed';
+  /** Failure reason when the deploy dispatch itself failed before deployment started. */
+  lastDeployDispatchError?: string;
   /** GitHub user login that triggered the latest webhook touching this branch. */
   githubSenderLogin?: string;
   /** Original GitHub avatar URL from webhook payload.sender.avatar_url. */

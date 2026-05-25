@@ -66,6 +66,7 @@ export interface BranchUpdatedPayload {
   patch: Partial<Pick<BranchEntry,
     'branch' | 'services' | 'status' | 'errorMessage' |
     'githubRepoFullName' | 'githubCommitSha' | 'lastPushAt' | 'githubSenderLogin' | 'githubSenderAvatarUrl' |
+    'lastDeployDispatchAt' | 'lastDeployDispatchCommitSha' | 'lastDeployDispatchSource' | 'lastDeployDispatchStatus' | 'lastDeployDispatchError' |
     'githubPrNumber' | 'pinnedCommit' | 'tags' | 'notes' |
     'isFavorite' | 'isColorMarked' | 'subdomainAliases'>>;
   ts: string;

@@ -1022,7 +1022,9 @@ function reconcileBranchStatus(entry: BranchEntry): void {
   // 2026-05-14: 进入 running 时打 lastReadyAt 戳。项目级 autoPublishAfterMinutes /
   // autoPublishAfterMinutes 调度器以本字段为计时起点。从非 running 翻到 running 才更新，
   // 内部 running→running（多次 reconcile）不刷新，避免调度器永远被推迟。
-  if (entry.status === 'running' && previousStatus !== 'running') {
+  const readyMs = entry.lastReadyAt ? Date.parse(entry.lastReadyAt) : 0;
+  const stoppedMs = entry.lastStoppedAt ? Date.parse(entry.lastStoppedAt) : 0;
+  if (entry.status === 'running' && (previousStatus !== 'running' || (stoppedMs > 0 && stoppedMs >= readyMs))) {
     entry.lastReadyAt = new Date().toISOString();
   }
 
@@ -2366,6 +2368,179 @@ export function createBranchRouter(deps: RouterDeps): Router {
       defaultBranch: state.defaultBranch,
       capacity: { maxContainers, runningContainers, totalMemGB },
       tabTitleEnabled: stateService.isTabTitleEnabled(),
+    });
+  });
+
+  router.get('/branches/state-audit', async (req, res) => {
+    const projectFilter = resolveProjectIdParam(req.query.project);
+    const branches = stateService.getAllBranches().filter(
+      (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
+    );
+    const runningNames = await containerService.getRunningContainerNames();
+    const discoveredApps = await containerService.discoverAppContainers();
+    const issues: Array<{
+      severity: 'warn' | 'info';
+      kind: string;
+      branchId?: string;
+      branch?: string;
+      service?: string;
+      container?: string;
+      detail?: Record<string, unknown>;
+    }> = [];
+    const now = Date.now();
+    const ts = (value?: string): number => {
+      const parsed = Date.parse(value || '');
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const ageMin = (value?: string): number | undefined => {
+      const parsed = ts(value);
+      return parsed ? Math.round((now - parsed) / 60_000) : undefined;
+    };
+    const expectedStatus = (b: BranchEntry): BranchEntry['status'] => {
+      const statuses = Object.values(b.services || {}).map((service) => service.status);
+      if (statuses.some((status) => status === 'error')) return 'error';
+      if (statuses.some((status) => status === 'building')) return 'building';
+      if (statuses.some((status) => status === 'starting' || status === 'restarting')) return 'starting';
+      if (statuses.some((status) => status === 'running')) return 'running';
+      return 'idle';
+    };
+    const stateServiceKeys = new Set<string>();
+    for (const branch of branches) {
+      const services = Object.values(branch.services || {});
+      const runningServices = services.filter((service) => service.status === 'running');
+      const errorServices = services.filter((service) => service.status === 'error');
+      const derived = expectedStatus(branch);
+      if (branch.status !== derived) {
+        issues.push({
+          severity: 'warn',
+          kind: 'branch-status-derived-mismatch',
+          branchId: branch.id,
+          branch: branch.branch,
+          detail: { current: branch.status, derived },
+        });
+      }
+      if (branch.status === 'running' && runningServices.length === 0) {
+        issues.push({ severity: 'warn', kind: 'branch-running-zero-services', branchId: branch.id, branch: branch.branch });
+      }
+      if (branch.status === 'error' && runningServices.length > 0) {
+        issues.push({
+          severity: errorServices.length > 0 ? 'info' : 'warn',
+          kind: errorServices.length > 0 ? 'branch-partial-error-has-running-services' : 'branch-error-has-running-services-without-error-service',
+          branchId: branch.id,
+          branch: branch.branch,
+          detail: { runningServices: runningServices.length, errorServices: errorServices.length },
+        });
+      }
+      if (['building', 'starting', 'restarting', 'stopping'].includes(branch.status)) {
+        const age = ageMin(branch.lastAccessedAt || branch.lastDeployAt || branch.createdAt);
+        if (age !== undefined && age > 30) {
+          issues.push({
+            severity: 'warn',
+            kind: 'branch-interim-state-stale',
+            branchId: branch.id,
+            branch: branch.branch,
+            detail: { status: branch.status, ageMin: age, lastAccessedAt: branch.lastAccessedAt },
+          });
+        }
+      }
+      if (branch.status === 'running' && branch.lastStoppedAt && ts(branch.lastStoppedAt) >= Math.max(ts(branch.lastReadyAt), ts(branch.lastDeployAt))) {
+        issues.push({
+          severity: 'warn',
+          kind: 'running-branch-stop-newer-than-ready',
+          branchId: branch.id,
+          branch: branch.branch,
+          detail: {
+            lastStoppedAt: branch.lastStoppedAt,
+            lastReadyAt: branch.lastReadyAt,
+            lastDeployAt: branch.lastDeployAt,
+            lastStopReason: branch.lastStopReason,
+          },
+        });
+      }
+      if (branch.lastPushAt && branch.lastDeployAt && ts(branch.lastPushAt) > ts(branch.lastDeployAt)) {
+        issues.push({
+          severity: 'info',
+          kind: 'push-newer-than-successful-deploy',
+          branchId: branch.id,
+          branch: branch.branch,
+          detail: {
+            lastPushAt: branch.lastPushAt,
+            lastDeployAt: branch.lastDeployAt,
+            githubCommitSha: branch.githubCommitSha,
+          },
+        });
+      }
+      if (
+        branch.lastDeployDispatchStatus === 'accepted'
+        && branch.lastDeployDispatchAt
+        && ts(branch.lastDeployDispatchAt) > ts(branch.lastDeployAt)
+        && (ageMin(branch.lastDeployDispatchAt) || 0) > 15
+      ) {
+        issues.push({
+          severity: 'warn',
+          kind: 'deploy-dispatch-accepted-without-success-stamp',
+          branchId: branch.id,
+          branch: branch.branch,
+          detail: {
+            lastDeployDispatchAt: branch.lastDeployDispatchAt,
+            lastDeployDispatchCommitSha: branch.lastDeployDispatchCommitSha,
+            lastDeployAt: branch.lastDeployAt,
+            ageMin: ageMin(branch.lastDeployDispatchAt),
+          },
+        });
+      }
+      for (const service of services) {
+        const key = `${branch.id}/${service.profileId}`;
+        stateServiceKeys.add(key);
+        const dockerRunning = runningNames.has(service.containerName);
+        if (service.status === 'running' && !dockerRunning) {
+          issues.push({
+            severity: 'warn',
+            kind: 'service-state-running-docker-not-running',
+            branchId: branch.id,
+            branch: branch.branch,
+            service: service.profileId,
+            container: service.containerName,
+          });
+        }
+        if (service.status !== 'running' && dockerRunning) {
+          issues.push({
+            severity: 'warn',
+            kind: 'service-state-not-running-docker-running',
+            branchId: branch.id,
+            branch: branch.branch,
+            service: service.profileId,
+            container: service.containerName,
+            detail: { serviceStatus: service.status },
+          });
+        }
+      }
+    }
+    for (const [key, container] of discoveredApps) {
+      if (stateServiceKeys.has(key)) continue;
+      if (!container.running) continue;
+      if (projectFilter) {
+        const branch = stateService.getBranch(container.branchId);
+        const inferredProjectMatch = !branch && (container.branchId === projectFilter || container.branchId.startsWith(`${projectFilter}-`));
+        if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
+      }
+      issues.push({
+        severity: 'warn',
+        kind: 'docker-running-app-container-not-in-branch-state',
+        branchId: container.branchId,
+        service: container.profileId,
+        container: container.containerName,
+      });
+    }
+    res.json({
+      ok: issues.filter((issue) => issue.severity === 'warn').length === 0,
+      checkedAt: new Date().toISOString(),
+      project: projectFilter || null,
+      branchCount: branches.length,
+      issueCount: issues.length,
+      warnCount: issues.filter((issue) => issue.severity === 'warn').length,
+      infoCount: issues.filter((issue) => issue.severity === 'info').length,
+      issues,
     });
   });
 
