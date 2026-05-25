@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Folder, FolderOpen, ExternalLink } from 'luc
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { FilePreview, type DocBrowserEntry, type EntryPreview } from '@/components/file-preview';
+import { useAuthStore } from '@/stores/authStore';
 
 type TreeFile = { kind: 'file'; name: string; path: string };
 type TreeDir = { kind: 'dir'; name: string; path: string; children: TreeNode[] };
@@ -225,7 +226,12 @@ export function SkillContentBrowser({
 
     (async () => {
       try {
-        const res = await fetch(zipUrl);
+        // 同源代理端点带 Authorization；外链回退时无 token 也安全 (公开 zip)。
+        const token = useAuthStore.getState().token;
+        const isProxy = zipUrl.startsWith('/api/');
+        const res = await fetch(zipUrl, {
+          headers: isProxy && token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
         const zip = await JSZip.loadAsync(blob);

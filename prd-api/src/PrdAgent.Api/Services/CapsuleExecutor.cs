@@ -5152,7 +5152,7 @@ function safeChart(canvasId, config) {
         };
         var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "page-agent.generate::chat",
+            AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
             TimeoutSeconds = ctx.TimeoutSeconds,
             RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = messages },
@@ -5469,7 +5469,7 @@ function safeChart(canvasId, config) {
         };
         var planReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "page-agent.generate::chat",
+            AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
             RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = planMessages },
         };
@@ -5507,7 +5507,7 @@ function safeChart(canvasId, config) {
         };
         var genReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "page-agent.generate::chat",
+            AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
             TimeoutSeconds = 300,
             RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = genMessages },
