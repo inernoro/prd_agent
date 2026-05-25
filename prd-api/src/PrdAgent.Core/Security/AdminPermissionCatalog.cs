@@ -196,6 +196,16 @@ public static class AdminPermissionCatalog
     public const string PrReviewUse = "pr-review.use";
 
     /// <summary>
+    /// 项目路由智能体权限（普通用户）：上传方案 + 查看自己的解析结果
+    /// </summary>
+    public const string ProjectRouteAgentUse = "project-route-agent.use";
+
+    /// <summary>
+    /// 项目路由智能体管理权限（管理员）：维护公共站点说明 md 与仓库登记
+    /// </summary>
+    public const string ProjectRouteAgentManage = "project-route-agent.manage";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
