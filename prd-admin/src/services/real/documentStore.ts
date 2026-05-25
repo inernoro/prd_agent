@@ -319,11 +319,11 @@ export async function createShareLink(storeId: string, input: { title?: string; 
   );
 }
 
-/** 解析公开分享视图（匿名可访问） */
+/** 解析公开分享视图（匿名可访问，必须 auth:false 否则未登录访客被前端拦成"未登录"） */
 export async function getDocStoreShareView(token: string) {
   return await apiRequest<import('@/services/contracts/documentStore').DocStoreShareView>(
     api.documentStore.stores.publicShare(token),
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -331,7 +331,7 @@ export async function getDocStoreShareView(token: string) {
 export async function listDocStoreShareEntries(token: string) {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
     api.documentStore.stores.publicShareEntries(token),
-    { method: 'GET' },
+    { method: 'GET', auth: false },
   );
 }
 
@@ -344,7 +344,7 @@ export async function getDocStoreShareEntryContent(token: string, entryId: strin
     contentType: string;
     fileUrl: string | null;
     hasContent: boolean;
-  }>(api.documentStore.stores.publicShareEntryContent(token, entryId), { method: 'GET' });
+  }>(api.documentStore.stores.publicShareEntryContent(token, entryId), { method: 'GET', auth: false });
 }
 
 /** 列出分享链接 */
