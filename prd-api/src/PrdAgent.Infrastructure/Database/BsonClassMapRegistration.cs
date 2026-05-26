@@ -74,6 +74,7 @@ public static class BsonClassMapRegistration
             RegisterReportAgent();
             RegisterDocumentStore();
             RegisterTeam();
+            RegisterWebHostingExtras();
             RegisterEmergence();
             RegisterSkillAgentSession();
             RegisterInfraAgentRuntimeProfile();
@@ -1027,6 +1028,33 @@ public static class BsonClassMapRegistration
         if (!BsonClassMap.IsClassMapRegistered(typeof(TeamActivityLog)))
         {
             BsonClassMap.RegisterClassMap<TeamActivityLog>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+    }
+
+    private static void RegisterWebHostingExtras()
+    {
+        if (!BsonClassMap.IsClassMapRegistered(typeof(SiteViewEvent)))
+        {
+            BsonClassMap.RegisterClassMap<SiteViewEvent>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(WebCategory)))
+        {
+            BsonClassMap.RegisterClassMap<WebCategory>(cm =>
             {
                 cm.AutoMap();
                 cm.MapIdMember(x => x.Id)

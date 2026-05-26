@@ -283,6 +283,10 @@ public class MongoDbContext
     public IMongoCollection<TeamMember> TeamMembers => _database.GetCollection<TeamMember>("team_members");
     public IMongoCollection<TeamActivityLog> TeamActivityLogs => _database.GetCollection<TeamActivityLog>("team_activity_logs");
 
+    // 网页访客痕迹 + 自定义分类
+    public IMongoCollection<SiteViewEvent> SiteViewEvents => _database.GetCollection<SiteViewEvent>("site_view_events");
+    public IMongoCollection<WebCategory> WebCategories => _database.GetCollection<WebCategory>("web_categories");
+
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
