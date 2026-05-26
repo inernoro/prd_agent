@@ -2951,6 +2951,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/branches/cleanup-orphan-containers', async (req, res) => {
     const projectFilter = resolveProjectIdParam(req.query.project);
     const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+    const includeStopped = req.query.includeStopped === '1' || req.query.includeStopped === 'true';
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
     const trigger = triggerFromRequest(req);
@@ -2973,6 +2974,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }> = [];
     for (const [key, container] of discoveredApps) {
       if (stateServiceKeys.has(key)) continue;
+      if (!includeStopped && !container.running) continue;
       const branch = stateService.getBranch(container.branchId);
       const projectIdFromNetwork = projectIdForDockerNetwork(container.network);
       if (projectFilter) {
@@ -3005,6 +3007,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor,
         trigger,
         dryRun,
+        includeStopped,
         candidates,
         reason: 'docker app container exists but is not referenced by branch state',
       },
@@ -3076,6 +3079,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         requestId,
         actor,
         trigger,
+        includeStopped,
         removed,
         failed,
       },
