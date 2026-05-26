@@ -37,6 +37,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PrReviewUse,
                 AdminPermissionCatalog.EmergenceAgentUse,
                 AdminPermissionCatalog.PaAgentUse,
+                AdminPermissionCatalog.ProjectRouteAgentUse,
                 // 管理权限
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,
@@ -75,6 +76,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.PrReviewUse,
                 AdminPermissionCatalog.EmergenceAgentUse,
                 AdminPermissionCatalog.PaAgentUse,
+                AdminPermissionCatalog.ProjectRouteAgentUse,
                 // 只读管理权限
                 AdminPermissionCatalog.UsersRead,
                 AdminPermissionCatalog.GroupsRead,
