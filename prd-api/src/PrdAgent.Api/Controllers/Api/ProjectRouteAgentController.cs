@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -33,6 +34,7 @@ public class ProjectRouteAgentController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly GitRepoCacheService _gitCache;
+    private readonly IConfiguration _config;
     private readonly ILogger<ProjectRouteAgentController> _logger;
 
     public ProjectRouteAgentController(
@@ -40,12 +42,14 @@ public class ProjectRouteAgentController : ControllerBase
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         GitRepoCacheService gitCache,
+        IConfiguration config,
         ILogger<ProjectRouteAgentController> logger)
     {
         _db = db;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _gitCache = gitCache;
+        _config = config;
         _logger = logger;
     }
 
@@ -61,6 +65,52 @@ public class ProjectRouteAgentController : ControllerBase
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
         return permissions.Contains(AdminPermissionCatalog.ProjectRouteAgentManage)
                || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    /// <summary>
+    /// 解析当前用户的 GitHub OAuth access token（复用 pr-review 的连接）。
+    /// 返回 null 表示用户未授权 / token 失效 —— 此时 git clone 走匿名（公共仓库仍可拉，私有 / 组织仓库会 404）。
+    /// </summary>
+    private async Task<string?> ResolveGitHubTokenAsync(string userId, CancellationToken ct)
+    {
+        try
+        {
+            var conn = await _db.GitHubUserConnections
+                .Find(x => x.UserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (conn == null || string.IsNullOrEmpty(conn.AccessTokenEncrypted))
+                return null;
+            var jwtSecret = _config["Jwt:Secret"];
+            if (string.IsNullOrWhiteSpace(jwtSecret)) return null;
+            var token = ApiKeyCrypto.Decrypt(conn.AccessTokenEncrypted, jwtSecret);
+            return string.IsNullOrEmpty(token) ? null : token;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ProjectRouteAgent] resolve github token failed for user {UserId}", userId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 前端检查用户是否已经在 pr-review 完成了 GitHub OAuth 授权（共享同一份连接）。
+    /// 未授权时 UI 显示「去授权」按钮跳 /pr-review；已授权才能拉私有 / 组织仓库的 routemap。
+    /// </summary>
+    [HttpGet("github/status")]
+    public async Task<IActionResult> GetGitHubStatus(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var conn = await _db.GitHubUserConnections
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            connected = conn != null && !string.IsNullOrEmpty(conn.AccessTokenEncrypted),
+            githubLogin = conn?.GitHubLogin,
+            avatarUrl = conn?.AvatarUrl,
+            scopes = conn?.Scopes,
+            connectedAt = conn?.ConnectedAt,
+        }));
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -319,8 +369,10 @@ public class ProjectRouteAgentController : ControllerBase
             }
 
             // ===== 阶段 2：克隆 AI 抽出的仓库 + 读 routemap 快照 =====
-            var cloningLabel = $"克隆 {repos.Count} 个 AI 选中的仓库";
-            await WriteEvent("phase", new { code = "cloning", label = cloningLabel, message = cloningLabel });
+            // 解析当前用户的 GitHub OAuth token（共享 pr-review 的连接）；未授权 → null（仍尝试匿名 clone）
+            var ghToken = await ResolveGitHubTokenAsync(userId, CancellationToken.None);
+            var cloningLabel = $"克隆 {repos.Count} 个 AI 选中的仓库" + (ghToken != null ? "（已用 GitHub 授权）" : "（匿名，可能拉不了私有仓库）");
+            await WriteEvent("phase", new { code = "cloning", label = cloningLabel, message = cloningLabel, hasGithubToken = ghToken != null });
 
             var repoSnapshots = new List<(ProjectRouteExtractedRepo Repo, RoutemapSnapshot? Snap, string? ErrorMessage)>();
             foreach (var entry in repos)
@@ -335,7 +387,7 @@ public class ProjectRouteAgentController : ControllerBase
                 });
                 try
                 {
-                    var dir = await _gitCache.EnsureClonedAsync(entry.RepoUrl, entry.Branch, CancellationToken.None);
+                    var dir = await _gitCache.EnsureClonedAsync(entry.RepoUrl, entry.Branch, ghToken, CancellationToken.None);
                     var snap = _gitCache.ReadRoutemap(dir, entry.RoutemapPath);
                     repoSnapshots.Add((entry, snap, null));
                     await WriteEvent("repo", new

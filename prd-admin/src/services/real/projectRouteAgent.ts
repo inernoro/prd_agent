@@ -127,3 +127,19 @@ export async function deletePlan(
 export function getAnalyzeStreamUrl(planId: string): string {
   return `/api/project-route-agent/plans/${encodeURIComponent(planId)}/analyze/stream`;
 }
+
+// ──────────────────────────────────────────────
+// GitHub OAuth 状态（共享 pr-review 的授权）
+// ──────────────────────────────────────────────
+
+export interface ProjectRouteGitHubStatus {
+  connected: boolean;
+  githubLogin?: string | null;
+  avatarUrl?: string | null;
+  scopes?: string | null;
+  connectedAt?: string | null;
+}
+
+export async function getProjectRouteGitHubStatus(): Promise<ApiResponse<ProjectRouteGitHubStatus>> {
+  return apiRequest('/api/project-route-agent/github/status');
+}

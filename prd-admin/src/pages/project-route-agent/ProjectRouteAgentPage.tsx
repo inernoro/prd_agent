@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2 } from 'lucide-react';
+import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ExternalLink } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -8,10 +8,12 @@ import {
   getActiveSiteSpec,
   upsertSiteSpec,
   getAnalyzeStreamUrl,
+  getProjectRouteGitHubStatus,
   type ProjectRoutePlan,
   type ProjectRouteSiteSpec,
   type ProjectRouteExtractedRepo,
   type ProjectRouteResolution,
+  type ProjectRouteGitHubStatus,
 } from '@/services/real/projectRouteAgent';
 import { useSseStream } from '@/lib/useSseStream';
 
@@ -98,6 +100,8 @@ function AnalyzeView() {
   const [siteSpec, setSiteSpec] = useState<ProjectRouteSiteSpec | null>(null);
   const [siteSpecLoading, setSiteSpecLoading] = useState(true);
 
+  const [ghStatus, setGhStatus] = useState<ProjectRouteGitHubStatus | null>(null);
+
   const [plan, setPlan] = useState<ProjectRoutePlan | null>(null);
   const [apps, setApps] = useState<string[]>([]);
   const [modules, setModules] = useState<string[]>([]);
@@ -113,6 +117,7 @@ function AnalyzeView() {
   useEffect(() => {
     void refreshRecent();
     void refreshSiteSpec();
+    void refreshGhStatus();
   }, []);
 
   async function refreshRecent() {
@@ -125,6 +130,11 @@ function AnalyzeView() {
     const res = await getActiveSiteSpec();
     if (res.success) setSiteSpec(res.data!.siteSpec);
     setSiteSpecLoading(false);
+  }
+
+  async function refreshGhStatus() {
+    const res = await getProjectRouteGitHubStatus();
+    if (res.success) setGhStatus(res.data ?? null);
   }
 
   const sse = useSseStream({
@@ -299,6 +309,9 @@ function AnalyzeView() {
               <p className="text-[11px] text-amber-300/80">公共站点说明尚未配置，需管理员先上传一份 markdown。</p>
             )}
 
+            {/* GitHub 授权状态 —— 与 pr-review 共享同一份 OAuth 连接 */}
+            <GitHubStatusCard status={ghStatus} onRefresh={() => { void refreshGhStatus(); }} />
+
             {error && (
               <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
                 <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
@@ -465,7 +478,15 @@ function AnalyzeView() {
                       </ul>
                     )}
                     {r.reasoning && (
-                      <p className="text-[10px] text-white/40 mt-1.5">{r.reasoning}</p>
+                      <p className="text-[10px] text-white/40 mt-1.5 break-all">{r.reasoning}</p>
+                    )}
+                    {r.status === 'CloneFailed' && !ghStatus?.connected && (
+                      <a
+                        href="/pr-review"
+                        className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-1.5 py-0.5 rounded-md transition-colors"
+                      >
+                        <Github className="w-3 h-3" /> 去授权 GitHub 后重试
+                      </a>
                     )}
                   </li>
                 ))}
@@ -474,6 +495,45 @@ function AnalyzeView() {
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function GitHubStatusCard({ status, onRefresh }: { status: ProjectRouteGitHubStatus | null; onRefresh: () => void }) {
+  if (status == null) return null;
+  if (status.connected) {
+    return (
+      <div className="flex items-center gap-2 bg-emerald-500/8 border border-emerald-500/20 rounded-md px-3 py-2">
+        <Github className="w-3.5 h-3.5 text-emerald-300 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] text-emerald-200">
+            已用 GitHub 账号 <span className="font-medium">{status.githubLogin ?? '已授权'}</span> 授权（私有 / 组织仓库 routemap 可拉）
+          </p>
+        </div>
+        <a
+          href="/pr-review"
+          className="text-[11px] text-emerald-300/80 hover:text-emerald-200 underline-offset-2 hover:underline shrink-0"
+        >
+          管理
+        </a>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 bg-amber-500/8 border border-amber-500/20 rounded-md px-3 py-2">
+      <Github className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-[11px] text-amber-200">
+          尚未授权 GitHub。匿名访问只能拉公共仓库；私有 / 组织仓库会克隆失败。
+        </p>
+      </div>
+      <a
+        href="/pr-review"
+        onClick={() => setTimeout(onRefresh, 2000)}
+        className="inline-flex items-center gap-1 text-[11px] text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 rounded-md shrink-0 transition-colors"
+      >
+        去授权 <ExternalLink className="w-3 h-3" />
+      </a>
     </div>
   );
 }

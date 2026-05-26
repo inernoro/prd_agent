@@ -41,9 +41,19 @@ public sealed class GitRepoCacheService
     ///   A. 缓存目录新鲜（6h 内） → 直接复用
     ///   B. 已有 .git 但过期 → fetch + reset 兜底（最快）
     ///   C. 重新 clone（带 1 次重试，应对网络抖动）
-    ///   D. clone 失败但仓库残留 → 仍能用残留目录读 routemap（best-effort 降级，附 stale 警告）
+    ///   D. clone 失败但仓库残留 → 仍能用残留目录读 routemap（best-effort 降级）
+    ///
+    /// <paramref name="accessToken"/>：可选 GitHub OAuth access token。
+    ///   - 传入时，URL 注入 `https://x-access-token:{token}@github.com/...` 形式，私有 / 组织仓库也能拉
+    ///   - 传入时也建议加 `Authorization: token` header（git clone 透过 -c http.extraHeader 实现），
+    ///     但 GitHub 的 x-access-token 内联 URL 方式已经足够覆盖绝大多数 case，简化路径
+    ///   - **缓存 key 与 token 解耦**：换 token 不会让缓存失效（同一仓库同分支同一份 routemap 内容）
     /// </summary>
-    public async Task<string> EnsureClonedAsync(string repoUrl, string branch, CancellationToken ct = default)
+    public async Task<string> EnsureClonedAsync(
+        string repoUrl,
+        string branch,
+        string? accessToken = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(repoUrl))
             throw new GitRepoCacheException("仓库 URL 不能为空");
@@ -64,13 +74,22 @@ public sealed class GitRepoCacheService
             return dir;
         }
 
+        // 注入 OAuth token 到 URL（仅 https）。token 不出现在日志 / 缓存路径里。
+        var cloneUrl = InjectTokenIntoUrl(repoUrl, accessToken);
+        var hasToken = !ReferenceEquals(cloneUrl, repoUrl);
+
         var errorTrail = new List<string>();
 
         try
         {
-            // 策略 B：已有 .git 但过期 → 优先用 fetch + reset
+            // 策略 B：已有 .git 但过期 → 优先用 fetch + reset。
+            // 若有 token，覆盖 origin URL 一次（旧 URL 可能不带 token / 用了旧 token）。
             if (Directory.Exists(Path.Combine(dir, ".git")))
             {
+                if (hasToken)
+                {
+                    await RunGitAsync(new[] { "remote", "set-url", "origin", cloneUrl }, dir, 10, ct);
+                }
                 var (fok, fout) = await RunGitAsync(new[] { "fetch", "--depth=1", "origin", branch }, dir, 120, ct);
                 if (fok)
                 {
@@ -106,12 +125,17 @@ public sealed class GitRepoCacheService
                     "--depth=1",
                     "--single-branch",
                     "--branch", branch,
-                    repoUrl,
+                    cloneUrl,
                     dir,
-                }, cwd: _cacheRoot, timeoutSeconds: 180, ct: ct);
+                }, cwd: _cacheRoot, timeoutSeconds: 180, ct: ct, secretToMask: accessToken);
 
                 if (cok)
                 {
+                    // 把 origin URL 改回不带 token 的形式 —— 后续 fetch 都从 set-url 那条路径走
+                    if (hasToken)
+                    {
+                        await RunGitAsync(new[] { "remote", "set-url", "origin", repoUrl }, dir, 10, ct);
+                    }
                     TouchCacheStamp(dir);
                     return dir;
                 }
@@ -141,6 +165,25 @@ public sealed class GitRepoCacheService
         {
             throw new GitRepoCacheException($"克隆 {repoUrl}@{branch} 失败：{ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// 把 GitHub OAuth access token 注入 https URL（同 PR 审查智能体的鉴权方式）：
+    ///   https://github.com/x/y.git → https://x-access-token:{token}@github.com/x/y.git
+    /// 仅 https/http 注入；其他协议（git@/ssh）原样返回。
+    /// 如果 URL 里已经有用户名:密码段，也原样返回（不覆盖用户显式给的凭据）。
+    /// </summary>
+    private static string InjectTokenIntoUrl(string url, string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return url;
+        if (string.IsNullOrWhiteSpace(url)) return url;
+        var prefix = url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            ? "https://"
+            : url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "http://" : null;
+        if (prefix == null) return url;
+        var rest = url[prefix.Length..];
+        if (rest.Contains('@')) return url; // 已有内联凭据，不覆盖
+        return $"{prefix}x-access-token:{token}@{rest}";
     }
 
     /// <summary>
@@ -261,7 +304,12 @@ public sealed class GitRepoCacheService
         }
     }
 
-    private static async Task<(bool ok, string output)> RunGitAsync(IReadOnlyList<string> args, string cwd, int timeoutSeconds, CancellationToken ct)
+    private static async Task<(bool ok, string output)> RunGitAsync(
+        IReadOnlyList<string> args,
+        string cwd,
+        int timeoutSeconds,
+        CancellationToken ct,
+        string? secretToMask = null)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(timeoutSeconds, 1, 600)));
@@ -291,6 +339,8 @@ public sealed class GitRepoCacheService
             p.BeginErrorReadLine();
             await p.WaitForExitAsync(timeoutCts.Token);
             var combined = stderr.Length > 0 ? stderr.ToString() : stdout.ToString();
+            if (!string.IsNullOrEmpty(secretToMask))
+                combined = combined.Replace(secretToMask, "***", StringComparison.Ordinal);
             return (p.ExitCode == 0, combined);
         }
         catch (OperationCanceledException)
