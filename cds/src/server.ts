@@ -2536,7 +2536,7 @@ export function createServer(deps: ServerDeps): express.Express {
       try {
         return (await deps.containerService.discoverAppContainers()) as unknown as Map<
           string,
-          { containerName: string; branchId: string; profileId: string; running: boolean }
+          { containerName: string; branchId: string; profileId: string; running: boolean; network?: string }
         >;
       } catch {
         return new Map();

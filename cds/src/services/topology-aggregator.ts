@@ -134,6 +134,7 @@ export interface AggregatorAppContainerInfo {
   branchId: string;
   profileId: string;
   running: boolean;
+  network?: string;
   /** 端口可选 — discover 函数可能不暴露 */
   port?: number;
 }

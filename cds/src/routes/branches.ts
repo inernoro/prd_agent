@@ -1310,9 +1310,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     config,
   });
 
-  function inferProjectIdFromBranchId(branchId: string): string | null {
-    const projectIds = stateService.getProjects().map((project) => project.id).sort((a, b) => b.length - a.length);
-    return projectIds.find((projectId) => branchId === projectId || branchId.startsWith(`${projectId}-`)) || null;
+  function projectIdForDockerNetwork(network?: string | null): string | null {
+    if (!network) return null;
+    return stateService.getProjects().find((project) => project.dockerNetwork === network)?.id || null;
   }
 
   function triggerFromRequest(req: Request): BranchOperationTrigger {
@@ -2801,7 +2801,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!container.running) continue;
       if (projectFilter) {
         const branch = stateService.getBranch(container.branchId);
-        const inferredProjectMatch = !branch && inferProjectIdFromBranchId(container.branchId) === projectFilter;
+        const inferredProjectMatch = !branch && projectIdForDockerNetwork(container.network) === projectFilter;
         if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
       }
       issues.push({
@@ -2974,8 +2974,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const [key, container] of discoveredApps) {
       if (stateServiceKeys.has(key)) continue;
       const branch = stateService.getBranch(container.branchId);
+      const projectIdFromNetwork = projectIdForDockerNetwork(container.network);
       if (projectFilter) {
-        const inferredProjectMatch = !branch && inferProjectIdFromBranchId(container.branchId) === projectFilter;
+        const inferredProjectMatch = !branch && projectIdFromNetwork === projectFilter;
         if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
       }
       candidates.push({
@@ -2983,7 +2984,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         profileId: container.profileId,
         containerName: container.containerName,
         running: container.running,
-        projectId: branch?.projectId || projectFilter || null,
+        projectId: branch?.projectId || projectIdFromNetwork || projectFilter || null,
       });
     }
 

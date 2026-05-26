@@ -1895,12 +1895,12 @@ export class ContainerService {
    * 同 discoverInfraContainers：移除了 `cds.network=` filter,改用 branchId
    * 关联,branch 自带 projectId 不会跨项目串数据。
    */
-  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string }>> {
+  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
     const result = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
     );
 
-    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string }>();
+    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>();
     if (result.exitCode !== 0 || !result.stdout.trim()) return discovered;
 
     for (const line of result.stdout.trim().split('\n')) {
@@ -1908,6 +1908,7 @@ export class ContainerService {
       const [name, state, labels] = line.split('|');
       const branchMatch = labels?.match(/cds\.branch\.id=([^,]+)/);
       const profileMatch = labels?.match(/cds\.profile\.id=([^,]+)/);
+      const networkMatch = labels?.match(/cds\.network=([^,]+)/);
       if (branchMatch && profileMatch) {
         const key = `${branchMatch[1]}/${profileMatch[1]}`;
         discovered.set(key, {
@@ -1915,6 +1916,7 @@ export class ContainerService {
           containerName: name,
           branchId: branchMatch[1],
           profileId: profileMatch[1],
+          ...(networkMatch?.[1] ? { network: networkMatch[1] } : {}),
         });
       }
     }
