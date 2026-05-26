@@ -27,6 +27,8 @@ interface RepoLiveStatus {
   message?: string | null;
   files?: string[];
   fileCount?: number;
+  /** 找到的 routemap 目录（相对仓库根，monorepo 可能多个） */
+  foundLocations?: string[];
 }
 
 export function ProjectRouteAgentPage() {
@@ -419,6 +421,7 @@ function AnalyzeView() {
                   status: r.status,
                   message: r.message,
                   fileCount: r.fileCount,
+                  foundLocations: r.foundLocations,
                 })) : extractedRepos.map((er) => ({
                   appName: er.appName,
                   repoUrl: er.repoUrl,
@@ -427,6 +430,7 @@ function AnalyzeView() {
                   status: 'cloning' as RepoLiveStatus['status'],
                   message: null as string | null | undefined,
                   fileCount: undefined as number | undefined,
+                  foundLocations: undefined as string[] | undefined,
                 }))).map((r) => (
                   <li key={r.repoUrl} className="bg-white/3 rounded-md p-2">
                     <div className="flex items-center gap-2">
@@ -436,6 +440,18 @@ function AnalyzeView() {
                     <p className="text-[10px] text-white/40 truncate">{r.repoUrl} · {r.branch}</p>
                     {r.reasoning && <p className="text-[10px] text-sky-200/70 mt-1">AI: {r.reasoning}</p>}
                     {r.message && <p className="text-[10px] text-amber-200/70 mt-1">{r.message}</p>}
+                    {r.foundLocations && r.foundLocations.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {r.foundLocations.slice(0, 5).map((loc, idx) => (
+                          <span key={idx} className="px-1.5 py-0.5 rounded-md text-[10px] bg-emerald-500/15 border border-emerald-500/30 text-emerald-200/90 font-mono">
+                            {loc}/
+                          </span>
+                        ))}
+                        {r.foundLocations.length > 5 && (
+                          <span className="text-[10px] text-white/40">+{r.foundLocations.length - 5} 更多</span>
+                        )}
+                      </div>
+                    )}
                     {r.fileCount != null && (
                       <p className="text-[10px] text-white/40 mt-1">{r.fileCount} 个 routemap 文件</p>
                     )}

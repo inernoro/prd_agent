@@ -261,68 +261,156 @@ public sealed class GitRepoCacheService
     }
 
     /// <summary>
-    /// 列出 routemap 目录下的所有文件（相对路径 + 截断后的内容片段）。
+    /// 列出 routemap 目录下的所有文件（路径相对**仓库根**、含内容片段）。
+    ///
+    /// 查找策略（按顺序）：
+    ///   1. 指定路径优先：&lt;repo&gt;/{routemapRelative} 直接命中就先用它
+    ///   2. 递归搜索：BFS 在仓库内找所有同名（routemap basename）的目录，最大深度 6
+    ///      （应对 monorepo：apps/billing/routemap、services/x/routemap、prd-api/routemap 等）
+    ///   3. 跳过噪声目录：.git / node_modules / bin / obj / dist / target / .next / .nuxt /
+    ///      build / out / __pycache__ / vendor
+    ///   4. 多个候选都收，合并到同一份 Snapshot（每个文件 Path 是相对仓库根的完整路径，能区分来源）
+    ///
     /// 不存在时返回空清单 + 在 missing 标记里写出原因。
     /// </summary>
     public RoutemapSnapshot ReadRoutemap(string repoRoot, string routemapRelative)
     {
         var snapshot = new RoutemapSnapshot();
-        var rel = string.IsNullOrWhiteSpace(routemapRelative) ? "routemap" : routemapRelative.Trim().TrimStart('/').Replace('\\', '/');
-        var target = Path.GetFullPath(Path.Combine(repoRoot, rel));
-        if (!IsInside(repoRoot, target))
+        var rel = string.IsNullOrWhiteSpace(routemapRelative)
+            ? "routemap"
+            : routemapRelative.Trim().TrimStart('/').Replace('\\', '/');
+
+        // 提取要查找的目录 basename：'routemap' / 'docs/routemap' → 'routemap'
+        var simpleName = rel.Contains('/') ? rel.Split('/').Last() : rel;
+        if (string.IsNullOrWhiteSpace(simpleName)) simpleName = "routemap";
+
+        var hitLocations = new List<string>();
+
+        // 1. 优先：指定路径直接命中
+        var specifiedAbs = Path.GetFullPath(Path.Combine(repoRoot, rel));
+        if (IsInside(repoRoot, specifiedAbs) && Directory.Exists(specifiedAbs))
         {
-            snapshot.Missing = $"routemap 路径 {rel} 不在仓库内";
-            return snapshot;
+            hitLocations.Add(specifiedAbs);
         }
-        if (!Directory.Exists(target))
+
+        // 2. 递归找所有同名子目录
+        var subHits = FindDirsByName(repoRoot, simpleName, maxDepth: 6);
+        foreach (var d in subHits)
         {
-            snapshot.Missing = $"仓库内未找到 {rel} 目录";
+            if (!hitLocations.Any(x => string.Equals(x, d, StringComparison.OrdinalIgnoreCase)))
+                hitLocations.Add(d);
+        }
+
+        if (hitLocations.Count == 0)
+        {
+            snapshot.Missing = $"仓库内未找到 {simpleName} 目录（已递归搜索子目录，最大深度 6）";
             return snapshot;
         }
 
-        snapshot.AbsolutePath = target;
-        snapshot.RelativePath = rel.Replace('\\', '/');
+        // 暴露给上层
+        snapshot.AbsolutePath = hitLocations[0];
+        snapshot.RelativePath = Path.GetRelativePath(repoRoot, hitLocations[0])
+            .Replace(Path.DirectorySeparatorChar, '/');
+        snapshot.FoundLocations = hitLocations
+            .Select(d => Path.GetRelativePath(repoRoot, d).Replace(Path.DirectorySeparatorChar, '/'))
+            .ToList();
 
         var total = 0;
-        foreach (var path in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories)
-                                       .OrderBy(p => p, StringComparer.Ordinal))
+        foreach (var location in hitLocations)
         {
             if (snapshot.Entries.Count >= MaxFileCount) break;
             if (total >= MaxTotalBytes) break;
 
-            var relativePath = Path.GetRelativePath(target, path).Replace(Path.DirectorySeparatorChar, '/');
-            try
+            foreach (var path in Directory.EnumerateFiles(location, "*", SearchOption.AllDirectories)
+                                           .OrderBy(p => p, StringComparer.Ordinal))
             {
-                var info = new FileInfo(path);
-                var read = (int)Math.Min(info.Length, MaxFileBytes);
-                string? content = null;
-                if (read > 0 && LooksLikeText(path))
+                if (snapshot.Entries.Count >= MaxFileCount) break;
+                if (total >= MaxTotalBytes) break;
+
+                // 文件路径用相对**仓库根**的完整路径（含 routemap 目录前缀），
+                // 这样 monorepo 多个 routemap 也能区分来源。
+                var relativePath = Path.GetRelativePath(repoRoot, path)
+                    .Replace(Path.DirectorySeparatorChar, '/');
+                try
                 {
-                    var buf = new byte[read];
-                    using var fs = File.OpenRead(path);
-                    var got = fs.Read(buf, 0, read);
-                    content = Encoding.UTF8.GetString(buf, 0, got);
+                    var info = new FileInfo(path);
+                    var read = (int)Math.Min(info.Length, MaxFileBytes);
+                    string? content = null;
+                    if (read > 0 && LooksLikeText(path))
+                    {
+                        var buf = new byte[read];
+                        using var fs = File.OpenRead(path);
+                        var got = fs.Read(buf, 0, read);
+                        content = Encoding.UTF8.GetString(buf, 0, got);
+                    }
+                    total += read;
+                    snapshot.Entries.Add(new RoutemapEntry
+                    {
+                        Path = relativePath,
+                        SizeBytes = info.Length,
+                        ContentPreview = content,
+                    });
                 }
-                total += read;
-                snapshot.Entries.Add(new RoutemapEntry
+                catch (Exception ex)
                 {
-                    Path = relativePath,
-                    SizeBytes = info.Length,
-                    ContentPreview = content,
-                });
-            }
-            catch (Exception ex)
-            {
-                snapshot.Entries.Add(new RoutemapEntry
-                {
-                    Path = relativePath,
-                    SizeBytes = 0,
-                    ContentPreview = $"[读取失败：{ex.Message}]",
-                });
+                    snapshot.Entries.Add(new RoutemapEntry
+                    {
+                        Path = relativePath,
+                        SizeBytes = 0,
+                        ContentPreview = $"[读取失败：{ex.Message}]",
+                    });
+                }
             }
         }
 
         return snapshot;
+    }
+
+    /// <summary>
+    /// BFS 找仓库内所有同名目录（按 basename 匹配，大小写不敏感），最多 maxDepth 层。
+    /// 跳过 .git / node_modules / bin / obj / dist / target / .next / .nuxt / build / out /
+    /// __pycache__ / vendor 等噪声目录（避免在 build artifacts 里找到假阳性）。
+    /// </summary>
+    private static List<string> FindDirsByName(string repoRoot, string targetName, int maxDepth)
+    {
+        var results = new List<string>();
+        var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".git", "node_modules", "bin", "obj", "dist", "target", ".next", ".nuxt",
+            "build", "out", "__pycache__", "vendor", ".venv", "venv", "publish",
+            ".idea", ".vs", ".vscode",
+        };
+
+        // BFS 队列：(dir, depth)
+        var queue = new Queue<(string Dir, int Depth)>();
+        queue.Enqueue((repoRoot, 0));
+
+        while (queue.Count > 0)
+        {
+            var (cur, depth) = queue.Dequeue();
+            if (depth > maxDepth) continue;
+
+            string[] children;
+            try { children = Directory.GetDirectories(cur); }
+            catch { continue; }
+
+            foreach (var child in children)
+            {
+                var name = Path.GetFileName(child);
+                if (skip.Contains(name)) continue;
+
+                if (string.Equals(name, targetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 已经在指定路径策略里加过的根 routemap，不重复
+                    results.Add(child);
+                    // 命中后不再下钻（不在 routemap 内部继续找 routemap）
+                    continue;
+                }
+                if (depth < maxDepth) queue.Enqueue((child, depth + 1));
+            }
+        }
+
+        return results;
     }
 
     private string ResolveCacheDir(string repoUrl, string branch)
@@ -489,6 +577,17 @@ public sealed class RoutemapSnapshot
     public string? AbsolutePath { get; set; }
     public string? RelativePath { get; set; }
     public string? Missing { get; set; }
+
+    /// <summary>
+    /// 找到的所有 routemap 目录（相对仓库根，按发现顺序）。
+    /// monorepo 一仓多个 routemap 时这里会有多条。
+    /// </summary>
+    public List<string> FoundLocations { get; set; } = new();
+
+    /// <summary>
+    /// routemap 文件清单。<see cref="RoutemapEntry.Path"/> 是相对**仓库根**的完整路径，
+    /// 例如 "apps/billing/routemap/projects.json"，能跨多个 routemap 目录区分来源。
+    /// </summary>
     public List<RoutemapEntry> Entries { get; set; } = new();
 }
 

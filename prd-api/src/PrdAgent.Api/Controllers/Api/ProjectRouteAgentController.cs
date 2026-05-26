@@ -399,6 +399,7 @@ public class ProjectRouteAgentController : ControllerBase
                         message = snap.Missing,
                         files = snap.Entries.Take(50).Select(e => e.Path).ToList(),
                         fileCount = snap.Entries.Count,
+                        foundLocations = snap.FoundLocations,
                     });
                 }
                 catch (Exception ex)
@@ -664,7 +665,11 @@ public class ProjectRouteAgentController : ControllerBase
             repoBlocks.AppendLine($"RoutemapPath: {entry.RoutemapPath}");
             if (!string.IsNullOrEmpty(entry.Reasoning))
                 repoBlocks.AppendLine($"AISelectedBecause: {entry.Reasoning}");
-            repoBlocks.AppendLine($"RoutemapFiles ({snap!.Entries.Count}):");
+            if (snap!.FoundLocations.Count > 0)
+            {
+                repoBlocks.AppendLine($"FoundRoutemapDirs ({snap.FoundLocations.Count}): {string.Join(", ", snap.FoundLocations)}");
+            }
+            repoBlocks.AppendLine($"RoutemapFiles ({snap.Entries.Count}, 路径相对仓库根):");
             foreach (var e in snap.Entries.Take(120))
             {
                 repoBlocks.AppendLine($"  - {e.Path} ({e.SizeBytes} bytes)");
