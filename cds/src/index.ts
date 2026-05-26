@@ -68,6 +68,10 @@ const MASTER_MEMORY_EVENT_MIN_INTERVAL_MS = Math.max(
   30_000,
   Number.parseInt(process.env.CDS_MASTER_MEMORY_EVENT_MIN_INTERVAL_MS || '', 10) || 120_000,
 );
+const STALE_DEPLOY_DISPATCH_RECONCILE_INTERVAL_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.CDS_STALE_DEPLOY_DISPATCH_RECONCILE_INTERVAL_MS || '', 10) || 300_000,
+);
 
 function mb(bytes: number): number {
   return Math.round(bytes / 1024 / 1024);
@@ -128,6 +132,42 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
   const timer = setInterval(sample, MASTER_MEMORY_MONITOR_INTERVAL_MS);
   timer.unref?.();
   sample();
+  return timer;
+}
+
+function startStaleDeployDispatchReconciler(
+  state: StateService,
+  store: ServerEventLogSink | null,
+): NodeJS.Timeout | null {
+  if (config.mode === 'executor') return null;
+  let running = false;
+  const run = () => {
+    if (running) return;
+    running = true;
+    try {
+      const reconciled = reconcileStaleDeployDispatches(state, {
+        source: 'deploy-dispatch-reconciler.interval',
+        serverEventLogStore: store,
+      });
+      if (reconciled.length > 0) {
+        console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
+      }
+    } catch (err) {
+      store?.record({
+        category: 'system',
+        severity: 'error',
+        source: 'deploy-dispatch-reconciler.interval',
+        action: 'branch.deploy-dispatch.reconcile.failed',
+        message: `stale webhook deploy dispatch reconcile failed: ${(err as Error).message}`,
+        details: { error: (err as Error).message },
+      });
+    } finally {
+      running = false;
+    }
+  };
+
+  const timer = setInterval(run, STALE_DEPLOY_DISPATCH_RECONCILE_INTERVAL_MS);
+  timer.unref?.();
   return timer;
 }
 
@@ -386,6 +426,7 @@ if (activeServerEventLogStore) {
 }
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
+const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
   branchId: string;
@@ -1864,6 +1905,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`[shutdown] received ${signal}, stopping services...`);
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
+  if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
   schedulerService.stop();

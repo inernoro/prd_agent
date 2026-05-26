@@ -1,5 +1,6 @@
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
+import { createHash } from 'node:crypto';
 
 export interface DeployDispatchReconcileResult {
   branchId: string;
@@ -26,6 +27,14 @@ function parseTime(value?: string | null): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function createReconcileTraceId(branchId: string, dispatchAt: string, source: string): string {
+  const digest = createHash('sha1')
+    .update(`${branchId}\0${dispatchAt}\0${source}`)
+    .digest('hex')
+    .slice(0, 12);
+  return `op_reconcile_${digest}`;
+}
+
 export function reconcileStaleDeployDispatches(
   stateService: StateService,
   options: ReconcileStaleDeployDispatchOptions = {},
@@ -49,6 +58,8 @@ export function reconcileStaleDeployDispatches(
     if (ageMin < staleAfterMinutes) continue;
 
     const reason = `Webhook deploy dispatch stayed ${status} for ${ageMin} minutes without a newer successful deploy stamp`;
+    const operationId = createReconcileTraceId(branch.id, dispatchAt, source);
+    const requestId = `reconcile_${operationId.slice('op_reconcile_'.length)}`;
     branch.lastDeployDispatchStatus = 'interrupted';
     branch.lastDeployDispatchError = reason;
     const result: DeployDispatchReconcileResult = {
@@ -90,7 +101,13 @@ export function reconcileStaleDeployDispatches(
       message: `stale webhook deploy dispatch interrupted for ${branch.id}`,
       projectId: branch.projectId,
       branchId: branch.id,
+      requestId,
+      operationId,
       details: {
+        operationId,
+        requestId,
+        actor: 'system:deploy-dispatch-reconciler',
+        trigger: 'system',
         previousStatus: status,
         nextStatus: 'interrupted',
         lastDeployDispatchAt: branch.lastDeployDispatchAt || null,

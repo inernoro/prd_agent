@@ -11,10 +11,22 @@ describe('reconcileStaleDeployDispatches', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-dispatch-reconcile-'));
     const stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     const now = new Date('2026-05-26T12:30:00.000Z');
-    const serverEvents: Array<{ action: string; branchId?: string | null; details?: Record<string, unknown> }> = [];
+    const serverEvents: Array<{
+      action: string;
+      branchId?: string | null;
+      requestId?: string | null;
+      operationId?: string | null;
+      details?: Record<string, unknown>;
+    }> = [];
     const serverEventLogStore: ServerEventLogSink = {
       record(record) {
-        serverEvents.push({ action: record.action, branchId: record.branchId, details: record.details });
+        serverEvents.push({
+          action: record.action,
+          branchId: record.branchId,
+          requestId: record.requestId,
+          operationId: record.operationId,
+          details: record.details,
+        });
       },
     };
 
@@ -58,8 +70,14 @@ describe('reconcileStaleDeployDispatches', () => {
     expect(serverEvents[0]).toMatchObject({
       action: 'branch.deploy-dispatch.interrupted',
       branchId: 'prd-agent-main',
+      requestId: expect.stringMatching(/^reconcile_/),
+      operationId: expect.stringMatching(/^op_reconcile_/),
     });
     expect(serverEvents[0].details).toMatchObject({
+      requestId: serverEvents[0].requestId,
+      operationId: serverEvents[0].operationId,
+      actor: 'system:deploy-dispatch-reconciler',
+      trigger: 'system',
       previousStatus: 'dispatching',
       nextStatus: 'interrupted',
       lastDeployDispatchCommitSha: 'abc123',
