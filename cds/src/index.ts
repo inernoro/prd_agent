@@ -1455,7 +1455,11 @@ janitorService.setRemoveFn(async (slug: string) => {
     let recoveredInFlight = 0;
     const IN_FLIGHT_STATES = new Set(['building', 'starting', 'restarting', 'stopping']);
     for (const branch of stateService.getAllBranches()) {
-      if (IN_FLIGHT_STATES.has(branch.status)) {
+      const recoverableInterruptedError =
+        branch.status === 'error'
+        && typeof branch.errorMessage === 'string'
+        && branch.errorMessage.includes('CDS 重启时上一次部署任务');
+      if (IN_FLIGHT_STATES.has(branch.status) || recoverableInterruptedError) {
         const prev = branch.status;
         const serviceStatuses = Object.values(branch.services || {}).map((svc) => svc.status);
         const hasRunningService = serviceStatuses.some((status) => status === 'running');
