@@ -51,6 +51,12 @@ export interface HttpLogSink {
     host?: string;
     layer?: HttpLogRecord['layer'];
     minStatus?: number;
+    method?: string;
+    pathContains?: string;
+    branchId?: string;
+    profileId?: string;
+    since?: string | Date;
+    until?: string | Date;
   }): Promise<HttpLogRecord[]>;
 }
 
@@ -63,6 +69,16 @@ const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?ke
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function coerceDate(value: string | Date | undefined): Date | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const buf = Buffer.from(value);
@@ -261,6 +277,12 @@ export class HttpLogStore {
     host?: string;
     layer?: HttpLogRecord['layer'];
     minStatus?: number;
+    method?: string;
+    pathContains?: string;
+    branchId?: string;
+    profileId?: string;
+    since?: string | Date;
+    until?: string | Date;
   } = {}): Promise<HttpLogRecord[]> {
     if (!this.collection) return [];
     const query: Record<string, unknown> = {};
@@ -268,6 +290,21 @@ export class HttpLogStore {
     if (filter.host) query.host = filter.host;
     if (filter.layer) query.layer = filter.layer;
     if (filter.minStatus) query.status = { $gte: filter.minStatus };
+    if (filter.method) query.method = filter.method.toUpperCase();
+    if (filter.branchId) query.branchId = filter.branchId;
+    if (filter.profileId) query.profileId = filter.profileId;
+    const pathContains = filter.pathContains?.trim();
+    if (pathContains) {
+      query.path = { $regex: escapeRegExp(pathContains.slice(0, 200)), $options: 'i' };
+    }
+    const since = coerceDate(filter.since);
+    const until = coerceDate(filter.until);
+    if (since || until) {
+      query.ts = {
+        ...(since ? { $gte: since } : {}),
+        ...(until ? { $lte: until } : {}),
+      };
+    }
     const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
     return await this.collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
   }

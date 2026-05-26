@@ -32,6 +32,7 @@ import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
+import { resolveActorFromRequest } from './services/actor-resolver.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
@@ -50,6 +51,45 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function getRemoteAddr(req: express.Request): string | undefined {
+  return (req.headers['cf-connecting-ip'] as string)
+    || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    || req.ip
+    || req.socket?.remoteAddress;
+}
+
+function extractApiMutationContext(req: express.Request, deps: ServerDeps): {
+  branchId?: string;
+  projectId?: string;
+  profileId?: string;
+} {
+  const branchMatch = req.path.match(/^\/branches\/([^/]+)/);
+  const projectMatch = req.path.match(/^\/projects\/([^/]+)/);
+  const profileMatch = req.path.match(/\/profiles\/([^/]+)/);
+  const branchId = branchMatch ? decodeURIComponent(branchMatch[1]) : undefined;
+  const stateBranch = branchId ? deps.stateService.getBranch(branchId) : undefined;
+  const projectId =
+    stateBranch?.projectId
+    || (projectMatch ? decodeURIComponent(projectMatch[1]) : undefined)
+    || (typeof req.body?.projectId === 'string' ? req.body.projectId : undefined)
+    || (typeof req.query.project === 'string' ? req.query.project : undefined);
+  const profileId =
+    (profileMatch ? decodeURIComponent(profileMatch[1]) : undefined)
+    || (typeof req.body?.profileId === 'string' ? req.body.profileId : undefined)
+    || (typeof req.query.profileId === 'string' ? req.query.profileId : undefined);
+  return { branchId, projectId, profileId };
+}
+
+function shouldAuditApiMutation(req: express.Request): boolean {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase())) return false;
+  if (req.path.startsWith('/bridge/heartbeat')) return false;
+  if (req.path.startsWith('/bridge/navigate-requests/')) return false;
+  if (req.path.startsWith('/bridge/handshake-requests/')) return false;
+  if (req.path.startsWith('/bridge/check/')) return false;
+  if (req.path === '/bridge/result') return false;
+  return true;
+}
 
 export interface ServerDeps {
   stateService: StateService;
@@ -2137,11 +2177,31 @@ export function createServer(deps: ServerDeps): express.Express {
     const minStatus = Number.parseInt(String(req.query.minStatus || ''), 10) || undefined;
     const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
     const host = typeof req.query.host === 'string' ? req.query.host : undefined;
+    const method = typeof req.query.method === 'string' ? req.query.method : undefined;
+    const pathContains = typeof req.query.pathContains === 'string'
+      ? req.query.pathContains
+      : (typeof req.query.path === 'string' ? req.query.path : undefined);
+    const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+    const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const until = typeof req.query.until === 'string' ? req.query.until : undefined;
     const layerRaw = typeof req.query.layer === 'string' ? req.query.layer : undefined;
     const layer = layerRaw === 'master' || layerRaw === 'master-proxy' || layerRaw === 'forwarder'
       ? layerRaw
       : undefined;
-    const logs = await reader.call(deps.httpLogStore, { limit, requestId, host, layer, minStatus });
+    const logs = await reader.call(deps.httpLogStore, {
+      limit,
+      requestId,
+      host,
+      layer,
+      minStatus,
+      method,
+      pathContains,
+      branchId,
+      profileId,
+      since,
+      until,
+    });
     res.json({ logs, total: logs.length });
   });
 
@@ -2179,6 +2239,56 @@ export function createServer(deps: ServerDeps): express.Express {
       since: typeof req.query.since === 'string' ? req.query.since : undefined,
     });
     res.json({ events, total: events.length });
+  });
+
+  // ── Durable control-plane mutation audit ──
+  //
+  // Activity stream is a live UI aid; route-specific logs are easy to miss.
+  // This middleware records one persistent, queryable audit row for every
+  // mutating /api request that can change CDS state or containers.
+  app.use('/api', (req, res, next) => {
+    if (!shouldAuditApiMutation(req)) return next();
+    const start = Date.now();
+    const requestId =
+      (res.locals as { cdsRequestId?: string }).cdsRequestId
+      || (req as any).cdsRequestId
+      || crypto.randomUUID().slice(0, 8);
+    (req as any).cdsRequestId = requestId;
+    (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
+    res.setHeader('X-CDS-Request-Id', requestId);
+    const { branchId, projectId, profileId } = extractApiMutationContext(req, deps);
+    const actor = resolveActorFromRequest(req);
+    res.on('finish', () => {
+      const status = res.statusCode || 200;
+      const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+      const fullPath = `/api${req.path}`;
+      deps.serverEventLogStore?.record({
+        category: 'system',
+        severity,
+        source: 'api-mutation',
+        action: 'api.request.completed',
+        message: `${req.method.toUpperCase()} ${fullPath} -> ${status}`,
+        projectId,
+        branchId,
+        profileId,
+        status: String(status),
+        requestId,
+        details: {
+          method: req.method.toUpperCase(),
+          path: fullPath,
+          originalUrl: req.originalUrl,
+          status,
+          durationMs: Date.now() - start,
+          actor,
+          trigger: req.headers['x-cds-trigger'] || req.headers['x-github-event'] || null,
+          remoteAddr: getRemoteAddr(req),
+          userAgent: req.headers['user-agent'] || null,
+          referer: req.headers['referer'] || req.headers['origin'] || null,
+          contentLength: req.headers['content-length'] || null,
+        },
+      });
+    });
+    next();
   });
 
   // ── API activity tracking middleware (before routes, after auth) ──
