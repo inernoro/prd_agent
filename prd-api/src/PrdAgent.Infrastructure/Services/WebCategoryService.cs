@@ -220,7 +220,7 @@ public class WebCategoryService : IWebCategoryService
 
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == store.Id,
-            Builders<DocumentStore>.Update
+            Builders<PrdAgent.Core.Models.DocumentStore>.Update
                 .Inc(s => s.DocumentCount, 1)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
@@ -248,7 +248,7 @@ public class WebCategoryService : IWebCategoryService
             .UseSoftlineBreakAsHardlineBreak()
             .DisableHtml()
             .Build();
-        var bodyHtml = Markdown.ToHtml(markdown, pipeline);
+        var bodyHtml = Markdig.Markdown.ToHtml(markdown, pipeline);
         var safeTitle = HtmlEscape(title);
 
         var sb = new StringBuilder();
