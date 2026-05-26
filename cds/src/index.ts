@@ -1452,10 +1452,35 @@ janitorService.setRemoveFn(async (slug: string) => {
     //
     // 仅扫一次（启动期），与 reconcile 容器状态那段并行处理；不影响热路径。
     let staleInFlight = 0;
+    let recoveredInFlight = 0;
     const IN_FLIGHT_STATES = new Set(['building', 'starting', 'restarting', 'stopping']);
     for (const branch of stateService.getAllBranches()) {
       if (IN_FLIGHT_STATES.has(branch.status)) {
         const prev = branch.status;
+        const serviceStatuses = Object.values(branch.services || {}).map((svc) => svc.status);
+        const hasRunningService = serviceStatuses.some((status) => status === 'running');
+        const hasStartingService = serviceStatuses.some((status) => status === 'starting' || status === 'building' || status === 'restarting');
+        if (hasRunningService && !hasStartingService) {
+          branch.status = 'running';
+          branch.errorMessage = undefined;
+          branch.lastReadyAt = branch.lastReadyAt || new Date().toISOString();
+          recoveredInFlight++;
+          activeServerEventLogStore?.record({
+            category: 'system',
+            severity: 'info',
+            source: 'startup-reconcile',
+            action: 'branch.reconcile.inflight-recovered',
+            message: `Branch ${branch.id} recovered from stale in-flight status=${prev}; services are already running`,
+            projectId: branch.projectId,
+            branchId: branch.id,
+            details: {
+              previousStatus: prev,
+              serviceStatuses,
+              reason: 'running services are authoritative after CDS restart',
+            },
+          });
+          continue;
+        }
         branch.status = 'error';
         branch.errorMessage = `CDS 重启时上一次部署任务（status=${prev}）被中断；请重新部署。`;
         // 同步把 services 里同样停滞的状态收敛成 error，便于 UI 渲染。
@@ -1481,6 +1506,10 @@ janitorService.setRemoveFn(async (slug: string) => {
         `  [boot] Converged ${staleInFlight} stale in-flight branch(es) (status=building/starting/restarting/stopping → error). ` +
         '这些分支需要重新部署。',
       );
+      stateService.save();
+    }
+    if (recoveredInFlight > 0) {
+      console.log(`  [boot] Recovered ${recoveredInFlight} stale in-flight branch(es) because services were already running.`);
       stateService.save();
     }
   } catch (err) {
