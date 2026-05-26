@@ -1077,6 +1077,10 @@ interface RunServiceWithPortRetryOptions {
   profile: BuildProfile;
   service: ServiceState;
   customEnv?: Record<string, string>;
+  requestId?: string | null;
+  operationId?: string | null;
+  actor?: string | null;
+  trigger?: string | null;
   onOutput?: (chunk: string) => void;
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
 }
@@ -1091,6 +1095,12 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
         options.service,
         options.onOutput,
         options.customEnv,
+        {
+          requestId: options.requestId ?? null,
+          operationId: options.operationId ?? null,
+          actor: options.actor ?? null,
+          trigger: options.trigger ?? null,
+        },
       );
       return;
     } catch (err) {
@@ -1532,6 +1542,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     profileIds: Set<string>,
     requestId: string | undefined,
     reason: string,
+    operationId?: string | null,
   ): Promise<void> {
     for (const profileId of profileIds) {
       const svc = entry.services?.[profileId];
@@ -1542,6 +1553,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           branchId: entry.id,
           profileId,
           requestId: requestId || null,
+          operationId: operationId || null,
           operation: 'deploy-fenced-cleanup',
           source: 'api.deploy-fenced',
           reason,
@@ -1557,6 +1569,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           profileId,
           containerName: svc.containerName,
           requestId: requestId || null,
+          operationId: operationId || null,
           details: { reason },
         });
       } catch (err) {
@@ -2839,6 +2852,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           projectId: branch.projectId,
           branchId: branch.id,
           profileId,
+          requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+          operationId: branchOperationLease?.operationId || null,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
           operation: 'cleanup-damaged-containers',
           source: 'api.cleanup-damaged-containers',
           reason: '批量清理损坏容器：状态未运行且容器不可用',
@@ -3813,6 +3830,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             branchId: entry.id,
             profileId: svc.profileId,
             requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null,
             actor,
             trigger: trigger || null,
             operation: 'branch-delete',
@@ -4385,6 +4403,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               profile: effectiveProfile,
               service: svc,
               customEnv: mergedEnv,
+              requestId: requestId || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor: resolveActorFromRequest(req),
+              trigger: triggerFromRequest(req),
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -4741,6 +4763,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           new Set(profiles.map((profile) => profile.id)),
           requestId,
           `部署操作被更高优先级操作取代: ${errMsg}`,
+          branchOperationLease?.operationId || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -4925,6 +4948,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           profile: effectiveProfile,
           service: svc,
           customEnv: mergedEnv,
+          requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+          operationId: branchOperationLease?.operationId || null,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
@@ -5040,6 +5067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           new Set([profile.id]),
           String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
           `单服务部署被更高优先级操作取代: ${errMsg}`,
+          branchOperationLease?.operationId || null,
         );
         logEvent({
           step: 'deploy-fenced',
@@ -5296,7 +5324,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Actually stop containers
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        try {
+          await containerService.stop(svc.containerName, '用户手动停止', {
+            requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+            operationId: branchOperationLease?.operationId || null,
+            actor: resolveActorFromRequest(req),
+            trigger: triggerFromRequest(req),
+            operation: 'branch-stop',
+            source: 'api.stop-branch',
+          });
+        } catch { /* ok */ }
         svc.status = 'stopped';
       }
       await archiveBranchContainerLogs({
@@ -6697,6 +6734,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: removedProfileId,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                actor: resolveActorFromRequest(req),
+                trigger: triggerFromRequest(req),
                 operation: 'build-profile-delete',
                 source: 'api.delete-build-profile',
                 reason: `删除构建配置 ${removedProfileId} 时清理对应容器`,
@@ -6946,6 +6986,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             branchId: branch.id,
             profileId,
             requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null,
             actor,
             trigger: typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : null,
             operation: 'force-rebuild',
@@ -7991,6 +8032,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: svc.profileId,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                operationId: branchOperationLease?.operationId || null,
+                actor: resolveActorFromRequest(req),
                 trigger: 'cleanup',
                 operation: 'cleanup-all-branches',
                 source: 'api.cleanup',
@@ -8130,6 +8174,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: svc.profileId,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                operationId: branchOperationLease?.operationId || null,
+                actor: resolveActorFromRequest(req),
                 trigger: 'cleanup-orphans',
                 operation: 'cleanup-orphans',
                 source: 'api.cleanup-orphans',
@@ -8297,6 +8344,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: svc.profileId,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                operationId: branchOperationLease?.operationId || null,
+                actor: resolveActorFromRequest(req),
                 trigger: 'factory-reset',
                 operation: 'factory-reset-project',
                 source: 'api.factory-reset',
@@ -8331,6 +8381,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await containerService.remove(svc.containerName, {
               projectId: svc.projectId,
               serviceId: svc.id,
+              requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+              actor: resolveActorFromRequest(req),
               trigger: 'factory-reset',
               operation: 'factory-reset-project-infra',
               source: 'api.factory-reset',
@@ -8395,6 +8447,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
               projectId: entry.projectId,
               branchId: entry.id,
               profileId: svc.profileId,
+              requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor: resolveActorFromRequest(req),
               trigger: 'factory-reset',
               operation: 'factory-reset-global',
               source: 'api.factory-reset',
@@ -8422,6 +8477,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           await containerService.remove(svc.containerName, {
             projectId: svc.projectId,
             serviceId: svc.id,
+            requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+            actor: resolveActorFromRequest(req),
             trigger: 'factory-reset',
             operation: 'factory-reset-global-infra',
             source: 'api.factory-reset',

@@ -100,6 +100,32 @@ describe('ContainerService', () => {
       writeSpy.mockRestore();
     });
 
+    it('records operationId on pre-run cleanup and docker run events', async () => {
+      const records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, {
+        record(record) {
+          records.push({ action: record.action, operationId: record.operationId, details: record.details });
+        },
+      });
+      aliveStub?.mockRestore();
+      aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService(), undefined, undefined, {
+        requestId: 'req-123',
+        operationId: 'op-123',
+        actor: 'ai',
+        trigger: 'manual',
+      });
+
+      expect(records.find((record) => record.action === 'app.pre-run-rm')?.operationId).toBe('op-123');
+      expect(records.find((record) => record.action === 'app.run.started')?.operationId).toBe('op-123');
+      expect(records.find((record) => record.action === 'app.pre-run-rm')?.details?.actor).toBe('ai');
+      expect(records.find((record) => record.action === 'app.pre-run-rm')?.details?.trigger).toBe('manual');
+    });
+
     it('should remove stale same branch/profile app containers before attaching service aliases', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
@@ -361,6 +387,30 @@ describe('ContainerService', () => {
       await expect(service.stop('cds-feature-a-api')).resolves.toBeUndefined();
       expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
       expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
+    });
+
+    it('records operationId on stop events', async () => {
+      const records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, {
+        record(record) {
+          records.push({ action: record.action, operationId: record.operationId, details: record.details });
+        },
+      });
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await service.stop('cds-feature-a-api', '用户手动停止', {
+        requestId: 'req-stop',
+        operationId: 'op-stop',
+        actor: 'user:1',
+        trigger: 'manual',
+        operation: 'branch-stop',
+        source: 'api.stop-branch',
+      });
+
+      expect(records.find((record) => record.action === 'container.stop.requested')?.operationId).toBe('op-stop');
+      expect(records.find((record) => record.action === 'container.stop.completed')?.operationId).toBe('op-stop');
+      expect(records.find((record) => record.action === 'container.stop.requested')?.details?.operation).toBe('branch-stop');
     });
   });
 

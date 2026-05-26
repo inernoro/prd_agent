@@ -26,6 +26,7 @@ export interface ContainerLifecycleIntent {
   profileId?: string | null;
   serviceId?: string | null;
   requestId?: string | null;
+  operationId?: string | null;
   actor?: string | null;
   trigger?: string | null;
   operation?: string | null;
@@ -62,6 +63,7 @@ export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIn
     profileId: intent.profileId ?? null,
     serviceId: intent.serviceId ?? null,
     requestId: intent.requestId ?? null,
+    operationId: intent.operationId ?? null,
     actor: intent.actor ?? null,
     trigger: intent.trigger ?? null,
     operation: intent.operation ?? null,
@@ -346,6 +348,7 @@ export class DockerEventMonitor {
       branchId: branchId || null,
       profileId: profileId || null,
       serviceId: serviceId || null,
+      operationId: lifecycleIntent?.operationId || null,
       containerName: containerName || null,
       status: typeof state?.status === 'string' ? state.status : attrs.exitCode ? 'exited' : undefined,
       exitCode: Number.isFinite(Number(state?.exitCode ?? attrs.exitCode)) ? Number(state?.exitCode ?? attrs.exitCode) : undefined,

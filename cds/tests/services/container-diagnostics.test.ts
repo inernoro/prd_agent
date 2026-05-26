@@ -14,6 +14,7 @@ describe('container lifecycle intent correlation', () => {
       kind: 'cds-pre-run-replace',
       reason: 'deploy replacement',
       requestId: 'req-123',
+      operationId: 'op-123',
       operation: 'deploy-pre-run-replace',
     });
 
@@ -21,6 +22,7 @@ describe('container lifecycle intent correlation', () => {
     expect(intent?.kind).toBe('cds-pre-run-replace');
     expect(intent?.reason).toBe('deploy replacement');
     expect(intent?.requestId).toBe('req-123');
+    expect(intent?.operationId).toBe('op-123');
     expect(intent?.operation).toBe('deploy-pre-run-replace');
   });
 

@@ -44,6 +44,7 @@ export interface ContainerRemoveContext {
   profileId?: string | null;
   serviceId?: string | null;
   requestId?: string | null;
+  operationId?: string | null;
   actor?: string | null;
   trigger?: string | null;
   operation?: string | null;
@@ -364,6 +365,7 @@ export class ContainerService {
     profileId?: string | null;
     serviceId?: string | null;
     requestId?: string | null;
+    operationId?: string | null;
     containerName?: string | null;
     status?: string | null;
     exitCode?: number | null;
@@ -589,6 +591,7 @@ export class ContainerService {
     service: ServiceState,
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
@@ -603,6 +606,10 @@ export class ContainerService {
       projectId: entry.projectId,
       branchId: entry.id,
       profileId: profile.id,
+      requestId: context.requestId ?? null,
+      operationId: context.operationId ?? null,
+      actor: context.actor ?? null,
+      trigger: context.trigger ?? null,
       operation: 'deploy-pre-run-replace',
       source: 'container.runService',
     });
@@ -615,6 +622,8 @@ export class ContainerService {
       projectId: entry.projectId,
       branchId: entry.id,
       profileId: profile.id,
+      requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
       containerName: service.containerName,
       command: {
         name: 'docker rm -f',
@@ -625,6 +634,8 @@ export class ContainerService {
       details: {
         operation: 'deploy-pre-run-replace',
         reason: '部署前替换同名旧容器',
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
       },
     });
 
@@ -887,6 +898,8 @@ export class ContainerService {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
           containerName: service.containerName,
           command: {
             name: 'docker run',
@@ -911,6 +924,8 @@ export class ContainerService {
         projectId: entry.projectId,
         branchId: entry.id,
         profileId: profile.id,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
         containerName: service.containerName,
         command: {
           name: 'docker run',
@@ -942,6 +957,8 @@ export class ContainerService {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
+          requestId: context.requestId ?? undefined,
+          operationId: context.operationId ?? undefined,
           containerName: service.containerName,
           status: typeof state?.status === 'string' ? state.status : undefined,
           exitCode: Number.isFinite(Number(state?.exitCode)) ? Number(state?.exitCode) : undefined,
@@ -1286,20 +1303,39 @@ export class ContainerService {
    * 的场景。需要彻底销毁容器(删分支 / reset / 孤儿清理 / force-rebuild)
    * 请改用 remove()。
    */
-  async stop(containerName: string, reason = 'cds-stop'): Promise<void> {
+  async stop(
+    containerName: string,
+    reason = 'cds-stop',
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+  ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
       source: 'cds-container-service',
       action: 'container.stop.requested',
       message: `CDS requested docker stop for ${containerName}: ${reason}`,
+      requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
       containerName,
       inspect: before.inspect,
       logs: before.logs,
-      details: { reason },
+      details: {
+        reason,
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+        operation: context.operation ?? null,
+        source: context.source ?? null,
+      },
     });
     await this.writeStopSentinel(containerName, reason);
-    this.noteLifecycleIntent(containerName, 'cds-stop', reason);
+    this.noteLifecycleIntent(containerName, 'cds-stop', reason, {
+      requestId: context.requestId ?? null,
+      operationId: context.operationId ?? null,
+      actor: context.actor ?? null,
+      trigger: context.trigger ?? null,
+      operation: context.operation ?? null,
+      source: context.source ?? null,
+    });
     const result = await this.shell.exec(`docker stop ${containerName}`);
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
@@ -1308,6 +1344,8 @@ export class ContainerService {
       source: 'cds-container-service',
       action: 'container.stop.completed',
       message: `docker stop completed for ${containerName}: ${reason}`,
+      requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
       containerName,
       status: typeof state?.status === 'string' ? state.status : undefined,
       exitCode: Number.isFinite(Number(state?.exitCode)) ? Number(state?.exitCode) : undefined,
@@ -1316,7 +1354,13 @@ export class ContainerService {
       inspect: after.inspect,
       logs: after.logs,
       error: after.error,
-      details: { reason },
+      details: {
+        reason,
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+        operation: context.operation ?? null,
+        source: context.source ?? null,
+      },
     });
   }
 
@@ -1340,6 +1384,7 @@ export class ContainerService {
       profileId: context.profileId ?? undefined,
       serviceId: context.serviceId ?? undefined,
       requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
       containerName,
       inspect: before.inspect,
       logs: before.logs,
@@ -1366,6 +1411,7 @@ export class ContainerService {
       profileId: context.profileId ?? undefined,
       serviceId: context.serviceId ?? undefined,
       requestId: context.requestId ?? undefined,
+      operationId: context.operationId ?? undefined,
       containerName,
       command: {
         name: 'docker stop && docker rm',
