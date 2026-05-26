@@ -178,7 +178,7 @@ export class BranchOperationCoordinator {
         supersededByTrigger: request.trigger,
       });
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-        this.pendingWebhookDeploys.delete(branchId);
+        this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
       }
       return this.start(request);
     }
@@ -382,7 +382,7 @@ export class BranchOperationCoordinator {
         reserved: true,
       });
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-        this.pendingWebhookDeploys.delete(request.branchId);
+        this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`);
       }
       return this.start(request);
     }
@@ -426,6 +426,18 @@ export class BranchOperationCoordinator {
       reason: 'force-rebuild cleanup finished; waiting for deploy continuation',
       continueWith,
       expiresAt: new Date(expiresAt).toISOString(),
+    });
+  }
+
+  private cancelPendingWebhookDeploy(branchId: string, reason: string): void {
+    const pending = this.pendingWebhookDeploys.get(branchId);
+    if (!pending) return;
+    this.pendingWebhookDeploys.delete(branchId);
+    this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
+      reason,
+      pending: true,
+      mergedCount: pending.mergedCount,
+      updatedAt: pending.updatedAt,
     });
   }
 

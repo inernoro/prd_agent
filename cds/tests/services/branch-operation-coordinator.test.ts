@@ -190,7 +190,8 @@ describe('BranchOperationCoordinator', () => {
   });
 
   it('manual stop clears queued webhook deploys so stopped branches do not silently restart', () => {
-    const coordinator = new BranchOperationCoordinator();
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
     const active = coordinator.begin({
       branchId: 'prd-agent-main',
       kind: 'deploy',
@@ -214,6 +215,10 @@ describe('BranchOperationCoordinator', () => {
     expect(stop.status).toBe('started');
     expect(active.lease?.isCurrent()).toBe(false);
     expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
+    const cancelled = records.filter((r) => r.action === 'branch.operation.cancelled');
+    expect(cancelled).toHaveLength(2);
+    expect(cancelled.some((r) => r.operationId === active.operationId && r.details?.pending !== true)).toBe(true);
+    expect(cancelled.some((r) => r.details?.pending === true && r.details?.reason === 'superseded by stop')).toBe(true);
   });
 
   it('cleanup-damaged yields to an active webhook deploy instead of killing an in-flight build', () => {
@@ -424,7 +429,10 @@ describe('BranchOperationCoordinator', () => {
 
     expect(del.status).toBe('started');
     expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
-    expect(records.filter((r) => r.action === 'branch.operation.cancelled').length).toBeGreaterThanOrEqual(1);
+    const cancelled = records.filter((r) => r.action === 'branch.operation.cancelled');
+    expect(cancelled.length).toBeGreaterThanOrEqual(2);
+    expect(cancelled.some((r) => r.operationId === force.operationId && r.details?.reserved === true)).toBe(true);
+    expect(cancelled.some((r) => r.details?.pending === true && r.details?.reason === 'reserved continuation superseded by delete')).toBe(true);
   });
 
   it('records active and pending operations as interrupted when CDS restarts', () => {
