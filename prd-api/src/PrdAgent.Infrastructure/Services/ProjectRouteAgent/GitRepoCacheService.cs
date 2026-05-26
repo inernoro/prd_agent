@@ -145,12 +145,52 @@ public sealed class GitRepoCacheService
                 _logger.LogWarning("[GitRepoCache] clone attempt {Attempt}/2 failed for {Repo}@{Branch}: {Err}",
                     attempt, repoUrl, branch, lastCloneError);
 
+                // 关键 fallback：分支不存在错误立刻退出重试循环，下面用 default branch 救场
+                if (IsBranchNotFoundError(cout))
+                {
+                    errorTrail.Add("检测到「Remote branch not found」—— 跳过重试，尝试 fallback 到仓库默认分支");
+                    break;
+                }
+
                 if (attempt == 1)
                 {
                     // 短暂等待网络抖动恢复
                     try { await Task.Delay(TimeSpan.FromSeconds(2), ct); }
                     catch (OperationCanceledException) { break; }
                 }
+            }
+
+            // 策略 D：分支不存在 → 用仓库 default branch 救场
+            // 走 `git clone --depth=1`（不带 --branch / --single-branch），git 会用 remote HEAD 指向的分支
+            if (lastCloneError != null && IsBranchNotFoundError(lastCloneError))
+            {
+                if (Directory.Exists(dir)) TryRecursiveDelete(dir);
+                Directory.CreateDirectory(dir);
+
+                var (dok, dout) = await RunGitAsync(new[]
+                {
+                    "clone",
+                    "--depth=1",
+                    cloneUrl,
+                    dir,
+                }, cwd: _cacheRoot, timeoutSeconds: 180, ct: ct, secretToMask: accessToken);
+
+                if (dok)
+                {
+                    if (hasToken)
+                    {
+                        await RunGitAsync(new[] { "remote", "set-url", "origin", repoUrl }, dir, 10, ct);
+                    }
+                    var (sok, sout) = await RunGitAsync(new[] { "symbolic-ref", "--short", "HEAD" }, dir, 10, ct);
+                    var actualBranch = sok ? sout.Trim() : "(default)";
+                    _logger.LogInformation(
+                        "[GitRepoCache] {Repo}: 请求分支 '{Requested}' 不存在，已 fallback 到默认分支 '{Actual}'",
+                        repoUrl, branch, actualBranch);
+                    TouchCacheStamp(dir);
+                    return dir;
+                }
+
+                errorTrail.Add($"fallback default branch clone 也失败：{Truncate(dout, 400)}");
             }
 
             // 全部失败 → 抛带完整 trail 的异常
@@ -165,6 +205,22 @@ public sealed class GitRepoCacheService
         {
             throw new GitRepoCacheException($"克隆 {repoUrl}@{branch} 失败：{ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// 判断 git clone 的错误信息是不是「请求的分支在远端不存在」。
+    /// git 实际报错信息：
+    ///   "Remote branch main not found in upstream origin"
+    ///   "fatal: Remote branch xxx not found in upstream origin"
+    ///   "warning: Could not find remote branch main to clone."
+    /// 注：仅 GitHub / GitLab 多见这套文案；其他 git 服务文案略有差异但关键词覆盖。
+    /// </summary>
+    private static bool IsBranchNotFoundError(string output)
+    {
+        if (string.IsNullOrEmpty(output)) return false;
+        return output.Contains("Remote branch", StringComparison.OrdinalIgnoreCase)
+               && (output.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                   || output.Contains("Could not find", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
