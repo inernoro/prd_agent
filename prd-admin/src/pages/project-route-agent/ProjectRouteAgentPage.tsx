@@ -509,16 +509,51 @@ function ResolutionBadge({ status }: { status: ProjectRouteResolution['status'] 
 function AdminView() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
   const [title, setTitle] = useState('');
   const [markdown, setMarkdown] = useState('');
   const [repos, setRepos] = useState<ProjectRouteRepoEntry[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void load();
   }, []);
+
+  async function handleSiteMdUpload(file: File) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.md') && file.type !== 'text/markdown' && file.type !== 'text/plain') {
+      setError('请上传 .md 格式的 Markdown 文件');
+      return;
+    }
+    // 单文件上限 1 MB，避免管理员误传巨大文件撑爆 textarea
+    if (file.size > 1024 * 1024) {
+      setError(`文件过大（${(file.size / 1024 / 1024).toFixed(2)} MB），上限 1 MB`);
+      return;
+    }
+    setError(null);
+    setOkMsg(null);
+    setUploading(true);
+    try {
+      // 公共站点说明只需要 markdown 文本，本地读取即可。无需走 attachment 上传管线 —— 防止 DB 留无关附件记录。
+      const text = await file.text();
+      setMarkdown(text);
+      if (!title) setTitle(file.name.replace(/\.md$/i, ''));
+      setOkMsg(`已从 ${file.name} 载入（${(file.size / 1024).toFixed(1)} KB），下方可继续编辑`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '读取文件失败');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleSiteMdDrop(e: React.DragEvent) {
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (f) void handleSiteMdUpload(f);
+  }
 
   async function load() {
     setLoading(true);
@@ -607,13 +642,43 @@ function AdminView() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-white/60 mb-1.5">Markdown 内容（背景知识 / 应用列表 / 业务说明）</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-medium text-white/60">Markdown 内容（背景知识 / 应用列表 / 业务说明）</label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="inline-flex items-center gap-1.5 text-xs text-sky-300 hover:text-sky-200 border border-sky-500/30 hover:border-sky-500/50 disabled:opacity-50 px-2.5 py-1 rounded-md transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  {uploading ? '读取中…' : '上传 .md 文件'}
+                </button>
+                {markdown && (
+                  <span className="text-[11px] text-white/40">{markdown.length.toLocaleString()} 字符</span>
+                )}
+              </div>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".md,text/markdown"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleSiteMdUpload(f);
+                // 清空 input 以便用户再次选同一文件可触发 onChange
+                e.target.value = '';
+              }}
+            />
             <textarea
               value={markdown}
               onChange={(e) => setMarkdown(e.target.value)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={handleSiteMdDrop}
               rows={12}
-              placeholder="可以把 doc/ 下的 codebase-snapshot 之类整段粘进来"
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono"
+              placeholder="把 .md 文件拖到这里、点上面的「上传 .md 文件」按钮，或直接粘贴整段（例如 doc/ 下的 codebase-snapshot）"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-sky-500/40"
             />
           </div>
         </div>
