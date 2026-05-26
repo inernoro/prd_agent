@@ -30,6 +30,9 @@ import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCa
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { useTeamStore } from '@/stores/teamStore';
+import { recordSiteView } from '@/services/real/webAnalytics';
+import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
+import { CategoryManager } from '@/components/web-hosting/CategoryManager';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 
@@ -244,6 +247,8 @@ export default function WebPagesPage() {
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [showShareToTeam, setShowShareToTeam] = useState(false);
+  const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
+  const [showCategories, setShowCategories] = useState(false);
 
   // ─── Load ───
 
@@ -451,6 +456,7 @@ export default function WebPagesPage() {
             onQrCode={() => setQrSite(site)}
             onTransferToLibrary={() => setLibraryTargetSite(site)}
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
+            onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
           />
         ))}
       </div>
@@ -595,6 +601,15 @@ export default function WebPagesPage() {
             value={teamScope}
             onChange={(next) => { setTeamScope(next); setSelectedIds(new Set()); }}
           />
+          {/* 自定义分类 + 按分类生成 */}
+          <button
+            type="button"
+            className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5"
+            style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+            onClick={() => setShowCategories(true)}
+          >
+            <Folder size={13} /> 分类
+          </button>
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -881,6 +896,21 @@ export default function WebPagesPage() {
         />
       )}
 
+      {viewersTarget && (
+        <SiteViewersDrawer
+          siteId={viewersTarget.siteId}
+          siteTitle={viewersTarget.siteTitle}
+          onClose={() => setViewersTarget(null)}
+        />
+      )}
+
+      {showCategories && (
+        <CategoryManager
+          onClose={() => setShowCategories(false)}
+          onGenerated={() => load()}
+        />
+      )}
+
       {showShareToTeam && (
         <ShareToTeamDialog
           title={`分享到团队（已选 ${selectedIds.size} 项）`}
@@ -1098,12 +1128,13 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile }: {
+function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
   shared?: boolean;
   ownerCard?: SiteOwnerCard;
+  onViewers?: () => void;
   onSelect: () => void;
   onTogglePublic: () => void;
   onEdit: () => void;
@@ -1151,6 +1182,8 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
   // 访问 = 无密码分享链接（≥12 字母 token 形式 /s/wp/{token}），
   // 与分享的数字短链 /s/{seq} 体系彻底分开。先同步开窗规避拦截，再异步解析。
   const handleVisit = () => {
+    // 记录一次访客痕迹（fire-and-forget，不阻塞打开）
+    void recordSiteView(site.id);
     const w = window.open('', '_blank');
     resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
   };
@@ -1288,6 +1321,9 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
                 onClick={onTransferToLibrary}
               />
             )}
+            {onViewers && (
+              <IconAction icon={<Eye size={12} />} label="访客" onClick={onViewers} />
+            )}
             <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />
             <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />
           </div>
@@ -1413,6 +1449,8 @@ function SiteListItem({ site, selected, shared, onSelect, onEdit, onDelete, onSh
   });
   // 访问地址与 SiteCard 网格视图一致：统一走 /s/wp/{token}，避免列表/网格切换得到不同 URL
   const handleVisit = () => {
+    // 记录一次访客痕迹（fire-and-forget，不阻塞打开）
+    void recordSiteView(site.id);
     const w = window.open('', '_blank');
     resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
   };
