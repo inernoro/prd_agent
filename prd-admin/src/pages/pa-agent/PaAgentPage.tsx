@@ -11,6 +11,7 @@ import { PaAssistantChat } from './PaAssistantChat';
 import { PaTaskBoard } from './PaTaskBoard';
 import { PaProfilePanel } from './PaProfilePanel';
 import { PaReviewDrawer } from './PaReviewDrawer';
+import './paAgent.css';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
@@ -139,6 +140,106 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
   );
 }
 
+// ── SessionSkeleton（骨架屏 — Linear/GitHub 风，比"加载中..."更现代） ────
+
+function SessionSkeleton() {
+  return (
+    <div className="space-y-1.5 px-1 pt-2">
+      {[0, 1, 2].map(i => (
+        <div
+          key={i}
+          className="rounded-xl px-2.5 py-2 flex items-start gap-2"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}
+        >
+          <div className="shrink-0 w-6 h-6 rounded-lg pa-skeleton-shimmer" />
+          <div className="flex-1 min-w-0 space-y-1.5">
+            <div className="h-2.5 rounded pa-skeleton-shimmer" style={{ width: `${60 + i * 10}%` }} />
+            <div className="h-2 rounded pa-skeleton-shimmer" style={{ width: `${40 + i * 8}%`, opacity: 0.6 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── GroupedSessions — 按时间分组 + 复盘单独成组（Notion/Linear 风） ────────
+
+interface GroupedSessionsProps {
+  sessions: PaSessionInfo[];
+  activeSessionId: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
+  onRename: (id: string, title: string) => Promise<void>;
+}
+
+function GroupedSessions({ sessions, activeSessionId, onSelect, onDelete, onRename }: GroupedSessionsProps) {
+  // 排序后再分组，保证组内仍按 UpdatedAt 倒序
+  const sorted = [...sessions].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+
+  const now = dayjs();
+  const startOfToday = now.startOf('day');
+  const startOfYesterday = startOfToday.subtract(1, 'day');
+  const startOfWeek = now.startOf('week');
+
+  const reviewGroup: PaSessionInfo[] = [];
+  const todayGroup: PaSessionInfo[] = [];
+  const yesterdayGroup: PaSessionInfo[] = [];
+  const thisWeekGroup: PaSessionInfo[] = [];
+  const earlierGroup: PaSessionInfo[] = [];
+
+  for (const s of sorted) {
+    if (s.type === 'review') {
+      reviewGroup.push(s);
+      continue;
+    }
+    const u = dayjs(s.updatedAt);
+    if (u.isAfter(startOfToday) || u.isSame(startOfToday)) todayGroup.push(s);
+    else if (u.isAfter(startOfYesterday) || u.isSame(startOfYesterday)) yesterdayGroup.push(s);
+    else if (u.isAfter(startOfWeek) || u.isSame(startOfWeek)) thisWeekGroup.push(s);
+    else earlierGroup.push(s);
+  }
+
+  const groups: { key: string; label: string; items: PaSessionInfo[] }[] = [
+    { key: 'review', label: '我的复盘', items: reviewGroup },
+    { key: 'today', label: '今天', items: todayGroup },
+    { key: 'yesterday', label: '昨天', items: yesterdayGroup },
+    { key: 'week', label: '本周', items: thisWeekGroup },
+    { key: 'earlier', label: '更早', items: earlierGroup },
+  ];
+
+  return (
+    <div className="space-y-3">
+      {groups
+        .filter(g => g.items.length > 0)
+        .map(g => (
+          <div key={g.key}>
+            <div
+              className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-between"
+              style={{ color: 'var(--text-muted)', opacity: 0.65, letterSpacing: '0.08em' }}
+            >
+              <span>{g.label}</span>
+              <span className="text-[9px] opacity-70 tabular-nums">{g.items.length}</span>
+            </div>
+            <div className="space-y-0.5">
+              {g.items.map(s => (
+                <SessionItem
+                  key={s.id}
+                  session={s}
+                  active={s.id === activeSessionId}
+                  onSelect={() => onSelect(s.id)}
+                  onDelete={() => void onDelete(s.id)}
+                  onRename={title => void onRename(s.id, title)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 // ── PaAgentPage ───────────────────────────────────────────────────────────
 
 export function PaAgentPage() {
@@ -248,27 +349,23 @@ export function PaAgentPage() {
           </button>
         </div>
 
-        {/* Session list */}
-        <div className="flex-1 overflow-auto p-2 space-y-0.5">
+        {/* Session list — 按时间分组 + 复盘单独成组 */}
+        <div className="flex-1 overflow-auto p-2 space-y-1">
           {loading ? (
-            <div className="text-xs text-center pt-4" style={{ color: 'var(--text-muted)' }}>
-              加载中...
-            </div>
+            <SessionSkeleton />
           ) : sessions.length === 0 ? (
-            <div className="text-xs text-center pt-6" style={{ color: 'var(--text-muted)' }}>
-              点击 + 开始新对话
+            <div className="text-xs text-center pt-6 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              点击 <span style={{ color: '#a5b4fc', fontWeight: 600 }}>+</span> 开始新对话<br/>
+              <span className="text-[10px] opacity-70">把混乱丢给秘书</span>
             </div>
           ) : (
-            sessions.map(s => (
-              <SessionItem
-                key={s.id}
-                session={s}
-                active={s.id === activeSessionId}
-                onSelect={() => { setActiveSessionId(s.id); setTab('chat'); }}
-                onDelete={() => void handleDeleteSession(s.id)}
-                onRename={title => void handleRenameSession(s.id, title)}
-              />
-            ))
+            <GroupedSessions
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSelect={id => { setActiveSessionId(id); setTab('chat'); }}
+              onDelete={handleDeleteSession}
+              onRename={handleRenameSession}
+            />
           )}
         </div>
 
@@ -344,7 +441,8 @@ export function PaAgentPage() {
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-[10px] transition-all whitespace-nowrap font-medium"
+                data-active={tab === t.key}
+                className="pa-tab-button flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-[10px] whitespace-nowrap font-medium"
                 style={
                   tab === t.key
                     ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }

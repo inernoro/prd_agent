@@ -60,6 +60,8 @@ export interface PaSessionInfo {
   title: string;
   lastMessagePreview?: string;
   messageCount: number;
+  /** chat（默认主对话）/ review（复盘归档会话） */
+  type?: 'chat' | 'review';
   createdAt: string;
   updatedAt: string;
 }
