@@ -1317,6 +1317,34 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('GET /api/branches/state-audit', () => {
+    it('counts only warning-severity findings as issues while preserving info totals', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'info-main',
+        projectId: 'default',
+        branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'info-main'),
+        status: 'idle',
+        services: {},
+        createdAt: now,
+        lastDeployAt: '2026-05-26T22:00:00.000Z',
+        lastPushAt: '2026-05-26T23:00:00.000Z',
+        githubCommitSha: 'abc1234',
+      });
+
+      const res = await request(server, 'GET', '/api/branches/state-audit?project=default');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).ok).toBe(true);
+      expect((res.body as any).issueCount).toBe(0);
+      expect((res.body as any).warnCount).toBe(0);
+      expect((res.body as any).infoCount).toBe(1);
+      expect((res.body as any).totalCount).toBe(1);
+      expect((res.body as any).issues[0].kind).toBe('push-newer-than-successful-deploy');
+    });
+  });
+
   // ── Logs ──
 
   describe('GET /api/branches/:id/logs', () => {

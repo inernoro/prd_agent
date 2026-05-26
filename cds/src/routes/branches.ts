@@ -2824,14 +2824,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         container: container.containerName,
       });
     }
+    const warnCount = issues.filter((issue) => issue.severity === 'warn').length;
+    const infoCount = issues.filter((issue) => issue.severity === 'info').length;
     res.json({
-      ok: issues.filter((issue) => issue.severity === 'warn').length === 0,
+      ok: warnCount === 0,
       checkedAt: new Date().toISOString(),
       project: projectFilter || null,
       branchCount: branches.length,
-      issueCount: issues.length,
-      warnCount: issues.filter((issue) => issue.severity === 'warn').length,
-      infoCount: issues.filter((issue) => issue.severity === 'info').length,
+      issueCount: warnCount,
+      warnCount,
+      infoCount,
+      totalCount: issues.length,
       issues,
     });
   });
