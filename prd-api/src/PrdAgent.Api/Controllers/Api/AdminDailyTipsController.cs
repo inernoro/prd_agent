@@ -69,6 +69,10 @@ public sealed class AdminDailyTipsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "actionUrl 不能为空"));
 
         var now = DateTime.UtcNow;
+        var sourceType = string.IsNullOrWhiteSpace(req.SourceType) ? "manual" : req.SourceType.Trim();
+        // 时效性公告（新功能 feature-release / 缺陷修复 bug-fix）未显式指定结束时间时，
+        // 默认 7 天后过期，避免过时弹窗一直堆在首页；常驻引导（manual/onboarding）保持不过期。
+        var endAt = req.EndAt ?? (sourceType is "feature-release" or "bug-fix" ? now.AddDays(7) : (DateTime?)null);
         var tip = new DailyTip
         {
             Kind = req.Kind.Trim(),
@@ -84,8 +88,8 @@ public sealed class AdminDailyTipsController : ControllerBase
             DisplayOrder = req.DisplayOrder,
             IsActive = req.IsActive,
             StartAt = req.StartAt,
-            EndAt = req.EndAt,
-            SourceType = string.IsNullOrWhiteSpace(req.SourceType) ? "manual" : req.SourceType.Trim(),
+            EndAt = endAt,
+            SourceType = sourceType,
             CreatedBy = this.GetRequiredUserId(),
             CreatedAt = now,
             UpdatedAt = now
@@ -358,6 +362,8 @@ public sealed class AdminDailyTipsController : ControllerBase
                 TargetRoles = null,
                 DisplayOrder = seed.DisplayOrder,
                 IsActive = true,
+                StartAt = seed.StartAt,
+                EndAt = seed.EndAt,
                 SourceType = "seed",
                 SourceId = seed.SourceId,
                 CreatedBy = this.GetRequiredUserId(),
