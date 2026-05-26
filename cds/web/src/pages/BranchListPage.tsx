@@ -3974,7 +3974,7 @@ function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <h3
-                className="min-w-0 flex-[1_1_14rem] break-all text-[17px] font-semibold leading-7 tracking-tight"
+                className="min-w-0 flex-[0_1_auto] break-all text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
                 {branch.branch}
@@ -4014,18 +4014,17 @@ function BranchCard({
               */}
               {runtime ? (
                 <span
-                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-medium ${runtime.className}`}
+                  className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-medium ${runtime.className}`}
                   title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
                 >
                   <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
-                  {runtime.label}
                 </span>
               ) : (
                 <span
-                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
+                  className="inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] text-[10px] font-medium text-muted-foreground"
                   title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  源码
+                  <Github className="h-2.5 w-2.5" aria-hidden />
                 </span>
               )}
             </div>
@@ -4203,11 +4202,10 @@ function BranchCard({
             <span
               key={service.profileId}
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
-              title={service.profileId}
+              title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${isAiActive ? 'cds-ai-kinetic-dot ' : ''}${chipRailClass}`} aria-hidden />
+              <Server className={`h-3 w-3 ${chipRailClass.replace('bg-', 'text-')}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
-              <span>:{service.hostPort}</span>
             </span>
           );
         }) : (
