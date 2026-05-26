@@ -1196,6 +1196,17 @@ public static class PaAgent
         )]
         public const string Conversation = "pa-agent.chat::chat";
     }
+
+    public static class Review
+    {
+        [AppCallerMetadata(
+            "毒舌秘书-复盘",
+            "对一周/自定义时段的任务数据进行 MECE 复盘，输出数字 + 没干完的为什么 + 下周建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Assistant"
+        )]
+        public const string Conversation = "pa-agent.review::chat";
+    }
 }
 }
 
