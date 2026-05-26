@@ -1135,6 +1135,7 @@ async function defaultLocalhostBranchDelete(config: CdsConfig, stateService: Sta
   if (!res.ok && res.status !== 404) {
     throw new Error(`DELETE /api/branches/${branchId} -> ${await responseErrorSummary(res)}`);
   }
+  drainResponseBody(res);
 }
 
 async function defaultLocalhostStop(config: CdsConfig, stateService: StateService, branchId: string): Promise<void> {

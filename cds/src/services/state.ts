@@ -602,6 +602,13 @@ export class StateService {
     }
   }
 
+  async flush(): Promise<void> {
+    const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
+    if (typeof maybeFlush === 'function') {
+      await maybeFlush.call(this.backingStore);
+    }
+  }
+
   getState(): Readonly<CdsState> {
     return this.state;
   }

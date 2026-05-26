@@ -771,6 +771,34 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it('records branch delete completion only after state flush succeeds', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'flush-delete',
+        projectId: 'default',
+        branch: 'feature/flush-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'flush-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      stateService.flush = async () => {
+        operationEvents.push({ action: 'test.state-flushed', branchId: 'flush-delete' });
+      };
+
+      const del = await request(server, 'DELETE', '/api/branches/flush-delete');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('flush-delete')).toBeUndefined();
+
+      const actions = operationEvents
+        .filter((event) => event.branchId === 'flush-delete')
+        .map((event) => event.action);
+      expect(actions.indexOf('test.state-flushed')).toBeGreaterThanOrEqual(0);
+      expect(actions.indexOf('branch.delete.completed')).toBeGreaterThan(actions.indexOf('test.state-flushed'));
+    });
+
     it('manual delete fences an in-flight webhook deploy and the old deploy cannot recreate branch state', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api',

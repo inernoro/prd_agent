@@ -3877,10 +3877,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
-    const finalizeBranchDelete = (message: string): void => {
+    const finalizeBranchDelete = async (message: string): Promise<void> => {
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
+      await stateService.flush();
       branchEvents.emitEvent({
         type: 'branch.removed',
         payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
@@ -3974,7 +3975,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const completeMessage = proxied
             ? `分支 "${id}" 已在执行器 ${remoteExecutor.id} 上删除`
             : `分支 "${id}" 已从主节点移除；执行器上的残留请手动检查`;
-        finalizeBranchDelete(completeMessage);
+        await finalizeBranchDelete(completeMessage);
         sendSSE(res, 'complete', { message: completeMessage });
         return;
       }
@@ -4023,7 +4024,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Commit the user-visible deletion before best-effort volume cleanup.
       // A slow/hung Docker volume command or master restart must not leave
       // "containers removed but branch card still present" half-state.
-      finalizeBranchDelete(`分支 "${id}" 已删除`);
+      await finalizeBranchDelete(`分支 "${id}" 已删除`);
 
       // ⚠ Bugbot 2026-05-06 ea633e03:删除 per-(branch, profile) 的
       // node_modules docker named volume(container.ts 里给 pnpm 项目挂的
