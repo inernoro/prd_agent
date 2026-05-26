@@ -15,4 +15,11 @@ public interface ITeamService
 
     /// <summary>用户是否为该团队管理员</summary>
     Task<bool> IsAdminAsync(string teamId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 当前用户在所属各团队的「网页托管有效角色」映射（teamId → owner/editor/viewer）。
+    /// 已应用继承解析（WebHostingRole 为空时 admin→owner / member→editor）。
+    /// 仅网页托管模块消费，用于在团队作用域内做角色门控。
+    /// </summary>
+    Task<Dictionary<string, string>> GetMyWebHostingTeamRolesAsync(string userId, CancellationToken ct = default);
 }

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
@@ -90,6 +91,19 @@ public class HostedSiteService : IHostedSiteService
         var owner = fb.Eq(x => x.OwnerUserId, userId);
         if (myTeamIds.Count == 0) return owner;
         return fb.Or(owner, fb.AnyIn(x => x.SharedTeamIds, myTeamIds));
+    }
+
+    /// <summary>
+    /// 解析用户对单个站点的网页托管有效角色（owner/editor/viewer），返回 null 表示完全不可访问
+    /// （既非站点创建者，也不在任何「站点已共享到」的团队里）。这是「能看到哪些站点」隔离铁律
+    /// 与「在站点上能做什么」角色门控的统一入口：role==null ⇔ 不可见；role!=null 时交 WebHostingPermission.Can。
+    /// </summary>
+    private async Task<string?> ResolveSiteRoleAsync(HostedSite site, string userId, CancellationToken ct)
+    {
+        if (site.OwnerUserId == userId) return WebHostingRoles.Owner;
+        if (site.SharedTeamIds is not { Count: > 0 }) return null;
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        return WebHostingPermission.ResolveSiteRole(isSiteOwner: false, site.SharedTeamIds, roles);
     }
 
     // ─────────────────────────────────────────────
@@ -221,14 +235,13 @@ public class HostedSiteService : IHostedSiteService
         string? wrappedAssetType = null,
         CancellationToken ct = default)
     {
-        // 决策 10：团队成员可替换团队内站点内容
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        var fbR = Builders<HostedSite>.Filter;
-        var site = await _db.HostedSites
-            .Find(fbR.And(fbR.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds)))
-            .FirstOrDefaultAsync(ct);
+        // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
+        var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
+        var role = await ResolveSiteRoleAsync(site, userId, ct);
+        if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
+            throw new KeyNotFoundException("站点不存在"); // 不可见/无编辑权一并按不存在处理，不泄露存在性
 
         // P1 + URL 稳定 + 无孤儿：先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用），
         // 校验通过前绝不写任何 COS 对象。校验失败直接抛错——旧 siteId 前缀文件零改动、
@@ -419,12 +432,14 @@ public class HostedSiteService : IHostedSiteService
 
         updates.Add(ub.Set(x => x.UpdatedAt, DateTime.UtcNow));
 
-        // 决策 10：团队成员全员可编辑团队内容
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        var fb = Builders<HostedSite>.Filter;
-        var filter = fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds));
+        // 角色门控：editor / owner / 站点创建者可编辑元信息；viewer 与非成员拒绝
+        var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+        var role = await ResolveSiteRoleAsync(site, userId, ct);
+        if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
+            return null;
 
-        var result = await _db.HostedSites.UpdateOneAsync(filter, ub.Combine(updates), cancellationToken: ct);
+        var result = await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, ub.Combine(updates), cancellationToken: ct);
         if (result.MatchedCount == 0) return null;
 
         var updated = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
@@ -439,12 +454,12 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct)
     {
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        var fb = Builders<HostedSite>.Filter;
-        var site = await _db.HostedSites
-            .Find(fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds)))
-            .FirstOrDefaultAsync(ct);
+        // 角色门控：删除只给文件夹所有者(owner)或站点创建者；editor 不能删别人的站点，viewer 全拒
+        var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null) return false;
+        var role = await ResolveSiteRoleAsync(site, userId, ct);
+        if (!WebHostingPermission.Can(role, WebHostingAction.Delete, site.OwnerUserId == userId))
+            return false;
 
         foreach (var f in site.Files)
         {
@@ -467,12 +482,16 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct)
     {
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        // 角色门控：仅保留「文件夹所有者或站点创建者」可删除的站点；editor/viewer 删别人的会被静默跳过
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
         var fb = Builders<HostedSite>.Filter;
-        var idFilter = fb.In(x => x.Id, siteIds);
-        var sites = await _db.HostedSites
-            .Find(fb.And(idFilter, OwnerOrMemberFilter(userId, myTeamIds)))
-            .ToListAsync(ct);
+        var candidates = await _db.HostedSites.Find(fb.In(x => x.Id, siteIds)).ToListAsync(ct);
+        var sites = candidates.Where(s =>
+        {
+            var isOwner = s.OwnerUserId == userId;
+            var role = WebHostingPermission.ResolveSiteRole(isOwner, s.SharedTeamIds, roles);
+            return WebHostingPermission.Can(role, WebHostingAction.Delete, isOwner);
+        }).ToList();
 
         foreach (var site in sites)
         foreach (var f in site.Files)
@@ -578,14 +597,19 @@ public class HostedSiteService : IHostedSiteService
         if (allIds.Count == 0)
             throw new ArgumentException("至少选择一个站点");
 
-        // 决策 10：团队成员可为团队内站点创建分享链接（owner 或 我所在团队已共享的）
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        // 角色门控：editor / owner / 站点创建者可建分享链接；viewer 与非成员拒绝。
+        // 所有目标站点都必须有 CreateShare 权限，否则整笔拒绝（与原「全部可访问才放行」一致）。
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
         var fbShare = Builders<HostedSite>.Filter;
-        var accessibleCount = await _db.HostedSites.CountDocumentsAsync(
-            fbShare.And(fbShare.In(x => x.Id, allIds), OwnerOrMemberFilter(userId, myTeamIds)),
-            cancellationToken: ct);
-        if (accessibleCount != allIds.Count)
-            throw new UnauthorizedAccessException("包含非自己或非团队的站点");
+        var shareSites = await _db.HostedSites.Find(fbShare.In(x => x.Id, allIds)).ToListAsync(ct);
+        var sharableIds = shareSites.Where(s =>
+        {
+            var isOwner = s.OwnerUserId == userId;
+            var role = WebHostingPermission.ResolveSiteRole(isOwner, s.SharedTeamIds, roles);
+            return WebHostingPermission.Can(role, WebHostingAction.CreateShare, isOwner);
+        }).Select(s => s.Id).ToHashSet();
+        if (!allIds.All(sharableIds.Contains))
+            throw new UnauthorizedAccessException("包含无分享权限或非团队的站点");
 
         // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
         // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；

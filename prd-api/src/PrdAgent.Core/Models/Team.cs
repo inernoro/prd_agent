@@ -72,8 +72,16 @@ public class TeamMember
     /// <summary>用户头像文件名（冗余，卡片直接渲染头像免查）</summary>
     public string? AvatarFileName { get; set; }
 
-    /// <summary>角色：admin / member（admin 可管理团队，内容编辑权限全员平等）</summary>
+    /// <summary>角色：admin / member（admin 可管理团队；知识库仍按决策 10 全员平等编辑）</summary>
     public string Role { get; set; } = TeamRole.Member;
+
+    /// <summary>
+    /// 网页托管内容角色：owner / editor / viewer（仅网页托管模块消费此字段，知识库不读）。
+    /// null = 继承团队角色（admin → owner，member → editor），保证已有成员迁移时不被意外降权，
+    /// 维持决策 10「成员可编辑」的既有能力；只有显式设为 viewer 才会被限制为只读。
+    /// 解析逻辑见 PrdAgent.Core.Security.WebHostingRoles.Resolve。
+    /// </summary>
+    public string? WebHostingRole { get; set; }
 
     /// <summary>加入时间</summary>
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;

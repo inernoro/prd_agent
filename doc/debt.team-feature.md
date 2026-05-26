@@ -5,10 +5,23 @@
 
 团队功能（wave 1）已落地核心 11 项需求。本文件登记交付时主动声明的已知边界与后续可补项，避免下一次 session 无人记得。
 
-## 已知边界（wave 1 故意未覆盖）
+## wave 2 进行中：网页托管角色细分（owner/editor/viewer）
+
+2026-05-26 起，网页托管团队共享层把决策 10「成员全员平等」细分为三角色（知识库仍按决策 10 不变）：
+
+- 模型：`TeamMember.WebHostingRole`（nullable，仅网页托管消费）。null = 继承（admin→owner / member→editor），存量成员零降权迁移；显式设 viewer 才只读。
+- 策略：`PrdAgent.Core.Security.WebHostingPermission`（纯函数）+ `TeamService.GetMyWebHostingTeamRolesAsync`。`HostedSiteService` 的 Update/Reupload/Delete/BatchDelete/CreateShare 已接角色门控；Get/List 读路径不变（viewer 可读）。
+- 能力矩阵：viewer 只读；editor 读+编辑+重传+建分享（**不能删别人创建的站点**）；owner（团队管理员默认映射）全开；站点创建者对自己的站点恒为 owner。
+
+### 本阶段已知边界（Phase 1 地基，wave 2 续作）
+- **角色暂不可设**：尚无「设置成员网页托管角色」端点 + 管理 UI（ManageRoles 能力已在策略里预留）。因此当前所有成员都走继承默认，**viewer 角色暂不可达**，唯一对外可见的行为变化是「普通成员不再能删除别人的站点」。设置 UI/端点是 Phase 2。
+- **删除行为变化**：细分前任意成员可删团队内任意站点；现在普通成员(editor)只能删自己创建的，删别人的需 owner（团队管理员）。这部分缓解了下面边界 #1 的「恶意删」风险，但回收站仍未做。
+- **写路径拒绝返回 404**：viewer/非成员尝试 Update/Delete 时服务返回 null→控制器 404（不泄露存在性）；CreateShare 返回 403。UI 应按角色隐藏操作入口，404 仅作纵深防御兜底。
+- **后端编译**：本地无 dotnet SDK，C# 编译由 CDS 灰度构建验证；纯单测 `WebHostingPermissionTests` 走 CI，本地未执行。
 
 ### 1. 团队回收站（软删除，E3）未实现
 决策 10「全员可删除」下，团队成员误删/恶意删会直接毁掉别人内容，无回收站兜底。
+- 网页托管已部分缓解：删除收敛到 owner / 站点创建者（见上）；知识库仍是全员可删。
 - 当前：删除即物理删除（与个人版一致）。
 - 建议（紧邻 wave 2 第一项）：给 HostedSite / DocumentEntry 加 `IsDeleted`/`DeletedAt`，团队内容删除走软删 + 30 天回收站视图 + restore 端点。改动面：两模块所有 delete 路径 + list 过滤 `IsDeleted==false` + 回收站 UI。
 
