@@ -2,3 +2,4 @@
 | feat | prd-api | 网页托管与知识库支持团队作用域：SharedTeamIds 字段 + owner-or-member 过滤放宽（全员可编辑）+ 分享到团队端点 + 活动日志埋点 |
 | feat | prd-admin | 网页托管/知识库顶部新增「我的/团队」切换栏 + 「管理团队」面板（成员/邀请/活动日志）+ 卡片成员归属头像昵称 + 分享到团队 |
 | feat | prd-api | UsersController 之外新增 /api/teams/search-users 与 /api/teams/user-cards（仅登录可用，团队成员检索与展示卡解析） |
+| fix | prd-admin | 修复团队管理面板背景透明：modal 误用 --bg-card（rgba 0.08 玻璃叠加层）改为 --bg-elevated（两主题均不透明） |

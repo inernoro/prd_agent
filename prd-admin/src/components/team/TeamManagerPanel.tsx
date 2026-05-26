@@ -226,7 +226,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
           height: '80vh',
           maxHeight: '80vh',
           maxWidth: '880px',
-          background: 'var(--bg-card)',
+          background: 'var(--bg-elevated)',
           border: '1px solid rgba(255,255,255,0.12)',
           boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
         }}
