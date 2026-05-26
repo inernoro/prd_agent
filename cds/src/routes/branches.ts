@@ -2223,7 +2223,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/branches', async (req, res) => {
     const state = stateService.getState();
-    const live = req.query.live !== 'false' && req.query.live !== '0';
+    // Default is an authoritative state snapshot. Docker/git probing is an
+    // explicit operator action (`?live=true`) so passive page loads, polling,
+    // widgets, and preview pages cannot silently turn reads into expensive
+    // reconciliation work.
+    const live = req.query.live === 'true' || req.query.live === '1';
     // P4 Part 3b: optional ?project=<id> filter. When absent or set to
     // 'default', pre-P4 behavior is preserved (every branch rolls up
     // because all legacy branches were migrated to projectId='default'
@@ -2259,7 +2263,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    // Batch-reconcile container status (perf fix, 2026-05-03):
+    // Explicit live reconcile only (perf fix, 2026-05-03):
     // Old code did `containerService.isRunning(svc.containerName)` sequentially
     // for every (branch × service) tuple — N×M `docker inspect` calls,
     // ~50–150 ms each. With ~20 branches × 5 services that is 5+ seconds of
@@ -7883,7 +7887,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
-    const live = req.query.live !== 'false' && req.query.live !== '0';
+    const live = req.query.live === 'true' || req.query.live === '1';
     const services = projectFilter
       ? stateService.getInfraServicesForProject(projectFilter)
       : stateService.getInfraServices();

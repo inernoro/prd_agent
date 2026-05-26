@@ -337,7 +337,7 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches[0].id).toBe('main');
     });
 
-    it('live=false returns cached branch state without probing Docker', async () => {
+    it('returns cached branch state by default without probing Docker', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'cached-main',
@@ -356,7 +356,7 @@ describe('Branch Routes', () => {
         createdAt: now,
       });
 
-      const res = await request(server, 'GET', '/api/branches?project=default&live=false');
+      const res = await request(server, 'GET', '/api/branches?project=default');
 
       expect(res.status).toBe(200);
       expect((res.body as any).branches[0].services.api.status).toBe('running');
@@ -364,7 +364,7 @@ describe('Branch Routes', () => {
       expect(mock.commands.some((cmd) => cmd.includes('git log -1'))).toBe(false);
     });
 
-    it('live=true reconciles branch state with Docker', async () => {
+    it('live=true explicitly reconciles branch state with Docker', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'live-main',
@@ -384,7 +384,7 @@ describe('Branch Routes', () => {
       });
       mock.addResponsePattern(/docker ps --format/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
-      const res = await request(server, 'GET', '/api/branches?project=default');
+      const res = await request(server, 'GET', '/api/branches?project=default&live=true');
 
       expect(res.status).toBe(200);
       expect((res.body as any).branches[0].services.api.status).toBe('stopped');

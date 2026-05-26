@@ -331,15 +331,15 @@ export function BranchTopologyPage(): JSX.Element {
   const [infraDialogOpen, setInfraDialogOpen] = useState(false);
   const [toast, setToast] = useState('');
 
-  const refresh = useCallback(async (showLoading = false) => {
+  const refresh = useCallback(async (showLoading = false, forceLive = false) => {
     if (!projectId) return;
     if (showLoading) setState({ status: 'loading' });
     try {
       const [project, branchesRes, profilesRes, infraRes, routingRulesRes, previewModeRes, config] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
-        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
+        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`),
-        apiRequest<InfraResponse>(`/api/infra?project=${encodeURIComponent(projectId)}`),
+        apiRequest<InfraResponse>(`/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         apiRequest<RoutingRulesResponse>(`/api/routing-rules?project=${encodeURIComponent(projectId)}`),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
@@ -561,7 +561,7 @@ export function BranchTopologyPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void refresh(false)}
+                onClick={() => void refresh(false, true)}
                 aria-label="刷新"
                 title="刷新"
               >

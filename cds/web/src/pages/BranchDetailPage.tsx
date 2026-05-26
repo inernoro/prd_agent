@@ -644,7 +644,7 @@ export function BranchDetailPage(): JSX.Element {
     });
   }, [updateAction]);
 
-  const load = useCallback(async (showLoading = false) => {
+  const load = useCallback(async (showLoading = false, forceLive = false) => {
     if (showLoading) setState({ status: 'loading' });
     try {
       if (!branchId) {
@@ -654,15 +654,15 @@ export function BranchDetailPage(): JSX.Element {
         }
         const [project, branchesRes] = await Promise.all([
           apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
-          apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
+          apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         ]);
         setState({ status: 'select', project, branches: branchesRes.branches || [] });
         return;
       }
 
       const branchesPath = projectId
-        ? `/api/branches?project=${encodeURIComponent(projectId)}`
-        : '/api/branches';
+        ? `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`
+        : `/api/branches?live=${forceLive ? 'true' : 'false'}`;
       const branchesRes = await apiRequest<BranchesResponse>(branchesPath);
       const branch = (branchesRes.branches || []).find((item) => item.id === branchId);
       if (!branch) {
@@ -1225,7 +1225,7 @@ export function BranchDetailPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void load(false)}
+                onClick={() => void load(false, true)}
                 aria-label="刷新"
                 title="刷新"
               >

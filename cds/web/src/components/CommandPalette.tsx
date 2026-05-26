@@ -121,7 +121,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       const projects = projectRes.projects || [];
       const branchLists = await Promise.all(
         projects.map((project) =>
-          apiRequest<{ branches: BranchRow[] }>(`/api/branches?project=${encodeURIComponent(project.id)}`).catch(
+          apiRequest<{ branches: BranchRow[] }>(`/api/branches?project=${encodeURIComponent(project.id)}&live=false`).catch(
             () => ({ branches: [] as BranchRow[] }),
           ),
         ),

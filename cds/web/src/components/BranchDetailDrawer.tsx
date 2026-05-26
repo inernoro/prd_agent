@@ -791,7 +791,7 @@ export function BranchDetailDrawer({
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
       const [branchesRes, logsRes, profilesRes] = await Promise.all([
-        apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}`),
+        apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
           .catch((err) => {

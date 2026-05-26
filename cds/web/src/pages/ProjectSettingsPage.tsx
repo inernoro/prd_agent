@@ -2187,7 +2187,7 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
   const load = useCallback(async () => {
     setState({ status: 'loading' });
     try {
-      const data = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
+      const data = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
       setState({ status: 'ok', branches: data.branches || [] });
     } catch (err) {
       setState({ status: 'error', message: messageFromError(err) });

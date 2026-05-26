@@ -1277,7 +1277,7 @@ export function BranchListPage(): JSX.Element {
   const refreshLiveBranches = useCallback(async () => {
     if (!projectId) return;
     try {
-      const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
+      const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
       let needsEmptyRecheck = false;
       setState((prev) => {
         if (prev.status !== 'ok') return prev;
@@ -1303,23 +1303,18 @@ export function BranchListPage(): JSX.Element {
           message: `后台刷新失败，已保留上次可用内容。${message}`,
         }).state;
       });
-      // 首屏已显示缓存态;后台 live reconcile 失败时保留现状,让 SSE 和手动刷新兜底。
+      // 首屏已显示缓存态;后台快照刷新失败时保留现状,让 SSE 和手动刷新兜底。
     }
   }, [confirmEmptyBranchList, projectId]);
 
-  const refresh = useCallback(async (showLoading = false) => {
+  const refresh = useCallback(async (showLoading = false, forceLive = false) => {
     if (!projectId) return;
     if (showLoading) {
       setState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
     }
     try {
-      const fast = showLoading;
-      const branchUrl = fast
-        ? `/api/branches?project=${encodeURIComponent(projectId)}&live=false`
-        : `/api/branches?project=${encodeURIComponent(projectId)}`;
-      const infraUrl = fast
-        ? `/api/infra?project=${encodeURIComponent(projectId)}&live=false`
-        : `/api/infra?project=${encodeURIComponent(projectId)}`;
+      const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
+      const infraUrl = `/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
       const [projectResult, branchesResult, previewModeResult, configResult, infraResult] = await Promise.allSettled([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(branchUrl),
@@ -1395,7 +1390,7 @@ export function BranchListPage(): JSX.Element {
         };
       });
       if (needsEmptyRecheck) void confirmEmptyBranchList('分支列表刷新');
-      if (fast) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
+      if (showLoading) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
@@ -1889,7 +1884,7 @@ export function BranchListPage(): JSX.Element {
       });
       let latestBranch: BranchSummary | undefined;
       if (projectId) {
-        const latest = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
+        const latest = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
         latestBranch = latest.branches.find((item) => item.id === branch.id);
       }
       const failure = deployFailureMessage(latestBranch);
@@ -2787,7 +2782,7 @@ export function BranchListPage(): JSX.Element {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => void refresh(false)}
+                  onClick={() => void refresh(false, true)}
                   aria-label="重新拉取(SSE 已中断)"
                   title="实时连接中断,点击手动刷新"
                   className="text-amber-500 hover:text-amber-600"
