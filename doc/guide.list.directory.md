@@ -668,6 +668,9 @@
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项
 
+- [小技巧与首页提醒过时机制债务台账](debt.daily-tips) `debt.daily-tips`
+  > 小技巧/缺陷提醒 1 周过时机制的已知边界（历史数据不回填、存量环境需 seed 一次）
+
 ### 七、周报
 
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
