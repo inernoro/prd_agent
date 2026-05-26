@@ -10,7 +10,7 @@ import {
   getAnalyzeStreamUrl,
   type ProjectRoutePlan,
   type ProjectRouteSiteSpec,
-  type ProjectRouteRepoEntry,
+  type ProjectRouteExtractedRepo,
   type ProjectRouteResolution,
 } from '@/services/real/projectRouteAgent';
 import { useSseStream } from '@/lib/useSseStream';
@@ -101,6 +101,7 @@ function AnalyzeView() {
   const [plan, setPlan] = useState<ProjectRoutePlan | null>(null);
   const [apps, setApps] = useState<string[]>([]);
   const [modules, setModules] = useState<string[]>([]);
+  const [extractedRepos, setExtractedRepos] = useState<ProjectRouteExtractedRepo[]>([]);
   const [repos, setRepos] = useState<RepoLiveStatus[]>([]);
   const [resolutions, setResolutions] = useState<ProjectRouteResolution[]>([]);
   const [model, setModel] = useState<string | null>(null);
@@ -131,9 +132,10 @@ function AnalyzeView() {
     method: 'GET',
     onEvent: {
       apps: (data) => {
-        const d = data as { apps: string[]; modules: string[] };
+        const d = data as { apps: string[]; modules: string[]; repos?: ProjectRouteExtractedRepo[] };
         setApps(d.apps);
         setModules(d.modules);
+        if (Array.isArray(d.repos)) setExtractedRepos(d.repos);
       },
       repo: (data) => {
         const d = data as RepoLiveStatus;
@@ -181,6 +183,7 @@ function AnalyzeView() {
   function resetAnalysisState() {
     setApps([]);
     setModules([]);
+    setExtractedRepos([]);
     setRepos([]);
     setResolutions([]);
     setModel(null);
@@ -198,8 +201,8 @@ function AnalyzeView() {
   );
 
   async function handleSubmit() {
-    if (!siteSpec || siteSpec.repos.length === 0) {
-      setError('公共站点说明尚未配置，请联系管理员先在「公共站点说明」标签维护一份。');
+    if (!siteSpec || !siteSpec.markdownContent?.trim()) {
+      setError('公共站点说明尚未配置，请联系管理员先在「公共站点说明」标签上传一份 markdown。');
       return;
     }
     if (!title.trim()) { setError('请填写方案标题'); return; }
@@ -288,12 +291,12 @@ function AnalyzeView() {
 
             {siteSpecLoading ? (
               <p className="text-[11px] text-white/40">正在读取公共站点说明…</p>
-            ) : siteSpec ? (
+            ) : siteSpec && siteSpec.markdownContent?.trim() ? (
               <p className="text-[11px] text-white/40">
-                公共站点说明：<span className="text-white/70">{siteSpec.title}</span>（{siteSpec.repos.length} 个仓库）
+                公共站点说明：<span className="text-white/70">{siteSpec.title}</span>（{(siteSpec.markdownContent?.length ?? 0).toLocaleString()} 字符）
               </p>
             ) : (
-              <p className="text-[11px] text-amber-300/80">公共站点说明尚未配置，需管理员先维护。</p>
+              <p className="text-[11px] text-amber-300/80">公共站点说明尚未配置，需管理员先上传一份 markdown。</p>
             )}
 
             {error && (
@@ -305,7 +308,7 @@ function AnalyzeView() {
 
             <button
               onClick={handleSubmit}
-              disabled={isBusy || !file || !title.trim() || !siteSpec || siteSpec.repos.length === 0}
+              disabled={isBusy || !file || !title.trim() || !siteSpec || !siteSpec.markdownContent?.trim()}
               className="w-full bg-sky-600 hover:bg-sky-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg py-2.5 text-sm font-medium text-white transition-colors flex items-center justify-center gap-2"
             >
               {isBusy ? (
@@ -334,6 +337,7 @@ function AnalyzeView() {
                       setPlan(p);
                       setApps(p.extractedApps ?? []);
                       setModules(p.extractedModules ?? []);
+                      setExtractedRepos(p.extractedRepos ?? []);
                       setResolutions(p.resolutions ?? []);
                       setRepos([]);
                       setModel(p.model ?? null);
@@ -385,22 +389,39 @@ function AnalyzeView() {
             <PillList label="业务模块" items={modules} color="emerald" />
           </div>
 
-          {/* 2) 仓库克隆状态 */}
+          {/* 2) AI 抽出的仓库 + 克隆状态 */}
           <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
             <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <GitBranch className="w-3.5 h-3.5" /> ② 仓库克隆 / routemap
+              <GitBranch className="w-3.5 h-3.5" /> ② AI 选中的仓库 / routemap
             </h3>
-            {repos.length === 0 ? (
-              <p className="text-xs text-white/30">分析时显示每个仓库的克隆状态</p>
+            {extractedRepos.length === 0 && repos.length === 0 ? (
+              <p className="text-xs text-white/30">分析时显示 AI 从公共说明里抽出的仓库 + 克隆状态</p>
             ) : (
               <ul className="space-y-2">
-                {repos.map((r) => (
+                {(repos.length > 0 ? repos.map((r) => ({
+                  appName: r.appName,
+                  repoUrl: r.repoUrl,
+                  branch: r.branch,
+                  reasoning: extractedRepos.find((er) => er.repoUrl === r.repoUrl)?.reasoning,
+                  status: r.status,
+                  message: r.message,
+                  fileCount: r.fileCount,
+                })) : extractedRepos.map((er) => ({
+                  appName: er.appName,
+                  repoUrl: er.repoUrl,
+                  branch: er.branch,
+                  reasoning: er.reasoning,
+                  status: 'cloning' as RepoLiveStatus['status'],
+                  message: null as string | null | undefined,
+                  fileCount: undefined as number | undefined,
+                }))).map((r) => (
                   <li key={r.repoUrl} className="bg-white/3 rounded-md p-2">
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-white truncate flex-1">{r.appName}</span>
                       <RepoBadge status={r.status} />
                     </div>
                     <p className="text-[10px] text-white/40 truncate">{r.repoUrl} · {r.branch}</p>
+                    {r.reasoning && <p className="text-[10px] text-sky-200/70 mt-1">AI: {r.reasoning}</p>}
                     {r.message && <p className="text-[10px] text-amber-200/70 mt-1">{r.message}</p>}
                     {r.fileCount != null && (
                       <p className="text-[10px] text-white/40 mt-1">{r.fileCount} 个 routemap 文件</p>
@@ -515,7 +536,6 @@ function AdminView() {
 
   const [title, setTitle] = useState('');
   const [markdown, setMarkdown] = useState('');
-  const [repos, setRepos] = useState<ProjectRouteRepoEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -562,28 +582,8 @@ function AdminView() {
       const s = res.data!.siteSpec;
       setTitle(s.title);
       setMarkdown(s.markdownContent);
-      setRepos(s.repos);
     }
     setLoading(false);
-  }
-
-  function addRepo() {
-    setRepos((prev) => [
-      ...prev,
-      { appName: '', aliases: [], repoUrl: '', branch: 'main', routemapPath: 'routemap', notes: '' },
-    ]);
-  }
-
-  function updateRepo(i: number, patch: Partial<ProjectRouteRepoEntry>) {
-    setRepos((prev) => {
-      const next = [...prev];
-      next[i] = { ...next[i], ...patch };
-      return next;
-    });
-  }
-
-  function removeRepo(i: number) {
-    setRepos((prev) => prev.filter((_, idx) => idx !== i));
   }
 
   async function save() {
@@ -591,27 +591,14 @@ function AdminView() {
     setOkMsg(null);
     if (!title.trim()) { setError('标题必填'); return; }
     if (!markdown.trim()) { setError('公共站点说明 markdown 必填'); return; }
-    const cleanedRepos = repos
-      .map((r) => ({
-        ...r,
-        appName: r.appName.trim(),
-        repoUrl: r.repoUrl.trim(),
-        branch: r.branch?.trim() || 'main',
-        routemapPath: r.routemapPath?.trim() || 'routemap',
-        aliases: (r.aliases ?? []).map((a) => a.trim()).filter((a) => a.length > 0),
-        notes: r.notes?.trim() || undefined,
-      }))
-      .filter((r) => r.appName && r.repoUrl);
-    if (cleanedRepos.length === 0) { setError('至少登记一个仓库（应用名 + 仓库 URL）'); return; }
 
     setSaving(true);
     try {
-      const res = await upsertSiteSpec({ title: title.trim(), markdownContent: markdown, repos: cleanedRepos });
+      const res = await upsertSiteSpec({ title: title.trim(), markdownContent: markdown });
       if (!res.success) {
         setError(res.error?.message ?? '保存失败');
         return;
       }
-      setRepos(res.data!.siteSpec.repos);
       setOkMsg(res.data!.mode === 'created' ? '已创建公共站点说明' : '已更新公共站点说明');
     } finally {
       setSaving(false);
@@ -685,70 +672,21 @@ function AdminView() {
       </section>
 
       <section className="bg-white/3 border border-white/10 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-white">仓库登记表（用于克隆 routemap 目录）</h2>
-          <button
-            onClick={addRepo}
-            className="text-xs text-sky-300 hover:text-sky-200 border border-sky-500/30 hover:border-sky-500/50 px-2.5 py-1 rounded-md"
-          >
-            + 添加仓库
-          </button>
-        </div>
-        {repos.length === 0 && (
-          <p className="text-xs text-white/40">还没有任何仓库登记。AI 在分析阶段会按这张表克隆每个仓库读取 routemap/ 目录。</p>
-        )}
-        <ul className="space-y-3">
-          {repos.map((r, i) => (
-            <li key={i} className="bg-white/3 border border-white/10 rounded-lg p-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <Field
-                  label="应用名"
-                  value={r.appName}
-                  onChange={(v) => updateRepo(i, { appName: v })}
-                  placeholder="例如：米多 PRD 智能体"
-                />
-                <Field
-                  label="别名（逗号分隔）"
-                  value={(r.aliases ?? []).join(', ')}
-                  onChange={(v) => updateRepo(i, { aliases: v.split(',').map((s) => s.trim()).filter(Boolean) })}
-                  placeholder="PRD, prd-agent, 解读"
-                />
-                <Field
-                  label="仓库 URL"
-                  value={r.repoUrl}
-                  onChange={(v) => updateRepo(i, { repoUrl: v })}
-                  placeholder="https://github.com/owner/repo.git"
-                />
-                <Field
-                  label="分支"
-                  value={r.branch}
-                  onChange={(v) => updateRepo(i, { branch: v })}
-                  placeholder="main"
-                />
-                <Field
-                  label="routemap 路径（仓库内相对路径）"
-                  value={r.routemapPath}
-                  onChange={(v) => updateRepo(i, { routemapPath: v })}
-                  placeholder="routemap"
-                />
-                <Field
-                  label="备注"
-                  value={r.notes ?? ''}
-                  onChange={(v) => updateRepo(i, { notes: v })}
-                  placeholder="（可选）"
-                />
-              </div>
-              <div className="flex justify-end mt-2">
-                <button
-                  onClick={() => removeRepo(i)}
-                  className="text-xs text-red-300/80 hover:text-red-200 border border-red-500/20 hover:border-red-500/40 px-2 py-1 rounded-md"
-                >
-                  删除
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <h2 className="text-sm font-semibold text-white mb-2">仓库地址登记方式</h2>
+        <p className="text-xs text-white/60 leading-relaxed">
+          V2 不再单独维护「仓库登记表」。分析方案时，AI 会从上方 Markdown 内容里读取所有出现的 git URL，
+          再结合方案上下文挑出真正需要克隆的仓库。所以请在上方 Markdown 里**明确写出**每个应用对应的仓库地址，例如：
+        </p>
+        <pre className="mt-2 bg-white/5 border border-white/10 rounded-md px-3 py-2 text-[11px] text-emerald-200/90 font-mono leading-relaxed overflow-x-auto">
+{`## 仓库索引
+
+- 米多 PRD 智能体: https://github.com/inernoro/prd_agent.git (branch: main, routemap: routemap)
+- 视觉创作: https://github.com/inernoro/openvisual.git
+- 缺陷管理: https://github.com/example/defect-agent.git`}
+        </pre>
+        <p className="text-xs text-white/40 mt-2">
+          AI 会优先在 markdown 里找类似上面的 URL 列表。分支 / routemapPath 可选，省略时默认为 <code className="text-white/60">main</code> / <code className="text-white/60">routemap</code>。
+        </p>
       </section>
 
       {error && (
@@ -772,28 +710,6 @@ function AdminView() {
           {saving ? '保存中…' : '保存公共站点说明'}
         </button>
       </div>
-    </div>
-  );
-}
-
-function Field({
-  label, value, onChange, placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-}) {
-  return (
-    <div>
-      <label className="block text-[11px] font-medium text-white/50 mb-1">{label}</label>
-      <input
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-white/5 border border-white/10 rounded-md px-2.5 py-1.5 text-xs text-white placeholder-white/30 focus:outline-none focus:border-sky-500/50"
-      />
     </div>
   );
 }

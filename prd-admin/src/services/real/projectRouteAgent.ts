@@ -1,20 +1,19 @@
 import { apiRequest } from './apiClient';
 import type { ApiResponse } from '@/types/api';
 
-export interface ProjectRouteRepoEntry {
+/** AI 抽取出的、本次分析实际克隆的仓库（V2 替代 V1 的 ProjectRouteRepoEntry） */
+export interface ProjectRouteExtractedRepo {
   appName: string;
-  aliases: string[];
   repoUrl: string;
   branch: string;
   routemapPath: string;
-  notes?: string | null;
+  reasoning?: string | null;
 }
 
 export interface ProjectRouteSiteSpec {
   id: string;
   title: string;
   markdownContent: string;
-  repos: ProjectRouteRepoEntry[];
   isActive: boolean;
   createdBy: string;
   updatedBy?: string | null;
@@ -46,6 +45,7 @@ export interface ProjectRoutePlan {
   siteSpecId?: string | null;
   extractedApps: string[];
   extractedModules: string[];
+  extractedRepos: ProjectRouteExtractedRepo[];
   resolutions: ProjectRouteResolution[];
   status: ProjectRoutePlanStatus;
   errorMessage?: string | null;
@@ -69,7 +69,6 @@ export async function getActiveSiteSpec(): Promise<
 export async function upsertSiteSpec(payload: {
   title: string;
   markdownContent: string;
-  repos: ProjectRouteRepoEntry[];
 }): Promise<ApiResponse<{ siteSpec: ProjectRouteSiteSpec; mode: 'created' | 'updated' }>> {
   return apiRequest('/api/project-route-agent/site-spec', {
     method: 'POST',

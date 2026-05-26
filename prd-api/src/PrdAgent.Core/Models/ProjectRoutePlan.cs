@@ -1,9 +1,12 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 项目路由智能体 - 用户上传的方案 + AI 分析结果
-/// 流程：用户上传 .md → LLM 抽取 apps/modules → 对照公共站点说明克隆仓库 → 扫 routemap → LLM 匹配项目路径
+/// 流程：用户上传 .md → LLM 抽取 apps/modules/repos → 克隆 AI 抽出的仓库 → 扫 routemap → LLM 匹配项目路径
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ProjectRoutePlan
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -35,6 +38,12 @@ public class ProjectRoutePlan
     /// <summary>LLM 抽取出的业务模块清单</summary>
     public List<string> ExtractedModules { get; set; } = new();
 
+    /// <summary>
+    /// LLM 从「公共站点说明 + 用户方案」里抽出来、本次分析实际去克隆的仓库列表。
+    /// 替代 V1 里管理员手填的仓库登记表。
+    /// </summary>
+    public List<ProjectRouteExtractedRepo> ExtractedRepos { get; set; } = new();
+
     /// <summary>解析结果：每条「应用 - 仓库 - routemap 项目路径」三元组</summary>
     public List<ProjectRouteResolution> Resolutions { get; set; } = new();
 
@@ -53,6 +62,27 @@ public class ProjectRoutePlan
 }
 
 /// <summary>
+/// AI 抽出的某个仓库引用。用于本次分析的克隆 + routemap 扫描。
+/// </summary>
+public class ProjectRouteExtractedRepo
+{
+    /// <summary>应用 / 仓库展示名（AI 推断）</summary>
+    public string AppName { get; set; } = string.Empty;
+
+    /// <summary>仓库 git URL（AI 从公共说明里读出）</summary>
+    public string RepoUrl { get; set; } = string.Empty;
+
+    /// <summary>分支，默认 main</summary>
+    public string Branch { get; set; } = "main";
+
+    /// <summary>routemap 目录相对路径，默认 "routemap"</summary>
+    public string RoutemapPath { get; set; } = "routemap";
+
+    /// <summary>AI 给出的命中说明（为什么这个仓库要被克隆）</summary>
+    public string? Reasoning { get; set; }
+}
+
+/// <summary>
 /// 解析结果：一个应用 / 业务模块 → 对应的仓库 routemap 下的项目路径
 /// </summary>
 public class ProjectRouteResolution
@@ -60,7 +90,7 @@ public class ProjectRouteResolution
     /// <summary>用户方案里被识别的应用 / 业务模块名</summary>
     public string AppOrModule { get; set; } = string.Empty;
 
-    /// <summary>命中的仓库（来自 ProjectRouteSiteSpec.Repos[*]）</summary>
+    /// <summary>命中的仓库（来自本次 AI 抽出的 ExtractedRepos[*]）</summary>
     public string? RepoUrl { get; set; }
     public string? RepoAppName { get; set; }
 
