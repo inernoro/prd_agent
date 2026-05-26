@@ -1527,6 +1527,57 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return snapshots;
   }
 
+  async function cleanupFencedDeployContainers(
+    entry: BranchEntry,
+    profileIds: Set<string>,
+    requestId: string | undefined,
+    reason: string,
+  ): Promise<void> {
+    for (const profileId of profileIds) {
+      const svc = entry.services?.[profileId];
+      if (!svc?.containerName) continue;
+      try {
+        await containerService.remove(svc.containerName, {
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          requestId: requestId || null,
+          operation: 'deploy-fenced-cleanup',
+          source: 'api.deploy-fenced',
+          reason,
+        });
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy',
+          message: `removed container after fenced deploy: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          details: { reason },
+        });
+      } catch (err) {
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.failed',
+          message: `failed to remove container after fenced deploy: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          details: { reason },
+          error: { message: (err as Error)?.message || String(err) },
+        });
+      }
+    }
+  }
+
   const resolveProjectIdParam = (raw: unknown): string | null => {
     if (typeof raw !== 'string' || !raw.trim()) return null;
     const project = stateService.getProject(raw.trim());
@@ -3930,6 +3981,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
@@ -4450,6 +4502,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
             stateService.save();
           } catch (err) {
+            if (err instanceof BranchOperationSupersededError) throw err;
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
             const elapsed = Date.now() - serviceStartTime;
@@ -4683,6 +4736,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       const errStack = (err as Error)?.stack || '';
       if (err instanceof BranchOperationSupersededError) {
+        await cleanupFencedDeployContainers(
+          entry,
+          new Set(profiles.map((profile) => profile.id)),
+          requestId,
+          `部署操作被更高优先级操作取代: ${errMsg}`,
+        );
         logEvent({
           step: 'deploy-fenced',
           status: 'warning',
@@ -4927,6 +4986,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
       } catch (err) {
+        if (err instanceof BranchOperationSupersededError) throw err;
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
         logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message, timestamp: new Date().toISOString() });
@@ -4975,6 +5035,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       if (err instanceof BranchOperationSupersededError) {
         const errMsg = (err as Error).message;
+        await cleanupFencedDeployContainers(
+          entry,
+          new Set([profile.id]),
+          String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
+          `单服务部署被更高优先级操作取代: ${errMsg}`,
+        );
         logEvent({
           step: 'deploy-fenced',
           status: 'warning',
