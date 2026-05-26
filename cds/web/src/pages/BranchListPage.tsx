@@ -132,6 +132,22 @@ interface BranchesResponse {
   };
 }
 
+function branchListOrPrevious(
+  current: LoadState,
+  nextBranches: BranchSummary[] | undefined,
+  source: string,
+): { branches: BranchSummary[]; warning?: string } {
+  const next = Array.isArray(nextBranches) ? nextBranches : [];
+  if (current.status !== 'ok') return { branches: next };
+  if (next.length === 0 && current.branches.length > 0) {
+    return {
+      branches: current.branches,
+      warning: `${source} 返回了空分支列表，已保留上次可用的 ${current.branches.length} 个分支；请稍后刷新确认。`,
+    };
+  }
+  return { branches: next };
+}
+
 interface RemoteBranch {
   name: string;
   date?: string;
@@ -1165,11 +1181,16 @@ export function BranchListPage(): JSX.Element {
     if (!projectId) return;
     try {
       const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
-      setState((prev) => prev.status === 'ok' ? {
-        ...prev,
-        branches: branchesRes.branches || [],
-        capacity: branchesRes.capacity,
-      } : prev);
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        const guarded = branchListOrPrevious(prev, branchesRes.branches, '后台刷新');
+        return {
+          ...prev,
+          branches: guarded.branches,
+          capacity: branchesRes.capacity,
+          projectWarning: guarded.warning || prev.projectWarning,
+        };
+      });
     } catch {
       // 首屏已显示缓存态;后台 live reconcile 失败时保留现状,让 SSE 和手动刷新兜底。
     }
@@ -1226,18 +1247,21 @@ export function BranchListPage(): JSX.Element {
       const hasSchemafulInfra = (infraRes.services || []).some((s) =>
         /(mysql|mariadb|postgres)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
       );
-      setState((prev) => ({
-        status: 'ok',
-        project,
-        branches: branchesRes.branches || [],
-        // 保留之前已加载的远程分支(若有),避免主刷新时远程区闪空
-        remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
-        previewMode: previewModeRes.mode || 'multi',
-        config,
-        capacity: branchesRes.capacity,
-        projectWarning,
-        hasSchemafulInfra,
-      }));
+      setState((prev) => {
+        const guarded = branchListOrPrevious(prev, branchesRes.branches, '分支列表刷新');
+        return {
+          status: 'ok',
+          project,
+          branches: guarded.branches,
+          // 保留之前已加载的远程分支(若有),避免主刷新时远程区闪空
+          remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
+          previewMode: previewModeRes.mode || 'multi',
+          config,
+          capacity: branchesRes.capacity,
+          projectWarning: guarded.warning || projectWarning,
+          hasSchemafulInfra,
+        };
+      });
       if (fast) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1450,8 +1474,20 @@ export function BranchListPage(): JSX.Element {
       });
     };
     source.addEventListener('snapshot', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branches?: BranchSummary[] };
-      setState((current) => (current.status === 'ok' ? { ...current, branches: data.branches || [] } : current));
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as { branches?: BranchSummary[] };
+        setState((current) => {
+          if (current.status !== 'ok') return current;
+          const guarded = branchListOrPrevious(current, data.branches, '实时快照');
+          return {
+            ...current,
+            branches: guarded.branches,
+            projectWarning: guarded.warning || current.projectWarning,
+          };
+        });
+      } catch {
+        // Keep the last usable list; malformed stream chunks must not blank the panel.
+      }
     });
     source.addEventListener('branch.created', (ev) => {
       const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
@@ -1881,6 +1917,11 @@ export function BranchListPage(): JSX.Element {
       }
       setAction(branch.id, null);
       setToast(`${branch.branch} 已删除`);
+      setState((current) => (
+        current.status === 'ok'
+          ? { ...current, branches: current.branches.filter((item) => item.id !== branch.id) }
+          : current
+      ));
       if (refreshAfter) await refresh(false);
       return true;
     } catch (err) {
