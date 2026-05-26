@@ -1355,6 +1355,18 @@ describe('Branch Routes', () => {
       const body = res.body as { liveStreamHint?: { url?: string } };
       expect(body.liveStreamHint?.url).toContain('project=p2');
     });
+
+    it('is a passive read path and does not touch Docker, Git, or branch operations', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      mock.commands.length = 0;
+      operationEvents.length = 0;
+
+      const res = await request(server, 'GET', '/api/branches/feature-test/logs');
+
+      expect(res.status).toBe(200);
+      expect(mock.commands.some((cmd) => /docker |git /.test(cmd))).toBe(false);
+      expect(operationEvents.filter((event) => event.action.startsWith('branch.operation.'))).toEqual([]);
+    });
   });
 
   // ── F9 (2026-05-02 onboarding UAT): Branch detail endpoint ──
@@ -1371,6 +1383,18 @@ describe('Branch Routes', () => {
       expect(body.branch).toBeDefined();
       expect(body.branch.id).toBe('feature-x');
       expect(body.branch.branch).toBe('feature/x');
+    });
+
+    it('is a passive read path and does not reconcile, deploy, or emit operation events', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
+      mock.commands.length = 0;
+      operationEvents.length = 0;
+
+      const res = await request(server, 'GET', '/api/branches/feature-x');
+
+      expect(res.status).toBe(200);
+      expect(mock.commands.some((cmd) => /docker |git /.test(cmd))).toBe(false);
+      expect(operationEvents.filter((event) => event.action.startsWith('branch.operation.'))).toEqual([]);
     });
 
     it('returns 404 when the id does not exist', async () => {
