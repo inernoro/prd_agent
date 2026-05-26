@@ -3907,14 +3907,12 @@ function BranchCard({
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   const [actorOrbitActive, setActorOrbitActive] = useState(false);
   const actorPulseSeenRef = useRef(false);
-  const actorPulseSignal = [
-    activityPulseKey || '',
-    action?.status || '',
-    branch.status,
-    branch.lastPushAt || '',
-    branch.lastDeployAt || '',
-    branch.aiOpCount || 0,
-  ].join('|');
+  const operationPulseKey = action?.status === 'running'
+    ? `action:${action.kind}:${action.startedAt}:running`
+    : '';
+  // 只把"新事件进入 / 本地操作开始"定义为动画触发点。构建完成、停止、
+  // running 回落等收尾状态不再触发环绕，避免用户以为还有操作在进行。
+  const actorPulseSignal = activityPulseKey || operationPulseKey;
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3931,6 +3929,10 @@ function BranchCard({
   useEffect(() => {
     if (!actorPulseSeenRef.current) {
       actorPulseSeenRef.current = true;
+      return;
+    }
+    if (!actorPulseSignal) {
+      setActorOrbitActive(false);
       return;
     }
     if (!footerBuilder) return;
