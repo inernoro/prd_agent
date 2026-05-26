@@ -59,14 +59,14 @@ public class WebFolderService : IWebFolderService
             UpdatedAt = now,
         };
 
-        await _db.WebCategories.InsertOneAsync(category, cancellationToken: ct);
+        await _db.WebFolders.InsertOneAsync(category, cancellationToken: ct);
         _logger.LogInformation("[web-folder] Created {Id} '{Name}' by {UserId}", category.Id, category.Name, userId);
         return category;
     }
 
     public async Task<List<WebFolder>> ListAsync(string userId, CancellationToken ct = default)
     {
-        return await _db.WebCategories
+        return await _db.WebFolders
             .Find(c => c.OwnerUserId == userId)
             .Sort(Builders<WebFolder>.Sort
                 .Ascending(c => c.SortOrder)
@@ -76,7 +76,7 @@ public class WebFolderService : IWebFolderService
 
     public async Task<WebFolder?> UpdateAsync(string id, string userId, WebFolder patch, CancellationToken ct = default)
     {
-        var existing = await _db.WebCategories
+        var existing = await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
         if (existing == null) return null;
@@ -100,26 +100,26 @@ public class WebFolderService : IWebFolderService
             string.IsNullOrWhiteSpace(patch.GenerateStoreId) ? null : patch.GenerateStoreId.Trim()));
         updates.Add(ub.Set(c => c.UpdatedAt, DateTime.UtcNow));
 
-        await _db.WebCategories.UpdateOneAsync(
+        await _db.WebFolders.UpdateOneAsync(
             c => c.Id == id && c.OwnerUserId == userId,
             ub.Combine(updates),
             cancellationToken: ct);
 
-        return await _db.WebCategories
+        return await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
     }
 
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct = default)
     {
-        var result = await _db.WebCategories.DeleteOneAsync(
+        var result = await _db.WebFolders.DeleteOneAsync(
             c => c.Id == id && c.OwnerUserId == userId, ct);
         return result.DeletedCount > 0;
     }
 
     public async Task<object> GenerateAsync(string id, string userId, CancellationToken ct = default)
     {
-        var category = await _db.WebCategories
+        var category = await _db.WebFolders
             .Find(c => c.Id == id && c.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
         if (category == null)
