@@ -3,17 +3,17 @@ import { createPortal } from 'react-dom';
 import { X, Plus, Pencil, Trash2, Sparkles, FolderTree, ExternalLink, ArrowLeft } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
-  listWebCategories,
-  createWebCategory,
-  updateWebCategory,
-  deleteWebCategory,
-  generateFromCategory,
-  type WebCategory,
-  type WebCategoryInput,
-  type WebCategoryGeneratorType,
-  type WebCategoryGenerateTarget,
+  listWebFolders,
+  createWebFolder,
+  updateWebFolder,
+  deleteWebFolder,
+  generateFromFolder,
+  type WebFolder,
+  type WebFolderInput,
+  type WebFolderGeneratorType,
+  type WebFolderGenerateTarget,
   type GenerateResult,
-} from '@/services/real/webCategories';
+} from '@/services/real/webFolders';
 
 /**
  * 自定义分类管理器 —— 列出/新建/编辑/删除分类，并对绑定了 Markdown 生成器的分类
@@ -25,7 +25,7 @@ import {
  * 文字走 var(--text-primary/secondary)，两套主题自动翻转。
  */
 
-interface CategoryManagerProps {
+interface FolderManagerProps {
   onClose: () => void;
   onGenerated?: () => void;
 }
@@ -33,9 +33,9 @@ interface CategoryManagerProps {
 type ViewMode =
   | { kind: 'list' }
   | { kind: 'create' }
-  | { kind: 'edit'; category: WebCategory };
+  | { kind: 'edit'; category: WebFolder };
 
-const EMPTY_FORM: WebCategoryInput = {
+const EMPTY_FORM: WebFolderInput = {
   name: '',
   description: '',
   sortOrder: 0,
@@ -59,14 +59,14 @@ function fieldStyle(): React.CSSProperties {
   };
 }
 
-export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) {
+export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
   const [loading, setLoading] = useState(true);
-  const [categories, setCategories] = useState<WebCategory[]>([]);
+  const [categories, setCategories] = useState<WebFolder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>({ kind: 'list' });
 
   // 编辑/创建表单
-  const [form, setForm] = useState<WebCategoryInput>(EMPTY_FORM);
+  const [form, setForm] = useState<WebFolderInput>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -77,7 +77,7 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await listWebCategories();
+    const res = await listWebFolders();
     if (res.success) {
       setCategories(res.data.items ?? []);
     } else {
@@ -104,7 +104,7 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
     setView({ kind: 'create' });
   };
 
-  const openEdit = (c: WebCategory) => {
+  const openEdit = (c: WebFolder) => {
     setForm({
       name: c.name,
       description: c.description ?? '',
@@ -146,7 +146,7 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
 
     setSaving(true);
     setFormError(null);
-    const payload: WebCategoryInput = {
+    const payload: WebFolderInput = {
       name: form.name.trim(),
       description: form.description?.trim() || undefined,
       sortOrder: form.sortOrder ?? 0,
@@ -159,8 +159,8 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
 
     const res =
       view.kind === 'edit'
-        ? await updateWebCategory(view.category.id, payload)
-        : await createWebCategory(payload);
+        ? await updateWebFolder(view.category.id, payload)
+        : await createWebFolder(payload);
 
     setSaving(false);
     if (res.success) {
@@ -171,9 +171,9 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
     }
   };
 
-  const handleDelete = async (c: WebCategory) => {
+  const handleDelete = async (c: WebFolder) => {
     if (!window.confirm(`确定删除分类「${c.name}」吗？`)) return;
-    const res = await deleteWebCategory(c.id);
+    const res = await deleteWebFolder(c.id);
     if (res.success) {
       await load();
     } else {
@@ -181,10 +181,10 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
     }
   };
 
-  const handleGenerate = async (c: WebCategory) => {
+  const handleGenerate = async (c: WebFolder) => {
     setGeneratingId(c.id);
     setGenerateMsg(null);
-    const res = await generateFromCategory(c.id);
+    const res = await generateFromFolder(c.id);
     setGeneratingId(null);
     if (!res.success) {
       setGenerateMsg({ ok: false, text: res.error?.message ?? '生成失败' });
@@ -207,9 +207,9 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
     onGenerated?.();
   };
 
-  const generatorLabel = (t: WebCategoryGeneratorType): string =>
+  const generatorLabel = (t: WebFolderGeneratorType): string =>
     t === 'markdown' ? 'Markdown 模板' : t === 'skill' ? 'Skill' : '仅分类';
-  const targetLabel = (t: WebCategoryGenerateTarget): string =>
+  const targetLabel = (t: WebFolderGenerateTarget): string =>
     t === 'document-store' ? '知识库' : '托管网页';
 
   // ─── 表单视图 ───
@@ -251,7 +251,7 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
           <select
             value={form.generatorType}
             onChange={(e) =>
-              setForm((f) => ({ ...f, generatorType: e.target.value as WebCategoryGeneratorType }))
+              setForm((f) => ({ ...f, generatorType: e.target.value as WebFolderGeneratorType }))
             }
             className="rounded-lg border px-3 py-2 text-sm outline-none"
             style={fieldStyle()}
@@ -320,7 +320,7 @@ export function CategoryManager({ onClose, onGenerated }: CategoryManagerProps) 
             <select
               value={form.generateTarget}
               onChange={(e) =>
-                setForm((f) => ({ ...f, generateTarget: e.target.value as WebCategoryGenerateTarget }))
+                setForm((f) => ({ ...f, generateTarget: e.target.value as WebFolderGenerateTarget }))
               }
               className="rounded-lg border px-3 py-2 text-sm outline-none"
               style={fieldStyle()}

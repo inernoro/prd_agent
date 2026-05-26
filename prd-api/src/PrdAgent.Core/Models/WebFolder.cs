@@ -9,7 +9,7 @@ namespace PrdAgent.Core.Models;
 /// 知识库 AddEntry 自动产出对应网页/文档。
 /// </summary>
 [AppOwnership(AppNames.System, AppNames.SystemDisplay)]
-public class WebCategory
+public class WebFolder
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -31,7 +31,7 @@ public class WebCategory
     /// - skill: 绑定一个用户 skill，按分类生成时执行该 skill 产出内容
     /// - markdown: 绑定一段 Markdown 模板，按分类生成时直接渲染为网页
     /// </summary>
-    public string GeneratorType { get; set; } = WebCategoryGeneratorType.None;
+    public string GeneratorType { get; set; } = WebFolderGeneratorType.None;
 
     /// <summary>绑定的 skill ID（GeneratorType=skill 时）</summary>
     public string? GeneratorSkillId { get; set; }
@@ -40,7 +40,7 @@ public class WebCategory
     public string? GeneratorMarkdown { get; set; }
 
     /// <summary>生成目标：web = 生成托管网页（默认）| document-store = 生成知识库条目</summary>
-    public string GenerateTarget { get; set; } = WebCategoryGenerateTarget.Web;
+    public string GenerateTarget { get; set; } = WebFolderGenerateTarget.Web;
 
     /// <summary>生成目标知识库空间 ID（GenerateTarget=document-store 时）</summary>
     public string? GenerateStoreId { get; set; }
@@ -50,7 +50,7 @@ public class WebCategory
 }
 
 /// <summary>分类生成器类型常量</summary>
-public static class WebCategoryGeneratorType
+public static class WebFolderGeneratorType
 {
     public const string None = "none";
     public const string Skill = "skill";
@@ -59,7 +59,7 @@ public static class WebCategoryGeneratorType
 }
 
 /// <summary>分类生成目标常量</summary>
-public static class WebCategoryGenerateTarget
+public static class WebFolderGenerateTarget
 {
     public const string Web = "web";
     public const string DocumentStore = "document-store";

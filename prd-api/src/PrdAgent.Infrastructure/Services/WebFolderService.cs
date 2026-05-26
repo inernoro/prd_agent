@@ -18,18 +18,18 @@ namespace PrdAgent.Infrastructure.Services;
 ///   wave 1 不在此构建半成品 LLM 管线，直接返回 { generated = false, reason }，
 ///   优先保证 Markdown 路径稳固（见 .claude/rules/no-rootless-tree.md：缺什么明确暴露）。
 /// </summary>
-public class WebCategoryService : IWebCategoryService
+public class WebFolderService : IWebFolderService
 {
     private readonly MongoDbContext _db;
     private readonly IHostedSiteService _hostedSites;
     private readonly IDocumentService _documents;
-    private readonly ILogger<WebCategoryService> _logger;
+    private readonly ILogger<WebFolderService> _logger;
 
-    public WebCategoryService(
+    public WebFolderService(
         MongoDbContext db,
         IHostedSiteService hostedSites,
         IDocumentService documents,
-        ILogger<WebCategoryService> logger)
+        ILogger<WebFolderService> logger)
     {
         _db = db;
         _hostedSites = hostedSites;
@@ -37,64 +37,64 @@ public class WebCategoryService : IWebCategoryService
         _logger = logger;
     }
 
-    public async Task<WebCategory> CreateAsync(string userId, WebCategory input, CancellationToken ct = default)
+    public async Task<WebFolder> CreateAsync(string userId, WebFolder input, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var category = new WebCategory
+        var category = new WebFolder
         {
             OwnerUserId = userId,
             Name = (input.Name ?? string.Empty).Trim(),
             Description = input.Description?.Trim(),
             SortOrder = input.SortOrder,
-            GeneratorType = WebCategoryGeneratorType.All.Contains(input.GeneratorType)
+            GeneratorType = WebFolderGeneratorType.All.Contains(input.GeneratorType)
                 ? input.GeneratorType
-                : WebCategoryGeneratorType.None,
+                : WebFolderGeneratorType.None,
             GeneratorSkillId = string.IsNullOrWhiteSpace(input.GeneratorSkillId) ? null : input.GeneratorSkillId.Trim(),
             GeneratorMarkdown = input.GeneratorMarkdown,
-            GenerateTarget = WebCategoryGenerateTarget.All.Contains(input.GenerateTarget)
+            GenerateTarget = WebFolderGenerateTarget.All.Contains(input.GenerateTarget)
                 ? input.GenerateTarget
-                : WebCategoryGenerateTarget.Web,
+                : WebFolderGenerateTarget.Web,
             GenerateStoreId = string.IsNullOrWhiteSpace(input.GenerateStoreId) ? null : input.GenerateStoreId.Trim(),
             CreatedAt = now,
             UpdatedAt = now,
         };
 
         await _db.WebCategories.InsertOneAsync(category, cancellationToken: ct);
-        _logger.LogInformation("[web-category] Created {Id} '{Name}' by {UserId}", category.Id, category.Name, userId);
+        _logger.LogInformation("[web-folder] Created {Id} '{Name}' by {UserId}", category.Id, category.Name, userId);
         return category;
     }
 
-    public async Task<List<WebCategory>> ListAsync(string userId, CancellationToken ct = default)
+    public async Task<List<WebFolder>> ListAsync(string userId, CancellationToken ct = default)
     {
         return await _db.WebCategories
             .Find(c => c.OwnerUserId == userId)
-            .Sort(Builders<WebCategory>.Sort
+            .Sort(Builders<WebFolder>.Sort
                 .Ascending(c => c.SortOrder)
                 .Ascending(c => c.CreatedAt))
             .ToListAsync(ct);
     }
 
-    public async Task<WebCategory?> UpdateAsync(string id, string userId, WebCategory patch, CancellationToken ct = default)
+    public async Task<WebFolder?> UpdateAsync(string id, string userId, WebFolder patch, CancellationToken ct = default)
     {
         var existing = await _db.WebCategories
             .Find(c => c.Id == id && c.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
         if (existing == null) return null;
 
-        var ub = Builders<WebCategory>.Update;
-        var updates = new List<UpdateDefinition<WebCategory>>();
+        var ub = Builders<WebFolder>.Update;
+        var updates = new List<UpdateDefinition<WebFolder>>();
 
         if (patch.Name != null)
             updates.Add(ub.Set(c => c.Name, patch.Name.Trim()));
         if (patch.Description != null)
             updates.Add(ub.Set(c => c.Description, patch.Description.Trim()));
         updates.Add(ub.Set(c => c.SortOrder, patch.SortOrder));
-        if (WebCategoryGeneratorType.All.Contains(patch.GeneratorType))
+        if (WebFolderGeneratorType.All.Contains(patch.GeneratorType))
             updates.Add(ub.Set(c => c.GeneratorType, patch.GeneratorType));
         updates.Add(ub.Set(c => c.GeneratorSkillId,
             string.IsNullOrWhiteSpace(patch.GeneratorSkillId) ? null : patch.GeneratorSkillId.Trim()));
         updates.Add(ub.Set(c => c.GeneratorMarkdown, patch.GeneratorMarkdown));
-        if (WebCategoryGenerateTarget.All.Contains(patch.GenerateTarget))
+        if (WebFolderGenerateTarget.All.Contains(patch.GenerateTarget))
             updates.Add(ub.Set(c => c.GenerateTarget, patch.GenerateTarget));
         updates.Add(ub.Set(c => c.GenerateStoreId,
             string.IsNullOrWhiteSpace(patch.GenerateStoreId) ? null : patch.GenerateStoreId.Trim()));
@@ -126,10 +126,10 @@ public class WebCategoryService : IWebCategoryService
             return new { generated = false, reason = "分类不存在或无权访问" };
 
         // ── skill 生成：best-effort，wave 1 延后（依赖 LLM/run-worker 异步链路）──
-        if (category.GeneratorType == WebCategoryGeneratorType.Skill)
+        if (category.GeneratorType == WebFolderGeneratorType.Skill)
         {
             _logger.LogInformation(
-                "[web-category] Generate {Id} skill path deferred (skillId={SkillId})",
+                "[web-folder] Generate {Id} skill path deferred (skillId={SkillId})",
                 category.Id, category.GeneratorSkillId);
             return new
             {
@@ -139,7 +139,7 @@ public class WebCategoryService : IWebCategoryService
         }
 
         // ── Markdown 生成 ──
-        if (category.GeneratorType == WebCategoryGeneratorType.Markdown)
+        if (category.GeneratorType == WebFolderGeneratorType.Markdown)
         {
             var markdown = category.GeneratorMarkdown ?? string.Empty;
             if (string.IsNullOrWhiteSpace(markdown))
@@ -147,7 +147,7 @@ public class WebCategoryService : IWebCategoryService
 
             var title = $"{category.Name} {DateTime.Now:yyyy-MM-dd HH:mm}";
 
-            if (category.GenerateTarget == WebCategoryGenerateTarget.DocumentStore)
+            if (category.GenerateTarget == WebFolderGenerateTarget.DocumentStore)
             {
                 return await GenerateDocumentEntryAsync(category, userId, markdown, title, ct);
             }
@@ -160,12 +160,12 @@ public class WebCategoryService : IWebCategoryService
                 tags: null, folder: category.Name, ct);
 
             _logger.LogInformation(
-                "[web-category] Generated web page {SiteId} from category {CategoryId}", site.Id, category.Id);
+                "[web-folder] Generated web page {SiteId} from category {CategoryId}", site.Id, category.Id);
 
             return new
             {
                 generated = true,
-                target = WebCategoryGenerateTarget.Web,
+                target = WebFolderGenerateTarget.Web,
                 siteId = site.Id,
                 title = site.Title,
                 siteUrl = site.SiteUrl,
@@ -179,7 +179,7 @@ public class WebCategoryService : IWebCategoryService
 
     /// <summary>生成知识库条目：校验 store 归属 → 创建 ParsedPrd → 写 DocumentEntry → 计数 +1</summary>
     private async Task<object> GenerateDocumentEntryAsync(
-        WebCategory category, string userId, string markdown, string title, CancellationToken ct)
+        WebFolder category, string userId, string markdown, string title, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(category.GenerateStoreId))
             return new { generated = false, reason = "生成目标为知识库，但未指定知识库空间 ID" };
@@ -226,13 +226,13 @@ public class WebCategoryService : IWebCategoryService
             cancellationToken: ct);
 
         _logger.LogInformation(
-            "[web-category] Generated document entry {EntryId} in store {StoreId} from category {CategoryId}",
+            "[web-folder] Generated document entry {EntryId} in store {StoreId} from category {CategoryId}",
             entry.Id, store.Id, category.Id);
 
         return new
         {
             generated = true,
-            target = WebCategoryGenerateTarget.DocumentStore,
+            target = WebFolderGenerateTarget.DocumentStore,
             storeId = store.Id,
             entryId = entry.Id,
             documentId = parsed.Id,

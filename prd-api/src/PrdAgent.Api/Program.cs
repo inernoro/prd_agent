@@ -205,7 +205,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infra
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
 // 网页访客痕迹审计 + 自定义分类自动生成
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteViewEventService, PrdAgent.Infrastructure.Services.SiteViewEventService>();
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebCategoryService, PrdAgent.Infrastructure.Services.WebCategoryService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebFolderService, PrdAgent.Infrastructure.Services.WebFolderService>();
 // 统一短链路由（所有分享系统共用 /s/{seq}）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IShortLinkService, PrdAgent.Infrastructure.Services.ShortLinkService>();
 // 分享链接密码安全统一服务（PBKDF2 + FixedTimeEquals + 失败锁），网页/周报/知识库/工作流共用

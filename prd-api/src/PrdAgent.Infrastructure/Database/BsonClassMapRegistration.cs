@@ -1052,9 +1052,9 @@ public static class BsonClassMapRegistration
             });
         }
 
-        if (!BsonClassMap.IsClassMapRegistered(typeof(WebCategory)))
+        if (!BsonClassMap.IsClassMapRegistered(typeof(WebFolder)))
         {
-            BsonClassMap.RegisterClassMap<WebCategory>(cm =>
+            BsonClassMap.RegisterClassMap<WebFolder>(cm =>
             {
                 cm.AutoMap();
                 cm.MapIdMember(x => x.Id)

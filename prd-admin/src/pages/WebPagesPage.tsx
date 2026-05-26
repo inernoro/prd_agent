@@ -32,7 +32,7 @@ import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
-import { CategoryManager } from '@/components/web-hosting/CategoryManager';
+import { FolderManager } from '@/components/web-hosting/FolderManager';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 
@@ -248,7 +248,7 @@ export default function WebPagesPage() {
   const [replacing, setReplacing] = useState(false);
   const [showShareToTeam, setShowShareToTeam] = useState(false);
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
-  const [showCategories, setShowCategories] = useState(false);
+  const [showFolders, setShowFolders] = useState(false);
 
   // ─── Load ───
 
@@ -601,15 +601,15 @@ export default function WebPagesPage() {
             value={teamScope}
             onChange={(next) => { setTeamScope(next); setSelectedIds(new Set()); }}
           />
-          {/* 自定义分类 + 按分类生成 */}
+          {/* 文件夹管理 + 按文件夹生成 */}
           <button
             type="button"
-            data-tour-id="webpages-categories"
+            data-tour-id="webpages-folders"
             className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5"
             style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
-            onClick={() => setShowCategories(true)}
+            onClick={() => setShowFolders(true)}
           >
-            <Folder size={13} /> 分类
+            <Folder size={13} /> 文件夹
           </button>
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
@@ -905,9 +905,9 @@ export default function WebPagesPage() {
         />
       )}
 
-      {showCategories && (
-        <CategoryManager
-          onClose={() => setShowCategories(false)}
+      {showFolders && (
+        <FolderManager
+          onClose={() => setShowFolders(false)}
           onGenerated={() => load()}
         />
       )}

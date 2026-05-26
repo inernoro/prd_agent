@@ -11,16 +11,16 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 并对绑定了生成器（Markdown 模板）的分类执行「按分类生成」→ 产出托管网页或知识库条目。
 /// </summary>
 [ApiController]
-[Route("api/web-categories")]
+[Route("api/web-folders")]
 [Authorize]
-public class WebCategoryController : ControllerBase
+public class WebFolderController : ControllerBase
 {
-    private readonly IWebCategoryService _categories;
-    private readonly ILogger<WebCategoryController> _logger;
+    private readonly IWebFolderService _categories;
+    private readonly ILogger<WebFolderController> _logger;
 
-    public WebCategoryController(
-        IWebCategoryService categories,
-        ILogger<WebCategoryController> logger)
+    public WebFolderController(
+        IWebFolderService categories,
+        ILogger<WebFolderController> logger)
     {
         _categories = categories;
         _logger = logger;
@@ -39,7 +39,7 @@ public class WebCategoryController : ControllerBase
 
     /// <summary>创建分类</summary>
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] WebCategoryRequest req, CancellationToken ct)
+    public async Task<IActionResult> Create([FromBody] WebFolderRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(req.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分类名称不能为空"));
@@ -51,7 +51,7 @@ public class WebCategoryController : ControllerBase
 
     /// <summary>更新分类</summary>
     [HttpPut("{id}")]
-    public async Task<IActionResult> Update(string id, [FromBody] WebCategoryRequest req, CancellationToken ct)
+    public async Task<IActionResult> Update(string id, [FromBody] WebFolderRequest req, CancellationToken ct)
     {
         var userId = GetUserId();
         var updated = await _categories.UpdateAsync(id, userId, req.ToModel(), ct);
@@ -82,7 +82,7 @@ public class WebCategoryController : ControllerBase
 }
 
 /// <summary>分类创建/更新请求体（创建与更新共用）</summary>
-public class WebCategoryRequest
+public class WebFolderRequest
 {
     public string? Name { get; set; }
     public string? Description { get; set; }
@@ -95,15 +95,15 @@ public class WebCategoryRequest
     public string? GenerateTarget { get; set; }
     public string? GenerateStoreId { get; set; }
 
-    public WebCategory ToModel() => new()
+    public WebFolder ToModel() => new()
     {
         Name = Name ?? string.Empty,
         Description = Description,
         SortOrder = SortOrder,
-        GeneratorType = GeneratorType ?? WebCategoryGeneratorType.None,
+        GeneratorType = GeneratorType ?? WebFolderGeneratorType.None,
         GeneratorSkillId = GeneratorSkillId,
         GeneratorMarkdown = GeneratorMarkdown,
-        GenerateTarget = GenerateTarget ?? WebCategoryGenerateTarget.Web,
+        GenerateTarget = GenerateTarget ?? WebFolderGenerateTarget.Web,
         GenerateStoreId = GenerateStoreId,
     };
 }

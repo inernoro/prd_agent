@@ -1202,11 +1202,11 @@ export const api = {
     viewers: (id: string) => `/api/admin-web-pages/${id}/viewers`,
   },
   // ============ 波3 网页/知识库自定义分类 + 按分类自动生成 ============
-  webCategories: {
-    list: () => '/api/web-categories',
-    create: () => '/api/web-categories',
-    detail: (id: string) => `/api/web-categories/${id}`,
-    generate: (id: string) => `/api/web-categories/${id}/generate`,
+  webFolders: {
+    list: () => '/api/web-folders',
+    create: () => '/api/web-folders',
+    detail: (id: string) => `/api/web-folders/${id}`,
+    generate: (id: string) => `/api/web-folders/${id}/generate`,
   },
   // ============ 团队（跨应用协作单位：网页托管 + 知识库共用） ============
   teams: {

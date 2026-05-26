@@ -285,7 +285,7 @@ public class MongoDbContext
 
     // 网页访客痕迹 + 自定义分类
     public IMongoCollection<SiteViewEvent> SiteViewEvents => _database.GetCollection<SiteViewEvent>("site_view_events");
-    public IMongoCollection<WebCategory> WebCategories => _database.GetCollection<WebCategory>("web_categories");
+    public IMongoCollection<WebFolder> WebFolders => _database.GetCollection<WebFolder>("web_folders");
 
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
