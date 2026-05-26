@@ -957,6 +957,9 @@ schedulerService.setCoolFn(async (slug: string) => {
     source: 'scheduler-stop',
     serverEventLogStore: activeServerEventLogStore,
     message: 'captured after scheduler cooling stop preserved containers',
+    operationId: branchOperationLease?.operationId || null,
+    actor: 'scheduler',
+    trigger: 'scheduler',
   });
   branch.status = 'idle';
   // 2026-05-14: 记录调度器降温原因，让用户在 UI 上看清"为什么变灰"。
@@ -1144,6 +1147,9 @@ const autoLifecycleService = new AutoLifecycleService(
         source: 'auto-lifecycle-stop',
         serverEventLogStore: activeServerEventLogStore,
         message: 'captured after auto-lifecycle stop preserved containers',
+        operationId: branchOperationLease?.operationId || null,
+        actor: 'auto-lifecycle',
+        trigger: 'auto-lifecycle',
       });
       branch.status = 'idle';
       // 2026-05-14 Cursor Bugbot review 修复：必须同步把 heatState 置 cold。

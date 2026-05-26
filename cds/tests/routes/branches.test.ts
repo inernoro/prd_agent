@@ -107,7 +107,13 @@ describe('Branch Routes', () => {
   let mock: MockShellExecutor;
   let stateService: StateService;
   let containerService: ContainerService;
-  let operationEvents: Array<{ action: string; branchId?: string | null; details?: Record<string, unknown> }>;
+  let operationEvents: Array<{
+    action: string;
+    branchId?: string | null;
+    requestId?: string | null;
+    operationId?: string | null;
+    details?: Record<string, unknown>;
+  }>;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
@@ -147,7 +153,13 @@ describe('Branch Routes', () => {
     operationEvents = [];
     const serverEventLogStore: ServerEventLogSink = {
       record(record) {
-        operationEvents.push({ action: record.action, branchId: record.branchId, details: record.details });
+        operationEvents.push({
+          action: record.action,
+          branchId: record.branchId,
+          requestId: record.requestId,
+          operationId: record.operationId,
+          details: record.details,
+        });
       },
     };
     const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
@@ -817,6 +829,14 @@ describe('Branch Routes', () => {
       const events = operationEvents.filter((event) => event.branchId === 'race-delete');
       expect(events.map((event) => event.action)).toContain('branch.operation.cancelled');
       expect(events.map((event) => event.action)).toContain('branch.operation.completed');
+      const deleteStarted = events.find((event) => event.action === 'branch.operation.started' && event.details?.kind === 'delete');
+      const deleteOperationId = deleteStarted?.operationId;
+      expect(deleteOperationId).toMatch(/^op_/);
+      expect(events.find((event) => event.action === 'branch.delete.requested')?.operationId).toBe(deleteOperationId);
+      expect(events.find((event) => event.action === 'branch.delete.completed')?.operationId).toBe(deleteOperationId);
+      expect(events.find((event) =>
+        event.action === 'container.logs.archived' && event.details?.archiveSource === 'branch-delete',
+      )?.operationId).toBe(deleteOperationId);
     });
   });
 

@@ -3695,6 +3695,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: entry.lastStopReason,
       });
     } catch { /* activity log is best-effort */ }
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'delete',
+      source: 'api.delete-branch',
+      reason: deleteReason,
+      sse: true,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+
     serverEventLogStore?.record({
       category: 'container',
       severity: 'warn',
@@ -3704,6 +3712,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId: entry.projectId,
       branchId: entry.id,
       requestId: requestId || null,
+      operationId: branchOperationLease?.operationId || null,
       details: {
         actor,
         trigger: trigger || null,
@@ -3713,13 +3722,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       },
     });
 
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
-      kind: 'delete',
-      source: 'api.delete-branch',
-      reason: deleteReason,
-      sse: true,
-    });
-    if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     const finalizeBranchDelete = (message: string): void => {
@@ -3739,6 +3741,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         projectId: entry.projectId,
         branchId: entry.id,
         requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
         details: { actor, trigger: trigger || null },
       });
     };
@@ -3830,6 +3833,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         source: 'branch-delete',
         serverEventLogStore,
         message: 'captured before branch delete removes containers',
+        requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor,
+        trigger: trigger || null,
       });
 
       // Local delete path (unchanged behavior)
@@ -4389,6 +4396,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               profileIds: new Set([profile.id]),
               serverEventLogStore,
               message: 'captured before docker rm/run during branch deploy',
+              requestId: requestId || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor: resolveActorFromRequest(req),
+              trigger: triggerFromRequest(req),
             });
 
             // ── Trace: resolved CDS_* env vars for this service ──
@@ -4953,6 +4964,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           profileIds: new Set([profile.id]),
           serverEventLogStore,
           message: 'captured before docker rm/run during single service deploy',
+          requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+          operationId: branchOperationLease?.operationId || null,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
         });
         await runServiceWithPortRetry({
           stateService,
@@ -5365,6 +5380,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         source: 'manual-stop',
         serverEventLogStore,
         message: 'captured after user stop preserved containers',
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
       });
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
@@ -8046,6 +8065,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             source: 'cleanup',
             serverEventLogStore,
             message: 'captured before cleanup removes branch containers',
+            requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+            operationId: branchOperationLease?.operationId || null,
+            actor: resolveActorFromRequest(req),
+            trigger: triggerFromRequest(req),
           });
           for (const svc of Object.values(entry.services)) {
             assertBranchOperationCurrent(branchOperationLease, `cleanup before ${svc.profileId}`);
@@ -8186,6 +8209,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             source: 'cleanup',
             serverEventLogStore,
             message: 'captured before orphan cleanup removes branch containers',
+            requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+            operationId: branchOperationLease?.operationId || null,
+            actor: resolveActorFromRequest(req),
+            trigger: triggerFromRequest(req),
           });
 
           // Stop all containers for this orphan in parallel
@@ -9827,6 +9854,9 @@ cdscli project list --human
               profileIds: new Set([profile.id]),
               serverEventLogStore,
               message: 'captured before docker rm/run during import deploy',
+              requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+              actor: resolveActorFromRequest(req),
+              trigger: triggerFromRequest(req),
             });
             await runServiceWithPortRetry({
               stateService,
