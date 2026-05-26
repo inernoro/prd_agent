@@ -260,39 +260,43 @@ function sanitizeDataMigration(migration: DataMigration): DataMigration {
 }
 
 function sanitizeStateForPersistence(state: CdsState): CdsState {
-  const snapshot = structuredClone(state);
+  // Do not structuredClone the full CdsState here. In production the detached
+  // log fields can be hundreds of MB across many branches; cloning them on
+  // every save() was enough to push cds-master into V8 heap OOM. Clone the
+  // lightweight main state first, then copy bounded log slices explicitly.
+  const snapshot = withoutDetachedState(state) as CdsState;
   snapshot.logs = Object.fromEntries(
-    Object.entries(snapshot.logs || {}).map(([branchId, logs]) => [
+    Object.entries(state.logs || {}).map(([branchId, logs]) => [
       branchId,
       (logs || []).slice(-MAX_LOGS_PER_BRANCH).map(sanitizeOperationLog),
     ]),
   );
   snapshot.containerLogArchives = Object.fromEntries(
-    Object.entries(snapshot.containerLogArchives || {}).map(([branchId, archives]) => [
+    Object.entries(state.containerLogArchives || {}).map(([branchId, archives]) => [
       branchId,
       (archives || []).slice(-MAX_CONTAINER_ARCHIVES_PER_BRANCH).map(sanitizeContainerArchive),
     ]),
   );
   snapshot.activityLogs = Object.fromEntries(
-    Object.entries(snapshot.activityLogs || {}).map(([projectId, logs]) => [
+    Object.entries(state.activityLogs || {}).map(([projectId, logs]) => [
       projectId,
-      logs || [],
+      (logs || []).slice(-1000),
     ]),
   );
-  snapshot.githubWebhookDeliveries = (snapshot.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
+  snapshot.githubWebhookDeliveries = (state.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
   snapshot.serviceDeployments = Object.fromEntries(
-    Object.entries(snapshot.serviceDeployments || {}).map(([deploymentId, deployment]) => [
+    Object.entries(state.serviceDeployments || {}).map(([deploymentId, deployment]) => [
       deploymentId,
       sanitizeServiceDeployment(deployment),
     ]),
   );
-  snapshot.selfUpdateHistory = (snapshot.selfUpdateHistory || []).map(sanitizeSelfUpdateRecord);
-  snapshot.dataMigrations = (snapshot.dataMigrations || []).slice(-MAX_DATA_MIGRATIONS).map(sanitizeDataMigration);
+  snapshot.selfUpdateHistory = (state.selfUpdateHistory || []).map(sanitizeSelfUpdateRecord);
+  snapshot.dataMigrations = (state.dataMigrations || []).slice(-MAX_DATA_MIGRATIONS).map(sanitizeDataMigration);
   return snapshot;
 }
 
 function withoutDetachedState(state: CdsState): Partial<CdsState> {
-  const mainState = structuredClone(state) as Partial<CdsState>;
+  const mainState = { ...state } as Partial<CdsState>;
   delete mainState.logs;
   delete mainState.containerLogArchives;
   delete mainState.activityLogs;
@@ -307,7 +311,9 @@ function withoutDetachedState(state: CdsState): Partial<CdsState> {
       ]),
     );
   }
-  return mainState;
+  // The async write-behind path needs a stable snapshot, but only of the small
+  // main document. The large detached log fields were removed above.
+  return structuredClone(mainState);
 }
 
 function fragmentId(kind: DetachedStateKey, ownerId?: string): string {
@@ -675,7 +681,7 @@ export class MongoStateBackingStore implements StateBackingStore {
       await logRecordCol.replaceOne({ _id: record._id }, record, { upsert: true });
     }
     await logRecordCol.deleteMany?.({ scope: LOG_RECORD_SCOPE, updatedAt: { $ne: updatedAt } });
-    this.cache = structuredClone(snapshot);
+    this.cache = snapshot;
     return true;
   }
 }
