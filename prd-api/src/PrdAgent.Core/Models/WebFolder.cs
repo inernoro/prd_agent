@@ -3,9 +3,9 @@ using PrdAgent.Core.Attributes;
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 网页/知识库自定义分类。基础用途：给托管站点分类（替代/增强裸 Folder 字符串）。
-/// 进阶用途：给高频分类（如「运营简报」）绑定一个生成器（用户配置的 skill 或 Markdown
-/// 模板），之后一键「按分类生成」→ 复用 IHostedSiteService.CreateFromContentAsync /
+/// 网页/知识库自定义文件夹。基础用途：给托管站点文件夹（替代/增强裸 Folder 字符串）。
+/// 进阶用途：给高频文件夹（如「运营简报」）绑定一个生成器（用户配置的 skill 或 Markdown
+/// 模板），之后一键「按文件夹生成」→ 复用 IHostedSiteService.CreateFromContentAsync /
 /// 知识库 AddEntry 自动产出对应网页/文档。
 /// </summary>
 [AppOwnership(AppNames.System, AppNames.SystemDisplay)]
@@ -13,13 +13,13 @@ public class WebFolder
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>所属用户 UserId（个人分类，按 owner 隔离）</summary>
+    /// <summary>所属用户 UserId（个人文件夹，按 owner 隔离）</summary>
     public string OwnerUserId { get; set; } = string.Empty;
 
-    /// <summary>分类名称（如「运营简报」）</summary>
+    /// <summary>文件夹名称（如「运营简报」）</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>分类描述</summary>
+    /// <summary>文件夹描述</summary>
     public string? Description { get; set; }
 
     /// <summary>排序权重（小在前）</summary>
@@ -27,9 +27,9 @@ public class WebFolder
 
     /// <summary>
     /// 生成器类型：
-    /// - none: 仅作分类，不绑定生成器（默认）
-    /// - skill: 绑定一个用户 skill，按分类生成时执行该 skill 产出内容
-    /// - markdown: 绑定一段 Markdown 模板，按分类生成时直接渲染为网页
+    /// - none: 仅作文件夹，不绑定生成器（默认）
+    /// - skill: 绑定一个用户 skill，按文件夹生成时执行该 skill 产出内容
+    /// - markdown: 绑定一段 Markdown 模板，按文件夹生成时直接渲染为网页
     /// </summary>
     public string GeneratorType { get; set; } = WebFolderGeneratorType.None;
 
@@ -49,7 +49,7 @@ public class WebFolder
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
-/// <summary>分类生成器类型常量</summary>
+/// <summary>文件夹生成器类型常量</summary>
 public static class WebFolderGeneratorType
 {
     public const string None = "none";
@@ -58,7 +58,7 @@ public static class WebFolderGeneratorType
     public static readonly string[] All = { None, Skill, Markdown };
 }
 
-/// <summary>分类生成目标常量</summary>
+/// <summary>文件夹生成目标常量</summary>
 public static class WebFolderGenerateTarget
 {
     public const string Web = "web";

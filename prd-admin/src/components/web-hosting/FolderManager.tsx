@@ -16,8 +16,8 @@ import {
 } from '@/services/real/webFolders';
 
 /**
- * 自定义分类管理器 —— 列出/新建/编辑/删除分类，并对绑定了 Markdown 生成器的分类
- * 一键「按分类生成」托管网页或知识库条目。
+ * 自定义文件夹管理器 —— 列出/新建/编辑/删除文件夹，并对绑定了 Markdown 生成器的文件夹
+ * 一键「按文件夹生成」托管网页或知识库条目。
  *
  * 遵循 frontend-modal 规则：createPortal 挂 body、inline style 高度、min-h-0 滚动区、
  * overscrollBehavior:contain、ESC + 蒙版点击关闭、z-[10000]。
@@ -81,7 +81,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
     if (res.success) {
       setCategories(res.data.items ?? []);
     } else {
-      setError(res.error?.message ?? '加载分类失败');
+      setError(res.error?.message ?? '加载文件夹失败');
     }
     setLoading(false);
   }, []);
@@ -126,7 +126,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
 
   const handleSave = async () => {
     if (!form.name.trim()) {
-      setFormError('分类名称不能为空');
+      setFormError('文件夹名称不能为空');
       return;
     }
     if (
@@ -172,7 +172,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
   };
 
   const handleDelete = async (c: WebFolder) => {
-    if (!window.confirm(`确定删除分类「${c.name}」吗？`)) return;
+    if (!window.confirm(`确定删除文件夹「${c.name}」吗？`)) return;
     const res = await deleteWebFolder(c.id);
     if (res.success) {
       await load();
@@ -208,7 +208,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
   };
 
   const generatorLabel = (t: WebFolderGeneratorType): string =>
-    t === 'markdown' ? 'Markdown 模板' : t === 'skill' ? 'Skill' : '仅分类';
+    t === 'markdown' ? 'Markdown 模板' : t === 'skill' ? 'Skill' : '仅文件夹';
   const targetLabel = (t: WebFolderGenerateTarget): string =>
     t === 'document-store' ? '知识库' : '托管网页';
 
@@ -217,7 +217,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
     <div className="flex flex-col gap-4">
       <label className="flex flex-col gap-1.5">
         <span className="text-xs" style={{ color: TEXT_SUB }}>
-          分类名称 <span style={{ color: '#ef4444' }}>*</span>
+          文件夹名称 <span style={{ color: '#ef4444' }}>*</span>
         </span>
         <input
           type="text"
@@ -231,7 +231,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
 
       <label className="flex flex-col gap-1.5">
         <span className="text-xs" style={{ color: TEXT_SUB }}>
-          分类描述
+          文件夹描述
         </span>
         <input
           type="text"
@@ -256,7 +256,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
             className="rounded-lg border px-3 py-2 text-sm outline-none"
             style={fieldStyle()}
           >
-            <option value="none">仅分类（不绑定生成器）</option>
+            <option value="none">仅文件夹（不绑定生成器）</option>
             <option value="markdown">Markdown 模板</option>
             <option value="skill">Skill（暂仅即时支持 Markdown）</option>
           </select>
@@ -372,7 +372,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
           style={{ background: 'var(--accent, #6366f1)' }}
         >
           {saving ? <MapSpinner size={14} /> : null}
-          {view.kind === 'edit' ? '保存修改' : '创建分类'}
+          {view.kind === 'edit' ? '保存修改' : '创建文件夹'}
         </button>
       </div>
     </div>
@@ -380,7 +380,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
 
   // ─── 列表视图 ───
   const renderList = () => {
-    if (loading) return <MapSectionLoader text="正在加载分类…" />;
+    if (loading) return <MapSectionLoader text="正在加载文件夹…" />;
     if (error)
       return (
         <div
@@ -395,7 +395,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
         <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
           <FolderTree size={30} style={{ color: TEXT_SUB, opacity: 0.5 }} />
           <div className="text-sm" style={{ color: TEXT_SUB }}>
-            还没有分类，点击下方「新建分类」开始
+            还没有文件夹，点击下方「新建文件夹」开始
           </div>
           <button
             type="button"
@@ -404,7 +404,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
             style={{ background: 'var(--accent, #6366f1)' }}
           >
             <Plus size={15} />
-            新建分类
+            新建文件夹
           </button>
         </div>
       );
@@ -451,7 +451,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
                     type="button"
                     onClick={() => void handleGenerate(c)}
                     disabled={!canGenerate || generatingId === c.id}
-                    title={canGenerate ? '按分类生成' : '仅 Markdown 生成器支持一键生成'}
+                    title={canGenerate ? '按文件夹生成' : '仅 Markdown 生成器支持一键生成'}
                     className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white transition-opacity disabled:opacity-40"
                     style={{ background: 'var(--accent, #6366f1)' }}
                   >
@@ -525,10 +525,10 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
             <FolderTree size={16} style={{ color: TEXT_SUB }} />
             <span className="text-sm font-semibold">
               {view.kind === 'create'
-                ? '新建分类'
+                ? '新建文件夹'
                 : view.kind === 'edit'
-                  ? '编辑分类'
-                  : '分类管理'}
+                  ? '编辑文件夹'
+                  : '文件夹管理'}
             </span>
           </div>
           <div className="flex items-center gap-1.5">

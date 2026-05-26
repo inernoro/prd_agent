@@ -21,7 +21,7 @@ export interface WebFolder {
   updatedAt: string;
 }
 
-/** 创建/更新分类的入参（与后端 WebFolderRequest 对齐） */
+/** 创建/更新文件夹的入参（与后端 WebFolderRequest 对齐） */
 export interface WebFolderInput {
   name: string;
   description?: string;
@@ -33,7 +33,7 @@ export interface WebFolderInput {
   generateStoreId?: string;
 }
 
-/** 「按分类生成」结果。generated=false 时带 reason；成功时按 target 携带 site/entry 信息 */
+/** 「按文件夹生成」结果。generated=false 时带 reason；成功时按 target 携带 site/entry 信息 */
 export interface GenerateResult {
   generated: boolean;
   reason?: string;

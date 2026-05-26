@@ -9,7 +9,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 网页/知识库自定义分类服务实现。
+/// 网页/知识库自定义文件夹服务实现。
 ///
 /// 生成路径分两种：
 /// - Markdown：稳固的即时生成路径。Markdig 渲染 → 包壳 HTML →
@@ -123,7 +123,7 @@ public class WebFolderService : IWebFolderService
             .Find(c => c.Id == id && c.OwnerUserId == userId)
             .FirstOrDefaultAsync(ct);
         if (category == null)
-            return new { generated = false, reason = "分类不存在或无权访问" };
+            return new { generated = false, reason = "文件夹不存在或无权访问" };
 
         // ── skill 生成：best-effort，wave 1 延后（依赖 LLM/run-worker 异步链路）──
         if (category.GeneratorType == WebFolderGeneratorType.Skill)
@@ -143,7 +143,7 @@ public class WebFolderService : IWebFolderService
         {
             var markdown = category.GeneratorMarkdown ?? string.Empty;
             if (string.IsNullOrWhiteSpace(markdown))
-                return new { generated = false, reason = "该分类未配置 Markdown 模板内容" };
+                return new { generated = false, reason = "该文件夹未配置 Markdown 模板内容" };
 
             var title = $"{category.Name} {DateTime.Now:yyyy-MM-dd HH:mm}";
 
@@ -174,7 +174,7 @@ public class WebFolderService : IWebFolderService
         }
 
         // ── none ──
-        return new { generated = false, reason = "该分类未绑定生成器" };
+        return new { generated = false, reason = "该文件夹未绑定生成器" };
     }
 
     /// <summary>生成知识库条目：校验 store 归属 → 创建 ParsedPrd → 写 DocumentEntry → 计数 +1</summary>
