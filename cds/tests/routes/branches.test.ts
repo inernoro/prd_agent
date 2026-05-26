@@ -965,6 +965,103 @@ describe('Branch Routes', () => {
         event.action === 'container.logs.archived' && event.details?.archiveSource === 'branch-delete',
       )?.operationId).toBe(deleteOperationId);
     });
+
+    it('manual stop clears an active and queued webhook deploy without dispatching the queued commit', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-stop',
+        projectId: 'default',
+        branch: 'feature/race-stop',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-stop'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-race-stop-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-race-stop', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: Array<{ url: string; body: unknown }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/race-stop/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-a' },
+        );
+        await runStarted;
+
+        const merged = await request(
+          server,
+          'POST',
+          '/api/branches/race-stop/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-b' },
+        );
+        expect(String(merged.body)).toContain('merged');
+
+        const stop = await request(
+          server,
+          'POST',
+          '/api/branches/race-stop/stop',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-stop-user' },
+        );
+        expect(stop.status).toBe(200);
+        expect((stop.body as any).message).toContain('已停止');
+        expect(stateService.getBranch('race-stop')?.status).toBe('idle');
+        expect(Object.values(stateService.getBranch('race-stop')?.services || {}).every((svc) => svc.status === 'stopped')).toBe(true);
+
+        releaseRun();
+        const deploy = await activeDeploy;
+        expect(deploy.status).toBe(200);
+        expect(String(deploy.body)).toContain('no longer current');
+        expect(fetchCalls).toEqual([]);
+        expect(stateService.getBranch('race-stop')?.status).toBe('idle');
+
+        const events = operationEvents.filter((event) => event.branchId === 'race-stop');
+        const cancelled = events.filter((event) => event.action === 'branch.operation.cancelled');
+        expect(cancelled.some((event) => event.details?.kind === 'deploy' && event.details?.pending !== true)).toBe(true);
+        expect(cancelled.some((event) => event.details?.pending === true && event.details?.reason === 'superseded by stop')).toBe(true);
+        const stopStarted = events.find((event) => event.action === 'branch.operation.started' && event.details?.kind === 'stop');
+        expect(stopStarted?.operationId).toMatch(/^op_/);
+        expect(events.find((event) => event.action === 'container.logs.archived' && event.details?.archiveSource === 'manual-stop')?.operationId)
+          .toBe(stopStarted?.operationId);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('POST /api/branches/:id/set-default', () => {
