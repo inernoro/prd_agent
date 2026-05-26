@@ -24,8 +24,8 @@ import type { PhaseLogState } from '@/components/deployment/PhaseTree';
  *   - GET /api/branches/:id              → branch + services
  *   - GET /api/branches/:id/logs         → recent build/run logs (last 5)
  *
- * Escape hatch: header has "完整页面" link → /branch-panel/<id> for the
- * dedicated page when the user wants the full set of tabs.
+ * Escape hatch: header has an external-detail link → /branch-panel/<id> for
+ * the dedicated page when the user wants the full set of tabs.
  */
 
 interface ServiceState {
@@ -1594,10 +1594,10 @@ export function BranchDetailDrawer({
                 <GitBranch />
               </Button>
             )}
-            <Button asChild variant="ghost" size="sm" title="完整页面">
+            <Button asChild variant="ghost" size="sm" title="打开分支详情页">
               <a href={fullPageHref}>
                 <ExternalLink />
-                完整页面
+                详情页
               </a>
             </Button>
             <Button
@@ -2114,7 +2114,7 @@ export function BranchDetailDrawer({
                   需要修改构建配置 / 环境变量 / 路由？打开
                   <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
                   。需要查看完整日志、Bridge、提交历史？打开
-                  <a href={fullPageHref} className="ml-1 text-primary hover:underline">完整页面</a>
+                  <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
             </>
@@ -2123,7 +2123,7 @@ export function BranchDetailDrawer({
 
         {/* Quick action footer。
             未运行 / 已停止 / 异常时把"重新部署"作为主按钮放在 footer flex-1 位,
-            "打开完整页面"降级为 outline 副按钮——以前 footer 里只有"完整页面"
+            "打开分支详情页"降级为 outline 副按钮——以前 footer 里只有"完整页面"
             一个孤零零的橙色大按钮,用户对着停止的分支找不到启动入口
             (2026-05-07 反馈)。 */}
         {branch ? (
@@ -2151,17 +2151,35 @@ export function BranchDetailDrawer({
                 <Button asChild variant="outline">
                   <a href={fullPageHref}>
                     <ExternalLink />
-                    完整页面
+                    详情页
                   </a>
                 </Button>
               </>
             ) : (
-              <Button asChild className="flex-1">
-                <a href={fullPageHref}>
-                  <Play />
-                  打开完整页面
-                </a>
-              </Button>
+              <>
+                {previewUrl ? (
+                  <Button asChild className="flex-[2_1_0]">
+                    <a href={previewUrl} target="_blank" rel="noreferrer" title="打开预览页">
+                      <Play />
+                      打开预览页
+                    </a>
+                  </Button>
+                ) : (
+                  <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
+                    <Play />
+                    等待预览页
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-[1_1_0]"
+                  onClick={() => setActiveTab('settings')}
+                >
+                  <Settings />
+                  详细设置
+                </Button>
+              </>
             )}
           </footer>
         ) : null}
