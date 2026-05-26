@@ -37,12 +37,7 @@ import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
-import {
-  normalizeLogText,
-  type ServerEventCategory,
-  type ServerEventLogSink,
-  type ServerEventSeverity,
-} from '../services/server-event-log-store.js';
+import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
 import {
   BranchOperationSupersededError,
   type BranchOperationCoordinator,
@@ -1314,25 +1309,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     githubApp,
     config,
   });
-
-  const serverEventCategories = new Set<ServerEventCategory>(['container', 'docker', 'system']);
-  const serverEventSeverities = new Set<ServerEventSeverity>(['info', 'warn', 'error']);
-
-  const readStringQuery = (value: unknown): string | undefined => {
-    if (typeof value !== 'string') return undefined;
-    const trimmed = value.trim();
-    return trimmed || undefined;
-  };
-
-  const readServerEventSeverity = (value: unknown): ServerEventSeverity | undefined => {
-    const raw = readStringQuery(value);
-    return raw && serverEventSeverities.has(raw as ServerEventSeverity) ? raw as ServerEventSeverity : undefined;
-  };
-
-  const readServerEventCategory = (value: unknown): ServerEventCategory | undefined => {
-    const raw = readStringQuery(value);
-    return raw && serverEventCategories.has(raw as ServerEventCategory) ? raw as ServerEventCategory : undefined;
-  };
 
   function projectIdForDockerNetwork(network?: string | null): string | null {
     if (!network) return null;
@@ -2860,50 +2836,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       infoCount,
       totalCount: issues.length,
       issues,
-    });
-  });
-
-  router.get('/server-events', async (req, res) => {
-    if (!serverEventLogStore?.findRecent) {
-      res.json({
-        ok: false,
-        disabled: true,
-        events: [],
-        total: 0,
-        message: 'server event log store is not enabled',
-      });
-      return;
-    }
-
-    const limitRaw = Number.parseInt(readStringQuery(req.query.limit) || '', 10);
-    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 1000)) : 200;
-    const since = readStringQuery(req.query.since);
-    if (since && Number.isNaN(Date.parse(since))) {
-      res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
-      return;
-    }
-
-    const events = await serverEventLogStore.findRecent({
-      limit,
-      category: readServerEventCategory(req.query.category),
-      severity: readServerEventSeverity(req.query.severity),
-      minSeverity: readServerEventSeverity(req.query.minSeverity),
-      source: readStringQuery(req.query.source),
-      action: readStringQuery(req.query.action),
-      containerName: readStringQuery(req.query.containerName),
-      branchId: readStringQuery(req.query.branchId),
-      profileId: readStringQuery(req.query.profileId),
-      projectId: readStringQuery(req.query.projectId),
-      requestId: readStringQuery(req.query.requestId),
-      operationId: readStringQuery(req.query.operationId),
-      since,
-    });
-
-    res.json({
-      ok: true,
-      disabled: false,
-      total: events.length,
-      events,
     });
   });
 
