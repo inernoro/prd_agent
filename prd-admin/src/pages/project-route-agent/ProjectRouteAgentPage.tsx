@@ -432,23 +432,30 @@ function AnalyzeView() {
             )}
           </div>
 
-          {/* 3) 项目路径匹配 */}
+          {/* 3) 项目路径 — 按仓库分组 */}
           <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
             <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <FolderTree className="w-3.5 h-3.5" /> ③ routemap 项目路径
+              <FolderTree className="w-3.5 h-3.5" /> ③ 仓库 × 项目路径
             </h3>
             {resolutions.length === 0 ? (
-              <p className="text-xs text-white/30">分析完成后展示具体命中的项目路径</p>
+              <p className="text-xs text-white/30">分析完成后按仓库展示命中的项目路径</p>
             ) : (
               <ul className="space-y-3">
-                {resolutions.map((r, i) => (
-                  <li key={i} className="bg-white/3 rounded-md p-2.5">
+                {resolutions.map((r) => (
+                  <li key={r.repoUrl} className="bg-white/3 rounded-md p-2.5">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-white truncate flex-1">{r.appOrModule}</span>
+                      <span className="text-xs text-white truncate flex-1">{r.repoAppName || r.repoUrl}</span>
                       <ResolutionBadge status={r.status} />
                     </div>
-                    {r.repoAppName && (
-                      <p className="text-[10px] text-white/50 mt-1">仓库：{r.repoAppName}</p>
+                    {r.repoUrl && r.repoUrl !== r.repoAppName && (
+                      <p className="text-[10px] text-white/40 truncate mt-0.5">{r.repoUrl}</p>
+                    )}
+                    {r.matchedAppsOrModules.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {r.matchedAppsOrModules.map((m, j) => (
+                          <span key={j} className="px-1.5 py-0.5 rounded-md text-[10px] bg-sky-500/15 border border-sky-500/30 text-sky-200">{m}</span>
+                        ))}
+                      </div>
                     )}
                     {r.projectPaths.length > 0 && (
                       <ul className="mt-1.5 space-y-0.5">
@@ -516,8 +523,10 @@ function RepoBadge({ status }: { status: RepoLiveStatus['status'] }) {
 function ResolutionBadge({ status }: { status: ProjectRouteResolution['status'] }) {
   const m: Record<string, { label: string; cls: string }> = {
     Hit: { label: '命中', cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/30' },
-    NotFound: { label: '未找到', cls: 'bg-white/8 text-white/60 border-white/15' },
+    NotFound: { label: '无路径', cls: 'bg-white/8 text-white/60 border-white/15' },
     Ambiguous: { label: '多候选', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
+    CloneFailed: { label: '克隆失败', cls: 'bg-red-500/15 text-red-200 border-red-500/30' },
+    NoRoutemap: { label: '无 routemap', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
   };
   const info = m[status] ?? m.NotFound;
   return <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${info.cls}`}>{info.label}</span>;

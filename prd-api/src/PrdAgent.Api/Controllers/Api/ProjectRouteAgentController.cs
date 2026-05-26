@@ -410,12 +410,15 @@ public class ProjectRouteAgentController : ControllerBase
     private async Task<(List<string> apps, List<string> modules, List<ProjectRouteExtractedRepo> repos, string? model, string? platform)>
         ExtractAppsAndReposAsync(ProjectRoutePlan plan, ProjectRouteSiteSpec siteSpec, string userId)
     {
-        const int maxPlanChars = 10_000;
+        const int maxPlanHeadChars = 2_000;
         const int maxSiteChars = 8_000;
 
-        var planContent = plan.ExtractedContent ?? string.Empty;
-        if (planContent.Length > maxPlanChars)
-            planContent = planContent[..maxPlanChars] + "\n…(方案已截断)";
+        // 需求 ① "只读方案文档的文档头中的应用/模块"：截方案 markdown 的头部 2000 字符。
+        // 典型方案 markdown 头部就包含「涉及应用」「业务模块」「影响范围」等元信息段，
+        // 没必要把整篇正文塞给 LLM（节省 token + 减少错抽 + 提速）。
+        var planHead = plan.ExtractedContent ?? string.Empty;
+        if (planHead.Length > maxPlanHeadChars)
+            planHead = planHead[..maxPlanHeadChars] + "\n…(只读文档头，正文部分已省略)";
 
         var siteContent = siteSpec.MarkdownContent ?? string.Empty;
         if (siteContent.Length > maxSiteChars)
@@ -427,24 +430,23 @@ public class ProjectRouteAgentController : ControllerBase
             SessionId: null,
             UserId: userId,
             ViewRole: null,
-            DocumentChars: planContent.Length + siteContent.Length,
+            DocumentChars: planHead.Length + siteContent.Length,
             DocumentHash: null,
             SystemPromptRedacted: "project-route-agent.extract.apps",
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.ProjectRouteAgent.Extract.Apps));
 
         var systemPrompt =
-            "你是「项目路由智能体」的方案分析助手。你将收到两份 Markdown：\n" +
-            " - 公共站点说明（背景知识，可能包含多个仓库的 git URL）\n" +
-            " - 用户方案正文\n\n" +
-            "你的任务是输出 3 项：\n" +
-            "1. apps[]：方案中明确提到 / 强烈暗示的应用、系统、智能体、产品线（去重，3~10 项）\n" +
-            "2. modules[]：方案中提到的业务模块、功能点、页面（去重，3~15 项）\n" +
-            "3. repos[]：**本次分析需要克隆的仓库 git URL 清单**。约束：\n" +
-            "   - 必须是 https://… 或 git@… 形式的 git URL\n" +
-            "   - **只能从公共站点说明 markdown 里出现过的 git URL 中挑选**（不要编造）\n" +
-            "   - 只挑跟 apps[] / modules[] 真正相关的，无关的仓库不要带\n" +
-            "   - 默认 branch = main、routemapPath = routemap，除非公共说明里另写明\n\n" +
+            "你是「项目路由智能体」的方案分析助手。按以下两步顺序产出结果：\n\n" +
+            "【第一步】从「方案文档头」中读出涉及的应用 + 业务模块\n" +
+            " - 输入：用户方案 markdown 的开头部分（约 2000 字符内的元信息段，可能含「涉及应用」/「业务模块」/「影响范围」等小节）\n" +
+            " - 输出 apps[]（应用 / 系统 / 智能体 / 产品线，3~10 项，去重）\n" +
+            " - 输出 modules[]（业务模块 / 功能点 / 页面，3~15 项，去重）\n\n" +
+            "【第二步】按上一步抽出的应用 / 模块，到「公共站点说明 markdown」里查找对应的仓库 git URL\n" +
+            " - **只能从公共说明里出现过的 git URL 中挑选**，禁止编造、禁止猜测、禁止补全 owner\n" +
+            " - **只能是 https://… 形式的 URL**，遇到 git@... / ssh://… 协议一律跳过（容器内通常无 SSH key）\n" +
+            " - 只挑跟 apps[] / modules[] 真正相关的，无关仓库不要带\n" +
+            " - 默认 branch=main、routemapPath=routemap，除非公共说明里另写明\n\n" +
             "严格只输出 **一个** JSON 对象，UTF-8，禁止 markdown 代码围栏，禁止解释：\n" +
             "{\n" +
             "  \"apps\": [\"...\"],\n" +
@@ -455,20 +457,20 @@ public class ProjectRouteAgentController : ControllerBase
             "      \"repoUrl\": \"https://github.com/.../xxx.git\",\n" +
             "      \"branch\": \"main\",\n" +
             "      \"routemapPath\": \"routemap\",\n" +
-            "      \"reasoning\": \"≤40 字中文，为什么这个仓库要克隆\"\n" +
+            "      \"reasoning\": \"≤40 字中文，说明这个仓库对应的是 apps/modules 里哪些条目\"\n" +
             "    }\n" +
             "  ]\n" +
             "}";
 
         var userMessage = new StringBuilder();
-        userMessage.AppendLine("===== 公共站点说明 =====");
+        userMessage.AppendLine("===== 公共站点说明（完整）=====");
         userMessage.AppendLine(siteContent);
         userMessage.AppendLine();
-        userMessage.AppendLine("===== 用户方案 =====");
+        userMessage.AppendLine("===== 用户方案（仅文档头）=====");
         userMessage.AppendLine($"标题：{plan.Title}");
         userMessage.AppendLine();
-        userMessage.AppendLine("方案正文：");
-        userMessage.AppendLine(planContent);
+        userMessage.AppendLine("文档头内容：");
+        userMessage.AppendLine(planHead);
 
         var body = new JsonObject
         {
@@ -517,11 +519,13 @@ public class ProjectRouteAgentController : ControllerBase
                         if (node is not JsonObject ro) continue;
                         var url = ro["repoUrl"]?.GetValue<string>()?.Trim();
                         if (string.IsNullOrEmpty(url)) continue;
+                        // 容器内通常没 SSH key，强制只接受 https/http；ssh / git@ 一律跳过
                         if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-                            && !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                            && !url.StartsWith("git@", StringComparison.OrdinalIgnoreCase)
-                            && !url.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+                            && !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogInformation("[ProjectRouteAgent] 跳过非 https 仓库 URL：{Url}", url);
                             continue;
+                        }
 
                         repos.Add(new ProjectRouteExtractedRepo
                         {
@@ -562,27 +566,53 @@ public class ProjectRouteAgentController : ControllerBase
             IReadOnlyList<(ProjectRouteExtractedRepo Repo, RoutemapSnapshot? Snap, string? ErrorMessage)> snapshots,
             string userId)
     {
+        // 把所有 snapshots（含 clone 失败 / no routemap 的）都做成基线 resolution，确保不漏。
+        // LLM 只需要在「克隆成功 + 有 routemap 文件」的子集上填项目路径 + 关联到的 apps/modules。
+        var baseline = snapshots.Select(t => new ProjectRouteResolution
+        {
+            RepoUrl = t.Repo.RepoUrl,
+            RepoAppName = t.Repo.AppName,
+            Reasoning = t.Repo.Reasoning,
+            ProjectPaths = new List<string>(),
+            MatchedAppsOrModules = new List<string>(),
+            Status = t.ErrorMessage != null
+                ? ProjectRouteResolutionStatuses.CloneFailed
+                : (t.Snap == null || !string.IsNullOrEmpty(t.Snap.Missing)
+                    ? ProjectRouteResolutionStatuses.NoRoutemap
+                    : ProjectRouteResolutionStatuses.Hit),
+        }).ToList();
+
+        // 给失败 / 无 routemap 的条目把 reasoning 改成错误信息（覆盖 AI 的选仓库 reasoning）
+        for (var i = 0; i < snapshots.Count; i++)
+        {
+            var (_, snap, err) = snapshots[i];
+            if (err != null) baseline[i].Reasoning = $"git 操作失败：{Truncate(err, 200)}";
+            else if (snap?.Missing != null) baseline[i].Reasoning = snap.Missing;
+        }
+
+        // 只把「Hit」状态的仓库交给 LLM 做路径匹配
+        var matchable = snapshots
+            .Select((t, idx) => (Index: idx, t.Repo, t.Snap, t.ErrorMessage))
+            .Where(t => t.ErrorMessage == null && t.Snap != null && string.IsNullOrEmpty(t.Snap.Missing))
+            .ToList();
+
+        if (matchable.Count == 0)
+        {
+            // 无可匹配仓库 → 直接返回 baseline，跳过 LLM 调用
+            return (baseline, null, null);
+        }
+
         var repoBlocks = new StringBuilder();
-        foreach (var (entry, snap, err) in snapshots)
+        foreach (var (_, entry, snap, _) in matchable)
         {
             repoBlocks.AppendLine("---");
+            repoBlocks.AppendLine($"RepoKey: {entry.RepoUrl}");
             repoBlocks.AppendLine($"AppName: {entry.AppName}");
-            repoBlocks.AppendLine($"RepoUrl: {entry.RepoUrl}");
             repoBlocks.AppendLine($"Branch: {entry.Branch}");
             repoBlocks.AppendLine($"RoutemapPath: {entry.RoutemapPath}");
             if (!string.IsNullOrEmpty(entry.Reasoning))
                 repoBlocks.AppendLine($"AISelectedBecause: {entry.Reasoning}");
-            if (err != null)
-            {
-                repoBlocks.AppendLine($"[ERROR] {err}");
-                continue;
-            }
-            if (snap == null || !string.IsNullOrEmpty(snap.Missing))
-            {
-                repoBlocks.AppendLine($"[NO ROUTEMAP] {snap?.Missing}");
-                continue;
-            }
-            repoBlocks.AppendLine($"RoutemapFiles ({snap.Entries.Count}):");
+            repoBlocks.AppendLine($"RoutemapFiles ({snap!.Entries.Count}):");
             foreach (var e in snap.Entries.Take(120))
             {
                 repoBlocks.AppendLine($"  - {e.Path} ({e.SizeBytes} bytes)");
@@ -596,29 +626,29 @@ public class ProjectRouteAgentController : ControllerBase
         }
 
         var systemPrompt =
-            "你是「项目路由智能体」的路径匹配助手。任务：把方案涉及的应用 / 业务模块映射到具体的 routemap 项目路径。\n" +
-            "你将收到：\n" +
-            " - 方案涉及的 apps[] 和 modules[]（上一步 AI 抽取）\n" +
-            " - 上一步 AI 选中要克隆的仓库 + 其 routemap/ 目录文件清单（可能含部分内容预览）\n\n" +
+            "你是「项目路由智能体」的路径匹配助手。\n" +
+            "任务：对每个仓库，输出它在 routemap/ 下命中的项目路径 + 命中了方案里哪些 apps/modules。\n\n" +
+            "输入：\n" +
+            " - 方案涉及的 apps[] 和 modules[]\n" +
+            " - 已成功克隆的仓库列表（含 routemap 文件清单 + 内容预览）\n\n" +
             "请输出严格 JSON（**一个对象**，UTF-8，禁止 markdown 代码围栏，禁止解释）：\n" +
             "{\n" +
-            "  \"resolutions\": [\n" +
+            "  \"repos\": [\n" +
             "    {\n" +
-            "      \"appOrModule\": \"用户方案里的某个应用/模块原话\",\n" +
-            "      \"repoUrl\": \"命中的仓库 url（来自上面列表，找不到为空字符串）\",\n" +
-            "      \"repoAppName\": \"命中的仓库 AppName\",\n" +
-            "      \"projectPaths\": [\"routemap 下的相对路径，最多 5 个\"],\n" +
-            "      \"reasoning\": \"中文简述命中依据（≤80 字）\",\n" +
+            "      \"repoUrl\": \"仓库 url（必须来自上面的 RepoKey）\",\n" +
+            "      \"projectPaths\": [\"routemap 下的相对路径，0~10 个\"],\n" +
+            "      \"matchedAppsOrModules\": [\"该仓库覆盖到的 apps/modules 原话，去重\"],\n" +
+            "      \"reasoning\": \"≤80 字中文，简述这个仓库命中了什么\",\n" +
             "      \"status\": \"Hit | NotFound | Ambiguous\"\n" +
             "    }\n" +
             "  ]\n" +
             "}\n\n" +
             "规则：\n" +
-            "- 给方案里每个 app 和 module 都生成一条 resolution（去重后）\n" +
+            "- **输出按仓库分组**：每个仓库 1 条 resolution（即使该仓库命中 0 个项目路径也要给一条，status=NotFound）\n" +
             "- projectPaths 只能引用上面 RoutemapFiles 真实存在的相对路径\n" +
-            "- 找不到就 status=NotFound、projectPaths=[]、reasoning 说明原因\n" +
-            "- 多候选无法确定唯一时 status=Ambiguous，projectPaths 列出全部候选\n" +
-            "- 不要瞎编路径，不要返回上面列表外的 repoUrl";
+            "- matchedAppsOrModules 一定要从输入的 apps[]/modules[] 里挑，不要编造\n" +
+            "- 多候选无法确定唯一时 status=Ambiguous，projectPaths 列全部候选\n" +
+            "- 不要返回输入列表外的 repoUrl";
 
         var userBlock = new StringBuilder();
         userBlock.AppendLine($"方案标题：{plan.Title}");
@@ -630,7 +660,7 @@ public class ProjectRouteAgentController : ControllerBase
         foreach (var m in plan.ExtractedModules) userBlock.AppendLine("- " + m);
 
         userBlock.AppendLine();
-        userBlock.AppendLine("===== 仓库 + routemap 文件清单 =====");
+        userBlock.AppendLine("===== 已成功克隆的仓库 + routemap 文件清单 =====");
         userBlock.Append(repoBlocks);
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -668,60 +698,63 @@ public class ProjectRouteAgentController : ControllerBase
         var platform = resp.Resolution?.ActualPlatformName;
 
         if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
-            throw new InvalidOperationException($"routemap 匹配失败：{resp.ErrorMessage ?? "模型未返回内容"}");
+        {
+            // LLM 失败也不让整个流程崩 —— 保留 baseline（含 clone 失败/无 routemap 的占位）
+            _logger.LogWarning("[ProjectRouteAgent] routemap LLM 匹配失败：{Err}", resp.ErrorMessage);
+            return (baseline, model, platform);
+        }
 
-        var resolutions = ParseResolutions(resp.Content!, snapshots);
-        return (resolutions, model, platform);
+        MergeLlmIntoBaseline(resp.Content!, baseline);
+        return (baseline, model, platform);
     }
 
-    private static List<ProjectRouteResolution> ParseResolutions(
-        string content,
-        IReadOnlyList<(ProjectRouteExtractedRepo Repo, RoutemapSnapshot? Snap, string? ErrorMessage)> snapshots)
+    /// <summary>
+    /// LLM 输出按 repo 分组的 JSON，merge 回 baseline（按 RepoUrl 匹配）。
+    /// baseline 里已有 CloneFailed / NoRoutemap 状态的条目不被 LLM 覆盖。
+    /// </summary>
+    private static void MergeLlmIntoBaseline(string content, List<ProjectRouteResolution> baseline)
     {
-        var list = new List<ProjectRouteResolution>();
         JsonNode? parsed;
-        try
-        {
-            parsed = JsonNode.Parse(StripCodeFence(content));
-        }
-        catch
-        {
-            return list;
-        }
-        if (parsed is not JsonObject obj) return list;
-        if (obj["resolutions"] is not JsonArray arr) return list;
+        try { parsed = JsonNode.Parse(StripCodeFence(content)); }
+        catch { return; }
+        if (parsed is not JsonObject obj) return;
+        if (obj["repos"] is not JsonArray arr) return;
 
-        var entryByUrl = snapshots.ToDictionary(s => s.Repo.RepoUrl, s => s.Repo, StringComparer.OrdinalIgnoreCase);
+        var byUrl = baseline.ToDictionary(r => r.RepoUrl, r => r, StringComparer.OrdinalIgnoreCase);
 
         foreach (var node in arr)
         {
             if (node is not JsonObject o) continue;
-            var item = new ProjectRouteResolution
-            {
-                AppOrModule = o["appOrModule"]?.GetValue<string>()?.Trim() ?? string.Empty,
-                RepoUrl = o["repoUrl"]?.GetValue<string>()?.Trim(),
-                RepoAppName = o["repoAppName"]?.GetValue<string>()?.Trim(),
-                Reasoning = o["reasoning"]?.GetValue<string>()?.Trim(),
-                Status = NormalizeStatus(o["status"]?.GetValue<string>()),
-            };
+            var url = o["repoUrl"]?.GetValue<string>()?.Trim();
+            if (string.IsNullOrEmpty(url)) continue;
+            if (!byUrl.TryGetValue(url, out var target)) continue;
+            // 仓库克隆失败 / 无 routemap → 不让 LLM 改写其状态
+            if (target.Status == ProjectRouteResolutionStatuses.CloneFailed
+                || target.Status == ProjectRouteResolutionStatuses.NoRoutemap)
+                continue;
+
             if (o["projectPaths"] is JsonArray pp)
             {
-                item.ProjectPaths = pp.Where(p => p != null)
+                target.ProjectPaths = pp.Where(p => p != null)
                     .Select(p => p!.ToString().Trim())
                     .Where(p => p.Length > 0)
                     .Distinct()
                     .ToList();
             }
-            if (!string.IsNullOrEmpty(item.RepoUrl)
-                && string.IsNullOrEmpty(item.RepoAppName)
-                && entryByUrl.TryGetValue(item.RepoUrl, out var entry))
+            if (o["matchedAppsOrModules"] is JsonArray mm)
             {
-                item.RepoAppName = entry.AppName;
+                target.MatchedAppsOrModules = mm.Where(p => p != null)
+                    .Select(p => p!.ToString().Trim())
+                    .Where(p => p.Length > 0)
+                    .Distinct()
+                    .ToList();
             }
-            if (string.IsNullOrEmpty(item.AppOrModule)) continue;
-            list.Add(item);
+            target.Reasoning = o["reasoning"]?.GetValue<string>()?.Trim() ?? target.Reasoning;
+            target.Status = NormalizeStatus(o["status"]?.GetValue<string>());
+            // 路径 0 但 LLM 标 Hit → 自动降级为 NotFound，避免误导
+            if (target.Status == ProjectRouteResolutionStatuses.Hit && target.ProjectPaths.Count == 0)
+                target.Status = ProjectRouteResolutionStatuses.NotFound;
         }
-        return list;
     }
 
     private static string NormalizeStatus(string? raw)
@@ -731,8 +764,16 @@ public class ProjectRouteAgentController : ControllerBase
         {
             "notfound" or "not-found" or "not_found" or "miss" or "missing" => ProjectRouteResolutionStatuses.NotFound,
             "ambiguous" or "multi" or "multiple" => ProjectRouteResolutionStatuses.Ambiguous,
+            "clonefailed" or "clone-failed" or "clone_failed" => ProjectRouteResolutionStatuses.CloneFailed,
+            "noroutemap" or "no-routemap" or "no_routemap" => ProjectRouteResolutionStatuses.NoRoutemap,
             _ => ProjectRouteResolutionStatuses.Hit,
         };
+    }
+
+    private static string Truncate(string value, int limit)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Length <= limit ? value : value[..limit] + "...[truncated]";
     }
 
     private static string StripCodeFence(string s)

@@ -83,24 +83,26 @@ public class ProjectRouteExtractedRepo
 }
 
 /// <summary>
-/// 解析结果：一个应用 / 业务模块 → 对应的仓库 routemap 下的项目路径
+/// 解析结果（V2 重构后按仓库分组）：一个仓库 → 该仓库下命中的项目路径 + 关联到的方案应用/模块。
 /// </summary>
 public class ProjectRouteResolution
 {
-    /// <summary>用户方案里被识别的应用 / 业务模块名</summary>
-    public string AppOrModule { get; set; } = string.Empty;
+    /// <summary>仓库 url（来自 plan.ExtractedRepos[*]）</summary>
+    public string RepoUrl { get; set; } = string.Empty;
 
-    /// <summary>命中的仓库（来自本次 AI 抽出的 ExtractedRepos[*]）</summary>
-    public string? RepoUrl { get; set; }
-    public string? RepoAppName { get; set; }
+    /// <summary>仓库展示名（来自 plan.ExtractedRepos[*].AppName）</summary>
+    public string RepoAppName { get; set; } = string.Empty;
 
-    /// <summary>routemap/ 下命中的项目相对路径（如 "billing/main.json"），可能多个</summary>
+    /// <summary>routemap/ 下命中的项目相对路径（如 "billing/main.json"）</summary>
     public List<string> ProjectPaths { get; set; } = new();
+
+    /// <summary>方案里命中该仓库的应用 / 模块清单（去重，文档头里抽到的原话）</summary>
+    public List<string> MatchedAppsOrModules { get; set; } = new();
 
     /// <summary>命中说明（LLM 给出的中文解释，用户可读）</summary>
     public string? Reasoning { get; set; }
 
-    /// <summary>命中状态：Hit（找到） / NotFound（未找到） / Ambiguous（多候选）</summary>
+    /// <summary>命中状态：Hit / NotFound / Ambiguous / CloneFailed / NoRoutemap</summary>
     public string Status { get; set; } = ProjectRouteResolutionStatuses.Hit;
 }
 
@@ -117,4 +119,6 @@ public static class ProjectRouteResolutionStatuses
     public const string Hit = "Hit";
     public const string NotFound = "NotFound";
     public const string Ambiguous = "Ambiguous";
+    public const string CloneFailed = "CloneFailed";
+    public const string NoRoutemap = "NoRoutemap";
 }

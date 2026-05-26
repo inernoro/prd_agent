@@ -21,13 +21,19 @@ export interface ProjectRouteSiteSpec {
   updatedAt: string;
 }
 
-export type ProjectRouteResolutionStatus = 'Hit' | 'NotFound' | 'Ambiguous';
+export type ProjectRouteResolutionStatus =
+  | 'Hit'
+  | 'NotFound'
+  | 'Ambiguous'
+  | 'CloneFailed'
+  | 'NoRoutemap';
 
+/** V2 重构后按仓库分组：每条 = 一个仓库 + 该仓库下命中的项目路径 + 关联到的 apps/modules */
 export interface ProjectRouteResolution {
-  appOrModule: string;
-  repoUrl?: string | null;
-  repoAppName?: string | null;
+  repoUrl: string;
+  repoAppName: string;
   projectPaths: string[];
+  matchedAppsOrModules: string[];
   reasoning?: string | null;
   status: ProjectRouteResolutionStatus;
 }

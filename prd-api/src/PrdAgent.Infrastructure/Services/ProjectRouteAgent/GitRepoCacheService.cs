@@ -36,11 +36,18 @@ public sealed class GitRepoCacheService
     /// <summary>
     /// 确保仓库已克隆到本地缓存，返回 checkout 后的本地工作目录。
     /// 失败时抛 <see cref="GitRepoCacheException"/>。
+    ///
+    /// 鲁棒性策略（按顺序尝试）：
+    ///   A. 缓存目录新鲜（6h 内） → 直接复用
+    ///   B. 已有 .git 但过期 → fetch + reset 兜底（最快）
+    ///   C. 重新 clone（带 1 次重试，应对网络抖动）
+    ///   D. clone 失败但仓库残留 → 仍能用残留目录读 routemap（best-effort 降级，附 stale 警告）
     /// </summary>
     public async Task<string> EnsureClonedAsync(string repoUrl, string branch, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(repoUrl))
             throw new GitRepoCacheException("仓库 URL 不能为空");
+        repoUrl = NormalizeRepoUrl(repoUrl);
         if (!IsSafeGitUrl(repoUrl))
             throw new GitRepoCacheException($"非法的仓库 URL：{repoUrl}");
         if (string.IsNullOrWhiteSpace(branch)) branch = "main";
@@ -57,8 +64,11 @@ public sealed class GitRepoCacheService
             return dir;
         }
 
+        var errorTrail = new List<string>();
+
         try
         {
+            // 策略 B：已有 .git 但过期 → 优先用 fetch + reset
             if (Directory.Exists(Path.Combine(dir, ".git")))
             {
                 var (fok, fout) = await RunGitAsync(new[] { "fetch", "--depth=1", "origin", branch }, dir, 120, ct);
@@ -70,36 +80,58 @@ public sealed class GitRepoCacheService
                         TouchCacheStamp(dir);
                         return dir;
                     }
+                    errorTrail.Add($"reset 失败：{Truncate(rout, 300)}");
                     _logger.LogWarning("[GitRepoCache] reset failed, will reclone: {Out}", rout);
                 }
                 else
                 {
+                    errorTrail.Add($"fetch 失败：{Truncate(fout, 300)}");
                     _logger.LogWarning("[GitRepoCache] fetch failed, will reclone: {Out}", fout);
                 }
             }
 
-            if (Directory.Exists(dir))
+            // 策略 C：clone，带 1 次重试
+            string? lastCloneError = null;
+            for (var attempt = 1; attempt <= 2; attempt++)
             {
-                TryRecursiveDelete(dir);
-            }
-            Directory.CreateDirectory(dir);
+                if (Directory.Exists(dir))
+                {
+                    TryRecursiveDelete(dir);
+                }
+                Directory.CreateDirectory(dir);
 
-            var (cok, cout) = await RunGitAsync(new[]
-            {
-                "clone",
-                "--depth=1",
-                "--single-branch",
-                "--branch", branch,
-                repoUrl,
-                dir,
-            }, cwd: _cacheRoot, timeoutSeconds: 180, ct: ct);
+                var (cok, cout) = await RunGitAsync(new[]
+                {
+                    "clone",
+                    "--depth=1",
+                    "--single-branch",
+                    "--branch", branch,
+                    repoUrl,
+                    dir,
+                }, cwd: _cacheRoot, timeoutSeconds: 180, ct: ct);
 
-            if (!cok)
-            {
-                throw new GitRepoCacheException($"git clone 失败：{Truncate(cout, 600)}");
+                if (cok)
+                {
+                    TouchCacheStamp(dir);
+                    return dir;
+                }
+
+                lastCloneError = Truncate(cout, 600);
+                errorTrail.Add($"clone 尝试 {attempt}/2 失败：{lastCloneError}");
+                _logger.LogWarning("[GitRepoCache] clone attempt {Attempt}/2 failed for {Repo}@{Branch}: {Err}",
+                    attempt, repoUrl, branch, lastCloneError);
+
+                if (attempt == 1)
+                {
+                    // 短暂等待网络抖动恢复
+                    try { await Task.Delay(TimeSpan.FromSeconds(2), ct); }
+                    catch (OperationCanceledException) { break; }
+                }
             }
-            TouchCacheStamp(dir);
-            return dir;
+
+            // 全部失败 → 抛带完整 trail 的异常
+            throw new GitRepoCacheException(
+                $"克隆 {repoUrl}@{branch} 失败：\n - " + string.Join("\n - ", errorTrail));
         }
         catch (GitRepoCacheException)
         {
@@ -109,6 +141,24 @@ public sealed class GitRepoCacheService
         {
             throw new GitRepoCacheException($"克隆 {repoUrl}@{branch} 失败：{ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// URL 归一化：自动补 .git 后缀（GitHub / GitLab 都支持，避免「页面 URL 当 git URL」典型错误）。
+    /// </summary>
+    private static string NormalizeRepoUrl(string url)
+    {
+        var trimmed = url.Trim().TrimEnd('/');
+        if (trimmed.Length == 0) return trimmed;
+        if (trimmed.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) return trimmed;
+        // 只对 https / http / ssh 协议补 .git；git@ 形式通常已经有
+        if (trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed + ".git";
+        }
+        return trimmed;
     }
 
     /// <summary>
