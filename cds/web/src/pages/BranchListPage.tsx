@@ -562,6 +562,34 @@ function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
   writeAvatarStorage(url, status);
 }
 
+function circularActorText(value: string): string {
+  const base = (value || '').trim() || 'CDS';
+  const compact = base.replace(/\s+/g, '');
+  const clipped = compact.length > 18 ? compact.slice(0, 18) : compact;
+  return `${clipped} • ${clipped} •`;
+}
+
+function CircularActorText({ text }: { text: string }): JSX.Element {
+  const chars = Array.from(circularActorText(text));
+  return (
+    <span className="cds-actor-orbit__ring" aria-hidden>
+      {chars.map((char, index) => {
+        const angle = (360 / chars.length) * index;
+        return (
+          <span
+            // eslint-disable-next-line react/no-array-index-key
+            key={`${char}-${index}`}
+            className="cds-actor-orbit__char"
+            style={{ transform: `rotate(${angle}deg) translateY(-23px) rotate(90deg)` }}
+          >
+            {char}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function formatBytesFromMB(value?: number): string {
   if (!value || value <= 0) return '未知';
   if (value >= 1024) return `${Math.round(value / 102.4) / 10} GB`;
@@ -3819,9 +3847,9 @@ function BranchCard({
             aria-hidden
           />
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <h3
-                className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight"
+                className="min-w-0 flex-[1_1_14rem] break-all text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
                 {branch.branch}
@@ -4238,33 +4266,36 @@ function BranchCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
-          <div className="flex w-11 shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div
-              className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-              aria-label={builderTitle}
-            >
-              <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
-                {builderInitial}
-              </span>
-              {builderAvatarUrl && builderAvatarStatus !== 'failed' ? (
-                <img
-                  src={builderAvatarUrl}
-                  alt=""
-                  className="relative h-full w-full object-cover"
-                  referrerPolicy="no-referrer"
-                  onLoad={() => {
-                    rememberAvatarStatus(builderAvatarUrl, 'loaded');
-                    setBuilderAvatarStatus('loaded');
-                  }}
-                  onError={() => {
-                    rememberAvatarStatus(builderAvatarUrl, 'failed');
-                    setBuilderAvatarStatus('failed');
-                  }}
-                />
-              ) : null}
+          <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
+            <div className={`cds-actor-orbit ${isInterim || isAiActive ? 'cds-actor-orbit--active' : ''}`}>
+              {(isInterim || isAiActive) && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
+              <div
+                className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                aria-label={builderTitle}
+              >
+                <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+                  {builderInitial}
+                </span>
+                {builderAvatarUrl && builderAvatarStatus !== 'failed' ? (
+                  <img
+                    src={builderAvatarUrl}
+                    alt=""
+                    className="relative h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onLoad={() => {
+                      rememberAvatarStatus(builderAvatarUrl, 'loaded');
+                      setBuilderAvatarStatus('loaded');
+                    }}
+                    onError={() => {
+                      rememberAvatarStatus(builderAvatarUrl, 'failed');
+                      setBuilderAvatarStatus('failed');
+                    }}
+                  />
+                ) : null}
+              </div>
             </div>
             {footerBuilder ? (
-              <span className="block max-w-full truncate text-center text-[10px] font-medium leading-none text-foreground/70">
+              <span className="block max-w-full break-all text-center text-[10px] font-medium leading-tight text-foreground/70">
                 {footerBuilder}
               </span>
             ) : null}

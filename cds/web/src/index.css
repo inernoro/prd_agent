@@ -326,6 +326,52 @@
     animation-delay: 0.36s;
   }
 
+  .cds-actor-orbit {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    overflow: visible;
+  }
+
+  .cds-actor-orbit--active {
+    width: 54px;
+    height: 54px;
+    margin-block: -8px -6px;
+  }
+
+  .cds-actor-orbit__avatar {
+    z-index: 2;
+  }
+
+  .cds-actor-orbit__ring {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    animation: cds-actor-orbit-spin 9s linear infinite;
+    color: rgb(125 211 252 / 0.92);
+    filter: drop-shadow(0 0 5px rgb(56 189 248 / 0.5));
+    pointer-events: none;
+  }
+
+  .cds-actor-orbit__char {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 8px;
+    margin-left: -4px;
+    margin-top: -4px;
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    font-size: 7px;
+    font-weight: 700;
+    line-height: 8px;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    transform-origin: 50% 50%;
+  }
+
   [data-theme='light'] .cds-ai-preview-beacon {
     border-color: rgb(2 132 199 / 0.58) !important;
     box-shadow:
@@ -423,6 +469,10 @@
     }
   }
 
+  @keyframes cds-actor-orbit-spin {
+    to { transform: rotate(360deg); }
+  }
+
   @keyframes cds-site-notice-pulse {
     0%, 100% {
       transform: scale(1);
@@ -441,6 +491,7 @@
     .cds-ai-preview-beacon svg,
     .cds-ai-active-card .cds-ai-kinetic-icon,
     .cds-ai-active-card .cds-ai-kinetic-dot,
+    .cds-actor-orbit__ring,
     .cds-site-notice-trigger--active {
       animation: none;
     }
