@@ -1,1 +1,0 @@
-| refactor | prd-admin | 周报编辑器章节卡：上一轮去框过头导致章节融化到主背景，恢复轻量 surface 容器（暗色 rgba(255,255,255,0.025) + 1px hairline border + 微 backdrop-blur + 双层柔和阴影；浅色 #FFFFFF + hairline + sm 阴影），保留中性灰阶不回退到彩色色斑；mono 章节编号"01"提升为悬浮页边码（桌面 lg 断点显示在卡片外左侧，窄屏内联回 header）；header / items 间加 mx-6 hairline 细分隔；bullet 与拖动手柄通过 fixed-height 容器对齐输入框首行中心 |

@@ -1,1 +1,0 @@
-| fix | cds skills | 修正 SKILL.md 中 7 处与真实 cdscli parser 不符的命令示例（Codex review #619 发现）：cds 删除不存在的 key create；cds-deploy-pipeline 修正 project list --human 全局选项位置、branch exec 补 --profile、branch deploy 去掉不支持的 --profile、branch stop/delete 改为 API 直调、branch pull 改为 deploy 内置说明 |

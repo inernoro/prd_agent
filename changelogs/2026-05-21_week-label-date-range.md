@@ -1,1 +1,0 @@
-| refactor | prd-admin | 周报全局周次显示从「2026 年第 21 周」改为「5/18 - 5/24 · W21」格式：日期范围为主、ISO 周次为辅。覆盖顶部筛选下拉、卡片、详情页、编辑器、分享对话框、Markdown 导入、示例 Markdown 等 9 处显示。新增 utils/weekRange.ts 共享 helper（含 getISOWeekStart + formatWeekDateRange + formatWeekLabelWithRange） |
