@@ -1379,6 +1379,7 @@ export function createServer(deps: ServerDeps): express.Express {
           /^\/api\/branches\/[^/]+\/container-logs(\?|$)/,
           /^\/api\/branches\/[^/]+\/deploy(\?|$)/,
           /^\/api\/branches\/[^/]+\/deploy\/[^/]+/,
+          /^\/api\/branches\/[^/]+\/stop(\?|$)/,
           /^\/api\/bridge\/(heartbeat|result|end-session|dismiss|approve|reject)/,
         ];
         const ALLOW_PUT: RegExp[] = [

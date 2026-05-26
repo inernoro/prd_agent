@@ -3371,6 +3371,68 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    const actor = resolveActorFromRequest(req);
+    const trigger = typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : undefined;
+    const deleteReason = trigger === 'webhook'
+      ? 'GitHub webhook 删除远程分支后自动清理 CDS preview'
+      : trigger
+        ? `CDS 内部触发(${trigger})删除分支`
+        : `${actor} 请求删除分支`;
+    const deleteStartedAt = nowIso();
+    entry.status = 'stopping';
+    entry.lastStoppedAt = deleteStartedAt;
+    entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
+    entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
+    stateService.save();
+    try {
+      stateService.appendActivityLog(entry.projectId, {
+        type: 'stop',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor,
+        note: entry.lastStopReason,
+      });
+    } catch { /* activity log is best-effort */ }
+    serverEventLogStore?.record({
+      category: 'container',
+      severity: 'warn',
+      source: 'branch-delete',
+      action: 'branch.delete.requested',
+      message: `delete requested for ${id}: ${deleteReason}`,
+      projectId: entry.projectId,
+      branchId: entry.id,
+      requestId: requestId || null,
+      details: {
+        actor,
+        trigger: trigger || null,
+        remoteAddr: req.ip || req.socket.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+        referer: req.headers.referer || null,
+      },
+    });
+
+    const finalizeBranchDelete = (message: string): void => {
+      stateService.removeLogs(id);
+      stateService.removeBranch(id);
+      stateService.save();
+      branchEvents.emitEvent({
+        type: 'branch.removed',
+        payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
+      });
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'branch-delete',
+        action: 'branch.delete.completed',
+        message,
+        projectId: entry.projectId,
+        branchId: entry.id,
+        requestId: requestId || null,
+        details: { actor, trigger: trigger || null },
+      });
+    };
+
     // ── Cluster-aware delete ──
     //
     // If the branch is owned by a remote executor, the master doesn't have
@@ -3436,20 +3498,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         // Drop master-side state unconditionally — if the executor is
         // unreachable, the operator can manually clean up on that node.
-        stateService.removeLogs(id);
-        stateService.removeBranch(id);
-        stateService.save();
-
-        branchEvents.emitEvent({
-          type: 'branch.removed',
-          payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
-        });
-
-        sendSSE(res, 'complete', {
-          message: proxied
+        const completeMessage = proxied
             ? `分支 "${id}" 已在执行器 ${remoteExecutor.id} 上删除`
-            : `分支 "${id}" 已从主节点移除；执行器上的残留请手动检查`,
-        });
+            : `分支 "${id}" 已从主节点移除；执行器上的残留请手动检查`;
+        finalizeBranchDelete(completeMessage);
+        sendSSE(res, 'complete', { message: completeMessage });
         return;
       }
 
@@ -3477,6 +3530,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch { /* ok */ }
       sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
+      // Commit the user-visible deletion before best-effort volume cleanup.
+      // A slow/hung Docker volume command or master restart must not leave
+      // "containers removed but branch card still present" half-state.
+      finalizeBranchDelete(`分支 "${id}" 已删除`);
+
       // ⚠ Bugbot 2026-05-06 ea633e03:删除 per-(branch, profile) 的
       // node_modules docker named volume(container.ts 里给 pnpm 项目挂的
       // cds-nm-{branchId}-{profileId})。volume 不会随容器删除自动清,长期
@@ -3489,7 +3547,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 改为子串过滤(name=prefix)粗筛 + JS startsWith 精确兜底,前缀里的 hyphen
         // 已足够独特,不会误吞其他名字。
         const prefix = nodeModulesVolumePrefix(entry.id);
-        const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=${prefix}`);
+        const list = await shell.exec(`docker volume ls --format='{{.Name}}' --filter name=${prefix}`, { timeout: 10_000 });
         // ⚠ Bugbot 2026-05-06 8469603b:虽然我们生成的 volume 名是定长 hex,但
         // docker volume ls 输出来自 docker daemon,理论上可被外部命令污染。
         // shell.exec 走 child_process.exec(整串 shell 解释),恶意 volume 名
@@ -3501,22 +3559,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
             n.startsWith(prefix) && isSafeVolumeName(n),
           );
           for (const name of names) {
-            await shell.exec(`docker volume rm ${name}`).catch(() => { /* tolerate */ });
+            await shell.exec(`docker volume rm ${name}`, { timeout: 10_000 }).catch(() => { /* tolerate */ });
           }
           if (names.length > 0) {
             sendSSE(res, 'step', { step: 'volume-cleanup', status: 'done', title: `已清理 ${names.length} 个 node_modules volume` });
           }
         }
       } catch { /* ok — volume cleanup 是 best-effort */ }
-
-      stateService.removeLogs(id);
-      stateService.removeBranch(id);
-      stateService.save();
-
-      branchEvents.emitEvent({
-        type: 'branch.removed',
-        payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
-      });
 
       sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
     } catch (err) {
