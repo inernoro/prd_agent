@@ -106,6 +106,7 @@ describe('Branch Routes', () => {
   let server: http.Server;
   let mock: MockShellExecutor;
   let stateService: StateService;
+  let containerService: ContainerService;
   let operationEvents: Array<{ action: string; branchId?: string | null; details?: Record<string, unknown> }>;
 
   beforeEach(async () => {
@@ -140,7 +141,9 @@ describe('Branch Routes', () => {
     seedLegacyDefaultProject(stateService);
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    containerService = new ContainerService(mock, config);
+    (containerService as any).waitForContainerAlive = async () => undefined;
+    (containerService as any).waitForReadiness = async () => true;
     operationEvents = [];
     const serverEventLogStore: ServerEventLogSink = {
       record(record) {
@@ -752,6 +755,68 @@ describe('Branch Routes', () => {
       expect(actions).toContain('branch.operation.started');
       expect(actions).toContain('branch.operation.completed');
       expect(actions).toContain('branch.operation.queued');
+    });
+  });
+
+  describe('branch operation fencing', () => {
+    it('manual delete fences an in-flight webhook deploy and the old deploy cannot recreate branch state', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-delete',
+        projectId: 'default',
+        branch: 'feature/race-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-race-delete-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-race-delete', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(
+        server,
+        'POST',
+        '/api/branches/race-delete/deploy',
+        { commitSha: '2222222222222222222222222222222222222222' },
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      await runStarted;
+
+      const del = await request(server, 'DELETE', '/api/branches/race-delete');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('race-delete')).toBeUndefined();
+
+      releaseRun();
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('no longer current');
+      expect(stateService.getBranch('race-delete')).toBeUndefined();
+
+      const events = operationEvents.filter((event) => event.branchId === 'race-delete');
+      expect(events.map((event) => event.action)).toContain('branch.operation.cancelled');
+      expect(events.map((event) => event.action)).toContain('branch.operation.completed');
     });
   });
 

@@ -27,6 +27,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createExecutorRouter } from '../../src/executor/routes.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 function makeConfig(tmpDir: string): CdsConfig {
   return {
@@ -84,11 +85,38 @@ async function postSse(
   });
 }
 
+async function postJson(
+  server: http.Server, urlPath: string, body: unknown,
+): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const data = JSON.stringify(body);
+    const req = http.request({
+      hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode!, body: JSON.parse(raw) }); }
+        catch { resolve({ status: res.statusCode!, body: raw }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
 describe('Executor /exec/deploy', () => {
   let tmpDir: string;
   let stateService: StateService;
   let server: http.Server;
   let mock: MockShellExecutor;
+  let containerEvents: Array<{ action: string; operationId?: string | null; requestId?: string | null; details?: Record<string, unknown> }>;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-exec-'));
@@ -114,7 +142,20 @@ describe('Executor /exec/deploy', () => {
     mock.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    containerEvents = [];
+    const eventSink: ServerEventLogSink = {
+      record(record) {
+        containerEvents.push({
+          action: record.action,
+          operationId: record.operationId,
+          requestId: record.requestId,
+          details: record.details,
+        });
+      },
+    };
+    const containerService = new ContainerService(mock, config, undefined, eventSink);
+    (containerService as any).waitForContainerAlive = async () => undefined;
+    (containerService as any).waitForReadiness = async () => true;
 
     const app = express();
     app.use(express.json());
@@ -285,5 +326,76 @@ describe('Executor /exec/deploy', () => {
     // Should not have been overwritten — the master-supplied value
     // only applies to newly-created entries.
     expect(entry!.projectId).toBe('whatever-was-there-before');
+  });
+
+  it('threads operationId/requestId from master into executor docker run events', async () => {
+    const result = await postSse(server, '/exec/deploy', {
+      branchId: 'realproj-op-trace',
+      branchName: 'feature/op-trace',
+      projectId: 'default',
+      requestId: 'req-exec-deploy',
+      operationId: 'op-exec-deploy',
+      actor: 'user:42',
+      trigger: 'manual',
+      profiles: [{
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        workDir: '.',
+        command: 'node server.js',
+        containerPort: 3000,
+      }],
+      env: {},
+    });
+
+    expect(result.status).toBe(200);
+    expect(containerEvents.find((event) => event.action === 'app.pre-run-rm')?.operationId).toBe('op-exec-deploy');
+    expect(containerEvents.find((event) => event.action === 'app.run.started')?.requestId).toBe('req-exec-deploy');
+    expect(containerEvents.find((event) => event.action === 'app.pre-run-rm')?.details?.actor).toBe('user:42');
+  });
+
+  it('threads operationId into executor stop and delete container events', async () => {
+    const now = new Date().toISOString();
+    stateService.addBranch({
+      id: 'exec-owned',
+      projectId: 'default',
+      branch: 'feature/exec-owned',
+      worktreePath: path.join(tmpDir, 'worktrees', 'default', 'exec-owned'),
+      services: {
+        api: {
+          profileId: 'api',
+          containerName: 'cds-exec-owned-api',
+          hostPort: 10001,
+          status: 'running',
+        },
+      },
+      status: 'running',
+      createdAt: now,
+    });
+
+    const stop = await postJson(server, '/exec/stop', {
+      branchId: 'exec-owned',
+      requestId: 'req-exec-stop',
+      operationId: 'op-exec-stop',
+      actor: 'scheduler',
+      trigger: 'auto-lifecycle',
+    });
+    expect(stop.status).toBe(200);
+    expect(containerEvents.find((event) => event.action === 'container.stop.requested')?.operationId).toBe('op-exec-stop');
+
+    const branch = stateService.getBranch('exec-owned')!;
+    branch.status = 'running';
+    branch.services.api.status = 'running';
+    stateService.save();
+    const del = await postJson(server, '/exec/delete', {
+      branchId: 'exec-owned',
+      requestId: 'req-exec-delete',
+      operationId: 'op-exec-delete',
+      actor: 'user:42',
+      trigger: 'manual',
+    });
+    expect(del.status).toBe(200);
+    expect(containerEvents.find((event) => event.action === 'container.remove.requested')?.operationId).toBe('op-exec-delete');
+    expect(stateService.getBranch('exec-owned')).toBeUndefined();
   });
 });
