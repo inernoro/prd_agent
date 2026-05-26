@@ -1,0 +1,234 @@
+/**
+ * 毒舌秘书 UE 系统化样式。
+ *
+ * 目标：把 Linear / Apple HIG / Vercel 的微交互范式落地到毒舌秘书，零新增 JS 依赖（不引入 framer-motion）。
+ * 维度：
+ *   1) typography token —— 信息层级用注释化的 utility（不污染全局）
+ *   2) easing token —— 三档动画曲线常量
+ *   3) 入场动画 —— bubble / panel / empty state
+ *   4) hover glow —— 按钮 / chip / 卡片
+ *   5) 复选框 spring —— 任务勾选的 tactile 反馈
+ *   6) 骨架屏 shimmer —— 加载状态
+ *
+ * 命名空间：所有 class 以 `pa-` 起头，避免与全局 surface system 冲突。
+ */
+
+/* =======================================================================
+ *  Easing tokens
+ *  Linear / Apple 系统的核心都是 spring 与 deceleration 曲线
+ * ===================================================================== */
+:root {
+  --pa-ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --pa-ease-deceleration: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --pa-ease-emphasized: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* =======================================================================
+ *  入场动画 — 聊天 streaming bubble / 空状态 / 一般 panel
+ * ===================================================================== */
+@keyframes pa-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.streaming-bubble-enter {
+  animation: pa-bubble-in 260ms var(--pa-ease-spring) both;
+}
+
+@keyframes pa-empty-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.pa-empty-enter {
+  animation: pa-empty-in 320ms var(--pa-ease-deceleration) both;
+}
+
+/* hero icon：缓慢轻微呼吸，强调"在等你" */
+@keyframes pa-hero-breath {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow:
+      0 18px 40px -12px rgba(139, 92, 246, 0.55),
+      0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+      0 1px 0 rgba(255, 255, 255, 0.15) inset;
+  }
+  50% {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow:
+      0 22px 50px -10px rgba(139, 92, 246, 0.65),
+      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+      0 1px 0 rgba(255, 255, 255, 0.18) inset,
+      0 0 24px rgba(34, 211, 238, 0.18);
+  }
+}
+.pa-hero-icon {
+  animation: pa-hero-breath 4.5s var(--pa-ease-emphasized) infinite;
+}
+
+/* =======================================================================
+ *  Quick command 卡片 — Linear/Notion 风的精致按钮
+ * ===================================================================== */
+.pa-quick-cmd {
+  transition:
+    transform 200ms var(--pa-ease-spring),
+    border-color 200ms var(--pa-ease-emphasized),
+    box-shadow 280ms var(--pa-ease-deceleration),
+    background-color 200ms var(--pa-ease-emphasized);
+  will-change: transform, box-shadow;
+}
+.pa-quick-cmd:hover {
+  transform: translateY(-1px) scale(1.012);
+  border-color: rgba(99, 102, 241, 0.45) !important;
+  box-shadow:
+    0 6px 20px -8px rgba(99, 102, 241, 0.5),
+    0 0 0 1px rgba(99, 102, 241, 0.15) inset;
+}
+.pa-quick-cmd:hover > span:first-child {
+  background: rgba(99, 102, 241, 0.22) !important;
+  color: #c7d2fe !important;
+}
+.pa-quick-cmd:active {
+  transform: translateY(0) scale(0.99);
+  transition-duration: 60ms;
+}
+
+/* =======================================================================
+ *  任务卡片 — hover 抬升 + 阴影 + 边框高亮
+ * ===================================================================== */
+.pa-task-card {
+  transition:
+    transform 220ms var(--pa-ease-spring),
+    box-shadow 280ms var(--pa-ease-deceleration),
+    border-color 200ms var(--pa-ease-emphasized);
+  will-change: transform, box-shadow;
+}
+.pa-task-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(99, 102, 241, 0.35) !important;
+  box-shadow:
+    0 4px 14px -6px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(99, 102, 241, 0.12);
+}
+
+/* 任务卡片右上角操作按钮：tactile hover */
+.pa-task-action {
+  transition: transform 180ms var(--pa-ease-spring), background-color 180ms var(--pa-ease-emphasized);
+}
+.pa-task-action:hover {
+  background-color: rgba(34, 197, 94, 0.14) !important;
+  transform: scale(1.1);
+}
+.pa-task-action-danger {
+  transition: transform 180ms var(--pa-ease-spring), background-color 180ms var(--pa-ease-emphasized), color 180ms;
+}
+.pa-task-action-danger:hover {
+  background-color: rgba(239, 68, 68, 0.13) !important;
+  color: #f87171 !important;
+  transform: scale(1.1);
+}
+
+/* =======================================================================
+ *  Sub-task 复选框 spring — Apple HIG 风
+ *  点击时 scale(0.85) → scale(1.15) → scale(1)，文字划线淡入
+ * ===================================================================== */
+@keyframes pa-checkbox-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.22); }
+  70% { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+.pa-subtask-toggle {
+  transition: color 220ms var(--pa-ease-emphasized);
+}
+.pa-subtask-toggle:hover {
+  color: #6ee7b7 !important;
+}
+.pa-subtask-toggle:active {
+  animation: pa-checkbox-pop 320ms var(--pa-ease-spring);
+}
+.pa-subtask-text {
+  transition:
+    color 280ms var(--pa-ease-deceleration),
+    opacity 280ms var(--pa-ease-deceleration),
+    text-decoration-color 280ms var(--pa-ease-deceleration);
+}
+
+/* =======================================================================
+ *  骨架屏 shimmer — 用于 SessionSkeleton
+ * ===================================================================== */
+@keyframes pa-skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.pa-skeleton-shimmer {
+  background:
+    linear-gradient(
+      100deg,
+      rgba(255, 255, 255, 0.05) 0%,
+      rgba(255, 255, 255, 0.12) 50%,
+      rgba(255, 255, 255, 0.05) 100%
+    );
+  background-size: 200% 100%;
+  animation: pa-skeleton-shimmer 1.6s linear infinite;
+}
+
+/* =======================================================================
+ *  Session list group label — caption 12 / 字间距加宽
+ *  按 Notion / Linear 习惯，分组标题用 micro caps
+ * ===================================================================== */
+.pa-session-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+
+/* =======================================================================
+ *  Tab 切换：spring 过渡（PaAgentPage tab 按钮 / PaReviewDrawer 时段按钮通用）
+ * ===================================================================== */
+.pa-tab-button {
+  transition:
+    background 220ms var(--pa-ease-spring),
+    color 200ms var(--pa-ease-emphasized),
+    box-shadow 240ms var(--pa-ease-deceleration);
+}
+.pa-tab-button[data-active="true"] {
+  box-shadow:
+    0 4px 14px -4px rgba(99, 102, 241, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
+/* =======================================================================
+ *  复盘 / 画像 主按钮 glow（琥珀渐变按钮通用 class）
+ * ===================================================================== */
+.pa-primary-button {
+  transition:
+    transform 200ms var(--pa-ease-spring),
+    box-shadow 260ms var(--pa-ease-deceleration);
+}
+.pa-primary-button:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 8px 24px -6px rgba(245, 158, 11, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+}
+.pa-primary-button:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: 60ms;
+}
+
+/* =======================================================================
+ *  StreamingText 自身在 `streaming.css` 已定义 blur-focus 入场，
+ *  这里只在 pa-agent 上微调 caret dot 颜色，让它和气泡品牌色一致
+ * ===================================================================== */
+.streaming-text .streaming-text-caret--dot {
+  background-color: #a5b4fc !important;
+  box-shadow: 0 0 6px rgba(165, 180, 252, 0.6);
+}
