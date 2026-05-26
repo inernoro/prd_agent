@@ -556,7 +556,18 @@ function dockerLifecycleReason(event: {
   const actor = event.attrs?.signal ? ` signal=${event.attrs.signal}` : '';
   const name = event.containerName || 'unknown-container';
   const intent = event.lifecycleIntent;
-  const intentText = intent ? `；已匹配 CDS 意图 ${intent.kind}：${intent.reason}` : '';
+  const intentMeta = intent
+    ? [
+        intent.operation ? `operation=${intent.operation}` : '',
+        intent.source ? `source=${intent.source}` : '',
+        intent.requestId ? `requestId=${intent.requestId}` : '',
+        intent.actor ? `actor=${intent.actor}` : '',
+        intent.trigger ? `trigger=${intent.trigger}` : '',
+      ].filter(Boolean).join(' ')
+    : '';
+  const intentText = intent
+    ? `；已匹配 CDS 意图 ${intent.kind}：${intent.reason}${intentMeta ? `（${intentMeta}）` : ''}`
+    : '';
   if (event.oomKilled || action === 'oom') {
     return {
       source: 'oom',
@@ -1104,7 +1115,18 @@ janitorService.setRemoveFn(async (slug: string) => {
     });
   } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
   for (const svc of Object.values(branch.services)) {
-    try { await containerService.remove(svc.containerName); } catch { /* best effort */ }
+    try {
+      await containerService.remove(svc.containerName, {
+        projectId: branch.projectId,
+        branchId: branch.id,
+        profileId: svc.profileId,
+        actor: 'janitor',
+        trigger: 'janitor',
+        operation: 'janitor-remove',
+        source: 'janitorService.setRemoveFn',
+        reason: 'Janitor 自动回收：超过保留期或磁盘清理',
+      });
+    } catch { /* best effort */ }
   }
   try {
     const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);

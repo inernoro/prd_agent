@@ -285,7 +285,17 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     }
     try {
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+        try {
+          await containerService.remove(svc.containerName, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: svc.profileId,
+            trigger: 'executor-delete',
+            operation: 'executor-delete-branch',
+            source: 'executor.delete',
+            reason: `执行器删除分支 ${branchId}`,
+          });
+        } catch { /* ok */ }
       }
       // P4 Part 18 (G1.2): executor stays on config.repoRoot.
       try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }

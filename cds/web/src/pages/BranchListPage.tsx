@@ -2218,15 +2218,14 @@ export function BranchListPage(): JSX.Element {
           { method: 'POST' },
         );
       }
-      setAction(branch.id, null);
-      setToast(`${branch.branch} 已重新生成 (${profileIds.length} 服务)`);
-      await refresh(false);
+      setToast(`${branch.branch} 已清理构建缓存，正在重新部署`);
+      await deployBranch(branch, false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setAction(branch.id, finishAction(actionRef.current[branch.id], 'rebuild', message, 'error'));
       setToast(message);
     }
-  }, [refresh, setAction]);
+  }, [deployBranch, setAction]);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;

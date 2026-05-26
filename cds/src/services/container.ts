@@ -9,7 +9,11 @@ import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
-import { collectContainerDiagnostics, recordContainerLifecycleIntent } from './container-diagnostics.js';
+import {
+  collectContainerDiagnostics,
+  recordContainerLifecycleIntent,
+  type ContainerLifecycleIntentKind,
+} from './container-diagnostics.js';
 import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from './server-event-log-store.js';
 
 /**
@@ -30,6 +34,21 @@ export interface ProjectNetworkResolver {
    * fallback 到 projectId)。
    */
   getProjectSlug?(projectId: string): string | undefined;
+}
+
+export interface ContainerRemoveContext {
+  kind?: ContainerLifecycleIntentKind;
+  reason?: string;
+  projectId?: string | null;
+  branchId?: string | null;
+  profileId?: string | null;
+  serviceId?: string | null;
+  requestId?: string | null;
+  actor?: string | null;
+  trigger?: string | null;
+  operation?: string | null;
+  source?: string | null;
+  details?: Record<string, unknown>;
 }
 
 /**
@@ -344,6 +363,7 @@ export class ContainerService {
     branchId?: string | null;
     profileId?: string | null;
     serviceId?: string | null;
+    requestId?: string | null;
     containerName?: string | null;
     status?: string | null;
     exitCode?: number | null;
@@ -370,10 +390,11 @@ export class ContainerService {
 
   private noteLifecycleIntent(
     containerName: string,
-    kind: Parameters<typeof recordContainerLifecycleIntent>[0]['kind'],
+    kind: ContainerLifecycleIntentKind,
     reason: string,
+    context: ContainerRemoveContext = {},
   ): void {
-    recordContainerLifecycleIntent({ containerName, kind, reason });
+    recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
   }
 
   /**
@@ -578,7 +599,13 @@ export class ContainerService {
     await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
 
     // Remove any existing container
-    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器');
+    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
+      projectId: entry.projectId,
+      branchId: entry.id,
+      profileId: profile.id,
+      operation: 'deploy-pre-run-replace',
+      source: 'container.runService',
+    });
     const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
     this.recordContainerEvent({
       severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
@@ -594,6 +621,10 @@ export class ContainerService {
         exitCode: preRunRemove.exitCode,
         stdoutPreview: preRunRemove.stdout,
         stderrPreview: preRunRemove.stderr,
+      },
+      details: {
+        operation: 'deploy-pre-run-replace',
+        reason: '部署前替换同名旧容器',
       },
     });
 
@@ -1295,19 +1326,34 @@ export class ContainerService {
    * force-rebuild / janitor 回收)。停止后还想唤醒请用 stop()。
    * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
    */
-  async remove(containerName: string): Promise<void> {
+  async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
+    const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
+    const kind = context.kind || 'cds-remove';
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
       source: 'cds-container-service',
       action: 'container.remove.requested',
       message: `CDS requested docker stop/rm for ${containerName}`,
+      projectId: context.projectId ?? undefined,
+      branchId: context.branchId ?? undefined,
+      profileId: context.profileId ?? undefined,
+      serviceId: context.serviceId ?? undefined,
+      requestId: context.requestId ?? undefined,
       containerName,
       inspect: before.inspect,
       logs: before.logs,
       error: before.error,
+      details: {
+        reason,
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+        operation: context.operation ?? null,
+        source: context.source ?? null,
+        ...(context.details ? { context: context.details } : {}),
+      },
     });
-    this.noteLifecycleIntent(containerName, 'cds-remove', '删除分支/重置/清理触发容器销毁');
+    this.noteLifecycleIntent(containerName, kind, reason, context);
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({
@@ -1315,12 +1361,24 @@ export class ContainerService {
       source: 'cds-container-service',
       action: 'container.remove.completed',
       message: `docker rm completed for ${containerName}`,
+      projectId: context.projectId ?? undefined,
+      branchId: context.branchId ?? undefined,
+      profileId: context.profileId ?? undefined,
+      serviceId: context.serviceId ?? undefined,
+      requestId: context.requestId ?? undefined,
       containerName,
       command: {
         name: 'docker stop && docker rm',
         exitCode: rmResult.exitCode,
         stdoutPreview: `${stopResult.stdout || ''}${rmResult.stdout || ''}`,
         stderrPreview: `${stopResult.stderr || ''}${rmResult.stderr || ''}`,
+      },
+      details: {
+        reason,
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+        operation: context.operation ?? null,
+        source: context.source ?? null,
       },
     });
   }

@@ -13,11 +13,15 @@ describe('container lifecycle intent correlation', () => {
       containerName: 'cds-prd-agent-main-api-prd-agent',
       kind: 'cds-pre-run-replace',
       reason: 'deploy replacement',
+      requestId: 'req-123',
+      operation: 'deploy-pre-run-replace',
     });
 
     const intent = findRecentContainerLifecycleIntent('/cds-prd-agent-main-api-prd-agent');
     expect(intent?.kind).toBe('cds-pre-run-replace');
     expect(intent?.reason).toBe('deploy replacement');
+    expect(intent?.requestId).toBe('req-123');
+    expect(intent?.operation).toBe('deploy-pre-run-replace');
   });
 
   it('expires stale intents so old CDS actions cannot mask external kills', () => {

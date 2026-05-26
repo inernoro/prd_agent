@@ -2578,7 +2578,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           continue;
         }
 
-        await containerService.remove(svc.containerName).catch(() => undefined);
+        await containerService.remove(svc.containerName, {
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId,
+          operation: 'cleanup-damaged-containers',
+          source: 'api.cleanup-damaged-containers',
+          reason: '批量清理损坏容器：状态未运行且容器不可用',
+        }).catch(() => undefined);
         delete branch.services[profileId];
         removed.push({ branchId: branch.id, branch: branch.branch, profileId, containerName: svc.containerName });
         changedBranchIds.add(branch.id);
@@ -3522,7 +3529,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
-        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+        try {
+          await containerService.remove(svc.containerName, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: svc.profileId,
+            requestId: requestId || null,
+            actor,
+            trigger: trigger || null,
+            operation: 'branch-delete',
+            source: 'api.delete-branch',
+            reason: deleteReason,
+          });
+        } catch { /* ok */ }
         sendSSE(res, 'step', { step: 'stop', status: 'done', title: `已停止 ${svc.containerName}` });
       }
 
@@ -6299,7 +6318,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (Object.prototype.hasOwnProperty.call(svcs, removedProfileId)) {
           const svc = (svcs as any)[removedProfileId];
           if (svc?.containerName) {
-            try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: removedProfileId,
+                operation: 'build-profile-delete',
+                source: 'api.delete-build-profile',
+                reason: `删除构建配置 ${removedProfileId} 时清理对应容器`,
+              });
+            } catch { /* already gone */ }
           }
           delete (svcs as any)[removedProfileId];
         }
@@ -6508,6 +6536,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profile = stateService.getBuildProfile(profileId);
     if (!branch) { res.status(404).json({ error: `分支 "${branchSlug}" 不存在` }); return; }
     if (!profile) { res.status(404).json({ error: `构建配置 "${profileId}" 不存在` }); return; }
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    const actor = resolveActorFromRequest(req);
 
     const svc = branch.services?.[profileId];
     const containerName = svc?.containerName;
@@ -6519,7 +6549,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 1) 停容器
     if (containerName) {
       try {
-        await containerService.remove(containerName);
+        await containerService.remove(containerName, {
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId,
+          requestId: requestId || null,
+          actor,
+          trigger: typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : null,
+          operation: 'force-rebuild',
+          source: 'api.force-rebuild',
+          reason: `强制干净重建 ${branchSlug}:${profileId}：停止旧容器以清理 bin/obj`,
+        });
         steps.push({ step: `停止 ${containerName}`, ok: true });
       } catch (err) {
         steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
@@ -7474,7 +7514,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // Best-effort stop the orphan container.
             const svc = entry.services[profileId];
             if (svc?.containerName) {
-              try { await containerService.remove(svc.containerName); } catch { /* already gone */ }
+              try {
+                await containerService.remove(svc.containerName, {
+                  projectId: entry.projectId,
+                  branchId: entry.id,
+                  profileId,
+                  operation: 'cleanup-cross-project-services',
+                  source: 'api.cleanup-cross-project-services',
+                  reason: `清理跨项目污染服务 ${profileId}`,
+                });
+              } catch { /* already gone */ }
             }
             delete entry.services[profileId];
             dropped.push(profileId);
@@ -7520,7 +7569,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           message: 'captured before cleanup removes branch containers',
         });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+          try {
+            await containerService.remove(svc.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: svc.profileId,
+              trigger: 'cleanup',
+              operation: 'cleanup-all-branches',
+              source: 'api.cleanup',
+              reason: projectFilter ? `清理项目 ${projectFilter} 的非默认分支` : '全局清理非默认分支',
+            });
+          } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -7624,7 +7683,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // Stop all containers for this orphan in parallel
         await Promise.all(
           Object.values(entry.services).map(svc =>
-            containerService.remove(svc.containerName).catch(() => { /* ok */ }),
+            containerService.remove(svc.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: svc.profileId,
+              trigger: 'cleanup-orphans',
+              operation: 'cleanup-orphans',
+              source: 'api.cleanup-orphans',
+              reason: '远程分支不存在，清理 CDS 孤儿分支容器',
+            }).catch(() => { /* ok */ }),
           ),
         );
         // Remove worktree
@@ -7761,7 +7828,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const entry of branches) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
-            try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: svc.profileId,
+                trigger: 'factory-reset',
+                operation: 'factory-reset-project',
+                source: 'api.factory-reset',
+                reason: `项目 ${projectFilter} 恢复出厂设置`,
+              });
+            } catch { /* ok */ }
           }
           try {
             const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -7778,7 +7855,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const infra = stateService.getInfraServicesForProject(projectFilter);
         for (const svc of infra) {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+          try {
+            await containerService.remove(svc.containerName, {
+              projectId: svc.projectId,
+              serviceId: svc.id,
+              trigger: 'factory-reset',
+              operation: 'factory-reset-project-infra',
+              source: 'api.factory-reset',
+              reason: `项目 ${projectFilter} 恢复出厂设置时停止基础设施 ${svc.name}`,
+            });
+          } catch { /* ok */ }
         }
 
         // 3. Remove this project's profiles / infra / routing / env bucket
@@ -7820,7 +7906,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const entry of branches) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
-          try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+          try {
+            await containerService.remove(svc.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: svc.profileId,
+              trigger: 'factory-reset',
+              operation: 'factory-reset-global',
+              source: 'api.factory-reset',
+              reason: '全局恢复出厂设置',
+            });
+          } catch { /* ok */ }
         }
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
@@ -7831,7 +7927,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2. Stop and remove all infra service containers (volumes preserved)
       for (const svc of state.infraServices) {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
-        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+        try {
+          await containerService.remove(svc.containerName, {
+            projectId: svc.projectId,
+            serviceId: svc.id,
+            trigger: 'factory-reset',
+            operation: 'factory-reset-global-infra',
+            source: 'api.factory-reset',
+            reason: `全局恢复出厂设置时停止基础设施 ${svc.name}`,
+          });
+        } catch { /* ok */ }
       }
 
       // 3. Clear all state (but keep the file — it will be overwritten with defaults)

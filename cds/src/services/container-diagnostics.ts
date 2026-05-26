@@ -21,6 +21,16 @@ export interface ContainerLifecycleIntent {
   kind: ContainerLifecycleIntentKind;
   reason: string;
   requestedAt: string;
+  projectId?: string | null;
+  branchId?: string | null;
+  profileId?: string | null;
+  serviceId?: string | null;
+  requestId?: string | null;
+  actor?: string | null;
+  trigger?: string | null;
+  operation?: string | null;
+  source?: string | null;
+  details?: Record<string, unknown>;
 }
 
 const lifecycleIntents = new Map<string, ContainerLifecycleIntent>();
@@ -47,6 +57,16 @@ export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIn
     kind: intent.kind,
     reason: intent.reason,
     requestedAt: intent.requestedAt || new Date().toISOString(),
+    projectId: intent.projectId ?? null,
+    branchId: intent.branchId ?? null,
+    profileId: intent.profileId ?? null,
+    serviceId: intent.serviceId ?? null,
+    requestId: intent.requestId ?? null,
+    actor: intent.actor ?? null,
+    trigger: intent.trigger ?? null,
+    operation: intent.operation ?? null,
+    source: intent.source ?? null,
+    details: intent.details,
   });
 }
 

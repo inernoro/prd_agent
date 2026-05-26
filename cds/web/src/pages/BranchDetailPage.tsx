@@ -1078,7 +1078,7 @@ export function BranchDetailPage(): JSX.Element {
       const steps = res.steps || [];
       const failed = steps.some((step) => !step.ok);
       updateAction({
-        label: failed ? `${profileId} 清理部分失败` : (res.message || '已清理构建缓存'),
+        label: failed ? `${profileId} 清理部分失败` : `${profileId} 已清理，正在重新部署`,
         log: [
           ...steps.map((step) => `${step.ok ? 'ok' : 'fail'} ${step.step}${step.detail ? ` - ${step.detail}` : ''}`),
           ...(failed ? ['suggestion: 检查失败步骤后重试；如果只是容器已不存在，可直接重新部署该服务。'] : []),
@@ -1086,6 +1086,11 @@ export function BranchDetailPage(): JSX.Element {
         status: failed ? 'error' : 'done',
       });
       if (failed) setToast('清理部分失败，查看构建日志中的失败步骤');
+      if (!failed) {
+        setToast(`${profileId} 已清理构建缓存，正在重新部署`);
+        await deploy(profileId);
+        return;
+      }
       await load(false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1135,7 +1140,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [state]);
+  }, [deploy, load, state]);
 
   if (!branchId && !projectId) return <Navigate to="/project-list" replace />;
 
