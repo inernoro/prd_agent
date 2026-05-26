@@ -3,7 +3,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router, type Request, type Response } from 'express';
@@ -2941,6 +2941,141 @@ export function createBranchRouter(deps: RouterDeps): Router {
       skippedRunning,
       skippedBusy,
     });
+  });
+
+  router.post('/branches/cleanup-orphan-containers', async (req, res) => {
+    const projectFilter = resolveProjectIdParam(req.query.project);
+    const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+    const actor = resolveActorFromRequest(req);
+    const trigger = triggerFromRequest(req);
+    const operationId = `op_orphan_container_${randomUUID().slice(0, 12)}`;
+    const discoveredApps = await containerService.discoverAppContainers();
+    const stateServiceKeys = new Set<string>();
+    for (const branch of stateService.getAllBranches()) {
+      if (projectFilter && (branch.projectId || 'default') !== projectFilter) continue;
+      for (const service of Object.values(branch.services || {})) {
+        stateServiceKeys.add(`${branch.id}/${service.profileId}`);
+      }
+    }
+
+    const candidates: Array<{
+      branchId: string;
+      profileId: string;
+      containerName: string;
+      running: boolean;
+      projectId: string | null;
+    }> = [];
+    for (const [key, container] of discoveredApps) {
+      if (stateServiceKeys.has(key)) continue;
+      const branch = stateService.getBranch(container.branchId);
+      if (projectFilter) {
+        const inferredProjectMatch = !branch && (container.branchId === projectFilter || container.branchId.startsWith(`${projectFilter}-`));
+        if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
+      }
+      candidates.push({
+        branchId: container.branchId,
+        profileId: container.profileId,
+        containerName: container.containerName,
+        running: container.running,
+        projectId: branch?.projectId || projectFilter || null,
+      });
+    }
+
+    serverEventLogStore?.record({
+      category: 'container',
+      severity: candidates.length > 0 ? 'warn' : 'info',
+      source: 'api.cleanup-orphan-containers',
+      action: dryRun ? 'app.orphan-container.cleanup-dry-run' : 'app.orphan-container.cleanup-started',
+      message: dryRun
+        ? `orphan app container cleanup dry-run found ${candidates.length} container(s)`
+        : `orphan app container cleanup started for ${candidates.length} container(s)`,
+      projectId: projectFilter || null,
+      requestId,
+      operationId,
+      details: {
+        operationId,
+        requestId,
+        actor,
+        trigger,
+        dryRun,
+        candidates,
+        reason: 'docker app container exists but is not referenced by branch state',
+      },
+    });
+
+    if (dryRun || candidates.length === 0) {
+      res.json({ ok: true, dryRun, operationId, removed: [], candidates });
+      return;
+    }
+
+    const removed: typeof candidates = [];
+    const failed: Array<typeof candidates[number] & { error: string }> = [];
+    for (const item of candidates) {
+      const active = branchOperationCoordinator?.getActive(item.branchId);
+      if (active) {
+        failed.push({ ...item, error: `同分支已有写操作正在运行: ${active.request.kind}` });
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'api.cleanup-orphan-containers',
+          action: 'app.orphan-container.cleanup-skipped',
+          message: `skip orphan container ${item.containerName}: branch operation active`,
+          projectId: item.projectId,
+          branchId: item.branchId,
+          profileId: item.profileId,
+          requestId,
+          operationId,
+          containerName: item.containerName,
+          details: {
+            operationId,
+            requestId,
+            activeOperationId: active.operationId,
+            activeKind: active.request.kind,
+            reason: 'branch-operation-active',
+          },
+        });
+        continue;
+      }
+      try {
+        await containerService.remove(item.containerName, {
+          projectId: item.projectId || undefined,
+          branchId: item.branchId,
+          profileId: item.profileId,
+          requestId,
+          operationId,
+          actor,
+          trigger,
+          operation: 'cleanup-orphan-containers',
+          source: 'api.cleanup-orphan-containers',
+          reason: '清理 Docker orphan app 容器：容器存在但分支状态不再引用',
+        });
+        removed.push(item);
+      } catch (err) {
+        failed.push({ ...item, error: (err as Error).message });
+      }
+    }
+
+    serverEventLogStore?.record({
+      category: 'container',
+      severity: failed.length > 0 ? 'warn' : 'info',
+      source: 'api.cleanup-orphan-containers',
+      action: failed.length > 0 ? 'app.orphan-container.cleanup-partial' : 'app.orphan-container.cleanup-completed',
+      message: `orphan app container cleanup removed ${removed.length}/${candidates.length} container(s)`,
+      projectId: projectFilter || null,
+      requestId,
+      operationId,
+      details: {
+        operationId,
+        requestId,
+        actor,
+        trigger,
+        removed,
+        failed,
+      },
+    });
+
+    res.json({ ok: failed.length === 0, dryRun: false, operationId, removed, failed });
   });
 
   router.post('/branches', async (req, res) => {
