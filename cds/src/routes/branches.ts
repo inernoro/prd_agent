@@ -2121,7 +2121,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // Live UI stream — 2026-04-19.
   //
   // Dashboards subscribe to this SSE once on page load. We emit:
-  //   - event: snapshot         (initial full branch list, for late joiners)
+  //   - event: snapshot         (initial/reconnect hint; GET /branches is list authority)
   //   - event: branch.created   (GitHub webhook or manual add)
   //   - event: branch.updated   (commit SHA refresh, favorite/tag/notes change)
   //   - event: branch.status    (idle → building → running/error)
@@ -2147,31 +2147,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
       'X-Accel-Buffering': 'no',
     });
 
+    let streamEventSeq = 0;
     const safeSend = (event: string, data: unknown) => {
-      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+      const dataObject = data && typeof data === 'object' && !Array.isArray(data)
+        ? data as Record<string, unknown>
+        : { value: data };
+      const payload = { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` };
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`); }
       catch { /* client gone */ }
     };
 
-    // Helper: filter events that belong to a different project. Every
-    // payload may carry projectId or branch.projectId; events missing a
-    // projectId (legacy / global) always pass through.
+    // Helper: filter events that belong to a different project. Project
+    // scoped clients must only receive events with explicit projectId or
+    // branch.projectId. Legacy/global events without project identity are
+    // ignored so a malformed event cannot blank or mutate another project.
     const eventMatchesFilter = (type: string, payload: any): boolean => {
       if (!projectFilter) return true;
-      if (type === 'branch.created') return !payload.branch?.projectId || payload.branch.projectId === projectFilter;
-      if ('projectId' in (payload || {})) return !payload.projectId || payload.projectId === projectFilter;
-      return true;
+      if (payload?.branch?.projectId) return payload.branch.projectId === projectFilter;
+      if (payload?.projectId) return payload.projectId === projectFilter;
+      return false;
     };
 
-    // Initial snapshot — the dashboard can populate its list without
-    // waiting for the first event. Also acts as a liveness confirmation
-    // so the client knows the stream is alive even when nothing's
-    // happening upstream.
+    // Initial snapshot — retained for stream liveness and reconnect
+    // hints. Dashboard list authority is GET /api/branches?project=...
+    // so clients must not treat this event as permission to replace the
+    // full branch list.
     const all = stateService.getAllBranches();
     const snapshot = projectFilter
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
     for (const branch of snapshot) reconcileBranchStatus(branch);
-    safeSend('snapshot', { branches: snapshot, ts: nowIso() });
+    safeSend('snapshot', { branches: snapshot, projectId: projectFilter || undefined, ts: nowIso() });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.

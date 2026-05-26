@@ -51,6 +51,7 @@ import {
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
+import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
@@ -67,6 +68,7 @@ interface ProjectSummary {
   gitRepoUrl?: string;
   gitDefaultBranch?: string | null;
   defaultBranch?: string | null;
+  branchCount?: number;
 }
 
 interface ServiceState {
@@ -130,22 +132,6 @@ interface BranchesResponse {
     runningContainers: number;
     totalMemGB: number;
   };
-}
-
-function branchListOrPrevious(
-  current: LoadState,
-  nextBranches: BranchSummary[] | undefined,
-  source: string,
-): { branches: BranchSummary[]; warning?: string } {
-  const next = Array.isArray(nextBranches) ? nextBranches : [];
-  if (current.status !== 'ok') return { branches: next };
-  if (next.length === 0 && current.branches.length > 0) {
-    return {
-      branches: current.branches,
-      warning: `${source} 返回了空分支列表，已保留上次可用的 ${current.branches.length} 个分支；请稍后刷新确认。`,
-    };
-  }
-  return { branches: next };
 }
 
 interface RemoteBranch {
@@ -261,6 +247,7 @@ type LoadState =
       status: 'ok';
       project: ProjectSummary;
       branches: BranchSummary[];
+      lastKnownGoodBranches: BranchSummary[];
       remoteBranches: RemoteBranch[];
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
@@ -271,6 +258,37 @@ type LoadState =
       // 又或者 infra id 是 'db' 之类不含 mysql 关键字。fetch infra 接口取真实信号源。
       hasSchemafulInfra: boolean;
     };
+
+type OkLoadState = Extract<LoadState, { status: 'ok' }>;
+
+function applyBranchListAction(
+  current: OkLoadState,
+  action: BranchListAction<BranchSummary>,
+): { state: OkLoadState; needsEmptyRecheck: boolean } {
+  const slice: BranchListSlice<BranchSummary> = {
+    branches: current.branches,
+    lastKnownGoodBranches: current.lastKnownGoodBranches,
+    projectWarning: current.projectWarning,
+  };
+  const result = reduceBranchListState(slice, action);
+  return {
+    state: {
+      ...current,
+      branches: result.state.branches,
+      lastKnownGoodBranches: result.state.lastKnownGoodBranches,
+      projectWarning: result.state.projectWarning,
+    },
+    needsEmptyRecheck: result.needsEmptyRecheck,
+  };
+}
+
+function parseSseJson<T>(event: Event): T | null {
+  try {
+    return JSON.parse((event as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
+}
 
 type OpsStatusState =
   | { status: 'loading' }
@@ -1205,24 +1223,89 @@ export function BranchListPage(): JSX.Element {
   //   - 远程分支由独立 useEffect 触发,首次走 cache(后端 5 分钟内
   //     不再 git fetch),用户主动刷新时才 force refresh
   //   - UI 在远程区独立显示"加载远程分支..."chip,不阻塞主链路
+  const confirmEmptyBranchList = useCallback(async (source: string) => {
+    if (!projectId) return;
+    try {
+      const [projectResult, branchesResult] = await Promise.allSettled([
+        apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
+        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
+      ]);
+      if (branchesResult.status === 'rejected') {
+        const message = readableError(branchesResult.reason);
+        setState((prev) => {
+          if (prev.status !== 'ok') return prev;
+          return applyBranchListAction(prev, {
+            type: 'refreshFailed',
+            message: `${source} 复核失败，已保留上次可用内容。${message}`,
+          }).state;
+        });
+        return;
+      }
+      const project = projectResult.status === 'fulfilled' ? projectResult.value : undefined;
+      const projectWarning = projectResult.status === 'rejected'
+        ? `项目元信息复核失败，分支列表已保留当前可用内容。${readableError(projectResult.reason)}`
+        : undefined;
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        const applied = applyBranchListAction(prev, {
+          type: 'authoritativeLoaded',
+          branches: branchesResult.value.branches || [],
+          source,
+          confirmedEmpty: true,
+          projectBranchCount: project?.branchCount,
+          warning: projectWarning,
+        });
+        return {
+          ...applied.state,
+          project: project || prev.project,
+          capacity: branchesResult.value.capacity || prev.capacity,
+          projectWarning: applied.state.projectWarning || projectWarning,
+        };
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        return applyBranchListAction(prev, {
+          type: 'refreshFailed',
+          message: `${source} 复核失败，已保留上次可用内容。${message}`,
+        }).state;
+      });
+    }
+  }, [projectId]);
+
   const refreshLiveBranches = useCallback(async () => {
     if (!projectId) return;
     try {
       const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
+      let needsEmptyRecheck = false;
       setState((prev) => {
         if (prev.status !== 'ok') return prev;
-        const guarded = branchListOrPrevious(prev, branchesRes.branches, '后台刷新');
+        const applied = applyBranchListAction(prev, {
+          type: 'authoritativeLoaded',
+          branches: branchesRes.branches || [],
+          source: '后台刷新',
+          projectBranchCount: prev.project.branchCount,
+        });
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
         return {
-          ...prev,
-          branches: guarded.branches,
+          ...applied.state,
           capacity: branchesRes.capacity,
-          projectWarning: guarded.warning || prev.projectWarning,
         };
       });
-    } catch {
+      if (needsEmptyRecheck) void confirmEmptyBranchList('后台刷新');
+    } catch (err) {
+      const message = readableError(err);
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        return applyBranchListAction(prev, {
+          type: 'refreshFailed',
+          message: `后台刷新失败，已保留上次可用内容。${message}`,
+        }).state;
+      });
       // 首屏已显示缓存态;后台 live reconcile 失败时保留现状,让 SSE 和手动刷新兜底。
     }
-  }, [projectId]);
+  }, [confirmEmptyBranchList, projectId]);
 
   const refresh = useCallback(async (showLoading = false) => {
     if (!projectId) return;
@@ -1249,10 +1332,10 @@ export function BranchListPage(): JSX.Element {
       if (branchesResult.status === 'rejected') {
         const message = readableError(branchesResult.reason);
         setState((prev) => prev.status === 'ok'
-          ? {
-            ...prev,
-            projectWarning: `分支列表刷新失败，已保留上次可用内容。${message}`,
-          }
+          ? applyBranchListAction(prev, {
+            type: 'refreshFailed',
+            message: `分支列表刷新失败，已保留上次可用内容。${message}`,
+          }).state
           : { status: 'error', message });
         return;
       }
@@ -1275,27 +1358,49 @@ export function BranchListPage(): JSX.Element {
       const hasSchemafulInfra = (infraRes.services || []).some((s) =>
         /(mysql|mariadb|postgres)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
       );
+      let needsEmptyRecheck = false;
       setState((prev) => {
-        const guarded = branchListOrPrevious(prev, branchesRes.branches, '分支列表刷新');
+        const base: OkLoadState = prev.status === 'ok'
+          ? prev
+          : {
+            status: 'ok',
+            project,
+            branches: [],
+            lastKnownGoodBranches: [],
+            remoteBranches: [],
+            previewMode: previewModeRes.mode || 'multi',
+            config,
+            capacity: branchesRes.capacity,
+            projectWarning,
+            hasSchemafulInfra,
+          };
+        const applied = applyBranchListAction(base, {
+          type: 'authoritativeLoaded',
+          branches: branchesRes.branches || [],
+          source: '分支列表刷新',
+          projectBranchCount: project.branchCount,
+          warning: projectWarning,
+        });
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
         return {
-          status: 'ok',
+          ...applied.state,
           project,
-          branches: guarded.branches,
           // 保留之前已加载的远程分支(若有),避免主刷新时远程区闪空
           remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
           previewMode: previewModeRes.mode || 'multi',
           config,
           capacity: branchesRes.capacity,
-          projectWarning: guarded.warning || projectWarning,
+          projectWarning: applied.state.projectWarning || projectWarning,
           hasSchemafulInfra,
         };
       });
+      if (needsEmptyRecheck) void confirmEmptyBranchList('分支列表刷新');
       if (fast) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
-  }, [projectId, refreshLiveBranches]);
+  }, [confirmEmptyBranchList, projectId, refreshLiveBranches]);
 
   const refreshRemoteBranches = useCallback(async (forceFetch = false) => {
     if (!projectId) return;
@@ -1491,70 +1596,84 @@ export function BranchListPage(): JSX.Element {
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
     source.onopen = () => setSseConnected(true);
     source.onerror = () => setSseConnected(false);
-    const upsert = (branch: BranchSummary) => {
+    const applySseAction = (action: BranchListAction<BranchSummary>) => {
+      let needsEmptyRecheck = false;
       setState((current) => {
         if (current.status !== 'ok') return current;
-        const existing = current.branches.find((item) => item.id === branch.id);
-        const branches = existing
-          ? current.branches.map((item) => (item.id === branch.id ? { ...item, ...branch } : item))
-          : [branch, ...current.branches];
-        return { ...current, branches };
+        const applied = applyBranchListAction(current, action);
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
+        return applied.state;
       });
+      if (needsEmptyRecheck) void confirmEmptyBranchList(action.type === 'sseSnapshot' ? action.source : '实时事件');
     };
     source.addEventListener('snapshot', (ev) => {
-      try {
-        const data = JSON.parse((ev as MessageEvent).data) as { branches?: BranchSummary[] };
-        setState((current) => {
-          if (current.status !== 'ok') return current;
-          const guarded = branchListOrPrevious(current, data.branches, '实时快照');
-          return {
-            ...current,
-            branches: guarded.branches,
-            projectWarning: guarded.warning || current.projectWarning,
-          };
-        });
-      } catch {
-        // Keep the last usable list; malformed stream chunks must not blank the panel.
+      const data = parseSseJson<{ branches?: BranchSummary[]; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: '实时快照' });
+        return;
       }
+      if (data.projectId && data.projectId !== projectId) return;
+      applySseAction({ type: 'sseSnapshot', branches: data.branches, source: '实时快照' });
     });
     source.addEventListener('branch.created', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (data.branch) upsert(data.branch);
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.created' });
+        return;
+      }
+      if (!data.branch || data.branch.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (data.branch) upsert(data.branch);
+      const data = parseSseJson<{ branch?: BranchSummary; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.updated' });
+        return;
+      }
+      if (!data.branch || data.branch.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
     });
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as {
+      const data = parseSseJson<{
         branchId?: string;
+        projectId?: string;
         status?: BranchSummary['status'];
         branch?: BranchSummary;
-      };
+      }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.status' });
+        return;
+      }
       if (!data.branchId || !data.status) return;
-      setState((current) => {
-        if (current.status !== 'ok') return current;
-        return {
-          ...current,
-          branches: current.branches.map((branch) =>
-            branch.id === data.branchId
-              ? { ...branch, ...(data.branch || {}), status: data.status as BranchSummary['status'] }
-              : branch,
-          ),
-        };
+      const eventProjectId = data.branch?.projectId || data.projectId;
+      if (eventProjectId !== projectId) return;
+      if (data.branch) {
+        applySseAction({
+          type: 'sseBranchUpsert',
+          branch: { ...data.branch, status: data.status },
+          projectId,
+        });
+        return;
+      }
+      applySseAction({
+        type: 'sseBranchPatch',
+        branchId: data.branchId,
+        projectId,
+        patch: { status: data.status } as Partial<BranchSummary>,
       });
     });
     source.addEventListener('branch.removed', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string };
+      const data = parseSseJson<{ branchId?: string; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.removed' });
+        return;
+      }
       if (!data.branchId) return;
-      setState((current) => (
-        current.status === 'ok'
-          ? { ...current, branches: current.branches.filter((branch) => branch.id !== data.branchId) }
-          : current
-      ));
+      if (data.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchRemove', branchId: data.branchId, projectId });
     });
     return () => source.close();
-  }, [projectId]);
+  }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1947,7 +2066,11 @@ export function BranchListPage(): JSX.Element {
       setToast(`${branch.branch} 已删除`);
       setState((current) => (
         current.status === 'ok'
-          ? { ...current, branches: current.branches.filter((item) => item.id !== branch.id) }
+          ? applyBranchListAction(current, {
+            type: 'sseBranchRemove',
+            branchId: branch.id,
+            projectId: branch.projectId,
+          }).state
           : current
       ));
       if (refreshAfter) await refresh(false);
@@ -2762,36 +2885,40 @@ export function BranchListPage(): JSX.Element {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                {sortedBranches.map((branch) => (
-                  <BranchCard
-                    key={branch.id}
-                    branch={branch}
-                    action={actions[branch.id]}
-                    now={actionClock}
-                    projectId={projectId}
-                    highlighted={highlightedBranchId === branch.id}
-                    highlightPulse={highlightPulseBranchId === branch.id}
-                    activityEvents={activityEvents
-                      .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
-                      .slice(0, 5)}
-                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
-                    activeTagFilter={activeTagFilter}
-                    onPreview={() => void openPreview(branch, true)}
-                    onDeploy={() => void deployBranch(branch, false)}
-                    onDetail={() => setDetailDrawerBranchId(branch.id)}
-                    onPull={() => void pullBranch(branch)}
-                    onStop={() => void stopBranch(branch)}
-                    onForceRebuild={() => void forceRebuildBranch(branch)}
-                    onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
-                    onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
-                    onReset={() => void resetBranch(branch)}
-                    onDelete={() => void deleteBranch(branch)}
-                    onEditTags={() => void editTags(branch)}
-                    onAddTag={(tag) => void addTagToBranch(branch, tag)}
-                    onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
-                    onClickTag={toggleTagFilter}
-                  />
-                ))}
+                {sortedBranches.map((branch) => {
+                  const latestBranchActivity = activityEvents.find((event) => activityBranchMatches(event, branch.id));
+                  return (
+                    <BranchCard
+                      key={branch.id}
+                      branch={branch}
+                      action={actions[branch.id]}
+                      now={actionClock}
+                      projectId={projectId}
+                      highlighted={highlightedBranchId === branch.id}
+                      highlightPulse={highlightPulseBranchId === branch.id}
+                      activityEvents={activityEvents
+                        .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
+                        .slice(0, 5)}
+                      activityPulseKey={latestBranchActivity ? `${latestBranchActivity.id}:${latestBranchActivity.ts}` : undefined}
+                      capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
+                      activeTagFilter={activeTagFilter}
+                      onPreview={() => void openPreview(branch, true)}
+                      onDeploy={() => void deployBranch(branch, false)}
+                      onDetail={() => setDetailDrawerBranchId(branch.id)}
+                      onPull={() => void pullBranch(branch)}
+                      onStop={() => void stopBranch(branch)}
+                      onForceRebuild={() => void forceRebuildBranch(branch)}
+                      onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
+                      onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
+                      onReset={() => void resetBranch(branch)}
+                      onDelete={() => void deleteBranch(branch)}
+                      onEditTags={() => void editTags(branch)}
+                      onAddTag={(tag) => void addTagToBranch(branch, tag)}
+                      onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
+                      onClickTag={toggleTagFilter}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -3665,6 +3792,7 @@ function BranchCard({
   highlighted,
   highlightPulse,
   activityEvents = [],
+  activityPulseKey,
   activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -3689,6 +3817,7 @@ function BranchCard({
   now: number;
   capacityWarning?: string;
   activityEvents?: ActivityEvent[];
+  activityPulseKey?: string;
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
@@ -3776,6 +3905,16 @@ function BranchCard({
   const footerBuilder = builderHandle(branch);
   const footerSha = shortCommitSha(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
+  const [actorOrbitActive, setActorOrbitActive] = useState(false);
+  const actorPulseSeenRef = useRef(false);
+  const actorPulseSignal = [
+    activityPulseKey || '',
+    action?.status || '',
+    branch.status,
+    branch.lastPushAt || '',
+    branch.lastDeployAt || '',
+    branch.aiOpCount || 0,
+  ].join('|');
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3789,6 +3928,16 @@ function BranchCard({
   useEffect(() => {
     setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
+  useEffect(() => {
+    if (!actorPulseSeenRef.current) {
+      actorPulseSeenRef.current = true;
+      return;
+    }
+    if (!footerBuilder) return;
+    setActorOrbitActive(true);
+    const timer = window.setTimeout(() => setActorOrbitActive(false), 2600);
+    return () => window.clearTimeout(timer);
+  }, [actorPulseSignal, footerBuilder]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -4267,8 +4416,8 @@ function BranchCard({
       >
         <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
           <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div className={`cds-actor-orbit ${isInterim || isAiActive ? 'cds-actor-orbit--active' : ''}`}>
-              {(isInterim || isAiActive) && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
+            <div className={`cds-actor-orbit ${actorOrbitActive ? 'cds-actor-orbit--active' : ''}`}>
+              {actorOrbitActive && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
                 className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                 aria-label={builderTitle}
