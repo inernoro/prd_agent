@@ -12,6 +12,7 @@ export type BranchOperationKind =
   | 'factory-reset'
   | 'scheduler-cooling'
   | 'auto-lifecycle-redeploy'
+  | 'auto-restart'
   | 'janitor-remove';
 
 export type BranchOperationTrigger = 'manual' | 'webhook' | 'auto-lifecycle' | 'scheduler' | 'janitor' | 'system';
@@ -106,6 +107,7 @@ function priorityOf(req: BranchOperationRequest): number {
   if (req.kind === 'cleanup-damaged') return 45;
   if (req.trigger === 'webhook' && (req.kind === 'deploy' || req.kind === 'deploy-profile')) return 50;
   if (req.trigger === 'auto-lifecycle') return 40;
+  if (req.kind === 'auto-restart') return 35;
   if (req.trigger === 'scheduler') return 30;
   if (req.trigger === 'janitor') return 25;
   return 10;

@@ -603,6 +603,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
       'X-CDS-Trigger': 'webhook',
+      'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
       ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
       'X-CDS-Source-Branch-Id': pending.branchId,
     },
@@ -626,6 +627,8 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       message: `pending webhook deploy dispatch failed: ${(err as Error).message}`,
       projectId: branch.projectId,
       branchId: pending.branchId,
+      requestId: pending.request.requestId || null,
+      operationId: pending.operationId,
       details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
     });
   });
@@ -637,6 +640,8 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     message: `pending webhook deploy dispatched: ${pending.branchId}`,
     projectId: branch.projectId,
     branchId: pending.branchId,
+    requestId: pending.request.requestId || null,
+    operationId: pending.operationId,
     details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
   });
 }
@@ -1880,45 +1885,118 @@ janitorService.setRemoveFn(async (slug: string) => {
           stateService.save();
           continue;
         }
-        const startRes = await shell.exec(`docker start ${found.containerName}`);
-        activeServerEventLogStore?.record({
-          category: 'container',
-          severity: startRes.exitCode === 0 ? 'info' : 'error',
-          source: 'auto-restart',
-          action: startRes.exitCode === 0 ? 'app.auto-restart.completed' : 'app.auto-restart.failed',
-          message: `auto-restart docker start ${found.containerName} attempt ${att.count + 1}`,
-          projectId: branch.projectId,
-          branchId: branch.id,
-          profileId,
-          containerName: found.containerName,
-          command: {
-            name: 'docker start',
-            exitCode: startRes.exitCode,
-            stdoutPreview: startRes.stdout,
-            stderrPreview: startRes.stderr,
-          },
-          details: { attempt: att.count + 1, maxRetries: MAX_RETRIES },
-        });
-        if (startRes.exitCode === 0) {
-          console.log(`[auto-restart] app ${found.containerName} 已重启(attempt ${att.count + 1})`);
-          restartAttempts.delete(attemptKey);
-          try {
-            stateService.appendActivityLog(branch.projectId, {
-              type: 'restart',
-              branchId: branch.id,
-              branchName: branch.branch,
+        let branchOperationLease: BranchOperationLease | null = null;
+        let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+        try {
+          branchOperationLease = beginBackgroundBranchOperation({
+            branchId: branch.id,
+            kind: 'auto-restart',
+            trigger: 'system',
+            actor: 'auto-restart',
+            profileId,
+            source: 'auto-restart.tick',
+            reason: `容器异常退出后自动拉起：${found.containerName}`,
+          });
+        } catch (err) {
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'warn',
+            source: 'auto-restart',
+            action: 'app.auto-restart.skipped',
+            message: `auto-restart skipped for ${found.containerName}: ${(err as Error).message}`,
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId,
+            containerName: found.containerName,
+            details: {
+              attempt: att.count + 1,
+              maxRetries: MAX_RETRIES,
+              reason: 'branch-operation-busy',
+              error: (err as Error).message,
+            },
+          });
+          continue;
+        }
+        try {
+          branchOperationLease?.assertCurrent(`auto-restart before docker start ${profileId}`);
+          const startRes = await shell.exec(`docker start ${found.containerName}`);
+          branchOperationLease?.assertCurrent(`auto-restart after docker start ${profileId}`);
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: startRes.exitCode === 0 ? 'info' : 'error',
+            source: 'auto-restart',
+            action: startRes.exitCode === 0 ? 'app.auto-restart.completed' : 'app.auto-restart.failed',
+            message: `auto-restart docker start ${found.containerName} attempt ${att.count + 1}`,
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId,
+            requestId: branchOperationLease?.request.requestId || null,
+            operationId: branchOperationLease?.operationId || null,
+            containerName: found.containerName,
+            command: {
+              name: 'docker start',
+              exitCode: startRes.exitCode,
+              stdoutPreview: startRes.stdout,
+              stderrPreview: startRes.stderr,
+            },
+            details: {
+              operationId: branchOperationLease?.operationId || null,
+              attempt: att.count + 1,
+              maxRetries: MAX_RETRIES,
               actor: 'auto-restart',
-              note: `容器异常退出后由 auto-restart 自动拉起成功（第 ${att.count + 1} 次尝试）：${found.containerName}`,
+              trigger: 'system',
+              source: 'auto-restart.tick',
+            },
+          });
+          if (startRes.exitCode === 0) {
+            console.log(`[auto-restart] app ${found.containerName} 已重启(attempt ${att.count + 1})`);
+            restartAttempts.delete(attemptKey);
+            try {
+              stateService.appendActivityLog(branch.projectId, {
+                type: 'restart',
+                branchId: branch.id,
+                branchName: branch.branch,
+                actor: 'auto-restart',
+                note: `容器异常退出后由 auto-restart 自动拉起成功（第 ${att.count + 1} 次尝试）：${found.containerName}`,
+              });
+            } catch { /* 辅助 */ }
+            branchOperationLease?.assertCurrent(`auto-restart before final save ${profileId}`);
+            stateService.save();
+          } else {
+            branchOperationFinalStatus = 'failed';
+            att.count += 1;
+            att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
+            restartAttempts.set(attemptKey, att);
+            console.warn(
+              `[auto-restart] app ${found.containerName} 第 ${att.count}/${MAX_RETRIES} 次重启失败:${(startRes.stderr || startRes.stdout || '').slice(0, 120)}`,
+            );
+          }
+        } catch (err) {
+          if ((err as Error).name === 'BranchOperationSupersededError') {
+            branchOperationFinalStatus = 'cancelled';
+            activeServerEventLogStore?.record({
+              category: 'container',
+              severity: 'warn',
+              source: 'auto-restart',
+              action: 'app.auto-restart.cancelled',
+              message: `auto-restart cancelled for ${found.containerName}: ${(err as Error).message}`,
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId,
+              operationId: branchOperationLease?.operationId || null,
+              containerName: found.containerName,
+              details: {
+                operationId: branchOperationLease?.operationId || null,
+                reason: 'branch-operation-superseded',
+                error: (err as Error).message,
+              },
             });
-          } catch { /* 辅助 */ }
-          stateService.save();
-        } else {
-          att.count += 1;
-          att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
-          restartAttempts.set(attemptKey, att);
-          console.warn(
-            `[auto-restart] app ${found.containerName} 第 ${att.count}/${MAX_RETRIES} 次重启失败:${(startRes.stderr || startRes.stdout || '').slice(0, 120)}`,
-          );
+          } else {
+            branchOperationFinalStatus = 'failed';
+            throw err;
+          }
+        } finally {
+          completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
         }
       }
     }

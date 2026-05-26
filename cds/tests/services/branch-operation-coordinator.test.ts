@@ -239,6 +239,55 @@ describe('BranchOperationCoordinator', () => {
     expect(records.map((r) => r.action)).toContain('branch.operation.rejected');
   });
 
+  it('auto-restart yields to an active webhook deploy instead of starting a stale container', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+
+    const restart = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'auto-restart',
+      trigger: 'system',
+      actor: 'auto-restart',
+      profileId: 'api',
+      source: 'auto-restart.tick',
+      reason: 'docker container is stopped while state says running',
+    });
+
+    expect(restart.status).toBe('rejected');
+    expect(restart.activeOperationId).toBe(active.operationId);
+    expect(coordinator.getActive('prd-agent-main')?.operationId).toBe(active.operationId);
+    expect(records.map((r) => r.action)).toContain('branch.operation.rejected');
+  });
+
+  it('manual delete cancels an active auto-restart and fences its final state write', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const restart = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'auto-restart',
+      trigger: 'system',
+      actor: 'auto-restart',
+      profileId: 'api',
+      source: 'auto-restart.tick',
+    });
+
+    const del = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(del.status).toBe('started');
+    expect(restart.lease?.isCurrent()).toBe(false);
+    expect(() => restart.lease?.assertCurrent('after-docker-start')).toThrow(BranchOperationSupersededError);
+  });
+
   it('serializes per branch without blocking other branches', () => {
     const coordinator = new BranchOperationCoordinator();
     const a = coordinator.begin({

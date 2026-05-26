@@ -1428,6 +1428,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         'Content-Type': 'application/json',
         'X-CDS-Internal': '1',
         'X-CDS-Trigger': 'webhook',
+        'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
         ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
         'X-CDS-Source-Branch-Id': pending.branchId,
       },
@@ -1458,6 +1459,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: `pending webhook deploy dispatch failed: ${(err as Error).message}`,
         projectId: branch.projectId,
         branchId: pending.branchId,
+        requestId: pending.request.requestId || null,
+        operationId: pending.operationId,
         details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
       });
     });
@@ -1469,6 +1472,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       message: `pending webhook deploy dispatched: ${pending.branchId}`,
       projectId: branch.projectId,
       branchId: pending.branchId,
+      requestId: pending.request.requestId || null,
+      operationId: pending.operationId,
       details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
     });
   }
