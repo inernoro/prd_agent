@@ -132,6 +132,13 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
 
 function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatus: string; nextStatus: string; changed: boolean } {
   const previousStatus = branch.status;
+  let serviceErrorCleared = false;
+  for (const service of Object.values(branch.services || {})) {
+    if (service.status === 'running' && service.errorMessage) {
+      service.errorMessage = undefined;
+      serviceErrorCleared = true;
+    }
+  }
   const statuses = Object.values(branch.services || {}).map((service) => service.status);
   if (statuses.some((status) => status === 'error')) branch.status = 'error';
   else if (statuses.some((status) => status === 'building')) branch.status = 'building';
@@ -146,7 +153,7 @@ function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatu
   if (branch.status === 'running' && previousStatus !== 'running') {
     branch.lastReadyAt = new Date().toISOString();
   }
-  return { previousStatus, nextStatus: branch.status, changed: previousStatus !== branch.status };
+  return { previousStatus, nextStatus: branch.status, changed: previousStatus !== branch.status || serviceErrorCleared };
 }
 
 // ── State ──
