@@ -112,6 +112,44 @@ function resolveOperationId(record: { operationId?: string | null; details?: Rec
   return typeof nested === 'string' && nested.trim() ? nested.trim() : record.operationId;
 }
 
+export function buildServerEventQuery(filter: {
+  category?: ServerEventCategory;
+  severity?: ServerEventSeverity;
+  minSeverity?: ServerEventSeverity;
+  source?: string;
+  action?: string;
+  containerName?: string;
+  branchId?: string;
+  profileId?: string;
+  projectId?: string;
+  requestId?: string;
+  operationId?: string;
+  since?: Date | string;
+} = {}): Record<string, unknown> {
+  const query: Record<string, unknown> = {};
+  if (filter.category) query.category = filter.category;
+  if (filter.severity) query.severity = filter.severity;
+  if (filter.source) query.source = filter.source;
+  if (filter.action) query.action = filter.action;
+  if (filter.containerName) query.containerName = filter.containerName;
+  if (filter.branchId) query.branchId = filter.branchId;
+  if (filter.profileId) query.profileId = filter.profileId;
+  if (filter.projectId) query.projectId = filter.projectId;
+  if (filter.requestId) query.requestId = filter.requestId;
+  if (filter.operationId) {
+    query.$or = [
+      { operationId: filter.operationId },
+      { 'details.operationId': filter.operationId },
+    ];
+  }
+  if (filter.since) query.ts = { $gte: new Date(filter.since) };
+  if (filter.minSeverity) {
+    const min = SEVERITY_RANK[filter.minSeverity];
+    query.severity = { $in: Object.entries(SEVERITY_RANK).filter(([, rank]) => rank >= min).map(([sev]) => sev) };
+  }
+  return query;
+}
+
 export function createServerEventId(): string {
   return randomUUID().slice(0, 12);
 }
@@ -164,6 +202,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
       this.collection.createIndex({ profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
       this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
       this.collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
+      this.collection.createIndex({ 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
       this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
@@ -229,22 +268,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
     since?: Date | string;
   } = {}): Promise<ServerEventRecord[]> {
     if (!this.collection) return [];
-    const query: Record<string, unknown> = {};
-    if (filter.category) query.category = filter.category;
-    if (filter.severity) query.severity = filter.severity;
-    if (filter.source) query.source = filter.source;
-    if (filter.action) query.action = filter.action;
-    if (filter.containerName) query.containerName = filter.containerName;
-    if (filter.branchId) query.branchId = filter.branchId;
-    if (filter.profileId) query.profileId = filter.profileId;
-    if (filter.projectId) query.projectId = filter.projectId;
-    if (filter.requestId) query.requestId = filter.requestId;
-    if (filter.operationId) query.operationId = filter.operationId;
-    if (filter.since) query.ts = { $gte: new Date(filter.since) };
-    if (filter.minSeverity) {
-      const min = SEVERITY_RANK[filter.minSeverity];
-      query.severity = { $in: Object.entries(SEVERITY_RANK).filter(([, rank]) => rank >= min).map(([sev]) => sev) };
-    }
+    const query = buildServerEventQuery(filter);
     const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
     return await this.collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
   }
