@@ -2185,6 +2185,10 @@ export function createServer(deps: ServerDeps): express.Express {
     const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
     const since = typeof req.query.since === 'string' ? req.query.since : undefined;
     const until = typeof req.query.until === 'string' ? req.query.until : undefined;
+    const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
+    const minDurationMs = Number.isFinite(minDurationRaw) ? minDurationRaw : undefined;
+    const sortRaw = typeof req.query.sort === 'string' ? req.query.sort : undefined;
+    const sort = sortRaw === 'duration' ? 'duration' : 'recent';
     const layerRaw = typeof req.query.layer === 'string' ? req.query.layer : undefined;
     const layer = layerRaw === 'master' || layerRaw === 'master-proxy' || layerRaw === 'forwarder'
       ? layerRaw
@@ -2201,6 +2205,8 @@ export function createServer(deps: ServerDeps): express.Express {
       profileId,
       since,
       until,
+      minDurationMs,
+      sort,
     });
     res.json({ logs, total: logs.length });
   });

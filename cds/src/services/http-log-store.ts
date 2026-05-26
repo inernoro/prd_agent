@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
-import { MongoClient, type Collection } from 'mongodb';
+import { MongoClient, type Collection, type Sort } from 'mongodb';
 
 export interface HttpLogRecord {
   _id: string;
@@ -57,6 +57,8 @@ export interface HttpLogSink {
     profileId?: string;
     since?: string | Date;
     until?: string | Date;
+    minDurationMs?: number;
+    sort?: 'recent' | 'duration';
   }): Promise<HttpLogRecord[]>;
 }
 
@@ -226,6 +228,7 @@ export class HttpLogStore {
       this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1' }),
       this.collection.createIndex({ host: 1, ts: -1 }, { name: 'host_ts_desc' }),
       this.collection.createIndex({ status: 1, ts: -1 }, { name: 'status_ts_desc' }),
+      this.collection.createIndex({ durationMs: -1, ts: -1 }, { name: 'duration_ts_desc' }),
       this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
@@ -283,6 +286,8 @@ export class HttpLogStore {
     profileId?: string;
     since?: string | Date;
     until?: string | Date;
+    minDurationMs?: number;
+    sort?: 'recent' | 'duration';
   } = {}): Promise<HttpLogRecord[]> {
     if (!this.collection) return [];
     const query: Record<string, unknown> = {};
@@ -293,6 +298,9 @@ export class HttpLogStore {
     if (filter.method) query.method = filter.method.toUpperCase();
     if (filter.branchId) query.branchId = filter.branchId;
     if (filter.profileId) query.profileId = filter.profileId;
+    if (typeof filter.minDurationMs === 'number' && Number.isFinite(filter.minDurationMs) && filter.minDurationMs > 0) {
+      query.durationMs = { $gte: Math.floor(filter.minDurationMs) };
+    }
     const pathContains = filter.pathContains?.trim();
     if (pathContains) {
       query.path = { $regex: escapeRegExp(pathContains.slice(0, 200)), $options: 'i' };
@@ -306,7 +314,10 @@ export class HttpLogStore {
       };
     }
     const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
-    return await this.collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
+    const sort: Sort = filter.sort === 'duration'
+      ? { durationMs: -1 as const, ts: -1 as const }
+      : { ts: -1 as const };
+    return await this.collection.find(query).sort(sort).limit(limit).toArray();
   }
 
   async flush(): Promise<void> {
