@@ -42,7 +42,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
-import { computePreviewSlug } from '../services/preview-slug.js';
+import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -976,7 +976,7 @@ function collectProjectRuntimeInstances(
   }
 
   if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-    const projectSlug = project.slug || project.id;
+    const projectSlug = previewProjectSlug(project, project.id);
     const previewRoot = resolvePreviewRootDomain();
     discovery.previewRootConfigured = Boolean(previewRoot);
     const branches = stateService.getBranchesForProject(project.id);
@@ -1656,7 +1656,7 @@ function resolveCdsManagedRuntimeBaseUrl(
   }
   const previewRoot = resolvePreviewRootDomain();
   if (!previewRoot) return null;
-  const previewSlug = computePreviewSlug(branch.branch, project.slug || project.id);
+  const previewSlug = computePreviewSlug(branch.branch, previewProjectSlug(project, project.id));
   return `https://${previewSlug}.${previewRoot}`;
 }
 

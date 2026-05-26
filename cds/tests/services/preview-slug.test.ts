@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { computePreviewSlug, slugifyForPreview } from '../../src/services/preview-slug.js';
+import {
+  computePreviewSlug,
+  previewProjectSlug,
+  previewProjectSlugCandidates,
+  previewSlugMatchPercent,
+  repoNameFromGitRef,
+  slugifyForPreview,
+} from '../../src/services/preview-slug.js';
 
 describe('slugifyForPreview', () => {
   it('lowercases the input', () => {
@@ -103,5 +110,46 @@ describe('computePreviewSlug — v3 格式 (tail-prefix-project)', () => {
     expect(a).not.toBe(b);
     expect(a).toBe('fix-foo-claude-prd-agent');
     expect(b).toBe('fix-foo-claude-my-fork');
+  });
+});
+
+describe('preview project identity helpers', () => {
+  it('extracts repo names from common git refs', () => {
+    expect(repoNameFromGitRef('git@github.com:inernoro/prd_agent.git')).toBe('prd-agent');
+    expect(repoNameFromGitRef('https://github.com/inernoro/prd_agent.git')).toBe('prd-agent');
+    expect(repoNameFromGitRef('ssh://git@github.com/inernoro/my-app.git')).toBe('my-app');
+    expect(repoNameFromGitRef('inernoro/prd_agent')).toBe('prd-agent');
+  });
+
+  it('uses git repo identity before local project slugs', () => {
+    expect(previewProjectSlug({
+      id: 'default',
+      slug: 'workspace',
+      gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
+    })).toBe('prd-agent');
+  });
+
+  it('keeps legacy project slug candidates for old preview URL resolution', () => {
+    expect(previewProjectSlugCandidates({
+      id: 'default',
+      slug: 'workspace',
+      gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
+    })).toEqual(['prd-agent', 'workspace', 'default']);
+  });
+
+  it('scores the closest available preview higher than unrelated previews', () => {
+    const target = 'sleepy-curie-p7te3-claude-prd-agent';
+    const close = previewSlugMatchPercent(
+      target,
+      'prd-agent-claude-elegant-cray-ddxdl',
+      'claude/elegant-cray-ddxdl',
+    );
+    const unrelated = previewSlugMatchPercent(
+      target,
+      'mytapd-cursor-include-rejected-brief-tickets',
+      'cursor/include-rejected-brief-tickets',
+    );
+    expect(close).toBeGreaterThan(unrelated);
+    expect(close).toBeGreaterThanOrEqual(40);
   });
 });

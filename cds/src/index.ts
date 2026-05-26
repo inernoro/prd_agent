@@ -18,6 +18,7 @@ import { JanitorService } from './services/janitor.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrl } from './services/comment-template.js';
+import { computePreviewSlug, previewProjectSlug, previewSlugMatchPercent } from './services/preview-slug.js';
 import crypto from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
@@ -1610,7 +1611,15 @@ const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.Ser
  *   - Auto-redirects to the dashboard so the tab doesn't sit blank forever
  * See .claude/rules/cds-auto-deploy.md (no-blank-wait principle).
  */
-function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; mainDomain?: string; liveBranches?: Array<{ slug: string; url: string | null }> }): string {
+interface BranchGoneLivePreview {
+  slug: string;
+  branch: string;
+  previewSlug: string;
+  url: string | null;
+  matchPercent: number;
+}
+
+function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; mainDomain?: string; liveBranches?: BranchGoneLivePreview[] }): string {
   const escape = (s: string): string => s.replace(/[&<>"']/g, (c) => {
     switch (c) {
       case '&': return '&amp;';
@@ -1622,11 +1631,14 @@ function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; ma
   });
   const live = (opts.liveBranches || []).slice(0, 8);
   const liveHtml = live.length > 0
-    ? `<div class="section-title">当前可用预览（${live.length}）</div><div class="live-list">${live.map(b => {
-        const safe = escape(b.slug);
+    ? `<div class="section-title">最匹配可用预览（${live.length}）</div><div class="live-list">${live.map(b => {
+        const safe = escape(b.previewSlug || b.slug);
+        const branch = escape(b.branch || b.slug);
+        const score = `${Math.max(0, Math.min(100, b.matchPercent || 0))}%`;
+        const content = `<span class="live-main"><span class="live-host">${safe}</span><span class="live-branch">${branch}</span></span><span class="match-badge">匹配 ${score}</span>`;
         return b.url
-          ? `<a class="live-item" href="${escape(b.url)}">${safe}</a>`
-          : `<div class="live-item disabled">${safe}</div>`;
+          ? `<a class="live-item" href="${escape(b.url)}">${content}</a>`
+          : `<div class="live-item disabled">${content}</div>`;
       }).join('')}</div>`
     : '';
   const dashHtml = opts.dashboardUrl
@@ -1649,9 +1661,13 @@ h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
 .desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:20px}
 .section-title{font-size:12px;color:#8b949e;text-align:left;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
 .live-list{display:flex;flex-direction:column;gap:4px;margin-bottom:20px;text-align:left}
-.live-item{display:block;padding:8px 12px;background:#0d1117;border:1px solid #21262d;border-radius:6px;color:#58a6ff;font-size:13px;font-family:ui-monospace,monospace;text-decoration:none;transition:border-color .15s}
+.live-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;background:#0d1117;border:1px solid #21262d;border-radius:6px;color:#58a6ff;font-size:13px;font-family:ui-monospace,monospace;text-decoration:none;transition:border-color .15s}
 .live-item:hover{border-color:#58a6ff}
 .live-item.disabled{color:#6e7681;cursor:not-allowed}
+.live-main{min-width:0;display:flex;flex-direction:column;gap:2px}
+.live-host{overflow:hidden;text-overflow:ellipsis}
+.live-branch{font-size:11px;color:#8b949e;overflow:hidden;text-overflow:ellipsis}
+.match-badge{flex:0 0 auto;font-size:11px;color:#7ee787;background:rgba(35,134,54,.14);border:1px solid rgba(46,160,67,.35);border-radius:999px;padding:2px 8px}
 .btn{display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #30363d;color:#c9d1d9;background:#21262d;transition:background .15s}
 .btn:hover{background:#30363d}
 .btn.primary{background:#238636;border-color:#238636;color:#fff}
@@ -1967,7 +1983,7 @@ h1{font-size:18px;font-weight:600;color:var(--text-primary);letter-spacing:.2px}
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
-function liveBranchesForGonePage(host: string): Array<{ slug: string; url: string | null }> {
+function liveBranchesForGonePage(host: string, targetSlug: string): BranchGoneLivePreview[] {
   const state = stateService.getState();
   // Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
   // under any configured root domain without hardcoding.
@@ -1980,22 +1996,31 @@ function liveBranchesForGonePage(host: string): Array<{ slug: string; url: strin
   }
   // 走 buildPreviewUrl 全栈唯一入口，列出来的链接和 PR 评论 / settings preview
   // 输出格式一致（v3 = tail-prefix-projectSlug）。
-  const out: Array<{ slug: string; url: string | null }> = [];
+  const out: BranchGoneLivePreview[] = [];
   for (const [slug, b] of Object.entries(state.branches)) {
     if (b.status !== 'running' && b.status !== 'starting') continue;
     let url: string | null = null;
+    let previewSlug = slug;
     if (previewHost && b.branch) {
       const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
-      const projectSlug = project?.slug || b.projectId;
+      const projectSlug = previewProjectSlug(project, b.projectId);
       if (projectSlug) {
+        previewSlug = computePreviewSlug(b.branch, projectSlug);
         const built = buildPreviewUrl(previewHost, b.branch, projectSlug);
         if (built) url = built;
       }
     }
-    out.push({ slug, url });
+    out.push({
+      slug,
+      branch: b.branch || slug,
+      previewSlug,
+      url,
+      matchPercent: previewSlugMatchPercent(targetSlug, previewSlug, b.branch || slug),
+    });
   }
-  // Newest (most recently accessed) first — best signals what's active today.
+  // Match first; recency breaks ties so users see the likeliest replacement.
   out.sort((a, b) => {
+    if (b.matchPercent !== a.matchPercent) return b.matchPercent - a.matchPercent;
     const ba = state.branches[a.slug]?.lastAccessedAt || '';
     const bb = state.branches[b.slug]?.lastAccessedAt || '';
     return bb.localeCompare(ba);
@@ -2010,7 +2035,7 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
   const host = req.headers.host || '';
   const dashboardDomain = config.dashboardDomain || config.mainDomain || null;
   const dashboardUrl = dashboardDomain ? `https://${dashboardDomain}` : undefined;
-  const live = liveBranchesForGonePage(host);
+  const live = liveBranchesForGonePage(host, slug);
   const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
   res.writeHead(404, {
     'Content-Type': 'text/html; charset=utf-8',

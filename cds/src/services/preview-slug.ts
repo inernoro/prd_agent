@@ -45,6 +45,124 @@ export function slugifyForPreview(s: string): string {
     .replace(/^-|-$/g, '');
 }
 
+export interface PreviewProjectIdentity {
+  id?: string | null;
+  slug?: string | null;
+  aliasSlug?: string | null;
+  name?: string | null;
+  gitRepoUrl?: string | null;
+  githubRepoFullName?: string | null;
+}
+
+/**
+ * 从 Git remote / owner/repo 里取仓库名，避免把本地目录名（如 workspace）
+ * 错当成项目身份拼进 preview URL。
+ */
+export function repoNameFromGitRef(raw: string | undefined | null): string {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+
+  const withoutQuery = value.replace(/[?#].*$/, '').replace(/\/+$/, '');
+  let pathPart = withoutQuery;
+
+  if (/^[^@\s]+@[^:\s]+:.+/.test(withoutQuery)) {
+    pathPart = withoutQuery.slice(withoutQuery.indexOf(':') + 1);
+  } else {
+    try {
+      const parsed = new URL(withoutQuery);
+      pathPart = parsed.pathname;
+    } catch {
+      pathPart = withoutQuery;
+    }
+  }
+
+  const last = pathPart
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop() || '';
+  return slugifyForPreview(last.replace(/\.git$/i, ''));
+}
+
+/**
+ * Preview URL 里的项目段必须优先代表 Git 仓库，而不是 CDS 运行目录。
+ * 例：`/workspace` 目录托管 `git@github.com:inernoro/prd_agent.git` 时，
+ * 项目段应为 `prd-agent`，不是 `workspace`。
+ */
+export function previewProjectSlug(
+  project: PreviewProjectIdentity | undefined | null,
+  fallback?: string | null,
+): string {
+  const fromGitUrl = repoNameFromGitRef(project?.gitRepoUrl);
+  if (fromGitUrl) return fromGitUrl;
+
+  const fromRepoFullName = repoNameFromGitRef(project?.githubRepoFullName);
+  if (fromRepoFullName) return fromRepoFullName;
+
+  return slugifyForPreview(
+    project?.aliasSlug ||
+    project?.slug ||
+    fallback ||
+    project?.id ||
+    project?.name ||
+    'default',
+  ) || 'default';
+}
+
+/**
+ * 解析 preview host 时保留历史 project.slug / aliasSlug 兼容；新链接只用
+ * previewProjectSlug() 生成。
+ */
+export function previewProjectSlugCandidates(
+  project: PreviewProjectIdentity | undefined | null,
+  fallback?: string | null,
+): string[] {
+  const candidates = [
+    previewProjectSlug(project, fallback),
+    project?.slug,
+    project?.aliasSlug,
+    fallback,
+    project?.id,
+  ]
+    .map((s) => slugifyForPreview(String(s || '')))
+    .filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+export function previewSlugMatchPercent(
+  targetSlug: string,
+  candidatePreviewSlug: string,
+  branchName = '',
+): number {
+  const normalize = (s: string): string[] => (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .split('-')
+      .filter((p) => p.length >= 2)
+  );
+  const targetTokens = normalize(targetSlug);
+  const candidateTokens = normalize(`${candidatePreviewSlug}-${branchName}`);
+  if (targetTokens.length === 0 || candidateTokens.length === 0) return 0;
+
+  const targetSet = new Set(targetTokens);
+  const candidateSet = new Set(candidateTokens);
+  let overlap = 0;
+  for (const token of targetSet) {
+    if (candidateSet.has(token)) overlap += 1;
+  }
+
+  const containment = overlap / targetSet.size;
+  const union = new Set([...targetSet, ...candidateSet]).size || 1;
+  const jaccard = overlap / union;
+  const compactTarget = targetTokens.join('-');
+  const compactCandidate = candidateTokens.join('-');
+  const substringBonus = compactCandidate.includes(compactTarget) || compactTarget.includes(compactCandidate)
+    ? 0.18
+    : 0;
+  return Math.max(1, Math.min(100, Math.round((containment * 0.72 + jaccard * 0.28 + substringBonus) * 100)));
+}
+
 /**
  * 根据 git 分支名 + 项目 slug 计算 v3 预览 slug。
  *

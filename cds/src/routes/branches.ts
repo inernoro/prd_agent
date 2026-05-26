@@ -29,7 +29,7 @@ import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
-import { computePreviewSlug } from '../services/preview-slug.js';
+import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -1798,7 +1798,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return null;
     }
     // 走 buildPreviewUrl 全栈唯一入口，公式同 v3（tail-prefix-projectSlug）。
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, project.slug);
+    const smokeHost = buildPreviewUrl(previewHost, entry.branch, previewProjectSlug(project, project.id));
     if (!smokeHost) {
       emitSkip('preview_host_missing');
       return null;
@@ -2284,7 +2284,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
         const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
-        const projectSlug = project?.slug || b.projectId || '';
+        const projectSlug = previewProjectSlug(project, b.projectId);
         const previewSlug = b.branch && projectSlug
           ? computePreviewSlug(b.branch, projectSlug)
           : b.id;
@@ -4677,7 +4677,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     // 走 buildPreviewUrl 全栈唯一入口；project 必有，用 'default' 兜底。
     const smokeProject = stateService.getProject(entry.projectId || 'default');
-    const smokeProjectSlug = smokeProject?.slug || entry.projectId || 'default';
+    const smokeProjectSlug = previewProjectSlug(smokeProject, entry.projectId || 'default');
     const smokeHost = buildPreviewUrl(previewHost, entry.branch, smokeProjectSlug);
     if (!smokeHost) {
       res.status(400).json({ error: 'preview_host_missing', message: '无法生成预览 URL' });

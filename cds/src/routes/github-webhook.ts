@@ -55,6 +55,7 @@ import {
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
+import { previewProjectSlug } from '../services/preview-slug.js';
 import { broadcastSelfStatus } from './branches.js';
 
 export interface GitHubWebhookRouterDeps {
@@ -1106,7 +1107,7 @@ async function postOrUpdatePrComment(
   // 走 v3 公式（tail-prefix-projectSlug）需要分支原名 + 项目 slug，
   // 不能再传 entry id（那是内部存储 key）。详见 preview-slug.ts 头部注释。
   const project = branch.projectId ? stateService.getProject(branch.projectId) : undefined;
-  const projectSlug = project?.slug || branch.projectId;
+  const projectSlug = previewProjectSlug(project, branch.projectId);
   const previewUrl = buildPreviewUrl(host, branch.branch, projectSlug);
   const dashboardUrl = buildDashboardUrl(config.publicBaseUrl, branchId);
   // 走 per-project 模板：项目自己的优先，未设回退到旧 state.commentTemplate。

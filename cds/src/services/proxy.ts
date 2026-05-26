@@ -5,7 +5,7 @@ import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
-import { computePreviewSlug } from './preview-slug.js';
+import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import {
   createBodyCapture,
   createRequestId,
@@ -178,10 +178,10 @@ export class ProxyService {
     for (const entry of Object.values(state.branches)) {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
-      const projectSlug = project?.slug || entry.projectId;
-      if (!projectSlug) continue;
-      if (computePreviewSlug(entry.branch, projectSlug) === slug) {
-        return entry;
+      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
+        if (computePreviewSlug(entry.branch, projectSlug) === slug) {
+          return entry;
+        }
       }
     }
 
