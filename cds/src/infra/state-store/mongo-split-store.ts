@@ -67,6 +67,17 @@ export const GLOBAL_DOC_ID = 'global';
  */
 export type GlobalRest = Omit<CdsState, 'projects' | 'branches'>;
 
+function stableJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function globalRestOf(state: CdsState): GlobalRest {
+  const restOfState: GlobalRest = { ...state } as CdsState;
+  delete (restOfState as Partial<CdsState>).projects;
+  delete (restOfState as Partial<CdsState>).branches;
+  return restOfState;
+}
+
 export class MongoSplitStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo-split' as const;
   private cache: CdsState | null = null;
@@ -121,6 +132,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   save(state: CdsState): void {
     // 同步刷 cache，异步分发到 3 个 collection。
+    const previous = this.cache;
     this.cache = structuredClone(state);
 
     const snapshot = this.cache;
@@ -130,36 +142,36 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       .catch(() => { /* 旧错误吞掉,链路继续 */ })
       .then(async () => {
         // ── 1) Global rest（单文档，replaceOne 即可）──
-        const restOfState: GlobalRest = { ...snapshot } as CdsState;
-        // 从 rest 里把 projects / branches 拆出来 — 它们各有 collection。
-        delete (restOfState as Partial<CdsState>).projects;
-        delete (restOfState as Partial<CdsState>).branches;
-        await this.handle.globalCollection().replaceOne(
-          { _id: GLOBAL_DOC_ID },
-          { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
-          { upsert: true },
-        );
+        const restOfState = globalRestOf(snapshot);
+        const previousRest = previous ? globalRestOf(previous) : null;
+        if (!previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
+          await this.handle.globalCollection().replaceOne(
+            { _id: GLOBAL_DOC_ID },
+            { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
+            { upsert: true },
+          );
+        }
 
         // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
-        // 2026-04-27 (Bugbot Low review): 原来是 for-loop await replaceOne
-        // 一条一条跑，N 个项目 = N 次 mongo round-trip。改用 bulkWrite 把
-        // 所有 upsert 打成一次 op，删除走单次 deleteMany($in: 待删 ids)。
-        // 类文件头部的设计文档明确说"bulkWrite 到对应 collection"，但实
-        // 现一直没落地。
         const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
-        const existingProjects = await this.handle.projectsCollection().find().toArray();
+        const previousProjectIds = new Set((previous?.projects || []).map((p) => p.id));
+        const previousProjects = new Map((previous?.projects || []).map((p) => [p.id, p]));
 
-        const projectOps: unknown[] = (snapshot.projects || []).map((project) => ({
-          replaceOne: {
-            filter: { _id: project.id },
-            replacement: { _id: project.id, doc: project, updatedAt: now },
-            upsert: true,
-          },
-        }));
-        const projectIdsToDelete = existingProjects
-          .map((d) => d._id)
-          .filter((id) => !newProjectIds.has(id));
-        for (const id of projectIdsToDelete) {
+        const projectOps: unknown[] = [];
+        for (const project of snapshot.projects || []) {
+          const previousProject = previousProjects.get(project.id);
+          if (!previousProject || stableJson(project) !== stableJson(previousProject)) {
+            projectOps.push({
+              replaceOne: {
+                filter: { _id: project.id },
+                replacement: { _id: project.id, doc: project, updatedAt: now },
+                upsert: true,
+              },
+            });
+          }
+        }
+        for (const id of previousProjectIds) {
+          if (newProjectIds.has(id)) continue;
           projectOps.push({ deleteOne: { filter: { _id: id } } });
         }
         if (projectOps.length > 0) {
@@ -168,32 +180,82 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
         // ── 3) Branches collection（同样 bulkWrite）──
         const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
-        const existingBranches = await this.handle.branchesCollection().find().toArray();
+        const previousBranchIds = new Set(Object.keys(previous?.branches || {}));
 
-        const branchOps: unknown[] = Object.values(snapshot.branches || {}).map(
-          (branch) => ({
-            replaceOne: {
-              filter: { _id: branch.id },
-              replacement: {
-                _id: branch.id,
-                projectId: branch.projectId,
-                doc: branch,
-                updatedAt: now,
+        const branchOps: unknown[] = [];
+        for (const branch of Object.values(snapshot.branches || {})) {
+          const previousBranch = previous?.branches?.[branch.id];
+          if (!previousBranch || stableJson(branch) !== stableJson(previousBranch)) {
+            branchOps.push({
+              replaceOne: {
+                filter: { _id: branch.id },
+                replacement: {
+                  _id: branch.id,
+                  projectId: branch.projectId,
+                  doc: branch,
+                  updatedAt: now,
+                },
+                upsert: true,
               },
-              upsert: true,
-            },
-          }),
-        );
-        const branchIdsToDelete = existingBranches
-          .map((d) => d._id)
-          .filter((id) => !newBranchIds.has(id));
-        for (const id of branchIdsToDelete) {
+            });
+          }
+        }
+        for (const id of previousBranchIds) {
+          if (newBranchIds.has(id)) continue;
           branchOps.push({ deleteOne: { filter: { _id: id } } });
         }
         if (branchOps.length > 0) {
           await this.handle.branchesCollection().bulkWrite(branchOps);
         }
       });
+  }
+
+  async forceFullSave(state: CdsState): Promise<void> {
+    this.cache = structuredClone(state);
+
+    const snapshot = this.cache;
+    const now = new Date().toISOString();
+
+    await this.handle.globalCollection().replaceOne(
+      { _id: GLOBAL_DOC_ID },
+      { _id: GLOBAL_DOC_ID, state: globalRestOf(snapshot), updatedAt: now },
+      { upsert: true },
+    );
+
+    const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
+    const existingProjects = await this.handle.projectsCollection().find().toArray();
+    const projectOps: unknown[] = (snapshot.projects || []).map((project) => ({
+      replaceOne: {
+        filter: { _id: project.id },
+        replacement: { _id: project.id, doc: project, updatedAt: now },
+        upsert: true,
+      },
+    }));
+    for (const id of existingProjects.map((d) => d._id)) {
+      if (!newProjectIds.has(id)) projectOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (projectOps.length > 0) await this.handle.projectsCollection().bulkWrite(projectOps);
+
+    const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
+    const existingBranches = await this.handle.branchesCollection().find().toArray();
+    const branchOps: unknown[] = Object.values(snapshot.branches || {}).map(
+      (branch) => ({
+        replaceOne: {
+          filter: { _id: branch.id },
+          replacement: {
+            _id: branch.id,
+            projectId: branch.projectId,
+            doc: branch,
+            updatedAt: now,
+          },
+          upsert: true,
+        },
+      }),
+    );
+    for (const id of existingBranches.map((d) => d._id)) {
+      if (!newBranchIds.has(id)) branchOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (branchOps.length > 0) await this.handle.branchesCollection().bulkWrite(branchOps);
   }
 
   async flush(): Promise<void> {
@@ -228,10 +290,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     ]);
     if (globalCount > 0 || projectsCount > 0 || branchesCount > 0) return false;
 
-    // 直接走 save() 的写入逻辑，确保 schema 一致。
-    this.cache = structuredClone(state);
-    this.save(state);
-    await this.flush();
+    await this.forceFullSave(state);
     return true;
   }
 }
