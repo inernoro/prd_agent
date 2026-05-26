@@ -180,6 +180,7 @@ function dispatchRecoveredWebhookDeploys(
   source: string,
 ): void {
   for (const result of reconciled) {
+    if (result.nextStatus !== 'interrupted') continue;
     const traceHash = crypto.createHash('sha1')
       .update(`${result.branchId}\0${result.dispatchAt}\0${source}`)
       .digest('hex')
