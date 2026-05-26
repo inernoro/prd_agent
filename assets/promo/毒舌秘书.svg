@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1440" width="1080" height="1440" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <radialGradient id="bg1" cx="80%" cy="0%" r="60%">
+      <stop offset="0%" stop-color="#ff4d4f" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ff4d4f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bg2" cx="0%" cy="100%" r="55%">
+      <stop offset="0%" stop-color="#59d18c" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#59d18c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1080" height="1440" fill="#0f1014"/>
+  <rect width="1080" height="1440" fill="url(#bg1)"/>
+  <rect width="1080" height="1440" fill="url(#bg2)"/>
+
+  <!-- top badge -->
+  <g transform="translate(80,100)">
+    <rect x="0" y="0" width="280" height="40" rx="20" fill="none" stroke="#ff4d4f" stroke-width="1.5"/>
+    <text x="140" y="26" fill="#ff4d4f" font-size="14" letter-spacing="4" text-anchor="middle">内部新工具 · 限同事可见</text>
+  </g>
+
+  <!-- title -->
+  <text x="80" y="240" fill="#e8e8ec" font-size="120" font-weight="700" letter-spacing="8">毒舌秘书</text>
+  <text x="80" y="296" fill="#8b8d97" font-size="26">温柔话有人说了，狠话我来讲。</text>
+
+  <!-- divider -->
+  <line x1="80" y1="340" x2="1000" y2="340" stroke="rgba(255,255,255,0.08)"/>
+
+  <!-- definition -->
+  <text x="80" y="400" fill="#ff4d4f" font-size="20" letter-spacing="2">它是什么</text>
+  <text x="80" y="446" fill="#e8e8ec" font-size="30">一个会戳穿你工作内容的 AI 秘书。</text>
+  <text x="80" y="486" fill="#e8e8ec" font-size="30">不哄你、不夸你、不陪你演戏。</text>
+  <text x="80" y="526" fill="#8b8d97" font-size="20">用一句话定位：你最讨厌、但最该听的那个同事。</text>
+
+  <!-- three boxes -->
+  <text x="80" y="610" fill="#ff4d4f" font-size="20" letter-spacing="2">它替你挡掉的三件事</text>
+
+  <g transform="translate(80,640)">
+    <rect x="0" y="0" width="920" height="70" rx="8" fill="rgba(255,77,79,0.12)"/>
+    <rect x="0" y="0" width="4" height="70" fill="#ff4d4f"/>
+    <text x="24" y="44" fill="#e8e8ec" font-size="22">老板私下吐槽你的那十分钟</text>
+  </g>
+  <g transform="translate(80,725)">
+    <rect x="0" y="0" width="920" height="70" rx="8" fill="rgba(255,77,79,0.12)"/>
+    <rect x="0" y="0" width="4" height="70" fill="#ff4d4f"/>
+    <text x="24" y="44" fill="#e8e8ec" font-size="22">同事在群里翻白眼的那几次</text>
+  </g>
+  <g transform="translate(80,810)">
+    <rect x="0" y="0" width="920" height="70" rx="8" fill="rgba(255,77,79,0.12)"/>
+    <rect x="0" y="0" width="4" height="70" fill="#ff4d4f"/>
+    <text x="24" y="44" fill="#e8e8ec" font-size="22">你自己半夜想起来再改一版的那两小时</text>
+  </g>
+
+  <!-- when to call -->
+  <text x="80" y="940" fill="#ff4d4f" font-size="20" letter-spacing="2">什么时候叫它</text>
+
+  <g font-size="20" fill="#e8e8ec">
+    <text x="80" y="985">PRD 不敢交评审  ·  让它先撕一遍</text>
+    <text x="80" y="1020">周报花团锦簇  ·  它问一句"所以呢"</text>
+    <text x="80" y="1055">方案头头是道  ·  它指出"你只是换了说法"</text>
+    <text x="80" y="1090">邮件想软中带硬  ·  教你"礼貌但锋利"</text>
+    <text x="80" y="1125">复盘自欺欺人  ·  逐条追问"证据呢"</text>
+  </g>
+
+  <!-- quote -->
+  <line x1="80" y1="1180" x2="84" y2="1280" stroke="#ff4d4f" stroke-width="4"/>
+  <text x="110" y="1216" fill="#e8e8ec" font-size="26">好话谁都会说，</text>
+  <text x="110" y="1252" fill="#e8e8ec" font-size="26">问题是没人替你把不好听的话先讲一遍。</text>
+  <text x="110" y="1278" fill="#8b8d97" font-size="14" letter-spacing="2">— 毒舌秘书 自我介绍</text>
+
+  <!-- CTA -->
+  <g transform="translate(80,1340)">
+    <rect x="0" y="0" width="320" height="52" rx="8" fill="#ff4d4f"/>
+    <text x="160" y="34" fill="#ffffff" font-size="18" text-anchor="middle">百宝箱 → 毒舌秘书</text>
+  </g>
+  <text x="420" y="1374" fill="#8b8d97" font-size="14">登录后首页 → 百宝箱 → 搜"毒舌秘书"</text>
+
+  <!-- footer line -->
+  <text x="540" y="1420" fill="#8b8d97" font-size="12" letter-spacing="2" text-anchor="middle">真话有风险，使用需勇气 · 内部工具，谨慎外传</text>
+</svg>

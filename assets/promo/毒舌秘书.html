@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>毒舌秘书 · 内部推广</title>
+<style>
+  :root {
+    --bg: #0f1014;
+    --card: #16171d;
+    --line: rgba(255,255,255,0.08);
+    --text: #e8e8ec;
+    --muted: #8b8d97;
+    --accent: #ff4d4f;
+    --accent-soft: rgba(255,77,79,0.12);
+    --ok: #59d18c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "SF Pro SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: radial-gradient(1200px 600px at 80% -10%, rgba(255,77,79,0.10), transparent 60%),
+                radial-gradient(900px 500px at -10% 110%, rgba(89,209,140,0.08), transparent 60%),
+                var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 48px 24px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 999px;
+    font-size: 12px;
+    letter-spacing: 2px;
+  }
+  h1 {
+    font-size: 56px;
+    line-height: 1.1;
+    margin: 16px 0 8px;
+    letter-spacing: 4px;
+  }
+  .tag {
+    color: var(--muted);
+    font-size: 16px;
+    margin-bottom: 32px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    font-size: 18px;
+    margin: 0 0 14px;
+    color: var(--text);
+    border-left: 3px solid var(--accent);
+    padding-left: 10px;
+  }
+  .card p { margin: 0 0 8px; color: var(--text); }
+  .card .dim { color: var(--muted); font-size: 14px; }
+
+  .three { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  .three .item {
+    padding: 12px 14px;
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    font-size: 15px;
+  }
+
+  table.usage { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.usage th, table.usage td {
+    text-align: left; padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.usage th { color: var(--muted); font-weight: 500; width: 35%; }
+
+  .quote {
+    font-size: 22px;
+    line-height: 1.6;
+    color: var(--text);
+    border-left: 4px solid var(--accent);
+    padding: 8px 0 8px 18px;
+    margin: 28px 0;
+  }
+  .quote .small { display:block; color: var(--muted); font-size: 13px; margin-top: 6px; letter-spacing: 1px; }
+
+  .cta {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    align-items: center; margin-top: 24px;
+  }
+  .cta .btn {
+    display: inline-block;
+    padding: 10px 18px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .cta .meta { color: var(--muted); font-size: 13px; }
+
+  .footer {
+    margin-top: 36px;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    letter-spacing: 1px;
+  }
+
+  @media (min-width: 720px) {
+    .three { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <span class="badge">内部新工具 · 限同事可见</span>
+    <h1>毒舌秘书</h1>
+    <div class="tag">温柔话有人说了，狠话我来讲。</div>
+
+    <div class="card">
+      <h2>它是什么</h2>
+      <p>一个会戳穿你工作内容的 AI 秘书。</p>
+      <p>不哄你、不夸你、不陪你演戏。</p>
+      <p class="dim">用一句话定位：你最讨厌、但最该听的那个同事。</p>
+    </div>
+
+    <div class="card">
+      <h2>它替你挡掉的三件事</h2>
+      <div class="three">
+        <div class="item">老板私下吐槽你的那十分钟</div>
+        <div class="item">同事在群里翻白眼的那几次</div>
+        <div class="item">你自己半夜想起来再改一版的那两小时</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>什么时候叫它</h2>
+      <table class="usage">
+        <tr>
+          <th>写完 PRD 不敢提交评审</th>
+          <td>先让它撕一遍，把"想当然"挑出来再交。</td>
+        </tr>
+        <tr>
+          <th>周报写得花团锦簇</th>
+          <td>它会问一句："所以呢？业务指标动了吗？"</td>
+        </tr>
+        <tr>
+          <th>方案讲得头头是道</th>
+          <td>它会指出："你只是把问题换了个说法。"</td>
+        </tr>
+        <tr>
+          <th>邮件想软中带硬</th>
+          <td>它教你怎么"礼貌但锋利"，不卑不亢。</td>
+        </tr>
+        <tr>
+          <th>OKR / 复盘自欺欺人</th>
+          <td>它会逐条问"证据呢"，让你交不出就改。</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="quote">
+      "好话谁都会说，<br/>问题是没人替你把不好听的话先讲一遍。"
+      <span class="small">— 毒舌秘书 自我介绍</span>
+    </div>
+
+    <div class="card">
+      <h2>使用建议</h2>
+      <p>把它当成一个不留情面的评审员，不要当成情绪垃圾桶。</p>
+      <p class="dim">它的目标不是让你不爽，是让你少返工。看完想骂它，说明它说对了。</p>
+    </div>
+
+    <div class="cta">
+      <a class="btn" href="#">百宝箱 → 毒舌秘书</a>
+      <span class="meta">登录后首页 → 百宝箱 → 搜索 "毒舌秘书" → 开聊</span>
+    </div>
+
+    <div class="footer">内部工具，谨慎转发外部 · 真话有风险，使用需勇气</div>
+  </div>
+</body>
+</html>
