@@ -412,6 +412,8 @@ public sealed class AdminDailyTipsController : ControllerBase
             TargetRoles = null,
             DisplayOrder = seed.DisplayOrder,
             IsActive = true,
+            StartAt = seed.StartAt,
+            EndAt = seed.EndAt,
             SourceType = "seed",
             SourceId = seed.SourceId,
             CreatedBy = this.GetRequiredUserId(),

@@ -105,6 +105,10 @@ public sealed class DailyTipsController : ControllerBase
         if (items.Count == 0)
         {
             items = BuildDefaultTips(now);
+            // 兜底集合同样走发布窗口过滤,否则带固定 EndAt 的时效公告在空环境永不过期(与 DB 路径口径一致)
+            items = items.Where(t =>
+                (t.StartAt == null || t.StartAt <= now)
+                && (t.EndAt == null || t.EndAt > now)).ToList();
             if (foreverDismissed.Count > 0)
             {
                 items = items.Where(t =>
@@ -339,6 +343,12 @@ public sealed class DailyTipsController : ControllerBase
     /// 全部为「text / card」类,带 ActionUrl 可跳转。DisplayOrder 预留 10-90,方便管理员插入。
     /// AdminDailyTipsController 的 /seed 端点复用此列表批量写库。
     /// </summary>
+    // 2026-W20/W21 新功能公告的固定下线时间。必须锚定发布日，不能用 now.AddDays(7)——
+    // 否则 /visible 兜底路径每次请求重建 BuildDefaultTips(now) 时会刷新 EndAt，导致空环境永不过期
+    // （Cursor Bugbot / Codex review）。过此日期后两条公告在全平台（含兜底）消失。
+    private static readonly DateTime FeatureTip2026W21ExpireAt =
+        new(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
+
     internal static List<DailyTip> BuildDefaultTips(DateTime now)
     {
         DailyTip T(
@@ -383,7 +393,7 @@ public sealed class DailyTipsController : ControllerBase
                 null,
                 2,
                 autoAction: null,
-                endAt: now.AddDays(7),
+                endAt: FeatureTip2026W21ExpireAt,
                 sourceType: "feature-release"),
 
             T("feature-2026w21-knowledge-browser", "card",
@@ -394,7 +404,7 @@ public sealed class DailyTipsController : ControllerBase
                 null,
                 3,
                 autoAction: null,
-                endAt: now.AddDays(7),
+                endAt: FeatureTip2026W21ExpireAt,
                 sourceType: "feature-release"),
 
             // 1. 自定义导航顺序 —— 排第一,新用户上手第一件事就是配自己的菜单

@@ -33,10 +33,19 @@ last_review: 2026-05-26
    它们是全局可见 tip（不 auto-pop 弹窗），符合用户「不要讨厌的弹窗」诉求。
 
 3. **feature-release seed 是时效内容**：`BuildDefaultTips` 里这 2 条带日期语义（2026-W20/W21），
-   过期后仍留在源码中。下一批新功能上线时应替换这两条，避免源码里堆积过时公告。
+   下线时间锚定固定常量 `FeatureTip2026W21ExpireAt`（2026-06-02），过此日期全平台（含 /visible 兜底）
+   自动消失，但源码仍残留。下一批新功能上线时应替换这两条 + 更新常量，避免源码堆积过时公告。
 
 4. **存量 14 天 defect-fix tip 不回填**：改动前已生成、EndAt=14 天的 defect-fix tip 仍按 14 天过期，
    只有新生成的按 7 天。影响极小（最多多挂 7 天），不做回填。
+
+## 已修复（PR #673 review 反馈，2026-05-26）
+
+- ~~Reset 端点克隆丢失 EndAt~~：已补 `StartAt`/`EndAt`（Bugbot Medium，原 replace 因缩进只命中 Seed 漏了 Reset）。
+- ~~兜底 tip 用 now.AddDays(7) 每次请求重算、永不过期~~：改用固定常量 `FeatureTip2026W21ExpireAt` +
+  `/visible` 兜底路径补发布窗口过滤，DB 与兜底两条路径口径一致（Bugbot Medium + Codex P2）。
+- ~~AdminNotification 7 天默认会让未恢复的运营告警静默消失~~：模型池故障转移告警（`PoolFailoverNotifier`，
+  唯一就地更新 + 自关闭的持续型告警）显式 `ExpiresAt = null` 豁免（Codex P1）。其余一次性提醒仍走 7 天默认。
 
 ## 相关文件
 
