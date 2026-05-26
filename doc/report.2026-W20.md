@@ -1,10 +1,11 @@
 # 2026-W20 (2026-05-11 ~ 2026-05-17) · 周报
 
-> **总计 702 次提交 | 509 个文件变更 | +44,440 行 / -12,107 行 | 28 个 PR 收口项（详见附录）**
+> **主干可达 702 次提交（first-parent 落地 297） | 全分支研发活动 713 次提交 | 509 个文件变更 | +44,440 行 / -12,107 行 | 28 个 PR 收口项（详见附录）**
 >
-> **贡献者**：Claude (263 commits)、InerNoro / inernoro (437 commits，同一人多机身份合并)、RuXiuWEi (2 commits)
+> **贡献者（主干可达）**：Claude (263)、InerNoro / inernoro (437，同一人多机身份合并)、RuXiuWEi (2)
 >
-> **统计口径**：仅统计 `origin/main` 主干分支，按提交日期文本（`%cd --date=short`）过滤 `2026-05-11 ~ 2026-05-17`；PR 边界以 GitHub `mergedAt` 落地主干判断；文件 / 行变更口径为 `git diff --shortstat FIRST^..LAST`（包含跨 PR 合并副作用）。本报告为事后补齐——拉取时本地为浅克隆只含 05-17 之后历史，已 `git fetch --shallow-since=2026-05-09` 深挖补全后重新统计。
+> **统计口径**：仅统计 `origin/main` 主干分支（weekly 技能纪律 #2：禁用 `--all`），按提交日期文本（`%cd --date=short`）过滤 `2026-05-11 ~ 2026-05-17`；PR 边界以 GitHub `mergedAt` 落地主干判断；文件 / 行变更口径为 `git diff --shortstat FIRST^..LAST`（包含跨 PR 合并副作用）。本报告为事后补齐——拉取时本地为浅克隆只含 05-17 之后历史，已 `git fetch --shallow-since=2026-05-09` 深挖补全后重新统计。
+> **口径漂移说明（重要）**：上周（05-17）在 `claude/great-keller-htQwH` 分支生成的同周报告写"305 次"，与本报告"702 次"差异全部来自 **#642（05-20）用 merge-commit 把 `codex/cds-agent-workbench-ui` 分支的 253 个 W20 日期提交回灌进主干可达历史**。两者均为"主干可达"口径，只是快照时点不同（305 ≈ 当时 first-parent 297）。本报告的 702 含这 253 个后并入的 CDS Agent 探索提交，故"高提交"主要是一次性大分支合并的副作用，并非当周真实交付密度提升——见下文趋势分析与第六节熔断教训。
 
 **本周趋势**：W20 是全季度提交量最高的一周（702 次），但"提交量高"不等于"功能净增高"——本周存在**明显的双重性**。一面是 **产品体验的密集打磨**真实落地：知识库文档浏览器（TOC 导航 / 章节分组 / 整篇划词评论）、作品广场动态列数 + 创作者头像筛选 + 极光背景、多类型资源预览（音频/视频/网页/PDF）、网页托管媒体上传、统一短链基础设施 + 管理员控制台、统一流式文本动效，这些都是用户能直接感知的增量。另一面是 **CDS Agent 运行时 / 官方 SDK 适配的探索**——本周约 **261 个提交（占 37%）** 集中在 `cds-agent` / `sidecar` / `runtime` / `official sdk adapter` 一线，但其中大量是 "expose / surface / show ... diagnostics / readiness gates / repair plan" 这类**就绪面板与计划文档**的反复重写，真正的功能净增有限，且最终是通过 W21 的 #642 一次性合入主干的。fix 占 54%（381/702）延续了"边开边缝"的节奏，feat 144 中近半被 CDS Agent 诊断/就绪类占据。这一现象后来被固化为项目规则 `blocked-state-circuit-breaker.md`：撞上自己无法提供的外部输入（runtime-pool sidecar 镜像 + remote host）时应熔断升级，而非靠脚本 / gate / plan 的数量制造"在推进"的假象。
 
