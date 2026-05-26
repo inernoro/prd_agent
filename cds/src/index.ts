@@ -1,5 +1,6 @@
 import http from 'node:http';
 import os from 'node:os';
+import * as v8 from 'node:v8';
 import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -35,6 +36,7 @@ import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
 import { DockerEventMonitor, type ContainerLifecycleIntent } from './services/container-diagnostics.js';
 import { SystemLogMonitor } from './services/system-log-monitor.js';
 
@@ -48,6 +50,77 @@ const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
 
 const shell = new ShellExecutor();
+
+const MASTER_MEMORY_MONITOR_INTERVAL_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.CDS_MASTER_MEMORY_MONITOR_INTERVAL_MS || '', 10) || 30_000,
+);
+const MASTER_MEMORY_EVENT_MIN_INTERVAL_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.CDS_MASTER_MEMORY_EVENT_MIN_INTERVAL_MS || '', 10) || 120_000,
+);
+
+function mb(bytes: number): number {
+  return Math.round(bytes / 1024 / 1024);
+}
+
+function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (!store) return null;
+  let lastSeverity: ServerEventSeverity | null = null;
+  let lastRecordedAt = 0;
+  let maxHeapUsed = 0;
+  let maxRss = 0;
+
+  const sample = () => {
+    const mem = process.memoryUsage();
+    const heapStats = v8.getHeapStatistics();
+    maxHeapUsed = Math.max(maxHeapUsed, mem.heapUsed);
+    maxRss = Math.max(maxRss, mem.rss);
+    const heapLimit = heapStats.heap_size_limit || 0;
+    const heapRatio = heapLimit > 0 ? mem.heapUsed / heapLimit : 0;
+    const severity: ServerEventSeverity | null =
+      heapRatio >= 0.9 ? 'error' :
+        heapRatio >= 0.75 ? 'warn' :
+          null;
+    const now = Date.now();
+    if (!severity) {
+      if (lastSeverity && heapRatio < 0.65) lastSeverity = null;
+      return;
+    }
+    if (lastSeverity === severity && now - lastRecordedAt < MASTER_MEMORY_EVENT_MIN_INTERVAL_MS) return;
+    lastSeverity = severity;
+    lastRecordedAt = now;
+    const message =
+      `cds-master heap pressure ${Math.round(heapRatio * 100)}% ` +
+      `(heapUsed=${mb(mem.heapUsed)}MB heapLimit=${mb(heapLimit)}MB rss=${mb(mem.rss)}MB)`;
+    store.record({
+      category: 'system',
+      severity,
+      source: 'cds-master-memory',
+      action: 'process.memory.pressure',
+      message,
+      status: severity,
+      details: {
+        pid: process.pid,
+        heapUsedMB: mb(mem.heapUsed),
+        heapTotalMB: mb(mem.heapTotal),
+        heapLimitMB: mb(heapLimit),
+        heapRatio,
+        rssMB: mb(mem.rss),
+        externalMB: mb(mem.external),
+        arrayBuffersMB: mb(mem.arrayBuffers),
+        maxHeapUsedMB: mb(maxHeapUsed),
+        maxRssMB: mb(maxRss),
+      },
+    });
+    console.warn(`[memory] ${message}`);
+  };
+
+  const timer = setInterval(sample, MASTER_MEMORY_MONITOR_INTERVAL_MS);
+  timer.unref?.();
+  sample();
+  return timer;
+}
 
 // ── State ──
 //
@@ -276,6 +349,7 @@ if (activeServerEventLogStore) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
   }
 }
+const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 
 async function initAuthStore(): Promise<void> {
   const authBackend = (process.env.CDS_AUTH_BACKEND || 'memory').toLowerCase();
@@ -1489,6 +1563,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
+  if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
   schedulerService.stop();
