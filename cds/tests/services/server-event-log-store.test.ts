@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildServerEventQuery } from '../../src/services/server-event-log-store.js';
+import { buildServerEventQuery, normalizeLogText } from '../../src/services/server-event-log-store.js';
 
 describe('ServerEventLogStore query builder', () => {
   it('matches operationId in both new top-level field and legacy details.operationId', () => {
@@ -26,5 +26,15 @@ describe('ServerEventLogStore query builder', () => {
       ],
       severity: { $in: ['warn', 'error'] },
     });
+  });
+
+  it('truncates long log bodies before they can become oversized Mongo documents', () => {
+    const hugeLog = Array.from({ length: 40_000 }, (_, index) => `line-${index}=secret-value`).join('\n');
+    const normalized = normalizeLogText(hugeLog, 200);
+
+    expect(normalized.byteLength).toBe(Buffer.byteLength(hugeLog, 'utf8'));
+    expect(normalized.lineCount).toBe(40_000);
+    expect(Buffer.byteLength(normalized.text || '', 'utf8')).toBeLessThanOrEqual(16 * 1024);
+    expect(normalized.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });

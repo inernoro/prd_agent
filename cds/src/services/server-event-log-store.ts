@@ -85,9 +85,11 @@ function truncateUtf8(value: string, maxBytes: number): string {
   const masked = maskSecrets(value, { mask: true });
   const buf = Buffer.from(masked);
   if (buf.length <= maxBytes) return masked;
-  let text = buf.subarray(0, maxBytes).toString('utf8');
-  while (Buffer.byteLength(text, 'utf8') > maxBytes) text = text.slice(0, -1);
-  return `${text}\n[cds server event log truncated: original ${buf.length} bytes]`;
+  const suffix = `\n[cds server event log truncated: original ${buf.length} bytes]`;
+  const textBudget = Math.max(0, maxBytes - Buffer.byteLength(suffix, 'utf8'));
+  let text = buf.subarray(0, textBudget).toString('utf8');
+  while (Buffer.byteLength(text, 'utf8') > textBudget) text = text.slice(0, -1);
+  return `${text}${suffix}`;
 }
 
 function compactObject(value: unknown): unknown {

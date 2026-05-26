@@ -15,6 +15,54 @@ function eventSink(): { sink: ServerEventLogSink; records: Array<{ action: strin
 }
 
 describe('BranchOperationCoordinator', () => {
+  it('records queryable lifecycle events with top-level operationId', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+    coordinator.complete(active.lease!, 'completed');
+    const continuation = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+    });
+    const repeated = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+    });
+    coordinator.complete(continuation.lease!, 'completed');
+
+    expect(repeated.status).toBe('rejected');
+    expect(records.map((record) => record.action)).toEqual(expect.arrayContaining([
+      'branch.operation.started',
+      'branch.operation.merged',
+      'branch.operation.completed',
+      'branch.operation.queued',
+      'branch.operation.continued',
+      'branch.operation.rejected',
+    ]));
+    for (const record of records) {
+      expect(record.operationId).toMatch(/^op_/);
+    }
+  });
+
   it('starts one operation per branch and rejects a concurrent manual deploy', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);
