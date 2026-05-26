@@ -1422,7 +1422,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         action: 'branch.operation.pending-drop',
         message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
         branchId: pending.branchId,
-        details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+        details: {
+          operationId: pending.operationId,
+          commitSha: pending.request.commitSha || null,
+          mergedCount: pending.mergedCount,
+        },
       });
       return;
     }
@@ -1466,7 +1470,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchId: pending.branchId,
         requestId: pending.request.requestId || null,
         operationId: pending.operationId,
-        details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+        details: {
+          operationId: pending.operationId,
+          commitSha: pending.request.commitSha || null,
+          mergedCount: pending.mergedCount,
+        },
       });
     });
     serverEventLogStore?.record({
@@ -1479,7 +1487,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: pending.branchId,
       requestId: pending.request.requestId || null,
       operationId: pending.operationId,
-      details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+      details: {
+        operationId: pending.operationId,
+        commitSha: pending.request.commitSha || null,
+        mergedCount: pending.mergedCount,
+      },
     });
   }
 

@@ -771,6 +771,105 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it('dispatches only the latest merged webhook commit after the active deploy completes', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'pending-latest',
+        projectId: 'default',
+        branch: 'feature/pending-latest',
+        worktreePath: path.join(tmpDir, 'worktrees', 'pending-latest'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-pending-latest-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-pending-latest', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: Array<{ url: string; body: unknown; requestId?: string }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
+            : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/pending-latest/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-a' },
+        );
+        await runStarted;
+
+        const mergedB = await request(
+          server,
+          'POST',
+          '/api/branches/pending-latest/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-b' },
+        );
+        const mergedC = await request(
+          server,
+          'POST',
+          '/api/branches/pending-latest/deploy',
+          { commitSha: '3333333333333333333333333333333333333333' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-c' },
+        );
+
+        expect(String(mergedB.body)).toContain('operationStatus');
+        expect(String(mergedB.body)).toContain('merged');
+        expect(String(mergedC.body)).toContain('3333333333333333333333333333333333333333');
+
+        releaseRun();
+        const active = await activeDeploy;
+        expect(active.status).toBe(200);
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0].url).toContain('/api/branches/pending-latest/deploy');
+        expect(fetchCalls[0].body).toEqual({ commitSha: '3333333333333333333333333333333333333333' });
+        expect(fetchCalls[0].requestId).toBe('req-c');
+
+        const pendingDispatch = operationEvents.find((event) =>
+          event.branchId === 'pending-latest' && event.action === 'branch.operation.pending-dispatch.started',
+        );
+        expect(pendingDispatch?.operationId).toMatch(/^op_/);
+        expect(pendingDispatch?.details).toMatchObject({
+          commitSha: '3333333333333333333333333333333333333333',
+          mergedCount: 2,
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it('records branch delete completion only after state flush succeeds', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
