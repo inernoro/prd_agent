@@ -52,6 +52,7 @@ import {
 // import 顺序、把 config 的 import 挪走，env loading 也仍然先于业务模块求值。
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
+import type { BranchEntry } from './types.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -127,6 +128,25 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
   timer.unref?.();
   sample();
   return timer;
+}
+
+function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatus: string; nextStatus: string; changed: boolean } {
+  const previousStatus = branch.status;
+  const statuses = Object.values(branch.services || {}).map((service) => service.status);
+  if (statuses.some((status) => status === 'error')) branch.status = 'error';
+  else if (statuses.some((status) => status === 'building')) branch.status = 'building';
+  else if (statuses.some((status) => status === 'starting' || status === 'restarting')) branch.status = 'starting';
+  else if (statuses.some((status) => status === 'running')) branch.status = 'running';
+  else branch.status = 'idle';
+
+  const failedReasons = Object.entries(branch.services || {})
+    .filter(([, service]) => service.status === 'error')
+    .map(([id, service]) => `${id}: ${service.errorMessage || '启动失败'}`);
+  branch.errorMessage = failedReasons.length ? failedReasons.join('\n') : undefined;
+  if (branch.status === 'running' && previousStatus !== 'running') {
+    branch.lastReadyAt = new Date().toISOString();
+  }
+  return { previousStatus, nextStatus: branch.status, changed: previousStatus !== branch.status };
 }
 
 // ── State ──
@@ -1433,8 +1453,32 @@ janitorService.setRemoveFn(async (slug: string) => {
       });
     }
 
-    if (appReconciled > 0) {
-      console.log(`  [app] Reconciled ${appReconciled} app container(s)`);
+    let branchStatusReconciled = 0;
+    for (const branch of stateService.getAllBranches()) {
+      const result = reconcileBranchStatusFromServices(branch);
+      if (!result.changed) continue;
+      branchStatusReconciled++;
+      activeServerEventLogStore?.record({
+        category: 'system',
+        severity: result.nextStatus === 'error' ? 'warn' : 'info',
+        source: 'startup-reconcile',
+        action: 'branch.reconcile.status-derived',
+        message: `Branch ${branch.id} status reconciled from services: ${result.previousStatus} -> ${result.nextStatus}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        details: {
+          previousStatus: result.previousStatus,
+          nextStatus: result.nextStatus,
+          reason: 'derive-branch-status-from-service-statuses',
+          serviceStatuses: Object.fromEntries(
+            Object.entries(branch.services || {}).map(([profileId, svc]) => [profileId, svc.status]),
+          ),
+        },
+      });
+    }
+
+    if (appReconciled > 0 || branchStatusReconciled > 0) {
+      console.log(`  [app] Reconciled ${appReconciled} app container(s), ${branchStatusReconciled} branch status(es)`);
       stateService.save();
     }
 
