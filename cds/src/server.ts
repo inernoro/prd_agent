@@ -2217,10 +2217,22 @@ export function createServer(deps: ServerDeps): express.Express {
   app.get('/api/server-events', async (req, res) => {
     const reader = deps.serverEventLogStore?.findRecent;
     if (!reader) {
-      res.json({ events: [], total: 0, message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。' });
+      res.json({
+        ok: false,
+        disabled: true,
+        events: [],
+        total: 0,
+        message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。',
+      });
       return;
     }
-    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const limitRaw = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const limit = Math.max(1, Math.min(limitRaw, 1000));
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    if (since && Number.isNaN(Date.parse(since))) {
+      res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
     const categoryRaw = typeof req.query.category === 'string' ? req.query.category : undefined;
     const category = categoryRaw === 'container' || categoryRaw === 'docker' || categoryRaw === 'system'
       ? categoryRaw as ServerEventCategory
@@ -2246,9 +2258,9 @@ export function createServer(deps: ServerDeps): express.Express {
       projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
       operationId: typeof req.query.operationId === 'string' ? req.query.operationId : undefined,
-      since: typeof req.query.since === 'string' ? req.query.since : undefined,
+      since,
     });
-    res.json({ events, total: events.length });
+    res.json({ ok: true, disabled: false, events, total: events.length });
   });
 
   // ── Durable control-plane mutation audit ──
