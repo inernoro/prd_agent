@@ -34,7 +34,8 @@ import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
-import { reconcileStaleDeployDispatches } from './services/deploy-dispatch-reconciler.js';
+import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
+import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -152,6 +153,7 @@ function startStaleDeployDispatchReconciler(
       if (reconciled.length > 0) {
         console.warn(`[deploy-dispatch] reconciled ${reconciled.length} stale webhook dispatch state(s)`);
       }
+      dispatchRecoveredWebhookDeploys(state, store, reconciled, 'deploy-dispatch-reconciler.interval');
     } catch (err) {
       store?.record({
         category: 'system',
@@ -169,6 +171,130 @@ function startStaleDeployDispatchReconciler(
   const timer = setInterval(run, STALE_DEPLOY_DISPATCH_RECONCILE_INTERVAL_MS);
   timer.unref?.();
   return timer;
+}
+
+function dispatchRecoveredWebhookDeploys(
+  state: StateService,
+  store: ServerEventLogSink | null,
+  reconciled: DeployDispatchReconcileResult[],
+  source: string,
+): void {
+  for (const result of reconciled) {
+    const traceHash = crypto.createHash('sha1')
+      .update(`${result.branchId}\0${result.dispatchAt}\0${source}`)
+      .digest('hex')
+      .slice(0, 12);
+    const operationId = `op_dispatch_retry_${traceHash}`;
+    const requestId = `retry_${traceHash}`;
+    const branch = state.getBranch(result.branchId);
+    const decision = shouldRetryInterruptedWebhookDispatch(branch, result);
+    if (!decision.retry || !branch || !result.commitSha) {
+      store?.record({
+        category: 'system',
+        severity: 'info',
+        source,
+        action: 'branch.deploy-dispatch.retry-skipped',
+        message: `stale webhook deploy retry skipped for ${result.branchId}: ${decision.reason}`,
+        projectId: result.projectId,
+        branchId: result.branchId,
+        requestId,
+        operationId,
+        details: {
+          operationId,
+          requestId,
+          reason: decision.reason,
+          commitSha: result.commitSha || null,
+          dispatchAt: result.dispatchAt,
+          previousStatus: result.previousStatus,
+        },
+      });
+      continue;
+    }
+
+    const retryAt = new Date().toISOString();
+    branch.lastDeployDispatchAt = retryAt;
+    branch.lastDeployDispatchCommitSha = result.commitSha;
+    branch.lastDeployDispatchSource = 'webhook';
+    branch.lastDeployDispatchStatus = 'dispatching';
+    branch.lastDeployDispatchError = undefined;
+    state.save();
+
+    store?.record({
+      category: 'system',
+      severity: 'warn',
+      source,
+      action: 'branch.deploy-dispatch.retry-started',
+      message: `retrying interrupted webhook deploy for ${result.branchId}`,
+      projectId: branch.projectId,
+      branchId: branch.id,
+      requestId,
+      operationId,
+      details: {
+        operationId,
+        requestId,
+        reason: decision.reason,
+        commitSha: result.commitSha,
+        originalDispatchAt: result.dispatchAt,
+        retryAt,
+        previousStatus: result.previousStatus,
+      },
+    });
+
+    void fetch(`http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(result.branchId)}/deploy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CDS-Internal': '1',
+        'X-CDS-Trigger': 'webhook',
+        'X-CDS-Request-Id': requestId,
+        ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+        'X-CDS-Source-Branch-Id': branch.id,
+      },
+      body: JSON.stringify({ commitSha: result.commitSha }),
+    }).then(async (response) => {
+      const fresh = state.getBranch(result.branchId);
+      if (response.ok) {
+        if (fresh && fresh.lastDeployDispatchAt === retryAt) {
+          fresh.lastDeployDispatchStatus = 'accepted';
+          state.save();
+        }
+        const reader = response.body?.getReader();
+        if (!reader) return;
+        for (;;) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+        return;
+      }
+      throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
+    }).catch((err) => {
+      const fresh = state.getBranch(result.branchId);
+      if (fresh && fresh.lastDeployDispatchAt === retryAt) {
+        fresh.lastDeployDispatchStatus = 'failed';
+        fresh.lastDeployDispatchError = (err as Error).message;
+        state.save();
+      }
+      store?.record({
+        category: 'system',
+        severity: 'error',
+        source,
+        action: 'branch.deploy-dispatch.retry-failed',
+        message: `interrupted webhook deploy retry failed for ${result.branchId}: ${(err as Error).message}`,
+        projectId: branch.projectId,
+        branchId: branch.id,
+        requestId,
+        operationId,
+        details: {
+          operationId,
+          requestId,
+          commitSha: result.commitSha,
+          originalDispatchAt: result.dispatchAt,
+          retryAt,
+          error: (err as Error).message,
+        },
+      });
+    });
+  }
 }
 
 function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatus: string; nextStatus: string; changed: boolean } {
@@ -1570,6 +1696,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     if (staleDispatches.length > 0) {
       console.warn(`  [app] Converged ${staleDispatches.length} stale webhook deploy dispatch state(s) to interrupted`);
     }
+    dispatchRecoveredWebhookDeploys(stateService, activeServerEventLogStore, staleDispatches, 'startup-reconcile');
 
     // ── #551 (c)(d) 终态收敛 ──
     //

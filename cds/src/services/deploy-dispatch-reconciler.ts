@@ -9,6 +9,7 @@ export interface DeployDispatchReconcileResult {
   nextStatus: 'interrupted';
   ageMin: number;
   commitSha?: string;
+  dispatchAt: string;
   reason: string;
 }
 
@@ -69,6 +70,7 @@ export function reconcileStaleDeployDispatches(
       nextStatus: 'interrupted',
       ageMin,
       commitSha: branch.lastDeployDispatchCommitSha,
+      dispatchAt,
       reason,
     };
     results.push(result);
