@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
@@ -38,6 +38,14 @@ import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
+import {
+  BranchOperationSupersededError,
+  type BranchOperationCoordinator,
+  type BranchOperationKind,
+  type BranchOperationLease,
+  type BranchOperationTrigger,
+  type PendingWebhookDeploy,
+} from '../services/branch-operation-coordinator.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -1260,6 +1268,8 @@ export interface RouterDeps {
   githubApp?: GitHubAppClient;
   /** Persistent diagnostics sink for container/docker lifecycle and log captures. */
   serverEventLogStore?: ServerEventLogSink | null;
+  /** Serializes/fences branch container lifecycle writes. */
+  branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -1274,6 +1284,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     getClusterStrategy,
     githubApp,
     serverEventLogStore,
+    branchOperationCoordinator,
   } = deps;
 
   const router = Router();
@@ -1288,6 +1299,179 @@ export function createBranchRouter(deps: RouterDeps): Router {
     githubApp,
     config,
   });
+
+  function triggerFromRequest(req: Request): BranchOperationTrigger {
+    const raw = typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : '';
+    if (raw === 'webhook') return 'webhook';
+    if (raw === 'auto-lifecycle') return 'auto-lifecycle';
+    if (raw === 'scheduler') return 'scheduler';
+    if (raw === 'janitor') return 'janitor';
+    if (raw === 'system') return 'system';
+    return 'manual';
+  }
+
+  function beginBranchOperation(
+    req: Request,
+    res: Response,
+    entry: BranchEntry,
+    input: {
+      kind: BranchOperationKind;
+      profileId?: string | null;
+      commitSha?: string | null;
+      source: string;
+      reason?: string | null;
+      sse?: boolean;
+    },
+  ): BranchOperationLease | null {
+    if (!branchOperationCoordinator) return null;
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    const decision = branchOperationCoordinator.begin({
+      branchId: entry.id,
+      projectId: entry.projectId,
+      profileId: input.profileId || null,
+      kind: input.kind,
+      trigger: triggerFromRequest(req),
+      actor: resolveActorFromRequest(req),
+      requestId: requestId || null,
+      commitSha: input.commitSha || null,
+      source: input.source,
+      reason: input.reason || null,
+    });
+    if (decision.status === 'started') return decision.lease || null;
+
+    const payload = {
+      ok: true,
+      operationStatus: decision.status,
+      operationId: decision.operationId,
+      activeOperationId: decision.activeOperationId,
+      activeKind: decision.activeKind,
+      pendingCommitSha: decision.pendingCommitSha,
+      message: decision.status === 'merged'
+        ? '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit'
+        : decision.reason || '同分支已有写操作正在运行',
+    };
+    if (input.sse) {
+      initSSE(res);
+      sendSSE(res, decision.status === 'merged' ? 'complete' : 'error', payload);
+      res.end();
+    } else if (decision.status === 'merged') {
+      res.status(202).json(payload);
+    } else {
+      res.status(409).json({ ...payload, ok: false });
+    }
+    return null;
+  }
+
+  function beginSilentBranchOperation(
+    req: Request,
+    entry: BranchEntry,
+    input: {
+      kind: BranchOperationKind;
+      profileId?: string | null;
+      commitSha?: string | null;
+      source: string;
+      reason?: string | null;
+      triggerOverride?: BranchOperationTrigger;
+      actorOverride?: string | null;
+    },
+  ): BranchOperationLease | null {
+    if (!branchOperationCoordinator) return null;
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    const decision = branchOperationCoordinator.begin({
+      branchId: entry.id,
+      projectId: entry.projectId,
+      profileId: input.profileId || null,
+      kind: input.kind,
+      trigger: input.triggerOverride || triggerFromRequest(req),
+      actor: input.actorOverride || resolveActorFromRequest(req),
+      requestId: requestId || null,
+      commitSha: input.commitSha || null,
+      source: input.source,
+      reason: input.reason || null,
+    });
+    return decision.status === 'started' ? decision.lease || null : null;
+  }
+
+  function dispatchPendingWebhookDeploy(pending: PendingWebhookDeploy | null): void {
+    if (!pending) return;
+    const branch = stateService.getBranch(pending.branchId);
+    if (!branch) {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'branch-operation-coordinator',
+        action: 'branch.operation.pending-drop',
+        message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
+        branchId: pending.branchId,
+        details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+      });
+      return;
+    }
+    const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`;
+    void fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CDS-Internal': '1',
+        'X-CDS-Trigger': 'webhook',
+        ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+        'X-CDS-Source-Branch-Id': pending.branchId,
+      },
+      body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
+    }).then((response) => {
+      if (!response.ok) {
+        return response.text().then((body) => {
+          throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);
+        });
+      }
+      const reader = response.body?.getReader();
+      if (reader) {
+        void (async () => {
+          try {
+            for (;;) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } catch { /* ignore drain errors */ }
+        })();
+      }
+    }).catch((err) => {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'error',
+        source: 'branch-operation-coordinator',
+        action: 'branch.operation.pending-dispatch.failed',
+        message: `pending webhook deploy dispatch failed: ${(err as Error).message}`,
+        projectId: branch.projectId,
+        branchId: pending.branchId,
+        details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+      });
+    });
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: 'info',
+      source: 'branch-operation-coordinator',
+      action: 'branch.operation.pending-dispatch.started',
+      message: `pending webhook deploy dispatched: ${pending.branchId}`,
+      projectId: branch.projectId,
+      branchId: pending.branchId,
+      details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+    });
+  }
+
+  function completeBranchOperation(
+    lease: BranchOperationLease | null | undefined,
+    status: 'completed' | 'failed' | 'cancelled',
+    error?: string,
+  ): void {
+    if (!lease || !branchOperationCoordinator) return;
+    const pending = branchOperationCoordinator.complete(lease, status, error);
+    dispatchPendingWebhookDeploy(pending);
+  }
+
+  function assertBranchOperationCurrent(lease: BranchOperationLease | null | undefined, step: string): void {
+    lease?.assertCurrent(step);
+  }
   async function captureContainerLogSnapshots(
     entry: BranchEntry,
     source: OperationLogContainerSnapshot['source'],
@@ -2562,11 +2746,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const runningNames = await containerService.getRunningContainerNames();
     const removed: Array<{ branchId: string; branch: string; profileId: string; containerName: string }> = [];
     const skippedRunning: Array<{ branchId: string; profileId: string; containerName: string }> = [];
+    const skippedBusy: Array<{ branchId: string; reason: string }> = [];
     const changedBranchIds = new Set<string>();
 
     for (const branch of branches) {
-      for (const [profileId, svc] of Object.entries(branch.services || {})) {
-        if (!svc.containerName) continue;
+      let branchOperationLease: BranchOperationLease | null = null;
+      let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+      let branchChanged = false;
+      const candidates = Object.entries(branch.services || {}).filter(([_, svc]) => {
+        if (!svc.containerName) return false;
         if (
           runningNames.has(svc.containerName)
           || svc.status === 'running'
@@ -2574,10 +2762,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
           || svc.status === 'starting'
           || svc.status === 'restarting'
         ) {
-          skippedRunning.push({ branchId: branch.id, profileId, containerName: svc.containerName });
+          skippedRunning.push({ branchId: branch.id, profileId: svc.profileId, containerName: svc.containerName });
+          return false;
+        }
+        return true;
+      });
+      if (candidates.length === 0) continue;
+      try {
+        branchOperationLease = beginSilentBranchOperation(req, branch, {
+          kind: 'cleanup-damaged',
+          source: 'api.cleanup-damaged-containers',
+          reason: '批量清理损坏容器：状态未运行且容器不可用',
+        });
+        if (branchOperationCoordinator && !branchOperationLease) {
+          skippedBusy.push({ branchId: branch.id, reason: '同分支已有写操作正在运行' });
           continue;
         }
-
+      for (const [profileId, svc] of candidates) {
+        assertBranchOperationCurrent(branchOperationLease, `cleanup damaged before ${profileId}`);
         await containerService.remove(svc.containerName, {
           projectId: branch.projectId,
           branchId: branch.id,
@@ -2586,12 +2788,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           source: 'api.cleanup-damaged-containers',
           reason: '批量清理损坏容器：状态未运行且容器不可用',
         }).catch(() => undefined);
+        assertBranchOperationCurrent(branchOperationLease, `cleanup damaged before deleting state ${profileId}`);
         delete branch.services[profileId];
         removed.push({ branchId: branch.id, branch: branch.branch, profileId, containerName: svc.containerName });
         changedBranchIds.add(branch.id);
+        branchChanged = true;
       }
 
-      if (changedBranchIds.has(branch.id)) {
+      if (branchChanged) {
         if (Object.keys(branch.services || {}).length === 0) {
           branch.status = 'idle';
           branch.errorMessage = undefined;
@@ -2599,6 +2803,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           reconcileBranchStatus(branch);
           if (branch.status !== 'error') branch.errorMessage = undefined;
         }
+      }
+      } catch (err) {
+        branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+        skippedBusy.push({ branchId: branch.id, reason: (err as Error).message });
+      } finally {
+        completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
     }
 
@@ -2633,6 +2843,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       details: {
         removed,
         skippedRunning,
+        skippedBusy,
       },
     });
 
@@ -2640,8 +2851,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ok: true,
       removedCount: removed.length,
       skippedRunningCount: skippedRunning.length,
+      skippedBusyCount: skippedBusy.length,
       removed,
       skippedRunning,
+      skippedBusy,
     });
   });
 
@@ -3423,6 +3636,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       },
     });
 
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'delete',
+      source: 'api.delete-branch',
+      reason: deleteReason,
+      sse: true,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+
     const finalizeBranchDelete = (message: string): void => {
       stateService.removeLogs(id);
       stateService.removeBranch(id);
@@ -3463,6 +3685,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     initSSE(res);
     try {
+      assertBranchOperationCurrent(branchOperationLease, 'before-branch-delete');
       if (remoteExecutor) {
         // Proxy to the executor's /exec/delete endpoint.
         sendSSE(res, 'step', {
@@ -3592,8 +3815,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
     } catch (err) {
+      branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
+      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
   });
@@ -3697,6 +3922,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
+    const requestCommitSha = typeof req.body?.commitSha === 'string'
+      && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+      ? req.body.commitSha
+      : undefined;
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'deploy',
+      commitSha: requestCommitSha || entry.githubCommitSha || null,
+      source: 'api.deploy-branch',
+      reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
+      sse: true,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+
     // `lastAccessedAt` is the branch card's "last deploy attempt" clock.
     // Stamp it before dispatching so failures and remote rejections update the
     // visible time just like successful deploys do.
@@ -3762,6 +4001,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // Clear previous error state on new deploy
+      assertBranchOperationCurrent(branchOperationLease, 'before-deploy-state');
       entry.errorMessage = undefined;
       for (const svc of Object.values(entry.services)) {
         if (svc.errorMessage) svc.errorMessage = undefined;
@@ -3790,9 +4030,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       //      handler (same value in the normal flow)
       //   3. current worktree HEAD — fallback for UI-triggered deploys
       // If none of the above resolve, the check-run path is a no-op.
-      const bodyCommitSha = typeof req.body?.commitSha === 'string'
-        && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
-        ? req.body.commitSha : undefined;
+      const bodyCommitSha = requestCommitSha;
       if (bodyCommitSha) {
         entry.githubCommitSha = bodyCommitSha;
       } else if (entry.githubRepoFullName && !entry.githubCommitSha) {
@@ -4117,6 +4355,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               },
             });
 
+            assertBranchOperationCurrent(branchOperationLease, `after-run-${profile.id}`);
             // Phase 1 passed (container alive). Enter 'starting' and gate the
             // transition to 'running' on either a startup-log signal or an
             // HTTP/TCP readiness probe. Closes the gap that used to surface
@@ -4232,6 +4471,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // ── Update overall status ──
+      assertBranchOperationCurrent(branchOperationLease, 'before-deploy-finalize');
       //
       // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
       //
@@ -4436,7 +4676,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // GitHub Checks 也只看到 "Deploy failed" 没有阶段信息。
       // 现在统一通过 logEvent() 写入事件，让事后排查能在事件流中看到。
       const errMsg = (err as Error)?.message || String(err);
+      branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       const errStack = (err as Error)?.stack || '';
+      if (err instanceof BranchOperationSupersededError) {
+        logEvent({
+          step: 'deploy-fenced',
+          status: 'warning',
+          title: '部署操作已被更高优先级操作取代，停止写入分支状态',
+          log: errMsg,
+          timestamp: new Date().toISOString(),
+        });
+        opLog.status = 'error';
+        opLog.finishedAt = new Date().toISOString();
+        stateService.appendLog(id, opLog);
+        stateService.save();
+        sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
+        return;
+      }
       logEvent({
         step: 'deploy',
         status: 'error',
@@ -4476,6 +4732,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
     } finally {
+      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
   });
@@ -4507,6 +4764,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'deploy-profile',
+      profileId,
+      commitSha: entry.githubCommitSha || null,
+      source: 'api.deploy-profile',
+      reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
+      sse: true,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+
     initSSE(res);
 
     const opLog: OperationLog = {
@@ -4526,6 +4794,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logDeploy(id, `开始部署服务 ${profile.name}`);
 
       // Clear previous error state on new deploy
+      assertBranchOperationCurrent(branchOperationLease, 'before-profile-deploy-state');
       entry.errorMessage = undefined;
       const existingSvc = entry.services[profile.id];
       if (existingSvc?.errorMessage) existingSvc.errorMessage = undefined;
@@ -4610,6 +4879,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           },
         });
 
+        assertBranchOperationCurrent(branchOperationLease, `after-run-${profile.id}`);
         // Enter 'starting' and gate transition on startup signal + readiness
         // probe (TCP+HTTP). Prevents the 502 window between `docker run` exit
         // and the app binding its port. See .claude/rules/cds-auto-deploy.md.
@@ -4659,6 +4929,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // Update overall status
+      assertBranchOperationCurrent(branchOperationLease, 'before-profile-deploy-finalize');
       const statuses = Object.values(entry.services).map(s => s.status);
       const hasRunning = statuses.some(s => s === 'running');
       const hasStarting = statuses.some(s => s === 'starting');
@@ -4697,6 +4968,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         services: entry.services,
       });
     } catch (err) {
+      branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+      if (err instanceof BranchOperationSupersededError) {
+        const errMsg = (err as Error).message;
+        logEvent({
+          step: 'deploy-fenced',
+          status: 'warning',
+          title: '单服务部署已被更高优先级操作取代，停止写入分支状态',
+          log: errMsg,
+          timestamp: new Date().toISOString(),
+        });
+        opLog.status = 'error';
+        opLog.finishedAt = new Date().toISOString();
+        stateService.appendLog(id, opLog);
+        stateService.save();
+        sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
+        return;
+      }
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
       opLog.status = 'error';
@@ -4707,6 +4995,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logDeploy(id, `部署失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
+      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
   });
@@ -4853,6 +5142,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
     }
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'stop',
+      source: 'api.stop-branch',
+      reason: 'stop branch containers',
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     // ── Cluster-aware stop ──
     //
@@ -4864,14 +5160,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? registry.getAll().find(n => n.id === entry.executorId && n.role !== 'embedded')
         : null;
     if (remoteExecutor) {
-      entry.status = 'stopping';
-      for (const svc of Object.values(entry.services)) {
-        if (svc.status === 'running' || svc.status === 'starting') {
-          svc.status = 'stopping';
-        }
-      }
-      stateService.save();
       try {
+        assertBranchOperationCurrent(branchOperationLease, 'before-remote-stop');
+        entry.status = 'stopping';
+        for (const svc of Object.values(entry.services)) {
+          if (svc.status === 'running' || svc.status === 'starting') {
+            svc.status = 'stopping';
+          }
+        }
+        stateService.save();
         const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`;
         const upstream = await fetch(upstreamUrl, {
           method: 'POST',
@@ -4908,13 +5205,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {
+        branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
         res.status(502).json({ error: `无法连接执行器: ${(err as Error).message}` });
+      } finally {
+        completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
       return;
     }
 
     try {
       // Set stopping state immediately so frontend can show animation
+      assertBranchOperationCurrent(branchOperationLease, 'before-local-stop');
       entry.status = 'stopping';
       for (const svc of Object.values(entry.services)) {
         if (svc.status === 'running' || svc.status === 'starting') {
@@ -4953,7 +5254,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       res.json({ message: '所有服务已停止' });
     } catch (err) {
+      branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       res.status(500).json({ error: (err as Error).message });
+    } finally {
+      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
     }
   });
 
@@ -6544,65 +6848,80 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const worktree = branch.worktreePath;
     if (!worktree) { res.status(400).json({ error: '分支无 worktreePath' }); return; }
 
+    const branchOperationLease = beginBranchOperation(req, res, branch, {
+      kind: 'force-rebuild',
+      profileId,
+      source: 'api.force-rebuild',
+      reason: `强制干净重建 ${branchSlug}:${profileId}`,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const steps: Array<{ step: string; ok: boolean; detail?: string }> = [];
 
-    // 1) 停容器
-    if (containerName) {
-      try {
-        await containerService.remove(containerName, {
-          projectId: branch.projectId,
-          branchId: branch.id,
-          profileId,
-          requestId: requestId || null,
-          actor,
-          trigger: typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : null,
-          operation: 'force-rebuild',
-          source: 'api.force-rebuild',
-          reason: `强制干净重建 ${branchSlug}:${profileId}：停止旧容器以清理 bin/obj`,
-        });
-        steps.push({ step: `停止 ${containerName}`, ok: true });
-      } catch (err) {
-        steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
-      }
-    } else {
-      steps.push({ step: '停止容器', ok: true, detail: '容器未运行，跳过' });
-    }
-
-    // 2) 物理删除 worktree 下目标 profile workDir 里的 bin / obj —— 绕过 MSBuild 增量
-    const workDir = profile.workDir ? `${worktree}/${profile.workDir}` : worktree;
-    const wipeCmd = `find ${shq(workDir)} -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} + 2>/dev/null; echo done`;
     try {
-      const result = await shell.exec(wipeCmd);
-      if (result.exitCode !== 0) {
-        steps.push({ step: 'rm -rf bin/obj', ok: false, detail: combinedOutput(result) });
+      assertBranchOperationCurrent(branchOperationLease, 'before-force-rebuild');
+      // 1) 停容器
+      if (containerName) {
+        try {
+          await containerService.remove(containerName, {
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId,
+            requestId: requestId || null,
+            actor,
+            trigger: typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : null,
+            operation: 'force-rebuild',
+            source: 'api.force-rebuild',
+            reason: `强制干净重建 ${branchSlug}:${profileId}：停止旧容器以清理 bin/obj`,
+          });
+          steps.push({ step: `停止 ${containerName}`, ok: true });
+        } catch (err) {
+          steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
+        }
       } else {
-        steps.push({ step: 'rm -rf bin/obj', ok: true, detail: workDir });
+        steps.push({ step: '停止容器', ok: true, detail: '容器未运行，跳过' });
       }
+
+      assertBranchOperationCurrent(branchOperationLease, 'before-force-rebuild-wipe');
+      // 2) 物理删除 worktree 下目标 profile workDir 里的 bin / obj —— 绕过 MSBuild 增量
+      const workDir = profile.workDir ? `${worktree}/${profile.workDir}` : worktree;
+      const wipeCmd = `find ${shq(workDir)} -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} + 2>/dev/null; echo done`;
+      try {
+        const result = await shell.exec(wipeCmd);
+        if (result.exitCode !== 0) {
+          steps.push({ step: 'rm -rf bin/obj', ok: false, detail: combinedOutput(result) });
+        } else {
+          steps.push({ step: 'rm -rf bin/obj', ok: true, detail: workDir });
+        }
+      } catch (err) {
+        steps.push({ step: 'rm -rf bin/obj', ok: false, detail: (err as Error).message });
+      }
+
+      steps.push({
+        step: '等待调用方重新部署',
+        ok: true,
+        detail: '构建缓存已清理，前端/CLI 应随后触发 deploy；本端点本身不隐式拉起容器。',
+      });
+
+      stateService.recordDestructiveOp({
+        type: 'other',
+        projectId: branch.projectId || null,
+        summary: `强制干净重建 ${branchSlug}:${profileId}（清 bin/obj）`,
+      });
+
+      res.json({
+        branch: branchSlug,
+        profile: profileId,
+        workDir,
+        steps,
+        message: '已强制清理构建缓存。请继续部署以重新拉起服务。',
+      });
     } catch (err) {
-      steps.push({ step: 'rm -rf bin/obj', ok: false, detail: (err as Error).message });
+      branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+      res.status(branchOperationFinalStatus === 'cancelled' ? 409 : 500).json({ error: (err as Error).message, steps });
+    } finally {
+      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
     }
-
-    // 3) 触发部署（异步；响应立即返回，不堵 HTTP）
-    // 部署接口是现成的，这里直接告诉用户去点"部署"；自动触发留给下一版
-    steps.push({
-      step: '触发重新部署',
-      ok: true,
-      detail: `已清理。请在分支卡片上点「部署」或等待 autoBuild 重启该服务。`,
-    });
-
-    stateService.recordDestructiveOp({
-      type: 'other',
-      projectId: branch.projectId || null,
-      summary: `强制干净重建 ${branchSlug}:${profileId}（清 bin/obj）`,
-    });
-
-    res.json({
-      branch: branchSlug,
-      profile: profileId,
-      workDir,
-      steps,
-      message: '已强制清理构建缓存。下次部署会从源码完整重编译。',
-    });
   });
 
   // ── 运行时字节码一致性核验（2026-04-22 诊断工具）──
@@ -7558,42 +7877,67 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (projectFilter && (b.projectId || 'default') !== projectFilter) return false;
         return true;
       });
+      let removedCount = 0;
+      const skippedBusy: Array<{ branchId: string; reason: string }> = [];
       for (const entry of toRemove) {
-        sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
-        await archiveBranchContainerLogs({
-          stateService,
-          containerService,
-          branch: entry,
-          source: 'cleanup',
-          serverEventLogStore,
-          message: 'captured before cleanup removes branch containers',
+        const branchOperationLease = beginSilentBranchOperation(req, entry, {
+          kind: 'cleanup-orphans',
+          source: 'api.cleanup',
+          reason: projectFilter ? `清理项目 ${projectFilter} 的非默认分支` : '全局清理非默认分支',
         });
-        for (const svc of Object.values(entry.services)) {
-          try {
-            await containerService.remove(svc.containerName, {
-              projectId: entry.projectId,
-              branchId: entry.id,
-              profileId: svc.profileId,
-              trigger: 'cleanup',
-              operation: 'cleanup-all-branches',
-              source: 'api.cleanup',
-              reason: projectFilter ? `清理项目 ${projectFilter} 的非默认分支` : '全局清理非默认分支',
-            });
-          } catch { /* ok */ }
+        if (branchOperationCoordinator && !branchOperationLease) {
+          skippedBusy.push({ branchId: entry.id, reason: '同分支已有写操作正在运行' });
+          sendSSE(res, 'step', { step: 'cleanup', status: 'warning', title: `跳过 ${entry.id}：同分支已有写操作正在运行` });
+          continue;
         }
+        let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
-          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
-          await worktreeService.remove(repoRoot, entry.worktreePath);
-        } catch { /* ok */ }
-        stateService.removeLogs(entry.id);
-        stateService.removeBranch(entry.id);
-        sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
+          sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
+          await archiveBranchContainerLogs({
+            stateService,
+            containerService,
+            branch: entry,
+            source: 'cleanup',
+            serverEventLogStore,
+            message: 'captured before cleanup removes branch containers',
+          });
+          for (const svc of Object.values(entry.services)) {
+            assertBranchOperationCurrent(branchOperationLease, `cleanup before ${svc.profileId}`);
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: svc.profileId,
+                trigger: 'cleanup',
+                operation: 'cleanup-all-branches',
+                source: 'api.cleanup',
+                reason: projectFilter ? `清理项目 ${projectFilter} 的非默认分支` : '全局清理非默认分支',
+              });
+            } catch { /* ok */ }
+          }
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup before worktree remove');
+          try {
+            const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+            await worktreeService.remove(repoRoot, entry.worktreePath);
+          } catch { /* ok */ }
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup before state delete');
+          stateService.removeLogs(entry.id);
+          stateService.removeBranch(entry.id);
+          removedCount += 1;
+          sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
+        } catch (err) {
+          branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+          skippedBusy.push({ branchId: entry.id, reason: (err as Error).message });
+          sendSSE(res, 'step', { step: 'cleanup', status: 'error', title: `删除 ${entry.id} 失败: ${(err as Error).message}` });
+        } finally {
+          completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+        }
       }
       stateService.save();
       const msg = projectFilter
-        ? `已清理项目 ${projectFilter} 的 ${toRemove.length} 个分支`
-        : `已清理 ${toRemove.length} 个分支`;
-      sendSSE(res, 'complete', { message: msg, removedCount: toRemove.length, scope: projectFilter || '_all' });
+        ? `已清理项目 ${projectFilter} 的 ${removedCount} 个分支`
+        : `已清理 ${removedCount} 个分支`;
+      sendSSE(res, 'complete', { message: msg, removedCount, scope: projectFilter || '_all', skippedBusy });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -7668,50 +8012,75 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       sendSSE(res, 'step', { step: 'scan', status: 'info', title: `发现 ${orphans.length} 个孤儿分支`, detail: { orphans: orphans.map(b => ({ id: b.id, branch: b.branch })) } });
 
+      const cleanedOrphans: BranchEntry[] = [];
+      const skippedBusy: Array<{ branchId: string; reason: string }> = [];
+
       // Step 3: stop containers + remove worktrees in parallel, then update state
       await Promise.all(orphans.map(async (entry) => {
-        sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
-        await archiveBranchContainerLogs({
-          stateService,
-          containerService,
-          branch: entry,
-          source: 'cleanup',
-          serverEventLogStore,
-          message: 'captured before orphan cleanup removes branch containers',
+        const branchOperationLease = beginSilentBranchOperation(req, entry, {
+          kind: 'cleanup-orphans',
+          source: 'api.cleanup-orphans',
+          reason: '远程分支不存在，清理 CDS 孤儿分支容器',
         });
-
-        // Stop all containers for this orphan in parallel
-        await Promise.all(
-          Object.values(entry.services).map(svc =>
-            containerService.remove(svc.containerName, {
-              projectId: entry.projectId,
-              branchId: entry.id,
-              profileId: svc.profileId,
-              trigger: 'cleanup-orphans',
-              operation: 'cleanup-orphans',
-              source: 'api.cleanup-orphans',
-              reason: '远程分支不存在，清理 CDS 孤儿分支容器',
-            }).catch(() => { /* ok */ }),
-          ),
-        );
-        // Remove worktree
+        if (branchOperationCoordinator && !branchOperationLease) {
+          skippedBusy.push({ branchId: entry.id, reason: '同分支已有写操作正在运行' });
+          sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'warning', title: `跳过 ${entry.branch}：同分支已有写操作正在运行` });
+          return;
+        }
+        let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
-          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
-          await worktreeService.remove(repoRoot, entry.worktreePath);
-        } catch { /* ok */ }
+          sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
+          await archiveBranchContainerLogs({
+            stateService,
+            containerService,
+            branch: entry,
+            source: 'cleanup',
+            serverEventLogStore,
+            message: 'captured before orphan cleanup removes branch containers',
+          });
 
-        sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
+          // Stop all containers for this orphan in parallel
+          await Promise.all(
+            Object.values(entry.services).map(async (svc) => {
+              assertBranchOperationCurrent(branchOperationLease, `cleanup orphan before ${svc.profileId}`);
+              return containerService.remove(svc.containerName, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: svc.profileId,
+                trigger: 'cleanup-orphans',
+                operation: 'cleanup-orphans',
+                source: 'api.cleanup-orphans',
+                reason: '远程分支不存在，清理 CDS 孤儿分支容器',
+              }).catch(() => { /* ok */ });
+            }),
+          );
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup orphan before worktree remove');
+          // Remove worktree
+          try {
+            const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+            await worktreeService.remove(repoRoot, entry.worktreePath);
+          } catch { /* ok */ }
+
+          cleanedOrphans.push(entry);
+          sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
+        } catch (err) {
+          branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+          skippedBusy.push({ branchId: entry.id, reason: (err as Error).message });
+          sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'error', title: `清理 ${entry.branch} 失败: ${(err as Error).message}` });
+        } finally {
+          completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+        }
       }));
 
       // State mutations are serial (state is in-memory, no async needed)
-      for (const entry of orphans) {
+      for (const entry of cleanedOrphans) {
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
       }
-      const cleaned = orphans.length;
+      const cleaned = cleanedOrphans.length;
 
       stateService.save();
-      sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned });
+      sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned, skippedBusy });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -7826,8 +8195,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const branches = Object.values(state.branches)
           .filter((b) => (b.projectId || 'default') === projectFilter);
         for (const entry of branches) {
+          const branchOperationLease = beginSilentBranchOperation(req, entry, {
+            kind: 'factory-reset',
+            source: 'api.factory-reset',
+            reason: `项目 ${projectFilter} 恢复出厂设置`,
+          });
+          if (branchOperationCoordinator && !branchOperationLease) {
+            sendSSE(res, 'step', { step: 'reset', status: 'warning', title: `跳过分支 ${entry.id}：同分支已有写操作正在运行` });
+            continue;
+          }
+          let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+          try {
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
+            assertBranchOperationCurrent(branchOperationLease, `factory reset before ${svc.profileId}`);
             try {
               await containerService.remove(svc.containerName, {
                 projectId: entry.projectId,
@@ -7836,16 +8217,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 trigger: 'factory-reset',
                 operation: 'factory-reset-project',
                 source: 'api.factory-reset',
-                reason: `项目 ${projectFilter} 恢复出厂设置`,
-              });
+              reason: `项目 ${projectFilter} 恢复出厂设置`,
+            });
             } catch { /* ok */ }
           }
+          assertBranchOperationCurrent(branchOperationLease, 'factory reset before worktree remove');
           try {
             const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
+          assertBranchOperationCurrent(branchOperationLease, 'factory reset before state delete');
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
+          } catch (err) {
+            branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+            throw err;
+          } finally {
+            completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+          }
         }
 
         // 2. Stop + remove that project's infra containers (volumes preserved).
@@ -7904,8 +8293,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 1. Stop and remove all branch containers + worktrees
       const branches = Object.values(state.branches);
       for (const entry of branches) {
+        const branchOperationLease = beginSilentBranchOperation(req, entry, {
+          kind: 'factory-reset',
+          source: 'api.factory-reset',
+          reason: '全局恢复出厂设置',
+        });
+        if (branchOperationCoordinator && !branchOperationLease) {
+          sendSSE(res, 'step', { step: 'reset', status: 'warning', title: `跳过分支 ${entry.id}：同分支已有写操作正在运行` });
+          continue;
+        }
+        let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+        try {
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
+          assertBranchOperationCurrent(branchOperationLease, `factory reset before ${svc.profileId}`);
           try {
             await containerService.remove(svc.containerName, {
               projectId: entry.projectId,
@@ -7914,14 +8315,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
               trigger: 'factory-reset',
               operation: 'factory-reset-global',
               source: 'api.factory-reset',
-              reason: '全局恢复出厂设置',
-            });
+            reason: '全局恢复出厂设置',
+          });
           } catch { /* ok */ }
         }
+        assertBranchOperationCurrent(branchOperationLease, 'factory reset before worktree remove');
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
           await worktreeService.remove(repoRoot, entry.worktreePath);
         } catch { /* ok */ }
+        } catch (err) {
+          branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+          throw err;
+        } finally {
+          completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+        }
       }
 
       // 2. Stop and remove all infra service containers (volumes preserved)

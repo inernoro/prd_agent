@@ -1,0 +1,186 @@
+import { describe, expect, it } from 'vitest';
+import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
+
+function eventSink(): { sink: ServerEventLogSink; records: Array<{ action: string; details?: Record<string, unknown> }> } {
+  const records: Array<{ action: string; details?: Record<string, unknown> }> = [];
+  return {
+    records,
+    sink: {
+      record(record) {
+        records.push({ action: record.action, details: record.details });
+      },
+    },
+  };
+}
+
+describe('BranchOperationCoordinator', () => {
+  it('starts one operation per branch and rejects a concurrent manual deploy', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const first = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+    });
+    const second = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(first.status).toBe('started');
+    expect(second.status).toBe('rejected');
+    expect(second.activeOperationId).toBe(first.operationId);
+    expect(records.map((r) => r.action)).toEqual([
+      'branch.operation.started',
+      'branch.operation.rejected',
+    ]);
+  });
+
+  it('merges concurrent webhook deploys to the latest pending commit', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+    const mergedA = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+    const mergedB = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '3333333',
+    });
+
+    expect(active.status).toBe('started');
+    expect(mergedA.status).toBe('merged');
+    expect(mergedB.status).toBe('merged');
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')?.request.commitSha).toBe('3333333');
+    expect(records.filter((r) => r.action === 'branch.operation.merged')).toHaveLength(2);
+  });
+
+  it('manual delete cancels an active webhook deploy and fences the old lease', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+    expect(active.lease).toBeDefined();
+
+    const decision = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(decision.status).toBe('started');
+    expect(decision.operationId).not.toBe(active.operationId);
+    expect(active.lease?.isCurrent()).toBe(false);
+    expect(() => active.lease?.assertCurrent('before-state-save')).toThrow(BranchOperationSupersededError);
+    expect(records.map((r) => r.action)).toContain('branch.operation.cancelled');
+  });
+
+  it('complete returns and clears a pending webhook deploy', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+
+    const pending = coordinator.complete(active.lease!, 'completed');
+
+    expect(pending?.request.commitSha).toBe('2222222');
+    expect(coordinator.getActive('prd-agent-main')).toBeUndefined();
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
+  });
+
+  it('manual stop clears queued webhook deploys so stopped branches do not silently restart', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+
+    const stop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'stop',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(stop.status).toBe('started');
+    expect(active.lease?.isCurrent()).toBe(false);
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
+  });
+
+  it('cleanup-damaged yields to an active webhook deploy instead of killing an in-flight build', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+
+    const cleanup = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'cleanup-damaged',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(cleanup.status).toBe('rejected');
+    expect(coordinator.getActive('prd-agent-main')?.operationId).toBe(active.operationId);
+    expect(active.lease?.isCurrent()).toBe(true);
+    expect(records.map((r) => r.action)).toContain('branch.operation.rejected');
+  });
+
+  it('serializes per branch without blocking other branches', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const a = coordinator.begin({
+      branchId: 'prd-agent-a',
+      kind: 'deploy',
+      trigger: 'manual',
+    });
+    const b = coordinator.begin({
+      branchId: 'prd-agent-b',
+      kind: 'deploy',
+      trigger: 'manual',
+    });
+
+    expect(a.status).toBe('started');
+    expect(b.status).toBe('started');
+    expect(a.operationId).not.toBe(b.operationId);
+  });
+});

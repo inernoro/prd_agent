@@ -39,6 +39,13 @@ import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
 import { DockerEventMonitor, type ContainerLifecycleIntent } from './services/container-diagnostics.js';
 import { SystemLogMonitor } from './services/system-log-monitor.js';
+import {
+  BranchOperationCoordinator,
+  type BranchOperationKind,
+  type BranchOperationLease,
+  type BranchOperationTrigger,
+  type PendingWebhookDeploy,
+} from './services/branch-operation-coordinator.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -349,7 +356,104 @@ if (activeServerEventLogStore) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
   }
 }
+const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
+
+function beginBackgroundBranchOperation(input: {
+  branchId: string;
+  kind: BranchOperationKind;
+  trigger: BranchOperationTrigger;
+  source: string;
+  reason: string;
+  actor?: string;
+  profileId?: string | null;
+  commitSha?: string | null;
+}): BranchOperationLease | null {
+  const branch = stateService.getBranch(input.branchId);
+  if (!branch) return null;
+  const decision = branchOperationCoordinator.begin({
+    branchId: branch.id,
+    projectId: branch.projectId,
+    profileId: input.profileId || null,
+    kind: input.kind,
+    trigger: input.trigger,
+    actor: input.actor || input.trigger,
+    requestId: null,
+    commitSha: input.commitSha || branch.githubCommitSha || null,
+    source: input.source,
+    reason: input.reason,
+  });
+  if (decision.status === 'started') return decision.lease || null;
+  throw new Error(`branch operation ${decision.status}: ${decision.reason || decision.activeKind || 'busy'}`);
+}
+
+function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | null): void {
+  if (!pending) return;
+  const branch = stateService.getBranch(pending.branchId);
+  if (!branch) {
+    activeServerEventLogStore?.record({
+      category: 'system',
+      severity: 'warn',
+      source: 'branch-operation-coordinator',
+      action: 'branch.operation.pending-drop',
+      message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
+      branchId: pending.branchId,
+      details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+    });
+    return;
+  }
+  void fetch(`http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CDS-Internal': '1',
+      'X-CDS-Trigger': 'webhook',
+      ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+      'X-CDS-Source-Branch-Id': pending.branchId,
+    },
+    body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
+  }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
+    }
+    const reader = response.body?.getReader();
+    if (!reader) return;
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  }).catch((err) => {
+    activeServerEventLogStore?.record({
+      category: 'system',
+      severity: 'error',
+      source: 'branch-operation-coordinator',
+      action: 'branch.operation.pending-dispatch.failed',
+      message: `pending webhook deploy dispatch failed: ${(err as Error).message}`,
+      projectId: branch.projectId,
+      branchId: pending.branchId,
+      details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+    });
+  });
+  activeServerEventLogStore?.record({
+    category: 'system',
+    severity: 'info',
+    source: 'branch-operation-coordinator',
+    action: 'branch.operation.pending-dispatch.started',
+    message: `pending webhook deploy dispatched: ${pending.branchId}`,
+    projectId: branch.projectId,
+    branchId: pending.branchId,
+    details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+  });
+}
+
+function completeBackgroundBranchOperation(
+  lease: BranchOperationLease | null | undefined,
+  status: 'completed' | 'failed' | 'cancelled',
+  error?: string,
+): void {
+  if (!lease) return;
+  dispatchBackgroundPendingWebhookDeploy(branchOperationCoordinator.complete(lease, status, error));
+}
 
 async function initAuthStore(): Promise<void> {
   const authBackend = (process.env.CDS_AUTH_BACKEND || 'memory').toLowerCase();
@@ -785,9 +889,20 @@ const schedulerService = new SchedulerService(stateService, config.scheduler);
 schedulerService.setCoolFn(async (slug: string) => {
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  const branchOperationLease = beginBackgroundBranchOperation({
+    branchId: slug,
+    kind: 'scheduler-cooling',
+    trigger: 'scheduler',
+    actor: 'scheduler',
+    source: 'schedulerService.setCoolFn',
+    reason: '调度器降温（保留容器，可秒级唤醒）',
+  });
+  let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+  try {
   branch.status = 'stopping';
   stateService.save();
   for (const svc of Object.values(branch.services)) {
+    branchOperationLease?.assertCurrent(`scheduler cooling before ${svc.profileId}`);
     if (svc.status === 'running' || svc.status === 'starting') {
       // 先把 svc.status 翻成 stopping 再 await stop()。stop() 重构后容器
       // 停止仍保留(exited)，若此处仍是 running，30s auto-restart tick 命中
@@ -837,7 +952,14 @@ schedulerService.setCoolFn(async (slug: string) => {
   // （AutoLifecycleService.stopBranch / 手动 stop handler）保持一致，
   // 调度器降温也要 +1 stopCount，否则 UI 上"停止次数"对调度器停止漏计。
   stateService.incrementBranchStat(slug, 'stopCount');
+  branchOperationLease?.assertCurrent('scheduler cooling before final save');
   stateService.save();
+  } catch (err) {
+    branchOperationFinalStatus = 'failed';
+    throw err;
+  } finally {
+    completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
+  }
 });
 // wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
 // handler already covers the "branch is not running" case and runs the full
@@ -868,6 +990,16 @@ const autoLifecycleService = new AutoLifecycleService(
     stopBranch: async (slug: string) => {
       const branch = stateService.getBranch(slug);
       if (!branch) return;
+      const branchOperationLease = beginBackgroundBranchOperation({
+        branchId: slug,
+        kind: 'scheduler-cooling',
+        trigger: 'auto-lifecycle',
+        actor: 'auto-lifecycle',
+        source: 'autoLifecycleService.stopBranch',
+        reason: 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）',
+      });
+      let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+      try {
       // 2026-05-14 Codex review P2：远端 stop 失败时要能回滚到 running，
       // 否则分支卡在 stopping，AutoLifecycleService.tick 的
       // `status==='running'` 过滤会永久跳过它、不再重试。先快照原状态。
@@ -907,6 +1039,7 @@ const autoLifecycleService = new AutoLifecycleService(
         throw new Error(`分支 ${slug} 归属执行器 ${branch.executorId} 当前未注册（可能 coordinator 刚重启或漏 heartbeat），稍后重试`);
       }
       if (remoteExecutor) {
+        branchOperationLease?.assertCurrent('auto-lifecycle stop before remote stop');
         for (const svc of Object.values(branch.services)) {
           if (svc.status === 'running' || svc.status === 'starting') svc.status = 'stopping';
         }
@@ -940,11 +1073,13 @@ const autoLifecycleService = new AutoLifecycleService(
         branch.status = 'idle';
         branch.heatState = 'cold';
         stateService.incrementBranchStat(slug, 'stopCount');
+        branchOperationLease?.assertCurrent('auto-lifecycle stop before remote final save');
         stateService.save();
         return;
       }
 
       for (const svc of Object.values(branch.services)) {
+        branchOperationLease?.assertCurrent(`auto-lifecycle stop before ${svc.profileId}`);
         if (svc.status === 'running' || svc.status === 'starting') {
           // 同 coolFn：先翻 stopping 再 await stop()，否则 auto-restart tick
           // 在 await 窗口会把主动停止误判为 crash 并 docker start 抢跑
@@ -974,7 +1109,14 @@ const autoLifecycleService = new AutoLifecycleService(
       // 还会在下一 tick 重复 cool 它、写一条重复的 stop reason。
       branch.heatState = 'cold';
       stateService.incrementBranchStat(slug, 'stopCount');
+      branchOperationLease?.assertCurrent('auto-lifecycle stop before final save');
       stateService.save();
+      } catch (err) {
+        branchOperationFinalStatus = 'failed';
+        throw err;
+      } finally {
+        completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
+      }
     },
     // 2026-05-14 用户决策：auto-publish 必须全自动「停源码 → 重建发布版」，
     // 不靠懒唤醒（懒唤醒路径 index.ts 用 raw profile 不 resolve override）。
@@ -1104,6 +1246,16 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  const branchOperationLease = beginBackgroundBranchOperation({
+    branchId: slug,
+    kind: 'janitor-remove',
+    trigger: 'janitor',
+    actor: 'janitor',
+    source: 'janitorService.setRemoveFn',
+    reason: 'Janitor 自动回收：超过保留期或磁盘清理',
+  });
+  let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+  try {
   // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
   try {
     stateService.appendActivityLog(branch.projectId, {
@@ -1115,6 +1267,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     });
   } catch { /* activity log 是辅助手段，失败不影响主流程 */ }
   for (const svc of Object.values(branch.services)) {
+    branchOperationLease?.assertCurrent(`janitor remove before ${svc.profileId}`);
     try {
       await containerService.remove(svc.containerName, {
         projectId: branch.projectId,
@@ -1132,8 +1285,15 @@ janitorService.setRemoveFn(async (slug: string) => {
     const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
     await worktreeService.remove(repoRoot, branch.worktreePath);
   } catch { /* best effort */ }
+  branchOperationLease?.assertCurrent('janitor remove before state delete');
   stateService.removeBranch(slug);
   stateService.save();
+  } catch (err) {
+    branchOperationFinalStatus = 'failed';
+    throw err;
+  } finally {
+    completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
+  }
 });
 
 // The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
@@ -2239,6 +2399,7 @@ const app = createServer({
   gracefulShutdown: gracefulShutdownController,
   httpLogStore: activeHttpLogStore,
   serverEventLogStore: activeServerEventLogStore,
+  branchOperationCoordinator,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

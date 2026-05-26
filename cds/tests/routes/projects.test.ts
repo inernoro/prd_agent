@@ -275,6 +275,7 @@ describe('Projects router (P4 Part 2)', () => {
         },
         createdAt: older,
         lastAccessedAt: older,
+        lastDeployAt: older,
       });
 
       // Branch B: 1 running + 1 stopped, NEWER lastAccessedAt → should win
@@ -290,6 +291,7 @@ describe('Projects router (P4 Part 2)', () => {
         },
         createdAt: older,
         lastAccessedAt: newer,
+        lastDeployAt: newer,
       });
 
       const res = await request(server, 'GET', '/api/projects');

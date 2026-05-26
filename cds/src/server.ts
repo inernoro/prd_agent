@@ -49,6 +49,7 @@ import {
   type HttpLogSink,
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
+import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -132,6 +133,8 @@ export interface ServerDeps {
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
+  /** Serializes/fences branch container lifecycle writes. */
+  branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -2618,6 +2621,7 @@ export function createServer(deps: ServerDeps): express.Express {
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    branchOperationCoordinator: deps.branchOperationCoordinator,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──

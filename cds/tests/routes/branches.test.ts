@@ -8,6 +8,8 @@ import { clearRunningServiceErrorMessages, createBranchRouter } from '../../src/
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
@@ -60,7 +62,7 @@ describe('branch status helpers', () => {
 });
 
 async function request(
-  server: http.Server, method: string, urlPath: string, body?: unknown,
+  server: http.Server, method: string, urlPath: string, body?: unknown, headers?: Record<string, string>,
 ): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -69,6 +71,7 @@ async function request(
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
       headers: {
         'Content-Type': 'application/json',
+        ...(headers || {}),
         ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
       },
     }, (res) => {
@@ -103,6 +106,7 @@ describe('Branch Routes', () => {
   let server: http.Server;
   let mock: MockShellExecutor;
   let stateService: StateService;
+  let operationEvents: Array<{ action: string; branchId?: string | null; details?: Record<string, unknown> }>;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
@@ -137,11 +141,18 @@ describe('Branch Routes', () => {
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
     const containerService = new ContainerService(mock, config);
+    operationEvents = [];
+    const serverEventLogStore: ServerEventLogSink = {
+      record(record) {
+        operationEvents.push({ action: record.action, branchId: record.branchId, details: record.details });
+      },
+    };
+    const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
 
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({
-      stateService, worktreeService, containerService, shell: mock, config,
+      stateService, worktreeService, containerService, shell: mock, config, branchOperationCoordinator, serverEventLogStore,
     }));
 
     await new Promise<void>((resolve) => {
@@ -646,6 +657,58 @@ describe('Branch Routes', () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches/feature-test/stop');
       expect(res.status).toBe(200);
+      const operationActions = operationEvents
+        .filter((event) => event.branchId === 'feature-test')
+        .map((event) => event.action);
+      expect(operationActions).toContain('branch.operation.started');
+      expect(operationActions).toContain('branch.operation.completed');
+    });
+  });
+
+  describe('POST /api/branches/cleanup-damaged-containers', () => {
+    it('removes only non-running damaged services and records branch operations', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'damaged-branch',
+        projectId: 'default',
+        branch: 'feature/damaged',
+        worktreePath: path.join(tmpDir, 'worktrees', 'damaged-branch'),
+        status: 'error',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'missing-api',
+            hostPort: 10001,
+            status: 'error',
+          },
+          web: {
+            profileId: 'web',
+            containerName: 'running-web',
+            hostPort: 10002,
+            status: 'running',
+          },
+        },
+      });
+      mock.addResponse('docker ps --format "{{.Names}}"', {
+        stdout: 'running-web\n',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/cleanup-damaged-containers');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).removedCount).toBe(1);
+      expect((res.body as any).skippedRunningCount).toBe(1);
+      const branch = stateService.getBranch('damaged-branch')!;
+      expect(branch.services.api).toBeUndefined();
+      expect(branch.services.web).toBeDefined();
+      const operationActions = operationEvents
+        .filter((event) => event.branchId === 'damaged-branch')
+        .map((event) => event.action);
+      expect(operationActions).toContain('branch.operation.started');
+      expect(operationActions).toContain('branch.operation.completed');
     });
   });
 
