@@ -9,7 +9,7 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
-import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
+import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
@@ -107,13 +107,7 @@ describe('Branch Routes', () => {
   let mock: MockShellExecutor;
   let stateService: StateService;
   let containerService: ContainerService;
-  let operationEvents: Array<{
-    action: string;
-    branchId?: string | null;
-    requestId?: string | null;
-    operationId?: string | null;
-    details?: Record<string, unknown>;
-  }>;
+  let operationEvents: ServerEventRecord[];
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
@@ -154,12 +148,32 @@ describe('Branch Routes', () => {
     const serverEventLogStore: ServerEventLogSink = {
       record(record) {
         operationEvents.push({
-          action: record.action,
-          branchId: record.branchId,
-          requestId: record.requestId,
-          operationId: record.operationId,
-          details: record.details,
-        });
+          ...record,
+          _id: `test-${operationEvents.length + 1}`,
+          ts: record.ts ? new Date(record.ts) : new Date(Date.now() + operationEvents.length),
+        } as ServerEventRecord);
+      },
+      async findRecent(filter = {}) {
+        const minSeverityRank = { info: 10, warn: 20, error: 30 } as const;
+        const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+        return operationEvents
+          .filter((event) => {
+            if (filter.category && event.category !== filter.category) return false;
+            if (filter.severity && event.severity !== filter.severity) return false;
+            if (filter.minSeverity && minSeverityRank[event.severity] < minSeverityRank[filter.minSeverity]) return false;
+            if (filter.source && event.source !== filter.source) return false;
+            if (filter.action && event.action !== filter.action) return false;
+            if (filter.containerName && event.containerName !== filter.containerName) return false;
+            if (filter.branchId && event.branchId !== filter.branchId) return false;
+            if (filter.profileId && event.profileId !== filter.profileId) return false;
+            if (filter.projectId && event.projectId !== filter.projectId) return false;
+            if (filter.requestId && event.requestId !== filter.requestId) return false;
+            if (filter.operationId && event.operationId !== filter.operationId && event.details?.operationId !== filter.operationId) return false;
+            if (filter.since && event.ts < new Date(filter.since)) return false;
+            return true;
+          })
+          .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+          .slice(0, limit);
       },
     };
     const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
@@ -1342,6 +1356,88 @@ describe('Branch Routes', () => {
       expect((res.body as any).infoCount).toBe(1);
       expect((res.body as any).totalCount).toBe(1);
       expect((res.body as any).issues[0].kind).toBe('push-newer-than-successful-deploy');
+    });
+  });
+
+  describe('GET /api/server-events', () => {
+    it('returns queryable operation events by operationId, branchId, and action', async () => {
+      operationEvents.push(
+        {
+          _id: 'evt-1',
+          ts: new Date('2026-05-26T23:00:00.000Z'),
+          category: 'system',
+          severity: 'info',
+          source: 'branch-operation-coordinator',
+          action: 'branch.operation.started',
+          message: 'started',
+          projectId: 'prd-agent',
+          branchId: 'prd-agent-main',
+          profileId: 'api',
+          requestId: 'req-a',
+          operationId: 'op-a',
+          details: { operationId: 'op-a', trigger: 'webhook', commitSha: '1111111' },
+        },
+        {
+          _id: 'evt-2',
+          ts: new Date('2026-05-26T23:01:00.000Z'),
+          category: 'system',
+          severity: 'warn',
+          source: 'branch-operation-coordinator',
+          action: 'branch.operation.cancelled',
+          message: 'cancelled',
+          projectId: 'prd-agent',
+          branchId: 'prd-agent-main',
+          profileId: 'api',
+          requestId: 'req-b',
+          operationId: 'op-b',
+          details: { operationId: 'op-b', trigger: 'manual', actor: 'user' },
+        },
+      );
+
+      const res = await request(
+        server,
+        'GET',
+        '/api/server-events?operationId=op-b&branchId=prd-agent-main&action=branch.operation.cancelled',
+      );
+
+      expect(res.status).toBe(200);
+      const body = res.body as { ok: boolean; total: number; events: ServerEventRecord[] };
+      expect(body.ok).toBe(true);
+      expect(body.total).toBe(1);
+      expect(body.events[0].operationId).toBe('op-b');
+      expect(body.events[0].requestId).toBe('req-b');
+      expect(body.events[0].details?.trigger).toBe('manual');
+    });
+
+    it('supports severity filtering and rejects invalid since timestamps', async () => {
+      operationEvents.push(
+        {
+          _id: 'evt-info',
+          ts: new Date('2026-05-26T23:00:00.000Z'),
+          category: 'docker',
+          severity: 'info',
+          source: 'docker-events',
+          action: 'container.die',
+          operationId: 'op-info',
+        },
+        {
+          _id: 'evt-error',
+          ts: new Date('2026-05-26T23:01:00.000Z'),
+          category: 'docker',
+          severity: 'error',
+          source: 'docker-events',
+          action: 'container.oom',
+          operationId: 'op-error',
+        },
+      );
+
+      const filtered = await request(server, 'GET', '/api/server-events?category=docker&minSeverity=warn');
+      expect(filtered.status).toBe(200);
+      expect((filtered.body as any).events.map((event: ServerEventRecord) => event.operationId)).toEqual(['op-error']);
+
+      const badSince = await request(server, 'GET', '/api/server-events?since=not-a-date');
+      expect(badSince.status).toBe(400);
+      expect((badSince.body as any).error).toBe('invalid_since');
     });
   });
 
