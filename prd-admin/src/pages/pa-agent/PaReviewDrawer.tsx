@@ -16,6 +16,7 @@ import remarkGfm from 'remark-gfm';
 import {
   X, ChevronDown, Calendar, Play, Loader2, RotateCcw, CheckCircle, AlertTriangle,
 } from 'lucide-react';
+import { StreamingText } from '@/components/streaming';
 import {
   streamPaReview,
   type PaReviewRange,
@@ -190,8 +191,9 @@ export function PaReviewDrawer({ open, onClose }: Props) {
                 key={opt.value}
                 onClick={() => setRange(opt.value)}
                 disabled={running}
+                data-active={range === opt.value}
                 title={opt.hint}
-                className="text-xs px-3 py-1.5 rounded-xl transition-all disabled:opacity-50"
+                className="pa-tab-button text-xs px-3 py-1.5 rounded-xl disabled:opacity-50"
                 style={{
                   background: range === opt.value
                     ? 'linear-gradient(135deg,#f59e0b,#ef4444)'
@@ -242,7 +244,7 @@ export function PaReviewDrawer({ open, onClose }: Props) {
             ) : (
               <button
                 onClick={() => void handleRun()}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all"
+                className="pa-primary-button flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
                 style={{ background: 'linear-gradient(135deg,#f59e0b,#ef4444)', color: '#fff' }}
               >
                 <Play size={13} />
@@ -289,16 +291,17 @@ export function PaReviewDrawer({ open, onClose }: Props) {
             </div>
           ) : content ? (
             <article
-              className="prose prose-sm max-w-none"
+              className="prose prose-sm max-w-none leading-relaxed"
               style={{ color: 'var(--text-primary)' }}
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-              {running && (
-                <span
-                  className="inline-block w-0.5 h-4 align-middle animate-pulse ml-0.5"
-                  style={{ background: '#fcd34d' }}
-                />
-              )}
+              {/* 流式期间按 token 渲染（blur focus），完成后切到最终 markdown 渲染表格 / 加粗等 */}
+              <StreamingText
+                text={content}
+                streaming={running}
+                markdown
+                renderMarkdown={c => <ReactMarkdown remarkPlugins={[remarkGfm]}>{c}</ReactMarkdown>}
+                cursorContent="dot"
+              />
             </article>
           ) : !running ? (
             <div

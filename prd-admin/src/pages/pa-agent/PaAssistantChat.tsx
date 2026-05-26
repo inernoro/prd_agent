@@ -12,6 +12,7 @@ import type {
 import {
   getPaMessages, streamPaChat, createPaTask, uploadPaFile,
 } from '@/services/real/paAgentService';
+import { StreamingText } from '@/components/streaming';
 
 // ── Quick commands（毒舌秘书风格，零 emoji） ──────────────────────────────
 
@@ -441,44 +442,80 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
             <Loader2 size={22} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
           </div>
         ) : isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
+          <div className="flex flex-col items-center justify-center h-full gap-7 px-4 pa-empty-enter">
             <div className="text-center max-w-md">
               <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3"
-                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+                className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon"
+                style={{
+                  background: 'linear-gradient(135deg,#6366f1 0%,#8b5cf6 60%,#22d3ee 110%)',
+                  boxShadow:
+                    '0 18px 40px -12px rgba(139,92,246,0.55),' +
+                    ' 0 0 0 1px rgba(255,255,255,0.06) inset,' +
+                    ' 0 1px 0 rgba(255,255,255,0.15) inset',
+                }}
               >
-                <Zap size={26} color="#fff" />
+                <Zap size={36} color="#fff" strokeWidth={2.2} />
               </div>
-              <div className="text-base font-semibold mb-1">毒舌秘书</div>
-              <div className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {/* display 标题层 */}
+              <div
+                className="font-semibold mb-2"
+                style={{ fontSize: 22, lineHeight: '28px', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}
+              >
+                毒舌秘书
+              </div>
+              {/* lead 描述层 */}
+              <div
+                className="mb-1"
+                style={{ fontSize: 13.5, lineHeight: '22px', color: 'var(--text-secondary)' }}
+              >
                 我不是来陪聊的，是来帮你把混乱变成清单的。
-                <br />
-                跟我说「挺好的」我会装没听见——把你最难的事丢过来。
+              </div>
+              <div
+                style={{ fontSize: 12, lineHeight: '20px', color: 'var(--text-muted)', opacity: 0.8 }}
+              >
+                说「挺好的」我会装没听见——把你最难的事丢过来。
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
+            <div className="grid grid-cols-2 gap-2.5 w-full max-w-md">
               {QUICK_COMMANDS.map((cmd, i) => (
                 <button
                   key={i}
                   onClick={() => void handleSend(cmd.prompt)}
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs text-left transition-all hover:scale-[1.02]"
+                  className="pa-quick-cmd group flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs text-left"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-default)',
                     color: 'var(--text-secondary)',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#6366f166'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; }}
                 >
-                  <span className="shrink-0" style={{ color: '#6366f1' }}>{cmd.icon}</span>
-                  <span className="font-medium truncate">{cmd.label}</span>
-                  <ChevronRight size={11} className="ml-auto shrink-0" style={{ color: 'var(--text-muted)' }} />
+                  <span
+                    className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center transition-all"
+                    style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}
+                  >
+                    {cmd.icon}
+                  </span>
+                  <span className="font-medium truncate flex-1">{cmd.label}</span>
+                  <ChevronRight size={11} className="opacity-30 group-hover:opacity-90 group-hover:translate-x-0.5 transition-all" />
                 </button>
               ))}
             </div>
-            <p className="text-[11px] text-center max-w-sm" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              明确待办自动入库；不确定的会让你拍板。
-            </p>
+            <div className="flex items-center gap-2 text-[10.5px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+              <kbd
+                className="px-1.5 py-0.5 rounded font-mono text-[10px]"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                Enter
+              </kbd>
+              <span>发送</span>
+              <span className="opacity-40">·</span>
+              <kbd
+                className="px-1.5 py-0.5 rounded font-mono text-[10px]"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                Shift+Enter
+              </kbd>
+              <span>换行</span>
+            </div>
           </div>
         ) : (
           <>
@@ -497,36 +534,42 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                 />
               );
             })}
-            {/* Streaming bubble */}
+            {/* Streaming bubble — 用 StreamingText 实现 blur-focus 入场，
+                避免 ReactMarkdown 每个 chunk 全量重渲染导致的抖动 */}
             {isStreaming && (
-              <div className="flex justify-start mb-4 gap-2.5">
+              <div className="flex justify-start mb-4 gap-2.5 streaming-bubble-enter">
                 <div
                   className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-0.5"
-                  style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+                  style={{
+                    background: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
+                    boxShadow: '0 0 0 2px rgba(99,102,241,0.12), 0 8px 24px -8px rgba(139,92,246,0.45)',
+                  }}
                 >
                   <Zap size={13} color="#fff" />
                 </div>
                 <div
-                  className="max-w-[82%] rounded-2xl rounded-tl-sm px-4 py-3 text-sm"
-                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  className="max-w-[82%] rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-default)',
+                    color: 'var(--text-primary)',
+                    boxShadow: '0 1px 0 rgba(255,255,255,0.02) inset',
+                  }}
                 >
                   {streamingContent ? (
-                    <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {stripTaskJson(streamingContent.replace(/\u200B/g, ''))}
-                      </ReactMarkdown>
-                    </div>
+                    <StreamingText
+                      text={stripTaskJson(streamingContent.replace(/\u200B/g, ''))}
+                      streaming
+                      mode="blur"
+                      cursorContent="dot"
+                    />
                   ) : (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5" aria-label="思考中">
                       {[0, 150, 300].map(d => (
                         <span key={d} className="w-1.5 h-1.5 rounded-full animate-bounce"
                           style={{ background: 'var(--text-muted)', animationDelay: `${d}ms` }} />
                       ))}
                     </div>
-                  )}
-                  {streamingContent && (
-                    <span className="inline-block w-0.5 h-4 align-middle animate-pulse ml-0.5"
-                      style={{ background: '#6366f1' }} />
                   )}
                 </div>
               </div>
