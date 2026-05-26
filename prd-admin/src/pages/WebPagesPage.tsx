@@ -604,6 +604,7 @@ export default function WebPagesPage() {
           {/* 自定义分类 + 按分类生成 */}
           <button
             type="button"
+            data-tour-id="webpages-categories"
             className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5"
             style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
             onClick={() => setShowCategories(true)}
@@ -1190,6 +1191,7 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
 
   return (
     <div
+      data-tour-id="webpages-card"
       className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
       style={{
         borderRadius: 24,
@@ -1356,7 +1358,7 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
           </div>
 
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            <span className="flex items-center gap-0.5"><Eye size={11} />{site.viewCount}</span>
+            <span data-tour-id="webpages-viewcount" className="flex items-center gap-0.5"><Eye size={11} />{site.viewCount}</span>
             <span className="flex items-center gap-0.5"><Clock size={11} />{relativeTime(site.createdAt)}</span>
             <span className="flex items-center gap-0.5"><FileArchive size={11} />{site.files.length} 文件</span>
             <span className="flex items-center gap-0.5"><HardDrive size={11} />{fmtSize(site.totalSize)}</span>
