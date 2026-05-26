@@ -463,12 +463,15 @@ public class ProjectRouteAgentController : ControllerBase
     private async Task<(List<string> apps, List<string> modules, List<ProjectRouteExtractedRepo> repos, string? model, string? platform)>
         ExtractAppsAndReposAsync(ProjectRoutePlan plan, ProjectRouteSiteSpec siteSpec, string userId)
     {
-        const int maxPlanHeadChars = 2_000;
-        const int maxSiteChars = 8_000;
+        const int maxPlanHeadChars = 4_000;
+        const int maxSiteChars = 12_000;
 
-        // 需求 ① "只读方案文档的文档头中的应用/模块"：截方案 markdown 的头部 2000 字符。
-        // 典型方案 markdown 头部就包含「涉及应用」「业务模块」「影响范围」等元信息段，
-        // 没必要把整篇正文塞给 LLM（节省 token + 减少错抽 + 提速）。
+        // 需求 ①：apps/modules **只读方案 md 里指定章节的原话**（不让 AI 拆解）。
+        // 先用确定性 markdown 解析（MarkdownSectionExtractor）抽，命中即用；
+        // 找不到对应章节时，回退到 LLM 兜底抽取（只在这一种 case 下让 AI 介入 apps/modules）。
+        var (deterministicApps, deterministicModules) = MarkdownSectionExtractor.Extract(plan.ExtractedContent);
+        var useDeterministicAppsModules = deterministicApps.Count > 0 || deterministicModules.Count > 0;
+
         var planHead = plan.ExtractedContent ?? string.Empty;
         if (planHead.Length > maxPlanHeadChars)
             planHead = planHead[..maxPlanHeadChars] + "\n…(只读文档头，正文部分已省略)";
@@ -489,31 +492,63 @@ public class ProjectRouteAgentController : ControllerBase
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.ProjectRouteAgent.Extract.Apps));
 
-        var systemPrompt =
-            "你是「项目路由智能体」的方案分析助手。按以下两步顺序产出结果：\n\n" +
-            "【第一步】从「方案文档头」中读出涉及的应用 + 业务模块\n" +
-            " - 输入：用户方案 markdown 的开头部分（约 2000 字符内的元信息段，可能含「涉及应用」/「业务模块」/「影响范围」等小节）\n" +
-            " - 输出 apps[]（应用 / 系统 / 智能体 / 产品线，3~10 项，去重）\n" +
-            " - 输出 modules[]（业务模块 / 功能点 / 页面，3~15 项，去重）\n\n" +
-            "【第二步】按上一步抽出的应用 / 模块，到「公共站点说明 markdown」里查找对应的仓库 git URL\n" +
-            " - **只能从公共说明里出现过的 git URL 中挑选**，禁止编造、禁止猜测、禁止补全 owner\n" +
-            " - **只能是 https://… 形式的 URL**，遇到 git@... / ssh://… 协议一律跳过（容器内通常无 SSH key）\n" +
-            " - 只挑跟 apps[] / modules[] 真正相关的，无关仓库不要带\n" +
-            " - 默认 branch=main、routemapPath=routemap，除非公共说明里另写明\n\n" +
-            "严格只输出 **一个** JSON 对象，UTF-8，禁止 markdown 代码围栏，禁止解释：\n" +
-            "{\n" +
-            "  \"apps\": [\"...\"],\n" +
-            "  \"modules\": [\"...\"],\n" +
-            "  \"repos\": [\n" +
-            "    {\n" +
-            "      \"appName\": \"应用 / 仓库展示名\",\n" +
-            "      \"repoUrl\": \"https://github.com/.../xxx.git\",\n" +
-            "      \"branch\": \"main\",\n" +
-            "      \"routemapPath\": \"routemap\",\n" +
-            "      \"reasoning\": \"≤40 字中文，说明这个仓库对应的是 apps/modules 里哪些条目\"\n" +
-            "    }\n" +
-            "  ]\n" +
-            "}";
+        // System prompt 根据是否已经有确定性 apps/modules 切两种模式
+        string systemPrompt;
+        if (useDeterministicAppsModules)
+        {
+            // 确定性命中 → AI 只负责输出 repos[]，apps/modules 直接照搬不再让 AI 改写
+            systemPrompt =
+                "你是「项目路由智能体」的方案分析助手。\n" +
+                "本次任务：用户已在「方案 markdown」里明确列出了涉及的应用 / 业务模块章节（apps[]、modules[]），由系统解析后直接给你，**你不要改写、拆解、合并、扩展或翻译这些原话**。\n\n" +
+                "你只需要做一件事：到「公共站点说明 markdown」里，按 apps[] / modules[] 查找它们对应的仓库 git URL。\n" +
+                " - **只能从公共说明里出现过的 git URL 中挑选**，禁止编造、禁止猜测、禁止补全 owner\n" +
+                " - **只能是 https://… 形式的 URL**，遇到 git@ / ssh:// 协议一律跳过\n" +
+                " - 只挑跟 apps[] / modules[] 真正相关的，无关仓库不要带\n" +
+                " - 默认 branch=main、routemapPath=routemap，除非公共说明里另写明\n" +
+                " - 对每条仓库，**复制公共说明里命中它的原文段落到 `sourceContext` 字段（完整、不截断、不改写）**\n\n" +
+                "严格只输出 **一个** JSON 对象，UTF-8，禁止 markdown 代码围栏，禁止解释：\n" +
+                "{\n" +
+                "  \"repos\": [\n" +
+                "    {\n" +
+                "      \"appName\": \"应用 / 仓库展示名\",\n" +
+                "      \"repoUrl\": \"https://github.com/.../xxx.git\",\n" +
+                "      \"branch\": \"main\",\n" +
+                "      \"routemapPath\": \"routemap\",\n" +
+                "      \"reasoning\": \"≤40 字中文，说明这个仓库对应的是 apps/modules 里哪些条目\",\n" +
+                "      \"sourceContext\": \"公共说明里命中此仓库的原文段落，完整复制，不要截断\"\n" +
+                "    }\n" +
+                "  ]\n" +
+                "}";
+        }
+        else
+        {
+            systemPrompt =
+                "你是「项目路由智能体」的方案分析助手。按以下两步顺序产出结果：\n\n" +
+                "【第一步】从「方案文档头」中读出涉及的应用 + 业务模块\n" +
+                " - 输出 apps[]（应用 / 系统 / 智能体 / 产品线，3~10 项，去重）\n" +
+                " - 输出 modules[]（业务模块 / 功能点 / 页面，3~15 项，去重）\n\n" +
+                "【第二步】按上一步抽出的应用 / 模块，到「公共站点说明 markdown」里查找对应的仓库 git URL\n" +
+                " - **只能从公共说明里出现过的 git URL 中挑选**，禁止编造、禁止猜测、禁止补全 owner\n" +
+                " - **只能是 https://… 形式的 URL**，遇到 git@ / ssh:// 协议一律跳过\n" +
+                " - 只挑跟 apps[] / modules[] 真正相关的，无关仓库不要带\n" +
+                " - 默认 branch=main、routemapPath=routemap，除非公共说明里另写明\n" +
+                " - 对每条仓库，**复制公共说明里命中它的原文段落到 `sourceContext` 字段（完整、不截断、不改写）**\n\n" +
+                "严格只输出 **一个** JSON 对象，UTF-8，禁止 markdown 代码围栏，禁止解释：\n" +
+                "{\n" +
+                "  \"apps\": [\"...\"],\n" +
+                "  \"modules\": [\"...\"],\n" +
+                "  \"repos\": [\n" +
+                "    {\n" +
+                "      \"appName\": \"...\",\n" +
+                "      \"repoUrl\": \"https://github.com/.../xxx.git\",\n" +
+                "      \"branch\": \"main\",\n" +
+                "      \"routemapPath\": \"routemap\",\n" +
+                "      \"reasoning\": \"≤40 字中文\",\n" +
+                "      \"sourceContext\": \"公共说明命中此仓库的原文段落，完整\"\n" +
+                "    }\n" +
+                "  ]\n" +
+                "}";
+        }
 
         var userMessage = new StringBuilder();
         userMessage.AppendLine("===== 公共站点说明（完整）=====");
@@ -524,6 +559,16 @@ public class ProjectRouteAgentController : ControllerBase
         userMessage.AppendLine();
         userMessage.AppendLine("文档头内容：");
         userMessage.AppendLine(planHead);
+
+        if (useDeterministicAppsModules)
+        {
+            userMessage.AppendLine();
+            userMessage.AppendLine("===== 已确定的应用 / 业务模块（系统从方案 md 章节解析，原话，禁止修改）=====");
+            userMessage.AppendLine("apps:");
+            foreach (var a in deterministicApps) userMessage.AppendLine("  - " + a);
+            userMessage.AppendLine("modules:");
+            foreach (var m in deterministicModules) userMessage.AppendLine("  - " + m);
+        }
 
         var body = new JsonObject
         {
@@ -572,7 +617,6 @@ public class ProjectRouteAgentController : ControllerBase
                         if (node is not JsonObject ro) continue;
                         var url = ro["repoUrl"]?.GetValue<string>()?.Trim();
                         if (string.IsNullOrEmpty(url)) continue;
-                        // 容器内通常没 SSH key，强制只接受 https/http；ssh / git@ 一律跳过
                         if (!url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
                             && !url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
                         {
@@ -591,9 +635,9 @@ public class ProjectRouteAgentController : ControllerBase
                                 ? "routemap"
                                 : ro["routemapPath"]!.GetValue<string>().Trim(),
                             Reasoning = ro["reasoning"]?.GetValue<string>()?.Trim(),
+                            SourceContext = ro["sourceContext"]?.GetValue<string>()?.Trim(),
                         });
                     }
-                    // 去重（按 repoUrl）
                     repos = repos
                         .GroupBy(r => r.RepoUrl, StringComparer.OrdinalIgnoreCase)
                         .Select(g => g.First())
@@ -604,6 +648,13 @@ public class ProjectRouteAgentController : ControllerBase
         catch (Exception ex)
         {
             throw new InvalidOperationException($"LLM 抽取结果不是合法 JSON：{ex.Message}");
+        }
+
+        // 确定性命中时，强制覆盖 apps/modules 用本地解析的原话（防止 LLM 偷偷改写）
+        if (useDeterministicAppsModules)
+        {
+            apps = deterministicApps;
+            modules = deterministicModules;
         }
 
         if (apps.Count == 0 && modules.Count == 0)
@@ -756,13 +807,55 @@ public class ProjectRouteAgentController : ControllerBase
 
         if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
         {
-            // LLM 失败也不让整个流程崩 —— 保留 baseline（含 clone 失败/无 routemap 的占位）
             _logger.LogWarning("[ProjectRouteAgent] routemap LLM 匹配失败：{Err}", resp.ErrorMessage);
+            EnrichResolutionsWithThirdPartyRepos(baseline, snapshots);
             return (baseline, model, platform);
         }
 
         MergeLlmIntoBaseline(resp.Content!, baseline);
+        EnrichResolutionsWithThirdPartyRepos(baseline, snapshots);
         return (baseline, model, platform);
+    }
+
+    /// <summary>
+    /// 对每条 Hit / Ambiguous 状态的 Resolution：
+    ///   1. 取它命中的 routemap 文件（projectPaths + 整个仓库 routemap snapshot）
+    ///   2. 扫 .md 文件内容里的 git URL，去重后写入 resolution.LinkedThirdPartyRepos
+    ///   3. 保留命中文件的完整内容到 resolution.RoutemapFiles（前端「查看明细」用）
+    /// </summary>
+    private static void EnrichResolutionsWithThirdPartyRepos(
+        List<ProjectRouteResolution> resolutions,
+        IReadOnlyList<(ProjectRouteExtractedRepo Repo, RoutemapSnapshot? Snap, string? ErrorMessage)> snapshots)
+    {
+        var snapByUrl = snapshots.ToDictionary(s => s.Repo.RepoUrl, s => s, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var r in resolutions)
+        {
+            if (r.Status != ProjectRouteResolutionStatuses.Hit
+                && r.Status != ProjectRouteResolutionStatuses.Ambiguous) continue;
+            if (string.IsNullOrEmpty(r.RepoUrl)) continue;
+            if (!snapByUrl.TryGetValue(r.RepoUrl, out var t)) continue;
+            if (t.Snap == null) continue;
+
+            // 优先扫命中的 projectPaths 对应的文件；如果没具体命中文件就扫整个 snapshot 的 .md
+            var hitPaths = new HashSet<string>(r.ProjectPaths, StringComparer.OrdinalIgnoreCase);
+            var mdFilesToScan = t.Snap.Entries
+                .Where(e => e.Path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+                .Where(e => hitPaths.Count == 0 || hitPaths.Contains(e.Path))
+                .ToList();
+
+            r.LinkedThirdPartyRepos = ThirdPartyRepoExtractor.Extract(
+                mdFilesToScan.Select(e => (e.Path, e.ContentPreview)));
+
+            r.RoutemapFiles = mdFilesToScan
+                .Select(e => new ProjectRouteRoutemapFile
+                {
+                    Path = e.Path,
+                    SizeBytes = e.SizeBytes,
+                    Content = e.ContentPreview,
+                })
+                .ToList();
+        }
     }
 
     /// <summary>

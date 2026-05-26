@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ExternalLink } from 'lucide-react';
+import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ExternalLink, ChevronDown, ChevronRight, History, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -340,35 +340,74 @@ function AnalyzeView() {
         </section>
 
         <section className="bg-white/3 border border-white/10 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-white mb-3">我的最近方案</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <History className="w-4 h-4 text-white/40" />我的最近方案
+            </h2>
+            <button
+              onClick={() => { void refreshRecent(); }}
+              className="text-[10px] text-white/40 hover:text-white/70 transition-colors"
+              title="刷新列表"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
           {recent.length === 0 ? (
             <p className="text-xs text-white/40">还没有提交过方案。</p>
           ) : (
-            <ul className="space-y-1">
-              {recent.map((p) => (
-                <li key={p.id}>
-                  <button
-                    onClick={() => {
-                      setPlan(p);
-                      setApps(p.extractedApps ?? []);
-                      setModules(p.extractedModules ?? []);
-                      setExtractedRepos(p.extractedRepos ?? []);
-                      setResolutions(p.resolutions ?? []);
-                      setRepos([]);
-                      setModel(p.model ?? null);
-                      setPlatform(p.modelPlatform ?? null);
-                      if (p.status !== 'Done') startAnalysis(p.id);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-md hover:bg-white/5 transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-white truncate flex-1">{p.title}</span>
-                      <StatusBadge status={p.status} />
+            <ul className="space-y-1.5">
+              {recent.map((p) => {
+                const isActive = plan?.id === p.id;
+                const repoCount = (p.extractedRepos ?? []).length;
+                const moduleCount = (p.extractedModules ?? []).length;
+                const projectCount = (p.resolutions ?? []).reduce((s, r) => s + (r.projectPaths?.length ?? 0), 0);
+                return (
+                  <li key={p.id}>
+                    <div className={`rounded-md transition-colors ${isActive ? 'bg-sky-500/10 border border-sky-500/30' : 'hover:bg-white/5 border border-transparent'}`}>
+                      <button
+                        onClick={() => {
+                          setPlan(p);
+                          setApps(p.extractedApps ?? []);
+                          setModules(p.extractedModules ?? []);
+                          setExtractedRepos(p.extractedRepos ?? []);
+                          setResolutions(p.resolutions ?? []);
+                          setRepos([]);
+                          setModel(p.model ?? null);
+                          setPlatform(p.modelPlatform ?? null);
+                          // 历史方案：Done / Error 都只回放，不自动重跑；只有 Queued / Running 才接着跑
+                          if (p.status === 'Queued' || p.status === 'Running') startAnalysis(p.id);
+                        }}
+                        className="w-full text-left px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-white truncate flex-1">{p.title}</span>
+                          <StatusBadge status={p.status} />
+                        </div>
+                        <p className="text-[10px] text-white/40 mt-0.5">{new Date(p.submittedAt).toLocaleString()}</p>
+                        {(repoCount > 0 || moduleCount > 0 || projectCount > 0) && (
+                          <div className="flex items-center gap-2 mt-1 text-[10px] text-white/40">
+                            {moduleCount > 0 && <span>{moduleCount} 模块</span>}
+                            {repoCount > 0 && <span>· {repoCount} 仓库</span>}
+                            {projectCount > 0 && <span>· {projectCount} 路径</span>}
+                          </div>
+                        )}
+                      </button>
+                      {isActive && (
+                        <div className="px-3 pb-2 flex items-center justify-end">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); startAnalysis(p.id); }}
+                            disabled={isBusy}
+                            className="inline-flex items-center gap-1 text-[10px] text-sky-200 bg-sky-500/15 hover:bg-sky-500/25 disabled:opacity-50 border border-sky-500/30 px-2 py-0.5 rounded-md transition-colors"
+                            title="忽略已存结果，重新分析一次"
+                          >
+                            <RefreshCw className="w-3 h-3" /> 重新分析
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <p className="text-[10px] text-white/40 mt-0.5">{new Date(p.submittedAt).toLocaleString()}</p>
-                  </button>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
@@ -387,6 +426,24 @@ function AnalyzeView() {
             )}
           </div>
           <p className="text-xs text-white/60 mb-2">{sse.phaseMessage || (plan ? '已读取历史结果' : '尚未发起分析')}</p>
+
+          {plan && plan.status === 'Done' && sse.phase === 'idle' && (
+            <div className="flex items-center gap-2 bg-amber-500/8 border border-amber-500/20 rounded-md px-3 py-1.5 mb-2">
+              <History className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+              <p className="text-[11px] text-amber-200/90 flex-1">
+                正在查看历史记录 · 提交于 {new Date(plan.submittedAt).toLocaleString()}
+                {plan.completedAt && ` · 完成于 ${new Date(plan.completedAt).toLocaleString()}`}
+              </p>
+              <button
+                onClick={() => startAnalysis(plan.id)}
+                disabled={isBusy}
+                className="inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 disabled:opacity-50 border border-amber-500/30 px-2 py-0.5 rounded-md transition-colors shrink-0"
+              >
+                <RefreshCw className="w-3 h-3" /> 重新分析
+              </button>
+            </div>
+          )}
+
           {sse.phase === 'error' && (
             <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2 mb-2">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
@@ -404,10 +461,10 @@ function AnalyzeView() {
             <PillList label="业务模块" items={modules} color="emerald" />
           </div>
 
-          {/* 2) AI 抽出的仓库 + 克隆状态 */}
+          {/* 2) 当前方案关联仓库地址 */}
           <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
             <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <GitBranch className="w-3.5 h-3.5" /> ② AI 选中的仓库 / routemap
+              <GitBranch className="w-3.5 h-3.5" /> ② 当前方案关联仓库地址
             </h3>
             {extractedRepos.length === 0 && repos.length === 0 ? (
               <p className="text-xs text-white/30">分析时显示 AI 从公共说明里抽出的仓库 + 克隆状态</p>
@@ -417,94 +474,42 @@ function AnalyzeView() {
                   appName: r.appName,
                   repoUrl: r.repoUrl,
                   branch: r.branch,
-                  reasoning: extractedRepos.find((er) => er.repoUrl === r.repoUrl)?.reasoning,
+                  reasoning: extractedRepos.find((er) => er.repoUrl === r.repoUrl)?.reasoning ?? null,
+                  sourceContext: extractedRepos.find((er) => er.repoUrl === r.repoUrl)?.sourceContext ?? null,
+                  routemapPath: extractedRepos.find((er) => er.repoUrl === r.repoUrl)?.routemapPath ?? 'routemap',
                   status: r.status,
-                  message: r.message,
+                  message: r.message ?? null,
                   fileCount: r.fileCount,
                   foundLocations: r.foundLocations,
                 })) : extractedRepos.map((er) => ({
                   appName: er.appName,
                   repoUrl: er.repoUrl,
                   branch: er.branch,
-                  reasoning: er.reasoning,
+                  reasoning: er.reasoning ?? null,
+                  sourceContext: er.sourceContext ?? null,
+                  routemapPath: er.routemapPath,
                   status: 'cloning' as RepoLiveStatus['status'],
                   message: null as string | null | undefined,
                   fileCount: undefined as number | undefined,
                   foundLocations: undefined as string[] | undefined,
                 }))).map((r) => (
-                  <li key={r.repoUrl} className="bg-white/3 rounded-md p-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-white truncate flex-1">{r.appName}</span>
-                      <RepoBadge status={r.status} />
-                    </div>
-                    <p className="text-[10px] text-white/40 truncate">{r.repoUrl} · {r.branch}</p>
-                    {r.reasoning && <p className="text-[10px] text-sky-200/70 mt-1">AI: {r.reasoning}</p>}
-                    {r.message && <p className="text-[10px] text-amber-200/70 mt-1">{r.message}</p>}
-                    {r.foundLocations && r.foundLocations.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {r.foundLocations.slice(0, 5).map((loc, idx) => (
-                          <span key={idx} className="px-1.5 py-0.5 rounded-md text-[10px] bg-emerald-500/15 border border-emerald-500/30 text-emerald-200/90 font-mono">
-                            {loc}/
-                          </span>
-                        ))}
-                        {r.foundLocations.length > 5 && (
-                          <span className="text-[10px] text-white/40">+{r.foundLocations.length - 5} 更多</span>
-                        )}
-                      </div>
-                    )}
-                    {r.fileCount != null && (
-                      <p className="text-[10px] text-white/40 mt-1">{r.fileCount} 个 routemap 文件</p>
-                    )}
-                  </li>
+                  <RepoCard key={r.repoUrl} r={r} />
                 ))}
               </ul>
             )}
           </div>
 
-          {/* 3) 项目路径 — 按仓库分组 */}
+          {/* 3) 仓库 × 关联项目路径 */}
           <div className="bg-white/3 border border-white/10 rounded-xl p-4 min-h-[200px]">
             <h3 className="text-xs font-semibold text-white/60 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <FolderTree className="w-3.5 h-3.5" /> ③ 仓库 × 项目路径
+              <FolderTree className="w-3.5 h-3.5" /> ③ 仓库 × 关联项目路径
             </h3>
             {resolutions.length === 0 ? (
-              <p className="text-xs text-white/30">分析完成后按仓库展示命中的项目路径</p>
+              <p className="text-xs text-white/30">分析完成后按仓库展示命中的项目路径 + 第三方仓库</p>
             ) : (
               <ul className="space-y-3">
                 {resolutions.map((r) => (
-                  <li key={r.repoUrl} className="bg-white/3 rounded-md p-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-white truncate flex-1">{r.repoAppName || r.repoUrl}</span>
-                      <ResolutionBadge status={r.status} />
-                    </div>
-                    {r.repoUrl && r.repoUrl !== r.repoAppName && (
-                      <p className="text-[10px] text-white/40 truncate mt-0.5">{r.repoUrl}</p>
-                    )}
-                    {r.matchedAppsOrModules.length > 0 && (
-                      <div className="mt-1.5 flex flex-wrap gap-1">
-                        {r.matchedAppsOrModules.map((m, j) => (
-                          <span key={j} className="px-1.5 py-0.5 rounded-md text-[10px] bg-sky-500/15 border border-sky-500/30 text-sky-200">{m}</span>
-                        ))}
-                      </div>
-                    )}
-                    {r.projectPaths.length > 0 && (
-                      <ul className="mt-1.5 space-y-0.5">
-                        {r.projectPaths.map((p, j) => (
-                          <li key={j} className="text-[11px] text-emerald-200/90 font-mono break-all">{p}</li>
-                        ))}
-                      </ul>
-                    )}
-                    {r.reasoning && (
-                      <p className="text-[10px] text-white/40 mt-1.5 break-all">{r.reasoning}</p>
-                    )}
-                    {r.status === 'CloneFailed' && !ghStatus?.connected && (
-                      <a
-                        href="/pr-review"
-                        className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-1.5 py-0.5 rounded-md transition-colors"
-                      >
-                        <Github className="w-3 h-3" /> 去授权 GitHub 后重试
-                      </a>
-                    )}
-                  </li>
+                  <ResolutionCard key={r.repoUrl} r={r} ghConnected={!!ghStatus?.connected} />
                 ))}
               </ul>
             )}
@@ -594,6 +599,178 @@ function RepoBadge({ status }: { status: RepoLiveStatus['status'] }) {
   };
   const info = m[status] ?? m.cloning;
   return <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${info.cls}`}>{info.label}</span>;
+}
+
+/** 第二栏单条仓库卡：默认折叠简要，点开看完整 reasoning / sourceContext / 全部 routemap 子目录 */
+function RepoCard({ r }: {
+  r: {
+    appName: string;
+    repoUrl: string;
+    branch: string;
+    reasoning: string | null;
+    sourceContext: string | null;
+    routemapPath: string;
+    status: RepoLiveStatus['status'];
+    message: string | null | undefined;
+    fileCount?: number;
+    foundLocations?: string[];
+  };
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="bg-white/3 rounded-md p-2 border border-white/5">
+      <div className="flex items-center gap-2">
+        <button onClick={() => setOpen(!open)} className="text-white/40 hover:text-white/70 shrink-0">
+          {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        </button>
+        <span className="text-xs text-white truncate flex-1">{r.appName}</span>
+        <RepoBadge status={r.status} />
+      </div>
+      <p className="text-[10px] text-white/40 break-all mt-0.5">
+        <a href={r.repoUrl} target="_blank" rel="noopener noreferrer" className="hover:text-sky-300">
+          {r.repoUrl}
+        </a>
+        <span className="text-white/30"> · {r.branch}</span>
+      </p>
+      {!open && r.reasoning && (
+        <p className="text-[10px] text-sky-200/70 mt-1 line-clamp-2">AI: {r.reasoning}</p>
+      )}
+      {r.message && (
+        <p className="text-[10px] text-amber-200/70 mt-1 break-all">{r.message}</p>
+      )}
+      {!open && r.foundLocations && r.foundLocations.length > 0 && (
+        <p className="text-[10px] text-emerald-200/70 mt-1">{r.foundLocations.length} 个 routemap 子目录</p>
+      )}
+      {r.fileCount != null && !open && (
+        <p className="text-[10px] text-white/40 mt-1">{r.fileCount} 个 routemap 文件</p>
+      )}
+
+      {open && (
+        <div className="mt-2 pt-2 border-t border-white/5 space-y-2 text-[11px]">
+          <DetailRow label="routemapPath" value={r.routemapPath} mono />
+          {r.reasoning && (
+            <DetailRow label="AI 选中理由" value={r.reasoning} preserveWhitespace />
+          )}
+          {r.sourceContext && (
+            <DetailRow label="公共说明原文片段" value={r.sourceContext} preserveWhitespace mono />
+          )}
+          {r.foundLocations && r.foundLocations.length > 0 && (
+            <div>
+              <p className="text-white/40 mb-1">routemap 子目录（{r.foundLocations.length}）</p>
+              <ul className="space-y-0.5 max-h-32 overflow-y-auto">
+                {r.foundLocations.map((loc, idx) => (
+                  <li key={idx} className="text-emerald-200/90 font-mono text-[11px] break-all">{loc}/</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {r.fileCount != null && (
+            <DetailRow label="routemap 文件数" value={String(r.fileCount)} />
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** 第三栏单条 Resolution 卡：默认显示项目路径 + 第三方仓库；点开看 .md 文件全文 */
+function ResolutionCard({ r, ghConnected }: { r: ProjectRouteResolution; ghConnected: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="bg-white/3 rounded-md p-2.5 border border-white/5">
+      <div className="flex items-center gap-2">
+        <button onClick={() => setOpen(!open)} className="text-white/40 hover:text-white/70 shrink-0">
+          {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        </button>
+        <span className="text-xs text-white truncate flex-1">{r.repoAppName || r.repoUrl}</span>
+        <ResolutionBadge status={r.status} />
+      </div>
+      {r.repoUrl && r.repoUrl !== r.repoAppName && (
+        <p className="text-[10px] text-white/40 break-all mt-0.5">{r.repoUrl}</p>
+      )}
+      {r.matchedAppsOrModules.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {r.matchedAppsOrModules.map((m, j) => (
+            <span key={j} className="px-1.5 py-0.5 rounded-md text-[10px] bg-sky-500/15 border border-sky-500/30 text-sky-200">{m}</span>
+          ))}
+        </div>
+      )}
+      {r.projectPaths.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5">
+          {r.projectPaths.map((p, j) => (
+            <li key={j} className="text-[11px] text-emerald-200/90 font-mono break-all">{p}</li>
+          ))}
+        </ul>
+      )}
+      {r.linkedThirdPartyRepos.length > 0 && (
+        <div className="mt-2 bg-emerald-500/5 border border-emerald-500/15 rounded p-1.5">
+          <p className="text-[10px] text-emerald-300/80 mb-1">关联第三方仓库（{r.linkedThirdPartyRepos.length}）</p>
+          <ul className="space-y-0.5">
+            {r.linkedThirdPartyRepos.map((url, j) => (
+              <li key={j} className="text-[11px]">
+                <a href={url} target="_blank" rel="noopener noreferrer" className="text-emerald-200/90 font-mono break-all hover:text-emerald-100 hover:underline">
+                  {url}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {r.reasoning && (
+        <p className="text-[10px] text-white/40 mt-1.5 break-all">{r.reasoning}</p>
+      )}
+      {r.status === 'CloneFailed' && !ghConnected && (
+        <a
+          href="/pr-review"
+          className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-1.5 py-0.5 rounded-md transition-colors"
+        >
+          <Github className="w-3 h-3" /> 去授权 GitHub 后重试
+        </a>
+      )}
+
+      {open && r.routemapFiles.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-white/5 space-y-2">
+          <p className="text-[11px] text-white/60">routemap *.md 文件全文（{r.routemapFiles.length}）</p>
+          {r.routemapFiles.map((f, idx) => (
+            <details key={idx} className="bg-black/20 border border-white/5 rounded">
+              <summary className="px-2 py-1 cursor-pointer text-[11px] text-emerald-200/90 font-mono">
+                {f.path} <span className="text-white/30">· {(f.sizeBytes / 1024).toFixed(1)} KB</span>
+              </summary>
+              <pre
+                className="px-2 py-1.5 text-[11px] text-white/80 font-mono whitespace-pre-wrap break-all"
+                style={{ maxHeight: '320px', overflowY: 'auto' }}
+              >
+                {f.content || '(空 / 无法读取)'}
+              </pre>
+            </details>
+          ))}
+        </div>
+      )}
+      {open && r.routemapFiles.length === 0 && (
+        <p className="text-[10px] text-white/40 mt-2 pt-2 border-t border-white/5">该仓库未命中任何 routemap *.md 文件。</p>
+      )}
+    </li>
+  );
+}
+
+/** 详情行：label + value，可保留换行 / 字体 mono */
+function DetailRow({ label, value, mono, preserveWhitespace }: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  preserveWhitespace?: boolean;
+}) {
+  return (
+    <div>
+      <p className="text-white/40 mb-0.5">{label}</p>
+      <p
+        className={`text-white/80 break-all ${mono ? 'font-mono' : ''}`}
+        style={preserveWhitespace ? { whiteSpace: 'pre-wrap' } : undefined}
+      >
+        {value}
+      </p>
+    </div>
+  );
 }
 
 function ResolutionBadge({ status }: { status: ProjectRouteResolution['status'] }) {

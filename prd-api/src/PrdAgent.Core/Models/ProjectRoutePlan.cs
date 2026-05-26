@@ -80,6 +80,12 @@ public class ProjectRouteExtractedRepo
 
     /// <summary>AI 给出的命中说明（为什么这个仓库要被克隆）</summary>
     public string? Reasoning { get; set; }
+
+    /// <summary>
+    /// 公共站点说明里命中此仓库的原文段落（完整、不截断）。
+    /// 用于前端「查看详情」时展示，让用户能完整看到 AI 是从哪段文字判断出这个仓库的。
+    /// </summary>
+    public string? SourceContext { get; set; }
 }
 
 /// <summary>
@@ -104,6 +110,28 @@ public class ProjectRouteResolution
 
     /// <summary>命中状态：Hit / NotFound / Ambiguous / CloneFailed / NoRoutemap</summary>
     public string Status { get; set; } = ProjectRouteResolutionStatuses.Hit;
+
+    /// <summary>
+    /// 从该仓库命中的 routemap *.md 文件内容里用正则扫出的所有第三方 git 仓库 URL（去重）。
+    /// 例如 routemap/项目调用地图.md 里写了「子仓库 A: https://.../a.git」，会收录进来。
+    /// </summary>
+    public List<string> LinkedThirdPartyRepos { get; set; } = new();
+
+    /// <summary>
+    /// 命中的 routemap *.md 文件全文（前端「查看明细」时展示，不截断）。
+    /// Key = 文件相对仓库根的路径，Value = 文件完整文本。
+    /// </summary>
+    public List<ProjectRouteRoutemapFile> RoutemapFiles { get; set; } = new();
+}
+
+/// <summary>
+/// 一份 routemap .md 文件的完整快照（前端可点开查看）。
+/// </summary>
+public class ProjectRouteRoutemapFile
+{
+    public string Path { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public string? Content { get; set; }
 }
 
 public static class ProjectRoutePlanStatuses

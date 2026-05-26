@@ -8,6 +8,8 @@ export interface ProjectRouteExtractedRepo {
   branch: string;
   routemapPath: string;
   reasoning?: string | null;
+  /** 公共说明里命中此仓库的原文段落（完整，不截断） */
+  sourceContext?: string | null;
 }
 
 export interface ProjectRouteSiteSpec {
@@ -36,6 +38,16 @@ export interface ProjectRouteResolution {
   matchedAppsOrModules: string[];
   reasoning?: string | null;
   status: ProjectRouteResolutionStatus;
+  /** 从命中的 routemap *.md 文件内容里扫出的第三方 git URL（去重，保持出现顺序） */
+  linkedThirdPartyRepos: string[];
+  /** 命中的 *.md routemap 文件全文（前端「查看明细」用） */
+  routemapFiles: ProjectRouteRoutemapFile[];
+}
+
+export interface ProjectRouteRoutemapFile {
+  path: string;
+  sizeBytes: number;
+  content?: string | null;
 }
 
 export type ProjectRoutePlanStatus = 'Queued' | 'Running' | 'Done' | 'Error';
