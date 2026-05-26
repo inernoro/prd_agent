@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MessageSquare, LayoutGrid, Plus, Trash2, Edit2, Check, X,
-  Zap, ChevronLeft, ChevronRight,
+  Zap, ChevronLeft, ChevronRight, Brain,
 } from 'lucide-react';
 import {
   getPaSessions, createPaSession, deletePaSession, renamePaSession,
@@ -9,6 +9,8 @@ import {
 import type { PaSessionInfo, PaTask } from '@/services/real/paAgentService';
 import { PaAssistantChat } from './PaAssistantChat';
 import { PaTaskBoard } from './PaTaskBoard';
+import { PaProfilePanel } from './PaProfilePanel';
+import { PaReviewDrawer } from './PaReviewDrawer';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
@@ -146,6 +148,8 @@ export function PaAgentPage() {
   const [boardRefreshKey, setBoardRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const loadSessions = useCallback(async () => {
     const res = await getPaSessions();
@@ -268,9 +272,9 @@ export function PaAgentPage() {
           )}
         </div>
 
-        {/* Task board link at bottom */}
+        {/* Task board + Profile entry at bottom */}
         <div
-          className="shrink-0 p-2"
+          className="shrink-0 p-2 space-y-1"
           style={{ borderTop: '1px solid var(--border-default)' }}
         >
           <button
@@ -286,6 +290,17 @@ export function PaAgentPage() {
           >
             <LayoutGrid size={13} />
             任务看板
+          </button>
+          <button
+            onClick={() => setProfileOpen(true)}
+            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs transition-all"
+            style={{ color: 'var(--text-muted)', border: '1px solid transparent' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            title="毒舌秘书会跨会话记得的事 — 角色 / 项目 / 节奏 / 偏好"
+          >
+            <Brain size={13} />
+            我的画像
           </button>
         </div>
       </div>
@@ -387,10 +402,16 @@ export function PaAgentPage() {
               </div>
             )
           ) : (
-            <PaTaskBoard key={boardRefreshKey} />
+            <PaTaskBoard
+              key={boardRefreshKey}
+              onOpenReview={() => setReviewOpen(true)}
+            />
           )}
         </div>
       </div>
+
+      <PaProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <PaReviewDrawer open={reviewOpen} onClose={() => setReviewOpen(false)} />
     </div>
   );
 }

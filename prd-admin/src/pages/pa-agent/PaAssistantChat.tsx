@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Paperclip, X, ChevronRight, Loader2, Plus, Zap, Check, CheckCircle,
-  Scissors, AlarmClock, AlertTriangle, ListChecks,
+  Scissors, AlarmClock, AlertTriangle, ListChecks, Brain, Eye,
   FileText, FileSpreadsheet, FileType, File as FileIcon,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { PaMessage, PaTask, PaUploadResult, PaTaskEvent, PaSessionInfo } from '@/services/real/paAgentService';
+import type {
+  PaMessage, PaTask, PaUploadResult, PaTaskEvent, PaSessionInfo, PaProfileEvent,
+} from '@/services/real/paAgentService';
 import {
   getPaMessages, streamPaChat, createPaTask, uploadPaFile,
 } from '@/services/real/paAgentService';
@@ -129,6 +131,44 @@ function SuggestTaskButton({ event, sessionId, onSaved }: SuggestTaskButtonProps
   );
 }
 
+// ── ProfileUpdateToast ─────────────────────────────────────────────────────
+
+function ProfileUpdateToast({ event, onDismiss }: { event: PaProfileEvent; onDismiss: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 7000);
+    return () => clearTimeout(t);
+  }, [onDismiss]);
+
+  const isSuggest = event.confidence === 'suggest';
+  const items = [...event.addedMemories.map(m => m.text), ...event.changedFields];
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      <div
+        className="self-start inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium"
+        style={{
+          background: isSuggest ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.12)',
+          color: isSuggest ? '#fcd34d' : '#a5b4fc',
+          border: isSuggest
+            ? '1px solid rgba(245,158,11,0.3)'
+            : '1px solid rgba(99,102,241,0.3)',
+        }}
+        title={isSuggest
+          ? '秘书觉得可能要记下来 — 在「我的画像」里确认才会参与未来对话'
+          : '秘书已经记下来了 — 下次对话会带上'}
+      >
+        {isSuggest ? <Eye size={11} /> : <Brain size={11} />}
+        {isSuggest ? '秘书想记下：' : '秘书记住了：'}
+        <span className="font-normal max-w-[240px] truncate">
+          {items.slice(0, 2).join(' / ')}
+          {items.length > 2 && ` 等 ${items.length} 项`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── AutoSaveToast ──────────────────────────────────────────────────────────
 
 function AutoSaveToast({ event, onDismiss }: { event: PaTaskEvent; onDismiss: () => void }) {
@@ -169,11 +209,13 @@ interface ChatBubbleProps {
   sessionId: string;
   suggestEvent?: PaTaskEvent;
   autoEvent?: PaTaskEvent;
+  profileEvent?: PaProfileEvent;
   onTaskSaved: (task: PaTask) => void;
 }
 
-function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, onTaskSaved }: ChatBubbleProps) {
+function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, profileEvent, onTaskSaved }: ChatBubbleProps) {
   const [autoDismissed, setAutoDismissed] = useState(false);
+  const [profileDismissed, setProfileDismissed] = useState(false);
   const isUser = msg.role === 'user';
   const displayContent = stripTaskJson(msg.content);
 
@@ -219,6 +261,10 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, onTaskSaved }: Ch
         {suggestEvent && (
           <SuggestTaskButton event={suggestEvent} sessionId={sessionId} onSaved={onTaskSaved} />
         )}
+        {/* Profile update toast */}
+        {profileEvent && !profileDismissed && (
+          <ProfileUpdateToast event={profileEvent} onDismiss={() => setProfileDismissed(true)} />
+        )}
       </div>
     </div>
   );
@@ -235,6 +281,7 @@ interface PaAssistantChatProps {
 export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: PaAssistantChatProps) {
   const [messages, setMessages] = useState<PaMessage[]>([]);
   const [taskEvents, setTaskEvents] = useState<Record<string, PaTaskEvent>>({});
+  const [profileEvents, setProfileEvents] = useState<Record<string, PaProfileEvent>>({});
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState('');
@@ -256,6 +303,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
     if (!sessionId) return;
     setMessages([]);
     setTaskEvents({});
+    setProfileEvents({});
     setLoadingHistory(true);
     (async () => {
       try {
@@ -367,6 +415,9 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
           onSessionUpdated?.({ updatedAt: new Date().toISOString() });
         }
       },
+      onProfileUpdate: (event) => {
+        setProfileEvents(prev => ({ ...prev, [assistantMsgId]: event }));
+      },
     });
   }, [isStreaming, sessionId, attachment, onTaskSaved, onSessionUpdated]);
 
@@ -433,6 +484,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
           <>
             {messages.map((msg) => {
               const event = taskEvents[msg.id];
+              const profileEvent = profileEvents[msg.id];
               return (
                 <ChatBubble
                   key={msg.id}
@@ -440,6 +492,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                   sessionId={sessionId}
                   suggestEvent={event?.confidence === 'suggest' ? event : undefined}
                   autoEvent={event?.confidence === 'auto' ? event : undefined}
+                  profileEvent={profileEvent}
                   onTaskSaved={onTaskSaved ?? (() => {})}
                 />
               );

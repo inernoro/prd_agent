@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CheckSquare, Square, Trash2, RefreshCw, Flame, TrendingUp, Clock, Archive } from 'lucide-react';
+import { CheckSquare, Square, Trash2, RefreshCw, Flame, TrendingUp, Clock, Archive, RotateCcw } from 'lucide-react';
 import type { PaTask, PaSubTask } from '@/services/real/paAgentService';
 import {
   getPaTasks,
@@ -179,7 +179,12 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
 
 // ── PaTaskBoard ────────────────────────────────────────────────────────────
 
-export function PaTaskBoard() {
+interface PaTaskBoardProps {
+  /** 点击「复盘」按钮时由父组件打开 PaReviewDrawer */
+  onOpenReview?: () => void;
+}
+
+export function PaTaskBoard({ onOpenReview }: PaTaskBoardProps = {}) {
   const [tasks, setTasks] = useState<PaTask[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -246,16 +251,33 @@ export function PaTaskBoard() {
             先干 Q1，再排 Q2，扫掉 Q3，养着 Q4。
           </span>
         </div>
-        <button
-          onClick={() => void load()}
-          className="shrink-0 flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-colors"
-          style={{ color: 'var(--text-muted)', background: 'var(--bg-elevated)' }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          {onOpenReview && (
+            <button
+              onClick={onOpenReview}
+              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-all font-medium"
+              style={{
+                color: '#fff',
+                background: 'linear-gradient(135deg,#f59e0b,#ef4444)',
+                boxShadow: '0 4px 12px -4px rgba(245,158,11,0.5)',
+              }}
+              title="毒舌秘书帮你复盘上周 / 自定义时段的任务进展"
+            >
+              <RotateCcw size={12} />
+              复盘
+            </button>
+          )}
+          <button
+            onClick={() => void load()}
+            className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-colors"
+            style={{ color: 'var(--text-muted)', background: 'var(--bg-elevated)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* Board */}
