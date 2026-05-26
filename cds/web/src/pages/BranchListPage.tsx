@@ -2880,40 +2880,36 @@ export function BranchListPage(): JSX.Element {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                {sortedBranches.map((branch) => {
-                  const latestBranchActivity = activityEvents.find((event) => activityBranchMatches(event, branch.id));
-                  return (
-                    <BranchCard
-                      key={branch.id}
-                      branch={branch}
-                      action={actions[branch.id]}
-                      now={actionClock}
-                      projectId={projectId}
-                      highlighted={highlightedBranchId === branch.id}
-                      highlightPulse={highlightPulseBranchId === branch.id}
-                      activityEvents={activityEvents
-                        .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
-                        .slice(0, 5)}
-                      activityPulseKey={latestBranchActivity ? `${latestBranchActivity.id}:${latestBranchActivity.ts}` : undefined}
-                      capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
-                      activeTagFilter={activeTagFilter}
-                      onPreview={() => void openPreview(branch, true)}
-                      onDeploy={() => void deployBranch(branch, false)}
-                      onDetail={() => setDetailDrawerBranchId(branch.id)}
-                      onPull={() => void pullBranch(branch)}
-                      onStop={() => void stopBranch(branch)}
-                      onForceRebuild={() => void forceRebuildBranch(branch)}
-                      onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
-                      onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
-                      onReset={() => void resetBranch(branch)}
-                      onDelete={() => void deleteBranch(branch)}
-                      onEditTags={() => void editTags(branch)}
-                      onAddTag={(tag) => void addTagToBranch(branch, tag)}
-                      onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
-                      onClickTag={toggleTagFilter}
-                    />
-                  );
-                })}
+                {sortedBranches.map((branch) => (
+                  <BranchCard
+                    key={branch.id}
+                    branch={branch}
+                    action={actions[branch.id]}
+                    now={actionClock}
+                    projectId={projectId}
+                    highlighted={highlightedBranchId === branch.id}
+                    highlightPulse={highlightPulseBranchId === branch.id}
+                    activityEvents={activityEvents
+                      .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
+                      .slice(0, 5)}
+                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
+                    activeTagFilter={activeTagFilter}
+                    onPreview={() => void openPreview(branch, true)}
+                    onDeploy={() => void deployBranch(branch, false)}
+                    onDetail={() => setDetailDrawerBranchId(branch.id)}
+                    onPull={() => void pullBranch(branch)}
+                    onStop={() => void stopBranch(branch)}
+                    onForceRebuild={() => void forceRebuildBranch(branch)}
+                    onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
+                    onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
+                    onReset={() => void resetBranch(branch)}
+                    onDelete={() => void deleteBranch(branch)}
+                    onEditTags={() => void editTags(branch)}
+                    onAddTag={(tag) => void addTagToBranch(branch, tag)}
+                    onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
+                    onClickTag={toggleTagFilter}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -3787,7 +3783,6 @@ function BranchCard({
   highlighted,
   highlightPulse,
   activityEvents = [],
-  activityPulseKey,
   activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -3812,7 +3807,6 @@ function BranchCard({
   now: number;
   capacityWarning?: string;
   activityEvents?: ActivityEvent[];
-  activityPulseKey?: string;
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
@@ -3901,15 +3895,13 @@ function BranchCard({
   const footerSha = shortCommitSha(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
-  const [actorOrbitSpinning, setActorOrbitSpinning] = useState(false);
-  const actorPulseSeenRef = useRef(false);
-  const operationPulseKey = action?.status === 'running'
-    ? `action:${action.kind}:${action.startedAt}:running`
-    : '';
-  // visible: 只在构建/操作态把名字变成环绕静止态。
-  // spinning: 只在 visible 期间遇到新事件 / 本地操作开始时短暂转动。
-  // 构建完成、停止、running 回落等收尾状态不触发旋转。
-  const actorPulseSignal = activityPulseKey || operationPulseKey;
+  const actorOrbitTone = isError || action?.status === 'error'
+    ? 'danger'
+    : isAiActive
+      ? 'ai'
+      : branch.status === 'stopping' || action?.kind === 'stop'
+        ? 'warning'
+        : 'build';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3923,19 +3915,6 @@ function BranchCard({
   useEffect(() => {
     setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
-  useEffect(() => {
-    if (!actorPulseSeenRef.current) {
-      actorPulseSeenRef.current = true;
-      return;
-    }
-    if (!actorOrbitVisible || !actorPulseSignal) {
-      setActorOrbitSpinning(false);
-      return;
-    }
-    setActorOrbitSpinning(true);
-    const timer = window.setTimeout(() => setActorOrbitSpinning(false), 1800);
-    return () => window.clearTimeout(timer);
-  }, [actorOrbitVisible, actorPulseSignal]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -4414,7 +4393,7 @@ function BranchCard({
       >
         <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
           <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div className={`cds-actor-orbit ${actorOrbitVisible ? 'cds-actor-orbit--active' : ''} ${actorOrbitSpinning ? 'cds-actor-orbit--spinning' : ''}`}>
+            <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
               {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
                 className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
@@ -4441,7 +4420,7 @@ function BranchCard({
                 ) : null}
               </div>
             </div>
-            {footerBuilder ? (
+            {footerBuilder && !actorOrbitVisible ? (
               <span className="block max-w-full break-all text-center text-[10px] font-medium leading-tight text-foreground/70">
                 {footerBuilder}
               </span>
