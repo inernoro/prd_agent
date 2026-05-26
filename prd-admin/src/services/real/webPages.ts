@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
@@ -160,7 +161,15 @@ export async function listSites(params?: {
   /** 'team' + teamId 返回团队共享站点，缺省返回我的 */
   scope?: 'mine' | 'team';
   teamId?: string | null;
-}): Promise<ApiResponse<{ items: HostedSite[]; total: number; owners?: Record<string, SiteOwnerCard> }>> {
+}): Promise<
+  ApiResponse<{
+    items: HostedSite[];
+    total: number;
+    owners?: Record<string, SiteOwnerCard>;
+    /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
+    myWebHostingRole?: WebHostingRole;
+  }>
+> {
   const sp = new URLSearchParams();
   if (params?.keyword) sp.set('keyword', params.keyword);
   if (params?.folder) sp.set('folder', params.folder);

@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -122,7 +123,13 @@ public class TeamController : ControllerBase
         var members = await _db.TeamMembers.Find(m => m.TeamId == id).ToListAsync();
         var myRole = members.FirstOrDefault(m => m.UserId == userId)?.Role ?? TeamRole.Member;
 
-        return Ok(ApiResponse<object>.Ok(new { team, members, myRole }));
+        // 网页托管有效角色（owner/editor/viewer）：成员管理面板据此渲染角色选择器 + 角标。
+        // 附带返回避免前端各自做继承解析导致漂移（SSOT 在后端 WebHostingRoles.Resolve）。
+        var webHostingRoles = members.ToDictionary(
+            m => m.UserId, m => WebHostingRoles.Resolve(m.WebHostingRole, m.Role));
+        var myWebHostingRole = webHostingRoles.GetValueOrDefault(userId, WebHostingRoles.Editor);
+
+        return Ok(ApiResponse<object>.Ok(new { team, members, myRole, webHostingRoles, myWebHostingRole }));
     }
 
     /// <summary>更新团队（管理员）</summary>
@@ -270,6 +277,46 @@ public class TeamController : ControllerBase
         await _activity.LogAsync(id, TeamAppKey.Team, userId,
             TeamActivityAction.MemberRoleChanged, "member", memberUserId, member?.UserName);
         return Ok(ApiResponse<object>.Ok(new { updated = true, role = req.Role }));
+    }
+
+    /// <summary>
+    /// 设置成员的网页托管内容角色（owner/editor/viewer）。仅团队管理员（= 文件夹 owner）可操作。
+    /// role 传 null/空 = 重置为继承（admin→owner / member→editor）。仅影响网页托管，不动知识库。
+    /// </summary>
+    [HttpPut("{id}/members/{memberUserId}/web-hosting-role")]
+    public async Task<IActionResult> UpdateMemberWebHostingRole(
+        string id, string memberUserId, [FromBody] UpdateWebHostingRoleRequest req)
+    {
+        var userId = GetUserId();
+        if (!await _teams.IsAdminAsync(id, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要管理员权限"));
+
+        var role = string.IsNullOrWhiteSpace(req.Role) ? null : req.Role.Trim().ToLowerInvariant();
+        if (role != null && !WebHostingRoles.IsValid(role))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "网页托管角色非法（owner/editor/viewer）"));
+
+        var team = await _db.Teams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "团队不存在"));
+        // 团队创建者在网页托管里恒为 owner，不允许被降级（与团队角色「不能降级创建者」对齐）
+        if (memberUserId == team.OwnerUserId && role != null && role != WebHostingRoles.Owner)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "不能降级团队创建者的网页托管角色"));
+
+        var result = await _db.TeamMembers.UpdateOneAsync(
+            m => m.TeamId == id && m.UserId == memberUserId,
+            Builders<TeamMember>.Update.Set(m => m.WebHostingRole, role));
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "成员不存在"));
+
+        var member = await _db.TeamMembers.Find(m => m.TeamId == id && m.UserId == memberUserId).FirstOrDefaultAsync();
+        var effective = WebHostingRoles.Resolve(member?.WebHostingRole, member?.Role ?? TeamRole.Member);
+        await _activity.LogAsync(id, TeamAppKey.WebHosting, userId,
+            TeamActivityAction.MemberRoleChanged, "member", memberUserId, member?.UserName);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            updated = true,
+            webHostingRole = role,
+            effectiveWebHostingRole = effective,
+        }));
     }
 
     // ─────────────────────────────────────────────
@@ -436,6 +483,12 @@ public class UpdateMemberRoleRequest
 {
     /// <summary>admin | member</summary>
     public string Role { get; set; } = TeamRole.Member;
+}
+
+public class UpdateWebHostingRoleRequest
+{
+    /// <summary>owner | editor | viewer；null/空 = 重置为继承</summary>
+    public string? Role { get; set; }
 }
 
 public class CreateInviteCodeRequest

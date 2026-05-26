@@ -15,6 +15,7 @@ import {
   regenerateInviteCode,
   removeTeamMember,
   searchTeamUsers,
+  updateMemberWebHostingRole,
   updateTeamMemberRole,
   type Team,
   type TeamActivityItem,
@@ -22,7 +23,13 @@ import {
   type TeamMember,
   type TeamRole,
   type UserCard,
+  type WebHostingRole,
 } from '@/services/real/teams';
+import {
+  WEB_HOSTING_ROLE_HINT,
+  WEB_HOSTING_ROLE_LABEL,
+  WEB_HOSTING_ROLE_OPTIONS,
+} from '@/lib/webHostingRole';
 
 type Tab = 'members' | 'invite' | 'activity';
 
@@ -52,6 +59,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
   const [team, setTeam] = useState<Team | null>(null);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [myRole, setMyRole] = useState<TeamRole | null>(null);
+  const [webHostingRoles, setWebHostingRoles] = useState<Record<string, WebHostingRole>>({});
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // 活动
@@ -91,6 +99,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
       setTeam(res.data.team);
       setMembers(res.data.members);
       setMyRole(res.data.myRole);
+      setWebHostingRoles(res.data.webHostingRoles ?? {});
     }
     setLoadingDetail(false);
   }, []);
@@ -180,6 +189,13 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
   const handleRoleChange = async (userId: string, role: TeamRole) => {
     if (!selectedId) return;
     const res = await updateTeamMemberRole(selectedId, userId, role);
+    if (res.success) await loadDetail(selectedId);
+    else alert(res.error?.message ?? '调整失败');
+  };
+
+  const handleWebHostingRoleChange = async (userId: string, role: WebHostingRole) => {
+    if (!selectedId) return;
+    const res = await updateMemberWebHostingRole(selectedId, userId, role);
     if (res.success) await loadDetail(selectedId);
     else alert(res.error?.message ?? '调整失败');
   };
@@ -396,10 +412,35 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                               )}
                             </div>
                           </div>
+                          {/* 网页托管内容角色（owner/editor/viewer），仅网页托管生效 */}
+                          {isAdmin && m.userId !== team.ownerUserId ? (
+                            <select
+                              value={webHostingRoles[m.userId] ?? 'editor'}
+                              onChange={(e) => handleWebHostingRoleChange(m.userId, e.target.value as WebHostingRole)}
+                              title="网页托管权限"
+                              className="h-7 px-2 rounded-[6px] text-[12px] outline-none"
+                              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            >
+                              {WEB_HOSTING_ROLE_OPTIONS.map((r) => (
+                                <option key={r} value={r}>
+                                  网页·{WEB_HOSTING_ROLE_LABEL[r]}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span
+                              className="text-[11px] px-1.5 py-0.5 rounded"
+                              title={WEB_HOSTING_ROLE_HINT[webHostingRoles[m.userId] ?? (m.userId === team.ownerUserId ? 'owner' : 'editor')]}
+                              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                            >
+                              网页·{WEB_HOSTING_ROLE_LABEL[webHostingRoles[m.userId] ?? (m.userId === team.ownerUserId ? 'owner' : 'editor')]}
+                            </span>
+                          )}
                           {isAdmin && m.userId !== team.ownerUserId ? (
                             <select
                               value={m.role}
                               onChange={(e) => handleRoleChange(m.userId, e.target.value as TeamRole)}
+                              title="团队管理权限"
                               className="h-7 px-2 rounded-[6px] text-[12px] outline-none"
                               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                             >

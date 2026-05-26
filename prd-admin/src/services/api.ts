@@ -1215,6 +1215,8 @@ export const api = {
     detail: (id: string) => `/api/teams/${id}`,
     members: (id: string) => `/api/teams/${id}/members`,
     member: (id: string, userId: string) => `/api/teams/${id}/members/${userId}`,
+    memberWebHostingRole: (id: string, userId: string) =>
+      `/api/teams/${id}/members/${userId}/web-hosting-role`,
     inviteCode: (id: string) => `/api/teams/${id}/invite-code`,
     join: () => '/api/teams/join',
     activity: (id: string) => `/api/teams/${id}/activity`,

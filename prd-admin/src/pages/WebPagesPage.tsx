@@ -27,6 +27,13 @@ import {
   setSiteTeams,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+import type { WebHostingRole } from '@/services/real/teams';
+import {
+  canDeleteInWebHosting,
+  canEditInWebHosting,
+  canShareInWebHosting,
+  WEB_HOSTING_ROLE_LABEL,
+} from '@/lib/webHostingRole';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { useTeamStore } from '@/stores/teamStore';
@@ -202,8 +209,17 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
 
 // ─── Main Page ───
 
+/** 单站点在当前作用域下的操作能力（团队作用域按角色 + 是否站点创建者解析；个人作用域全开） */
+interface SiteCaps {
+  canEdit: boolean;
+  canDelete: boolean;
+  canShare: boolean;
+  canSetVisibility: boolean;
+}
+
 export default function WebPagesPage() {
   const username = useAuthStore(s => s.user?.username);
+  const currentUserId = useAuthStore(s => s.user?.userId);
   const [sites, setSites] = useState<HostedSite[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -211,6 +227,8 @@ export default function WebPagesPage() {
   const initialScope = useTeamStore.getState().getScope('web-hosting');
   const [teamScope, setTeamScope] = useState<TeamScope>(initialScope);
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
+  // 团队作用域下我的网页托管有效角色（owner/editor/viewer）；个人作用域为 null（=自己的，全权）
+  const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -268,9 +286,25 @@ export default function WebPagesPage() {
       setSites(res.data.items);
       setTotal(res.data.total);
       setOwnerCards(res.data.owners ?? {});
+      setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
   }, [keyword, activeFolder, activeTag, activeSourceType, sort, teamScope]);
+
+  // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
+  // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
+  const siteCaps = useCallback((site: HostedSite): SiteCaps => {
+    if (teamScope.scope !== 'team') {
+      return { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
+    }
+    const isOwner = !!currentUserId && site.ownerUserId === currentUserId;
+    return {
+      canEdit: isOwner || canEditInWebHosting(myWebHostingRole),
+      canShare: isOwner || canShareInWebHosting(myWebHostingRole),
+      canDelete: isOwner || canDeleteInWebHosting(myWebHostingRole),
+      canSetVisibility: isOwner, // 「设为公开」= SetVisibility，后端仅站点创建者可调
+    };
+  }, [teamScope.scope, currentUserId, myWebHostingRole]);
 
   const loadMeta = useCallback(async () => {
     const [fRes, tRes] = await Promise.all([listSiteFolders(), listSiteTags()]);
@@ -446,6 +480,7 @@ export default function WebPagesPage() {
             selected={selectedIds.has(site.id)}
             fresh={freshIds.has(site.id)}
             shared={sharedSiteIds.has(site.id)}
+            caps={siteCaps(site)}
             ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
@@ -468,6 +503,7 @@ export default function WebPagesPage() {
             site={site}
             selected={selectedIds.has(site.id)}
             shared={sharedSiteIds.has(site.id)}
+            caps={siteCaps(site)}
             onSelect={() => toggleSelect(site.id)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
@@ -601,6 +637,15 @@ export default function WebPagesPage() {
             value={teamScope}
             onChange={(next) => { setTeamScope(next); setSelectedIds(new Set()); }}
           />
+          {teamScope.scope === 'team' && myWebHostingRole && (
+            <span
+              className="h-8 inline-flex items-center px-2.5 rounded-[8px] text-[12px]"
+              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+              title="你在该团队的网页托管权限"
+            >
+              我的权限：{WEB_HOSTING_ROLE_LABEL[myWebHostingRole]}
+            </span>
+          )}
           {/* 文件夹管理 + 按文件夹生成 */}
           <button
             type="button"
@@ -759,9 +804,16 @@ export default function WebPagesPage() {
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>已选 {selectedIds.size} 项</span>
-            <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
-            <Button size="xs" variant="secondary" onClick={() => setShowShareToTeam(true)}><Users size={12} className="mr-1" /> 分享到团队</Button>
-            <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
+            {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
+            {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
+              <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
+            )}
+            {teamScope.scope !== 'team' && (
+              <Button size="xs" variant="secondary" onClick={() => setShowShareToTeam(true)}><Users size={12} className="mr-1" /> 分享到团队</Button>
+            )}
+            {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
+              <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
+            )}
             <Button size="xs" variant="ghost" onClick={() => setSelectedIds(new Set())}>取消选择</Button>
           </div>
         )}
@@ -1129,11 +1181,12 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers }: {
+function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
   shared?: boolean;
+  caps?: SiteCaps;
   ownerCard?: SiteOwnerCard;
   onViewers?: () => void;
   onSelect: () => void;
@@ -1146,6 +1199,7 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
   onTransferToLibrary: () => void;
   onReplaceFile: (file: File) => void;
 }) {
+  const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
   const [fileDragOver, setFileDragOver] = useState(false);
   // 取消分享 inline 轻确认：点一下转「确认 / 保留」两个小按钮，避免误触
@@ -1160,7 +1214,7 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
   const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
 
   const handleDragOver = (e: React.DragEvent) => {
-    if (!hasFiles(e)) return;
+    if (!hasFiles(e) || !c.canEdit) return; // 无编辑权（viewer）不接受拖拽替换
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     if (!fileDragOver) setFileDragOver(true);
@@ -1173,7 +1227,7 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
   };
 
   const handleDrop = (e: React.DragEvent) => {
-    if (!hasFiles(e)) return;
+    if (!hasFiles(e) || !c.canEdit) return;
     e.preventDefault();
     setFileDragOver(false);
     const f = e.dataTransfer.files?.[0];
@@ -1253,8 +1307,15 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
           />
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {/* 公开状态按钮固定在左上：私有态"设为公开"，公开态"公开"（悬浮变"取消公开"），位置不跳 */}
-            {isPublic ? (
+            {/* 公开状态按钮固定在左上：私有态"设为公开"，公开态"公开"（悬浮变"取消公开"），位置不跳。
+                设为公开 = SetVisibility，仅站点创建者可调；团队里非创建者只读展示公开角标。 */}
+            {!c.canSetVisibility ? (
+              isPublic ? (
+                <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
+                  <Globe size={12} /> 公开
+                </span>
+              ) : null
+            ) : isPublic ? (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onTogglePublic(); }}
@@ -1303,17 +1364,19 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
           )}
 
           <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-            {shared ? (
-              confirmCancel ? (
-                <>
-                  <IconAction icon={<Check size={12} />} label="确认取消分享" color="#6ee7b7" onClick={() => { setConfirmCancel(false); onCancelShare(); }} />
-                  <IconAction icon={<X size={12} />} label="保留分享" onClick={() => setConfirmCancel(false)} />
-                </>
+            {c.canShare && (
+              shared ? (
+                confirmCancel ? (
+                  <>
+                    <IconAction icon={<Check size={12} />} label="确认取消分享" color="#6ee7b7" onClick={() => { setConfirmCancel(false); onCancelShare(); }} />
+                    <IconAction icon={<X size={12} />} label="保留分享" onClick={() => setConfirmCancel(false)} />
+                  </>
+                ) : (
+                  <IconAction icon={<Link2Off size={12} />} label="取消分享" color="#fcd34d" onClick={() => setConfirmCancel(true)} />
+                )
               ) : (
-                <IconAction icon={<Link2Off size={12} />} label="取消分享" color="#fcd34d" onClick={() => setConfirmCancel(true)} />
+                <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
               )
-            ) : (
-              <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
             )}
             <IconAction icon={<QrCode size={12} />} label="二维码" onClick={onQrCode} />
             {isPublic && (
@@ -1326,8 +1389,8 @@ function SiteCard({ site, selected, fresh, shared, ownerCard, onSelect, onToggle
             {onViewers && (
               <IconAction icon={<Eye size={12} />} label="访客" onClick={onViewers} />
             )}
-            <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />
-            <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />
+            {c.canEdit && <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />}
+            {c.canDelete && <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />}
           </div>
         </div>
 
@@ -1431,10 +1494,11 @@ function IconAction({
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, onSelect, onEdit, onDelete, onShare, onCancelShare, onQrCode }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onCancelShare, onQrCode }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
+  caps?: SiteCaps;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -1442,6 +1506,7 @@ function SiteListItem({ site, selected, shared, onSelect, onEdit, onDelete, onSh
   onCancelShare: () => void;
   onQrCode: () => void;
 }) {
+  const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
@@ -1528,24 +1593,30 @@ function SiteListItem({ site, selected, shared, onSelect, onEdit, onDelete, onSh
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
           <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
-        {shared ? (
-          <button onClick={onCancelShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="取消分享">
-            <Link2Off size={14} style={{ color: '#fcd34d' }} />
-          </button>
-        ) : (
-          <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">
-            <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
-          </button>
+        {c.canShare && (
+          shared ? (
+            <button onClick={onCancelShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="取消分享">
+              <Link2Off size={14} style={{ color: '#fcd34d' }} />
+            </button>
+          ) : (
+            <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">
+              <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
+            </button>
+          )
         )}
         <button onClick={onQrCode} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="二维码">
           <QrCode size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
-        <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
-          <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
-        </button>
-        <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--bg-hover)]">
-          <Trash2 size={14} style={{ color: '#ef4444' }} />
-        </button>
+        {c.canEdit && (
+          <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+            <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
+          </button>
+        )}
+        {c.canDelete && (
+          <button onClick={onDelete} className="p-1 rounded hover:bg-[var(--bg-hover)]">
+            <Trash2 size={14} style={{ color: '#ef4444' }} />
+          </button>
+        )}
       </div>
     </GlassCard>
   );

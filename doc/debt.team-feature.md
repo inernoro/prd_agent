@@ -13,11 +13,15 @@
 - 策略：`PrdAgent.Core.Security.WebHostingPermission`（纯函数）+ `TeamService.GetMyWebHostingTeamRolesAsync`。`HostedSiteService` 的 Update/Reupload/Delete/BatchDelete/CreateShare 已接角色门控；Get/List 读路径不变（viewer 可读）。
 - 能力矩阵：viewer 只读；editor 读+编辑+重传+建分享（**不能删别人创建的站点**）；owner（团队管理员默认映射）全开；站点创建者对自己的站点恒为 owner。
 
-### 本阶段已知边界（Phase 1 地基，wave 2 续作）
-- **角色暂不可设**：尚无「设置成员网页托管角色」端点 + 管理 UI（ManageRoles 能力已在策略里预留）。因此当前所有成员都走继承默认，**viewer 角色暂不可达**，唯一对外可见的行为变化是「普通成员不再能删除别人的站点」。设置 UI/端点是 Phase 2。
-- **删除行为变化**：细分前任意成员可删团队内任意站点；现在普通成员(editor)只能删自己创建的，删别人的需 owner（团队管理员）。这部分缓解了下面边界 #1 的「恶意删」风险，但回收站仍未做。
-- **写路径拒绝返回 404**：viewer/非成员尝试 Update/Delete 时服务返回 null→控制器 404（不泄露存在性）；CreateShare 返回 403。UI 应按角色隐藏操作入口，404 仅作纵深防御兜底。
-- **后端编译**：本地无 dotnet SDK，C# 编译由 CDS 灰度构建验证；纯单测 `WebHostingPermissionTests` 走 CI，本地未执行。
+### 已落地（Phase 1 地基 + Phase 2 角色管理）
+- **角色可设**（Phase 2）：`PUT /api/teams/{id}/members/{userId}/web-hosting-role`（仅团队管理员可调，团队创建者恒 owner，role=null 重置继承）。团队管理面板成员行新增「网页托管角色」选择器；网页托管团队视图按 `myWebHostingRole` 隐藏 viewer 的编辑/删除/分享/设公开入口 + 批量操作门控 + 顶部「我的权限」角标。`GET /api/teams/{id}` 返回 `webHostingRoles` 映射，`GET /api/web-pages?scope=team` 返回 `myWebHostingRole`。
+- **删除行为变化**：细分前任意成员可删团队内任意站点；现在普通成员(editor)只能删自己创建的，删别人的需 owner（团队管理员或站点创建者）。这部分缓解了下面边界 #1 的「恶意删」风险，但回收站仍未做。
+
+### 仍未覆盖（wave 2 续作）
+- **写路径拒绝返回 404**：viewer/非成员尝试 Update/Delete 时服务返回 null→控制器 404（不泄露存在性）；CreateShare 返回 403。UI 已按角色隐藏入口，404 仅作纵深防御兜底。
+- **「分享到团队」批量入口在团队作用域隐藏**：setSiteTeams 后端仅站点创建者可调，团队视图里对非创建者会逐条失败，故只在个人作用域显示该批量按钮。
+- **知识库未跟进**：本次只动网页托管，知识库仍按决策 10 全员平等。
+- **后端编译**：本地无 dotnet SDK，C# 编译由 CDS 灰度构建验证；前端 `pnpm tsc --noEmit` + `eslint` 改动文件零告警已本地跑通；纯单测 `WebHostingPermissionTests` 走 CI，本地未执行。
 
 ### 1. 团队回收站（软删除，E3）未实现
 决策 10「全员可删除」下，团队成员误删/恶意删会直接毁掉别人内容，无回收站兜底。

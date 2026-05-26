@@ -6,6 +6,8 @@ import type { ApiResponse } from '@/types/api';
 
 export type TeamRole = 'admin' | 'member';
 export type TeamVisibility = 'private' | 'public';
+/** 网页托管内容角色（仅网页托管消费，知识库不读）。与后端 WebHostingRoles 镜像。 */
+export type WebHostingRole = 'owner' | 'editor' | 'viewer';
 
 export interface Team {
   id: string;
@@ -27,6 +29,8 @@ export interface TeamMember {
   userName?: string;
   avatarFileName?: string;
   role: TeamRole;
+  /** 网页托管角色覆盖；null/缺省 = 继承团队角色（admin→owner / member→editor） */
+  webHostingRole?: WebHostingRole | null;
   joinedAt: string;
 }
 
@@ -71,9 +75,16 @@ export async function createTeam(input: {
   return apiRequest(api.teams.create(), { method: 'POST', body: input });
 }
 
-export async function getTeam(
-  id: string,
-): Promise<ApiResponse<{ team: Team; members: TeamMember[]; myRole: TeamRole }>> {
+export async function getTeam(id: string): Promise<
+  ApiResponse<{
+    team: Team;
+    members: TeamMember[];
+    myRole: TeamRole;
+    /** 各成员的网页托管有效角色（已解析继承）：userId → owner/editor/viewer */
+    webHostingRoles: Record<string, WebHostingRole>;
+    myWebHostingRole: WebHostingRole;
+  }>
+> {
   return apiRequest(api.teams.detail(encodeURIComponent(id)), { method: 'GET' });
 }
 
@@ -112,6 +123,18 @@ export async function updateTeamMemberRole(
   role: TeamRole,
 ): Promise<ApiResponse<{ updated: boolean; role: TeamRole }>> {
   return apiRequest(api.teams.member(encodeURIComponent(id), encodeURIComponent(userId)), {
+    method: 'PUT',
+    body: { role },
+  });
+}
+
+/** 设置成员网页托管角色（owner/editor/viewer）。仅团队管理员可调；role=null 重置为继承。 */
+export async function updateMemberWebHostingRole(
+  id: string,
+  userId: string,
+  role: WebHostingRole | null,
+): Promise<ApiResponse<{ updated: boolean; webHostingRole: WebHostingRole | null; effectiveWebHostingRole: WebHostingRole }>> {
+  return apiRequest(api.teams.memberWebHostingRole(encodeURIComponent(id), encodeURIComponent(userId)), {
     method: 'PUT',
     body: { role },
   });

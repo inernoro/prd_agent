@@ -38,13 +38,16 @@ public class WebPagesController : ControllerBase
     };
 
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
+    private readonly ITeamService _teams;
 
     public WebPagesController(
         IHostedSiteService siteService,
-        PrdAgent.Infrastructure.Database.MongoDbContext db)
+        PrdAgent.Infrastructure.Database.MongoDbContext db,
+        ITeamService teams)
     {
         _siteService = siteService;
         _db = db;
+        _teams = teams;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -339,14 +342,20 @@ public class WebPagesController : ControllerBase
         [FromQuery] string? scope = null,
         [FromQuery] string? teamId = null)
     {
+        var userId = GetUserId();
         var (items, total) = await _siteService.ListAsync(
-            GetUserId(), keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
+            userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
 
-        // 团队作用域：附带创建者头像/昵称，供卡片左下角展示
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && items.Count > 0)
+        // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
+        //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
         {
-            var owners = await BuildUserCardsAsync(items.Select(s => s.OwnerUserId));
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners }));
+            var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+            var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
+            var owners = items.Count > 0
+                ? await BuildUserCardsAsync(items.Select(s => s.OwnerUserId))
+                : new Dictionary<string, object>();
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
         }
 
         return Ok(ApiResponse<object>.Ok(new { items, total }));

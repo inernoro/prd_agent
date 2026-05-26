@@ -6,6 +6,7 @@ import {
   type TeamListItem,
   type TeamMember,
   type TeamRole,
+  type WebHostingRole,
 } from '@/services/real/teams';
 
 // 记住每个模块上次选中的团队 / 作用域（禁用 localStorage，统一 sessionStorage）
@@ -38,6 +39,9 @@ interface TeamState {
   currentTeam: Team | null;
   currentMembers: TeamMember[];
   currentMyRole: TeamRole | null;
+  // 网页托管有效角色（userId → owner/editor/viewer）+ 我的有效角色
+  currentWebHostingRoles: Record<string, WebHostingRole>;
+  currentMyWebHostingRole: WebHostingRole | null;
 
   loadTeams: (force?: boolean) => Promise<void>;
   loadTeamDetail: (teamId: string) => Promise<void>;
@@ -55,6 +59,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   currentTeam: null,
   currentMembers: [],
   currentMyRole: null,
+  currentWebHostingRoles: {},
+  currentMyWebHostingRole: null,
 
   loadTeams: async (force = false) => {
     if (get().loading) return;
@@ -74,11 +80,20 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         currentTeam: res.data.team,
         currentMembers: res.data.members,
         currentMyRole: res.data.myRole,
+        currentWebHostingRoles: res.data.webHostingRoles ?? {},
+        currentMyWebHostingRole: res.data.myWebHostingRole ?? null,
       });
     }
   },
 
-  clearDetail: () => set({ currentTeam: null, currentMembers: [], currentMyRole: null }),
+  clearDetail: () =>
+    set({
+      currentTeam: null,
+      currentMembers: [],
+      currentMyRole: null,
+      currentWebHostingRoles: {},
+      currentMyWebHostingRole: null,
+    }),
 
   getScope: (moduleKey: string) => {
     const sel = readScopeSelection();
