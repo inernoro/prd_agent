@@ -1704,6 +1704,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     executor: ExecutorNode,
     entry: BranchEntry,
     res: import('express').Response,
+    context: { requestId?: string | null; operationId?: string | null; actor?: string | null; trigger?: string | null } = {},
   ): Promise<void> {
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
@@ -1771,6 +1772,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId: entry.projectId || 'default',
       profiles,
       env,
+      requestId: context.requestId || null,
+      operationId: context.operationId || null,
+      actor: context.actor || null,
+      trigger: context.trigger || 'manual',
     };
 
     const upstreamUrl = `http://${executor.host}:${executor.port}/exec/deploy`;
@@ -3775,7 +3780,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
               'Content-Type': 'application/json',
               ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
             },
-            body: JSON.stringify({ branchId: id }),
+            body: JSON.stringify({
+              branchId: id,
+              requestId: requestId || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor,
+              trigger: trigger || null,
+            }),
           });
           if (upstream.ok) {
             proxied = true;
@@ -4029,7 +4040,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // handing this branch off to the remote — the master isn't running
       // containers for it, the executor is.
       entry.errorMessage = undefined;
-      await proxyDeployToExecutor(remoteTarget, entry, res);
+      await proxyDeployToExecutor(remoteTarget, entry, res, {
+        requestId: requestId || null,
+        operationId: branchOperationLease?.operationId || null,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+      });
       return;
     }
 
@@ -5274,7 +5290,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
             'Content-Type': 'application/json',
             ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
           },
-          body: JSON.stringify({ branchId: id }),
+          body: JSON.stringify({
+            branchId: id,
+            requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+            operationId: branchOperationLease?.operationId || null,
+            actor: resolveActorFromRequest(req),
+            trigger: triggerFromRequest(req),
+          }),
         });
         if (!upstream.ok) {
           const errText = await upstream.text().catch(() => '');

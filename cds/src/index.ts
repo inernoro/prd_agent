@@ -937,7 +937,13 @@ schedulerService.setCoolFn(async (slug: string) => {
       // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
       svc.status = 'stopping';
       try {
-        await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）');
+        await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+          operationId: branchOperationLease?.operationId || null,
+          actor: 'scheduler',
+          trigger: 'scheduler',
+          operation: 'scheduler-cooling',
+          source: 'schedulerService.setCoolFn',
+        });
       } catch (err) {
         console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
       }
@@ -1081,7 +1087,12 @@ const autoLifecycleService = new AutoLifecycleService(
               'Content-Type': 'application/json',
               ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
             },
-            body: JSON.stringify({ branchId: slug }),
+            body: JSON.stringify({
+              branchId: slug,
+              operationId: branchOperationLease?.operationId || null,
+              actor: 'auto-lifecycle',
+              trigger: 'auto-lifecycle',
+            }),
           });
         } catch (err) {
           // 执行器不可达：回滚到原 running 状态 + 抛出。caller
@@ -1113,7 +1124,13 @@ const autoLifecycleService = new AutoLifecycleService(
           // （Cursor Bugbot High）。
           svc.status = 'stopping';
           try {
-            await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）');
+            await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+              operationId: branchOperationLease?.operationId || null,
+              actor: 'auto-lifecycle',
+              trigger: 'auto-lifecycle',
+              operation: 'auto-lifecycle-stop',
+              source: 'autoLifecycleService.stopBranch',
+            });
           } catch (err) {
             console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
           }
@@ -1300,6 +1317,7 @@ janitorService.setRemoveFn(async (slug: string) => {
         projectId: branch.projectId,
         branchId: branch.id,
         profileId: svc.profileId,
+        operationId: branchOperationLease?.operationId || null,
         actor: 'janitor',
         trigger: 'janitor',
         operation: 'janitor-remove',
