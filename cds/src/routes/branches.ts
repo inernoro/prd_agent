@@ -1310,6 +1310,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     config,
   });
 
+  function inferProjectIdFromBranchId(branchId: string): string | null {
+    const projectIds = stateService.getProjects().map((project) => project.id).sort((a, b) => b.length - a.length);
+    return projectIds.find((projectId) => branchId === projectId || branchId.startsWith(`${projectId}-`)) || null;
+  }
+
   function triggerFromRequest(req: Request): BranchOperationTrigger {
     const raw = typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : '';
     if (raw === 'webhook') return 'webhook';
@@ -2796,7 +2801,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!container.running) continue;
       if (projectFilter) {
         const branch = stateService.getBranch(container.branchId);
-        const inferredProjectMatch = !branch && (container.branchId === projectFilter || container.branchId.startsWith(`${projectFilter}-`));
+        const inferredProjectMatch = !branch && inferProjectIdFromBranchId(container.branchId) === projectFilter;
         if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
       }
       issues.push({
@@ -2970,7 +2975,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (stateServiceKeys.has(key)) continue;
       const branch = stateService.getBranch(container.branchId);
       if (projectFilter) {
-        const inferredProjectMatch = !branch && (container.branchId === projectFilter || container.branchId.startsWith(`${projectFilter}-`));
+        const inferredProjectMatch = !branch && inferProjectIdFromBranchId(container.branchId) === projectFilter;
         if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
       }
       candidates.push({
