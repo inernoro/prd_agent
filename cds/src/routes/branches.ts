@@ -5666,7 +5666,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
           `docker inspect --format="{{.State.Status}}" ${svc.containerName}`,
         );
         if (inspectResult.exitCode !== 0) {
-          res.json({ logs: `容器 ${svc.containerName} 不存在，可能已被清理。请重新部署。` });
+          const message = `容器 ${svc.containerName} 不存在，可能已被清理。请重新部署。`;
+          stateService.appendContainerLogArchive(id, {
+            projectId: entry.projectId,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            hostPort: svc.hostPort,
+            status: svc.status,
+            source: 'container-logs-api',
+            masked: true,
+            logs: message,
+            message: 'container logs requested after container disappeared',
+          });
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'warn',
+            source: 'container-logs-api',
+            action: 'container.logs.missing',
+            message,
+            projectId: entry.projectId,
+            branchId: id,
+            profileId: svc.profileId,
+            containerName: svc.containerName,
+            status: svc.status,
+            error: { message: inspectResult.stderr || inspectResult.stdout || 'docker inspect failed' },
+            details: { hostPort: svc.hostPort, inspectExitCode: inspectResult.exitCode },
+          });
+          stateService.save();
+          res.json({ logs: message });
           return;
         }
       }

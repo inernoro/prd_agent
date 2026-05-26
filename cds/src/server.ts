@@ -2628,6 +2628,7 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     config: deps.config,
     githubApp: githubAppClient,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
 
   // P4 Part 18 (D.3): storage-mode management endpoints. Requires the
