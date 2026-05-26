@@ -11865,6 +11865,7 @@ cdscli project list --human
           // If the new process failed to start, the next admin to hit CDS will
           // see an empty upstream — and will find a forensic trail in
           // .cds/self-update-error.log.
+          branchOperationCoordinator?.interruptAll('CDS self-update is restarting the process', 'api.self-update');
           setTimeout(() => process.exit(0), 1000);
         } catch (spawnErr) {
           // Something went wrong before spawn; write it out and still exit
@@ -11872,6 +11873,7 @@ cdscli project list --human
           try {
             fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
           } catch { /* can't log either; give up silently */ }
+          branchOperationCoordinator?.interruptAll('CDS self-update spawn failed; process is exiting', 'api.self-update');
           setTimeout(() => process.exit(1), 500);
         }
       }, 500);
@@ -12633,6 +12635,7 @@ cdscli project list --human
           fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
         });
         child.unref();
+        branchOperationCoordinator?.interruptAll('CDS force-sync is restarting the process', 'api.self-force-sync');
         setTimeout(() => process.exit(0), 1000);
       } catch (spawnErr) {
         // If we can't spawn the replacement, at least we've persisted the

@@ -239,6 +239,36 @@ export class BranchOperationCoordinator {
     }
   }
 
+  interruptAll(reason: string, source: string): void {
+    for (const active of this.active.values()) {
+      this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
+        reason,
+        source,
+        startedAt: active.startedAt,
+        cancelled: active.cancelled,
+        cancelReason: active.cancelReason || null,
+      });
+    }
+    for (const pending of this.pendingWebhookDeploys.values()) {
+      this.record('branch.operation.interrupted', pending.request, pending.operationId, pending.generation, 'warn', {
+        reason,
+        source,
+        pending: true,
+        mergedCount: pending.mergedCount,
+        updatedAt: pending.updatedAt,
+      });
+    }
+    for (const reserved of this.reservedContinuations.values()) {
+      this.record('branch.operation.interrupted', reserved.request, reserved.operationId, reserved.generation, 'warn', {
+        reason,
+        source,
+        reserved: true,
+        reservedAt: reserved.reservedAt,
+        continueWith: reserved.continueWith,
+      });
+    }
+  }
+
   isCurrent(branchId: string, operationId: string, generation: number): boolean {
     const active = this.active.get(branchId);
     return Boolean(active && active.operationId === operationId && active.generation === generation && !active.cancelled);

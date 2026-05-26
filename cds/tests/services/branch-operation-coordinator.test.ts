@@ -377,4 +377,39 @@ describe('BranchOperationCoordinator', () => {
     expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
     expect(records.filter((r) => r.action === 'branch.operation.cancelled').length).toBeGreaterThanOrEqual(1);
   });
+
+  it('records active and pending operations as interrupted when CDS restarts', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      actor: 'system:webhook',
+      requestId: 'req-1',
+      commitSha: '1111111',
+      source: 'api.deploy-branch',
+    });
+    const pending = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      actor: 'system:webhook',
+      requestId: 'req-2',
+      commitSha: '2222222',
+      source: 'api.deploy-branch',
+    });
+
+    coordinator.interruptAll('CDS self-update is restarting the process', 'api.self-update');
+
+    const interrupted = records.filter((record) => record.action === 'branch.operation.interrupted');
+    expect(pending.status).toBe('merged');
+    expect(interrupted).toHaveLength(2);
+    expect(interrupted.map((record) => record.operationId)).toEqual(expect.arrayContaining([
+      active.operationId,
+      pending.operationId,
+    ]));
+    expect(interrupted.every((record) => record.details?.source === 'api.self-update')).toBe(true);
+    expect(interrupted.find((record) => record.operationId === pending.operationId)?.details?.pending).toBe(true);
+  });
 });
