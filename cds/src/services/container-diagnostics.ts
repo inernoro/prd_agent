@@ -7,13 +7,66 @@ import {
 } from './server-event-log-store.js';
 
 const VALID_DOCKER_REF = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
+const INTENT_TTL_MS = 5 * 60 * 1000;
+
+export type ContainerLifecycleIntentKind =
+  | 'cds-stop'
+  | 'cds-remove'
+  | 'cds-pre-run-replace'
+  | 'cds-stale-cleanup'
+  | 'cds-infra-recreate';
+
+export interface ContainerLifecycleIntent {
+  containerName: string;
+  kind: ContainerLifecycleIntentKind;
+  reason: string;
+  requestedAt: string;
+}
+
+const lifecycleIntents = new Map<string, ContainerLifecycleIntent>();
+
+function normalizeContainerName(value: string): string {
+  return String(value || '').replace(/^\/+/, '').trim();
+}
+
+function pruneLifecycleIntents(now = Date.now()): void {
+  for (const [name, intent] of lifecycleIntents.entries()) {
+    if (now - Date.parse(intent.requestedAt) > INTENT_TTL_MS) lifecycleIntents.delete(name);
+  }
+}
+
+export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIntent, 'containerName' | 'requestedAt'> & {
+  containerName: string;
+  requestedAt?: string;
+}): void {
+  const containerName = normalizeContainerName(intent.containerName);
+  if (!containerName) return;
+  pruneLifecycleIntents();
+  lifecycleIntents.set(containerName, {
+    containerName,
+    kind: intent.kind,
+    reason: intent.reason,
+    requestedAt: intent.requestedAt || new Date().toISOString(),
+  });
+}
+
+export function findRecentContainerLifecycleIntent(containerName: string | undefined | null): ContainerLifecycleIntent | undefined {
+  const clean = normalizeContainerName(containerName || '');
+  if (!clean) return undefined;
+  pruneLifecycleIntents();
+  return lifecycleIntents.get(clean);
+}
+
+export function clearContainerLifecycleIntentsForTest(): void {
+  lifecycleIntents.clear();
+}
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function safeDockerRef(value: string): string | null {
-  const clean = String(value || '').replace(/^\/+/, '').trim();
+  const clean = normalizeContainerName(value);
   return VALID_DOCKER_REF.test(clean) ? clean : null;
 }
 
@@ -154,6 +207,7 @@ export class DockerEventMonitor {
       exitCode?: number;
       oomKilled?: boolean;
       inspect?: Record<string, unknown>;
+      lifecycleIntent?: ContainerLifecycleIntent;
     }) => void | Promise<void>,
   ) {}
 
@@ -255,13 +309,20 @@ export class DockerEventMonitor {
       ? await collectContainerDiagnostics(this.shell, ref, 300)
       : {};
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
+    const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
+    const normalizedAction = action.toLowerCase();
+    const recordedSeverity = lifecycleIntent
+      && !normalizedAction.includes('oom')
+      && ['die', 'kill', 'destroy', 'stop'].includes(normalizedAction)
+      ? 'warn'
+      : severity;
 
     this.store.record({
       category: 'docker',
-      severity,
+      severity: recordedSeverity,
       source: 'docker-events',
       action,
-      message: `docker ${action}${containerName ? `: ${containerName}` : ''}`,
+      message: `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
       branchId: branchId || null,
       profileId: profileId || null,
       serviceId: serviceId || null,
@@ -281,6 +342,7 @@ export class DockerEventMonitor {
       inspect: diagnostics.inspect,
       logs: diagnostics.logs,
       error: diagnostics.error,
+      details: lifecycleIntent ? { lifecycleIntent } : undefined,
     });
 
     try {
@@ -295,6 +357,7 @@ export class DockerEventMonitor {
         exitCode: Number.isFinite(Number(state?.exitCode ?? attrs.exitCode)) ? Number(state?.exitCode ?? attrs.exitCode) : undefined,
         oomKilled: typeof state?.oomKilled === 'boolean' ? state.oomKilled : action.toLowerCase().includes('oom') || undefined,
         inspect: diagnostics.inspect,
+        lifecycleIntent,
       });
     } catch (err) {
       this.store.record({

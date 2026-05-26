@@ -34,7 +34,7 @@ import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
-import { DockerEventMonitor } from './services/container-diagnostics.js';
+import { DockerEventMonitor, type ContainerLifecycleIntent } from './services/container-diagnostics.js';
 import { SystemLogMonitor } from './services/system-log-monitor.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
@@ -465,36 +465,65 @@ function dockerLifecycleReason(event: {
   exitCode?: number;
   oomKilled?: boolean;
   attrs: Record<string, string>;
-}): { source: 'crash' | 'system'; nextServiceStatus: 'error' | 'stopped'; nextBranchStatus: 'error' | 'idle'; reason: string } {
+  lifecycleIntent?: ContainerLifecycleIntent;
+}): {
+  source: 'crash' | 'system' | 'cds' | 'external' | 'oom';
+  nextServiceStatus: 'error' | 'stopped';
+  nextBranchStatus: 'error' | 'idle';
+  reason: string;
+  stopClass: string;
+  unexpected: boolean;
+} {
   const action = String(event.action || '').toLowerCase();
   const exitCode = Number.isFinite(event.exitCode) ? event.exitCode : undefined;
   const exitText = exitCode !== undefined ? ` exitCode=${exitCode}` : '';
   const oom = event.oomKilled ? ' OOMKilled=true' : '';
   const actor = event.attrs?.signal ? ` signal=${event.attrs.signal}` : '';
   const name = event.containerName || 'unknown-container';
+  const intent = event.lifecycleIntent;
+  const intentText = intent ? `；已匹配 CDS 意图 ${intent.kind}：${intent.reason}` : '';
   if (event.oomKilled || action === 'oom') {
     return {
-      source: 'crash',
+      source: 'oom',
       nextServiceStatus: 'error',
       nextBranchStatus: 'error',
-      reason: `容器 OOM 被系统杀死：${name}${exitText}${oom}`,
+      reason: `容器被 OOM killer 杀死：${name}${exitText}${oom}`,
+      stopClass: 'oom-kill',
+      unexpected: true,
+    };
+  }
+  if (intent) {
+    return {
+      source: 'cds',
+      nextServiceStatus: 'stopped',
+      nextBranchStatus: 'idle',
+      reason: `CDS 生命周期操作导致容器停止：${name}${exitText}${actor}${intentText}`,
+      stopClass: intent.kind,
+      unexpected: false,
     };
   }
   if (action === 'die') {
-    const normalExit = exitCode === 0 || exitCode === 143 || exitCode === 137;
+    const normalExit = exitCode === 0 || exitCode === 143;
+    const sigkill = exitCode === 137;
     return {
-      source: normalExit ? 'system' : 'crash',
+      source: normalExit ? 'system' : sigkill ? 'external' : 'crash',
       nextServiceStatus: normalExit ? 'stopped' : 'error',
       nextBranchStatus: normalExit ? 'idle' : 'error',
-      reason: `Docker die 事件：${name}${exitText}${oom}${actor}`,
+      reason: sigkill
+        ? `容器收到 SIGKILL 后退出，但没有 OOMKilled 证据：${name}${exitText}${actor}；需对照 docker kill/stop/rm 事件和 CDS 意图判断来源`
+        : `Docker die 事件：${name}${exitText}${oom}${actor}`,
+      stopClass: normalExit ? 'normal-exit' : sigkill ? 'sigkill-no-oom-evidence' : 'process-exit-error',
+      unexpected: !normalExit,
     };
   }
   if (action === 'kill') {
     return {
-      source: 'crash',
+      source: 'external',
       nextServiceStatus: 'error',
       nextBranchStatus: 'error',
-      reason: `容器被 docker kill：${name}${exitText}${actor}`,
+      reason: `容器被 docker kill/SIGKILL，但没有匹配到 CDS 停止/删除/重部署意图：${name}${exitText}${actor}`,
+      stopClass: 'external-docker-kill',
+      unexpected: true,
     };
   }
   return {
@@ -502,6 +531,8 @@ function dockerLifecycleReason(event: {
     nextServiceStatus: 'stopped',
     nextBranchStatus: 'idle',
     reason: `容器被 Docker destroy/remove：${name}${exitText}${oom}`,
+    stopClass: 'docker-destroy-remove',
+    unexpected: false,
   };
 }
 
@@ -525,12 +556,12 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   branch.lastStoppedAt = new Date().toISOString();
   branch.lastStopReason = classified.reason;
   branch.lastStopSource = classified.source;
-  if (classified.source === 'crash') {
+  if (classified.unexpected) {
     stateService.incrementBranchStat(branch.id, 'stopCount');
   }
   try {
     stateService.appendActivityLog(branch.projectId, {
-      type: classified.source === 'crash' ? 'crash' : 'stop',
+      type: classified.unexpected ? 'crash' : 'stop',
       branchId: branch.id,
       branchName: branch.branch,
       actor: 'docker-events',
@@ -550,9 +581,9 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   });
   activeServerEventLogStore?.record({
     category: 'container',
-    severity: classified.source === 'crash' ? 'error' : 'warn',
+    severity: classified.unexpected ? 'error' : 'warn',
     source: 'docker-events-state-sync',
-    action: classified.source === 'crash' ? 'app.external-stop.crash-synced' : 'app.external-stop.synced',
+    action: classified.unexpected ? 'app.external-stop.unexpected-synced' : 'app.external-stop.synced',
     message: classified.reason,
     projectId: branch.projectId,
     branchId: branch.id,
@@ -567,6 +598,10 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
       exitCode: event.exitCode,
       oomKilled: event.oomKilled,
       dockerStatus: event.status,
+      lifecycleIntent: event.lifecycleIntent,
+      stopClass: classified.stopClass,
+      stopSource: classified.source,
+      unexpected: classified.unexpected,
       reason: 'sync-cds-state-after-docker-lifecycle-event',
     },
   });

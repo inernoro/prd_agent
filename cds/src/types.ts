@@ -586,10 +586,13 @@ export interface BranchEntry {
    *   - 'user'      用户在 UI 上点了停止
    *   - 'scheduler' 调度器自动降温/驱逐
    *   - 'executor'  远端执行器
-   *   - 'crash'     容器自行退出（崩溃 / OOM / docker kill），由 auto-restart 巡检发现
+   *   - 'crash'     进程自行异常退出（非 0/143/137）
+   *   - 'oom'       Docker / kernel 明确报告 OOMKilled
+   *   - 'external'  未匹配到 CDS 意图的 docker kill / SIGKILL
+   *   - 'cds'       CDS 生命周期操作（删除 / 重部署替换 / 清理旧容器）
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */

@@ -1903,7 +1903,7 @@ ${shouldAutoRefresh ? `;(function(){
       // 转发日志：明确记录上游错误类型，方便用户看到"502 但服务器无日志"时的真实原因
       const codeHintMap: Record<string, string> = {
         ECONNREFUSED: '上游端口未监听 — 容器可能还没启动完，或服务崩溃了。查 container logs。',
-        ECONNRESET: '上游主动断开 — 服务启动到一半挂了，或进程 OOM 被杀。查容器 dmesg / crash dump。',
+        ECONNRESET: '上游主动断开 — 服务启动中退出、被 stop/kill、或真实 OOM。以容器事件里的 OOMKilled/kernel OOM 为准。',
         ETIMEDOUT: '上游不响应 — 可能卡在启动（例如 restore 还没跑完），或进程 hang 住。',
         EHOSTUNREACH: 'Docker 网络不通 — 容器 IP 失效或跨 network 没配好。',
         ENOTFOUND: 'DNS 无法解析 upstream host — 检查 routing rule 里的 host 是否拼错。',

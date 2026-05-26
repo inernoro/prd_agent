@@ -55,7 +55,7 @@ interface BranchSummary {
   lastDeployAt?: string;
   lastStoppedAt?: string;
   lastStopReason?: string;
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
@@ -1315,6 +1315,9 @@ export function BranchDetailPage(): JSX.Element {
                             {state.branch.lastStopSource === 'user' ? '用户'
                               : state.branch.lastStopSource === 'scheduler' ? '调度器'
                               : state.branch.lastStopSource === 'executor' ? '执行器'
+                              : state.branch.lastStopSource === 'cds' ? 'CDS'
+                              : state.branch.lastStopSource === 'oom' ? 'OOM'
+                              : state.branch.lastStopSource === 'external' ? '外部'
                               : state.branch.lastStopSource === 'crash' ? '崩溃'
                               : '系统'}
                           </span>

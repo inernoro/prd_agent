@@ -9,7 +9,7 @@ import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
-import { collectContainerDiagnostics } from './container-diagnostics.js';
+import { collectContainerDiagnostics, recordContainerLifecycleIntent } from './container-diagnostics.js';
 import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from './server-event-log-store.js';
 
 /**
@@ -368,6 +368,14 @@ export class ContainerService {
     return collectContainerDiagnostics(this.shell, containerName, tailLines);
   }
 
+  private noteLifecycleIntent(
+    containerName: string,
+    kind: Parameters<typeof recordContainerLifecycleIntent>[0]['kind'],
+    reason: string,
+  ): void {
+    recordContainerLifecycleIntent({ containerName, kind, reason });
+  }
+
   /**
    * 解析特定项目的 docker network 名称。Week 4.9 多项目网络隔离：
    *   1. 调用方传 projectId 且 networkResolver 已注入 → 优先用 project.dockerNetwork
@@ -441,6 +449,7 @@ export class ContainerService {
       const target = id || cleanName;
       if (cleanName === service.containerName || removed.has(target)) return;
       onOutput?.(`── 清理同 alias 的旧 endpoint(${source}): ${cleanName} (${staleAliases.join(', ')}) ──\n`);
+      this.noteLifecycleIntent(cleanName, 'cds-stale-cleanup', `清理同 alias 的旧 endpoint(${source})`);
       const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(target)}`);
       if (rm.exitCode !== 0) {
         await this.shell.exec(
@@ -569,6 +578,7 @@ export class ContainerService {
     await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
 
     // Remove any existing container
+    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器');
     const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
     this.recordContainerEvent({
       severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
@@ -1258,6 +1268,7 @@ export class ContainerService {
       details: { reason },
     });
     await this.writeStopSentinel(containerName, reason);
+    this.noteLifecycleIntent(containerName, 'cds-stop', reason);
     const result = await this.shell.exec(`docker stop ${containerName}`);
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
@@ -1296,6 +1307,7 @@ export class ContainerService {
       logs: before.logs,
       error: before.error,
     });
+    this.noteLifecycleIntent(containerName, 'cds-remove', '删除分支/重置/清理触发容器销毁');
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({
@@ -1589,6 +1601,7 @@ export class ContainerService {
         inspect: diagnostics.inspect,
         logs: diagnostics.logs,
       });
+      this.noteLifecycleIntent(service.containerName, 'cds-infra-recreate', 'infra docker start 失败后删除重建');
       const rmResult = await this.shell.exec(`docker rm -f ${service.containerName}`);
       this.recordContainerEvent({
         severity: rmResult.exitCode === 0 ? 'warn' : 'error',
@@ -1710,6 +1723,7 @@ export class ContainerService {
       logs: before.logs,
       error: before.error,
     });
+    this.noteLifecycleIntent(containerName, 'cds-infra-recreate', 'infra stop/rm 重建或删除');
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({
