@@ -3900,13 +3900,15 @@ function BranchCard({
   const footerBuilder = builderHandle(branch);
   const footerSha = shortCommitSha(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
-  const [actorOrbitActive, setActorOrbitActive] = useState(false);
+  const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
+  const [actorOrbitSpinning, setActorOrbitSpinning] = useState(false);
   const actorPulseSeenRef = useRef(false);
   const operationPulseKey = action?.status === 'running'
     ? `action:${action.kind}:${action.startedAt}:running`
     : '';
-  // 只把"新事件进入 / 本地操作开始"定义为动画触发点。构建完成、停止、
-  // running 回落等收尾状态不再触发环绕，避免用户以为还有操作在进行。
+  // visible: 只在构建/操作态把名字变成环绕静止态。
+  // spinning: 只在 visible 期间遇到新事件 / 本地操作开始时短暂转动。
+  // 构建完成、停止、running 回落等收尾状态不触发旋转。
   const actorPulseSignal = activityPulseKey || operationPulseKey;
   useEffect(() => {
     if (!tagEditorOpen) return;
@@ -3926,15 +3928,14 @@ function BranchCard({
       actorPulseSeenRef.current = true;
       return;
     }
-    if (!actorPulseSignal) {
-      setActorOrbitActive(false);
+    if (!actorOrbitVisible || !actorPulseSignal) {
+      setActorOrbitSpinning(false);
       return;
     }
-    if (!footerBuilder) return;
-    setActorOrbitActive(true);
-    const timer = window.setTimeout(() => setActorOrbitActive(false), 2600);
+    setActorOrbitSpinning(true);
+    const timer = window.setTimeout(() => setActorOrbitSpinning(false), 1800);
     return () => window.clearTimeout(timer);
-  }, [actorPulseSignal, footerBuilder]);
+  }, [actorOrbitVisible, actorPulseSignal]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -4413,8 +4414,8 @@ function BranchCard({
       >
         <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
           <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div className={`cds-actor-orbit ${actorOrbitActive ? 'cds-actor-orbit--active' : ''}`}>
-              {actorOrbitActive && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
+            <div className={`cds-actor-orbit ${actorOrbitVisible ? 'cds-actor-orbit--active' : ''} ${actorOrbitSpinning ? 'cds-actor-orbit--spinning' : ''}`}>
+              {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
                 className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                 aria-label={builderTitle}

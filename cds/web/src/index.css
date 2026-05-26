@@ -349,10 +349,13 @@
     position: absolute;
     inset: 0;
     z-index: 1;
-    animation: cds-actor-orbit-spin 9s linear infinite;
     color: rgb(125 211 252 / 0.92);
     filter: drop-shadow(0 0 5px rgb(56 189 248 / 0.5));
     pointer-events: none;
+  }
+
+  .cds-actor-orbit--spinning .cds-actor-orbit__ring {
+    animation: cds-actor-orbit-spin 1.8s cubic-bezier(0.2, 0.7, 0.2, 1) 1;
   }
 
   .cds-actor-orbit__char {
