@@ -2212,9 +2212,10 @@ export function BranchListPage(): JSX.Element {
     }
     setAction(branch.id, createAction('rebuild', `正在重新生成 (${profileIds.length} 个服务)`));
     try {
-      for (const profileId of profileIds) {
+      for (const [index, profileId] of profileIds.entries()) {
+        const reserve = index === profileIds.length - 1 ? '?reserveDeploy=1&deployScope=branch' : '';
         await apiRequest(
-          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}${reserve}`,
           { method: 'POST' },
         );
       }

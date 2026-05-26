@@ -1321,6 +1321,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       source: string;
       reason?: string | null;
       sse?: boolean;
+      continueWith?: 'deploy' | 'deploy-profile' | null;
     },
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
@@ -1336,6 +1337,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: input.commitSha || null,
       source: input.source,
       reason: input.reason || null,
+      continueWith: input.continueWith || null,
     });
     if (decision.status === 'started') return decision.lease || null;
 
@@ -1373,6 +1375,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason?: string | null;
       triggerOverride?: BranchOperationTrigger;
       actorOverride?: string | null;
+      continueWith?: 'deploy' | 'deploy-profile' | null;
     },
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
@@ -1388,6 +1391,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: input.commitSha || null,
       source: input.source,
       reason: input.reason || null,
+      continueWith: input.continueWith || null,
     });
     return decision.status === 'started' ? decision.lease || null : null;
   }
@@ -6842,6 +6846,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!profile) { res.status(404).json({ error: `构建配置 "${profileId}" 不存在` }); return; }
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const actor = resolveActorFromRequest(req);
+    const reserveDeploy =
+      req.query.reserveDeploy === '1'
+      || req.query.reserveDeploy === 'true'
+      || req.body?.reserveDeploy === true;
+    const deployScope = req.query.deployScope === 'branch' || req.body?.deployScope === 'branch'
+      ? 'branch'
+      : 'profile';
 
     const svc = branch.services?.[profileId];
     const containerName = svc?.containerName;
@@ -6853,6 +6864,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       profileId,
       source: 'api.force-rebuild',
       reason: `强制干净重建 ${branchSlug}:${profileId}`,
+      continueWith: reserveDeploy ? (deployScope === 'branch' ? 'deploy' : 'deploy-profile') : null,
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
@@ -6898,9 +6910,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       steps.push({
-        step: '等待调用方重新部署',
+        step: reserveDeploy ? '已预留重新部署' : '等待调用方重新部署',
         ok: true,
-        detail: '构建缓存已清理，前端/CLI 应随后触发 deploy；本端点本身不隐式拉起容器。',
+        detail: reserveDeploy
+          ? `构建缓存已清理，下一次${deployScope === 'branch' ? '全量' : '单服务'} deploy 将继承同一个 operationId，期间 webhook deploy 会被合并等待。`
+          : '构建缓存已清理，前端/CLI 应随后触发 deploy；本端点本身不隐式拉起容器。',
       });
 
       stateService.recordDestructiveOp({
@@ -6912,6 +6926,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.json({
         branch: branchSlug,
         profile: profileId,
+        operationId: branchOperationLease?.operationId,
+        reserveDeploy,
+        deployScope,
         workDir,
         steps,
         message: '已强制清理构建缓存。请继续部署以重新拉起服务。',

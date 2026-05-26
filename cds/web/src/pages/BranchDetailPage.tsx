@@ -1072,7 +1072,7 @@ export function BranchDetailPage(): JSX.Element {
     updateAction({ label: `正在清理 ${profileId}`, log: [], status: 'running' });
     try {
       const res = await apiRequest<ForceRebuildResponse>(
-        `/api/branches/${encodeURIComponent(state.branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+        `/api/branches/${encodeURIComponent(state.branch.id)}/force-rebuild/${encodeURIComponent(profileId)}?reserveDeploy=1`,
         { method: 'POST' },
       );
       const steps = res.steps || [];

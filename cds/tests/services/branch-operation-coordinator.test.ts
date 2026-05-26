@@ -183,4 +183,96 @@ describe('BranchOperationCoordinator', () => {
     expect(b.status).toBe('started');
     expect(a.operationId).not.toBe(b.operationId);
   });
+
+  it('reserves the same operationId for force-rebuild deploy continuation', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const force = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+
+    const pending = coordinator.complete(force.lease!, 'completed');
+    const deploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+    });
+
+    expect(pending).toBeNull();
+    expect(deploy.status).toBe('started');
+    expect(deploy.operationId).toBe(force.operationId);
+    expect(deploy.generation).not.toBe(force.generation);
+    expect(records.map((r) => r.action)).toContain('branch.operation.queued');
+    expect(records.map((r) => r.action)).toContain('branch.operation.continued');
+  });
+
+  it('merges webhook deploys while force-rebuild waits for its manual deploy continuation', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const force = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    coordinator.complete(force.lease!, 'completed');
+
+    const webhook = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+    const deploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+    });
+    const pending = coordinator.complete(deploy.lease!, 'completed');
+
+    expect(webhook.status).toBe('merged');
+    expect(deploy.operationId).toBe(force.operationId);
+    expect(pending?.request.commitSha).toBe('2222222');
+  });
+
+  it('manual delete cancels a reserved force-rebuild continuation and its pending webhook', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const force = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    coordinator.complete(force.lease!, 'completed');
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+
+    const del = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(del.status).toBe('started');
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
+    expect(records.filter((r) => r.action === 'branch.operation.cancelled').length).toBeGreaterThanOrEqual(1);
+  });
 });

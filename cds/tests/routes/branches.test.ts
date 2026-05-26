@@ -712,6 +712,49 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('POST /api/branches/:id/force-rebuild/:profileId', () => {
+    it('can reserve the next deploy as the same operation chain', async () => {
+      const now = new Date().toISOString();
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'force-branch',
+        projectId: 'default',
+        branch: 'feature/force',
+        worktreePath: path.join(tmpDir, 'worktrees', 'force-branch'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'force-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+      });
+      mock.addResponsePattern(/find .* -type d .* echo done/, () => ({ stdout: 'done\n', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'POST', '/api/branches/force-branch/force-rebuild/api?reserveDeploy=1');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).reserveDeploy).toBe(true);
+      expect((res.body as any).operationId).toMatch(/^op_/);
+      const actions = operationEvents
+        .filter((event) => event.branchId === 'force-branch')
+        .map((event) => event.action);
+      expect(actions).toContain('branch.operation.started');
+      expect(actions).toContain('branch.operation.completed');
+      expect(actions).toContain('branch.operation.queued');
+    });
+  });
+
   describe('POST /api/branches/:id/set-default', () => {
     it('should set default branch', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'main' });

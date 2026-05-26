@@ -27,6 +27,7 @@ export interface BranchOperationRequest {
   commitSha?: string | null;
   source?: string | null;
   reason?: string | null;
+  continueWith?: 'deploy' | 'deploy-profile' | null;
 }
 
 export interface BranchOperationLease {
@@ -58,6 +59,16 @@ interface ActiveOperation {
   startedAt: string;
   cancelled: boolean;
   cancelReason?: string;
+}
+
+interface ReservedContinuation {
+  operationId: string;
+  branchId: string;
+  generation: number;
+  request: BranchOperationRequest;
+  reservedAt: string;
+  expiresAt: number;
+  continueWith: 'deploy' | 'deploy-profile';
 }
 
 export interface PendingWebhookDeploy {
@@ -111,6 +122,7 @@ function nowIso(): string {
 export class BranchOperationCoordinator {
   private readonly active = new Map<string, ActiveOperation>();
   private readonly pendingWebhookDeploys = new Map<string, PendingWebhookDeploy>();
+  private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private generations = new Map<string, number>();
 
   constructor(private readonly events?: ServerEventLogSink | null) {}
@@ -118,7 +130,11 @@ export class BranchOperationCoordinator {
   begin(request: BranchOperationRequest): BranchOperationDecision {
     const branchId = request.branchId;
     const active = this.active.get(branchId);
-    if (!active) return this.start(request);
+    if (!active) {
+      const reserved = this.getUsableReservedContinuation(branchId);
+      if (reserved) return this.beginAgainstReservedContinuation(request, reserved);
+      return this.start(request);
+    }
 
     if (isWebhookDeploy(request)) {
       const existing = this.pendingWebhookDeploys.get(branchId);
@@ -191,6 +207,14 @@ export class BranchOperationCoordinator {
       cancelled: active?.cancelled || false,
       cancelReason: active?.cancelReason || null,
     });
+    if (
+      status === 'completed'
+      && lease.request.kind === 'force-rebuild'
+      && (lease.request.continueWith === 'deploy' || lease.request.continueWith === 'deploy-profile')
+    ) {
+      this.reserveContinuation(lease, lease.request.continueWith);
+      return null;
+    }
     const pending = this.pendingWebhookDeploys.get(lease.branchId) || null;
     if (pending) this.pendingWebhookDeploys.delete(lease.branchId);
     return pending;
@@ -207,6 +231,11 @@ export class BranchOperationCoordinator {
     if (pending) {
       this.pendingWebhookDeploys.delete(branchId);
       this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', { reason, pending: true });
+    }
+    const reserved = this.reservedContinuations.get(branchId);
+    if (reserved) {
+      this.reservedContinuations.delete(branchId);
+      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', { reason, reserved: true });
     }
   }
 
@@ -226,13 +255,14 @@ export class BranchOperationCoordinator {
   clearForTest(): void {
     this.active.clear();
     this.pendingWebhookDeploys.clear();
+    this.reservedContinuations.clear();
     this.generations.clear();
   }
 
-  private start(request: BranchOperationRequest): BranchOperationDecision {
+  private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
     const branchId = request.branchId;
-    const generation = this.nextGeneration(branchId);
-    const operationId = this.createOperationId();
+    const generation = existing?.generation ?? this.nextGeneration(branchId);
+    const operationId = existing?.operationId ?? this.createOperationId();
     const active: ActiveOperation = {
       operationId,
       branchId,
@@ -255,8 +285,136 @@ export class BranchOperationCoordinator {
         }
       },
     };
-    this.record('branch.operation.started', request, operationId, generation, 'info');
+    this.record('branch.operation.started', request, operationId, generation, 'info', {
+      continuedFromKind: existing?.continuedFrom?.kind || null,
+      continuedFromSource: existing?.continuedFrom?.source || null,
+    });
     return { status: 'started', operationId, generation, lease };
+  }
+
+  private beginAgainstReservedContinuation(
+    request: BranchOperationRequest,
+    reserved: ReservedContinuation,
+  ): BranchOperationDecision {
+    if (isWebhookDeploy(request)) {
+      const existing = this.pendingWebhookDeploys.get(request.branchId);
+      const generation = this.nextGeneration(request.branchId);
+      const operationId = existing?.operationId || this.createOperationId();
+      this.pendingWebhookDeploys.set(request.branchId, {
+        operationId,
+        branchId: request.branchId,
+        generation,
+        request,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        updatedAt: nowIso(),
+      });
+      this.record('branch.operation.merged', request, operationId, generation, 'info', {
+        activeOperationId: reserved.operationId,
+        activeKind: reserved.request.kind,
+        reservedContinuation: true,
+        mergedCount: (existing?.mergedCount || 0) + 1,
+        commitSha: request.commitSha || null,
+      });
+      return {
+        status: 'merged',
+        operationId,
+        generation,
+        activeOperationId: reserved.operationId,
+        activeKind: reserved.request.kind,
+        pendingCommitSha: request.commitSha || null,
+        reason: 'webhook deploy merged while force-rebuild waits for its deploy continuation',
+      };
+    }
+
+    if (this.requestMatchesContinuation(request, reserved)) {
+      this.reservedContinuations.delete(request.branchId);
+      const generation = this.nextGeneration(request.branchId);
+      this.record('branch.operation.continued', request, reserved.operationId, generation, 'info', {
+        reservedAt: reserved.reservedAt,
+        continueWith: reserved.continueWith,
+        previousGeneration: reserved.generation,
+      });
+      return this.start(request, {
+        operationId: reserved.operationId,
+        generation,
+        continuedFrom: reserved.request,
+      });
+    }
+
+    const incomingPriority = priorityOf(request);
+    const reservedPriority = priorityOf(reserved.request);
+    if (incomingPriority > reservedPriority || TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
+      this.reservedContinuations.delete(request.branchId);
+      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
+        reason: `reserved continuation superseded by ${request.kind}`,
+        reserved: true,
+      });
+      if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
+        this.pendingWebhookDeploys.delete(request.branchId);
+      }
+      return this.start(request);
+    }
+
+    this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(request.branchId), 'warn', {
+      activeOperationId: reserved.operationId,
+      activeKind: reserved.request.kind,
+      reservedContinuation: true,
+      reason: 'branch is waiting for force-rebuild deploy continuation',
+    });
+    return {
+      status: 'rejected',
+      operationId: reserved.operationId,
+      generation: reserved.generation,
+      activeOperationId: reserved.operationId,
+      activeKind: reserved.request.kind,
+      reason: 'branch is waiting for force-rebuild deploy continuation',
+    };
+  }
+
+  private requestMatchesContinuation(request: BranchOperationRequest, reserved: ReservedContinuation): boolean {
+    if (request.trigger !== reserved.request.trigger) return false;
+    if (reserved.continueWith === 'deploy' && request.kind === 'deploy') return true;
+    return reserved.continueWith === 'deploy-profile'
+      && request.kind === 'deploy-profile'
+      && request.profileId === reserved.request.profileId;
+  }
+
+  private reserveContinuation(lease: BranchOperationLease, continueWith: 'deploy' | 'deploy-profile'): void {
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    this.reservedContinuations.set(lease.branchId, {
+      operationId: lease.operationId,
+      branchId: lease.branchId,
+      generation: lease.generation,
+      request: lease.request,
+      reservedAt: nowIso(),
+      expiresAt,
+      continueWith,
+    });
+    this.record('branch.operation.queued', lease.request, lease.operationId, lease.generation, 'info', {
+      reason: 'force-rebuild cleanup finished; waiting for deploy continuation',
+      continueWith,
+      expiresAt: new Date(expiresAt).toISOString(),
+    });
+  }
+
+  private getUsableReservedContinuation(branchId: string): ReservedContinuation | null {
+    const reserved = this.reservedContinuations.get(branchId);
+    if (!reserved) return null;
+    if (Date.now() <= reserved.expiresAt) return reserved;
+    this.reservedContinuations.delete(branchId);
+    this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
+      reason: 'reserved continuation expired',
+      reserved: true,
+    });
+    const pending = this.pendingWebhookDeploys.get(branchId);
+    if (pending) {
+      this.pendingWebhookDeploys.delete(branchId);
+      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
+        reason: 'reserved continuation expired before manual deploy continuation arrived',
+        pending: true,
+      });
+    }
+    return null;
   }
 
   private nextGeneration(branchId: string): number {
