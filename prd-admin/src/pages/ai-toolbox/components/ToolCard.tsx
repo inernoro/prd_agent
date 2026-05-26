@@ -158,6 +158,8 @@ function getPalette(iconName: string) {
 
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
+import { PaAgentCardArt } from './PaAgentCardArt';
+import { useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
 
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const {
@@ -180,8 +182,12 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const IconComponent = getIconComponent(item.icon);
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
-  const coverUrl = getCoverImageUrl(item.agentKey);
-  const videoUrl = getCoverVideoUrl(item.agentKey);
+  // 资源解析优先级：上传图 (homepageAssetsStore) > CDN 默认硬编码
+  // —— 与首页 FeaturedCard 行为一致，运维上传 `agent.{key}.image/.video` 后自动覆盖
+  const uploadedCover = useAgentImageUrl(item.agentKey);
+  const uploadedVideo = useAgentVideoUrl(item.agentKey);
+  const coverUrl = uploadedCover ?? getCoverImageUrl(item.agentKey);
+  const videoUrl = uploadedVideo ?? getCoverVideoUrl(item.agentKey);
   const [coverFailed, setCoverFailed] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
@@ -384,9 +390,28 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         '--toolbox-accent-line': `${palette.from}66`,
       } as React.CSSProperties}
     >
-      {/* Cover visual — 内联插画 / CDN 图片 / 渐变兜底 */}
+      {/* Cover visual — 内联插画 / 上传图 / CDN 默认 / 渐变兜底
+          毒舌秘书：用户没上传图时走 PaAgentCardArt 内联插画（无 CDN 也能用），
+          上传后立即走上传图（uploadedCover 优先于硬编码 CDN）。视频规则不变。 */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
+        <>
+          <PaAgentCardArt />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="toolbox-card-media absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : coverUrl && !coverFailed ? (
         <>
           <img

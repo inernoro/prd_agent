@@ -46,6 +46,7 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -249,8 +250,30 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       }}
     >
       {/* Cover visual: inline art / CDN image / gradient fallback */}
+      {/*
+        毒舌秘书走「上传图优先 + inline 插画兜底」：与其他 agent 一致先看运维上传，
+        没上传时不用渐变占位，而是渲染 PaAgentCardArt 内联插画（MBB + 四象限 + 琥珀/青色）。
+        这是规则 #8「Agent 开发完成标准」要求的「看起来是个东西」。
+      */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
+        <>
+          <PaAgentCardArt />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : coverUrl && !coverFailed ? (
         <>
           <img
