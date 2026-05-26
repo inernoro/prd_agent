@@ -3960,7 +3960,7 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -4621,26 +4621,36 @@ function BranchFailureHint({
   branch: BranchSummary;
 }): JSX.Element | null {
   /*
-   * 简化版(2026-05-03 用户反馈"不要在卡片里展开,样式错乱了"):
-   *
-   * 旧版在每个异常分支底部塞一条带 [详情] [重置] 按钮的红色横幅,卡片
-   * 高度跳变 + 网格对不齐。状态 chip 已经显示「异常」,卡片整体 onClick
-   * 走详情抽屉,详情抽屉里有完整的「重置异常 / 容器日志 / 构建日志」
-   * 入口 + BranchMoreMenu 也有「重置异常」—— 卡片本身不再需要重复操作。
-   *
-   * 这里只保留一行极简提示:点击告知用户「展开详情看原因」,鼠标悬停
-   * 显示完整失败消息,不展开任何按钮、不展开任何额外信息。
+   * 默认只占一条稳定高度的摘要，避免异常文案把整行 card 撑高。
+   * hover / keyboard focus 时用绝对定位浮层展开完整原因；浮层盖在网格
+   * 上方，不参与当前 card 的布局计算。
    */
   const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return null;
   const message = deployFailureMessage(branch) || '分支处于异常状态';
+  const hintId = `branch-failure-hint-${branch.id}`;
   return (
     <div
-      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${branchIssueHintTextClass(branch)}`}
+      className={`group/failure relative mx-5 mb-3 mt-1 h-8 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${branchIssueHintTextClass(branch)}`}
       title={message}
+      tabIndex={0}
+      aria-describedby={hintId}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
     >
-      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 line-clamp-2">{message}</span>
+      <div className="flex h-8 min-w-0 items-center gap-2 rounded-md border border-current/30 bg-[hsl(var(--surface-raised))]/70 px-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{message}</span>
+      </div>
+      <div
+        id={hintId}
+        className="pointer-events-auto absolute left-0 right-0 top-0 z-[120] hidden max-h-36 overflow-auto rounded-md border border-current/45 bg-[hsl(var(--surface-raised))] px-3 py-2.5 leading-5 shadow-2xl ring-1 ring-black/5 group-hover/failure:block group-focus/failure:block"
+      >
+        <div className="flex items-start gap-2">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 whitespace-pre-wrap break-words">{message}</span>
+        </div>
+      </div>
     </div>
   );
 }
