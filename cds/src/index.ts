@@ -34,6 +34,7 @@ import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
+import { reconcileStaleDeployDispatches } from './services/deploy-dispatch-reconciler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -1511,6 +1512,14 @@ janitorService.setRemoveFn(async (slug: string) => {
     if (appReconciled > 0 || branchStatusReconciled > 0) {
       console.log(`  [app] Reconciled ${appReconciled} app container(s), ${branchStatusReconciled} branch status(es)`);
       stateService.save();
+    }
+
+    const staleDispatches = reconcileStaleDeployDispatches(stateService, {
+      source: 'startup-reconcile',
+      serverEventLogStore: activeServerEventLogStore,
+    });
+    if (staleDispatches.length > 0) {
+      console.warn(`  [app] Converged ${staleDispatches.length} stale webhook deploy dispatch state(s) to interrupted`);
     }
 
     // ── #551 (c)(d) 终态收敛 ──

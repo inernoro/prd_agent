@@ -516,7 +516,7 @@ export interface BranchEntry {
   /** Source that created the last deploy dispatch request. */
   lastDeployDispatchSource?: 'webhook' | 'manual' | 'system';
   /** Whether the last deploy dispatch was accepted by the deploy endpoint. */
-  lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed';
+  lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed' | 'interrupted';
   /** Failure reason when the deploy dispatch itself failed before deployment started. */
   lastDeployDispatchError?: string;
   /** GitHub user login that triggered the latest webhook touching this branch. */

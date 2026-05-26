@@ -2738,17 +2738,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
       if (
-        branch.lastDeployDispatchStatus === 'accepted'
+        (branch.lastDeployDispatchStatus === 'accepted' || branch.lastDeployDispatchStatus === 'dispatching')
         && branch.lastDeployDispatchAt
         && ts(branch.lastDeployDispatchAt) > ts(branch.lastDeployAt)
         && (ageMin(branch.lastDeployDispatchAt) || 0) > 15
       ) {
         issues.push({
           severity: 'warn',
-          kind: 'deploy-dispatch-accepted-without-success-stamp',
+          kind: branch.lastDeployDispatchStatus === 'dispatching'
+            ? 'deploy-dispatch-stuck-dispatching'
+            : 'deploy-dispatch-accepted-without-success-stamp',
           branchId: branch.id,
           branch: branch.branch,
           detail: {
+            lastDeployDispatchStatus: branch.lastDeployDispatchStatus,
             lastDeployDispatchAt: branch.lastDeployDispatchAt,
             lastDeployDispatchCommitSha: branch.lastDeployDispatchCommitSha,
             lastDeployAt: branch.lastDeployAt,
