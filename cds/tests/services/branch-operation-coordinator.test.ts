@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
-function eventSink(): { sink: ServerEventLogSink; records: Array<{ action: string; details?: Record<string, unknown> }> } {
-  const records: Array<{ action: string; details?: Record<string, unknown> }> = [];
+function eventSink(): { sink: ServerEventLogSink; records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> } {
+  const records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> = [];
   return {
     records,
     sink: {
       record(record) {
-        records.push({ action: record.action, details: record.details });
+        records.push({ action: record.action, operationId: record.operationId, details: record.details });
       },
     },
   };
@@ -34,6 +34,7 @@ describe('BranchOperationCoordinator', () => {
     expect(first.status).toBe('started');
     expect(second.status).toBe('rejected');
     expect(second.activeOperationId).toBe(first.operationId);
+    expect(records[0].operationId).toBe(first.operationId);
     expect(records.map((r) => r.action)).toEqual([
       'branch.operation.started',
       'branch.operation.rejected',
@@ -92,6 +93,30 @@ describe('BranchOperationCoordinator', () => {
     expect(active.lease?.isCurrent()).toBe(false);
     expect(() => active.lease?.assertCurrent('before-state-save')).toThrow(BranchOperationSupersededError);
     expect(records.map((r) => r.action)).toContain('branch.operation.cancelled');
+  });
+
+  it('manual delete cancels an active manual deploy so the deploy cannot later save state', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const deploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user-a',
+    });
+
+    const del = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user-b',
+    });
+
+    expect(del.status).toBe('started');
+    expect(deploy.lease?.isCurrent()).toBe(false);
+    expect(() => deploy.lease?.assertCurrent('before-final-save')).toThrow(BranchOperationSupersededError);
+    expect(records.find((r) => r.action === 'branch.operation.cancelled')?.operationId).toBe(deploy.operationId);
+    expect(records.at(-1)?.operationId).toBe(del.operationId);
   });
 
   it('complete returns and clears a pending webhook deploy', () => {
@@ -211,6 +236,35 @@ describe('BranchOperationCoordinator', () => {
     expect(deploy.generation).not.toBe(force.generation);
     expect(records.map((r) => r.action)).toContain('branch.operation.queued');
     expect(records.map((r) => r.action)).toContain('branch.operation.continued');
+  });
+
+  it('rejects repeated force-rebuild clicks while the same branch is rebuilding', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const first = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    const second = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+
+    expect(first.status).toBe('started');
+    expect(second.status).toBe('rejected');
+    expect(second.activeOperationId).toBe(first.operationId);
+    expect(records.map((r) => r.action)).toEqual([
+      'branch.operation.started',
+      'branch.operation.rejected',
+    ]);
   });
 
   it('merges webhook deploys while force-rebuild waits for its manual deploy continuation', () => {

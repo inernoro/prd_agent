@@ -23,6 +23,7 @@ export interface ServerEventRecord {
   oomKilled?: boolean | null;
   upstream?: string | null;
   requestId?: string | null;
+  operationId?: string | null;
   docker?: Record<string, unknown>;
   inspect?: Record<string, unknown>;
   command?: {
@@ -68,6 +69,7 @@ export interface ServerEventLogSink {
     profileId?: string;
     projectId?: string;
     requestId?: string;
+    operationId?: string;
     since?: Date | string;
   }): Promise<ServerEventRecord[]>;
 }
@@ -102,6 +104,12 @@ function compactObject(value: unknown): unknown {
     }
   }
   return out;
+}
+
+function resolveOperationId(record: { operationId?: string | null; details?: Record<string, unknown> }): string | null | undefined {
+  if (typeof record.operationId === 'string' && record.operationId.trim()) return record.operationId.trim();
+  const nested = record.details?.operationId;
+  return typeof nested === 'string' && nested.trim() ? nested.trim() : record.operationId;
 }
 
 export function createServerEventId(): string {
@@ -153,7 +161,9 @@ export class ServerEventLogStore implements ServerEventLogSink {
       this.collection.createIndex({ severity: 1, ts: -1 }, { name: 'severity_ts_desc' }),
       this.collection.createIndex({ containerName: 1, ts: -1 }, { name: 'container_ts_desc' }),
       this.collection.createIndex({ branchId: 1, ts: -1 }, { name: 'branch_ts_desc' }),
+      this.collection.createIndex({ profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
       this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
+      this.collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
       this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
@@ -165,6 +175,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
       _id: `${createServerEventId()}:${Date.now()}`,
       ts: record.ts ? new Date(record.ts) : new Date(),
       severity: record.severity,
+      operationId: resolveOperationId(record),
       message: record.message ? truncateUtf8(record.message, MAX_TEXT_BYTES) : undefined,
       docker: record.docker ? compactObject(record.docker) as Record<string, unknown> : undefined,
       inspect: record.inspect ? compactObject(record.inspect) as Record<string, unknown> : undefined,
@@ -214,6 +225,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
     profileId?: string;
     projectId?: string;
     requestId?: string;
+    operationId?: string;
     since?: Date | string;
   } = {}): Promise<ServerEventRecord[]> {
     if (!this.collection) return [];
@@ -227,6 +239,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
     if (filter.profileId) query.profileId = filter.profileId;
     if (filter.projectId) query.projectId = filter.projectId;
     if (filter.requestId) query.requestId = filter.requestId;
+    if (filter.operationId) query.operationId = filter.operationId;
     if (filter.since) query.ts = { $gte: new Date(filter.since) };
     if (filter.minSeverity) {
       const min = SEVERITY_RANK[filter.minSeverity];

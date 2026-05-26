@@ -449,6 +449,7 @@ export class BranchOperationCoordinator {
       branchId: request.branchId,
       profileId: request.profileId || null,
       requestId: request.requestId || null,
+      operationId,
       details: {
         operationId,
         generation,

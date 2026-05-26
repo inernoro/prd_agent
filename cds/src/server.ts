@@ -2245,6 +2245,7 @@ export function createServer(deps: ServerDeps): express.Express {
       profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
       projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
+      operationId: typeof req.query.operationId === 'string' ? req.query.operationId : undefined,
       since: typeof req.query.since === 'string' ? req.query.since : undefined,
     });
     res.json({ events, total: events.length });
