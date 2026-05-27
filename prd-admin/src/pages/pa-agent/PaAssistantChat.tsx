@@ -467,10 +467,10 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
               <div className="flex items-center justify-center mx-auto mb-4">
                 <PaSecretaryHeroArt size={96} />
               </div>
-              {/* display 标题层 */}
+              {/* display 标题层 — 流星扫光 */}
               <div
-                className="font-semibold mb-2"
-                style={{ fontSize: 'calc(22px * var(--pa-fs-scale))', lineHeight: 'calc(28px * var(--pa-fs-scale))', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}
+                className="pa-hero-title-shooting font-semibold mb-2"
+                style={{ fontSize: 'calc(22px * var(--pa-fs-scale))', lineHeight: 'calc(28px * var(--pa-fs-scale))', letterSpacing: '-0.01em' }}
               >
                 毒舌秘书
               </div>

@@ -30,3 +30,4 @@
 | fix | prd-admin | 去掉毒舌秘书最外层 shell 矩形背景，仅保留侧栏+主区圆角层铺主题底；羊皮卷纹理下移 |
 | fix | prd-admin | 空状态 hero 图标重制为深蓝科技风（与首页卡片同款），含 idle/hover 星芒动效 |
 | feat | prd-admin | 毒舌秘书圆角内容层背景加呼吸动效：双层径向光晕错相位 11s/13s 缓慢呼吸，三主题适配，尊重 prefers-reduced-motion |
+| feat | prd-admin | 空状态标题「毒舌秘书」加流星扫光动效（background-clip:text 渐变高光带 5.4s 循环），三主题各自高光色 |

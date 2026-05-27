@@ -1036,3 +1036,60 @@
   color: var(--pa-accent-strong);
   border-color: rgba(74, 124, 111, 0.45);
 }
+
+/* =======================================================================
+ *  Hero 标题「毒舌秘书」— 流星扫光动效
+ *  - 文字底色由主题 var(--pa-hero-title-base) 决定
+ *  - 用渐变 + background-clip:text + size 200% 让亮带沿 X 扫过
+ *  - 周期 5s，斜向高光
+ * ===================================================================== */
+.pa-hero-title-shooting {
+  display: inline-block;
+  background:
+    linear-gradient(
+      105deg,
+      var(--pa-hero-title-base, #1f1f1f) 0%,
+      var(--pa-hero-title-base, #1f1f1f) 38%,
+      var(--pa-hero-title-flash, rgba(255, 255, 255, 0.95)) 50%,
+      var(--pa-hero-title-base, #1f1f1f) 62%,
+      var(--pa-hero-title-base, #1f1f1f) 100%
+    );
+  background-size: 240% 100%;
+  background-position: 120% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: pa-hero-title-shoot 5.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  text-shadow: none;
+}
+@keyframes pa-hero-title-shoot {
+  0% { background-position: 140% 0; }
+  60% { background-position: -40% 0; }
+  100% { background-position: -40% 0; }
+}
+
+/* Gemini（默认）— 深灰底色 + 淡蓝白流星 */
+.pa-agent-root .pa-hero-title-shooting,
+.pa-agent-root[data-pa-theme="gemini"] .pa-hero-title-shooting {
+  --pa-hero-title-base: #1f2a3a;
+  --pa-hero-title-flash: rgba(120, 170, 255, 0.92);
+}
+
+/* Mountain — 浅冷灰底色 + 青蓝流星 */
+.pa-agent-root[data-pa-theme="mountain"] .pa-hero-title-shooting {
+  --pa-hero-title-base: #e2e8f0;
+  --pa-hero-title-flash: rgba(125, 211, 252, 1);
+}
+
+/* Parchment — 墨绿底色 + 暖金流星 */
+.pa-agent-root[data-pa-theme="parchment"] .pa-hero-title-shooting {
+  --pa-hero-title-base: #2a322e;
+  --pa-hero-title-flash: rgba(217, 178, 92, 0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pa-hero-title-shooting {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
