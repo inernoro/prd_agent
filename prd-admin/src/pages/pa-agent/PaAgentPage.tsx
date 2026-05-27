@@ -83,6 +83,13 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
       className="pa-session-item group relative flex items-start gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition-all"
       data-active={active ? 'true' : 'false'}
       onClick={onSelect}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        e.currentTarget.style.setProperty('--pa-hover-x', `${x}px`);
+        e.currentTarget.style.setProperty('--pa-hover-y', `${y}px`);
+      }}
     >
       <div
         className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center mt-0.5"
@@ -411,37 +418,6 @@ export function PaAgentPage() {
           )}
         </div>
 
-        {/* Task board + Profile entry at bottom */}
-        <div
-          className="shrink-0 p-2 space-y-1"
-          style={{ borderTop: '1px solid var(--border-default)' }}
-        >
-          <button
-            onClick={() => setTab('board')}
-            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs transition-all"
-            style={{
-              background: tab === 'board' ? 'rgba(99,102,241,0.12)' : 'transparent',
-              color: tab === 'board' ? '#a5b4fc' : 'var(--text-muted)',
-              border: tab === 'board' ? '1px solid rgba(99,102,241,0.25)' : '1px solid transparent',
-            }}
-            onMouseEnter={e => { if (tab !== 'board') e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { if (tab !== 'board') e.currentTarget.style.background = 'transparent'; }}
-          >
-            <LayoutGrid size={13} />
-            任务看板
-          </button>
-          <button
-            onClick={() => setProfileOpen(true)}
-            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs transition-all"
-            style={{ color: 'var(--text-muted)', border: '1px solid transparent' }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-            title="毒舌秘书会跨会话记得的事 — 角色 / 项目 / 节奏 / 偏好"
-          >
-            <Brain size={13} />
-            我的画像
-          </button>
-        </div>
       </div>
 
       {/* ── Main area ── */}
@@ -540,6 +516,14 @@ export function PaAgentPage() {
             style={{ width: 28, height: 28, padding: 0 }}
           >
             {theme === 'parchment' ? <Moon size={14} /> : <BookOpen size={14} />}
+          </button>
+          <button
+            onClick={() => setProfileOpen(true)}
+            className="pa-toolbar-btn flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+            title="毒舌秘书会跨会话记得的事 — 角色 / 项目 / 节奏 / 偏好"
+          >
+            <Brain size={13} />
+            我的画像
           </button>
 
           {/* New chat button (visible when sidebar collapsed) */}

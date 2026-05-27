@@ -19,3 +19,5 @@
 | fix | prd-admin | 修复 A-/A/A+ 字号：pa-fs-sm/xs 覆盖对话区 Tailwind 固定字号，档位拉大到 0.82/1.38 |
 | fix | prd-admin | 修复羊皮卷下「让我想想」渐变字被褐色色块遮挡（保留 background-clip:text） |
 | feat | prd-admin | 空状态换 PaSecretaryHeroArt 全息人像；卡片秘书 bust 重绘为 AI 科技风 |
+| feat | prd-admin | 主背景切换为 Gemini 风格浅灰+淡蓝渐变，列表卡片改鼠标跟随 hover 光斑 |
+| fix | prd-admin | “我的画像”按钮移到右上角 toolbar；删除左下角两个入口按钮 |

@@ -368,13 +368,33 @@
 
 /* 侧栏历史会话 — 每条线框卡片，便于区隔不同对话 */
 .pa-session-item {
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--pa-border-default, var(--border-default));
   background: var(--pa-bg-elevated, var(--bg-elevated));
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
+.pa-session-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms var(--pa-ease-emphasized);
+  background:
+    radial-gradient(
+      140px circle at var(--pa-hover-x, 50%) var(--pa-hover-y, 50%),
+      rgba(147, 197, 253, 0.2) 0%,
+      rgba(147, 197, 253, 0.08) 26%,
+      transparent 72%
+    );
+}
 .pa-session-item:hover {
   border-color: rgba(56, 189, 248, 0.28);
   background: var(--pa-bg-hover, var(--bg-hover));
+}
+.pa-session-item:hover::before {
+  opacity: 1;
 }
 .pa-session-item[data-active="true"] {
   border-color: rgba(37, 99, 235, 0.45);
@@ -406,22 +426,24 @@
  *  羊皮卷：本地化覆盖为温暖米色 + 深棕字
  * ===================================================================== */
 .pa-agent-root {
-  --pa-bg-base: var(--bg-base);
-  --pa-bg-elevated: var(--bg-elevated);
-  --pa-bg-hover: var(--bg-hover);
-  --pa-border-default: var(--border-default);
-  --pa-text-primary: var(--text-primary);
-  --pa-text-secondary: var(--text-secondary);
-  --pa-text-muted: var(--text-muted);
+  --pa-bg-base:
+    radial-gradient(110% 68% at 66% 58%, rgba(205, 227, 248, 0.68) 0%, rgba(233, 240, 248, 0.26) 45%, transparent 72%),
+    linear-gradient(180deg, #f5f6f8 0%, #f2f3f6 100%);
+  --pa-bg-elevated: rgba(255, 255, 255, 0.68);
+  --pa-bg-hover: rgba(232, 236, 242, 0.92);
+  --pa-border-default: rgba(190, 197, 208, 0.58);
+  --pa-text-primary: #30343b;
+  --pa-text-secondary: #454b54;
+  --pa-text-muted: #6b7280;
   --pa-accent-strong: #6366f1;
   --pa-accent-soft: #a5b4fc;
-  --pa-md-code-bg: rgba(255,255,255,0.04);
-  --pa-md-code-border: rgba(255,255,255,0.08);
-  --pa-md-quote-bg: rgba(245,158,11,0.06);
-  --pa-md-quote-border: rgba(252,211,77,0.5);
-  --pa-md-strong: #fcd34d;
-  --pa-md-link: #a5b4fc;
-  --pa-md-link-hover: #c7d2fe;
+  --pa-md-code-bg: rgba(149, 157, 169, 0.12);
+  --pa-md-code-border: rgba(149, 157, 169, 0.25);
+  --pa-md-quote-bg: rgba(99, 102, 241, 0.08);
+  --pa-md-quote-border: rgba(99, 102, 241, 0.3);
+  --pa-md-strong: #4f46e5;
+  --pa-md-link: #4f46e5;
+  --pa-md-link-hover: #3730a3;
 }
 
 .pa-agent-root[data-pa-theme="parchment"] {
