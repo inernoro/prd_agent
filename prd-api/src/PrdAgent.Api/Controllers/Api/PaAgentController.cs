@@ -94,15 +94,18 @@ public partial class PaAgentController : ControllerBase
 
         # 任务识别规则（必须严格执行，否则前端看板不会更新）
 
-        每次回复都要评估用户消息是否包含任务意图，根据置信度在回复末尾输出 JSON 块：
+        每次回复都要先做一次「是否应进入任务看板」判断，再决定是否输出 save_task JSON：
+        - 只要用户消息里出现可执行事项（时间、动作、目标、交付物任一），就按任务规则处理
+        - 用户只是在讨论想法、风险、方向、情绪，但没有明确要做什么时，按 suggest 征询
+        - 判断不确定时宁可给 suggest，不要直接 auto
 
         ## 情况 A：明确任务（用户清楚表达要做某件具体事）
         confidence = "auto"，系统**自动加入看板**，无需用户确认。
         触发：「明天要做 X」「需要完成 Y」「帮我拆解 Z」「安排一下 A」「P0/P1 + 具体事项」
 
-        ## 情况 B：潜在任务（涉及工作 / 目标但未明确「要做」）
+        ## 情况 B：潜在任务（涉及工作 / 目标但未明确「要做」或存在歧义）
         confidence = "suggest"，前端**显示加入看板按钮**，由用户确认。
-        触发：消息涉及工作计划、会议安排、项目进展，但缺「我要做」意图
+        触发：消息涉及工作计划、会议安排、项目进展，但缺「我要做」意图；或语义歧义、时间边界不清
 
         ## 情况 C：普通对话（闲聊、询问建议、情绪表达等）
         不输出任何 JSON 块。
@@ -551,12 +554,12 @@ public partial class PaAgentController : ControllerBase
             };
             await _db.PaMessages.InsertOneAsync(assistantMsg);
 
-            // ── Extract task payload from JSON block ──────────────────
+            // ── Extract task payload from JSON block(s) ───────────────
             string? autoTaskJson = null;
             string? sessionTitleFromLLM = null;
-            var jsonMatch = System.Text.RegularExpressions.Regex.Match(
+            var jsonMatches = System.Text.RegularExpressions.Regex.Matches(
                 fullReply, @"```json\s*([\s\S]*?)```");
-            if (jsonMatch.Success)
+            foreach (System.Text.RegularExpressions.Match jsonMatch in jsonMatches)
             {
                 try
                 {
@@ -603,6 +606,7 @@ public partial class PaAgentController : ControllerBase
                                 title = task.Title,
                                 quadrant = task.Quadrant,
                             });
+                            break;
                         }
                         else if (!string.IsNullOrWhiteSpace(title) && confidence == PaTaskConfidence.Suggest)
                         {
@@ -616,6 +620,7 @@ public partial class PaAgentController : ControllerBase
                                 reasoning,
                                 subTasks,
                             });
+                            break;
                         }
                     }
                 }

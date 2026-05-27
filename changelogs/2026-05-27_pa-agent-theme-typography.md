@@ -12,3 +12,4 @@
 | fix | prd-admin | 优化羊皮卷主题可读性：将 pa-theme 变量映射回 --bg/--text 体系，统一全局容器配色，避免背景与文字冲突 |
 | fix | prd-admin | 对话首页空状态图标改为拟人化秘书头像（发型+耳麦）并与深蓝主题统一 |
 | fix | prd-admin | 对话等待首 token 时由三点跳动改为橙色动态「让我想想...」（琥珀渐变扫光 + 省略号起伏） |
+| fix | prd-api | 毒舌秘书任务识别改为遍历全部 JSON 代码块并优先处理 save_task，避免与 update_profile 共存时漏入任务看板；同时强化 suggest/auto 判定提示词 |
