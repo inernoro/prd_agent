@@ -1510,6 +1510,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function assertBranchOperationCurrent(lease: BranchOperationLease | null | undefined, step: string): void {
     lease?.assertCurrent(step);
   }
+
+  function activeTerminalBranchOperations(): Array<{
+    operationId: string;
+    branchId: string;
+    kind: BranchOperationKind;
+    source?: string | null;
+    requestId?: string | null;
+  }> {
+    const terminalKinds = new Set<BranchOperationKind>([
+      'delete',
+      'stop',
+      'cleanup-damaged',
+      'cleanup-orphans',
+      'factory-reset',
+      'janitor-remove',
+    ]);
+    return branchOperationCoordinator
+      ?.getActiveOperations()
+      .filter((active) => terminalKinds.has(active.request.kind))
+      .map((active) => ({
+        operationId: active.operationId,
+        branchId: active.branchId,
+        kind: active.request.kind,
+        source: active.request.source || null,
+        requestId: active.request.requestId || null,
+      })) || [];
+  }
+
+  function blockRestartForTerminalOperations(source: string): boolean {
+    const activeTerminal = activeTerminalBranchOperations();
+    if (activeTerminal.length === 0) return false;
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: 'warn',
+      source,
+      action: 'self-update.restart.deferred',
+      message: `restart deferred because ${activeTerminal.length} terminal branch operation(s) are active`,
+      details: { activeTerminal },
+    });
+    return true;
+  }
+
   async function captureContainerLogSnapshots(
     entry: BranchEntry,
     source: OperationLogContainerSnapshot['source'],
@@ -12044,6 +12086,15 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
+      if (blockRestartForTerminalOperations('api.self-update')) {
+        const message = 'CDS 已完成代码更新预检，但检测到删除/停止/清理等终止操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 self-update。';
+        send('restart', 'warning', message);
+        sendSSE(res, 'error', { message, code: 'terminal-operation-active' });
+        res.end();
+        recordFailure(message);
+        return;
+      }
+
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
       recordSelfUpdate({
         ts: new Date().toISOString(),
@@ -12821,6 +12872,15 @@ cdscli project list --human
       // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
       // helper 保证两端口行为一致。
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+
+      if (blockRestartForTerminalOperations('api.self-force-sync')) {
+        const message = 'force-sync 已完成代码更新预检，但检测到删除/停止/清理等终止操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 force-sync。';
+        send('restart', 'warning', message);
+        sendSSE(res, 'error', { message, code: 'terminal-operation-active' });
+        res.end();
+        recordFailure(message);
+        return;
+      }
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。
       recordSelfUpdate({

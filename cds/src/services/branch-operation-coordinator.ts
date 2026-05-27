@@ -287,8 +287,9 @@ export class BranchOperationCoordinator {
     return [...this.active.values()].find((active) => active.branchId === branchId);
   }
 
-  getActiveOperations(branchId: string): ActiveOperation[] {
-    return [...this.active.values()].filter((active) => active.branchId === branchId);
+  getActiveOperations(branchId?: string): ActiveOperation[] {
+    const active = [...this.active.values()];
+    return branchId ? active.filter((item) => item.branchId === branchId) : active;
   }
 
   getPendingWebhookDeploy(branchId: string): PendingWebhookDeploy | undefined {
