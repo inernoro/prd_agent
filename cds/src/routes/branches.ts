@@ -36,6 +36,7 @@ import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
+import { waitForFlushWithTimeout } from '../services/bounded-flush.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -85,6 +86,7 @@ let broadcastInFlight = false;
 let broadcastQueued = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
 const DELETE_STATE_FLUSH_TIMEOUT_MS = 500;
+const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = 1000;
 
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
@@ -1313,6 +1315,47 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+
+  async function flushSelfUpdateStateBeforeRestart(context: {
+    trigger: 'manual' | 'force-sync';
+    branch?: string;
+    fromSha?: string;
+    toSha?: string;
+    actor?: string;
+  }): Promise<void> {
+    const result = await waitForFlushWithTimeout(
+      () => stateService.flush(),
+      SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
+      (err) => {
+        serverEventLogStore?.record({
+          category: 'system',
+          severity: 'error',
+          source: 'self-update',
+          action: 'self-update.state-flush-failed',
+          message: `self-update state flush failed before restart: ${(err as Error).message}`,
+          details: {
+            ...context,
+            timeoutMs: SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
+          },
+          error: { message: (err as Error).message },
+        });
+      },
+    );
+
+    if (result === 'timeout') {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'self-update',
+        action: 'self-update.state-flush-timeout',
+        message: 'self-update state flush timed out before restart; continuing restart to avoid stale daemon',
+        details: {
+          ...context,
+          timeoutMs: SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
+        },
+      });
+    }
+  }
 
   // PR_C.3: AI agent / cookie 真人 / 内部组件 三档解析。本地别名指向
   // services/actor-resolver.ts 的共享实现（Bugbot Low review：原本
@@ -12288,9 +12331,15 @@ cdscli project list --human
         actor,
       });
       // Mongo-backed state is write-behind. This path exits the process about
-      // one second after sending the restart event, so the success record must
-      // be flushed before scheduling the replacement daemon.
-      await stateService.flush();
+      // one second after sending the restart event. A stuck Mongo write must
+      // not keep the old daemon alive after dist/ has already been swapped.
+      await flushSelfUpdateStateBeforeRestart({
+        trigger: 'manual',
+        branch: branch || '',
+        fromSha,
+        toSha: newHead || fromSha,
+        actor,
+      });
 
       // Step 4: restart CDS via detached process
       // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
@@ -13077,8 +13126,15 @@ cdscli project list --human
         ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
       });
       // Same durability requirement as /api/self-update: this code path
-      // intentionally exits the daemon, so queued Mongo writes must land first.
-      await stateService.flush();
+      // intentionally exits the daemon. Bound this flush so a stuck write-behind
+      // queue cannot leave old code running after dist/ has already been swapped.
+      await flushSelfUpdateStateBeforeRestart({
+        trigger: 'force-sync',
+        branch: branch || target || '',
+        fromSha,
+        toSha: newHead || fromSha,
+        actor,
+      });
 
       // ★ 2026-05-06 双模式 self-update 出口:
       // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
