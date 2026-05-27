@@ -46,6 +46,7 @@ import {
   createBodyCapture,
   createRequestId,
   redactHeaders,
+  type HttpLogRecord,
   type HttpLogSink,
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -91,6 +92,106 @@ function shouldAuditApiMutation(req: express.Request): boolean {
   if (req.path.startsWith('/bridge/check/')) return false;
   if (req.path === '/bridge/result') return false;
   return true;
+}
+
+function normalizeHttpLogPath(pathValue: string): string {
+  const rawPath = (pathValue || '').split('?')[0] || '/';
+  const segments = rawPath.split('/');
+  return segments
+    .map((segment, index) => {
+      if (!segment) return segment;
+      const decoded = decodeURIComponent(segment);
+      if (segments[1] === 'api' && segments[2] === 'branches' && index === 3) return ':branchId';
+      if (segments[1] === 'api' && segments[2] === 'projects' && index === 3) return ':projectId';
+      if (segments[1] === 'api' && segments[2] === 'executors' && index === 3) return ':executorId';
+      if (/^[0-9a-f]{7,40}$/i.test(decoded)) return ':sha';
+      if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(decoded)) return ':uuid';
+      if (/^op_[A-Za-z0-9_-]+$/.test(decoded)) return ':operationId';
+      if (/^[A-Za-z0-9_-]+-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+/.test(decoded)) return ':id';
+      return decoded;
+    })
+    .join('/');
+}
+
+function percentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return 0;
+  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1));
+  return sortedAsc[idx];
+}
+
+function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
+  endpoint: string;
+  method: string;
+  count: number;
+  errorCount: number;
+  errorRate: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  slowest: {
+    ts: Date;
+    requestId: string;
+    status: number;
+    durationMs: number;
+    path: string;
+    branchId?: string | null;
+    profileId?: string | null;
+  };
+}> {
+  const groups = new Map<string, {
+    endpoint: string;
+    method: string;
+    durations: number[];
+    errorCount: number;
+    slowest: HttpLogRecord;
+  }>();
+  for (const log of logs) {
+    const method = (log.method || 'GET').toUpperCase();
+    const endpoint = normalizeHttpLogPath(log.path);
+    const key = `${method} ${endpoint}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, {
+        endpoint,
+        method,
+        durations: [log.durationMs],
+        errorCount: log.status >= 400 ? 1 : 0,
+        slowest: log,
+      });
+      continue;
+    }
+    existing.durations.push(log.durationMs);
+    if (log.status >= 400) existing.errorCount += 1;
+    if (log.durationMs > existing.slowest.durationMs) existing.slowest = log;
+  }
+  return [...groups.values()]
+    .map((group) => {
+      const sorted = [...group.durations].sort((a, b) => a - b);
+      const count = sorted.length;
+      const sum = sorted.reduce((acc, value) => acc + value, 0);
+      return {
+        endpoint: group.endpoint,
+        method: group.method,
+        count,
+        errorCount: group.errorCount,
+        errorRate: count > 0 ? group.errorCount / count : 0,
+        avgMs: Math.round(sum / Math.max(1, count)),
+        p50Ms: percentile(sorted, 50),
+        p95Ms: percentile(sorted, 95),
+        maxMs: sorted[sorted.length - 1] || 0,
+        slowest: {
+          ts: group.slowest.ts,
+          requestId: group.slowest.requestId,
+          status: group.slowest.status,
+          durationMs: group.slowest.durationMs,
+          path: group.slowest.path,
+          branchId: group.slowest.branchId,
+          profileId: group.slowest.profileId,
+        },
+      };
+    })
+    .sort((a, b) => (b.p95Ms - a.p95Ms) || (b.avgMs - a.avgMs) || (b.maxMs - a.maxMs));
 }
 
 export interface ServerDeps {
@@ -2212,6 +2313,58 @@ export function createServer(deps: ServerDeps): express.Express {
       sort,
     });
     res.json({ logs, total: logs.length });
+  });
+
+  app.get('/api/http-logs/slow', async (req, res) => {
+    const reader = deps.httpLogStore?.findRecent;
+    if (!reader) {
+      res.json({
+        ok: false,
+        disabled: true,
+        sampleSize: 0,
+        total: 0,
+        endpoints: [],
+        message: 'HTTP 持久化日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_HTTP_LOGS_ENABLED=0。',
+      });
+      return;
+    }
+    const sampleRaw = Number.parseInt(String(req.query.sample || req.query.limit || '1000'), 10) || 1000;
+    const sample = Math.max(1, Math.min(sampleRaw, 5000));
+    const topRaw = Number.parseInt(String(req.query.top || '20'), 10) || 20;
+    const top = Math.max(1, Math.min(topRaw, 100));
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    if (since && Number.isNaN(Date.parse(since))) {
+      res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
+    const until = typeof req.query.until === 'string' ? req.query.until : undefined;
+    if (until && Number.isNaN(Date.parse(until))) {
+      res.status(400).json({ error: 'invalid_until', message: 'until must be an ISO timestamp' });
+      return;
+    }
+    const logs = await reader.call(deps.httpLogStore, {
+      limit: sample,
+      since,
+      until,
+      method: typeof req.query.method === 'string' ? req.query.method : undefined,
+      minStatus: typeof req.query.minStatus === 'string' ? Number.parseInt(req.query.minStatus, 10) || undefined : undefined,
+      pathContains: typeof req.query.pathContains === 'string'
+        ? req.query.pathContains
+        : (typeof req.query.path === 'string' ? req.query.path : undefined),
+      sort: 'recent',
+    });
+    const endpoints = summarizeSlowHttpLogs(logs).slice(0, top);
+    res.json({
+      ok: true,
+      disabled: false,
+      sampleSize: logs.length,
+      total: endpoints.length,
+      window: {
+        newest: logs[0]?.ts || null,
+        oldest: logs[logs.length - 1]?.ts || null,
+      },
+      endpoints,
+    });
   });
 
   app.get('/api/server-events', async (req, res) => {

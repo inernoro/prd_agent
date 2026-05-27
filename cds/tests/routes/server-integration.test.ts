@@ -13,6 +13,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
+import type { HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
 
 /**
  * Integration regression test: verifies that routes mounted after the
@@ -170,6 +171,43 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
+  function buildRealServerWithHttpLogs(logs: HttpLogRecord[]): express.Express {
+    const stateFile = path.join(tmpDir, 'state.json');
+    const stateService = new StateService(stateFile);
+    stateService.load();
+    const httpLogStore: HttpLogSink = {
+      record() {},
+      async findRecent(filter = {}) {
+        const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+        return logs
+          .filter((log) => {
+            if (filter.method && log.method !== filter.method.toUpperCase()) return false;
+            if (filter.minStatus && log.status < filter.minStatus) return false;
+            if (filter.pathContains && !log.path.includes(filter.pathContains)) return false;
+            if (filter.since && log.ts < new Date(filter.since)) return false;
+            if (filter.until && log.ts > new Date(filter.until)) return false;
+            return true;
+          })
+          .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+          .slice(0, limit);
+      },
+    };
+    return createServer({
+      stateService,
+      worktreeService: new WorktreeService(new MockShellExecutor(), tmpDir),
+      containerService: {} as any,
+      proxyService: {
+        getProxyLog: () => [],
+        setOnProxyLog: () => {},
+        handleSwitchFromExpress: (_req: unknown, _res: unknown) => {},
+      } as any,
+      bridgeService: {} as any,
+      shell: new MockShellExecutor(),
+      config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
+      httpLogStore,
+    });
+  }
+
   it('real createServer exposes queryable /api/server-events before branch router fallback', async () => {
     const app = buildRealServerWithEvents([
       {
@@ -226,6 +264,46 @@ describe('Server route ordering (regression)', () => {
     expect(res.status).toBe(400);
     expect(res.contentType).toContain('application/json');
     expect(JSON.parse(res.body).error).toBe('invalid_since');
+  });
+
+  it('real createServer exposes slow HTTP endpoint rankings from recent samples', async () => {
+    const base = {
+      _id: 'unused',
+      ts: new Date('2026-05-27T08:00:00.000Z'),
+      layer: 'master' as const,
+      requestId: 'req',
+      method: 'GET',
+      protocol: 'http',
+      host: 'cds.test',
+      path: '/api/branches',
+      status: 200,
+      durationMs: 1,
+      outcome: 'ok' as const,
+      request: {},
+      response: {},
+    };
+    const app = buildRealServerWithHttpLogs([
+      { ...base, _id: '1', requestId: 'r1', path: '/api/branches?project=prd-agent', durationMs: 5 },
+      { ...base, _id: '2', requestId: 'r2', path: '/api/branches/prd-agent-main/logs', durationMs: 1200 },
+      { ...base, _id: '3', requestId: 'r3', path: '/api/branches/prd-agent-main/logs', durationMs: 800, status: 500, outcome: 'server-error' },
+      { ...base, _id: '4', requestId: 'r4', path: '/api/projects/prd-agent', durationMs: 30 },
+    ]);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/http-logs/slow?sample=1000&top=5');
+
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.sampleSize).toBe(4);
+    expect(body.endpoints[0]).toMatchObject({
+      method: 'GET',
+      endpoint: '/api/branches/:branchId/logs',
+      count: 2,
+      errorCount: 1,
+      maxMs: 1200,
+    });
+    expect(body.endpoints[0].slowest.requestId).toBe('r2');
   });
 
   it('cluster router returns JSON when mounted BEFORE installSpaFallback', async () => {

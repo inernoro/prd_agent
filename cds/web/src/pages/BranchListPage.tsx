@@ -187,6 +187,40 @@ interface ActivityEvent {
   userAgent?: string;
 }
 
+interface SlowHttpEndpoint {
+  endpoint: string;
+  method: string;
+  count: number;
+  errorCount: number;
+  errorRate: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  slowest: {
+    ts: string;
+    requestId: string;
+    status: number;
+    durationMs: number;
+    path: string;
+    branchId?: string | null;
+    profileId?: string | null;
+  };
+}
+
+interface SlowHttpResponse {
+  ok: boolean;
+  disabled?: boolean;
+  sampleSize: number;
+  total: number;
+  window?: {
+    newest?: string | null;
+    oldest?: string | null;
+  };
+  endpoints: SlowHttpEndpoint[];
+  message?: string;
+}
+
 interface FocusBranchEventDetail {
   projectId?: string;
   branchId?: string;
@@ -295,6 +329,11 @@ type OpsStatusState =
   | { status: 'error'; message: string }
   | { status: 'ok'; capacity: ExecutorCapacityResponse; cluster: ClusterStatusResponse };
 
+type SlowHttpState =
+  | { status: 'idle' | 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: SlowHttpResponse };
+
 type BranchAction = {
   kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
@@ -398,6 +437,12 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms)) return '0ms';
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  return formatDuration(ms);
 }
 
 function formatShortTime(value: string): string {
@@ -1152,6 +1197,7 @@ export function BranchListPage(): JSX.Element {
   const [activityBranchFilter, setActivityBranchFilter] = useState('');
   const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
+  const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
@@ -1447,11 +1493,29 @@ export function BranchListPage(): JSX.Element {
     }
   }, []);
 
+  const refreshSlowHttp = useCallback(async () => {
+    setSlowHttpState((current) => current.status === 'ok' ? current : { status: 'loading' });
+    try {
+      const data = await apiRequest<SlowHttpResponse>('/api/http-logs/slow?sample=1000&top=10', {
+        headers: { 'X-CDS-Poll': 'true' },
+      });
+      setSlowHttpState({ status: 'ok', data });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setSlowHttpState({ status: 'error', message });
+    }
+  }, []);
+
   useEffect(() => {
+    if (!opsDrawerOpen) return;
     void refreshOpsStatus();
-    const timer = window.setInterval(() => void refreshOpsStatus(), 15_000);
+    void refreshSlowHttp();
+    const timer = window.setInterval(() => {
+      void refreshOpsStatus();
+      void refreshSlowHttp();
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [refreshOpsStatus]);
+  }, [opsDrawerOpen, refreshOpsStatus, refreshSlowHttp]);
 
   const refreshHostStats = useCallback(async () => {
     try {
@@ -3048,6 +3112,65 @@ export function BranchListPage(): JSX.Element {
                     />
                   </div>
                 ) : null}
+              </div>
+
+              <div className="p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-semibold">慢接口排行</h2>
+                    <div className="mt-1 text-xs text-muted-foreground">最近 1000 次 HTTP 请求按 p95 排序</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新慢接口排行">
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                    <Gauge className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
+                {slowHttpState.status === 'idle' || slowHttpState.status === 'loading' ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取 HTTP 耗时样本</div>
+                ) : slowHttpState.status === 'error' ? (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
+                    {slowHttpState.message}
+                  </div>
+                ) : slowHttpState.data.disabled ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    {slowHttpState.data.message || 'HTTP 持久化日志未启用'}
+                  </div>
+                ) : slowHttpState.data.endpoints.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    暂无 HTTP 耗时样本。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <MetricTile label="样本" value={`${slowHttpState.data.sampleSize}`} />
+                      <MetricTile label="端点" value={`${slowHttpState.data.total}`} />
+                      <MetricTile label="窗口" value={slowHttpState.data.window?.oldest ? formatShortTime(slowHttpState.data.window.oldest) : '--:--'} />
+                    </div>
+                    <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                      {slowHttpState.data.endpoints.slice(0, 10).map((item, index) => (
+                        <div key={`${item.method}:${item.endpoint}`} className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
+                            <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
+                            <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
+                              {item.endpoint}
+                            </code>
+                            <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
+                            <span>count {item.count}</span>
+                            <span>avg {formatLatency(item.avgMs)}</span>
+                            <span>max {formatLatency(item.maxMs)}</span>
+                            {item.errorCount > 0 ? <span className="text-destructive">error {item.errorCount}</span> : null}
+                            <span className="ml-auto font-mono">requestId {item.slowest.requestId}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="p-3">
