@@ -460,7 +460,7 @@
   margin-top: 4px;
 }
 
-/* 外层容器圆角：侧栏负责左上/左下，主区负责右上/右下 */
+/* 圆角内容层（根节点透明，仅此处铺主题背景） */
 .pa-agent-sidebar {
   margin: 8px 0 8px 8px;
   border-radius: 18px 0 0 18px;
@@ -469,7 +469,6 @@
   background: var(--pa-bg-base, var(--bg-base));
 }
 
-/* 主内容区：仅右侧圆角，对话区域保持原样 */
 .pa-agent-main {
   margin: 8px 8px 8px 0;
   border-radius: 0 18px 18px 0;
@@ -479,6 +478,11 @@
   background: var(--pa-bg-base, var(--bg-base));
   box-shadow: 0 2px 16px -8px rgba(15, 23, 42, 0.12);
 }
+.pa-agent-root[data-sidebar-open="false"] .pa-agent-main {
+  margin-left: 8px;
+  border-radius: 18px;
+  border-left: 1px solid var(--pa-border-default, var(--border-default));
+}
 .pa-agent-root[data-pa-theme="mountain"] .pa-agent-main {
   box-shadow: 0 4px 24px -10px rgba(0, 0, 0, 0.45);
 }
@@ -487,9 +491,12 @@
  *  主题切换 — gemini（默认）→ mountain（山蓝深色）→ parchment（羊皮卷）
  *  通过 data-pa-theme 在 PaAgentPage 根 div 上挂主题
  * ===================================================================== */
+.pa-agent-root {
+  background: transparent !important;
+}
+
 .pa-agent-root,
 .pa-agent-root[data-pa-theme="gemini"] {
-  --pa-shell-bg: #e8eaef;
   --pa-bg-base:
     radial-gradient(110% 68% at 66% 58%, rgba(205, 227, 248, 0.68) 0%, rgba(233, 240, 248, 0.26) 45%, transparent 72%),
     linear-gradient(180deg, #f5f6f8 0%, #f2f3f6 100%);
@@ -512,7 +519,6 @@
 
 /* 山蓝深色 — 原暗夜专注背景 */
 .pa-agent-root[data-pa-theme="mountain"] {
-  --pa-shell-bg: #060a14;
   --pa-bg-base:
     radial-gradient(120% 80% at 20% 0%, rgba(14, 116, 144, 0.35) 0%, transparent 55%),
     radial-gradient(90% 70% at 100% 100%, rgba(37, 99, 235, 0.22) 0%, transparent 50%),
@@ -532,12 +538,10 @@
   --pa-md-strong: #67e8f9;
   --pa-md-link: #7dd3fc;
   --pa-md-link-hover: #bae6fd;
-  background-color: var(--pa-shell-bg) !important;
   color: var(--pa-text-primary) !important;
 }
 
 .pa-agent-root[data-pa-theme="parchment"] {
-  --pa-shell-bg: #ebe6dc;
   --pa-bg-base: #f8f6f1;
   --pa-bg-elevated: #fffcf8;
   --pa-bg-hover: #f0ebe4;
@@ -556,8 +560,12 @@
   --pa-md-link-hover: #2a4f44;
 }
 
-/* parchment：米白浅色系 + 淡淡书卷纹理（小清新、书卷气） */
+/* parchment：书卷纹理只铺在圆角内容层，不再铺最外层根节点 */
 .pa-agent-root[data-pa-theme="parchment"] {
+  color: var(--pa-text-primary) !important;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-agent-sidebar,
+.pa-agent-root[data-pa-theme="parchment"] .pa-agent-main {
   background-color: #f8f6f1 !important;
   background-image:
     radial-gradient(ellipse 90% 55% at 88% 4%, rgba(255, 253, 248, 0.98) 0%, transparent 52%),
@@ -570,7 +578,6 @@
       rgba(186, 176, 152, 0.04) 31px
     ),
     linear-gradient(168deg, #faf9f6 0%, #f4f0e8 52%, #ebe6dc 100%) !important;
-  color: var(--pa-text-primary) !important;
 }
 
 /* parchment：聊天气泡、看板、quick-cmd 卡片背景同步换成浅米白 */

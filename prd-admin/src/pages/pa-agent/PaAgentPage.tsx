@@ -360,8 +360,9 @@ export function PaAgentPage() {
       className="pa-agent-root h-full flex min-h-0"
       data-pa-theme={theme}
       data-pa-fontsize={fontSize}
+      data-sidebar-open={sidebarOpen ? 'true' : 'false'}
       style={{
-        background: 'var(--pa-shell-bg, var(--bg-base))',
+        background: 'transparent',
         color: 'var(--text-primary)',
       }}
     >
