@@ -1635,6 +1635,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const terminalKinds = new Set<BranchOperationKind>([
       'delete',
       'stop',
+      'reset',
       'cleanup-damaged',
       'cleanup-orphans',
       'factory-reset',
@@ -1727,6 +1728,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const terminalCleanupKinds = new Set<BranchOperationKind>([
       'delete',
       'stop',
+      'reset',
       'cleanup-damaged',
       'cleanup-orphans',
       'factory-reset',
@@ -7080,16 +7082,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
-    entry.status = 'idle';
-    entry.errorMessage = undefined;
-    for (const svc of Object.values(entry.services)) {
-      if (svc.status === 'error' || svc.status === 'building') {
-        svc.status = 'idle';
-        svc.errorMessage = undefined;
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'reset',
+      source: 'api.reset-branch',
+      reason: 'manual reset branch status',
+    });
+    if (!branchOperationLease) return;
+    try {
+      assertBranchOperationCurrent(branchOperationLease, 'reset before state write');
+      entry.status = 'idle';
+      entry.errorMessage = undefined;
+      for (const svc of Object.values(entry.services)) {
+        if (svc.status === 'error' || svc.status === 'building') {
+          svc.status = 'idle';
+          svc.errorMessage = undefined;
+        }
       }
+      assertBranchOperationCurrent(branchOperationLease, 'reset before state save');
+      stateService.save();
+      completeBranchOperation(branchOperationLease, 'completed');
+      res.json({ message: '分支状态已重置', operationId: branchOperationLease.operationId });
+    } catch (err) {
+      if (err instanceof BranchOperationSupersededError) {
+        completeBranchOperation(branchOperationLease, 'cancelled', err.message);
+        res.status(409).json({ error: err.message, operationId: branchOperationLease.operationId });
+        return;
+      }
+      completeBranchOperation(branchOperationLease, 'failed', (err as Error).message);
+      res.status(500).json({ error: (err as Error).message, operationId: branchOperationLease.operationId });
     }
-    stateService.save();
-    res.json({ message: '分支状态已重置' });
   });
 
   // ── Routing rules CRUD ──

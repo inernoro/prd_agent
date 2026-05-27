@@ -258,6 +258,38 @@ describe('BranchOperationCoordinator', () => {
     expect(cancelled.some((r) => r.details?.pending === true && r.details?.reason === 'superseded by stop')).toBe(true);
   });
 
+  it('manual reset is a terminal operation that fences active and queued webhook deploys', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+    });
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+    });
+
+    const reset = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'reset',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.reset-branch',
+    });
+
+    expect(reset.status).toBe('started');
+    expect(active.lease?.isCurrent()).toBe(false);
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
+    const cancelled = records.filter((r) => r.action === 'branch.operation.cancelled');
+    expect(cancelled.some((r) => r.operationId === active.operationId && r.details?.pending !== true)).toBe(true);
+    expect(cancelled.some((r) => r.details?.pending === true && r.details?.reason === 'superseded by reset')).toBe(true);
+  });
+
   it('cleanup-damaged yields to an active webhook deploy instead of killing an in-flight build', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

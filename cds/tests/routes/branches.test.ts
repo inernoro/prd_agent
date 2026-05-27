@@ -1705,9 +1705,14 @@ describe('Branch Routes', () => {
 
       const res = await request(server, 'POST', '/api/branches/feature-test/reset');
       expect(res.status).toBe(200);
+      expect((res.body as any).operationId).toMatch(/^op_/);
 
       const list = await request(server, 'GET', '/api/branches');
       expect((list.body as any).branches[0].status).toBe('idle');
+      expect(operationEvents.some((event) => event.action === 'branch.operation.completed'
+        && event.operationKind === 'reset'
+        && event.operationTrigger === 'manual'
+        && event.branchId === 'feature-test')).toBe(true);
     });
   });
 

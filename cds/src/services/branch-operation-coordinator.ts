@@ -7,6 +7,7 @@ export type BranchOperationKind =
   | 'restart'
   | 'force-rebuild'
   | 'stop'
+  | 'reset'
   | 'delete'
   | 'cleanup-damaged'
   | 'cleanup-orphans'
@@ -95,6 +96,7 @@ export class BranchOperationSupersededError extends Error {
 
 const TERMINAL_KINDS = new Set<BranchOperationKind>([
   'delete',
+  'reset',
   'cleanup-orphans',
   'factory-reset',
   'janitor-remove',

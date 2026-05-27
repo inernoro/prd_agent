@@ -1926,11 +1926,11 @@ export function BranchListPage(): JSX.Element {
     }
   }, [appendActionLog, openRunningPreview, projectId, refresh, setAction]);
 
-  const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = true): Promise<void> => {
+  const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
     if (branch.status !== 'running') {
       if (!deployWhenNeeded || isBusy(branch)) {
-        setToast(`${branch.branch} 还未运行`);
+        setToast(`${branch.branch} 还未运行。预览不会自动部署，请手动点击部署。`);
         return;
       }
       const target = openPreviewPlaceholder(branch.branch);
@@ -2894,7 +2894,7 @@ export function BranchListPage(): JSX.Element {
                       .slice(0, 5)}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
-                    onPreview={() => void openPreview(branch, true)}
+                    onPreview={() => void openPreview(branch, false)}
                     onDeploy={() => void deployBranch(branch, false)}
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
                     onPull={() => void pullBranch(branch)}
