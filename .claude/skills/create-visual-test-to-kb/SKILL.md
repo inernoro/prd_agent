@@ -40,7 +40,11 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/login/gotoByClick/click/type/setTheme/shot`。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。核心页双主题各一张;结束 `writeManifest(outDir)`。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
 3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填模板得出 Verdict。**默认用 `templates/zz-report.md`(ZZ 照做风:全大标题、一句话一步、`{{IMG:<name>}}` 逐步配图、文字在上图在下、变化处画框、分支顺序讲,见标准 §6.3)**;旧版九段集中证据用 `templates/report-template.md` + `{{EVIDENCE}}`。
-4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。**脚本收尾必打印「验收归档完成 · 必给地址」块**(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
+4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
+   - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
+   - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
+   - **防断头报告**:建条目后强制校验正文真的落库(`GET /content` 的 `hasContent`);写不进(预览 524 等)会**自动删空壳条目 + 报错**,绝不留"有标题、点开空白"的半截条目。
+   - **必给地址**:收尾必打印「验收归档完成 · 必给地址」块(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
 
 ## 端到端示例(照抄即可)
 

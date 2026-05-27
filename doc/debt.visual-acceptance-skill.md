@@ -10,6 +10,8 @@
 - **E1 强制必给地址**：`archive_report.py` doc-store 模式归档收尾必打印「验收归档完成 · 必给地址」块——分享短链优先，接口超时拿不到则给 owner 登录路径；条目已建即视为归档成功，分享链单独 try/except，绝不静默。curl 重试 3→5、退避加长。main() 包 try/except，写库失败打印「归档失败」+ exit(3)，不抛裸栈。
 - **E2 ZZ 照做风模板 + 逐步配图**：新增 `templates/zz-report.md`（全大标题、一句话一步、文字在上图在下、分支顺序讲）。`assemble()` 支持 `{{IMG:<截图name>}}` 逐步内联占位（与旧 `{{EVIDENCE}}` 集中证据二选一/并用）；`validate_inputs` + `PLACEHOLDER_PAT` 放宽接受 `{{IMG:`。标准 §6.3 写明 ZZ 九条铁律。
 - **E3/E4/E7 画框 + 步骤序号**：`harness.mjs` 新增 `box`/`clearBoxes`/`stepClick`/`stepShot`。`stepClick` 在点击目标上画红框 + 序号角标 → 截「点这里」图 → 清框 → 真点击；`stepShot` 截结果图并框住变化处。让"点哪到哪""哪里变了"一目了然。已用本地样例验证红框 + 序号渲染正确。
+- **命名固定结构 + 状态走标签**（用户定 2026-05-27）：标题恒为 `项目 · 模块 · 功能 · 操作方式 · 验收报告`（`--module/--feature/--type` 拼装、空段跳过），verdict（通过/不通过）不进标题、改用 `tags=[verdict_cn,type,tier]` 标记。复测翻转结论只改 tag，标题恒定可检索。config naming + standard §2.1 同步。
+- **防断头报告**（实测根因 2026-05-27）：doc-store 两步归档（建条目→PUT 正文），PUT 撞 524 会留下"有标题、点开空白(暂无可预览的内容)"的空壳。修复：建条目后强制 `GET /content` 校验 `hasContent`，写不进则重写一次→仍失败自动删空壳 + 报错（main 打印「归档失败」exit 3）。standard §2.2 立为硬规则。教训：此前 5 条历史归档全是空壳（PUT 在早期 CDS 不稳时静默丢失），用户"点开看不到"才暴露。
 
 ## wave 2 待补（差异化）
 

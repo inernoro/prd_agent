@@ -73,7 +73,7 @@ def assemble(title, body, evidence, meta, img_md=None):
     return f"# {title}\n\n" + content.replace("{{EVIDENCE}}", evidence) + meta
 
 
-def run_local(cfg, a, title, report_id, body, manifest, meta):
+def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
     out_dir = cfg["report"].get("localOutDir", "doc/acceptance")
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
@@ -94,7 +94,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta):
                       "reportPath": md_path, "shotsDir": shot_dir}, ensure_ascii=False))
 
 
-def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview):
+def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=None):
     api = cfg["auth"]["api"]
     key = os.environ[api["keyEnv"]]
     imp = os.environ[api["impersonateEnv"]]
@@ -126,10 +126,28 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview):
     eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
+        "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
     }), f"{base}/stores/{rid}/entries"])["data"]["id"]
-    print(f"  报告条目 id={eid} title={title}")
+    print(f"  报告条目 id={eid} title={title} tags={tags or []}")
     w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
     print(f"  写正文 success={w.get('success')}")
+    # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。
+    # 这里强制校验正文真的落库；写不进就删掉空壳 + 报错，绝不留半截。
+    def _has_content():
+        try:
+            return bool(curl(H + [f"{base}/entries/{eid}/content"]).get("data", {}).get("hasContent"))
+        except Exception:
+            return False
+    if not _has_content():
+        curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])  # 再写一次
+    if not _has_content():
+        try:
+            curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"])
+            print(f"  正文写入未生效，已删除空壳条目 {eid}（不留断头报告）")
+        except Exception:
+            pass
+        raise RuntimeError("正文写入未生效(hasContent=false)：多为预览环境 524/重启，已删除空壳条目，请稍后重跑")
+    print("  正文已校验落库 hasContent=true")
     # E1 强制分享链：条目已建=归档成功；分享链单独 try，失败也给 owner 路径，绝不静默
     owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,主交付）"
     share_url = None
@@ -192,6 +210,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--target", required=True)
+    ap.add_argument("--module", default="", help="模块（命名第2段，如 网页托管 / 知识库）")
+    ap.add_argument("--feature", default="", help="功能（命名第3段，如 SaaS空间模型；缺省用 --target）")
+    ap.add_argument("--type", default="", help="操作方式（命名第4段，如 新增功能 / 优化 / 修复）")
     ap.add_argument("--verdict", default="pass")
     ap.add_argument("--tier", default="L1")
     ap.add_argument("--report-md", required=True, help="正文 md（速览卡+九段，{{EVIDENCE}} 占位）")
@@ -206,9 +227,12 @@ def main():
     now = datetime.datetime.now()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M"))
     verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
-    title = cfg["report"]["naming"].format(
-        project=cfg["project"], datetime=dt, date=now.strftime("%Y-%m-%d"),
-        target=a.target, verdict_cn=verdict_cn)
+    # 命名固定结构：项目 · 模块 · 功能 · 操作方式 · 验收报告（用户定，2026-05-27）。
+    # verdict（通过/不通过）不进标题——走 tags 标记，不靠改名表达状态。空段自动跳过。
+    segs = [s for s in [cfg["project"], a.module, (a.feature or a.target), a.type] if (s or "").strip()]
+    title = " · ".join(segs) + " · 验收报告"
+    # 标签：状态 + 操作方式 + 档位（取代旧的「标题前缀 [通过]」）
+    tags = [t for t in [verdict_cn, a.type, a.tier] if (t or "").strip()]
     report_id = f"acc-{cfg['project']}-{now.strftime('%Y%m%d%H%M')}-{slugify(a.target)}"
     body = open(a.report_md, encoding="utf-8").read().lstrip()
     manifest = json.load(open(a.manifest))
@@ -229,9 +253,9 @@ def main():
 
     try:
         if mode == "local":
-            run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview))
+            run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview), tags)
         else:
-            run_doc_store(cfg, a, title, report_id, body, manifest, now, preview)
+            run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags)
     except Exception as e:
         import sys as _sys
         print("\n[归档失败] 写库未完成（常见原因：预览环境 524 / 容器重启 / API 不可达）。")

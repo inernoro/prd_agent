@@ -26,9 +26,10 @@
 
 ## 2. 命名标准（强制)
 
-- **报告条目标题 / 文件名**(业界风格,状态前置):`[{verdict_cn}] {验收目标} · 验收报告 · {project} · {date}`
-  - 例:`[通过] 知识库订阅保存双通道 · 验收报告 · prd-agent · 2026-05-26`
-  - 顺序:状态(一眼看出通过与否)→ 目标 → 类型 → 项目 → 日期。格式在 `acceptance.config.json` 的 `naming`,`{verdict_cn}` = 通过/有条件通过/不通过
+- **报告条目标题 / 文件名**(固定结构,用户定 2026-05-27):`{项目} · {模块} · {功能} · {操作方式} · 验收报告`
+  - 例:`prd-agent · 网页托管 · SaaS空间模型多账号MECE · 修复 · 验收报告`
+  - 操作方式 = `新增功能` / `优化` / `修复`。脚本按 `--module/--feature/--type` 拼装,空段自动跳过。
+  - **状态(通过/不通过)绝不进标题**——通过 `tags` 标记(脚本自动写 `[verdict_cn, type, tier]`)。不靠改名表达状态,这样同一份报告复测翻转结论时改 tag 即可,标题恒定可检索。
 - **report_id**(机读,frontmatter):`acc-{project}-{YYYYMMDDHHmm}-{slug}`
 - **截图文件名**:`{两位序号}-{动作}.png`,如 `03-after-subscribe.png`
 
@@ -41,6 +42,12 @@
 所以**正文(content)绝对不能以 YAML frontmatter `---` 开头**——否则 summary 首行 = `---`,目录里所有报告都显示 `---`(这就是历史 bug 的真因)。
 
 **硬规则**:报告正文**第一行必须是 `# {完整报告名}`**(ATX H1)。机读字段(report_id/verdict/...)放正文**末尾的 HTML 注释** `<!-- acceptance-meta ... -->`(不渲染、不进 summary、可被工具解析)。`archive_report.py` 已内置:`content = "# {title}\n\n" + body + "<!-- acceptance-meta ... -->"`。手工归档也必须照此,**禁止 frontmatter 打头**。
+
+### 2.2 防「断头报告」硬规则（必须遵守,实测根因)
+
+doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}/content`(写正文)。若 PUT 撞上预览环境 524/重启而丢失,就留下一条**有标题、点开却"暂无可预览的内容"**的空壳条目——用户看得到名字看不到内容,这是真实踩过的坑(2026-05-27)。
+
+**硬规则**:建条目写正文后,**必须** `GET /entries/{id}/content` 校验 `hasContent==true`;写不进时**自动删除空壳条目并报错**,绝不把半截条目留在库里。`archive_report.py` 已内置(校验→重写一次→仍失败则删条目 + 抛错,main 打印「归档失败」exit 3)。**结论:要么一条完整可看的报告,要么干脆没有,不留断头。**
 
 ---
 
