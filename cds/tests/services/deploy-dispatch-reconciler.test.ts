@@ -90,6 +90,58 @@ describe('reconcileStaleDeployDispatches', () => {
     });
   });
 
+  it('does not recover a dispatch when any service is still failed after lastReadyAt', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-dispatch-reconcile-partial-ready-'));
+    const stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+
+    stateService.addBranch({
+      id: 'prd-agent-main',
+      projectId: 'prd-agent',
+      branch: 'main',
+      worktreePath: path.join(tmpDir, 'main'),
+      status: 'running',
+      createdAt: '2026-05-26T10:00:00.000Z',
+      lastDeployAt: '2026-05-26T11:00:00.000Z',
+      lastReadyAt: '2026-05-26T12:05:00.000Z',
+      lastDeployDispatchAt: '2026-05-26T12:00:00.000Z',
+      lastDeployDispatchCommitSha: 'abc123',
+      lastDeployDispatchSource: 'webhook',
+      lastDeployDispatchStatus: 'accepted',
+      services: {
+        api: {
+          profileId: 'api',
+          containerName: 'cds-prd-agent-main-api',
+          hostPort: 10001,
+          status: 'running',
+        },
+        admin: {
+          profileId: 'admin',
+          containerName: 'cds-prd-agent-main-admin',
+          hostPort: 10002,
+          status: 'error',
+          errorMessage: '就绪探测超时',
+        },
+      },
+    });
+
+    const result = reconcileStaleDeployDispatches(stateService, {
+      now: new Date('2026-05-26T12:30:00.000Z'),
+      staleAfterMinutes: 15,
+      source: 'unit-test',
+    });
+
+    const branch = stateService.getBranch('prd-agent-main')!;
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      branchId: 'prd-agent-main',
+      previousStatus: 'accepted',
+      nextStatus: 'interrupted',
+    });
+    expect(branch.lastDeployAt).toBe('2026-05-26T11:00:00.000Z');
+    expect(branch.lastDeployDispatchStatus).toBe('interrupted');
+    expect(branch.lastDeployDispatchError).toContain('stayed accepted');
+  });
+
   it('marks stale dispatching webhook deploy metadata as interrupted without touching containers', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-dispatch-reconcile-'));
     const stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);

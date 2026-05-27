@@ -37,8 +37,9 @@ function createReconcileTraceId(branchId: string, dispatchAt: string, source: st
   return `op_reconcile_${digest}`;
 }
 
-function hasRunningService(branch: BranchEntry): boolean {
-  return Object.values(branch.services || {}).some((svc) => svc.status === 'running');
+function hasAllServicesRunning(branch: BranchEntry): boolean {
+  const services = Object.values(branch.services || {});
+  return services.length > 0 && services.every((svc) => svc.status === 'running');
 }
 
 export function reconcileStaleDeployDispatches(
@@ -64,7 +65,7 @@ export function reconcileStaleDeployDispatches(
     if (
       lastReadyAtMs >= dispatchAtMs
       && branch.status === 'running'
-      && hasRunningService(branch)
+      && hasAllServicesRunning(branch)
     ) {
       const reason = `Webhook deploy dispatch already reached ready state after dispatch; recovered deploy stamp from lastReadyAt`;
       const operationId = createReconcileTraceId(branch.id, dispatchAt, `${source}:ready`);

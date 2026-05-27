@@ -1574,10 +1574,34 @@ janitorService.setRemoveFn(async (slug: string) => {
         const key = `${branch.id}/${profileId}`;
         const found = appContainers.get(key);
         if (found) {
-          // Container exists in Docker — sync status
+          // Docker "running" only means PID 1 is alive. It does not prove the
+          // mapped service port is ready; build-mode containers can spend
+          // minutes in pnpm install/vite build while Docker still reports
+          // running. Never promote an error/in-flight service to running here,
+          // or startup reconcile can erase a real readiness failure.
           const wasStatus = svc.status;
           if (found.running) {
-            svc.status = 'running';
+            if (wasStatus === 'running') {
+              svc.status = 'running';
+            } else {
+              activeServerEventLogStore?.record({
+                category: 'container',
+                severity: wasStatus === 'error' ? 'warn' : 'info',
+                source: 'startup-reconcile',
+                action: 'app.reconcile.running-not-ready-authority',
+                message: `Docker container is running but service state remains ${wasStatus}: ${svc.containerName}`,
+                projectId: branch.projectId,
+                branchId: branch.id,
+                profileId,
+                containerName: svc.containerName,
+                status: wasStatus,
+                details: {
+                  dockerState: 'running',
+                  preservedStatus: wasStatus,
+                  reason: 'container-running-is-not-service-ready',
+                },
+              });
+            }
           } else if (wasStatus === 'running' || wasStatus === 'starting') {
             // 持久态认为在跑但容器已退出 → 真·异常退出，标 error
             activeServerEventLogStore?.record({
