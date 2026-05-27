@@ -108,6 +108,9 @@ describe('Branch Routes', () => {
   let stateService: StateService;
   let containerService: ContainerService;
   let operationEvents: Array<{
+    category?: string;
+    source?: string;
+    severity?: string;
     action: string;
     branchId?: string | null;
     requestId?: string | null;
@@ -154,6 +157,9 @@ describe('Branch Routes', () => {
     const serverEventLogStore: ServerEventLogSink = {
       record(record) {
         operationEvents.push({
+          category: record.category,
+          source: record.source,
+          severity: record.severity,
           action: record.action,
           branchId: record.branchId,
           requestId: record.requestId,
@@ -719,11 +725,96 @@ describe('Branch Routes', () => {
       const branch = stateService.getBranch('damaged-branch')!;
       expect(branch.services.api).toBeUndefined();
       expect(branch.services.web).toBeDefined();
+      const cleanupEvent = operationEvents.find((event) => event.source === 'bulk-damaged-container-cleanup');
+      expect(cleanupEvent?.action).toBe('app.damaged-containers.cleanup');
+      expect(cleanupEvent?.details?.removed).toEqual([
+        expect.objectContaining({ branchId: 'damaged-branch', profileId: 'api', containerName: 'missing-api' }),
+      ]);
+      expect(cleanupEvent?.details?.skippedRunning).toEqual([
+        expect.objectContaining({ branchId: 'damaged-branch', profileId: 'web', containerName: 'running-web' }),
+      ]);
       const operationActions = operationEvents
         .filter((event) => event.branchId === 'damaged-branch')
         .map((event) => event.action);
       expect(operationActions).toContain('branch.operation.started');
       expect(operationActions).toContain('branch.operation.completed');
+    });
+
+    it('keeps building, starting, restarting, and actually running services during damaged cleanup', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'mixed-damaged',
+        projectId: 'default',
+        branch: 'feature/mixed-damaged',
+        worktreePath: path.join(tmpDir, 'worktrees', 'mixed-damaged'),
+        status: 'error',
+        createdAt: now,
+        services: {
+          missing: {
+            profileId: 'missing',
+            containerName: 'missing-container',
+            hostPort: 10001,
+            status: 'error',
+          },
+          building: {
+            profileId: 'building',
+            containerName: 'building-container',
+            hostPort: 10002,
+            status: 'building',
+          },
+          starting: {
+            profileId: 'starting',
+            containerName: 'starting-container',
+            hostPort: 10003,
+            status: 'starting',
+          },
+          restarting: {
+            profileId: 'restarting',
+            containerName: 'restarting-container',
+            hostPort: 10004,
+            status: 'restarting',
+          },
+          staleButRunning: {
+            profileId: 'staleButRunning',
+            containerName: 'stale-running-container',
+            hostPort: 10005,
+            status: 'error',
+          },
+        },
+      });
+      mock.addResponse('docker ps --format "{{.Names}}"', {
+        stdout: 'stale-running-container\n',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/cleanup-damaged-containers');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).removedCount).toBe(1);
+      expect((res.body as any).skippedRunningCount).toBe(4);
+      const branch = stateService.getBranch('mixed-damaged')!;
+      expect(Object.keys(branch.services).sort()).toEqual([
+        'building',
+        'restarting',
+        'staleButRunning',
+        'starting',
+      ]);
+      expect(mock.commands.some((command) => command.includes('docker rm missing-container'))).toBe(true);
+      expect(mock.commands.some((command) => command.includes('docker rm building-container'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker rm starting-container'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker rm restarting-container'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker rm stale-running-container'))).toBe(false);
+      const cleanupEvent = operationEvents.find((event) => event.source === 'bulk-damaged-container-cleanup');
+      expect(cleanupEvent?.details?.removed).toEqual([
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'missing', containerName: 'missing-container' }),
+      ]);
+      expect(cleanupEvent?.details?.skippedRunning).toEqual(expect.arrayContaining([
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'building', containerName: 'building-container' }),
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'starting', containerName: 'starting-container' }),
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'restarting', containerName: 'restarting-container' }),
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'staleButRunning', containerName: 'stale-running-container' }),
+      ]));
     });
   });
 
