@@ -24,3 +24,4 @@
 | feat | prd-admin | 背景三态循环：默认 Gemini 浅色 → 山蓝深色 → 羊皮卷；旧 dark 偏好自动映射 mountain |
 | fix | prd-admin | 侧栏会话项统一 40px 高度，仅标题+时间，细线分隔；主内容区四角 18px 圆角 |
 | feat | prd-admin | PaSecretaryIcon / PaAgentCardArt 改为 Gemini 风四色星芒与浅色卡片插画 |
+| fix | prd-admin | 毒舌秘书首页卡片改回深蓝科技风；hover 时星芒增加旋转脉冲与轨迹流动动态效果 |
