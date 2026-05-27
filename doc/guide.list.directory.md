@@ -80,6 +80,9 @@
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
   > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
 
+- [功能验收体系设计](design.acceptance-system) `design.acceptance-system`
+  > 业界对标(IEEE 829 / ISO·IEC·IEEE 29119-3 / 29148 / ISTQB / BDD)的标准化验收：为何而写、踩过的坑、v2 落地与 v3 演进、涌现与未来
+
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 
@@ -664,6 +667,9 @@
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
+
+- [功能验收体系 · 债务台账](debt.acceptance-system) `debt.acceptance-system`
+  > 标准创建/执行/结果三方经知识库打通的未来架构：分阶段还债（先 schema 化+版本绑定，后拆 Agent），含触发条件与 YAGNI 边界
 
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项

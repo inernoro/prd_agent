@@ -47,6 +47,7 @@ docs:
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
+  design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
@@ -252,6 +253,7 @@ docs:
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.share-link-security: 分享链接安全债务台账
+  debt.acceptance-system: 功能验收体系 · 债务台账（标准/执行/结果三方经知识库打通）
   debt.daily-tips: 小技巧与首页提醒过时机制债务台账
 
   # ── 七、周报（降序：最新在前）──
