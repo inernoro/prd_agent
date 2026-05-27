@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.ProjectRouteAgent;
 using System.Security.Claims;
@@ -34,6 +35,7 @@ public class ProjectRouteAgentController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly GitRepoCacheService _gitCache;
+    private readonly IGitHubOAuthService _oauth;
     private readonly IConfiguration _config;
     private readonly ILogger<ProjectRouteAgentController> _logger;
 
@@ -42,6 +44,7 @@ public class ProjectRouteAgentController : ControllerBase
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         GitRepoCacheService gitCache,
+        IGitHubOAuthService oauth,
         IConfiguration config,
         ILogger<ProjectRouteAgentController> logger)
     {
@@ -49,6 +52,7 @@ public class ProjectRouteAgentController : ControllerBase
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _gitCache = gitCache;
+        _oauth = oauth;
         _config = config;
         _logger = logger;
     }
@@ -92,10 +96,17 @@ public class ProjectRouteAgentController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// 前端检查用户是否已经在 pr-review 完成了 GitHub OAuth 授权（共享同一份连接）。
-    /// 未授权时 UI 显示「去授权」按钮跳 /pr-review；已授权才能拉私有 / 组织仓库的 routemap。
-    /// </summary>
+    // ──────────────────────────────────────────────────────────────
+    // GitHub Device Flow（项目路由智能体独立授权入口）
+    //
+    // 设计：用 RFC 8628 Device Flow，用户全程在本智能体页面内完成授权。
+    //   不跳转到其他智能体的授权页。
+    //   底层 token 仍存到共享的 `github_user_connections`（按 UserId 唯一），
+    //   所以用户在本智能体授权后，其它共享同一份 OAuth 连接的智能体（如 pr-review）
+    //   也能立即使用 —— 一次授权，全局可用。
+    // ──────────────────────────────────────────────────────────────
+
+    /// <summary>查询当前用户的 GitHub 授权状态。</summary>
     [HttpGet("github/status")]
     public async Task<IActionResult> GetGitHubStatus(CancellationToken ct)
     {
@@ -106,11 +117,122 @@ public class ProjectRouteAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             connected = conn != null && !string.IsNullOrEmpty(conn.AccessTokenEncrypted),
+            oauthConfigured = IsOAuthConfigured(),
             githubLogin = conn?.GitHubLogin,
             avatarUrl = conn?.AvatarUrl,
             scopes = conn?.Scopes,
             connectedAt = conn?.ConnectedAt,
         }));
+    }
+
+    /// <summary>发起 Device Flow：返回用户码 + GitHub 输入页 URL + 轮询 token。</summary>
+    [HttpPost("github/device/start")]
+    public async Task<IActionResult> StartGitHubDeviceFlow(CancellationToken ct)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var start = await _oauth.StartDeviceFlowAsync(userId, CancellationToken.None);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                userCode = start.UserCode,
+                verificationUri = start.VerificationUri,
+                verificationUriComplete = start.VerificationUriComplete,
+                intervalSeconds = start.IntervalSeconds,
+                expiresInSeconds = start.ExpiresInSeconds,
+                flowToken = start.FlowToken,
+            }));
+        }
+        catch (GitHubException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
+    }
+
+    public class GitHubDevicePollRequest
+    {
+        public string? FlowToken { get; set; }
+    }
+
+    /// <summary>轮询 Device Flow：直到返回 done / expired / denied。done 时 token 已 upsert 到 DB。</summary>
+    [HttpPost("github/device/poll")]
+    public async Task<IActionResult> PollGitHubDeviceFlow([FromBody] GitHubDevicePollRequest req, CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.FlowToken))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "flowToken 不能为空"));
+        }
+
+        try
+        {
+            var userId = GetUserId();
+            var result = await _oauth.PollDeviceFlowAsync(userId, req.FlowToken, CancellationToken.None);
+
+            switch (result.Status)
+            {
+                case DeviceFlowPollStatus.Pending:
+                    return Ok(ApiResponse<object>.Ok(new { status = "pending" }));
+                case DeviceFlowPollStatus.SlowDown:
+                    return Ok(ApiResponse<object>.Ok(new { status = "slow_down" }));
+                case DeviceFlowPollStatus.Expired:
+                    return Ok(ApiResponse<object>.Ok(new { status = "expired" }));
+                case DeviceFlowPollStatus.Denied:
+                    return Ok(ApiResponse<object>.Ok(new { status = "denied" }));
+                case DeviceFlowPollStatus.Done:
+                    await PersistConnectionAsync(userId, result.AccessToken!, result.Scope ?? string.Empty);
+                    return Ok(ApiResponse<object>.Ok(new { status = "done" }));
+                default:
+                    return Ok(ApiResponse<object>.Ok(new { status = "pending" }));
+            }
+        }
+        catch (GitHubException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
+    }
+
+    /// <summary>断开 GitHub 连接（删除 token 记录）。</summary>
+    [HttpDelete("github/connection")]
+    public async Task<IActionResult> DisconnectGitHub(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var result = await _db.GitHubUserConnections.DeleteOneAsync(x => x.UserId == userId, ct);
+        return Ok(ApiResponse<object>.Ok(new { deleted = result.DeletedCount > 0 }));
+    }
+
+    /// <summary>Device Flow 成功后，把 (login / avatar / token) upsert 到 github_user_connections。</summary>
+    private async Task PersistConnectionAsync(string userId, string accessToken, string scope)
+    {
+        var userInfo = await _oauth.FetchUserInfoAsync(accessToken, CancellationToken.None);
+
+        var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret missing");
+        var encrypted = ApiKeyCrypto.Encrypt(accessToken, jwtSecret);
+
+        var now = DateTime.UtcNow;
+        var filter = Builders<GitHubUserConnection>.Filter.Eq(x => x.UserId, userId);
+        var update = Builders<GitHubUserConnection>.Update
+            .Set(x => x.UserId, userId)
+            .Set(x => x.GitHubLogin, userInfo.Login)
+            .Set(x => x.GitHubUserId, userInfo.Id.ToString())
+            .Set(x => x.AvatarUrl, userInfo.AvatarUrl)
+            .Set(x => x.AccessTokenEncrypted, encrypted)
+            .Set(x => x.Scopes, scope)
+            .Set(x => x.ConnectedAt, now)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"));
+
+        await _db.GitHubUserConnections.UpdateOneAsync(
+            filter,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            CancellationToken.None);
+
+        _logger.LogInformation("ProjectRouteAgent GitHub connected via device flow: user={UserId} login={Login}", userId, userInfo.Login);
+    }
+
+    private bool IsOAuthConfigured()
+    {
+        return !string.IsNullOrWhiteSpace(_config["GitHubOAuth:ClientId"])
+            && !string.IsNullOrWhiteSpace(_config["GitHubOAuth:ClientSecret"]);
     }
 
     // ──────────────────────────────────────────────────────────────

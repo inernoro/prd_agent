@@ -146,6 +146,8 @@ export function getAnalyzeStreamUrl(planId: string): string {
 
 export interface ProjectRouteGitHubStatus {
   connected: boolean;
+  /** 后端是否配置了 GitHubOAuth ClientId / Secret（没配则无法授权） */
+  oauthConfigured?: boolean;
   githubLogin?: string | null;
   avatarUrl?: string | null;
   scopes?: string | null;
@@ -154,4 +156,41 @@ export interface ProjectRouteGitHubStatus {
 
 export async function getProjectRouteGitHubStatus(): Promise<ApiResponse<ProjectRouteGitHubStatus>> {
   return apiRequest('/api/project-route-agent/github/status');
+}
+
+// ──────────────────────────────────────────────
+// GitHub Device Flow（项目路由智能体独立授权流程，不跳出本智能体）
+// ──────────────────────────────────────────────
+
+export interface ProjectRouteGitHubDeviceStart {
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+  flowToken: string;
+}
+
+export type ProjectRouteGitHubDevicePollStatus =
+  | 'pending'
+  | 'slow_down'
+  | 'expired'
+  | 'denied'
+  | 'done';
+
+export async function startProjectRouteGitHubDevice(): Promise<ApiResponse<ProjectRouteGitHubDeviceStart>> {
+  return apiRequest('/api/project-route-agent/github/device/start', { method: 'POST' });
+}
+
+export async function pollProjectRouteGitHubDevice(
+  flowToken: string,
+): Promise<ApiResponse<{ status: ProjectRouteGitHubDevicePollStatus }>> {
+  return apiRequest('/api/project-route-agent/github/device/poll', {
+    method: 'POST',
+    body: { flowToken },
+  });
+}
+
+export async function disconnectProjectRouteGitHub(): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest('/api/project-route-agent/github/connection', { method: 'DELETE' });
 }

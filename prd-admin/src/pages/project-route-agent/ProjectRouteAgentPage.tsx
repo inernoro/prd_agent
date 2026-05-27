@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ExternalLink, ChevronDown, ChevronRight, History, RefreshCw, Trash2 } from 'lucide-react';
+import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ChevronDown, ChevronRight, History, RefreshCw, Trash2, Check, Copy } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { uploadAttachment } from '@/services/real/aiToolbox';
+import { createPortal } from 'react-dom';
 import {
   createPlan,
   deletePlan,
@@ -10,6 +11,9 @@ import {
   upsertSiteSpec,
   getAnalyzeStreamUrl,
   getProjectRouteGitHubStatus,
+  startProjectRouteGitHubDevice,
+  pollProjectRouteGitHubDevice,
+  disconnectProjectRouteGitHub,
   type ProjectRoutePlan,
   type ProjectRouteSiteSpec,
   type ProjectRouteExtractedRepo,
@@ -104,6 +108,7 @@ function AnalyzeView() {
   const [siteSpecLoading, setSiteSpecLoading] = useState(true);
 
   const [ghStatus, setGhStatus] = useState<ProjectRouteGitHubStatus | null>(null);
+  const [ghAuthOpen, setGhAuthOpen] = useState(false);
 
   const [plan, setPlan] = useState<ProjectRoutePlan | null>(null);
   const [apps, setApps] = useState<string[]>([]);
@@ -332,8 +337,12 @@ function AnalyzeView() {
               <p className="text-[11px] text-amber-300/80">公共站点说明尚未配置，需管理员先上传一份 markdown。</p>
             )}
 
-            {/* GitHub 授权状态 —— 与 pr-review 共享同一份 OAuth 连接 */}
-            <GitHubStatusCard status={ghStatus} onRefresh={() => { void refreshGhStatus(); }} />
+            {/* GitHub 授权状态 —— 内联 Device Flow，不跳转其他智能体 */}
+            <GitHubStatusCard
+              status={ghStatus}
+              onOpenAuth={() => setGhAuthOpen(true)}
+              onRefresh={() => { void refreshGhStatus(); }}
+            />
 
             {error && (
               <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
@@ -540,18 +549,38 @@ function AnalyzeView() {
             ) : (
               <ul className="space-y-3">
                 {resolutions.map((r) => (
-                  <ResolutionCard key={r.repoUrl} r={r} ghConnected={!!ghStatus?.connected} />
+                  <ResolutionCard
+                    key={r.repoUrl}
+                    r={r}
+                    ghConnected={!!ghStatus?.connected}
+                    onOpenAuth={() => setGhAuthOpen(true)}
+                  />
                 ))}
               </ul>
             )}
           </div>
         </div>
       </section>
+
+      {ghAuthOpen && (
+        <GitHubAuthModal
+          onClose={() => setGhAuthOpen(false)}
+          onSuccess={() => { setGhAuthOpen(false); void refreshGhStatus(); }}
+        />
+      )}
     </div>
   );
 }
 
-function GitHubStatusCard({ status, onRefresh }: { status: ProjectRouteGitHubStatus | null; onRefresh: () => void }) {
+function GitHubStatusCard({
+  status,
+  onOpenAuth,
+  onRefresh,
+}: {
+  status: ProjectRouteGitHubStatus | null;
+  onOpenAuth: () => void;
+  onRefresh: () => void;
+}) {
   if (status == null) return null;
   if (status.connected) {
     return (
@@ -562,12 +591,27 @@ function GitHubStatusCard({ status, onRefresh }: { status: ProjectRouteGitHubSta
             已用 GitHub 账号 <span className="font-medium">{status.githubLogin ?? '已授权'}</span> 授权（私有 / 组织仓库 routemap 可拉）
           </p>
         </div>
-        <a
-          href="/pr-review"
-          className="text-[11px] text-emerald-300/80 hover:text-emerald-200 underline-offset-2 hover:underline shrink-0"
+        <button
+          onClick={async () => {
+            const ok = window.confirm(`断开 GitHub 账号「${status.githubLogin ?? '当前账号'}」？\n断开后私有 / 组织仓库将无法拉取。`);
+            if (!ok) return;
+            const res = await disconnectProjectRouteGitHub();
+            if (res.success) onRefresh();
+          }}
+          className="text-[11px] text-emerald-300/80 hover:text-emerald-200 hover:underline shrink-0"
         >
-          管理
-        </a>
+          断开授权
+        </button>
+      </div>
+    );
+  }
+  if (!status.oauthConfigured) {
+    return (
+      <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-md px-3 py-2">
+        <Github className="w-3.5 h-3.5 text-white/40 shrink-0" />
+        <p className="text-[11px] text-white/50">
+          后端未配置 GitHub OAuth ClientId/Secret，无法授权 —— 仅可拉公共仓库。
+        </p>
       </div>
     );
   }
@@ -579,15 +623,228 @@ function GitHubStatusCard({ status, onRefresh }: { status: ProjectRouteGitHubSta
           尚未授权 GitHub。匿名访问只能拉公共仓库；私有 / 组织仓库会克隆失败。
         </p>
       </div>
-      <a
-        href="/pr-review"
-        onClick={() => setTimeout(onRefresh, 2000)}
+      <button
+        onClick={onOpenAuth}
         className="inline-flex items-center gap-1 text-[11px] text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 rounded-md shrink-0 transition-colors"
       >
-        去授权 <ExternalLink className="w-3 h-3" />
-      </a>
+        授权 GitHub
+      </button>
     </div>
   );
+}
+
+/**
+ * GitHub Device Flow 内联授权弹窗 —— 全程在项目路由智能体页面内完成，不跳 /pr-review。
+ * 流程：start → 显示 user_code + 跳 GitHub 输入页 → 后端轮询 → done。
+ */
+function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [phase, setPhase] = useState<'idle' | 'starting' | 'waiting' | 'success' | 'expired' | 'denied' | 'error'>('idle');
+  const [data, setData] = useState<{
+    userCode: string;
+    verificationUri: string;
+    verificationUriComplete: string;
+    intervalSeconds: number;
+    expiresInSeconds: number;
+    flowToken: string;
+  } | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const pollTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    void start();
+    return () => {
+      if (pollTimerRef.current) {
+        window.clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ESC 关闭
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  async function start() {
+    setPhase('starting');
+    setErrorMsg(null);
+    const res = await startProjectRouteGitHubDevice();
+    if (!res.success || !res.data) {
+      setPhase('error');
+      setErrorMsg(res.error?.message ?? '发起 Device Flow 失败');
+      return;
+    }
+    setData(res.data);
+    setPhase('waiting');
+    // 等用户去 GitHub 输入码后开始轮询
+    schedulePoll(res.data.flowToken, res.data.intervalSeconds);
+  }
+
+  function schedulePoll(flowToken: string, intervalSec: number) {
+    if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    pollTimerRef.current = window.setTimeout(() => { void pollOnce(flowToken); }, intervalSec * 1000);
+  }
+
+  async function pollOnce(flowToken: string) {
+    const res = await pollProjectRouteGitHubDevice(flowToken);
+    if (!res.success) {
+      setPhase('error');
+      setErrorMsg(res.error?.message ?? '轮询失败');
+      return;
+    }
+    const status = res.data?.status ?? 'pending';
+    if (status === 'done') {
+      setPhase('success');
+      // 让用户看到 success 状态 1.2s 后再关弹窗
+      window.setTimeout(onSuccess, 1200);
+      return;
+    }
+    if (status === 'expired') { setPhase('expired'); return; }
+    if (status === 'denied') { setPhase('denied'); return; }
+    // pending / slow_down → 继续轮询；slow_down 时把间隔翻倍
+    const nextInterval = status === 'slow_down' ? (data?.intervalSeconds ?? 5) * 2 : (data?.intervalSeconds ?? 5);
+    schedulePoll(flowToken, nextInterval);
+  }
+
+  async function copyCode() {
+    if (!data?.userCode) return;
+    try {
+      await navigator.clipboard.writeText(data.userCode);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // best effort
+    }
+  }
+
+  const modal = (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="relative rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl"
+        style={{ width: '480px', maxWidth: '94vw', maxHeight: '90vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 shrink-0">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Github className="w-4 h-4" /> 授权 GitHub（项目路由智能体）
+          </h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white/80">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div
+          className="px-5 py-4"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: 'calc(90vh - 60px)' }}
+        >
+          {(phase === 'starting' || phase === 'idle') && (
+            <div className="flex items-center justify-center py-10 text-white/60 text-sm">
+              <Loader2 className="w-4 h-4 animate-spin mr-2" /> 正在发起授权…
+            </div>
+          )}
+
+          {phase === 'waiting' && data && (
+            <div className="space-y-4">
+              <p className="text-xs text-white/70 leading-relaxed">
+                1. 点击下方按钮跳转 GitHub 授权页（新窗口）<br />
+                2. GitHub 会要求你输入下面这个验证码<br />
+                3. 授权完成后本页面会自动检测，无需手动回来
+              </p>
+
+              <div className="bg-black/40 border border-white/10 rounded-lg p-4 text-center">
+                <p className="text-[10px] text-white/50 mb-1.5 uppercase tracking-wider">用户验证码</p>
+                <p className="text-[28px] font-mono text-emerald-200 tracking-[0.3em] select-all">
+                  {data.userCode}
+                </p>
+                <button
+                  onClick={copyCode}
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white/90"
+                >
+                  {copied ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />}
+                  {copied ? '已复制' : '复制验证码'}
+                </button>
+              </div>
+
+              <a
+                href={data.verificationUriComplete || data.verificationUri}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full text-center bg-sky-600 hover:bg-sky-500 rounded-lg py-2.5 text-sm font-medium text-white transition-colors"
+              >
+                打开 GitHub 输入验证码 →
+              </a>
+
+              <div className="flex items-center justify-center gap-2 text-[11px] text-white/40">
+                <Loader2 className="w-3 h-3 animate-spin" /> 等待 GitHub 那边完成授权…
+              </div>
+
+              <p className="text-[10px] text-white/30 text-center">
+                验证码 {Math.floor(data.expiresInSeconds / 60)} 分钟内有效
+              </p>
+            </div>
+          )}
+
+          {phase === 'success' && (
+            <div className="flex flex-col items-center justify-center py-8 text-emerald-200">
+              <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mb-3">
+                <Check className="w-6 h-6 text-emerald-300" />
+              </div>
+              <p className="text-sm">授权成功，正在返回…</p>
+            </div>
+          )}
+
+          {phase === 'expired' && (
+            <div className="text-center py-6 space-y-3">
+              <AlertCircle className="w-8 h-8 text-amber-300 mx-auto" />
+              <p className="text-sm text-amber-200">验证码已过期</p>
+              <button
+                onClick={start}
+                className="text-xs text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
+              >
+                重新获取
+              </button>
+            </div>
+          )}
+
+          {phase === 'denied' && (
+            <div className="text-center py-6 space-y-3">
+              <AlertCircle className="w-8 h-8 text-red-300 mx-auto" />
+              <p className="text-sm text-red-200">用户拒绝了授权</p>
+              <button
+                onClick={onClose}
+                className="text-xs text-white/60 hover:text-white/90 underline-offset-2 hover:underline"
+              >
+                关闭
+              </button>
+            </div>
+          )}
+
+          {phase === 'error' && (
+            <div className="text-center py-6 space-y-3">
+              <AlertCircle className="w-8 h-8 text-red-300 mx-auto" />
+              <p className="text-sm text-red-200">{errorMsg ?? '授权过程出错'}</p>
+              <button
+                onClick={start}
+                className="text-xs text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
+              >
+                重试
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
 }
 
 function PillList({ label, items, color }: { label: string; items: string[]; color: 'sky' | 'emerald' }) {
@@ -705,7 +962,7 @@ function RepoCard({ r }: {
 }
 
 /** 第三栏单条 Resolution 卡：默认显示项目路径 + 第三方仓库；点开看 .md 文件全文 */
-function ResolutionCard({ r, ghConnected }: { r: ProjectRouteResolution; ghConnected: boolean }) {
+function ResolutionCard({ r, ghConnected, onOpenAuth }: { r: ProjectRouteResolution; ghConnected: boolean; onOpenAuth?: () => void }) {
   const [open, setOpen] = useState(false);
   return (
     <li className="bg-white/3 rounded-md p-2.5 border border-white/5">
@@ -750,13 +1007,13 @@ function ResolutionCard({ r, ghConnected }: { r: ProjectRouteResolution; ghConne
       {r.reasoning && (
         <p className="text-[10px] text-white/40 mt-1.5 break-all">{r.reasoning}</p>
       )}
-      {r.status === 'CloneFailed' && !ghConnected && (
-        <a
-          href="/pr-review"
+      {r.status === 'CloneFailed' && !ghConnected && onOpenAuth && (
+        <button
+          onClick={onOpenAuth}
           className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-1.5 py-0.5 rounded-md transition-colors"
         >
-          <Github className="w-3 h-3" /> 去授权 GitHub 后重试
-        </a>
+          <Github className="w-3 h-3" /> 授权 GitHub 后重试
+        </button>
       )}
 
       {open && r.routemapFiles.length > 0 && (
