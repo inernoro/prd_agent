@@ -108,6 +108,7 @@ describe('Branch Routes', () => {
   let stateService: StateService;
   let containerService: ContainerService;
   let serverEventLogStore: ServerEventLogSink;
+  let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
     source?: string;
@@ -159,6 +160,12 @@ describe('Branch Routes', () => {
     containerService = new ContainerService(mock, config);
     (containerService as any).waitForContainerAlive = async () => undefined;
     (containerService as any).waitForReadiness = async () => true;
+    registryNodes = [];
+    const registry = {
+      getAll: () => registryNodes,
+      getOnline: () => registryNodes.filter((node) => node.status === 'online'),
+      selectExecutor: () => registryNodes.find((node) => node.status === 'online') || null,
+    } as any;
     operationEvents = [];
     serverEventLogStore = {
       record(record) {
@@ -184,7 +191,7 @@ describe('Branch Routes', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({
-      stateService, worktreeService, containerService, shell: mock, config, branchOperationCoordinator, serverEventLogStore,
+      stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
     }));
 
     await new Promise<void>((resolve) => {
@@ -1678,6 +1685,100 @@ describe('Branch Routes', () => {
         expect(stopStarted?.operationId).toMatch(/^op_/);
         expect(events.find((event) => event.action === 'container.logs.archived' && event.details?.archiveSource === 'manual-stop')?.operationId)
           .toBe(stopStarted?.operationId);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('remote executor deploy completes the branch operation lease so later webhook deploys are not merged into a stale active op', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'remote-lease',
+        projectId: 'default',
+        branch: 'feature/remote-lease',
+        worktreePath: path.join(tmpDir, 'worktrees', 'remote-lease'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-remote-lease-api',
+            hostPort: 10001,
+            status: 'idle',
+          },
+        },
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+      registryNodes.push({
+        id: 'exec-1',
+        host: '127.0.0.1',
+        port: 9101,
+        status: 'online',
+        role: 'remote',
+        labels: [],
+        branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        registeredAt: now,
+        lastHeartbeat: now,
+      });
+
+      const fetchCalls: Array<{ url: string; body: any }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return new Response([
+          'event: step',
+          'data: {"step":"remote","status":"running","title":"remote deploy"}',
+          '',
+          'event: complete',
+          'data: {"ok":true,"services":{"api":{"status":"running"}}}',
+          '',
+          '',
+        ].join('\n'), { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const first = await request(
+          server,
+          'POST',
+          '/api/branches/remote-lease/deploy',
+          { commitSha: '1111111111111111111111111111111111111111', targetExecutorId: 'exec-1' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-remote-a' },
+        );
+        expect(first.status).toBe(200);
+
+        const second = await request(
+          server,
+          'POST',
+          '/api/branches/remote-lease/deploy',
+          { commitSha: '2222222222222222222222222222222222222222', targetExecutorId: 'exec-1' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-remote-b' },
+        );
+        expect(second.status).toBe(200);
+        expect(String(second.body)).not.toContain('merged');
+        expect(fetchCalls).toHaveLength(2);
+
+        const events = operationEvents.filter((event) => event.branchId === 'remote-lease');
+        const started = events.filter((event) => event.action === 'branch.operation.started' && event.details?.kind === 'deploy');
+        const completed = events.filter((event) => event.action === 'branch.operation.completed' && event.details?.kind === 'deploy');
+        expect(started).toHaveLength(2);
+        expect(completed).toHaveLength(2);
+        expect(events.some((event) => event.action === 'branch.operation.merged')).toBe(false);
+        expect(fetchCalls[0].body.operationId).toBe(started[0].operationId);
+        expect(fetchCalls[1].body.operationId).toBe(started[1].operationId);
       } finally {
         globalThis.fetch = originalFetch;
       }

@@ -1901,7 +1901,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     entry: BranchEntry,
     res: import('express').Response,
     context: { requestId?: string | null; operationId?: string | null; actor?: string | null; trigger?: string | null } = {},
-  ): Promise<void> {
+  ): Promise<'completed' | 'failed'> {
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
     res.writeHead(200, {
@@ -1996,7 +1996,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         proxyHasError = true;
         opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
         stateService.save();
-        return;
+        return 'failed';
       }
 
       // Pipe the executor's SSE bytes directly to the client. Chunks may
@@ -2137,6 +2137,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try { stateService.appendLog(entry.id, opLog); } catch { /* tolerate */ }
       try { res.end(); } catch { /* ignore */ }
     }
+    return proxyHasError ? 'failed' : 'completed';
   }
 
   // ── Preview port servers (port mode: per-branch proxy with path-prefix routing) ──
@@ -4542,12 +4543,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // handing this branch off to the remote — the master isn't running
       // containers for it, the executor is.
       entry.errorMessage = undefined;
-      await proxyDeployToExecutor(remoteTarget, entry, res, {
-        requestId: requestId || null,
-        operationId: branchOperationLease?.operationId || null,
-        actor: resolveActorFromRequest(req),
-        trigger: triggerFromRequest(req),
-      });
+      try {
+        branchOperationFinalStatus = await proxyDeployToExecutor(remoteTarget, entry, res, {
+          requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
+        });
+      } catch (err) {
+        branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+        throw err;
+      } finally {
+        completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+      }
       return;
     }
 
