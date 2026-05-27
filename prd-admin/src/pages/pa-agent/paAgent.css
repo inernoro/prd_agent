@@ -234,6 +234,90 @@
 }
 
 /* =======================================================================
+ *  等待首 token —「让我想想...」橙色动态提示（替代三点跳动）
+ * ===================================================================== */
+@keyframes pa-thinking-shimmer {
+  0% { background-position: 200% 50%; }
+  100% { background-position: -200% 50%; }
+}
+@keyframes pa-thinking-dot {
+  0%, 70%, 100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+@keyframes pa-thinking-glow {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(245, 158, 11, 0)); }
+  50% { filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.45)); }
+}
+
+.pa-thinking-indicator {
+  display: inline-flex;
+  align-items: baseline;
+  font-size: var(--pa-fs-body, 14px);
+  font-weight: 600;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  animation: pa-thinking-glow 2.4s var(--pa-ease-emphasized, ease) infinite;
+}
+.pa-thinking-label {
+  color: #f59e0b;
+  background: linear-gradient(
+    90deg,
+    #d97706 0%,
+    #fbbf24 35%,
+    #fcd34d 50%,
+    #fbbf24 65%,
+    #d97706 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: pa-thinking-shimmer 2.2s linear infinite;
+}
+/* 渐变裁剪不支持时仍保持琥珀色可读 */
+@supports not ((-webkit-background-clip: text) or (background-clip: text)) {
+  .pa-thinking-label {
+    -webkit-text-fill-color: #f59e0b;
+    color: #f59e0b;
+  }
+}
+.pa-thinking-ellipsis {
+  display: inline-flex;
+  margin-left: 1px;
+}
+.pa-thinking-ellipsis > span {
+  color: #f59e0b;
+  font-weight: 700;
+  animation: pa-thinking-dot 1.1s var(--pa-ease-spring, ease) infinite;
+}
+.pa-thinking-ellipsis > span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.pa-thinking-ellipsis > span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-thinking-label,
+.pa-agent-root[data-pa-theme="parchment"] .pa-thinking-ellipsis > span {
+  color: #b45309;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-thinking-label {
+  background: linear-gradient(
+    90deg,
+    #92400e 0%,
+    #d97706 40%,
+    #b45309 60%,
+    #92400e 100%
+  );
+  background-size: 220% 100%;
+}
+
+/* =======================================================================
  *  字号自定义系统 — 顶部 bar A- / A / A+ 三档
  *  通过 data-pa-fontsize 在 PaAgentPage 根 div 控制；CSS 变量级联
  *  仅作用于 pa-agent 模块；不污染全局

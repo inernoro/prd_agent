@@ -63,6 +63,25 @@ function stripTaskJson(content: string): string {
   return content.replace(/```json\s*[\s\S]*?```/g, '').trim();
 }
 
+/** 流式首包未到前的等待态：橙色「让我想想...」+ 动态省略号 */
+function PaThinkingIndicator() {
+  return (
+    <div
+      className="pa-thinking-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label="让我想想"
+    >
+      <span className="pa-thinking-label">让我想想</span>
+      <span className="pa-thinking-ellipsis" aria-hidden="true">
+        <span>.</span>
+        <span>.</span>
+        <span>.</span>
+      </span>
+    </div>
+  );
+}
+
 // ── SuggestTaskButton ──────────────────────────────────────────────────────
 
 interface SuggestTaskButtonProps {
@@ -585,12 +604,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                       cursorContent="dot"
                     />
                   ) : (
-                    <div className="flex items-center gap-1.5" aria-label="思考中">
-                      {[0, 150, 300].map(d => (
-                        <span key={d} className="w-1.5 h-1.5 rounded-full animate-bounce"
-                          style={{ background: 'var(--text-muted)', animationDelay: `${d}ms` }} />
-                      ))}
-                    </div>
+                    <PaThinkingIndicator />
                   )}
                 </div>
               </div>
