@@ -15,3 +15,7 @@
 | fix | prd-api | 毒舌秘书任务识别改为遍历全部 JSON 代码块并优先处理 save_task，避免与 update_profile 共存时漏入任务看板；同时强化 suggest/auto 判定提示词 |
 | feat | prd-admin | 毒舌秘书视觉 v2：卡片 PaAgentCardArt 科幻深蓝+女秘书 bust；统一 PaSecretaryIcon 替换 NotebookPen（百宝箱/首页/侧栏/Cmd+K） |
 | feat | prd-admin | 羊皮卷主题改为米白浅色系+淡淡书卷纹理，强调色改鼠尾草绿，与科幻秘书品牌区隔 |
+| fix | prd-admin | 侧栏历史会话加线框卡片（pa-session-item）区隔每条对话 |
+| fix | prd-admin | 修复 A-/A/A+ 字号：pa-fs-sm/xs 覆盖对话区 Tailwind 固定字号，档位拉大到 0.82/1.38 |
+| fix | prd-admin | 修复羊皮卷下「让我想想」渐变字被褐色色块遮挡（保留 background-clip:text） |
+| feat | prd-admin | 空状态换 PaSecretaryHeroArt 全息人像；卡片秘书 bust 重绘为 AI 科技风 |

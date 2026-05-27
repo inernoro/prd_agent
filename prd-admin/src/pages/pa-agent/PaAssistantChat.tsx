@@ -12,7 +12,7 @@ import {
 } from '@/services/real/paAgentService';
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from './ChatMarkdown';
-import { PaSecretaryIcon } from '@/pages/ai-toolbox/components/PaSecretaryIcon';
+import { PaSecretaryHeroArt } from '@/pages/ai-toolbox/components/PaSecretaryHeroArt';
 
 /** 「进一步了解我」外链 — 米多内部 wp 链接，承载毒舌秘书完整产品介绍 */
 const LEARN_MORE_URL = 'https://map.ebcone.net/s/wp/0q1-vbQ9HehA';
@@ -246,7 +246,7 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, profileEvent, onT
     return (
       <div className="flex justify-end mb-4">
         <div
-          className="max-w-[80%] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm leading-relaxed"
+          className="max-w-[80%] rounded-2xl rounded-br-sm px-4 py-2.5 pa-fs-sm"
           style={{ background: 'linear-gradient(135deg,#3b82f6,#6366f1)', color: '#fff' }}
         >
           {msg.content}
@@ -265,14 +265,13 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, profileEvent, onT
       </div>
       <div className="max-w-[82%]">
         <div
-          className="rounded-2xl rounded-tl-sm px-4 py-3"
+          className="rounded-2xl rounded-tl-sm px-4 py-3 pa-fs-sm"
           style={{
             background: 'var(--bg-elevated)',
             border: '1px solid var(--border-default)',
             color: 'var(--text-primary)',
           }}
         >
-          {/* ChatMarkdown：H1/H2/列表/代码/表格/引用全部走精致排版 */}
           <ChatMarkdown content={displayContent} />
         </div>
         {/* Auto-saved toast */}
@@ -465,8 +464,8 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
         ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full gap-7 px-4 pa-empty-enter">
             <div className="text-center max-w-md">
-              <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon pa-secretary-avatar-shell">
-                <PaSecretaryIcon size={44} color="#e0f2fe" />
+              <div className="w-[88px] h-[88px] rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon pa-secretary-avatar-shell">
+                <PaSecretaryHeroArt size={72} />
               </div>
               {/* display 标题层 */}
               <div
@@ -493,7 +492,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                 <button
                   key={i}
                   onClick={() => void handleSend(cmd.prompt)}
-                  className="pa-quick-cmd group flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs text-left"
+                  className="pa-quick-cmd group flex items-center gap-2 px-3 py-2.5 rounded-xl pa-fs-xs text-left"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-default)',
@@ -577,7 +576,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                   <Zap size={13} color="#fff" />
                 </div>
                 <div
-                  className="max-w-[82%] rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
+                  className="max-w-[82%] rounded-2xl rounded-tl-sm px-4 py-3 pa-fs-sm pa-thinking-bubble"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-default)',
@@ -641,7 +640,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
             disabled={isStreaming}
             placeholder={isStreaming ? '正在回复中...' : attachment ? '说说你想拿这份文档干什么。' : '说事实，不说感受。'}
             rows={1}
-            className="w-full resize-none bg-transparent text-sm outline-none px-4 pt-3 pb-1"
+            className="w-full resize-none bg-transparent pa-fs-sm outline-none px-4 pt-3 pb-1"
             style={{ color: 'var(--text-primary)', minHeight: 42, maxHeight: 140 }}
           />
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1 gap-2">

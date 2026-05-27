@@ -69,49 +69,62 @@ export function PaAgentCardArt() {
           strokeWidth="0.8"
         />
 
-        {/* 女秘书 bust — 主体 */}
+        {/* 女秘书 bust — AI 科技风（全息环 + 耳麦 + 职业装） */}
         <g className="pa-agent-secretary-core">
+          <ellipse cx="92" cy="78" rx="34" ry="40" fill="rgba(56,189,248,0.12)" />
           {/* 长发 */}
           <path
-            d="M78 58 C72 32,108 28,118 52 C122 68,120 88,112 102 C108 112,98 118,88 118 C76 118,68 110,64 98 C58 82,62 68,78 58Z"
+            d="M74 56 C68 28,116 26,122 54 C126 72,124 92,114 106 C106 116,94 120,84 118 C70 114,62 100,58 84 C54 70,62 58,74 56Z"
             fill="url(#pac-hair)"
           />
           <path
-            d="M64 72 C58 88,60 108,70 118"
-            stroke="rgba(103,232,249,0.25)"
-            strokeWidth="1.2"
+            d="M58 74 C52 92,56 112,68 122"
+            stroke="rgba(103,232,249,0.3)"
+            strokeWidth="1.4"
             fill="none"
           />
-          {/* 脸 */}
-          <ellipse cx="92" cy="72" rx="20" ry="23" fill="#f8d4bc" />
+          {/* AI 额环 */}
           <path
-            d="M72 68 C74 48,110 46,114 68 C108 56,88 56,72 68Z"
+            d="M74 58 Q92 50 110 58"
+            stroke="#67e8f9"
+            strokeWidth="1.2"
+            fill="none"
+            opacity="0.85"
+          />
+          {/* 脸 */}
+          <ellipse cx="92" cy="70" rx="19" ry="22" fill="#f9dcc8" />
+          <ellipse cx="92" cy="71" rx="17" ry="19" fill="#f5d0bc" />
+          <path
+            d="M73 66 C75 46,109 44,113 66 C106 54,88 55,73 66Z"
             fill="#0f172a"
           />
-          <ellipse cx="84" cy="74" rx="2.2" ry="2.5" fill="#0f172a" />
-          <ellipse cx="100" cy="74" rx="2.2" ry="2.5" fill="#0f172a" />
-          <path d="M88 80 Q92 82 96 80" stroke="rgba(180,100,90,0.5)" strokeWidth="0.8" fill="none" />
+          <ellipse cx="85" cy="72" rx="2.4" ry="2.7" fill="#0f172a" />
+          <ellipse cx="99" cy="72" rx="2.4" ry="2.7" fill="#0f172a" />
+          <circle cx="86" cy="70.5" r="0.7" fill="#fff" opacity="0.75" />
+          <path d="M87 78 Q92 80 97 78" stroke="rgba(180,100,90,0.55)" strokeWidth="0.9" fill="none" />
           {/* 颈 + 西装 */}
-          <path d="M82 94 L102 94 L108 118 L76 118 Z" fill="url(#pac-suit)" />
-          <path d="M76 118 L108 118 L112 132 L72 132 Z" fill="rgba(15,23,42,0.85)" />
+          <path d="M80 92 L104 92 L110 118 L74 118 Z" fill="url(#pac-suit)" />
+          <path d="M74 118 L110 118 L114 134 L70 134 Z" fill="rgba(15,23,42,0.88)" />
+          <path d="M78 98 L106 98" stroke="rgba(191,219,254,0.35)" strokeWidth="0.6" />
           {/* 科幻耳麦 */}
           <path
-            d="M112 70 C124 66,130 74,128 86"
+            d="M114 68 C128 62,136 72,132 88"
             stroke="#22d3ee"
-            strokeWidth="2.4"
+            strokeWidth="2.6"
             fill="none"
             strokeLinecap="round"
           />
-          <circle cx="128" cy="87" r="4" fill="#0ea5e9" opacity="0.35" />
-          <circle cx="128" cy="87" r="2.2" fill="#67e8f9" />
-          {/* 胸前全息徽章 */}
-          <circle cx="92" cy="108" r="7" fill="none" stroke="rgba(103,232,249,0.5)" strokeWidth="0.8" />
+          <circle cx="132" cy="89" r="5" fill="#0ea5e9" opacity="0.28" />
+          <circle cx="132" cy="89" r="2.6" fill="#67e8f9" />
+          {/* 胸前全息核 */}
+          <circle cx="92" cy="108" r="9" fill="none" stroke="rgba(103,232,249,0.45)" strokeWidth="0.9" />
+          <circle cx="92" cy="108" r="5.5" fill="rgba(14,165,233,0.25)" />
           <text
             x="92"
             y="111"
             textAnchor="middle"
             fill="#e0f2fe"
-            fontSize="7"
+            fontSize="7.5"
             fontWeight="700"
             fontFamily="ui-sans-serif, system-ui, sans-serif"
           >

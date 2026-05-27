@@ -302,19 +302,23 @@
 .pa-thinking-ellipsis > span:nth-child(3) {
   animation-delay: 0.36s;
 }
-.pa-agent-root[data-pa-theme="parchment"] .pa-thinking-label,
-.pa-agent-root[data-pa-theme="parchment"] .pa-thinking-ellipsis > span {
-  color: #b45309;
-}
+/* 羊皮卷下仍用渐变字，必须保留 background-clip，否则会显示为褐色色块遮挡文字 */
 .pa-agent-root[data-pa-theme="parchment"] .pa-thinking-label {
   background: linear-gradient(
     90deg,
-    #92400e 0%,
-    #d97706 40%,
-    #b45309 60%,
-    #92400e 100%
+    #c2410c 0%,
+    #ea580c 40%,
+    #f97316 60%,
+    #c2410c 100%
   );
   background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-thinking-ellipsis > span {
+  color: #ea580c;
+  -webkit-text-fill-color: #ea580c;
 }
 
 /* =======================================================================
@@ -340,9 +344,58 @@
   --text-secondary: var(--pa-text-secondary);
   --text-muted: var(--pa-text-muted);
 }
-.pa-agent-root[data-pa-fontsize="small"]   { --pa-fs-scale: 0.8; }
+.pa-agent-root[data-pa-fontsize="small"]   { --pa-fs-scale: 0.82; }
 .pa-agent-root[data-pa-fontsize="medium"]  { --pa-fs-scale: 1; }
-.pa-agent-root[data-pa-fontsize="large"]   { --pa-fs-scale: 1.28; }
+.pa-agent-root[data-pa-fontsize="large"]   { --pa-fs-scale: 1.38; }
+
+/* 字号档：覆盖模块内 Tailwind 固定 text-sm / text-xs，使 A-/A/A+ 全局可见 */
+.pa-agent-root .pa-fs-sm {
+  font-size: var(--pa-fs-body, 14px) !important;
+  line-height: 1.65 !important;
+}
+.pa-agent-root .pa-fs-xs {
+  font-size: var(--pa-fs-caption, 12px) !important;
+  line-height: 1.5 !important;
+}
+.pa-agent-root .pa-fs-tiny {
+  font-size: var(--pa-fs-tiny, 11px) !important;
+  line-height: 1.45 !important;
+}
+.pa-agent-root .pa-fs-lead {
+  font-size: var(--pa-fs-lead, 15px) !important;
+  line-height: 1.55 !important;
+}
+
+/* 侧栏历史会话 — 每条线框卡片，便于区隔不同对话 */
+.pa-session-item {
+  border: 1px solid var(--pa-border-default, var(--border-default));
+  background: var(--pa-bg-elevated, var(--bg-elevated));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+.pa-session-item:hover {
+  border-color: rgba(56, 189, 248, 0.28);
+  background: var(--pa-bg-hover, var(--bg-hover));
+}
+.pa-session-item[data-active="true"] {
+  border-color: rgba(37, 99, 235, 0.45);
+  background: rgba(37, 99, 235, 0.1);
+  box-shadow:
+    0 0 0 1px rgba(56, 189, 248, 0.12) inset,
+    0 8px 20px -12px rgba(37, 99, 235, 0.35);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-session-item {
+  background: rgba(255, 255, 252, 0.85);
+  border-color: rgba(120, 108, 88, 0.2);
+  box-shadow: 0 1px 2px rgba(120, 108, 88, 0.06);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-session-item[data-active="true"] {
+  border-color: rgba(74, 124, 111, 0.45);
+  background: rgba(74, 124, 111, 0.1);
+  box-shadow: 0 4px 14px -8px rgba(74, 124, 111, 0.25);
+}
+.pa-session-group + .pa-session-group {
+  margin-top: 4px;
+}
 
 /* =======================================================================
  *  主题切换 — dark（默认）↔ parchment（羊皮卷）
@@ -703,13 +756,20 @@
 /* ========================================================================
  *  顶部 bar 工具按钮（主题切换 + 字号切换）
  * ====================================================================== */
+.pa-toolbar-font-btn[data-active="true"] {
+  font-weight: 700;
+}
+.pa-toolbar-font-btn:nth-child(1) { font-size: calc(10px * var(--pa-fs-scale, 1)); }
+.pa-toolbar-font-btn:nth-child(2) { font-size: calc(12px * var(--pa-fs-scale, 1)); }
+.pa-toolbar-font-btn:nth-child(3) { font-size: calc(14px * var(--pa-fs-scale, 1)); }
+
 .pa-toolbar-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 4px 8px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: calc(11px * var(--pa-fs-scale, 1));
   color: var(--pa-text-muted);
   background: transparent;
   border: 1px solid transparent;

@@ -80,18 +80,9 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
 
   return (
     <div
-      className="group relative flex items-start gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition-all"
-      style={{
-        background: active ? 'rgba(99,102,241,0.12)' : 'transparent',
-        border: active ? '1px solid rgba(99,102,241,0.25)' : '1px solid transparent',
-      }}
+      className="pa-session-item group relative flex items-start gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition-all"
+      data-active={active ? 'true' : 'false'}
       onClick={onSelect}
-      onMouseEnter={e => {
-        if (!active) e.currentTarget.style.background = 'var(--bg-hover)';
-      }}
-      onMouseLeave={e => {
-        if (!active) e.currentTarget.style.background = 'transparent';
-      }}
     >
       <div
         className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center mt-0.5"
@@ -118,17 +109,17 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
         ) : (
           <>
             <div
-              className="text-xs font-medium truncate"
-              style={{ color: active ? '#a5b4fc' : 'var(--text-secondary)' }}
+              className="pa-fs-xs font-medium truncate"
+              style={{ color: active ? '#67e8f9' : 'var(--text-secondary)' }}
             >
               {session.title || '新对话'}
             </div>
             {session.lastMessagePreview && (
-              <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              <div className="pa-fs-tiny truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 {session.lastMessagePreview}
               </div>
             )}
-            <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+            <div className="pa-fs-tiny mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
               {dayjs(session.updatedAt).fromNow()}
             </div>
           </>
@@ -237,15 +228,15 @@ function GroupedSessions({ sessions, activeSessionId, onSelect, onDelete, onRena
       {groups
         .filter(g => g.items.length > 0)
         .map(g => (
-          <div key={g.key}>
+          <div key={g.key} className="pa-session-group">
             <div
-              className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider flex items-center justify-between"
+              className="px-2 pb-1 pa-fs-tiny font-semibold uppercase tracking-wider flex items-center justify-between"
               style={{ color: 'var(--text-muted)', opacity: 0.65, letterSpacing: '0.08em' }}
             >
               <span>{g.label}</span>
               <span className="text-[9px] opacity-70 tabular-nums">{g.items.length}</span>
             </div>
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               {g.items.map(s => (
                 <SessionItem
                   key={s.id}
@@ -513,29 +504,29 @@ export function PaAgentPage() {
             title="阅读偏好：字号 A- / A / A+ 三档"
           >
             <button
-              className="pa-toolbar-btn"
+              type="button"
+              className="pa-toolbar-btn pa-toolbar-font-btn"
               data-active={fontSize === 'small'}
               onClick={() => handleSetFontSize('small')}
               title="小号字"
-              style={{ fontSize: 10 }}
             >
               A-
             </button>
             <button
-              className="pa-toolbar-btn"
+              type="button"
+              className="pa-toolbar-btn pa-toolbar-font-btn"
               data-active={fontSize === 'medium'}
               onClick={() => handleSetFontSize('medium')}
               title="默认字号"
-              style={{ fontSize: 12 }}
             >
               A
             </button>
             <button
-              className="pa-toolbar-btn"
+              type="button"
+              className="pa-toolbar-btn pa-toolbar-font-btn"
               data-active={fontSize === 'large'}
               onClick={() => handleSetFontSize('large')}
               title="大号字"
-              style={{ fontSize: 14 }}
             >
               A+
             </button>
