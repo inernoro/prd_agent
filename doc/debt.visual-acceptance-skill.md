@@ -15,6 +15,8 @@
 - **分享 URL 路由修正**（实测 2026-05-27）：脚本原拼 `/library/share/{token}`——该路由在 App.tsx **不存在**，会落到营销首页（用户以为没分享）。正确路由是 `/s/lib/{token}`（`LibraryShareViewPage`），实测能渲染书册目录 + 正文 + 4 张内联截图，可直接当"点开即看"交付。SKILL.md「分享给登出第三方」旧称"只渲染目录不渲染正文"的缺陷描述同步更正（新页面已能渲染正文）。
 - **殿堂≠分享 概念订正**（用户强调 2026-05-27）：殿堂(发布到殿堂)=`isPublic=true`→进 `/public/stores`→**对所有人**公开浏览；分享(共享给别人)=`/s/lib/{token}`→**对部分人**(持链接者)，token 独立授权，**库私有也能看**(已实测：库 isPublic=false 时分享链仍渲染正文+4图)。二者正交，绝不能拿"设 public 进殿堂"冒充"分享给某人"。修复：(A 数据)把「验收报告」库 `isPublic` 从误设的 true 改回 false→退出殿堂，分享链仍可用；(B) SKILL.md 交付段重写为三路径(分享链/owner自看/殿堂)并删掉"设 public 走殿堂当分享"错误兜底；(C) archive_report.py 复用库时校验 isPublic 与 config 不符则告警，必给地址默认给分享链+owner、殿堂不作默认；(D) standard §8.5 立术语区分。教训：该库被早期 session 误设公开，验收报告一度对所有人可见，是可见性漂移。
 
+- **归档后自查能否打开**（用户要求 2026-05-27「创建之后要能打开」）：新增 `scripts/verify-open.mjs`——headless 打开分享链断言报告真渲染(标题 + 正文 + 截图)，exit 0=能看、exit 2=空/打不开→重新推送验收。SKILL.md 工作流第 5 步定为强制：归档后必跑，杜绝"建了条目但点开空白"流到用户手里。全链路复验已实测：脚本归档(写正文 success + hasContent 校验) → 分享链 → verify-open(必现文字命中 + 4 图齐 + 无死页 exit 0) 全绿。历史 2 条空壳(旧MECE + SaaS)已删除，库内仅剩有内容条目。
+
 ## wave 2 待补（差异化）
 
 - **E5 自动识别变化区画框**：当前 `stepShot` 的高亮区要调用方手传 locator。理想是操作前后 DOM diff 自动定位"新增/变化的元素"并自动画框，driver 不用手指。可借 MutationObserver 在 `stepClick` 内记录点击后新增节点，回传给下一张 `stepShot` 当默认 highlight。

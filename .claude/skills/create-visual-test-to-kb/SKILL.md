@@ -45,6 +45,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
    - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
    - **防断头报告**:建条目后强制校验正文真的落库(`GET /content` 的 `hasContent`);写不进(预览 524 等)会**自动删空壳条目 + 报错**,绝不留"有标题、点开空白"的半截条目。
    - **必给地址**:收尾必打印「验收归档完成 · 必给地址」块(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
+5. **归档后自查能否打开(强制,创建≠能看)**:拿到分享链后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <shareUrl> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
 
 ## 端到端示例(照抄即可)
 
@@ -91,7 +92,8 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/zz-report.md` | **默认** ZZ 照做风骨架(全大标题 + 一句话一步 + `{{IMG:}}` 逐步配图) | 写报告时(首选) |
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
-| `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文/分享链) | 归档时 |
+| `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
+| `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
 | `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
 
 ## 跨仓库复用
