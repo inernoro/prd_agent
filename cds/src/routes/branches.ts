@@ -83,6 +83,7 @@ const selfStatusClients = new Set<import('express').Response>();
 let broadcastInFlight = false;
 let broadcastQueued = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
+const DELETE_STATE_FLUSH_TIMEOUT_MS = 500;
 
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
@@ -1104,6 +1105,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           operationId: options.operationId ?? null,
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
+          assertCurrent: options.assertCurrent,
         },
       );
       return;
@@ -1655,7 +1657,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ?.getActiveOperations(entry.id)
       .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
 
-    if (!branchStillExists || cleanupOwner) {
+    if (cleanupOwner && branchStillExists) {
       for (const profileId of profileIds) {
         const svc = entry.services?.[profileId];
         if (!svc?.containerName) continue;
@@ -4057,7 +4059,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
-      await stateService.flush();
+      const flushResult = await Promise.race([
+        stateService.flush().then(() => 'flushed' as const).catch((err) => {
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'branch-delete',
+            action: 'branch.delete.state-flush-failed',
+            message: `state flush failed while deleting ${id}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null,
+            error: { message: (err as Error).message },
+            details: { actor, trigger: trigger || null },
+          });
+          return 'failed' as const;
+        }),
+        new Promise<'timeout'>((resolve) => {
+          const timer = setTimeout(() => resolve('timeout'), DELETE_STATE_FLUSH_TIMEOUT_MS);
+          timer.unref?.();
+        }),
+      ]);
+      if (flushResult === 'timeout') {
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'branch-delete',
+          action: 'branch.delete.state-flush-timeout',
+          message: `state flush timed out while deleting ${id}; continuing delete response`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null,
+          details: { actor, trigger: trigger || null, timeoutMs: DELETE_STATE_FLUSH_TIMEOUT_MS },
+        });
+      }
       branchEvents.emitEvent({
         type: 'branch.removed',
         payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },

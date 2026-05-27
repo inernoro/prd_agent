@@ -1190,6 +1190,42 @@ describe('Branch Routes', () => {
       )).toBeTruthy();
     });
 
+    it('does not keep delete SSE open when state flush hangs after removing branch state', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'hung-flush-delete',
+        projectId: 'default',
+        branch: 'feature/hung-flush-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'hung-flush-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      stateService.flush = async () => {
+        await new Promise<void>(() => { /* simulate stuck write-behind persistence */ });
+      };
+
+      const startedAt = Date.now();
+      const del = await request(server, 'DELETE', '/api/branches/hung-flush-delete');
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(del.status).toBe(200);
+      expect(elapsedMs).toBeLessThan(2_000);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('hung-flush-delete')).toBeUndefined();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.delete.state-flush-timeout',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.operation.completed',
+      )).toBeTruthy();
+    });
+
     it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
@@ -1289,8 +1325,8 @@ describe('Branch Routes', () => {
       expect(events.find((event) =>
         event.action === 'container.logs.archived' && event.details?.archiveSource === 'branch-delete',
       )?.operationId).toBe(deleteOperationId);
-      expect(events.map((event) => event.action)).toContain('container.remove.after-fenced-deploy.skipped');
-      expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy');
+      expect(events.map((event) => event.action)).toContain('container.remove.after-fenced-deploy');
+      expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy.skipped');
     });
 
     it('manual delete before docker run prevents a fenced webhook deploy from creating containers', async () => {
@@ -1354,8 +1390,65 @@ describe('Branch Routes', () => {
       expect(dockerRunCount).toBe(0);
 
       const events = operationEvents.filter((event) => event.branchId === 'race-delete-before-run');
-      expect(events.map((event) => event.action)).toContain('container.remove.after-fenced-deploy.skipped');
-      expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy');
+      expect(events.map((event) => event.action)).toContain('branch.operation.cancelled');
+    });
+
+    it('manual delete after pre-run cleanup still fences before docker run', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-delete-during-runservice',
+        projectId: 'default',
+        branch: 'feature/race-delete-during-runservice',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-delete-during-runservice'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releasePreRun!: () => void;
+      const preRunRelease = new Promise<void>((resolve) => { releasePreRun = resolve; });
+      let markPreRunStarted!: () => void;
+      const preRunStarted = new Promise<void>((resolve) => { markPreRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command === 'docker rm -f cds-race-delete-during-runservice-api') {
+          markPreRunStarted();
+          await preRunRelease;
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(
+        server,
+        'POST',
+        '/api/branches/race-delete-during-runservice/deploy',
+        { commitSha: '2222222222222222222222222222222222222222' },
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      await preRunStarted;
+
+      const del = await request(server, 'DELETE', '/api/branches/race-delete-during-runservice');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('race-delete-during-runservice')).toBeUndefined();
+
+      releasePreRun();
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('no longer current');
+      expect(mock.commands.some((command) =>
+        command.includes('docker run -d') && command.includes('--name cds-race-delete-during-runservice-api'),
+      )).toBe(false);
     });
 
     it('manual stop clears an active and queued webhook deploy without dispatching the queued commit', async () => {

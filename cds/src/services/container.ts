@@ -591,7 +591,9 @@ export class ContainerService {
     service: ServiceState,
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
-    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> = {},
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      assertCurrent?: (step: string) => void;
+    } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
@@ -601,6 +603,7 @@ export class ContainerService {
     );
     await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
 
+    context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
     // Remove any existing container
     this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
       projectId: entry.projectId,
@@ -888,6 +891,7 @@ export class ContainerService {
         `sh -c "${command.replace(/"/g, '\\"')}"`,
       ].join(' ');
 
+      context.assertCurrent?.(`runService before docker-run ${profile.id}`);
       const result = await this.shell.exec(runCmd);
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
