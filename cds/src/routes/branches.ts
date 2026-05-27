@@ -85,7 +85,7 @@ const selfStatusClients = new Set<import('express').Response>();
 let broadcastInFlight = false;
 let broadcastQueued = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
-const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 5_000;
+const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 30_000;
 const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = 1000;
 
 function getDeleteStateFlushTimeoutMs(): number {
