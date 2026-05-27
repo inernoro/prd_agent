@@ -8586,10 +8586,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //
   // Idempotent, safe to run multiple times. Returns a summary so the
   // operator can see what was trimmed.
-  router.post('/cleanup-cross-project-services', async (_req, res) => {
+  router.post('/cleanup-cross-project-services', async (req, res) => {
     try {
       const allBranches = Object.values(stateService.getState().branches || {});
       const trimmed: Array<{ branchId: string; dropped: string[] }> = [];
+      const skippedBusy: Array<{ branchId: string; profileId: string; reason: string }> = [];
+      const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+      const actor = resolveActorFromRequest(req);
+      const trigger = triggerFromRequest(req);
 
       for (const entry of allBranches) {
         const ownProjectId = entry.projectId || 'default';
@@ -8599,22 +8603,92 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const dropped: string[] = [];
         for (const profileId of Object.keys(entry.services || {})) {
           if (!ownProfileIds.has(profileId)) {
-            // Best-effort stop the orphan container.
             const svc = entry.services[profileId];
-            if (svc?.containerName) {
-              try {
-                await containerService.remove(svc.containerName, {
-                  projectId: entry.projectId,
-                  branchId: entry.id,
-                  profileId,
-                  operation: 'cleanup-cross-project-services',
-                  source: 'api.cleanup-cross-project-services',
-                  reason: `清理跨项目污染服务 ${profileId}`,
-                });
-              } catch { /* already gone */ }
+            const active = branchOperationCoordinator?.getActive(entry.id);
+            if (active) {
+              skippedBusy.push({ branchId: entry.id, profileId, reason: `同分支已有写操作正在运行: ${active.request.kind}` });
+              serverEventLogStore?.record({
+                category: 'container',
+                severity: 'warn',
+                source: 'api.cleanup-cross-project-services',
+                action: 'app.cross-project-service.cleanup-skipped',
+                message: `skip cross-project polluted service ${entry.id}/${profileId}: branch operation active`,
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId,
+                requestId,
+                operationId: active.operationId,
+                operationKind: active.request.kind,
+                operationTrigger: active.request.trigger,
+                operationActor: active.request.actor || null,
+                operationSource: active.request.source || null,
+                details: {
+                  requestId,
+                  actor,
+                  trigger,
+                  activeOperationId: active.operationId,
+                  activeKind: active.request.kind,
+                  reason: 'branch-operation-active',
+                },
+              });
+              continue;
             }
-            delete entry.services[profileId];
-            dropped.push(profileId);
+            const branchOperationLease = beginSilentBranchOperation(req, entry, {
+              kind: 'cleanup-orphans',
+              profileId,
+              source: 'api.cleanup-cross-project-services',
+              reason: `清理跨项目污染服务 ${profileId}`,
+            });
+            if (branchOperationCoordinator && !branchOperationLease) {
+              skippedBusy.push({ branchId: entry.id, profileId, reason: '同分支已有写操作正在运行' });
+              serverEventLogStore?.record({
+                category: 'container',
+                severity: 'warn',
+                source: 'api.cleanup-cross-project-services',
+                action: 'app.cross-project-service.cleanup-skipped',
+                message: `skip cross-project polluted service ${entry.id}/${profileId}: branch operation active`,
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId,
+                requestId,
+                details: {
+                  requestId,
+                  actor,
+                  trigger,
+                  reason: 'branch-operation-active',
+                },
+              });
+              continue;
+            }
+            let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+            try {
+              assertBranchOperationCurrent(branchOperationLease, `cleanup cross-project before ${profileId}`);
+              // Best-effort stop the orphan container.
+              if (svc?.containerName) {
+                try {
+                  await containerService.remove(svc.containerName, {
+                    projectId: entry.projectId,
+                    branchId: entry.id,
+                    profileId,
+                    requestId,
+                    operationId: branchOperationLease?.operationId || null,
+                    actor,
+                    trigger,
+                    operation: 'cleanup-cross-project-services',
+                    source: 'api.cleanup-cross-project-services',
+                    reason: `清理跨项目污染服务 ${profileId}`,
+                  });
+                } catch { /* already gone */ }
+              }
+              assertBranchOperationCurrent(branchOperationLease, `cleanup cross-project before state delete ${profileId}`);
+              delete entry.services[profileId];
+              dropped.push(profileId);
+            } catch (err) {
+              branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+              skippedBusy.push({ branchId: entry.id, profileId, reason: (err as Error).message });
+            } finally {
+              completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+            }
           }
         }
         if (dropped.length > 0) {
@@ -8625,7 +8699,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       res.json({
         trimmedCount: trimmed.reduce((a, t) => a + t.dropped.length, 0),
+        skippedBusyCount: skippedBusy.length,
         branches: trimmed,
+        skippedBusy,
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

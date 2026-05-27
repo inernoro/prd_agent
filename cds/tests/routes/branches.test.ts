@@ -914,6 +914,84 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('POST /api/cleanup-cross-project-services', () => {
+    it('skips polluted service cleanup while the branch has an active lifecycle operation', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'cross-cleanup-busy',
+        projectId: 'default',
+        branch: 'feature/cross-cleanup-busy',
+        worktreePath: path.join(tmpDir, 'worktrees', 'cross-cleanup-busy'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-cross-cleanup-busy-api',
+            hostPort: 10001,
+            status: 'idle',
+          },
+          foreign: {
+            profileId: 'foreign',
+            containerName: 'cds-cross-cleanup-busy-foreign',
+            hostPort: 10002,
+            status: 'running',
+          },
+        },
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-cross-cleanup-busy-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-cross-cleanup-busy', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(server, 'POST', '/api/branches/cross-cleanup-busy/deploy');
+      try {
+        await runStarted;
+
+        const cleanup = await request(
+          server,
+          'POST',
+          '/api/cleanup-cross-project-services',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-cross-cleanup' },
+        );
+
+        expect(cleanup.status).toBe(200);
+        expect((cleanup.body as any).trimmedCount).toBe(0);
+        expect((cleanup.body as any).skippedBusyCount).toBe(1);
+        expect(stateService.getBranch('cross-cleanup-busy')?.services.foreign).toBeTruthy();
+        expect(mock.commands.some((command) => command.includes('docker rm -f cds-cross-cleanup-busy-foreign'))).toBe(false);
+        const skipped = operationEvents.find((event) => event.action === 'app.cross-project-service.cleanup-skipped');
+        expect(skipped?.requestId).toBe('req-cross-cleanup');
+        expect(skipped?.branchId).toBe('cross-cleanup-busy');
+        expect(skipped?.operationKind).toBe('deploy');
+      } finally {
+        releaseRun();
+      }
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+    });
+  });
+
   describe('POST /api/branches/:id/force-rebuild/:profileId', () => {
     it('can reserve the next deploy as the same operation chain', async () => {
       const now = new Date().toISOString();
