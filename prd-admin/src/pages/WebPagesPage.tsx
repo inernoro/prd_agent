@@ -641,7 +641,7 @@ export default function WebPagesPage() {
             <span
               className="h-8 inline-flex items-center px-2.5 rounded-[8px] text-[12px]"
               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
-              title="你在该团队的网页托管权限"
+              title="你在该共享文件夹的网页托管权限"
             >
               我的权限：{WEB_HOSTING_ROLE_LABEL[myWebHostingRole]}
             </span>
@@ -809,7 +809,7 @@ export default function WebPagesPage() {
               <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
             )}
             {teamScope.scope !== 'team' && (
-              <Button size="xs" variant="secondary" onClick={() => setShowShareToTeam(true)}><Users size={12} className="mr-1" /> 分享到团队</Button>
+              <Button size="xs" variant="secondary" onClick={() => setShowShareToTeam(true)}><Users size={12} className="mr-1" /> 分享到共享文件夹</Button>
             )}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
               <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
@@ -966,7 +966,7 @@ export default function WebPagesPage() {
 
       {showShareToTeam && (
         <ShareToTeamDialog
-          title={`分享到团队（已选 ${selectedIds.size} 项）`}
+          title={`分享到共享文件夹（已选 ${selectedIds.size} 项）`}
           onConfirm={async (teamIds) => {
             const ids = [...selectedIds];
             for (const id of ids) {
@@ -974,7 +974,7 @@ export default function WebPagesPage() {
             }
             setShowShareToTeam(false);
             setSelectedIds(new Set());
-            toast.success('已分享到团队', `${ids.length} 个站点已更新团队分享`);
+            toast.success('已分享到共享文件夹', `${ids.length} 个站点已更新分享`);
             load();
           }}
           onClose={() => setShowShareToTeam(false)}

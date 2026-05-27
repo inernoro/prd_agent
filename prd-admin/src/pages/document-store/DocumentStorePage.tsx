@@ -1568,7 +1568,7 @@ export function DocumentStorePage() {
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button
                             className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="分享到团队"
+                            title="分享到共享文件夹"
                             onClick={(e) => {
                               e.stopPropagation();
                               setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
@@ -1706,7 +1706,7 @@ export function DocumentStorePage() {
 
       {shareTeamTarget && (
         <ShareToTeamDialog
-          title={`分享「${shareTeamTarget.name}」到团队`}
+          title={`分享「${shareTeamTarget.name}」到共享文件夹`}
           initialTeamIds={shareTeamTarget.teamIds}
           onConfirm={async (teamIds) => {
             await setStoreTeams(shareTeamTarget.id, teamIds);

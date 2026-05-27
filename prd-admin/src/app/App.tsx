@@ -45,6 +45,7 @@ function NavigationBridge() {
 //   2. AppShell 内但不进 launcher 的路由（admin 后端菜单 / 移动端 / 子路由）
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
@@ -204,6 +205,16 @@ export default function App() {
         {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (
           <Route key={e.path} path={e.path} element={e.element} />
         ))}
+
+        {/* 自动加入共享文件夹（邀请链接）：登录后自动加入并跳网页托管 */}
+        <Route
+          path="/join/:code"
+          element={
+            <RequireAuth>
+              <JoinTeamPage />
+            </RequireAuth>
+          }
+        />
 
         {/* 子路由：智识殿堂详情 */}
         <Route path="/library/:storeId" element={<LibraryStoreDetailPage />} />

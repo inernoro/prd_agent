@@ -34,16 +34,16 @@ import {
 type Tab = 'members' | 'invite' | 'activity';
 
 const ACTION_LABEL: Record<string, string> = {
-  'team.created': '创建了团队',
-  'team.updated': '更新了团队',
+  'team.created': '创建了共享文件夹',
+  'team.updated': '更新了共享文件夹',
   'member.added': '添加了成员',
-  'member.joined': '加入了团队',
+  'member.joined': '加入了共享文件夹',
   'member.removed': '移除了成员',
   'member.role_changed': '调整了成员角色',
-  'site.shared': '分享了网页到团队',
+  'site.shared': '分享了网页',
   'site.updated': '更新了网页',
   'site.deleted': '删除了网页',
-  'store.shared': '分享了知识库到团队',
+  'store.shared': '分享了知识库',
   'entry.created': '新增了文档',
   'entry.updated': '更新了文档',
   'entry.deleted': '删除了文档',
@@ -202,7 +202,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
 
   const handleDeleteTeam = async () => {
     if (!selectedId || !team) return;
-    if (!confirm(`确认删除团队「${team.name}」？该团队下所有分享将解除。`)) return;
+    if (!confirm(`确认删除共享文件夹「${team.name}」？其中所有分享将解除。`)) return;
     const res = await deleteTeam(selectedId);
     if (res.success) {
       setSelectedId(null);
@@ -254,7 +254,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
           style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
         >
           <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            团队管理
+            共享文件夹管理
           </span>
           <button type="button" onClick={onClose} style={{ color: 'var(--text-muted)' }}>
             <X size={18} />
@@ -269,10 +269,10 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
           >
             <div className="flex-1 min-h-0 overflow-auto py-2" style={{ overscrollBehavior: 'contain' }}>
               {loadingTeams ? (
-                <MapSectionLoader text="加载团队…" />
+                <MapSectionLoader text="加载共享文件夹…" />
               ) : teams.length === 0 ? (
                 <div className="px-4 py-6 text-[12px] text-center" style={{ color: 'var(--text-muted)' }}>
-                  还没有团队，新建或凭邀请码加入
+                  还没有共享文件夹，新建或凭邀请码加入
                 </div>
               ) : (
                 teams.map((t) => (
@@ -303,7 +303,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                     autoFocus
                     value={newTeamName}
                     onChange={(e) => setNewTeamName(e.target.value)}
-                    placeholder="团队名称"
+                    placeholder="共享文件夹名称"
                     className="w-full h-8 px-2 rounded-[8px] text-[13px] outline-none"
                     style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                     onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
@@ -324,7 +324,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                   style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                   onClick={() => setCreating(true)}
                 >
-                  <Plus size={13} /> 新建团队
+                  <Plus size={13} /> 新建共享文件夹
                 </button>
               )}
               <div className="flex gap-1.5">
@@ -347,7 +347,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
           <div className="flex-1 min-h-0 flex flex-col">
             {!selectedId || !team ? (
               <div className="flex-1 flex items-center justify-center text-[13px]" style={{ color: 'var(--text-muted)' }}>
-                选择左侧团队查看详情
+                选择左侧共享文件夹查看详情
               </div>
             ) : loadingDetail ? (
               <MapSectionLoader text="加载详情…" />
@@ -368,7 +368,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                   ))}
                   {isAdmin && (
                     <button type="button" className="ml-auto px-2.5 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ color: 'var(--danger, #ef4444)' }} onClick={handleDeleteTeam}>
-                      <Trash2 size={12} /> 删除团队
+                      <Trash2 size={12} /> 删除共享文件夹
                     </button>
                   )}
                 </div>
@@ -440,7 +440,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                             <select
                               value={m.role}
                               onChange={(e) => handleRoleChange(m.userId, e.target.value as TeamRole)}
-                              title="团队管理权限"
+                              title="管理权限（管理员可改名/增删成员/改角色）"
                               className="h-7 px-2 rounded-[6px] text-[12px] outline-none"
                               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                             >
@@ -465,7 +465,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                   {tab === 'invite' && (
                     <div className="space-y-3 max-w-[420px]">
                       <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
-                        把邀请码发给同事，对方在「管理团队」里凭码加入。
+                        把邀请链接发给同事，对方打开并登录后自动加入；或发邀请码让其手动加入。
                       </div>
                       <div className="flex items-center gap-2">
                         <div

@@ -46,7 +46,7 @@ export function ShareToTeamDialog({
         <div className="space-y-3">
           {teams.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              你还没有团队，请先在「管理团队」里创建或加入一个团队。
+              你还没有共享文件夹，请先在「共享文件夹」页签里创建或加入一个。
             </p>
           ) : (
             <div className="space-y-1.5 max-h-[300px] overflow-auto" style={{ overscrollBehavior: 'contain' }}>
@@ -71,7 +71,7 @@ export function ShareToTeamDialog({
             </div>
           )}
           <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            说明：勾选的团队将成为分享目标（会覆盖原有团队分享）；取消全部勾选则撤销团队分享。
+            说明：勾选的共享文件夹将成为分享目标（会覆盖原有分享）；取消全部勾选则撤销分享。
           </p>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={onClose}>
