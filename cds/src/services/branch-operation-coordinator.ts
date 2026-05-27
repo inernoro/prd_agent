@@ -4,6 +4,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 export type BranchOperationKind =
   | 'deploy'
   | 'deploy-profile'
+  | 'restart'
   | 'force-rebuild'
   | 'stop'
   | 'delete'
@@ -103,7 +104,7 @@ function priorityOf(req: BranchOperationRequest): number {
   if (req.trigger === 'manual' && TERMINAL_KINDS.has(req.kind)) return 100;
   if (req.trigger === 'manual' && req.kind === 'stop') return 95;
   if (req.trigger === 'webhook' && req.kind === 'delete') return 90;
-  if (req.trigger === 'manual' && (req.kind === 'force-rebuild' || req.kind === 'deploy' || req.kind === 'deploy-profile')) return 80;
+  if (req.trigger === 'manual' && (req.kind === 'force-rebuild' || req.kind === 'deploy' || req.kind === 'deploy-profile' || req.kind === 'restart')) return 80;
   if (req.kind === 'cleanup-damaged') return 45;
   if (req.trigger === 'webhook' && (req.kind === 'deploy' || req.kind === 'deploy-profile')) return 50;
   if (req.trigger === 'auto-lifecycle') return 40;

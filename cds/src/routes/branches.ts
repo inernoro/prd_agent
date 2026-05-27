@@ -5798,14 +5798,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(409).json({ error: '还没有已构建的容器可重启，请先「重新部署」' });
       return;
     }
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'restart',
+      source: 'api.restart-branch',
+      reason: 'manual branch docker restart',
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+    let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+    const actor = resolveActorFromRequest(req);
+    const trigger = triggerFromRequest(req);
     try {
+      assertBranchOperationCurrent(branchOperationLease, 'restart before state write');
       entry.status = 'restarting';
       for (const svc of services) svc.status = 'starting';
       stateService.save();
 
       const failed: string[] = [];
       for (const svc of services) {
-        const ok = await containerService.restartServiceInPlace(svc.containerName);
+        assertBranchOperationCurrent(branchOperationLease, `restart before ${svc.profileId}`);
+        const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId: svc.profileId,
+          requestId,
+          operationId: branchOperationLease?.operationId || null,
+          actor,
+          trigger,
+          operation: 'branch-restart',
+          source: 'api.restart-branch',
+          reason: '手动重新启动（docker restart，未重建代码）',
+        });
+        assertBranchOperationCurrent(branchOperationLease, `restart after ${svc.profileId}`);
         if (ok) {
           svc.status = 'running';
           svc.errorMessage = undefined;
@@ -5817,6 +5841,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       if (failed.length === 0) {
+        assertBranchOperationCurrent(branchOperationLease, 'restart before success save');
         entry.status = 'running';
         // 全部成功必须清掉历史 errorMessage，否则下游 UI 仍按失败渲染
         // （Codex P2）。
@@ -5846,6 +5871,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
         res.json({ message: '所有服务已重新启动' });
       } else {
+        branchOperationFinalStatus = 'failed';
         entry.status = 'error';
         entry.errorMessage = `${failed.length} 个容器重启失败：${failed.join(', ')}`;
         stateService.appendActivityLog(entry.projectId, {
@@ -5862,17 +5888,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
     } catch (err) {
+      branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       // 兜底：未预期异常时把分支从 restarting/starting 恢复到 error，否则
       // UI 会卡在永久"重启中"转圈，只能手动重置（Cursor Bugbot）。
       try {
-        for (const svc of Object.values(entry.services)) {
-          if (svc.status === 'starting') svc.status = 'error';
+        if (branchOperationFinalStatus !== 'cancelled') {
+          for (const svc of Object.values(entry.services)) {
+            if (svc.status === 'starting') svc.status = 'error';
+          }
+          entry.status = 'error';
+          entry.errorMessage = `重新启动异常：${(err as Error).message}`;
+          stateService.save();
         }
-        entry.status = 'error';
-        entry.errorMessage = `重新启动异常：${(err as Error).message}`;
-        stateService.save();
       } catch { /* 状态恢复尽力而为，不掩盖原始错误 */ }
-      res.status(500).json({ error: (err as Error).message });
+      res.status(branchOperationFinalStatus === 'cancelled' ? 409 : 500).json({ error: (err as Error).message });
+    } finally {
+      completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
     }
   });
 

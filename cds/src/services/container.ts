@@ -1196,7 +1196,11 @@ export class ContainerService {
    * tweak). Returns true on success, false if the container doesn't exist
    * or restart failed (caller should fall back to full rm+run).
    */
-  async restartServiceInPlace(containerName: string, onOutput?: (chunk: string) => void): Promise<boolean> {
+  async restartServiceInPlace(
+    containerName: string,
+    onOutput?: (chunk: string) => void,
+    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason'> = {},
+  ): Promise<boolean> {
     const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
@@ -1205,8 +1209,20 @@ export class ContainerService {
         source: 'cds-container-service',
         action: 'container.restart.missing',
         message: `container ${containerName} missing before docker restart`,
+        projectId: context.projectId ?? undefined,
+        branchId: context.branchId ?? undefined,
+        profileId: context.profileId ?? undefined,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
         containerName,
         command: { name: 'docker inspect', exitCode: inspect.exitCode, stdoutPreview: inspect.stdout, stderrPreview: inspect.stderr },
+        details: {
+          reason: context.reason ?? null,
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+          operation: context.operation ?? null,
+          source: context.source ?? null,
+        },
       });
       return false;
     }
@@ -1220,11 +1236,23 @@ export class ContainerService {
         source: 'cds-container-service',
         action: 'container.restart.failed',
         message: `docker restart failed for ${containerName}`,
+        projectId: context.projectId ?? undefined,
+        branchId: context.branchId ?? undefined,
+        profileId: context.profileId ?? undefined,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
         containerName,
         command: { name: 'docker restart', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
         inspect: diagnostics.inspect,
         logs: diagnostics.logs,
         error: diagnostics.error,
+        details: {
+          reason: context.reason ?? null,
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+          operation: context.operation ?? null,
+          source: context.source ?? null,
+        },
       });
       return false;
     }
@@ -1236,10 +1264,22 @@ export class ContainerService {
         source: 'cds-container-service',
         action: 'container.restart.completed',
         message: `docker restart completed for ${containerName}`,
+        projectId: context.projectId ?? undefined,
+        branchId: context.branchId ?? undefined,
+        profileId: context.profileId ?? undefined,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
         containerName,
         command: { name: 'docker restart', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
         inspect: diagnostics.inspect,
         logs: diagnostics.logs,
+        details: {
+          reason: context.reason ?? null,
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+          operation: context.operation ?? null,
+          source: context.source ?? null,
+        },
       });
       return true;
     } catch (err) {
@@ -1250,10 +1290,22 @@ export class ContainerService {
         source: 'cds-container-service',
         action: 'container.restart.early-exit',
         message: (err as Error).message,
+        projectId: context.projectId ?? undefined,
+        branchId: context.branchId ?? undefined,
+        profileId: context.profileId ?? undefined,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
         containerName,
         inspect: diagnostics.inspect,
         logs: diagnostics.logs,
         error: diagnostics.error || { message: (err as Error).message },
+        details: {
+          reason: context.reason ?? null,
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+          operation: context.operation ?? null,
+          source: context.source ?? null,
+        },
       });
       return false;
     }

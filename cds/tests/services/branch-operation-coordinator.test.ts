@@ -633,4 +633,29 @@ describe('BranchOperationCoordinator', () => {
     ]));
     expect(coordinator.getActiveOperations().find((op) => op.request.kind === 'delete')?.request.requestId).toBe('delete-1');
   });
+
+  it('manual restart is fenced like other branch-wide startup writes', () => {
+    const { records, sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const restart = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'restart',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.restart-branch',
+    });
+    const deployProfile = coordinator.begin({
+      branchId: 'prd-agent-main',
+      profileId: 'api',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.deploy-profile',
+    });
+
+    expect(restart.status).toBe('started');
+    expect(deployProfile.status).toBe('rejected');
+    expect(deployProfile.activeOperationId).toBe(restart.operationId);
+    expect(records.find((record) => record.action === 'branch.operation.rejected')?.details?.activeKind).toBe('restart');
+  });
 });

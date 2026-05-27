@@ -2111,6 +2111,38 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(409);
     });
 
+    it('records manual restart as a fenced branch operation with container operationId', async () => {
+      stateService.addBranch({
+        id: 'feat-restart',
+        branch: 'feat/restart',
+        worktreePath: '/tmp/wt/feat-restart',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'restart-api',
+            hostPort: 10001,
+            status: 'stopped',
+          },
+        },
+        status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z',
+        projectId: 'default',
+      });
+      mock.addResponsePattern(/docker restart restart-api/, () => ({ stdout: 'restart-api', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'POST', '/api/branches/feat-restart/restart');
+
+      expect(res.status).toBe(200);
+      const branch = stateService.getBranch('feat-restart')!;
+      expect(branch.status).toBe('running');
+      expect(branch.services.api.status).toBe('running');
+      const started = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.started');
+      const completed = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.completed');
+      expect(started?.details).toMatchObject({ kind: 'restart', source: 'api.restart-branch' });
+      expect(completed?.operationId).toBe(started?.operationId);
+      expect(mock.commands.some((command) => command.includes('docker restart restart-api'))).toBe(true);
+    });
+
   });
 
   describe('GET /api/branches/:id/activity-logs', () => {

@@ -414,6 +414,58 @@ describe('ContainerService', () => {
     });
   });
 
+  describe('restartServiceInPlace', () => {
+    it('records operationId on docker restart events', async () => {
+      const records: Array<{ action: string; operationId?: string | null; branchId?: string | null; details?: Record<string, unknown> }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, {
+        record(record) {
+          records.push({
+            action: record.action,
+            operationId: record.operationId,
+            branchId: record.branchId,
+            details: record.details,
+          });
+        },
+      });
+      vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+      mock.addResponse('docker inspect --format="{{.State.Status}}" cds-feature-a-api', {
+        stdout: 'exited',
+        stderr: '',
+        exitCode: 0,
+      });
+      mock.addResponse('docker restart cds-feature-a-api', {
+        stdout: 'cds-feature-a-api',
+        stderr: '',
+        exitCode: 0,
+      });
+      mock.addResponsePattern(/docker inspect cds-feature-a-api/, () => ({ stdout: '{}', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker logs/, () => ({ stdout: 'ready', stderr: '', exitCode: 0 }));
+
+      await expect(service.restartServiceInPlace('cds-feature-a-api', undefined, {
+        projectId: 'prd-agent',
+        branchId: 'prd-agent-main',
+        profileId: 'api',
+        requestId: 'req-restart',
+        operationId: 'op-restart',
+        actor: 'user:1',
+        trigger: 'manual',
+        operation: 'branch-restart',
+        source: 'api.restart-branch',
+        reason: 'manual restart',
+      })).resolves.toBe(true);
+
+      const completed = records.find((record) => record.action === 'container.restart.completed');
+      expect(completed?.operationId).toBe('op-restart');
+      expect(completed?.branchId).toBe('prd-agent-main');
+      expect(completed?.details).toMatchObject({
+        operation: 'branch-restart',
+        source: 'api.restart-branch',
+        actor: 'user:1',
+        trigger: 'manual',
+      });
+    });
+  });
+
   describe('remove (destroy — container deleted)', () => {
     it('docker stop then docker rm', async () => {
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
