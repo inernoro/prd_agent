@@ -158,6 +158,26 @@ export async function rerunSubmission(id: string): Promise<ApiResponse<{ message
   return apiRequest(`/api/review-agent/submissions/${id}/rerun`, { method: 'POST' });
 }
 
+/**
+ * 未通过救机会：替换附件并触发重新评审。仅当 isPassed=false 且 RerunCount=0 时可调用。
+ */
+export async function reuploadOnFailure(
+  id: string,
+  attachmentId: string
+): Promise<ApiResponse<{ message: string }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(id)}/reupload-on-failure`, {
+    method: 'POST',
+    body: { attachmentId },
+  });
+}
+
+/** 获取该 submission 的所有评审历史（按时间倒序） */
+export async function getSubmissionResults(
+  id: string
+): Promise<ApiResponse<{ results: ReviewResult[] }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(id)}/results`);
+}
+
 export interface LeaderboardItem {
   rank: number;
   key: string;

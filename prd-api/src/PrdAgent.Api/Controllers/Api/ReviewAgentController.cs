@@ -293,8 +293,11 @@ public class ReviewAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 排行榜 — 按自然月区间聚合，支持按提交人或方案两种维度统计：
-    /// 评审数量 / 通过率 / 一次性通过率（首次评审就通过且未 rerun 的占比）
+    /// 排行榜 — 按自然月区间聚合，先把 submission 按 (SubmitterId, Title) 聚到「方案桶」，
+    /// 再按 submitter / document 维度展示。
+    /// 「一次性通过率」= 该用户的「一次过方案桶」/「方案桶总数」；
+    /// 一次过 = 桶里只 1 条 sub + IsPassed=true + RerunCount=0（不含 ErrorRetryCount，系统故障重跑不归咎用户）。
+    /// 「通过率」= 桶级最终通过的数量（桶内任一 sub IsPassed=true 视为通过） / 已落定的方案桶数。
     /// </summary>
     [HttpGet("leaderboard")]
     public async Task<IActionResult> GetLeaderboard(
@@ -326,7 +329,6 @@ public class ReviewAgentController : ControllerBase
             Builders<ReviewSubmission>.Filter.Lt(x => x.CompletedAt, endUtcExclusive)
         );
 
-        // 数据量当前在百级，未来到千级也是毫秒级，直接拉取后内存聚合更直观
         var docs = await _db.ReviewSubmissions
             .Find(filter)
             .Project(x => new LeaderboardRow
@@ -340,78 +342,151 @@ public class ReviewAgentController : ControllerBase
             })
             .ToListAsync(ct);
 
-        IEnumerable<IGrouping<string, LeaderboardRow>> grouped = groupBy == "document"
-            ? docs.GroupBy(x => $"{x.SubmitterId}|{x.Title}")
-            : docs.GroupBy(x => x.SubmitterId);
+        var buckets = AggregateProposalBuckets(docs);
 
-        // 申诉成功语义：该条评审「不计入通过、不计入未通过」（视为待重审），但仍计入总评审数。
-        // 通过率公式 = 有效通过 / (有效通过 + 有效未通过)，分母排除申诉成功的。
-        var items = grouped
-            .Select(g =>
-            {
-                var first = g.First();
-                var totalCount = g.Count();
-                var appealApprovedCount = g.Count(x => x.AppealStatus == AppealStatuses.Approved);
-                var effectivelyPassed = g.Count(x => x.IsPassed == true && x.AppealStatus != AppealStatuses.Approved);
-                var effectivelyFailed = g.Count(x => x.IsPassed == false && x.AppealStatus != AppealStatuses.Approved);
-                var ratedTotal = effectivelyPassed + effectivelyFailed; // 已落定（不含申诉成功）
-                var firstTimePassedCount = g.Count(x => x.IsPassed == true && x.RerunCount == 0 && x.AppealStatus != AppealStatuses.Approved);
-                return new
+        IEnumerable<dynamic> items;
+        if (groupBy == "document")
+        {
+            // 每个方案桶 = 一行
+            items = buckets
+                .OrderByDescending(b => b.SubmissionCount)
+                .ThenByDescending(b => b.IsBucketPassed)
+                .Select((b, i) => new
                 {
-                    key = g.Key,
-                    name = groupBy == "document" ? first.Title : first.SubmitterName,
-                    submitterId = first.SubmitterId,
-                    submitterName = first.SubmitterName,
-                    totalCount,
-                    passedCount = effectivelyPassed,
-                    appealApprovedCount,
-                    passRate = ratedTotal > 0 ? (double)effectivelyPassed / ratedTotal : 0d,
-                    firstTimePassedCount,
-                    // passedCount=0 时 N/A（前端显示「— 无通过」），避免 NaN
-                    firstTimePassRate = effectivelyPassed > 0 ? (double?)firstTimePassedCount / effectivelyPassed : null,
-                };
-            })
-            .OrderByDescending(x => x.totalCount)
-            .ThenByDescending(x => x.passRate)
-            .Select((x, i) => new
-            {
-                rank = i + 1,
-                x.key,
-                x.name,
-                x.submitterId,
-                x.submitterName,
-                x.totalCount,
-                x.passedCount,
-                x.appealApprovedCount,
-                x.passRate,
-                x.firstTimePassedCount,
-                x.firstTimePassRate,
-            })
-            .ToList();
+                    rank = i + 1,
+                    key = $"{b.SubmitterId}|{b.Title}",
+                    name = b.Title,
+                    submitterId = b.SubmitterId,
+                    submitterName = b.SubmitterName,
+                    totalCount = b.SubmissionCount,       // 该方案被提交了几次
+                    passedCount = b.IsBucketPassed ? 1 : 0,
+                    appealApprovedCount = b.IsBucketAppealApproved ? 1 : 0,
+                    passRate = b.IsBucketPassed ? 1d : 0d,
+                    firstTimePassedCount = b.IsFirstPass ? 1 : 0,
+                    firstTimePassRate = (double?)(b.IsFirstPass ? 1d : 0d),
+                });
+        }
+        else
+        {
+            // submitter 维度：把方案桶按 SubmitterId 二次聚合
+            items = buckets
+                .GroupBy(b => b.SubmitterId)
+                .Select(g =>
+                {
+                    var total = g.Count();
+                    var passed = g.Count(b => b.IsBucketPassed);
+                    var failed = g.Count(b => b.IsBucketFailed);
+                    var appealed = g.Count(b => b.IsBucketAppealApproved);
+                    var ratedTotal = passed + failed;
+                    var firstPassCount = g.Count(b => b.IsFirstPass);
+                    return new
+                    {
+                        key = g.Key,
+                        name = g.First().SubmitterName,
+                        submitterId = g.Key,
+                        submitterName = g.First().SubmitterName,
+                        totalCount = total,        // 方案桶数（按标题去重）
+                        passedCount = passed,
+                        appealApprovedCount = appealed,
+                        passRate = ratedTotal > 0 ? (double)passed / ratedTotal : 0d,
+                        firstTimePassedCount = firstPassCount,
+                        // 一次性通过率 = 一次过方案数 / 总方案数（用户给的口径）
+                        firstTimePassRate = total > 0 ? (double?)firstPassCount / total : null,
+                    };
+                })
+                .OrderByDescending(x => x.totalCount)
+                .ThenByDescending(x => x.passRate)
+                .Select((x, i) => new
+                {
+                    rank = i + 1,
+                    x.key,
+                    x.name,
+                    x.submitterId,
+                    x.submitterName,
+                    x.totalCount,
+                    x.passedCount,
+                    x.appealApprovedCount,
+                    x.passRate,
+                    x.firstTimePassedCount,
+                    x.firstTimePassRate,
+                });
+        }
 
-        var summaryTotal = docs.Count;
-        var summaryAppealApproved = docs.Count(x => x.AppealStatus == AppealStatuses.Approved);
-        var summaryEffectivePassed = docs.Count(x => x.IsPassed == true && x.AppealStatus != AppealStatuses.Approved);
-        var summaryEffectiveFailed = docs.Count(x => x.IsPassed == false && x.AppealStatus != AppealStatuses.Approved);
-        var summaryRatedTotal = summaryEffectivePassed + summaryEffectiveFailed;
-        var summaryFirstTimePassed = docs.Count(x => x.IsPassed == true && x.RerunCount == 0 && x.AppealStatus != AppealStatuses.Approved);
+        var itemsList = items.ToList();
+
+        // 总览：所有方案桶聚合（不分 submitter）
+        var summaryTotal = buckets.Count;
+        var summaryPassed = buckets.Count(b => b.IsBucketPassed);
+        var summaryFailed = buckets.Count(b => b.IsBucketFailed);
+        var summaryAppealed = buckets.Count(b => b.IsBucketAppealApproved);
+        var summaryRated = summaryPassed + summaryFailed;
+        var summaryFirstPass = buckets.Count(b => b.IsFirstPass);
         var summary = new
         {
             totalCount = summaryTotal,
-            totalPassedCount = summaryEffectivePassed,
-            totalAppealApprovedCount = summaryAppealApproved,
-            totalPassRate = summaryRatedTotal > 0 ? (double)summaryEffectivePassed / summaryRatedTotal : 0d,
-            totalFirstTimePassedCount = summaryFirstTimePassed,
-            totalFirstTimePassRate = summaryEffectivePassed > 0 ? (double?)summaryFirstTimePassed / summaryEffectivePassed : null,
+            totalPassedCount = summaryPassed,
+            totalAppealApprovedCount = summaryAppealed,
+            totalPassRate = summaryRated > 0 ? (double)summaryPassed / summaryRated : 0d,
+            totalFirstTimePassedCount = summaryFirstPass,
+            totalFirstTimePassRate = summaryTotal > 0 ? (double?)summaryFirstPass / summaryTotal : null,
         };
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            items,
+            items = itemsList,
             summary,
             period = new { startMonth, endMonth },
             groupBy,
         }));
+    }
+
+    /// <summary>
+    /// 把 submission 平表按 (SubmitterId, Title) 聚合到「方案桶」。
+    /// 同一用户同标题的多次提交视为同一方案，反映 Z 口径"一次性通过率"语义。
+    /// </summary>
+    internal static List<ProposalBucket> AggregateProposalBuckets(IEnumerable<LeaderboardRow> docs)
+    {
+        return docs
+            .GroupBy(x => $"{x.SubmitterId}|{x.Title}")
+            .Select(g =>
+            {
+                var rows = g.ToList();
+                var first = rows[0];
+                var submissionCount = rows.Count;
+                var hasAnyPass = rows.Any(r => r.IsPassed == true && r.AppealStatus != AppealStatuses.Approved);
+                var hasAnyFail = rows.Any(r => r.IsPassed == false && r.AppealStatus != AppealStatuses.Approved);
+                var hasAppealApproved = rows.Any(r => r.AppealStatus == AppealStatuses.Approved);
+
+                return new ProposalBucket
+                {
+                    SubmitterId = first.SubmitterId,
+                    SubmitterName = first.SubmitterName,
+                    Title = first.Title,
+                    SubmissionCount = submissionCount,
+                    IsBucketPassed = hasAnyPass,
+                    IsBucketFailed = !hasAnyPass && hasAnyFail,
+                    IsBucketAppealApproved = !hasAnyPass && hasAppealApproved,
+                    // 一次过：只 1 条 sub + IsPassed=true + RerunCount=0 + 非申诉成功
+                    IsFirstPass = submissionCount == 1
+                                  && first.IsPassed == true
+                                  && first.RerunCount == 0
+                                  && first.AppealStatus != AppealStatuses.Approved,
+                };
+            })
+            .ToList();
+    }
+
+    /// <summary>排行榜方案桶：把同一用户同标题的多次提交聚合为一份方案的统计结果。</summary>
+    internal class ProposalBucket
+    {
+        public string SubmitterId { get; set; } = string.Empty;
+        public string SubmitterName { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public int SubmissionCount { get; set; }
+        public bool IsBucketPassed { get; set; }
+        public bool IsBucketFailed { get; set; }
+        public bool IsBucketAppealApproved { get; set; }
+        public bool IsFirstPass { get; set; }
     }
 
     /// <summary>解析 YYYY-MM 区间为 UTC 起止（end 为下个月 1 号 0 点，半开区间）</summary>
@@ -436,7 +511,7 @@ public class ReviewAgentController : ControllerBase
     }
 
     /// <summary>排行榜聚合中间投影类型（避免匿名类型在 LINQ Project 表达式树中的限制）</summary>
-    private class LeaderboardRow
+    internal class LeaderboardRow
     {
         public string SubmitterId { get; set; } = string.Empty;
         public string SubmitterName { get; set; } = string.Empty;
@@ -478,7 +553,8 @@ public class ReviewAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 重新评审 — 清除旧结果，重置为 Queued 状态，触发重跑
+    /// 系统故障重跑 — 仅限 Error 状态使用（LLM 网关失败等）。保留旧 ReviewResult 作为历史，仅累加 ErrorRetryCount。
+    /// 不影响 RerunCount（系统故障不归咎用户，不计入一次性通过率统计）。
     /// </summary>
     [HttpPost("submissions/{id}/rerun")]
     public async Task<IActionResult> RerunSubmission(string id, CancellationToken ct)
@@ -491,11 +567,12 @@ public class ReviewAgentController : ControllerBase
         if (submission.SubmitterId != userId && !HasViewAllPermission())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作该提交"));
 
-        // 删除旧结果
-        if (!string.IsNullOrEmpty(submission.ResultId))
-            await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
+        // 仅允许 Error 状态触发"重新评审"（系统故障恢复）；未通过应走 reupload-on-failure
+        if (submission.Status != ReviewStatuses.Error)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "仅在评审过程出错时才能使用「重新评审」；如评审未通过，请使用「重新上传方案」（一次救机会）"));
 
-        // 重置状态 + 累加 RerunCount（一次性通过率统计依赖此字段）
+        // 不删旧 ReviewResult（保留为历史，详情页会展示评审历史）
         await _db.ReviewSubmissions.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReviewSubmission>.Update
@@ -505,10 +582,81 @@ public class ReviewAgentController : ControllerBase
                 .Unset(x => x.CompletedAt)
                 .Unset(x => x.StartedAt)
                 .Unset(x => x.ErrorMessage)
-                .Inc(x => x.RerunCount, 1),
+                .Inc(x => x.ErrorRetryCount, 1),
             cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { message = "已重置，请刷新页面重新评审" }));
+    }
+
+    /// <summary>
+    /// 未通过救机会 — 仅在 Done + IsPassed=false + RerunCount=0 时可用。替换附件、累加 RerunCount=1、状态置 Queued。
+    /// 保留旧 ReviewResult 作为历史。每个 submission 仅允许 1 次（RerunCount 上限 1）。
+    /// </summary>
+    [HttpPost("submissions/{id}/reupload-on-failure")]
+    public async Task<IActionResult> ReuploadOnFailure(string id, [FromBody] ReuploadRequest req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可重新上传方案"));
+
+        // 状态门槛：评审完成 + 未通过 + 没用过救机会
+        if (submission.Status != ReviewStatuses.Done || submission.IsPassed != false)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在评审完成且未通过时可使用救机会"));
+        if (submission.RerunCount >= 1)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "本方案的救机会已用完（每个方案仅 1 次）"));
+
+        if (string.IsNullOrWhiteSpace(req?.AttachmentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
+
+        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
+
+        // 不删旧 ReviewResult，保留为历史
+        await _db.ReviewSubmissions.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ReviewSubmission>.Update
+                .Set(x => x.AttachmentId, req.AttachmentId)
+                .Set(x => x.FileName, attachment.FileName)
+                .Set(x => x.ExtractedContent, attachment.ExtractedText)
+                .Set(x => x.Status, ReviewStatuses.Queued)
+                .Unset(x => x.ResultId)
+                .Unset(x => x.IsPassed)
+                .Unset(x => x.CompletedAt)
+                .Unset(x => x.StartedAt)
+                .Unset(x => x.ErrorMessage)
+                .Inc(x => x.RerunCount, 1),
+            cancellationToken: CancellationToken.None);
+
+        return Ok(ApiResponse<object>.Ok(new { message = "已替换附件，请刷新页面重新评审" }));
+    }
+
+    /// <summary>
+    /// 获取某 submission 的所有评审历史（含被 reupload-on-failure / Error 重跑覆盖前的历史结果），按时间倒序。
+    /// </summary>
+    [HttpGet("submissions/{id}/results")]
+    public async Task<IActionResult> GetSubmissionResults(string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (submission == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "提交记录不存在"));
+
+        if (submission.SubmitterId != userId && !HasViewAllPermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限查看该提交"));
+
+        var results = await _db.ReviewResults
+            .Find(x => x.SubmissionId == id)
+            .SortByDescending(x => x.ScoredAt)
+            .ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new { results }));
     }
 
     // ──────────────────────────────────────────────
@@ -739,10 +887,7 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
 
-        // 删除旧 ReviewResult（如有）
-        if (!string.IsNullOrEmpty(submission.ResultId))
-            await _db.ReviewResults.DeleteOneAsync(x => x.Id == submission.ResultId, CancellationToken.None);
-
+        // 不删旧 ReviewResult，保留为评审历史
         await _db.ReviewSubmissions.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReviewSubmission>.Update
@@ -750,7 +895,7 @@ public class ReviewAgentController : ControllerBase
                 .Set(x => x.FileName, attachment.FileName)
                 .Set(x => x.ExtractedContent, attachment.ExtractedText)
                 .Set(x => x.Status, ReviewStatuses.Queued)
-                .Set(x => x.RerunCount, 0)  // 重新上传 = 新一次方案的「首次评审」，RerunCount 清零
+                .Set(x => x.RerunCount, 0)  // 申诉成功后重新上传 = 该方案的"新一轮首次评审"，RerunCount 清零
                 .Unset(x => x.ResultId)
                 .Unset(x => x.IsPassed)
                 .Unset(x => x.CompletedAt)

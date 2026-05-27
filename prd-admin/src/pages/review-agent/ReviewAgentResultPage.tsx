@@ -5,7 +5,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions } from '@/services';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions, reuploadReviewOnFailure, getReviewSubmissionResults } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
 import { reuploadReviewSubmission } from '@/services/real/reviewAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -186,6 +186,9 @@ export function ReviewAgentResultPage() {
   const [reuploading, setReuploading] = useState(false);
   const [reuploadError, setReuploadError] = useState<string | null>(null);
   const reuploadInputRef = useRef<HTMLInputElement>(null);
+  const reuploadOnFailureInputRef = useRef<HTMLInputElement>(null);
+  const [resultHistory, setResultHistory] = useState<ReviewResult[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const authUser = useAuthStore(s => s.user);
   const permissions = useAuthStore(s => s.permissions);
@@ -197,6 +200,11 @@ export function ReviewAgentResultPage() {
   );
   const canAppeal = isOwner && canAppealLocal(submission);
   const canReupload = isOwner && submission?.appealStatus === 'Approved';
+  // 未通过救机会：Done + 未通过 + RerunCount=0（每方案仅 1 次）
+  const canReuploadOnFailure = isOwner
+    && submission?.status === 'Done'
+    && submission?.isPassed === false
+    && (submission?.rerunCount ?? 0) === 0;
   const hasAppealRecord = !!submission?.latestAppealId;
 
   const loadData = useCallback(async () => {
@@ -291,6 +299,53 @@ export function ReviewAgentResultPage() {
     } finally {
       setRerunning(false);
     }
+  }
+
+  async function handleReuploadOnFailureFile(file: File) {
+    if (!id || reuploading) return;
+    setReuploading(true);
+    setReuploadError(null);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        setReuploadError(up.error?.message ?? '文件上传失败');
+        return;
+      }
+      const res = await reuploadReviewOnFailure(id, up.data.attachmentId);
+      if (!res.success) {
+        setReuploadError(res.error?.message ?? '替换失败');
+        return;
+      }
+      // 重置本地评审展示，触发新一轮 SSE。RerunCount 在后端 +1，前端同步更新。
+      setResult(null);
+      setDimensionScores([]);
+      setSummary('');
+      setTotalScore(null);
+      setIsPassed(null);
+      setAdjustmentLog([]);
+      setExpandedDims(new Set());
+      setStreaming(true);
+      setSubmission(prev => prev ? {
+        ...prev,
+        status: 'Queued',
+        resultId: undefined,
+        isPassed: undefined,
+        completedAt: undefined,
+        rerunCount: (prev.rerunCount ?? 0) + 1,
+        attachmentId: up.data!.attachmentId,
+        fileName: file.name,
+      } : prev);
+      sse.start({ url: getReviewResultStreamUrl(id!) });
+    } finally {
+      setReuploading(false);
+      if (reuploadOnFailureInputRef.current) reuploadOnFailureInputRef.current.value = '';
+    }
+  }
+
+  async function loadResultHistory() {
+    if (!id) return;
+    const res = await getReviewSubmissionResults(id);
+    if (res.success && res.data) setResultHistory(res.data.results);
   }
 
   async function handleReuploadFile(file: File) {
@@ -432,8 +487,30 @@ export function ReviewAgentResultPage() {
       </div>
 
       {/* 申诉操作行（仅在相关状态下展示） */}
-      {(canAppeal || canReupload || hasAppealRecord) && (
+      {(canAppeal || canReupload || canReuploadOnFailure || hasAppealRecord) && (
         <div className="flex flex-wrap items-center gap-2 mb-6">
+          {canReuploadOnFailure && (
+            <>
+              <input
+                ref={reuploadOnFailureInputRef}
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReuploadOnFailureFile(f);
+                }}
+              />
+              <button
+                onClick={() => reuploadOnFailureInputRef.current?.click()}
+                disabled={reuploading}
+                title="未通过的方案可重新上传文件再评审一次（每方案仅 1 次机会）"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5" /> {reuploading ? '上传中...' : '重新上传方案（剩 1 次救机会）'}
+              </button>
+            </>
+          )}
           {canAppeal && (
             <button
               onClick={() => setShowAppealDialog(true)}
@@ -551,6 +628,52 @@ export function ReviewAgentResultPage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* 评审历史（含被重传/重跑覆盖之前的旧结果），按需折叠展开 */}
+      {isDone && !isRunning && (
+        <div className="mb-6 bg-white/3 border border-white/8 rounded-xl">
+          <button
+            onClick={() => {
+              const next = !showHistory;
+              setShowHistory(next);
+              if (next && resultHistory.length === 0) loadResultHistory();
+            }}
+            className="w-full flex items-center justify-between px-5 py-3 text-sm text-white/70 hover:text-white transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <ClockIcon className="w-4 h-4" />
+              评审历史 {resultHistory.length > 0 && <span className="text-xs text-white/40">（共 {resultHistory.length} 次）</span>}
+            </span>
+            {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {showHistory && (
+            <div className="px-5 pb-4 border-t border-white/5">
+              {resultHistory.length === 0 ? (
+                <div className="text-xs text-white/40 py-3">仅本次评审，无更早历史。</div>
+              ) : (
+                <ul className="space-y-2 mt-3">
+                  {resultHistory.map((r, i) => (
+                    <li key={r.id} className="flex items-center gap-3 text-xs">
+                      <span className="text-white/40 tabular-nums w-12">#{resultHistory.length - i}</span>
+                      <span className={`tabular-nums font-medium ${r.isPassed ? 'text-emerald-400' : 'text-orange-400'}`}>
+                        {r.totalScore}分
+                      </span>
+                      <span className={`flex items-center gap-1 ${r.isPassed ? 'text-emerald-400/80' : 'text-orange-400/80'}`}>
+                        {r.isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                        {r.isPassed ? '通过' : '未通过'}
+                      </span>
+                      <span className="text-white/40">{new Date(r.scoredAt).toLocaleString('zh-CN')}</span>
+                      {r.adjustmentLog && r.adjustmentLog.length > 0 && (
+                        <span className="text-amber-400/60">（系统兜底 {r.adjustmentLog.length} 项）</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       )}
 
