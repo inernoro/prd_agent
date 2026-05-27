@@ -52,6 +52,19 @@ export interface ContainerRemoveContext {
   details?: Record<string, unknown>;
 }
 
+function isDockerNoSuchContainer(result: { stderr?: string; stdout?: string }): boolean {
+  return /No such container:/i.test(`${result.stderr || ''}\n${result.stdout || ''}`);
+}
+
+function classifyRemoveCompletion(rmResult: { exitCode: number; stderr?: string; stdout?: string }): {
+  severity: ServerEventSeverity;
+  status: 'removed' | 'already-absent' | 'failed';
+} {
+  if (rmResult.exitCode === 0) return { severity: 'info', status: 'removed' };
+  if (isDockerNoSuchContainer(rmResult)) return { severity: 'warn', status: 'already-absent' };
+  return { severity: 'error', status: 'failed' };
+}
+
 /**
  * 2026-04-22 —— 热更新命令模板。enabled 时由 resolveProfileWithMode 优先应用。
  * 依据 hotReload.mode 生成 watcher 命令；mode='custom' 时用 hotReload.command。
@@ -1457,11 +1470,14 @@ export class ContainerService {
     this.noteLifecycleIntent(containerName, kind, reason, context);
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    const completion = classifyRemoveCompletion(rmResult);
     this.recordContainerEvent({
-      severity: rmResult.exitCode === 0 ? 'info' : 'error',
+      severity: completion.severity,
       source: 'cds-container-service',
       action: 'container.remove.completed',
-      message: `docker rm completed for ${containerName}`,
+      message: completion.status === 'already-absent'
+        ? `docker rm skipped for ${containerName}: container already absent`
+        : `docker rm completed for ${containerName}`,
       projectId: context.projectId ?? undefined,
       branchId: context.branchId ?? undefined,
       profileId: context.profileId ?? undefined,
@@ -1477,6 +1493,7 @@ export class ContainerService {
       },
       details: {
         reason,
+        removeStatus: completion.status,
         actor: context.actor ?? null,
         trigger: context.trigger ?? null,
         operation: context.operation ?? null,

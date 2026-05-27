@@ -491,6 +491,41 @@ describe('ContainerService', () => {
       expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
       expect(mock.commands.some((c) => c === 'docker rm cds-feature-a-api')).toBe(true);
     });
+
+    it('records already-absent containers as a warning instead of an error', async () => {
+      const records: Array<{ action: string; severity?: string; details?: Record<string, unknown> }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, {
+        record(record) {
+          records.push({ action: record.action, severity: record.severity, details: record.details });
+        },
+      });
+      mock.addResponsePattern(/docker inspect/, () => ({
+        stdout: '',
+        stderr: 'Error response from daemon: No such container: cds-feature-a-api',
+        exitCode: 1,
+      }));
+      mock.addResponsePattern(/docker logs/, () => ({
+        stdout: '',
+        stderr: 'Error response from daemon: No such container: cds-feature-a-api',
+        exitCode: 1,
+      }));
+      mock.addResponsePattern(/docker stop/, () => ({
+        stdout: '',
+        stderr: 'Error response from daemon: No such container: cds-feature-a-api',
+        exitCode: 1,
+      }));
+      mock.addResponsePattern(/docker rm/, () => ({
+        stdout: '',
+        stderr: 'Error response from daemon: No such container: cds-feature-a-api',
+        exitCode: 1,
+      }));
+
+      await service.remove('cds-feature-a-api');
+
+      const completed = records.find((record) => record.action === 'container.remove.completed');
+      expect(completed?.severity).toBe('warn');
+      expect(completed?.details?.removeStatus).toBe('already-absent');
+    });
   });
 
   describe('isRunning', () => {
