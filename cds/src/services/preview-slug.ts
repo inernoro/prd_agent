@@ -85,28 +85,29 @@ export function repoNameFromGitRef(raw: string | undefined | null): string {
 }
 
 /**
- * Preview URL 里的项目段必须优先代表 Git 仓库，而不是 CDS 运行目录。
- * 例：`/workspace` 目录托管 `git@github.com:inernoro/prd_agent.git` 时，
- * 项目段应为 `prd-agent`，不是 `workspace`。
+ * Preview URL 里的项目段必须优先代表 CDS 项目身份，而不是 Git 仓库。
+ *
+ * 同一个 CDS 实例里允许多个项目绑定同一个 Git repo；如果把 repo 名作为
+ * preview 项目段，两个项目的 `main` 都会生成 `main-prd-agent` 这类冲突
+ * 域名。Git repo 名只能作为旧链接解析候选，不能作为新链接生成依据。
  */
 export function previewProjectSlug(
   project: PreviewProjectIdentity | undefined | null,
   fallback?: string | null,
 ): string {
-  const fromGitUrl = repoNameFromGitRef(project?.gitRepoUrl);
-  if (fromGitUrl) return fromGitUrl;
-
-  const fromRepoFullName = repoNameFromGitRef(project?.githubRepoFullName);
-  if (fromRepoFullName) return fromRepoFullName;
-
-  return slugifyForPreview(
+  const fromProjectIdentity = slugifyForPreview(
     project?.aliasSlug ||
     project?.slug ||
     fallback ||
     project?.id ||
     project?.name ||
     'default',
-  ) || 'default';
+  );
+  if (fromProjectIdentity) return fromProjectIdentity;
+
+  return repoNameFromGitRef(project?.gitRepoUrl)
+    || repoNameFromGitRef(project?.githubRepoFullName)
+    || 'default';
 }
 
 /**
@@ -123,6 +124,8 @@ export function previewProjectSlugCandidates(
     project?.aliasSlug,
     fallback,
     project?.id,
+    repoNameFromGitRef(project?.gitRepoUrl),
+    repoNameFromGitRef(project?.githubRepoFullName),
   ]
     .map((s) => slugifyForPreview(String(s || '')))
     .filter(Boolean);

@@ -121,12 +121,32 @@ describe('preview project identity helpers', () => {
     expect(repoNameFromGitRef('inernoro/prd_agent')).toBe('prd-agent');
   });
 
-  it('uses git repo identity before local project slugs', () => {
+  it('uses CDS project identity before git repo identity for new preview URLs', () => {
     expect(previewProjectSlug({
       id: 'default',
       slug: 'workspace',
       gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
-    })).toBe('prd-agent');
+    })).toBe('workspace');
+  });
+
+  it('keeps different CDS projects unique even when they bind the same git repo', () => {
+    const repo = 'git@github.com:inernoro/prd_agent.git';
+    const shared = previewProjectSlug({
+      id: 'shared-sidecar-pool-mp4anabh',
+      slug: 'shared-sidecar-pool-mp4anabh',
+      gitRepoUrl: repo,
+      githubRepoFullName: 'inernoro/prd_agent',
+    });
+    const app = previewProjectSlug({
+      id: 'prd-agent',
+      slug: 'prd-agent',
+      gitRepoUrl: repo,
+      githubRepoFullName: 'inernoro/prd_agent',
+    });
+    expect(shared).toBe('shared-sidecar-pool-mp4anabh');
+    expect(app).toBe('prd-agent');
+    expect(computePreviewSlug('main', shared)).toBe('main-shared-sidecar-pool-mp4anabh');
+    expect(computePreviewSlug('main', app)).toBe('main-prd-agent');
   });
 
   it('keeps legacy project slug candidates for old preview URL resolution', () => {
@@ -134,7 +154,7 @@ describe('preview project identity helpers', () => {
       id: 'default',
       slug: 'workspace',
       gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
-    })).toEqual(['prd-agent', 'workspace', 'default']);
+    })).toEqual(['workspace', 'default', 'prd-agent']);
   });
 
   it('scores the closest available preview higher than unrelated previews', () => {
