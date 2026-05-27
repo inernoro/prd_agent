@@ -5,7 +5,10 @@ import {
   type ServerEventLogSink,
   type ServerEventSeverity,
 } from './server-event-log-store.js';
-import { classifyDockerLifecycleEvent } from './docker-lifecycle-classifier.js';
+import {
+  classifyDockerLifecycleEvent,
+  type DockerLifecycleClassification,
+} from './docker-lifecycle-classifier.js';
 
 const VALID_DOCKER_REF = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
 const INTENT_TTL_MS = 5 * 60 * 1000;
@@ -184,6 +187,25 @@ function eventSeverity(action: string, attrs: Record<string, string>): ServerEve
   return 'info';
 }
 
+function dockerLifecycleSeverity(
+  baseSeverity: ServerEventSeverity,
+  action: string,
+  classification?: DockerLifecycleClassification,
+  lifecycleIntent?: ContainerLifecycleIntent,
+): ServerEventSeverity {
+  if (!classification) return baseSeverity;
+  if (classification.unexpected) return 'error';
+
+  const normalized = action.toLowerCase();
+  const lifecycleAction = normalized.includes('oom')
+    || normalized === 'die'
+    || normalized === 'kill'
+    || normalized === 'destroy'
+    || normalized === 'stop';
+  if (lifecycleIntent && lifecycleAction) return 'warn';
+  return 'info';
+}
+
 function shouldCaptureDiagnostics(action: string): boolean {
   const normalized = action.toLowerCase();
   return normalized === 'die'
@@ -334,11 +356,6 @@ export class DockerEventMonitor {
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
     const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
     const normalizedAction = action.toLowerCase();
-    const recordedSeverity = lifecycleIntent
-      && !normalizedAction.includes('oom')
-      && ['die', 'kill', 'destroy', 'stop'].includes(normalizedAction)
-      ? 'warn'
-      : severity;
     const exitCode = Number.isFinite(Number(state?.exitCode ?? attrs.exitCode))
       ? Number(state?.exitCode ?? attrs.exitCode)
       : undefined;
@@ -359,6 +376,7 @@ export class DockerEventMonitor {
         lifecycleIntent,
       })
       : undefined;
+    const recordedSeverity = dockerLifecycleSeverity(severity, action, classification, lifecycleIntent);
 
     this.store.record({
       category: 'docker',

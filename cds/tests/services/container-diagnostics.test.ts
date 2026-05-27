@@ -109,6 +109,7 @@ describe('container lifecycle intent correlation', () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       category: 'docker',
+      severity: 'warn',
       source: 'docker-events',
       action: 'die',
       projectId: 'prd-agent',
@@ -126,6 +127,77 @@ describe('container lifecycle intent correlation', () => {
     expect(records[0].details.classification).toMatchObject({
       source: 'cds',
       stopClass: 'cds-pre-run-replace',
+      unexpected: false,
+      nextServiceStatus: 'stopped',
+    });
+  });
+
+  it('records normal docker exits as info instead of error', async () => {
+    const containerName = 'cds-prd-agent-main-api-prd-agent';
+    const records: any[] = [];
+    const store: ServerEventLogSink = {
+      record(record) {
+        records.push(record);
+      },
+    };
+    const shell: IShellExecutor = {
+      async exec(command): Promise<ShellResult> {
+        if (command.startsWith('docker inspect')) {
+          return {
+            stdout: JSON.stringify([{
+              Name: `/${containerName}`,
+              State: { Status: 'exited', ExitCode: 0, OOMKilled: false },
+              Config: {
+                Labels: {
+                  'cds.managed': 'true',
+                  'cds.type': 'app',
+                  'cds.branch.id': 'prd-agent-main',
+                  'cds.profile.id': 'api',
+                },
+              },
+            }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (command.startsWith('docker logs')) {
+          return { stdout: 'clean shutdown', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    };
+    const monitor = new DockerEventMonitor(shell, store);
+
+    await (monitor as any).handleLine(JSON.stringify({
+      Type: 'container',
+      Action: 'die',
+      Actor: {
+        ID: 'abcdef',
+        Attributes: {
+          name: containerName,
+          'cds.branch.id': 'prd-agent-main',
+          'cds.profile.id': 'api',
+          exitCode: '0',
+        },
+      },
+      time: 1,
+      timeNano: 1,
+    }));
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      category: 'docker',
+      severity: 'info',
+      source: 'docker-events',
+      action: 'die',
+      branchId: 'prd-agent-main',
+      profileId: 'api',
+      exitCode: 0,
+      oomKilled: false,
+    });
+    expect(records[0].details.classification).toMatchObject({
+      source: 'system',
+      stopClass: 'normal-exit',
       unexpected: false,
       nextServiceStatus: 'stopped',
     });
