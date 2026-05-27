@@ -12,6 +12,8 @@ triggers:
 
 # Page Agent Bridge — 远程操作预览页面
 
+> 暂停状态（2026-05-28）：Page Agent Bridge HTTP 轮询已默认关闭，除非 CDS 服务端显式设置 `CDS_BRIDGE_ENABLED=1`。不要主动使用本技能做页面操作；页面验收改用 `cdscli smoke`、浏览器插件/本地无头浏览器或人工预览。此文档仅保留历史设计与将来回滚参考。
+
 通过 CDS Widget 注入的 Bridge Client，Agent 可以读取用户浏览器中的真实页面 DOM、
 执行点击/输入操作（带鼠标轨迹动画），实现端到端的页面验证和自动化操作。
 

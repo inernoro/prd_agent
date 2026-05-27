@@ -176,18 +176,10 @@ interface ProxyLogResponse {
   events: ProxyLogEvent[];
 }
 
-interface BridgeCheckResponse {
-  active: boolean;
-}
-
 interface BridgeConnection {
   branchId: string;
   url: string;
   connectedAt: string;
-}
-
-interface BridgeConnectionsResponse {
-  connections: BridgeConnection[];
 }
 
 interface ForceRebuildResponse {
@@ -679,7 +671,7 @@ export function BranchDetailPage(): JSX.Element {
       }
 
       const realProjectId = branch.projectId || projectId;
-      const [project, operationLogs, commits, profiles, aliases, proxyLogs, bridgeCheck, bridgeConnections, previewMode, config] = await Promise.all([
+      const [project, operationLogs, commits, profiles, aliases, proxyLogs, previewMode, config] = await Promise.all([
         realProjectId
           ? apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(realProjectId)}`).catch(() => undefined)
           : Promise.resolve(undefined),
@@ -688,8 +680,6 @@ export function BranchDetailPage(): JSX.Element {
         apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`).catch(() => ({ profiles: [] })),
         apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`).catch(() => ({ aliases: [] })),
         apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })),
-        apiRequest<BridgeCheckResponse>(`/api/bridge/check/${encodeURIComponent(branch.id)}`).catch(() => ({ active: false })),
-        apiRequest<BridgeConnectionsResponse>('/api/bridge/connections').catch(() => ({ connections: [] })),
         realProjectId
           ? apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const }))
           : Promise.resolve({ mode: 'multi' as const }),
@@ -704,8 +694,8 @@ export function BranchDetailPage(): JSX.Element {
         profiles: profiles.profiles || [],
         aliases,
         proxyLogs: filterProxyLogsForBranch(proxyLogs.events || [], branch, aliases),
-        bridgeActive: !!bridgeCheck.active,
-        bridgeConnection: (bridgeConnections.connections || []).find((item) => item.branchId === branch.id),
+        bridgeActive: false,
+        bridgeConnection: undefined,
         previewMode: previewMode.mode || 'multi',
         config,
       });
@@ -1732,26 +1722,19 @@ export function BranchDetailPage(): JSX.Element {
               <DisclosurePanel
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Bridge 操作"
-                subtitle={state.bridgeConnection ? 'widget connected' : 'widget offline'}
+                subtitle="paused"
                 contentClassName="space-y-3 p-5 text-sm"
               >
                   <div className="flex flex-wrap gap-2 text-xs">
-                    <span className={`rounded border px-2 py-0.5 ${state.bridgeActive ? statusClass('running') : statusClass('idle')}`}>
-                      {state.bridgeActive ? 'session active' : 'session idle'}
-                    </span>
-                    <span className={`rounded border px-2 py-0.5 ${state.bridgeConnection ? statusClass('running') : statusClass('idle')}`}>
-                      {state.bridgeConnection ? 'widget connected' : 'widget offline'}
+                    <span className={`rounded border px-2 py-0.5 ${statusClass('idle')}`}>
+                      bridge paused
                     </span>
                   </div>
-                  {state.bridgeConnection ? (
-                    <Field label="页面" value={state.bridgeConnection.url || '未上报'} />
-                  ) : (
-                    <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
-                      打开分支预览页后，Widget 会建立 Bridge 连接；这里可读取页面状态。
-                    </div>
-                  )}
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+                    Page Agent Bridge HTTP 轮询已暂停。预览页不会建立 Bridge 连接，也不会静默轮询控制面。
+                  </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => void startBridgeSession()}>
+                    <Button size="sm" variant="outline" onClick={() => void startBridgeSession()} disabled>
                       <Play />
                       激活
                     </Button>
