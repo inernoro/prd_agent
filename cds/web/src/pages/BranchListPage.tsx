@@ -2620,9 +2620,12 @@ export function BranchListPage(): JSX.Element {
     ? Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)
     : null;
   const selectedCapacityWarning = state.status === 'ok' ? capacityMessage(state.capacity, selectedBranches) : '';
-  const onlineExecutors = opsStatus.status === 'ok' ? opsStatus.capacity.online : 0;
-  const totalExecutors = opsStatus.status === 'ok' ? opsStatus.capacity.online + opsStatus.capacity.offline : 0;
-  const executorFreePercent = opsStatus.status === 'ok' ? Math.round(opsStatus.capacity.freePercent) : 0;
+  const executorCapacity = opsStatus.status === 'ok' ? opsStatus.capacity : null;
+  const executorNodes = Array.isArray(executorCapacity?.nodes) ? executorCapacity.nodes : [];
+  const onlineExecutors = typeof executorCapacity?.online === 'number' ? executorCapacity.online : 0;
+  const offlineExecutors = typeof executorCapacity?.offline === 'number' ? executorCapacity.offline : 0;
+  const totalExecutors = onlineExecutors + offlineExecutors;
+  const executorFreePercent = typeof executorCapacity?.freePercent === 'number' ? Math.round(executorCapacity.freePercent) : 0;
   const clusterMode = opsStatus.status === 'ok' ? opsStatus.cluster.mode : 'unknown';
 
   /*
@@ -3106,10 +3109,10 @@ export function BranchListPage(): JSX.Element {
                       <MetricTile label="空闲" value={`${executorFreePercent}%`} />
                     </div>
                     <div className="space-y-2">
-                      {opsStatus.capacity.nodes.length === 0 ? (
+                      {executorNodes.length === 0 ? (
                         <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">暂无执行节点</div>
                       ) : null}
-                      {opsStatus.capacity.nodes.map((node) => (
+                      {executorNodes.map((node) => (
                         <ExecutorNodeRow
                           key={node.id}
                           node={node}
