@@ -63,7 +63,7 @@ describe('branch status helpers', () => {
 
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown, headers?: Record<string, string>,
-): Promise<{ status: number; body: unknown }> {
+): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const data = body ? JSON.stringify(body) : undefined;
@@ -78,8 +78,8 @@ async function request(
       let raw = '';
       res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
       res.on('end', () => {
-        try { resolve({ status: res.statusCode!, body: JSON.parse(raw) }); }
-        catch { resolve({ status: res.statusCode!, body: raw }); }
+        try { resolve({ status: res.statusCode!, body: JSON.parse(raw), headers: res.headers }); }
+        catch { resolve({ status: res.statusCode!, body: raw, headers: res.headers }); }
       });
     });
     req.on('error', reject);
@@ -201,6 +201,7 @@ describe('Branch Routes', () => {
 
   afterEach(async () => {
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
+    delete process.env.CDS_BRANCHES_SLOW_MS;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
   });
@@ -413,6 +414,43 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches[0].services.api.status).toBe('running');
       expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(false);
       expect(mock.commands.some((cmd) => cmd.includes('git log -1'))).toBe(false);
+    });
+
+    it('records timing headers and slow diagnostics for default branch snapshots without live probing', async () => {
+      process.env.CDS_BRANCHES_SLOW_MS = '0';
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'timed-main',
+        projectId: 'default',
+        branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'timed-main'),
+        status: 'running',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-timed-main-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+        createdAt: now,
+      });
+
+      const res = await request(server, 'GET', '/api/branches?project=default', undefined, {
+        'X-CDS-Request-Id': 'req-branches-timing',
+      });
+
+      expect(res.status).toBe(200);
+      expect(String(res.headers['server-timing'])).toContain('getState;dur=');
+      expect(String(res.headers['server-timing'])).toContain('liveSkipped;dur=');
+      expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(false);
+      expect(mock.commands.some((cmd) => cmd.includes('git log -1'))).toBe(false);
+      const slowEvent = operationEvents.find((event) => event.action === 'branches.list.slow');
+      expect(slowEvent?.source).toBe('api.branches');
+      expect(slowEvent?.requestId).toBe('req-branches-timing');
+      expect(slowEvent?.details?.live).toBe(false);
+      expect(slowEvent?.details?.branchCount).toBeGreaterThanOrEqual(1);
+      expect((slowEvent?.details?.timings as Record<string, number>)?.total).toBeGreaterThanOrEqual(0);
     });
 
     it('live=true explicitly reconciles branch state with Docker', async () => {

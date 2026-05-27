@@ -2676,7 +2676,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   router.get('/branches', async (req, res) => {
+    const startedAt = Date.now();
+    const timings: Record<string, number> = {};
+    let lastTimingAt = startedAt;
+    const markTiming = (name: string): void => {
+      const now = Date.now();
+      timings[name] = now - lastTimingAt;
+      lastTimingAt = now;
+    };
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const state = stateService.getState();
+    markTiming('getState');
     // Default is an authoritative state snapshot. Docker/git probing is an
     // explicit operator action (`?live=true`) so passive page loads, polling,
     // widgets, and preview pages cannot silently turn reads into expensive
@@ -2690,6 +2700,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branches = Object.values(state.branches).filter(
       (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
     );
+    markTiming('filterBranches');
     const aiActivityByBranch = new Map<string, { count: number; lastAt: string }>();
     const projectIds = new Set(branches.map((b) => b.projectId || 'default'));
     const branchIdSet = new Set(branches.map((b) => b.id));
@@ -2699,8 +2710,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ids.push(b.id);
       branchNameToIds.set(b.branch, ids);
     }
+    let activityLogCount = 0;
     for (const projectId of projectIds) {
-      for (const log of stateService.getActivityLogs(projectId)) {
+      const logs = stateService.getActivityLogs(projectId);
+      activityLogCount += logs.length;
+      for (const log of logs) {
         if (!isAiActivityLog(log)) continue;
         const ids = log.branchId && branchIdSet.has(log.branchId)
           ? [log.branchId]
@@ -2716,6 +2730,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
     }
+    markTiming('activityLogs');
 
     // Explicit live reconcile only (perf fix, 2026-05-03):
     // Old code did `containerService.isRunning(svc.containerName)` sequentially
@@ -2741,6 +2756,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
     }
+    markTiming(live ? 'liveDockerReconcile' : 'liveSkipped');
 
     // Fetch latest commit subject + short SHA for each branch + 计算 v3 previewSlug
     // 让 dashboard 前端不再自己拼 URL（避免又出现"代码改了文档没跟上"），
@@ -2802,6 +2818,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }),
     );
+    markTiming('enrichBranches');
 
     // Sort: favorites first, then by creation date
     branchesWithSubject.sort((a, b) => {
@@ -2825,6 +2842,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
           runningContainers++;
         }
       }
+    }
+    markTiming('capacity');
+    timings.total = Date.now() - startedAt;
+    res.setHeader('Server-Timing', Object.entries(timings)
+      .map(([name, duration]) => `${name};dur=${duration}`)
+      .join(', '));
+    const slowThresholdRaw = Number.parseInt(process.env.CDS_BRANCHES_SLOW_MS || '1000', 10);
+    const slowThresholdMs = Number.isFinite(slowThresholdRaw) ? Math.max(0, slowThresholdRaw) : 1000;
+    if (timings.total >= slowThresholdMs) {
+      serverEventLogStore?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'api.branches',
+        action: 'branches.list.slow',
+        message: `GET /api/branches took ${timings.total}ms${projectFilter ? ` for project ${projectFilter}` : ''}`,
+        projectId: projectFilter || null,
+        requestId: requestId || null,
+        details: {
+          requestId: requestId || null,
+          project: projectFilter || null,
+          live,
+          branchCount: branches.length,
+          totalBranchCount: Object.keys(state.branches).length,
+          projectCount: projectIds.size,
+          activityLogCount,
+          timings,
+          thresholdMs: slowThresholdMs,
+        },
+      });
     }
 
     res.json({
