@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MessageSquare, LayoutGrid, Plus, Trash2, Edit2, Check, X,
-  ChevronLeft, ChevronRight, Brain, NotebookPen, BookOpen, Moon,
+  ChevronLeft, ChevronRight, Brain, BookOpen, Moon,
 } from 'lucide-react';
 import {
   getPaSessions, createPaSession, deletePaSession, renamePaSession,
@@ -11,6 +11,7 @@ import { PaAssistantChat } from './PaAssistantChat';
 import { PaTaskBoard } from './PaTaskBoard';
 import { PaProfilePanel } from './PaProfilePanel';
 import { PaReviewDrawer } from './PaReviewDrawer';
+import { PaSecretaryIcon } from '@/pages/ai-toolbox/components/PaSecretaryIcon';
 import './paAgent.css';
 
 /** sessionStorage key — 主题偏好（dark / parchment） */
@@ -381,9 +382,9 @@ export function PaAgentPage() {
           <div className="flex items-center gap-2">
             <div
               className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+              style={{ background: 'linear-gradient(135deg,#0c3d6e,#2563eb)' }}
             >
-              <NotebookPen size={12} color="#fff" />
+              <PaSecretaryIcon size={12} color="#fff" />
             </div>
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
               毒舌秘书

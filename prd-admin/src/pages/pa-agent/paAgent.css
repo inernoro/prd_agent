@@ -372,50 +372,59 @@
 }
 
 .pa-agent-root[data-pa-theme="parchment"] {
-  --pa-bg-base:
-    radial-gradient(circle at 16% 12%, #fff6df 0%, #f3e5c0 46%, #dfc48c 100%);
-  --pa-bg-elevated: #f8edd2;
-  --pa-bg-hover: #efe0b8;
-  --pa-border-default: rgba(92, 58, 20, 0.2);
-  --pa-text-primary: #2f1f12;
-  --pa-text-secondary: #4a311c;
-  --pa-text-muted: #705633;
-  --pa-accent-strong: #D97706;
-  --pa-accent-soft: #B45309;
-  --pa-md-code-bg: rgba(120, 80, 30, 0.1);
-  --pa-md-code-border: rgba(120, 80, 30, 0.25);
-  --pa-md-quote-bg: rgba(217, 119, 6, 0.08);
-  --pa-md-quote-border: rgba(217, 119, 6, 0.6);
-  --pa-md-strong: #B45309;
-  --pa-md-link: #92400E;
-  --pa-md-link-hover: #5C2A04;
+  --pa-bg-base: #f8f6f1;
+  --pa-bg-elevated: #fffcf8;
+  --pa-bg-hover: #f0ebe4;
+  --pa-border-default: rgba(120, 108, 88, 0.16);
+  --pa-text-primary: #2a322e;
+  --pa-text-secondary: #45504a;
+  --pa-text-muted: #6d7872;
+  --pa-accent-strong: #4a7c6f;
+  --pa-accent-soft: #6b9e8f;
+  --pa-md-code-bg: rgba(74, 124, 111, 0.08);
+  --pa-md-code-border: rgba(74, 124, 111, 0.22);
+  --pa-md-quote-bg: rgba(74, 124, 111, 0.07);
+  --pa-md-quote-border: rgba(74, 124, 111, 0.45);
+  --pa-md-strong: #3d6b5c;
+  --pa-md-link: #3d6b5c;
+  --pa-md-link-hover: #2a4f44;
 }
 
-/* parchment 模式：把 PaAgentPage 用到 var(--bg-base) 等的关键容器换成 pa-* 变量
-   作用域只覆盖到 .pa-agent-root 内部，不影响外面其他页面 */
+/* parchment：米白浅色系 + 淡淡书卷纹理（小清新、书卷气） */
 .pa-agent-root[data-pa-theme="parchment"] {
-  background: var(--pa-bg-base) !important;
+  background-color: #f8f6f1 !important;
+  background-image:
+    radial-gradient(ellipse 90% 55% at 88% 4%, rgba(255, 253, 248, 0.98) 0%, transparent 52%),
+    radial-gradient(ellipse 65% 45% at 6% 96%, rgba(235, 228, 210, 0.4) 0%, transparent 48%),
+    repeating-linear-gradient(
+      -4deg,
+      transparent,
+      transparent 30px,
+      rgba(186, 176, 152, 0.04) 30px,
+      rgba(186, 176, 152, 0.04) 31px
+    ),
+    linear-gradient(168deg, #faf9f6 0%, #f4f0e8 52%, #ebe6dc 100%) !important;
   color: var(--pa-text-primary) !important;
 }
 
-/* parchment：聊天气泡、看板、quick-cmd 卡片背景同步换成米色 */
+/* parchment：聊天气泡、看板、quick-cmd 卡片背景同步换成浅米白 */
 .pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd {
-  background: rgba(255, 252, 239, 0.6) !important;
-  border-color: rgba(120, 80, 30, 0.22) !important;
+  background: rgba(255, 255, 252, 0.72) !important;
+  border-color: rgba(120, 108, 88, 0.18) !important;
   color: var(--pa-text-secondary) !important;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd:hover {
-  background: rgba(255, 252, 239, 0.9) !important;
-  border-color: rgba(217, 119, 6, 0.55) !important;
-  box-shadow: 0 6px 20px -8px rgba(217, 119, 6, 0.4) !important;
+  background: rgba(255, 255, 252, 0.95) !important;
+  border-color: rgba(74, 124, 111, 0.42) !important;
+  box-shadow: 0 6px 20px -10px rgba(74, 124, 111, 0.28) !important;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-task-card {
-  background: rgba(255, 252, 239, 0.7) !important;
-  border-color: rgba(120, 80, 30, 0.2) !important;
+  background: rgba(255, 255, 252, 0.78) !important;
+  border-color: rgba(120, 108, 88, 0.16) !important;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-task-card:hover {
-  border-color: rgba(217, 119, 6, 0.5) !important;
-  box-shadow: 0 4px 14px -6px rgba(120, 80, 30, 0.25) !important;
+  border-color: rgba(74, 124, 111, 0.4) !important;
+  box-shadow: 0 4px 14px -8px rgba(74, 124, 111, 0.2) !important;
 }
 
 /* 引用全局 var 的元素在 parchment 下也要替换 */
@@ -674,7 +683,7 @@
   background: rgba(255, 255, 255, 0.02);
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-chat-markdown .pa-md-table tbody tr:nth-child(even) {
-  background: rgba(120, 80, 30, 0.04);
+  background: rgba(74, 124, 111, 0.04);
 }
 
 /* 分隔线 — 渐隐 hairline */
@@ -712,9 +721,14 @@
   color: var(--pa-text-secondary);
 }
 .pa-toolbar-btn[data-active="true"] {
-  background: rgba(217, 119, 6, 0.12);
+  background: rgba(37, 99, 235, 0.14);
+  color: #93c5fd;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-toolbar-btn[data-active="true"] {
+  background: rgba(74, 124, 111, 0.12);
   color: var(--pa-accent-strong);
-  border-color: rgba(217, 119, 6, 0.35);
+  border-color: rgba(74, 124, 111, 0.35);
 }
 
 .pa-secretary-avatar-shell {
@@ -725,8 +739,19 @@
     0 1px 0 rgba(255, 255, 255, 0.18) inset;
 }
 
+/* 快捷指令图标底色 */
+.pa-quick-cmd-icon {
+  background: rgba(37, 99, 235, 0.12);
+  color: #67e8f9;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd-icon {
+  background: rgba(74, 124, 111, 0.12);
+  color: var(--pa-accent-soft);
+}
+
 /* 进一步了解我 ghost 按钮 — 二级 CTA */
 .pa-learn-more {
+  border-color: rgba(56, 189, 248, 0.28);
   transition:
     background 200ms var(--pa-ease-emphasized),
     color 200ms var(--pa-ease-emphasized),
@@ -734,8 +759,16 @@
     transform 180ms var(--pa-ease-spring);
 }
 .pa-learn-more:hover {
-  background: rgba(217, 119, 6, 0.08);
-  color: #fcd34d;
-  border-color: rgba(217, 119, 6, 0.55);
+  background: rgba(37, 99, 235, 0.1);
+  color: #93c5fd;
+  border-color: rgba(56, 189, 248, 0.5);
   transform: translateY(-1px);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-learn-more {
+  border-color: rgba(74, 124, 111, 0.28);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-learn-more:hover {
+  background: rgba(74, 124, 111, 0.08);
+  color: var(--pa-accent-strong);
+  border-color: rgba(74, 124, 111, 0.45);
 }

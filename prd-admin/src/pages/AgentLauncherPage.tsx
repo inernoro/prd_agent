@@ -31,9 +31,9 @@ import {
   Cpu,
   Users,
   Hammer,
-  NotebookPen,
   type LucideIcon,
 } from 'lucide-react';
+import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -90,8 +90,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
   // 基础设施
   FolderHeart, Cpu, Users, Hammer,
-  // 毒舌秘书 — AI 笔记本主题
-  NotebookPen,
+  PaSecretary,
 };
 
 // Agent 封面图/视频默认 CDN 路径由 `lib/homepageAssetSlots.ts` 统一维护
@@ -127,8 +126,8 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Cpu:       { from: '#6366F1', to: '#A5B4FC' },
   Users:     { from: '#22D3EE', to: '#67E8F9' },
   Hammer:    { from: '#64748B', to: '#94A3B8' },
-  // 毒舌秘书：羊皮卷琥珀，与 PaAgentCardArt 内联插画呼应
-  NotebookPen:{ from: '#D97706', to: '#FCD34D' },
+  // 毒舌秘书：科幻深蓝，与 PaAgentCardArt 内联插画呼应
+  PaSecretary:{ from: '#1D4ED8', to: '#67E8F9' },
 };
 
 function getAccent(icon: string) {

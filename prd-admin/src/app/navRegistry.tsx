@@ -282,7 +282,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       label: '毒舌秘书',
       shortLabel: '毒舌',
       description: '把模糊想法转成 MECE 执行清单的 MBB 级私人助理。毒舌幽默、不堆鸡汤、能落盘。',
-      icon: 'NotebookPen',
+      icon: 'PaSecretary',
       section: 'toolbox',
       appKey: 'pa-agent',
       wip: true,

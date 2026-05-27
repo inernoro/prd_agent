@@ -251,7 +251,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     id: 'builtin-pa-agent',
     name: '毒舌秘书',
     description: '把模糊想法转成 MECE 执行清单的 MBB 级私人助理',
-    icon: 'NotebookPen',
+    icon: 'PaSecretary',
     category: 'builtin',
     type: 'builtin',
     kind: 'agent',
