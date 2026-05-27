@@ -258,6 +258,75 @@ describe('BranchOperationCoordinator', () => {
     expect(cancelled.some((r) => r.details?.pending === true && r.details?.reason === 'superseded by stop')).toBe(true);
   });
 
+  it('webhook stop from PR close cancels active and queued webhook deploys', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const active = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '1111111',
+      source: 'github-webhook.push',
+    });
+    coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'webhook',
+      commitSha: '2222222',
+      source: 'github-webhook.push',
+    });
+
+    const stop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'stop',
+      trigger: 'webhook',
+      actor: 'system:webhook',
+      source: 'github-webhook.pr-close',
+      reason: 'PR closed; stop preview',
+    });
+
+    expect(stop.status).toBe('started');
+    expect(active.lease?.isCurrent()).toBe(false);
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')).toBeUndefined();
+    const cancelled = records.filter((r) => r.action === 'branch.operation.cancelled');
+    expect(cancelled.some((r) => r.operationId === active.operationId && r.details?.pending !== true)).toBe(true);
+    expect(cancelled.some((r) => r.details?.pending === true && r.details?.reason === 'superseded by stop')).toBe(true);
+    expect(records.at(-1)).toMatchObject({
+      action: 'branch.operation.started',
+      operationKind: 'stop',
+      operationTrigger: 'webhook',
+    });
+  });
+
+  it('webhook stop yields to an active manual deploy', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const manual = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.deploy-branch',
+    });
+
+    const stop = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'stop',
+      trigger: 'webhook',
+      actor: 'system:webhook',
+      source: 'github-webhook.pr-close',
+      reason: 'PR closed; stop preview',
+    });
+
+    expect(stop.status).toBe('rejected');
+    expect(stop.activeOperationId).toBe(manual.operationId);
+    expect(manual.lease?.isCurrent()).toBe(true);
+    expect(records.find((r) => r.action === 'branch.operation.rejected')).toMatchObject({
+      operationKind: 'stop',
+      operationTrigger: 'webhook',
+    });
+  });
+
   it('manual reset is a terminal operation that fences active and queued webhook deploys', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

@@ -106,6 +106,7 @@ function priorityOf(req: BranchOperationRequest): number {
   if (req.trigger === 'manual' && TERMINAL_KINDS.has(req.kind)) return 100;
   if (req.trigger === 'manual' && req.kind === 'stop') return 95;
   if (req.trigger === 'webhook' && req.kind === 'delete') return 90;
+  if (req.trigger === 'webhook' && req.kind === 'stop') return 70;
   if (req.trigger === 'manual' && (req.kind === 'force-rebuild' || req.kind === 'deploy' || req.kind === 'deploy-profile' || req.kind === 'restart')) return 80;
   if (req.kind === 'cleanup-damaged') return 45;
   if (req.trigger === 'webhook' && (req.kind === 'deploy' || req.kind === 'deploy-profile')) return 50;
