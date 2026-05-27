@@ -341,6 +341,67 @@ describe('BranchOperationCoordinator', () => {
     expect(records.map((r) => r.action)).toContain('branch.operation.rejected');
   });
 
+  it('scheduler cooling yields to active manual operations and cannot overwrite them', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const manual = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'restart',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.restart-branch',
+    });
+
+    const cooling = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'scheduler-cooling',
+      trigger: 'scheduler',
+      actor: 'scheduler',
+      source: 'scheduler.coolIdleBranch',
+      reason: 'idle timeout',
+    });
+
+    expect(manual.status).toBe('started');
+    expect(cooling.status).toBe('rejected');
+    expect(cooling.activeOperationId).toBe(manual.operationId);
+    expect(coordinator.getActive('prd-agent-main')?.operationId).toBe(manual.operationId);
+    const rejected = records.find((r) => r.action === 'branch.operation.rejected');
+    expect(rejected?.details).toMatchObject({
+      kind: 'scheduler-cooling',
+      trigger: 'scheduler',
+      activeOperationId: manual.operationId,
+      activeKind: 'restart',
+    });
+  });
+
+  it('manual delete cancels active janitor removal so final writes are fenced', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const janitor = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'janitor-remove',
+      trigger: 'janitor',
+      actor: 'janitor',
+      source: 'janitor.removeStaleBranch',
+      reason: 'stale branch cleanup',
+    });
+
+    const del = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.delete-branch',
+    });
+
+    expect(janitor.status).toBe('started');
+    expect(del.status).toBe('started');
+    expect(janitor.lease?.isCurrent()).toBe(false);
+    expect(() => janitor.lease?.assertCurrent('janitor final state write')).toThrow(BranchOperationSupersededError);
+    expect(records.find((r) => r.action === 'branch.operation.cancelled')?.operationId).toBe(janitor.operationId);
+    expect(records.at(-1)?.operationId).toBe(del.operationId);
+  });
+
   it('serializes per branch without blocking other branches', () => {
     const coordinator = new BranchOperationCoordinator();
     const a = coordinator.begin({
