@@ -2039,6 +2039,74 @@ describe('Branch Routes', () => {
       expect((list.body as any).profiles).toHaveLength(0);
     });
 
+    it('skips build profile service cleanup while the branch has an active lifecycle operation', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'profile-delete-busy',
+        projectId: 'default',
+        branch: 'feature/profile-delete-busy',
+        worktreePath: path.join(tmpDir, 'worktrees', 'profile-delete-busy'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-profile-delete-busy-api',
+            hostPort: 10001,
+            status: 'idle',
+          },
+        },
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-profile-delete-busy-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-profile-delete-busy', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(server, 'POST', '/api/branches/profile-delete-busy/deploy');
+      try {
+        await runStarted;
+
+        const deletion = await request(
+          server,
+          'DELETE',
+          '/api/build-profiles/api',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-profile-delete' },
+        );
+
+        expect(deletion.status).toBe(200);
+        expect((deletion.body as any).skippedBusyCount).toBe(1);
+        expect(stateService.getBranch('profile-delete-busy')?.services.api).toBeTruthy();
+        const skipped = operationEvents.find((event) => event.action === 'app.build-profile-service.cleanup-skipped');
+        expect(skipped?.requestId).toBe('req-profile-delete');
+        expect(skipped?.branchId).toBe('profile-delete-busy');
+        expect(skipped?.operationKind).toBe('deploy');
+      } finally {
+        releaseRun();
+      }
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+    });
+
     it('P4 Part 16 (B1): POST /build-profiles honors body.projectId', async () => {
       // Pre-create the target project
       const now = new Date().toISOString();

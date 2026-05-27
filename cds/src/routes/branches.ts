@@ -7369,30 +7369,101 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // profileId so the UI doesn't keep displaying a dead service.
       const removedProfileId = req.params.id;
       const allBranches = Object.values(stateService.getState().branches || {});
+      const skippedBusy: Array<{ branchId: string; profileId: string; reason: string }> = [];
+      const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+      const actor = resolveActorFromRequest(req);
+      const trigger = triggerFromRequest(req);
       for (const entry of allBranches) {
         const svcs = entry.services || {};
         if (Object.prototype.hasOwnProperty.call(svcs, removedProfileId)) {
           const svc = (svcs as any)[removedProfileId];
-          if (svc?.containerName) {
-            try {
-              await containerService.remove(svc.containerName, {
-                projectId: entry.projectId,
-                branchId: entry.id,
-                profileId: removedProfileId,
-                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
-                actor: resolveActorFromRequest(req),
-                trigger: triggerFromRequest(req),
-                operation: 'build-profile-delete',
-                source: 'api.delete-build-profile',
-                reason: `删除构建配置 ${removedProfileId} 时清理对应容器`,
-              });
-            } catch { /* already gone */ }
+          const active = branchOperationCoordinator?.getActive(entry.id);
+          if (active) {
+            skippedBusy.push({ branchId: entry.id, profileId: removedProfileId, reason: `同分支已有写操作正在运行: ${active.request.kind}` });
+            serverEventLogStore?.record({
+              category: 'container',
+              severity: 'warn',
+              source: 'api.delete-build-profile',
+              action: 'app.build-profile-service.cleanup-skipped',
+              message: `skip build profile service cleanup ${entry.id}/${removedProfileId}: branch operation active`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: removedProfileId,
+              requestId,
+              operationId: active.operationId,
+              operationKind: active.request.kind,
+              operationTrigger: active.request.trigger,
+              operationActor: active.request.actor || null,
+              operationSource: active.request.source || null,
+              details: {
+                requestId,
+                actor,
+                trigger,
+                activeOperationId: active.operationId,
+                activeKind: active.request.kind,
+                reason: 'branch-operation-active',
+              },
+            });
+            continue;
           }
-          delete (svcs as any)[removedProfileId];
+          const branchOperationLease = beginSilentBranchOperation(req, entry, {
+            kind: 'cleanup-orphans',
+            profileId: removedProfileId,
+            source: 'api.delete-build-profile',
+            reason: `删除构建配置 ${removedProfileId} 时清理对应容器`,
+          });
+          if (branchOperationCoordinator && !branchOperationLease) {
+            skippedBusy.push({ branchId: entry.id, profileId: removedProfileId, reason: '同分支已有写操作正在运行' });
+            serverEventLogStore?.record({
+              category: 'container',
+              severity: 'warn',
+              source: 'api.delete-build-profile',
+              action: 'app.build-profile-service.cleanup-skipped',
+              message: `skip build profile service cleanup ${entry.id}/${removedProfileId}: branch operation active`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: removedProfileId,
+              requestId,
+              details: {
+                requestId,
+                actor,
+                trigger,
+                reason: 'branch-operation-active',
+              },
+            });
+            continue;
+          }
+          let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+          try {
+            assertBranchOperationCurrent(branchOperationLease, `delete build profile before ${entry.id}/${removedProfileId}`);
+            if (svc?.containerName) {
+              try {
+                await containerService.remove(svc.containerName, {
+                  projectId: entry.projectId,
+                  branchId: entry.id,
+                  profileId: removedProfileId,
+                  requestId,
+                  operationId: branchOperationLease?.operationId || null,
+                  actor,
+                  trigger,
+                  operation: 'build-profile-delete',
+                  source: 'api.delete-build-profile',
+                  reason: `删除构建配置 ${removedProfileId} 时清理对应容器`,
+                });
+              } catch { /* already gone */ }
+            }
+            assertBranchOperationCurrent(branchOperationLease, `delete build profile before state delete ${entry.id}/${removedProfileId}`);
+            delete (svcs as any)[removedProfileId];
+          } catch (err) {
+            branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+            skippedBusy.push({ branchId: entry.id, profileId: removedProfileId, reason: (err as Error).message });
+          } finally {
+            completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+          }
         }
       }
       stateService.save();
-      res.json({ message: '已删除' });
+      res.json({ message: '已删除', skippedBusyCount: skippedBusy.length, skippedBusy });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
