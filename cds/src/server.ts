@@ -97,13 +97,15 @@ function shouldAuditApiMutation(req: express.Request): boolean {
 function normalizeHttpLogPath(pathValue: string): string {
   const rawPath = (pathValue || '').split('?')[0] || '/';
   const segments = rawPath.split('/');
+  const staticBranchRoutes = new Set(['stream', 'state-audit', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
+  const staticExecutorRoutes = new Set(['register', 'capacity', 'dispatch']);
   return segments
     .map((segment, index) => {
       if (!segment) return segment;
       const decoded = decodeURIComponent(segment);
-      if (segments[1] === 'api' && segments[2] === 'branches' && index === 3) return ':branchId';
+      if (segments[1] === 'api' && segments[2] === 'branches' && index === 3 && !staticBranchRoutes.has(decoded)) return ':branchId';
       if (segments[1] === 'api' && segments[2] === 'projects' && index === 3) return ':projectId';
-      if (segments[1] === 'api' && segments[2] === 'executors' && index === 3) return ':executorId';
+      if (segments[1] === 'api' && segments[2] === 'executors' && index === 3 && !staticExecutorRoutes.has(decoded)) return ':executorId';
       if (/^[0-9a-f]{7,40}$/i.test(decoded)) return ':sha';
       if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(decoded)) return ':uuid';
       if (/^op_[A-Za-z0-9_-]+$/.test(decoded)) return ':operationId';

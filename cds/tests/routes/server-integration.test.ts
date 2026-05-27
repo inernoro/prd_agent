@@ -287,6 +287,8 @@ describe('Server route ordering (regression)', () => {
       { ...base, _id: '2', requestId: 'r2', path: '/api/branches/prd-agent-main/logs', durationMs: 1200 },
       { ...base, _id: '3', requestId: 'r3', path: '/api/branches/prd-agent-main/logs', durationMs: 800, status: 500, outcome: 'server-error' },
       { ...base, _id: '4', requestId: 'r4', path: '/api/projects/prd-agent', durationMs: 30 },
+      { ...base, _id: '5', requestId: 'r5', path: '/api/executors/capacity', durationMs: 60 },
+      { ...base, _id: '6', requestId: 'r6', path: '/api/branches/stream', durationMs: 40 },
     ]);
     server = await startServer(app);
 
@@ -295,7 +297,7 @@ describe('Server route ordering (regression)', () => {
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.ok).toBe(true);
-    expect(body.sampleSize).toBe(4);
+    expect(body.sampleSize).toBe(6);
     expect(body.endpoints[0]).toMatchObject({
       method: 'GET',
       endpoint: '/api/branches/:branchId/logs',
@@ -304,6 +306,8 @@ describe('Server route ordering (regression)', () => {
       maxMs: 1200,
     });
     expect(body.endpoints[0].slowest.requestId).toBe('r2');
+    expect(body.endpoints.map((endpoint: { endpoint: string }) => endpoint.endpoint)).toContain('/api/executors/capacity');
+    expect(body.endpoints.map((endpoint: { endpoint: string }) => endpoint.endpoint)).toContain('/api/branches/stream');
   });
 
   it('cluster router returns JSON when mounted BEFORE installSpaFallback', async () => {
