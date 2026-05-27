@@ -1363,12 +1363,12 @@ export function BranchDetailDrawer({
       .reverse();
   }, [activityEvents, branch, selectedService?.profileId]);
 
-  // Passive detail views must not trigger live Docker reads. Container logs are
-  // loaded only from explicit user actions: container-log tab, service selector,
-  // maximize, or refresh.
+  // Container logs are loaded only when a visible log surface needs them:
+  // the active deployment card, container-log tab, service selector,
+  // maximize, or refresh. Do not poll in the background.
 
-  // 部署 tab 内联容器日志只消费已经显式加载过的内容。打开详情/部署 tab
-  // 本身不能触发 live Docker 读取，否则被动查看会变成隐式诊断。
+  // 部署 tab 内联容器日志只在该 tab 可见时读取一次默认服务日志；
+  // 不做后台轮询，也不在其它 tab 预取。
   const activeDeploymentPhases = useMemo(() => {
     if (!activeDeployment) return null;
     return deriveBranchPhases(
@@ -1401,6 +1401,20 @@ export function BranchDetailDrawer({
     }
     return autoDeploymentLogProfileId;
   }, [autoDeploymentLogProfileId, selectedDeploymentLogProfileId, services]);
+
+  useEffect(() => {
+    if (!open || activeTab !== 'deployments' || !activeDeployment || !deploymentLogProfileId) return;
+    if (serviceLogs.profileId === deploymentLogProfileId && serviceLogs.status !== 'idle') return;
+    void loadServiceLogs(deploymentLogProfileId);
+  }, [
+    activeDeployment,
+    activeTab,
+    deploymentLogProfileId,
+    loadServiceLogs,
+    open,
+    serviceLogs.profileId,
+    serviceLogs.status,
+  ]);
 
   /**
    * 2026-05-14: 内联容器日志的 tab strip + 最大化控制。
