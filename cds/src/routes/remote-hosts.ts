@@ -60,6 +60,14 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     () => '',
   );
   const router = Router();
+  const instanceDiscoveryCache = new Map<string, {
+    expiresAt: number;
+    payload: { projectId: string } & ProjectRuntimeInstancesResponse;
+  }>();
+  const instanceDiscoveryCacheTtlMs = Math.max(
+    0,
+    Number.parseInt(process.env.CDS_INSTANCE_DISCOVERY_CACHE_MS || '2000', 10) || 0,
+  );
 
   router.get('/cds-system/remote-hosts', (_req, res) => {
     res.json({ hosts: service.list() });
@@ -453,8 +461,24 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
+    const now = Date.now();
+    const cached = instanceDiscoveryCache.get(projectId);
+    if (instanceDiscoveryCacheTtlMs > 0 && cached && cached.expiresAt > now && req.query.fresh !== '1') {
+      res.setHeader('X-CDS-Cache', 'hit');
+      res.json(cached.payload);
+      return;
+    }
+
     const { instances, discovery, capacity } = collectProjectRuntimeInstances(deps.stateService, service, project);
-    res.json({ projectId, instances, discovery, capacity });
+    const payload = { projectId, instances, discovery, capacity };
+    if (instanceDiscoveryCacheTtlMs > 0) {
+      instanceDiscoveryCache.set(projectId, {
+        expiresAt: now + instanceDiscoveryCacheTtlMs,
+        payload,
+      });
+      res.setHeader('X-CDS-Cache', 'miss');
+    }
+    res.json(payload);
   });
 
   router.get('/projects/:id/runtime-capacity', (req, res) => {
