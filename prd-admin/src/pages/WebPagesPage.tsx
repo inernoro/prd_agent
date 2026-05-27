@@ -33,7 +33,7 @@ import {
   canEditInWebHosting,
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
-import { SpaceBar, type Space } from '@/components/team/SpaceBar';
+import { SpaceBar, TeamSpaceHeader, type Space } from '@/components/team/SpaceBar';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
@@ -649,46 +649,19 @@ export default function WebPagesPage() {
             <Button size="sm" variant="secondary" onClick={() => setShowSharesPanel(true)}>
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
-            <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
-              <Upload size={14} className="mr-1" /> 上传站点
-            </Button>
+            {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+              <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+                <Upload size={14} className="mr-1" /> 上传站点
+              </Button>
+            )}
           </div>
         }
       />
 
       {/* Toolbar */}
       <GlassCard className="p-3">
-        {/* 顶部：空间切换器（个人空间 / 团队空间）+ 团队空间协作头部 */}
-        <SpaceBar current={currentSpace} onChange={enterSpace} myWebHostingRole={myWebHostingRole} />
-
-        {/* 空间内文件夹（内容派生）：全部 + 各文件夹 */}
-        {spaceFolders.length > 0 && (
-          <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
-            <button
-              type="button"
-              onClick={() => setActiveFolder(null)}
-              className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-              style={activeFolder === null
-                ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' }
-                : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-            >
-              全部
-            </button>
-            {spaceFolders.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setActiveFolder(f)}
-                className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
-                style={activeFolder === f
-                  ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' }
-                  : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-              >
-                <Folder size={11} /> {f}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* 顶部：空间切换器（个人空间 / 团队空间）。搜索行紧随其后，切换空间时搜索框位置稳定 */}
+        <SpaceBar current={currentSpace} onChange={enterSpace} />
 
         {/* 第二行：搜索 / 视图 */}
         <div className="flex flex-wrap items-center gap-3 mt-3">
@@ -742,6 +715,27 @@ export default function WebPagesPage() {
             </button>
           </div>
         </div>
+
+        {/* 空间内文件夹（内容派生）：全部 + 各文件夹 —— 放搜索行下方，切换空间不顶动搜索框 */}
+        {spaceFolders.length > 0 && (
+          <div className="flex items-center gap-1.5 mt-3 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+            <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
+              style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+              全部
+            </button>
+            {spaceFolders.map((f) => (
+              <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
+                style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                <Folder size={11} /> {f}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
+        {currentSpace.kind === 'team' && (
+          <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+        )}
 
         {/* Tags */}
         {tags.length > 0 && (
@@ -831,10 +825,14 @@ export default function WebPagesPage() {
           folders={folders}
           initialFile={pendingExternalFile}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
-          onSaved={(saved, isCreate) => {
+          onSaved={async (saved, isCreate) => {
             setShowUploadDialog(false);
             setEditItem(null);
             setPendingExternalFile(null);
+            // 串数据修复：在团队空间内新建的站点必须归属该团队空间，否则会落到个人空间
+            if (saved && isCreate && currentSpace.kind === 'team') {
+              await setSiteTeams(saved.id, [currentSpace.teamId]);
+            }
             load();
             loadMeta();
             // 仅"新建上传"触发滑入 + 光环动效；编辑/重传现有站点不动

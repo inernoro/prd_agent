@@ -11,39 +11,23 @@ import { createTeam, getTeam, joinTeam, type TeamMember, type WebHostingRole } f
 export type Space = { kind: 'personal' } | { kind: 'team'; teamId: string };
 
 /**
- * SaaS 空间切换器 + 团队空间协作头部。
- * 空间是协作/归属边界（个人空间私有；团队空间复用现有 Team，有成员/角色/邀请）。
- * 文件夹是空间内部的组织，由页面另行渲染——这里只管"在哪个空间"。
+ * SaaS 空间切换器（只管「在哪个空间」）：个人空间 + 各团队空间 + 新建/加入。
+ * 团队空间的协作头部抽到独立的 TeamSpaceHeader（由页面放在搜索行下方，保证切换时搜索框不跳位）。
  */
 export function SpaceBar({
   current,
   onChange,
-  myWebHostingRole,
 }: {
   current: Space;
   onChange: (s: Space) => void;
-  myWebHostingRole: WebHostingRole | null;
 }) {
   const { teams, loadTeams } = useTeamStore();
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [copied, setCopied] = useState(false);
-  const [managerOpen, setManagerOpen] = useState(false);
   const addRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { void loadTeams(); }, [loadTeams]);
-
-  const activeTeamId = current.kind === 'team' ? current.teamId : null;
-  const activeTeam = teams.find((t) => t.team.id === activeTeamId) ?? null;
-
-  useEffect(() => {
-    if (!activeTeamId) { setMembers([]); return; }
-    let alive = true;
-    void getTeam(activeTeamId).then((res) => { if (alive && res.success) setMembers(res.data.members); });
-    return () => { alive = false; };
-  }, [activeTeamId]);
 
   useEffect(() => {
     if (!adding) return;
@@ -51,8 +35,6 @@ export function SpaceBar({
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [adding]);
-
-  const inviteLink = activeTeam ? `${window.location.origin}/join/${activeTeam.team.inviteCode}` : '';
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -65,10 +47,6 @@ export function SpaceBar({
     const res = await joinTeam(joinCode.trim());
     if (res.success) { setJoinCode(''); setAdding(false); await loadTeams(true); onChange({ kind: 'team', teamId: res.data.teamId }); }
     else toast.error('加入失败', res.error?.message);
-  };
-  const copyInvite = () => {
-    if (!inviteLink) return;
-    void navigator.clipboard.writeText(inviteLink).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
   };
 
   const pill = (label: React.ReactNode, on: boolean, onClick: () => void, key: string) => (
@@ -86,85 +64,110 @@ export function SpaceBar({
   );
 
   return (
-    <div className="flex flex-col gap-2 w-full">
-      {/* 空间切换器 */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
-        {pill(<><User size={13} /> 个人空间</>, current.kind === 'personal', () => onChange({ kind: 'personal' }), 'personal')}
-        {teams.map((t) =>
-          pill(
-            <><Users size={13} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span></>,
-            current.kind === 'team' && current.teamId === t.team.id,
-            () => onChange({ kind: 'team', teamId: t.team.id }),
-            t.team.id,
-          ),
-        )}
-        <div className="relative shrink-0" ref={addRef}>
-          <button
-            type="button"
-            title="新建 / 加入团队空间"
-            onClick={() => setAdding((o) => !o)}
-            className="h-8 w-8 rounded-[8px] flex items-center justify-center"
-            style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
-          >
-            <Plus size={15} />
-          </button>
-          {adding && (
-            <div className="absolute left-0 top-[38px] z-[130] w-[300px] rounded-[12px] p-3 space-y-2"
-              style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}>
-              <div className="flex gap-1.5">
-                <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新建团队空间名称"
-                  className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
-                <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>创建</button>
-              </div>
-              <div className="flex gap-1.5">
-                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="或输入邀请码加入"
-                  className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleJoin()} />
-                <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }} onClick={handleJoin}>加入</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* 团队空间协作头部 */}
-      {activeTeam && (
-        <div className="flex items-center gap-3 px-0.5">
-          <button type="button" className="flex items-center -space-x-1.5" title="成员（点击管理）" onClick={() => setManagerOpen(true)}>
-            {members.slice(0, 5).map((m) => (
-              <UserAvatar key={m.userId} src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-6 h-6 rounded-full" style={{ border: '1.5px solid var(--bg-card)' }} />
-            ))}
-            {activeTeam.memberCount > 5 && (
-              <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1.5px solid var(--bg-card)' }}>+{activeTeam.memberCount - 5}</span>
-            )}
-          </button>
-          <button type="button" className="h-8 px-3 rounded-[8px] text-[12px] flex items-center gap-1.5"
-            style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-            onClick={copyInvite} title={inviteLink}>
-            {copied ? <Check size={13} style={{ color: '#22c55e' }} /> : <Copy size={13} />}
-            {copied ? '链接已复制' : '邀请协作（复制链接）'}
-          </button>
-          {myWebHostingRole === 'viewer' && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>你是查看者（只读）</span>
-          )}
-          {activeTeam.myRole === 'admin' && (
-            <button type="button" className="h-8 w-8 rounded-[8px] flex items-center justify-center ml-auto"
-              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
-              title="成员与角色 / 重命名 / 删除空间" onClick={() => setManagerOpen(true)}>
-              <Settings size={15} />
-            </button>
-          )}
-        </div>
+    <div className="flex items-center gap-2 overflow-x-auto pb-0.5 w-full" style={{ overscrollBehavior: 'contain' }}>
+      {pill(<><User size={13} /> 个人空间</>, current.kind === 'personal', () => onChange({ kind: 'personal' }), 'personal')}
+      {teams.map((t) =>
+        pill(
+          <><Users size={13} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span></>,
+          current.kind === 'team' && current.teamId === t.team.id,
+          () => onChange({ kind: 'team', teamId: t.team.id }),
+          t.team.id,
+        ),
       )}
+      <div className="relative shrink-0" ref={addRef}>
+        <button
+          type="button"
+          title="新建 / 加入团队空间"
+          onClick={() => setAdding((o) => !o)}
+          className="h-8 w-8 rounded-[8px] flex items-center justify-center"
+          style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
+        >
+          <Plus size={15} />
+        </button>
+        {adding && (
+          <div className="absolute left-0 top-[38px] z-[130] w-[300px] rounded-[12px] p-3 space-y-2"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)' }}>
+            <div className="flex gap-1.5">
+              <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="新建团队空间名称"
+                className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+              <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>创建</button>
+            </div>
+            <div className="flex gap-1.5">
+              <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="或输入邀请码加入"
+                className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                onKeyDown={(e) => e.key === 'Enter' && handleJoin()} />
+              <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }} onClick={handleJoin}>加入</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
+/**
+ * 团队空间协作头部：成员头像 + 一键邀请链接 + 管理（成员/角色/重命名/删除）+ viewer 只读提示。
+ * 由页面放在搜索行下方，避免它出现/消失时把搜索框顶上顶下（保证切换统一性）。
+ */
+export function TeamSpaceHeader({
+  teamId,
+  myWebHostingRole,
+}: {
+  teamId: string;
+  myWebHostingRole: WebHostingRole | null;
+}) {
+  const { teams, loadTeams } = useTeamStore();
+  const team = teams.find((t) => t.team.id === teamId) ?? null;
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [copied, setCopied] = useState(false);
+  const [managerOpen, setManagerOpen] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void getTeam(teamId).then((r) => { if (alive && r.success) setMembers(r.data.members); });
+    return () => { alive = false; };
+  }, [teamId]);
+
+  if (!team) return null;
+  const inviteLink = `${window.location.origin}/join/${team.team.inviteCode}`;
+  const copyInvite = () => {
+    void navigator.clipboard.writeText(inviteLink).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
+  };
+
+  return (
+    <div className="flex items-center gap-3 mt-3">
+      <button type="button" className="flex items-center -space-x-1.5" title="成员（点击管理）" onClick={() => setManagerOpen(true)}>
+        {members.slice(0, 5).map((m) => (
+          <UserAvatar key={m.userId} src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-6 h-6 rounded-full" style={{ border: '1.5px solid var(--bg-card)' }} />
+        ))}
+        {team.memberCount > 5 && (
+          <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1.5px solid var(--bg-card)' }}>+{team.memberCount - 5}</span>
+        )}
+      </button>
+      <button type="button" className="h-8 px-3 rounded-[8px] text-[12px] flex items-center gap-1.5"
+        style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+        onClick={copyInvite} title={inviteLink}>
+        {copied ? <Check size={13} style={{ color: '#22c55e' }} /> : <Copy size={13} />}
+        {copied ? '链接已复制' : '邀请协作（复制链接）'}
+      </button>
+      {myWebHostingRole === 'viewer' && (
+        <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>你是查看者（只读）</span>
+      )}
+      {team.myRole === 'admin' && (
+        <button type="button" className="h-8 w-8 rounded-[8px] flex items-center justify-center ml-auto"
+          style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+          title="成员与角色 / 重命名 / 删除空间" onClick={() => setManagerOpen(true)}>
+          <Settings size={15} />
+        </button>
+      )}
       {managerOpen && (
         <TeamManagerPanel onClose={() => {
           setManagerOpen(false);
           void loadTeams(true);
-          if (activeTeamId) void getTeam(activeTeamId).then((r) => { if (r.success) setMembers(r.data.members); });
+          void getTeam(teamId).then((r) => { if (r.success) setMembers(r.data.members); });
         }} />
       )}
     </div>
