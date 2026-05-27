@@ -514,6 +514,7 @@ export function ReviewAgentResultPage() {
           {canAppeal && (
             <button
               onClick={() => setShowAppealDialog(true)}
+              title="认为 AI 评分有误，提交人工复核（与「重新上传方案」不同：申诉走人审，重传是改写方案后再 AI 评）"
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
             >
               <Megaphone className="w-3.5 h-3.5" /> 我要申诉

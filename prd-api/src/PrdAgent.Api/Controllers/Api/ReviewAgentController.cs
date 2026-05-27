@@ -339,6 +339,7 @@ public class ReviewAgentController : ControllerBase
                 IsPassed = x.IsPassed,
                 RerunCount = x.RerunCount,
                 AppealStatus = x.AppealStatus,
+                AppealResolvedAt = x.AppealResolvedAt,
             })
             .ToListAsync(ct);
 
@@ -456,6 +457,10 @@ public class ReviewAgentController : ControllerBase
                 var hasAnyPass = rows.Any(r => r.IsPassed == true && r.AppealStatus != AppealStatuses.Approved);
                 var hasAnyFail = rows.Any(r => r.IsPassed == false && r.AppealStatus != AppealStatuses.Approved);
                 var hasAppealApproved = rows.Any(r => r.AppealStatus == AppealStatuses.Approved);
+                // 该桶是否走过任何申诉通道（含已驳回 / 已通过 / 处理中 + 历史 AppealResolvedAt 非空）
+                // 申诉链路本身就意味着用户对该方案折腾过一轮，不应算"一次过"
+                var hasAppealHistory = rows.Any(r =>
+                    !string.IsNullOrEmpty(r.AppealStatus) || r.AppealResolvedAt != null);
 
                 return new ProposalBucket
                 {
@@ -466,11 +471,12 @@ public class ReviewAgentController : ControllerBase
                     IsBucketPassed = hasAnyPass,
                     IsBucketFailed = !hasAnyPass && hasAnyFail,
                     IsBucketAppealApproved = !hasAnyPass && hasAppealApproved,
-                    // 一次过：只 1 条 sub + IsPassed=true + RerunCount=0 + 非申诉成功
+                    // 一次过：只 1 条 sub + IsPassed=true + RerunCount=0 + 从未走过申诉
+                    // （申诉成功后 reupload 路径会把 RerunCount 清零，不加申诉历史判定会被错算成一次过）
                     IsFirstPass = submissionCount == 1
                                   && first.IsPassed == true
                                   && first.RerunCount == 0
-                                  && first.AppealStatus != AppealStatuses.Approved,
+                                  && !hasAppealHistory,
                 };
             })
             .ToList();
@@ -510,6 +516,19 @@ public class ReviewAgentController : ControllerBase
         return (startUtc, endUtcExclusive);
     }
 
+    // ──────────────────────────────────────────────
+    // 状态门槛 helper（提取以便守卫测试）
+    // ──────────────────────────────────────────────
+
+    /// <summary>系统故障恢复用的「重新评审」：仅 Error 状态可用，其他状态拒绝</summary>
+    internal static bool CanUseSystemRerun(ReviewSubmission s) => s.Status == ReviewStatuses.Error;
+
+    /// <summary>「未通过救机会」：仅 Done + IsPassed=false + RerunCount=0 三个条件齐备才可用</summary>
+    internal static bool CanReuploadOnFailure(ReviewSubmission s) =>
+        s.Status == ReviewStatuses.Done
+        && s.IsPassed == false
+        && s.RerunCount < 1;
+
     /// <summary>排行榜聚合中间投影类型（避免匿名类型在 LINQ Project 表达式树中的限制）</summary>
     internal class LeaderboardRow
     {
@@ -519,6 +538,8 @@ public class ReviewAgentController : ControllerBase
         public bool? IsPassed { get; set; }
         public int RerunCount { get; set; }
         public string? AppealStatus { get; set; }
+        /// <summary>申诉受理时间（任一非空）= 该方案桶走过申诉通道，不应算"一次过"</summary>
+        public DateTime? AppealResolvedAt { get; set; }
     }
 
     /// <summary>
@@ -568,7 +589,7 @@ public class ReviewAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限操作该提交"));
 
         // 仅允许 Error 状态触发"重新评审"（系统故障恢复）；未通过应走 reupload-on-failure
-        if (submission.Status != ReviewStatuses.Error)
+        if (!CanUseSystemRerun(submission))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 "仅在评审过程出错时才能使用「重新评审」；如评审未通过，请使用「重新上传方案」（一次救机会）"));
 
@@ -604,10 +625,11 @@ public class ReviewAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅本人可重新上传方案"));
 
         // 状态门槛：评审完成 + 未通过 + 没用过救机会
-        if (submission.Status != ReviewStatuses.Done || submission.IsPassed != false)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅在评审完成且未通过时可使用救机会"));
-        if (submission.RerunCount >= 1)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "本方案的救机会已用完（每个方案仅 1 次）"));
+        if (!CanReuploadOnFailure(submission))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                submission.RerunCount >= 1
+                    ? "本方案的救机会已用完（每个方案仅 1 次）"
+                    : "仅在评审完成且未通过时可使用救机会"));
 
         if (string.IsNullOrWhiteSpace(req?.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));

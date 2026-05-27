@@ -12,7 +12,8 @@ namespace PrdAgent.Api.Tests.Controllers;
 public class ReviewAgentLeaderboardTests
 {
     private static ReviewAgentController.LeaderboardRow Row(
-        string title, bool? passed, int rerun, string? appeal = null, string submitter = "u1")
+        string title, bool? passed, int rerun, string? appeal = null, string submitter = "u1",
+        DateTime? appealResolvedAt = null)
         => new()
         {
             SubmitterId = submitter,
@@ -21,6 +22,7 @@ public class ReviewAgentLeaderboardTests
             IsPassed = passed,
             RerunCount = rerun,
             AppealStatus = appeal,
+            AppealResolvedAt = appealResolvedAt,
         };
 
     [Fact]
@@ -176,5 +178,49 @@ public class ReviewAgentLeaderboardTests
     {
         var buckets = ReviewAgentController.AggregateProposalBuckets(Array.Empty<ReviewAgentController.LeaderboardRow>());
         buckets.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Bucket_申诉成功后重传通过_不算一次过_防止RerunCount被清零导致误判()
+    {
+        // Finding 1 修复：reupload-after-appeal 路径会把 RerunCount 清零，
+        // 但 AppealResolvedAt 非空，应据此判定"该方案折腾过申诉链路"，IsFirstPass=false
+        var rows = new[]
+        {
+            Row(
+                title: "方案 X：申诉通过后重传",
+                passed: true,
+                rerun: 0,                                   // ← 被清零
+                appeal: null,                               // ← 走完 reupload 后 AppealStatus 被 Unset
+                appealResolvedAt: DateTime.UtcNow.AddDays(-1)), // ← 但历史时间戳保留
+        };
+
+        var bucket = ReviewAgentController.AggregateProposalBuckets(rows).Single();
+        bucket.IsBucketPassed.ShouldBeTrue();
+        bucket.IsFirstPass.ShouldBeFalse();  // ✓ Finding 1 关键断言：申诉历史 → 非一次过
+    }
+
+    [Fact]
+    public void Bucket_申诉处理中_不算一次过()
+    {
+        // 用户提交、未通过、正在申诉中（AppealStatus=Pending），即便 RerunCount=0 也不应算"一次过"
+        var rows = new[]
+        {
+            Row("方案 Y", passed: false, rerun: 0, appeal: AppealStatuses.Pending),
+        };
+        var bucket = ReviewAgentController.AggregateProposalBuckets(rows).Single();
+        bucket.IsFirstPass.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Bucket_申诉被驳回_不算一次过()
+    {
+        // 申诉被驳回 + 评审仍未通过：明显非一次过
+        var rows = new[]
+        {
+            Row("方案 Z", passed: false, rerun: 0, appeal: AppealStatuses.Rejected),
+        };
+        var bucket = ReviewAgentController.AggregateProposalBuckets(rows).Single();
+        bucket.IsFirstPass.ShouldBeFalse();
     }
 }
