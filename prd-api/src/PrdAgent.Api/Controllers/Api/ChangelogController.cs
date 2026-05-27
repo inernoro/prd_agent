@@ -87,15 +87,16 @@ public class ChangelogController : ControllerBase
     }
 
     /// <summary>
-    /// 浏览器客户端缓存（stale-while-revalidate, RFC 5861）：
-    ///  - 60s 内：浏览器直接用本地缓存，零网络（跨标签页/会话也命中，比 sessionStorage 更广）
-    ///  - 60s~1 天：先用缓存即时渲染、同时后台校验刷新（用户不等待）
-    /// 内容对所有登录用户一致且非敏感，故用 private（仅浏览器缓存，不进共享 CDN）。
-    /// force=true（手动刷新）不下发缓存头，确保拿到最新。
+    /// 浏览器缓存策略：freshness-first。`no-cache` = 浏览器可存但每次使用前必须向后端校验，
+    /// 因此永远不会拿到「浏览器层面的陈旧副本」——杜绝「迟迟不更新」。
+    /// 速度由两层兜底，不靠浏览器缓存：
+    ///   1) 前端 sessionStorage 立即首屏渲染（不等网络），再后台拉取实时覆盖
+    ///   2) 后端 serve-stale-while-revalidate 内存缓存，校验请求 ms 级返回（不打 GitHub）
+    /// 这样既保持「秒开」又保证「所见即最新」。force=true（手动刷新）连后端缓存一并绕过。
     /// </summary>
     private void SetClientCacheHeaders()
     {
-        Response.Headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=86400";
+        Response.Headers["Cache-Control"] = "private, no-cache";
     }
 
     /// <summary>
