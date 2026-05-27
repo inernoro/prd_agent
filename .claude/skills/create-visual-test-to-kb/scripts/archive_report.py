@@ -103,12 +103,23 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     base = preview.rstrip("/") + cfg["report"]["apiBasePath"]
 
     store_name = cfg["report"]["storeName"]
+    want_public = bool(cfg["report"].get("isPublic", False))
     stores = curl(H + [f"{base}/stores?pageSize=100"])["data"]["items"]
     match = [s for s in stores if s["name"] == store_name]
-    rid = match[0]["id"] if match else curl(HJ + ["-X", "POST", "-d", json.dumps(
-        {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
-         "isPublic": bool(cfg["report"].get("isPublic", False))}
-    ), f"{base}/stores"])["data"]["id"]
+    if match:
+        rid = match[0]["id"]
+        # 防可见性漂移：复用到的库若 isPublic 与 config 不符就告警。
+        # 殿堂(isPublic=true,对所有人) ≠ 分享(token,对部分人)——验收报告默认私有,别让它悄悄公开进殿堂。
+        cur_public = bool(match[0].get("isPublic"))
+        if cur_public != want_public:
+            print(f"  [告警] 复用库「{store_name}」isPublic={cur_public}，但 config 要 {want_public}："
+                  + ("该库当前公开在殿堂(对所有人可见)，验收报告通常应私有；如非本意请把库设私有后重跑。"
+                     if cur_public else "config 想公开但库是私有；如需进殿堂请手动设公开。"))
+    else:
+        rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
+            {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
+             "isPublic": want_public}
+        ), f"{base}/stores"])["data"]["id"]
     print(f"  报告库 id={rid}")
 
     url_map = {}
@@ -157,7 +168,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         raise RuntimeError("正文写入未生效(hasContent=false)：多为预览环境 524/重启，已尝试删除空壳条目，请稍后重跑")
     print("  正文已校验落库 hasContent=true")
     # E1 强制分享链：条目已建=归档成功；分享链单独 try，失败也给 owner 路径，绝不静默
-    owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,主交付）"
+    owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,本人验收用）"
     share_url = None
     try:
         tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
@@ -168,12 +179,13 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     print(json.dumps({
         "mode": "doc-store", "title": title, "report_id": report_id, "entryId": eid, "storeId": rid,
         "ownerView": owner_view, "shareUrl": share_url,
-        "shareNote": "share 链接当前只渲染目录、不渲染正文（分享阅读器已知缺陷）;交给第三方请让其登录或设 report.isPublic=true",
+        "shareNote": "分享链 /s/lib/{token} 对部分人(拿到链接者)开放、库私有也能看(token 独立授权)，已实测渲染正文+截图;这不是殿堂(殿堂=isPublic=true 对所有人公开)，验收报告默认私有不进殿堂",
     }, ensure_ascii=False))
-    # 醒目收尾：每次必给一个可达地址（分享链优先，拿不到则 owner 路径）
+    # 醒目收尾：每次必给一个可达地址（分享链=对部分人，优先；owner 自看兜底；殿堂不作默认）
     print("\n===== 验收归档完成 · 必给地址 =====")
-    print("Owner 查看（登录可达）：" + owner_view)
-    print("分享地址：" + (share_url if share_url else "（分享链接接口超时，未拿到；请登录后在该库「" + store_name + "」手动生成分享，或稍后重跑本命令）"))
+    print("分享链（对部分人，拿到链接即可看，库私有也行）：" + (share_url if share_url else "（分享接口超时未拿到；请登录后在该库「" + store_name + "」手动生成分享，或稍后重跑）"))
+    print("Owner 自看（登录可达）：" + owner_view)
+    print("注：分享≠殿堂。殿堂是 isPublic=true 对所有人公开，验收报告默认私有不进殿堂。")
 
 
 # ── 准入门槛（入口准则，见 standard-v2.md §3.5）：输入不达标直接拒收 ──
