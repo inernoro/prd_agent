@@ -367,7 +367,7 @@ export function PaAgentPage() {
     >
       {/* ── Sidebar ── */}
       <div
-        className="flex flex-col shrink-0 transition-all duration-200 overflow-hidden"
+        className="pa-agent-sidebar flex flex-col shrink-0 transition-all duration-200 overflow-hidden"
         style={{
           width: sidebarOpen ? 220 : 0,
           borderRight: sidebarOpen ? '1px solid var(--border-default)' : 'none',

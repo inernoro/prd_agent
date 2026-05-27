@@ -419,12 +419,22 @@
   margin-top: 4px;
 }
 
-/* 主内容区 — 四角圆角 */
+/* 外层容器圆角：侧栏负责左上/左下，主区负责右上/右下 */
+.pa-agent-sidebar {
+  margin: 8px 0 8px 8px;
+  border-radius: 18px 0 0 18px;
+  border: 1px solid var(--pa-border-default, var(--border-default));
+  border-right: none;
+  background: var(--pa-bg-base, var(--bg-base));
+}
+
+/* 主内容区：仅右侧圆角，对话区域保持原样 */
 .pa-agent-main {
   margin: 8px 8px 8px 0;
-  border-radius: 18px;
+  border-radius: 0 18px 18px 0;
   overflow: hidden;
   border: 1px solid var(--pa-border-default, var(--border-default));
+  border-left: none;
   background: var(--pa-bg-base, var(--bg-base));
   box-shadow: 0 2px 16px -8px rgba(15, 23, 42, 0.12);
 }
