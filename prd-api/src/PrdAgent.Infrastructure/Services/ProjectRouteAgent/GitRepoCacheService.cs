@@ -65,47 +65,88 @@ public sealed class GitRepoCacheService
             throw new GitRepoCacheException($"非法的分支名：{branch}");
 
         var dir = ResolveCacheDir(repoUrl, branch);
+
+        // 注入 OAuth token 到 URL（仅 https）。token 不出现在日志 / 缓存路径里。
+        var cloneUrl = InjectTokenIntoUrl(repoUrl, accessToken);
+        var hasToken = !ReferenceEquals(cloneUrl, repoUrl);
+
         var fresh = Directory.Exists(Path.Combine(dir, ".git"))
                     && IsFresh(dir);
 
         if (fresh)
         {
-            _logger.LogDebug("[GitRepoCache] reuse fresh cache for {Repo}@{Branch}: {Dir}", repoUrl, branch, dir);
-            return dir;
+            // 安全关键：缓存目录是按 (repoUrl, branch) 哈希的全局共享缓存，
+            // 不按用户 ID 隔离。如果用户 A 用 OAuth 拉过私有仓库，6h 新鲜窗口内
+            // 用户 B 只要在 site spec 里引用同一 URL，**复用缓存就等于绕过 B 的访问授权**。
+            //
+            // 修复：复用前用 *当前请求的凭据* 做一次轻量 ls-remote 探测；
+            //   - 探测通过 → 当前用户对该 repo 至少有 read 权 → 复用缓存安全
+            //   - 探测失败 → 用户没权（或仓库不存在）→ 不复用，下降到正常 clone 路径
+            //     （让该用户用自己的凭据重新拉，失败也会得到属于他自己的错误信息）
+            //
+            // ls-remote 不下载对象，只查询 refs，毫秒级开销。
+            var authorized = await ProbeAccessAsync(cloneUrl, branch, accessToken, ct);
+            if (authorized)
+            {
+                _logger.LogDebug("[GitRepoCache] reuse fresh cache for {Repo}@{Branch}: {Dir}", repoUrl, branch, dir);
+                return dir;
+            }
+            _logger.LogInformation(
+                "[GitRepoCache] cache exists but caller credentials cannot access {Repo}@{Branch}, will re-clone with caller credentials",
+                repoUrl, branch);
+            // 不直接 return；继续走下方 fetch / clone 路径，按当前用户凭据拉
         }
-
-        // 注入 OAuth token 到 URL（仅 https）。token 不出现在日志 / 缓存路径里。
-        var cloneUrl = InjectTokenIntoUrl(repoUrl, accessToken);
-        var hasToken = !ReferenceEquals(cloneUrl, repoUrl);
 
         var errorTrail = new List<string>();
 
         try
         {
             // 策略 B：已有 .git 但过期 → 优先用 fetch + reset。
-            // 若有 token，覆盖 origin URL 一次（旧 URL 可能不带 token / 用了旧 token）。
+            // 若有 token，**临时**覆盖 origin URL（旧 URL 可能不带 token / 用了旧 token），
+            // 用完后无论 fetch 成败都用 try/finally 把 origin 还原回不带 token 的 repoUrl —— 否则
+            // OAuth token 会持久化在 `.git/config` 里，后续任何复用者都能读到。
             if (Directory.Exists(Path.Combine(dir, ".git")))
             {
-                if (hasToken)
+                try
                 {
-                    await RunGitAsync(new[] { "remote", "set-url", "origin", cloneUrl }, dir, 10, ct);
-                }
-                var (fok, fout) = await RunGitAsync(new[] { "fetch", "--depth=1", "origin", branch }, dir, 120, ct);
-                if (fok)
-                {
-                    var (rok, rout) = await RunGitAsync(new[] { "reset", "--hard", "FETCH_HEAD" }, dir, 30, ct);
-                    if (rok)
+                    if (hasToken)
                     {
-                        TouchCacheStamp(dir);
-                        return dir;
+                        await RunGitAsync(new[] { "remote", "set-url", "origin", cloneUrl }, dir, 10, ct);
                     }
-                    errorTrail.Add($"reset 失败：{Truncate(rout, 300)}");
-                    _logger.LogWarning("[GitRepoCache] reset failed, will reclone: {Out}", rout);
+                    var (fok, fout) = await RunGitAsync(new[] { "fetch", "--depth=1", "origin", branch }, dir, 120, ct);
+                    if (fok)
+                    {
+                        var (rok, rout) = await RunGitAsync(new[] { "reset", "--hard", "FETCH_HEAD" }, dir, 30, ct);
+                        if (rok)
+                        {
+                            TouchCacheStamp(dir);
+                            return dir;
+                        }
+                        errorTrail.Add($"reset 失败：{Truncate(rout, 300)}");
+                        _logger.LogWarning("[GitRepoCache] reset failed, will reclone: {Out}", rout);
+                    }
+                    else
+                    {
+                        errorTrail.Add($"fetch 失败：{Truncate(fout, 300)}");
+                        _logger.LogWarning("[GitRepoCache] fetch failed, will reclone: {Out}", fout);
+                    }
                 }
-                else
+                finally
                 {
-                    errorTrail.Add($"fetch 失败：{Truncate(fout, 300)}");
-                    _logger.LogWarning("[GitRepoCache] fetch failed, will reclone: {Out}", fout);
+                    // 关键安全步骤：把 origin 还原成不带 token 的版本。
+                    // 无论上面 fetch / reset 成功失败、抛异常都必须执行。
+                    // 失败路径下我们随后会 TryRecursiveDelete 整个 dir，但 finally 是更可靠的兜底。
+                    if (hasToken)
+                    {
+                        try
+                        {
+                            await RunGitAsync(new[] { "remote", "set-url", "origin", repoUrl }, dir, 10, CancellationToken.None);
+                        }
+                        catch
+                        {
+                            // 已尽力，落到 reclone 路径时会被整个删除
+                        }
+                    }
                 }
             }
 
@@ -204,6 +245,50 @@ public sealed class GitRepoCacheService
         catch (Exception ex)
         {
             throw new GitRepoCacheException($"克隆 {repoUrl}@{branch} 失败：{ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// 轻量探测当前凭据对指定 repo + branch 是否有访问权（git ls-remote --heads）。
+    /// 仅查询 refs，不下载对象，毫秒级开销。
+    /// 用于缓存复用前的授权校验，防止跨用户缓存绕权。
+    ///
+    /// 返回 true ⇔ exit code 0 且输出里能看到目标分支的 ref（或 branch 为空时只要 exit 0）。
+    /// 注：若同样的 URL 用 ls-remote 失败但用 clone 成功（罕见），我们宁可保守拒绝复用——
+    ///   会进入下方 fetch/clone 路径，用同样凭据再试一次，失败信息也属于当前用户。
+    /// </summary>
+    private async Task<bool> ProbeAccessAsync(
+        string cloneUrl,
+        string branch,
+        string? secretToMask,
+        CancellationToken ct)
+    {
+        try
+        {
+            // ls-remote 是 stateless，对工作目录无要求；用 cacheRoot 作 cwd
+            var args = new List<string> { "ls-remote", "--heads", "--exit-code", cloneUrl };
+            if (!string.IsNullOrWhiteSpace(branch))
+            {
+                args.Add(branch);
+            }
+            var (ok, output) = await RunGitAsync(args, _cacheRoot, timeoutSeconds: 15, ct, secretToMask: secretToMask);
+            if (ok) return true;
+
+            // exit-code != 0 时不是真"没权"的也可能是分支不存在；分支不存在仍属于"用户能读到该仓库 refs 列表"
+            // 但 --exit-code 模式下 refs 不存在也会非 0。再退一步：不带 branch 单纯查仓库可达性
+            if (!string.IsNullOrEmpty(output) && IsBranchNotFoundError(output))
+            {
+                // 分支不存在但仓库本身可读
+                var (ok2, _) = await RunGitAsync(
+                    new[] { "ls-remote", "--heads", cloneUrl },
+                    _cacheRoot, 15, ct, secretToMask);
+                return ok2;
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
         }
     }
 

@@ -320,14 +320,19 @@ public class ProjectRouteAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.AttachmentId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
 
-        var attachment = await _db.Attachments.Find(x => x.AttachmentId == req.AttachmentId).FirstOrDefaultAsync(ct);
-        if (attachment == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在"));
-        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
-
         var userId = GetUserId();
         var displayName = GetDisplayName() ?? userId;
+
+        // 安全：必须限制只能用自己上传的 attachment 创建 plan。
+        // 否则 attachmentId 一旦泄漏（UI / API 日志 / 邮件分享）任何登录用户都能
+        // 把别人上传的 Markdown 内容复制成自己的 plan 读取（ExtractedText 会拷贝到 plan.ExtractedContent）。
+        var attachment = await _db.Attachments
+            .Find(x => x.AttachmentId == req.AttachmentId && x.UploaderId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在或不属于当前用户"));
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是有效的 Markdown 文件"));
 
         var plan = new ProjectRoutePlan
         {
