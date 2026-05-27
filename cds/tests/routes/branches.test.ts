@@ -116,6 +116,11 @@ describe('Branch Routes', () => {
     branchId?: string | null;
     requestId?: string | null;
     operationId?: string | null;
+    operationKind?: string | null;
+    operationTrigger?: string | null;
+    operationActor?: string | null;
+    operationSource?: string | null;
+    commitSha?: string | null;
     details?: Record<string, unknown>;
   }>;
 
@@ -165,6 +170,11 @@ describe('Branch Routes', () => {
           branchId: record.branchId,
           requestId: record.requestId,
           operationId: record.operationId,
+          operationKind: record.operationKind,
+          operationTrigger: record.operationTrigger,
+          operationActor: record.operationActor,
+          operationSource: record.operationSource,
+          commitSha: record.commitSha,
           details: record.details,
         });
       },
@@ -988,7 +998,17 @@ describe('Branch Routes', () => {
         const pendingDispatch = events.find((event) => event.action === 'branch.operation.pending-dispatch.started');
         expect(pendingDispatch?.details).toMatchObject({
           commitSha: '2222222222222222222222222222222222222222',
+          trigger: 'webhook',
+          actor: 'system:webhook',
+          kind: 'deploy',
           mergedCount: 1,
+        });
+        expect(pendingDispatch).toMatchObject({
+          operationKind: 'deploy',
+          operationTrigger: 'webhook',
+          operationActor: 'system:webhook',
+          operationSource: 'api.deploy-branch',
+          commitSha: '2222222222222222222222222222222222222222',
         });
       } finally {
         globalThis.fetch = originalFetch;
@@ -1089,7 +1109,17 @@ describe('Branch Routes', () => {
         expect(pendingDispatch?.operationId).toMatch(/^op_/);
         expect(pendingDispatch?.details).toMatchObject({
           commitSha: '3333333333333333333333333333333333333333',
+          trigger: 'webhook',
+          actor: 'system:webhook',
+          kind: 'deploy',
           mergedCount: 2,
+        });
+        expect(pendingDispatch).toMatchObject({
+          operationKind: 'deploy',
+          operationTrigger: 'webhook',
+          operationActor: 'system:webhook',
+          operationSource: 'api.deploy-branch',
+          commitSha: '3333333333333333333333333333333333333333',
         });
       } finally {
         globalThis.fetch = originalFetch;

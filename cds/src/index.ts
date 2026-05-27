@@ -595,7 +595,19 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       action: 'branch.operation.pending-drop',
       message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
       branchId: pending.branchId,
-      details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+      operationKind: pending.request.kind,
+      operationTrigger: pending.request.trigger,
+      operationActor: pending.request.actor || null,
+      operationSource: pending.request.source || null,
+      commitSha: pending.request.commitSha || null,
+      details: {
+        operationId: pending.operationId,
+        commitSha: pending.request.commitSha || null,
+        trigger: pending.request.trigger,
+        actor: pending.request.actor || null,
+        source: pending.request.source || null,
+        kind: pending.request.kind,
+      },
     });
     return;
   }
@@ -631,7 +643,19 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       branchId: pending.branchId,
       requestId: pending.request.requestId || null,
       operationId: pending.operationId,
-      details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+      operationKind: pending.request.kind,
+      operationTrigger: pending.request.trigger,
+      operationActor: pending.request.actor || null,
+      operationSource: pending.request.source || null,
+      commitSha: pending.request.commitSha || null,
+      details: {
+        operationId: pending.operationId,
+        commitSha: pending.request.commitSha || null,
+        trigger: pending.request.trigger,
+        actor: pending.request.actor || null,
+        source: pending.request.source || null,
+        kind: pending.request.kind,
+      },
     });
   });
   activeServerEventLogStore?.record({
@@ -644,7 +668,19 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     branchId: pending.branchId,
     requestId: pending.request.requestId || null,
     operationId: pending.operationId,
-    details: { operationId: pending.operationId, commitSha: pending.request.commitSha || null },
+    operationKind: pending.request.kind,
+    operationTrigger: pending.request.trigger,
+    operationActor: pending.request.actor || null,
+    operationSource: pending.request.source || null,
+    commitSha: pending.request.commitSha || null,
+    details: {
+      operationId: pending.operationId,
+      commitSha: pending.request.commitSha || null,
+      trigger: pending.request.trigger,
+      actor: pending.request.actor || null,
+      source: pending.request.source || null,
+      kind: pending.request.kind,
+    },
   });
 }
 

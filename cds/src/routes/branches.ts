@@ -1513,6 +1513,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         details: {
           operationId: pending.operationId,
           commitSha: pending.request.commitSha || null,
+          trigger: pending.request.trigger,
+          actor: pending.request.actor || null,
+          source: pending.request.source || null,
+          kind: pending.request.kind,
           mergedCount: pending.mergedCount,
         },
       });
@@ -1558,9 +1562,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchId: pending.branchId,
         requestId: pending.request.requestId || null,
         operationId: pending.operationId,
+        operationKind: pending.request.kind,
+        operationTrigger: pending.request.trigger,
+        operationActor: pending.request.actor || null,
+        operationSource: pending.request.source || null,
+        commitSha: pending.request.commitSha || null,
         details: {
           operationId: pending.operationId,
           commitSha: pending.request.commitSha || null,
+          trigger: pending.request.trigger,
+          actor: pending.request.actor || null,
+          source: pending.request.source || null,
+          kind: pending.request.kind,
           mergedCount: pending.mergedCount,
         },
       });
@@ -1575,9 +1588,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: pending.branchId,
       requestId: pending.request.requestId || null,
       operationId: pending.operationId,
+      operationKind: pending.request.kind,
+      operationTrigger: pending.request.trigger,
+      operationActor: pending.request.actor || null,
+      operationSource: pending.request.source || null,
+      commitSha: pending.request.commitSha || null,
       details: {
         operationId: pending.operationId,
         commitSha: pending.request.commitSha || null,
+        trigger: pending.request.trigger,
+        actor: pending.request.actor || null,
+        source: pending.request.source || null,
+        kind: pending.request.kind,
         mergedCount: pending.mergedCount,
       },
     });
