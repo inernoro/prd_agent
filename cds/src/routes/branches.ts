@@ -41,6 +41,7 @@ import { normalizeLogText, type ServerEventLogSink } from '../services/server-ev
 import {
   BranchOperationSupersededError,
   type BranchOperationCoordinator,
+  type BranchOperationDecision,
   type BranchOperationKind,
   type BranchOperationLease,
   type BranchOperationTrigger,
@@ -1411,6 +1412,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
       continueWith: input.continueWith || null,
     });
     return decision.status === 'started' ? decision.lease || null : null;
+  }
+
+  function beginAdHocBranchOperation(
+    req: Request,
+    input: {
+      branchId: string;
+      projectId?: string | null;
+      kind: BranchOperationKind;
+      profileId?: string | null;
+      commitSha?: string | null;
+      source: string;
+      reason?: string | null;
+      triggerOverride?: BranchOperationTrigger;
+      actorOverride?: string | null;
+    },
+  ): BranchOperationDecision | null {
+    if (!branchOperationCoordinator) return null;
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    return branchOperationCoordinator.begin({
+      branchId: input.branchId,
+      projectId: input.projectId || null,
+      profileId: input.profileId || null,
+      kind: input.kind,
+      trigger: input.triggerOverride || triggerFromRequest(req),
+      actor: input.actorOverride || resolveActorFromRequest(req),
+      requestId: requestId || null,
+      commitSha: input.commitSha || null,
+      source: input.source,
+      reason: input.reason || null,
+    });
   }
 
   function dispatchPendingWebhookDeploy(pending: PendingWebhookDeploy | null): void {
@@ -3146,22 +3177,66 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         continue;
       }
+      let branchOperationLease: BranchOperationLease | null = null;
+      let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+      const decision = beginAdHocBranchOperation(req, {
+        branchId: item.branchId,
+        projectId: item.projectId,
+        profileId: item.profileId,
+        kind: 'cleanup-orphans',
+        source: 'api.cleanup-orphan-containers',
+        reason: '清理 Docker orphan app 容器：容器存在但分支状态不再引用',
+      });
+      if (branchOperationCoordinator) {
+        if (!decision || decision.status !== 'started' || !decision.lease) {
+          const error = decision?.reason || `同分支已有写操作正在运行: ${decision?.activeKind || 'unknown'}`;
+          failed.push({ ...item, error });
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'warn',
+            source: 'api.cleanup-orphan-containers',
+            action: 'app.orphan-container.cleanup-skipped',
+            message: `skip orphan container ${item.containerName}: ${error}`,
+            projectId: item.projectId,
+            branchId: item.branchId,
+            profileId: item.profileId,
+            requestId,
+            operationId: decision?.operationId || operationId,
+            containerName: item.containerName,
+            details: {
+              operationId: decision?.operationId || null,
+              batchOperationId: operationId,
+              requestId,
+              activeOperationId: decision?.activeOperationId || null,
+              activeKind: decision?.activeKind || null,
+              reason: 'branch-operation-not-started',
+            },
+          });
+          continue;
+        }
+        branchOperationLease = decision.lease;
+      }
       try {
+        assertBranchOperationCurrent(branchOperationLease, `cleanup orphan before remove ${item.profileId}`);
         await containerService.remove(item.containerName, {
           projectId: item.projectId || undefined,
           branchId: item.branchId,
           profileId: item.profileId,
           requestId,
-          operationId,
+          operationId: branchOperationLease?.operationId || operationId,
           actor,
           trigger,
           operation: 'cleanup-orphan-containers',
           source: 'api.cleanup-orphan-containers',
           reason: '清理 Docker orphan app 容器：容器存在但分支状态不再引用',
         });
+        assertBranchOperationCurrent(branchOperationLease, `cleanup orphan after remove ${item.profileId}`);
         removed.push(item);
       } catch (err) {
+        branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
         failed.push({ ...item, error: (err as Error).message });
+      } finally {
+        completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
     }
 

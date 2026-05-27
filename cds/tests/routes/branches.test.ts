@@ -818,6 +818,45 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('POST /api/branches/cleanup-orphan-containers', () => {
+    it('runs orphan removals through branch operation fencing and container diagnostics', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'orphan-host',
+        projectId: 'default',
+        branch: 'feature/orphan-host',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-host'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true"/, () => ({
+        stdout: [
+          'orphan-api|exited|cds.managed=true,cds.type=app,cds.branch.id=orphan-host,cds.profile.id=api,cds.network=cds-network',
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const res = await request(server, 'POST', '/api/branches/cleanup-orphan-containers?includeStopped=true');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).removed).toEqual([
+        expect.objectContaining({ branchId: 'orphan-host', profileId: 'api', containerName: 'orphan-api' }),
+      ]);
+      const opEvents = operationEvents.filter((event) => event.branchId === 'orphan-host');
+      const started = opEvents.find((event) => event.action === 'branch.operation.started');
+      const completed = opEvents.find((event) => event.action === 'branch.operation.completed');
+      expect(started?.details).toMatchObject({
+        kind: 'cleanup-orphans',
+        source: 'api.cleanup-orphan-containers',
+      });
+      expect(completed?.operationId).toBe(started?.operationId);
+      expect(mock.commands.some((command) => command.includes('docker stop orphan-api'))).toBe(true);
+      expect(mock.commands.some((command) => command.includes('docker rm orphan-api'))).toBe(true);
+    });
+  });
+
   describe('POST /api/branches/:id/force-rebuild/:profileId', () => {
     it('can reserve the next deploy as the same operation chain', async () => {
       const now = new Date().toISOString();

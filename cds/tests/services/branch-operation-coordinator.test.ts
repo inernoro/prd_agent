@@ -605,4 +605,32 @@ describe('BranchOperationCoordinator', () => {
     expect(interrupted.every((record) => record.details?.source === 'api.self-update')).toBe(true);
     expect(interrupted.find((record) => record.operationId === pending.operationId)?.details?.pending).toBe(true);
   });
+
+  it('can list all active operations so restart gates can detect terminal work', () => {
+    const { sink } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const deploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      profileId: 'api',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      source: 'api.deploy-profile',
+    });
+    const del = coordinator.begin({
+      branchId: 'prd-agent-feature',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+      requestId: 'delete-1',
+      source: 'api.delete-branch',
+    });
+
+    expect(coordinator.getActiveOperations('prd-agent-main').map((op) => op.operationId)).toEqual([deploy.operationId]);
+    expect(coordinator.getActiveOperations().map((op) => op.operationId)).toEqual(expect.arrayContaining([
+      deploy.operationId,
+      del.operationId,
+    ]));
+    expect(coordinator.getActiveOperations().find((op) => op.request.kind === 'delete')?.request.requestId).toBe('delete-1');
+  });
 });
