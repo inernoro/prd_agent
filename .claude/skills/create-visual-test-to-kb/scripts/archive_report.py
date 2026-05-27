@@ -129,24 +129,32 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
     }), f"{base}/stores/{rid}/entries"])["data"]["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
-    w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
-    print(f"  写正文 success={w.get('success')}")
     # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。
-    # 这里强制校验正文真的落库；写不进就删掉空壳 + 报错，绝不留半截。
+    # PUT 本身可能 524 抛错（curl 重试耗尽），也可能返回了但正文没落库 → 两种都得兜住：
+    # 强制校验 hasContent，写不进就删掉空壳 + 报错，绝不留半截。
     def _has_content():
         try:
-            return bool(curl(H + [f"{base}/entries/{eid}/content"]).get("data", {}).get("hasContent"))
+            return bool(curl(H + [f"{base}/entries/{eid}/content"], retries=2).get("data", {}).get("hasContent"))
         except Exception:
             return False
-    if not _has_content():
-        curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])  # 再写一次
-    if not _has_content():
+    ok = False
+    try:
+        w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+        print(f"  写正文 success={w.get('success')}")
+        ok = _has_content()
+        if not ok:  # 返回了但没落库 → 再写一次
+            curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
+            ok = _has_content()
+    except Exception as e:  # PUT 抛错（524 重试耗尽）；先确认是否其实写进去了
+        print(f"  写正文异常：{str(e)[:120]}")
+        ok = _has_content()
+    if not ok:
         try:
-            curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"])
+            curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
             print(f"  正文写入未生效，已删除空壳条目 {eid}（不留断头报告）")
         except Exception:
-            pass
-        raise RuntimeError("正文写入未生效(hasContent=false)：多为预览环境 524/重启，已删除空壳条目，请稍后重跑")
+            print(f"  正文写入未生效，且空壳条目 {eid} 删除也失败（预览环境不可达）；稳定后请手动删该空条目")
+        raise RuntimeError("正文写入未生效(hasContent=false)：多为预览环境 524/重启，已尝试删除空壳条目，请稍后重跑")
     print("  正文已校验落库 hasContent=true")
     # E1 强制分享链：条目已建=归档成功；分享链单独 try，失败也给 owner 路径，绝不静默
     owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,主交付）"
