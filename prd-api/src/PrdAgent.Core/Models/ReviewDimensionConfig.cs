@@ -54,9 +54,12 @@ public class DimensionCheckItem
 
 /// <summary>
 /// 系统默认评审维度（数据库无配置时使用）
-/// 总分 100。「全局规则检查清单」30 + 「文档规范完整性」8 + 「内在自洽性」14 + 「问题陈述质量」11
-///        + 「用户价值清晰度」10 + 「实现思路可行性」10 + 「需求可测试性」7 + 「表达质量与凝练度」10。
-/// 2026-05-21 调整：表达质量与凝练度 4→10、文档规范完整性 14→8（释放 6 分权重给反堆砌主战场，对抗"分数虚高 / 用户为分数堆砌文字"问题）。
+/// 总分 100。「全局规则检查清单」20 + 「文档规范完整性」8 + 「内在自洽性」16 + 「问题陈述质量」13
+///        + 「用户价值清晰度」12 + 「实现思路可行性」12 + 「需求可测试性」9 + 「表达质量与凝练度」10。
+/// 2026-05-21 调整：表达质量与凝练度 4→10、文档规范完整性 14→8（释放 6 分权重给反堆砌主战场）。
+/// 2026-05-27 调整：清单维度 30→20，10 分按 +2 平均分摊到 consistency/problem_quality/user_value/feasibility/testability 五个高风险维度，
+///   配合系统级三层兜底（evidence gate / 数据密度封顶 / summary 一致性闸），杜绝 LLM 把 70 分自填维度全填满凑 99 的钻空子路径。
+/// 注意：本默认配置仅在 review_dimension_configs 集合为空时生效；线上若已存在 DB 自定义配置，需管理员通过「评审维度配置」UI 手动同步权重。
 /// </summary>
 public static class DefaultReviewDimensions
 {
@@ -66,7 +69,7 @@ public static class DefaultReviewDimensions
         {
             Key = "global_rules_checklist",
             Name = "全局规则检查清单",
-            MaxScore = 30,
+            MaxScore = 20,
             Description = "检查方案是否考虑到米多平台的硬性业务/技术规则。对每个检查项做二段判断：① 方案是否涉及该规则？② 若涉及，方案是否已明确写出对应设计？只有「涉及=是 且 覆盖=否」才算未通过，涉及=否直接视为通过。得分 = 30 × 通过项数 / 总项数（向下取整）。",
             OrderIndex = 1,
             Items = new List<DimensionCheckItem>
@@ -135,7 +138,7 @@ public static class DefaultReviewDimensions
         {
             Key = "consistency",
             Name = "内在自洽性",
-            MaxScore = 14,
+            MaxScore = 16,
             Description = "评估整篇方案的逻辑闭环：项目目的→现状问题→用户诉求→实现思路是否形成完整链条；各章节描述是否互相支撑，有无矛盾；问题陈述的\"问题\"是否与\"需求\"对应；实现思路是否能解决所提出的问题。",
             OrderIndex = 3,
         },
@@ -143,7 +146,7 @@ public static class DefaultReviewDimensions
         {
             Key = "problem_quality",
             Name = "问题陈述质量",
-            MaxScore = 11,
+            MaxScore = 13,
             Description = "评估现状背景与问题陈述章节的质量：现状描述是否具体清晰（非泛泛而谈）；问题陈述是否指向根因（非表面症状）；需求描述是否明确可执行（用户期望达到的效果是否可验证）。",
             OrderIndex = 4,
         },
@@ -151,7 +154,7 @@ public static class DefaultReviewDimensions
         {
             Key = "user_value",
             Name = "用户价值清晰度",
-            MaxScore = 10,
+            MaxScore = 12,
             Description = "评估用户价值的阐述质量：项目目的中3个核心要点是否完整涵盖商业目标与客户价值；用户范围章节中核心用户角色是否明确列举；每个角色的核心诉求是否简明扼要且真实反映用户需要。",
             OrderIndex = 5,
         },
@@ -159,7 +162,7 @@ public static class DefaultReviewDimensions
         {
             Key = "feasibility",
             Name = "实现思路可行性",
-            MaxScore = 10,
+            MaxScore = 12,
             Description = "评估实现思路章节的质量：是否明确了'结构归母'（功能归属的产品模块/系统）；整体设计思路是否合理，分要点阐述是否具体；是否有明显的技术或业务风险盲点；方案是否在系统现有能力范围内可实现。",
             OrderIndex = 6,
         },
@@ -167,7 +170,7 @@ public static class DefaultReviewDimensions
         {
             Key = "testability",
             Name = "需求可测试性",
-            MaxScore = 7,
+            MaxScore = 9,
             Description = "评估需求是否可被验证和测试：需求描述是否有明确的完成标准；是否可以从需求推导出验收测试用例；描述中是否有可量化的指标或清晰的成功/失败判断条件。",
             OrderIndex = 7,
         },

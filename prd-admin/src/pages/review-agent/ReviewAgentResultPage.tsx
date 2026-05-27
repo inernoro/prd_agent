@@ -175,6 +175,7 @@ export function ReviewAgentResultPage() {
   const [summary, setSummary] = useState('');
   const [totalScore, setTotalScore] = useState<number | null>(null);
   const [isPassed, setIsPassed] = useState<boolean | null>(null);
+  const [adjustmentLog, setAdjustmentLog] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [dimConfigs, setDimConfigs] = useState<ReviewDimensionConfig[]>([]);
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
@@ -209,6 +210,7 @@ export function ReviewAgentResultPage() {
         setSummary(res.data.result.summary);
         setTotalScore(res.data.result.totalScore);
         setIsPassed(res.data.result.isPassed);
+        setAdjustmentLog(res.data.result.adjustmentLog ?? []);
         // 默认展开所有维度
         setExpandedDims(new Set(res.data.result.dimensionScores.map((d: { key: string }) => d.key)));
       }
@@ -238,10 +240,15 @@ export function ReviewAgentResultPage() {
     },
     onEvent: {
       result: (data: unknown) => {
-        const d = data as { totalScore: number; isPassed: boolean; summary: string };
+        const d = data as { totalScore: number; isPassed: boolean; summary: string; adjustmentLog?: string[] };
         setTotalScore(d.totalScore);
         setIsPassed(d.isPassed);
         setSummary(d.summary);
+        if (Array.isArray(d.adjustmentLog)) setAdjustmentLog(d.adjustmentLog);
+      },
+      adjustment_log: (data: unknown) => {
+        const d = data as { entries?: string[] };
+        if (Array.isArray(d.entries)) setAdjustmentLog(d.entries);
       },
     },
     onDone: () => {
@@ -275,6 +282,7 @@ export function ReviewAgentResultPage() {
         setSummary('');
         setTotalScore(null);
         setIsPassed(null);
+        setAdjustmentLog([]);
         setExpandedDims(new Set());
         setStreaming(true);
         setSubmission(prev => prev ? { ...prev, status: 'Queued', resultId: undefined } : prev);
@@ -306,6 +314,7 @@ export function ReviewAgentResultPage() {
       setSummary('');
       setTotalScore(null);
       setIsPassed(null);
+      setAdjustmentLog([]);
       setExpandedDims(new Set());
       setStreaming(true);
       setSubmission(prev => prev ? {
@@ -542,6 +551,24 @@ export function ReviewAgentResultPage() {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* 系统兜底调整记录（三层 guardrails 触发后才出现） */}
+      {adjustmentLog.length > 0 && !isRunning && (
+        <div className="mb-6 bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+          <h2 className="text-sm font-medium text-amber-300/90 mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            系统兜底调整记录
+            <span className="text-[11px] text-amber-300/60 font-normal">
+              （LLM 原始打分被三层 guardrail 调整，明细如下）
+            </span>
+          </h2>
+          <ul className="space-y-1.5 text-[13px] text-amber-100/80 leading-relaxed">
+            {adjustmentLog.map((entry, idx) => (
+              <li key={idx} className="font-mono whitespace-pre-wrap">{entry}</li>
+            ))}
+          </ul>
         </div>
       )}
 

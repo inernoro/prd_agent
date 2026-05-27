@@ -84,6 +84,8 @@ export interface ReviewResult {
   summary: string;
   fullMarkdown: string;
   parseError?: string;
+  /** 系统三层兜底（evidence gate / 数据密度封顶 / summary 一致性闸）的调整日志，空数组表示未触发任何调整 */
+  adjustmentLog?: string[];
   scoredAt: string;
 }
 

@@ -1058,17 +1058,24 @@ public class ReviewAgentController : ControllerBase
             // 否则进入下一轮重试
         }
 
+        // ── 三层兜底（Guardrails）：抵御 LLM 把非清单维度全填满凑高分 + summary 自相矛盾的钻空子路径 ──
+        var adjustmentLog = ApplyScoringGuardrails(dimensionScores, dims, content, summary);
+
         var totalScore = dimensionScores.Sum(d => d.Score);
         var isPassed = totalScore >= 80;
 
         // 在 summary 末尾追加权威结论，避免 LLM 文字与系统派生分数错位时误导用户
         // （企微/钉钉 webhook 通知也读这个 summary，保证三处文案对齐）
         var conclusionLine = $"[系统结论] 最终得分 {totalScore}/100，{(isPassed ? "已通过" : "未通过")}。";
+        if (adjustmentLog.Count > 0)
+        {
+            conclusionLine += $" 系统兜底已触发 {adjustmentLog.Count} 项调整（详见报告）。";
+        }
         summary = string.IsNullOrWhiteSpace(summary)
             ? conclusionLine
             : summary.TrimEnd() + "\n\n" + conclusionLine;
 
-        // 推送分项结果
+        // 推送分项结果（已应用 evidence gate）
         foreach (var dimScore in dimensionScores)
         {
             try
@@ -1076,6 +1083,13 @@ public class ReviewAgentController : ControllerBase
                 await WriteSseEventAsync("dimension_score", dimScore);
             }
             catch (ObjectDisposedException) { break; }
+        }
+
+        // 推送兜底调整日志（前端展示「系统调整记录」区）
+        if (adjustmentLog.Count > 0)
+        {
+            try { await WriteSseEventAsync("adjustment_log", new { entries = adjustmentLog }); }
+            catch (ObjectDisposedException) { /* 客户端已断开 */ }
         }
 
         // 保存结果
@@ -1088,6 +1102,7 @@ public class ReviewAgentController : ControllerBase
             Summary = summary,
             FullMarkdown = llmOutput,
             ParseError = parseError,
+            AdjustmentLog = adjustmentLog,
         };
 
         await _db.ReviewResults.InsertOneAsync(result, cancellationToken: CancellationToken.None);
@@ -1124,7 +1139,7 @@ public class ReviewAgentController : ControllerBase
         // 推送最终结果
         try
         {
-            await WriteSseEventAsync("result", new { totalScore, isPassed, summary });
+            await WriteSseEventAsync("result", new { totalScore, isPassed, summary, adjustmentLog });
             await WriteSseEventAsync("done", new { });
         }
         catch (ObjectDisposedException) { /* 客户端已断开，忽略 */ }
@@ -1145,6 +1160,145 @@ public class ReviewAgentController : ControllerBase
         var raw = BitConverter.ToInt32(hash, 0);
         // & 0x7FFFFFFF 保证非负，避免 Math.Abs(int.MinValue) 溢出
         return raw & 0x7FFFFFFF;
+    }
+
+    // ──────────────────────────────────────────────
+    // 三层兜底（Guardrails）：抵御 LLM 钻空子的硬规则
+    // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 应用系统级三层兜底，按顺序：
+    /// L1 evidence gate：非清单维度若 LLM 给到 MaxScore × 0.9 以上，要求 Comment 必须 ≥ 30 字且含具体证据（数字/百分比/引用/章节名），否则该维度降至 floor(MaxScore × 0.89)。
+    /// L2 数据密度封顶：方案原文「数字/百分比/链接/章节引用」总出现 &lt; 5 处时，整体高分维度（≥ 0.9 得分率）按 0.89 封顶。
+    /// L3 summary 一致性闸：summary 出现明确降级关键词（"75-89"/"未达 90+"/"合格区间"/"有改进空间"），但总分 ≥ 90 时，整体高分维度按 0.89 封顶。
+    /// 注意：清单类维度（Items != null）由系统按 truth table 强制重算，不在本兜底覆盖范围。
+    /// </summary>
+    /// <returns>触发的调整日志条目（≥ 0 条）</returns>
+    internal static List<string> ApplyScoringGuardrails(
+        List<ReviewDimensionScore> dimensionScores,
+        List<ReviewDimensionConfig> dims,
+        string proposalContent,
+        string summary)
+    {
+        var log = new List<string>();
+        var dimConfigMap = dims.ToDictionary(d => d.Key);
+
+        // L1：逐维度 evidence gate
+        foreach (var score in dimensionScores)
+        {
+            if (!dimConfigMap.TryGetValue(score.Key, out var cfg)) continue;
+            // 清单维度跳过：由 truth table 强制重算，不需要 evidence gate
+            if (cfg.Items != null && cfg.Items.Count > 0) continue;
+            // 仅对「得分率 ≥ 90%」的维度强制要求证据
+            var threshold90 = (int)Math.Ceiling(score.MaxScore * 0.9);
+            if (score.Score < threshold90) continue;
+
+            if (!HasSufficientEvidence(score.Comment))
+            {
+                var capped = (int)Math.Floor(score.MaxScore * 0.89);
+                log.Add(
+                    $"[L1 证据闸] 维度「{score.Name}」原 {score.Score}/{score.MaxScore} → 调整为 {capped}/{score.MaxScore}：" +
+                    $"得分率 ≥90% 但 LLM 评语未提供具体证据（数字/百分比/引用/原文章节），按 89% 封顶。");
+                score.Score = capped;
+                score.Comment = (string.IsNullOrWhiteSpace(score.Comment) ? "" : score.Comment.TrimEnd() + " ") +
+                                "[系统提示] 因高分缺乏具体证据，已按 89% 封顶。";
+            }
+        }
+
+        // L2：数据密度封顶（基于方案原文统计）
+        var dataDensity = CountDataPoints(proposalContent);
+        if (dataDensity < 5)
+        {
+            CapHighScoringDimensions(dimensionScores, dimConfigMap, log,
+                $"[L2 数据密度] 方案原文具体数据/链接/章节引用仅 {dataDensity} 处（要求 ≥ 5），所有得分率 ≥90% 的非清单维度按 89% 封顶。");
+        }
+
+        // L3：summary 与总分一致性闸
+        var totalScoreNow = dimensionScores.Sum(d => d.Score);
+        var totalMax = dimensionScores.Sum(d => d.MaxScore);
+        if (totalMax > 0 && (double)totalScoreNow / totalMax >= 0.9 && SummaryContainsDowngradeKeyword(summary))
+        {
+            CapHighScoringDimensions(dimensionScores, dimConfigMap, log,
+                "[L3 一致性闸] summary 出现明确降级表述（如「未达 90+」「合格区间」「有改进空间」）但总分 ≥90%，所有得分率 ≥90% 的非清单维度按 89% 封顶。");
+        }
+
+        return log;
+    }
+
+    /// <summary>
+    /// 判断 LLM 评语是否含「具体证据」：长度 ≥ 30 且含数字/百分比/章节引用/书名号/方括号引用 任一线索。
+    /// 纯定性形容词（"完整""清晰""凝练"）不视为证据。
+    /// </summary>
+    internal static bool HasSufficientEvidence(string? comment)
+    {
+        if (string.IsNullOrWhiteSpace(comment)) return false;
+        var trimmed = comment.Trim();
+        if (trimmed.Length < 30) return false;
+        // 至少含一种具体证据线索
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            trimmed,
+            @"\d|[%％]|第[一-龥\d]+[章节段条]|《[^》]+》|「[^」]+」|\[[^\]]+\]|http[s]?://");
+    }
+
+    /// <summary>
+    /// 数据密度统计：扫方案原文「数字串(≥2 位) / 百分比 / URL / 章节引用 / 书名号引用」总出现次数。
+    /// 阈值 5 是保守估计：1000 字以上的产品方案普遍能轻松达标，达不到说明确实空话占多数。
+    /// </summary>
+    internal static int CountDataPoints(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return 0;
+        var count = 0;
+        // 数字串（≥ 2 位连续数字，避免误算单个数字如"3 个"）
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"\d{2,}").Count;
+        // 百分比
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"\d+[%％]").Count;
+        // URL
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"http[s]?://[^\s一-龥]+").Count;
+        // 章节引用
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"第[一-龥\d]+[章节段条]").Count;
+        // 书名号引用
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"《[^》]{1,40}》").Count;
+        return count;
+    }
+
+    /// <summary>
+    /// 检测 summary 是否含明确的「降级」关键词。命中即视为 LLM 自己承认"未达 90+"。
+    /// </summary>
+    internal static bool SummaryContainsDowngradeKeyword(string? summary)
+    {
+        if (string.IsNullOrWhiteSpace(summary)) return false;
+        string[] keywords = { "75-89", "75 - 89", "75 至 89", "未达 90", "未达到 90", "未达90", "未达到90",
+                              "合格区间", "标杆级水平", "有改进空间", "未达标杆", "未达行业" };
+        return keywords.Any(k => summary.Contains(k, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// 把所有非清单维度中「得分率 ≥ 90%」的项一律压到 floor(MaxScore × 0.89)。
+    /// 触发时先写 reason 主条目，再逐条记录被压的维度；未触发任何维度不写 log。
+    /// </summary>
+    private static void CapHighScoringDimensions(
+        List<ReviewDimensionScore> dimensionScores,
+        Dictionary<string, ReviewDimensionConfig> dimConfigMap,
+        List<string> log,
+        string reason)
+    {
+        var subEntries = new List<string>();
+        foreach (var score in dimensionScores)
+        {
+            if (!dimConfigMap.TryGetValue(score.Key, out var cfg)) continue;
+            if (cfg.Items != null && cfg.Items.Count > 0) continue; // 清单维度跳过
+            var threshold90 = (int)Math.Ceiling(score.MaxScore * 0.9);
+            if (score.Score < threshold90) continue;
+
+            var capped = (int)Math.Floor(score.MaxScore * 0.89);
+            subEntries.Add($"  └ 维度「{score.Name}」{score.Score}/{score.MaxScore} → {capped}/{score.MaxScore}");
+            score.Score = capped;
+        }
+        if (subEntries.Count > 0)
+        {
+            log.Add(reason);
+            log.AddRange(subEntries);
+        }
     }
 
     /// <summary>

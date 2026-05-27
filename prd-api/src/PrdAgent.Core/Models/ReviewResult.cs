@@ -28,6 +28,13 @@ public class ReviewResult
     /// <summary>解析错误信息（为空表示解析成功）</summary>
     public string? ParseError { get; set; }
 
+    /// <summary>
+    /// 系统兜底调整日志。记录三层 guardrail（evidence gate / 数据密度封顶 / summary 一致性闸）
+    /// 触发后的调整原文，便于用户/审计追踪「LLM 给了 X 分，系统按规则 Y 改为 Z 分」。
+    /// 空列表表示 LLM 原始打分未被系统调整。
+    /// </summary>
+    public List<string> AdjustmentLog { get; set; } = new();
+
     public DateTime ScoredAt { get; set; } = DateTime.UtcNow;
 }
 
