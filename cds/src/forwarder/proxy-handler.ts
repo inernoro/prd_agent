@@ -268,11 +268,11 @@ export class ProxyHandler {
         error,
       });
     };
-    // 每请求一条 forward 日志:用原始 URL(含 /_cds 前缀如有),journalctl 能直接
-    // 关联客户端真实请求,不被 passthrough 的 path strip 干扰。对应 master proxy.ts:530。
-    this.opts.logger?.info?.(
-      `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
-    );
+    if (process.env.CDS_FORWARDER_ACCESS_LOG === '1') {
+      this.opts.logger?.info?.(
+        `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
+      );
+    }
 
     // 透传 headers + X-Forwarded-* 累积。先复制 req.headers 不 mutate,
     // 再合并 passthrough 注入的 extraHeaders(如 x-cds-internal)。

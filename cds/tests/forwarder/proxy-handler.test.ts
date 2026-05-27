@@ -917,6 +917,52 @@ describe('ProxyHandler — 故障与降级', () => {
 });
 
 describe('ProxyHandler — 资源回收', () => {
+  it('does not write successful forward access logs unless explicitly enabled', async () => {
+    const previous = process.env.CDS_FORWARDER_ACCESS_LOG;
+    delete process.env.CDS_FORWARDER_ACCESS_LOG;
+    try {
+      const infoMessages: string[] = [];
+      const u = await startUpstream((_req, res) => {
+        res.writeHead(200);
+        res.end('ok');
+      });
+      upstreams.push(u);
+      const proxy = new ProxyHandler({
+        upstreamTimeoutMs: 500,
+        logger: { info: (message) => infoMessages.push(message) },
+      });
+      const server = http.createServer((req, res) => {
+        void proxy.handle(req, res, {
+          _id: '1',
+          host: 'demo.miduo.org',
+          upstreamPort: u.port,
+          weight: 100,
+          branchId: 'branch-a',
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const addr = server.address() as AddressInfo;
+      forwarders.push({
+        port: addr.port,
+        server,
+        proxy,
+        close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+      });
+
+      const res = await clientReq(addr.port);
+      expect(res.status).toBe(200);
+      expect(infoMessages.filter((line) => line.startsWith('[forward] GET /'))).toHaveLength(0);
+
+      process.env.CDS_FORWARDER_ACCESS_LOG = '1';
+      const res2 = await clientReq(addr.port);
+      expect(res2.status).toBe(200);
+      expect(infoMessages.some((line) => line.startsWith('[forward] GET /'))).toBe(true);
+    } finally {
+      if (previous == null) delete process.env.CDS_FORWARDER_ACCESS_LOG;
+      else process.env.CDS_FORWARDER_ACCESS_LOG = previous;
+    }
+  });
+
   it('[C-3.3] 1000 次请求后,文件描述符数量稳定(无 leak)', async () => {
     const u = await startUpstream((_req, res) => {
       res.writeHead(200);
