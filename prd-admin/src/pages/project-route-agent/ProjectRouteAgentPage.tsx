@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ExternalLink, ChevronDown, ChevronRight, History, RefreshCw } from 'lucide-react';
+import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ExternalLink, ChevronDown, ChevronRight, History, RefreshCw, Trash2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   createPlan,
+  deletePlan,
   listMyPlans,
   getActiveSiteSpec,
   upsertSiteSpec,
@@ -137,6 +138,26 @@ function AnalyzeView() {
   async function refreshGhStatus() {
     const res = await getProjectRouteGitHubStatus();
     if (res.success) setGhStatus(res.data ?? null);
+  }
+
+  async function handleDeletePlan(p: ProjectRoutePlan) {
+    const ok = window.confirm(
+      `确定要删除方案「${p.title}」吗？\n\n` +
+      `提交于 ${new Date(p.submittedAt).toLocaleString()}\n` +
+      `此操作不可恢复，分析结果将一并删除。`,
+    );
+    if (!ok) return;
+    const res = await deletePlan(p.id);
+    if (!res.success) {
+      setError(res.error?.message ?? '删除失败');
+      return;
+    }
+    // 如果删除的是当前选中的方案，清空右侧分析视图
+    if (plan?.id === p.id) {
+      setPlan(null);
+      resetAnalysisState();
+    }
+    await refreshRecent();
   }
 
   const sse = useSseStream({
@@ -363,35 +384,45 @@ function AnalyzeView() {
                 const projectCount = (p.resolutions ?? []).reduce((s, r) => s + (r.projectPaths?.length ?? 0), 0);
                 return (
                   <li key={p.id}>
-                    <div className={`rounded-md transition-colors ${isActive ? 'bg-sky-500/10 border border-sky-500/30' : 'hover:bg-white/5 border border-transparent'}`}>
-                      <button
-                        onClick={() => {
-                          setPlan(p);
-                          setApps(p.extractedApps ?? []);
-                          setModules(p.extractedModules ?? []);
-                          setExtractedRepos(p.extractedRepos ?? []);
-                          setResolutions(p.resolutions ?? []);
-                          setRepos([]);
-                          setModel(p.model ?? null);
-                          setPlatform(p.modelPlatform ?? null);
-                          // 历史方案：Done / Error 都只回放，不自动重跑；只有 Queued / Running 才接着跑
-                          if (p.status === 'Queued' || p.status === 'Running') startAnalysis(p.id);
-                        }}
-                        className="w-full text-left px-3 py-2"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-white truncate flex-1">{p.title}</span>
-                          <StatusBadge status={p.status} />
-                        </div>
-                        <p className="text-[10px] text-white/40 mt-0.5">{new Date(p.submittedAt).toLocaleString()}</p>
-                        {(repoCount > 0 || moduleCount > 0 || projectCount > 0) && (
-                          <div className="flex items-center gap-2 mt-1 text-[10px] text-white/40">
-                            {moduleCount > 0 && <span>{moduleCount} 模块</span>}
-                            {repoCount > 0 && <span>· {repoCount} 仓库</span>}
-                            {projectCount > 0 && <span>· {projectCount} 路径</span>}
+                    <div className={`group rounded-md transition-colors ${isActive ? 'bg-sky-500/10 border border-sky-500/30' : 'hover:bg-white/5 border border-transparent'}`}>
+                      <div className="relative">
+                        <button
+                          onClick={() => {
+                            setPlan(p);
+                            setApps(p.extractedApps ?? []);
+                            setModules(p.extractedModules ?? []);
+                            setExtractedRepos(p.extractedRepos ?? []);
+                            setResolutions(p.resolutions ?? []);
+                            setRepos([]);
+                            setModel(p.model ?? null);
+                            setPlatform(p.modelPlatform ?? null);
+                            // 历史方案：Done / Error 都只回放，不自动重跑；只有 Queued / Running 才接着跑
+                            if (p.status === 'Queued' || p.status === 'Running') startAnalysis(p.id);
+                          }}
+                          className="w-full text-left px-3 py-2 pr-8"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-white truncate flex-1">{p.title}</span>
+                            <StatusBadge status={p.status} />
                           </div>
-                        )}
-                      </button>
+                          <p className="text-[10px] text-white/40 mt-0.5">{new Date(p.submittedAt).toLocaleString()}</p>
+                          {(repoCount > 0 || moduleCount > 0 || projectCount > 0) && (
+                            <div className="flex items-center gap-2 mt-1 text-[10px] text-white/40">
+                              {moduleCount > 0 && <span>{moduleCount} 模块</span>}
+                              {repoCount > 0 && <span>· {repoCount} 仓库</span>}
+                              {projectCount > 0 && <span>· {projectCount} 路径</span>}
+                            </div>
+                          )}
+                        </button>
+                        {/* 删除按钮，hover / 选中时显示 */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void handleDeletePlan(p); }}
+                          className={`absolute top-2 right-2 p-1 rounded transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-white/40 hover:text-red-300 hover:bg-red-500/10`}
+                          title="删除此方案"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                       {isActive && (
                         <div className="px-3 pb-2 flex items-center justify-end">
                           <button

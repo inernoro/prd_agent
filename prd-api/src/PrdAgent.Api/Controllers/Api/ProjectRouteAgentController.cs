@@ -466,10 +466,13 @@ public class ProjectRouteAgentController : ControllerBase
         const int maxPlanHeadChars = 4_000;
         const int maxSiteChars = 12_000;
 
-        // 需求 ①：apps/modules **只读方案 md 里指定章节的原话**（不让 AI 拆解）。
-        // 先用确定性 markdown 解析（MarkdownSectionExtractor）抽，命中即用；
-        // 找不到对应章节时，回退到 LLM 兜底抽取（只在这一种 case 下让 AI 介入 apps/modules）。
-        var (deterministicApps, deterministicModules) = MarkdownSectionExtractor.Extract(plan.ExtractedContent);
+        // 需求 ①：apps/modules **只读方案 md 文档头中的应用 / 业务模块章节原话**（不让 AI 拆解）。
+        // - 扫描范围限定文档头部前 6000 字符（约 100~150 行），避免抓到正文中后段的同名章节
+        // - 命中即用，原话直接进数组（不拆解、不改写、不缩写）
+        // - 找不到对应章节才回退 LLM 兜底抽取
+        const int planHeaderScanChars = 6_000;
+        var (deterministicApps, deterministicModules) =
+            MarkdownSectionExtractor.Extract(plan.ExtractedContent, planHeaderScanChars);
         var useDeterministicAppsModules = deterministicApps.Count > 0 || deterministicModules.Count > 0;
 
         var planHead = plan.ExtractedContent ?? string.Empty;

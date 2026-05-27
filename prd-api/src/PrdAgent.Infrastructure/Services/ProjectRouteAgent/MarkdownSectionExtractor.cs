@@ -34,14 +34,27 @@ public static class MarkdownSectionExtractor
     /// <summary>
     /// 从方案 markdown 抽出（apps, modules）原文清单。
     /// 找不到对应章节时返回的列表为空，调用方可决定是否回退到 LLM 抽取。
+    ///
+    /// <paramref name="maxScanChars"/>：扫描范围上限（字符数），默认 6000，约 100~150 行 markdown。
+    ///   规则：**只扫文档前 maxScanChars 字符**，相当于「方案文档头部」。
+    ///   超过该位置的章节即使命中关键词也不会被抽取（避免抓到正文中部 / 末尾的同名章节）。
     /// </summary>
-    public static (List<string> Apps, List<string> Modules) Extract(string? markdown)
+    public static (List<string> Apps, List<string> Modules) Extract(string? markdown, int maxScanChars = 6000)
     {
         if (string.IsNullOrWhiteSpace(markdown))
             return (new List<string>(), new List<string>());
 
-        var apps = ExtractSection(markdown!, AppsKeywords);
-        var modules = ExtractSection(markdown!, ModulesKeywords);
+        // 截到文档头（按字符上限，不破坏行边界 —— 在最后一个换行处切）
+        var head = markdown!;
+        if (head.Length > maxScanChars)
+        {
+            var cut = head.LastIndexOf('\n', maxScanChars);
+            if (cut < maxScanChars / 2) cut = maxScanChars; // 若行太长，直接硬切
+            head = head[..cut];
+        }
+
+        var apps = ExtractSection(head, AppsKeywords);
+        var modules = ExtractSection(head, ModulesKeywords);
         return (apps, modules);
     }
 
