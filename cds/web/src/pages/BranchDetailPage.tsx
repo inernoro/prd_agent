@@ -255,6 +255,14 @@ function queryValue(name: string): string {
   return new URLSearchParams(window.location.search).get(name) || '';
 }
 
+function parseSseJson<T>(event: Event): T | null {
+  try {
+    return JSON.parse((event as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
+}
+
 function displayName(project?: ProjectSummary): string {
   if (!project) return '';
   return project.aliasName || project.name || project.slug || project.id;
@@ -713,12 +721,16 @@ export function BranchDetailPage(): JSX.Element {
     void load(true);
   }, [load]);
 
+  const branchStreamProjectId = state.status === 'ok' ? state.branch.projectId : '';
+  const branchStreamBranchId = state.status === 'ok' ? state.branch.id : '';
+
   useEffect(() => {
-    if (state.status !== 'ok') return;
-    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(state.branch.projectId)}`);
+    if (!branchStreamProjectId || !branchStreamBranchId) return;
+    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(branchStreamProjectId)}`);
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string; status?: BranchSummary['status'] };
-      if (data.branchId !== state.branch.id || !data.status) return;
+      const data = parseSseJson<{ branchId?: string; projectId?: string; status?: BranchSummary['status'] }>(ev);
+      if (!data || data.branchId !== branchStreamBranchId || !data.status) return;
+      if (data.projectId && data.projectId !== branchStreamProjectId) return;
       setState((current) => (
         current.status === 'ok'
           ? { ...current, branch: { ...current.branch, status: data.status as BranchSummary['status'] } }
@@ -726,12 +738,12 @@ export function BranchDetailPage(): JSX.Element {
       ));
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (!data.branch || data.branch.id !== state.branch.id) return;
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data?.branch || data.branch.id !== branchStreamBranchId || data.branch.projectId !== branchStreamProjectId) return;
       setState((current) => (current.status === 'ok' ? { ...current, branch: { ...current.branch, ...data.branch } } : current));
     });
     return () => source.close();
-  }, [state]);
+  }, [branchStreamBranchId, branchStreamProjectId]);
 
   const proxyStreamKey = state.status === 'ok'
     ? `${state.branch.id}|${state.branch.previewSlug || ''}|${state.aliases.aliases.join(',')}`
