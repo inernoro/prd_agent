@@ -926,12 +926,6 @@
     transition: width 120ms ease, height 120ms ease, filter 160ms ease;
   }
 
-  .cds-project-node-devicon {
-    display: block;
-    object-fit: contain;
-    line-height: 1;
-  }
-
   @media (hover: hover) and (pointer: fine) {
     .cds-project-node-row .cds-project-node:hover {
       z-index: 3;

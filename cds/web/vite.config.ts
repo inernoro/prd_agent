@@ -5,8 +5,7 @@ import path from 'node:path';
 // CDS web build config (React + Vite + Tailwind + shadcn/ui).
 //
 // Output lives at cds/web/dist/ (Vite default). Express serves it under root
-// for migrated routes (see installSpaFallback / MIGRATED_REACT_ROUTES in
-// cds/src/server.ts); unmigrated paths fall through to cds/web-legacy/.
+// for every non-API dashboard route; React Router owns page-level routing.
 //
 // Local dev: `pnpm dev` → http://localhost:5173/. The dev proxy forwards
 // /api/* to the running CDS scheduler on :9900.
