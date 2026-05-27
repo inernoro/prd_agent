@@ -382,6 +382,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.issues-system.md` §3） |
 | **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
 | **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
+| **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
 | **weekly-update-summary** | `/weekly` | 输入时间范围 → 从 git 历史收集 commit/PR/贡献者数据，输出分类周报（完成项 + 下周优先级） |
 
 ### 辅助技能（按需使用）
@@ -448,7 +449,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
 4. **开发完成后** → 先 `/verify` 交叉验证，再 `/scope-check` 边界检查
 5. **部署测试时** → `/cds-deploy` 一键部署灰度环境，再 `/smoke` 冒烟测试
-6. **需人工验收时** → `/preview` 生成预览地址 → `/uat` 生成逐步打勾的验收清单，真人按表执行每一步
+6. **需人工验收时** → `/preview` 生成预览地址 → `/uat` 生成逐步打勾的验收清单，真人按表执行每一步；需要 AI 以真人路径复验并归档证据时走 `/验收`（create-visual-test-to-kb）
 7. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
 8. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
 9. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
