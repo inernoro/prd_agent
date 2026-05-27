@@ -56,6 +56,7 @@ public class ChangelogController : ControllerBase
     public async Task<IActionResult> GetCurrentWeek([FromQuery] bool force = false)
     {
         var view = await _reader.GetCurrentWeekAsync(force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<CurrentWeekDto>.Ok(MapCurrentWeek(view)));
     }
 
@@ -69,6 +70,7 @@ public class ChangelogController : ControllerBase
     {
         if (limit <= 0 || limit > 100) limit = 20;
         var view = await _reader.GetReleasesAsync(limit, force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view)));
     }
 
@@ -80,7 +82,20 @@ public class ChangelogController : ControllerBase
     {
         if (limit <= 0 || limit > 1000) limit = 1000;
         var view = await _reader.GetGitHubLogsAsync(limit, force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view)));
+    }
+
+    /// <summary>
+    /// 浏览器客户端缓存（stale-while-revalidate, RFC 5861）：
+    ///  - 60s 内：浏览器直接用本地缓存，零网络（跨标签页/会话也命中，比 sessionStorage 更广）
+    ///  - 60s~1 天：先用缓存即时渲染、同时后台校验刷新（用户不等待）
+    /// 内容对所有登录用户一致且非敏感，故用 private（仅浏览器缓存，不进共享 CDN）。
+    /// force=true（手动刷新）不下发缓存头，确保拿到最新。
+    /// </summary>
+    private void SetClientCacheHeaders()
+    {
+        Response.Headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=86400";
     }
 
     /// <summary>
