@@ -63,10 +63,9 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
 /*
  * Router root for the React-based CDS Dashboard.
  *
- * The Express server (cds/src/server.ts) holds a list of migrated routes and
- * serves the built React index.html for them. Unmigrated paths still resolve
- * to legacy static pages under cds/web-legacy/, so each migration step is a
- * single addition to MIGRATED_REACT_ROUTES + a new <Route> here.
+ * The Express server (cds/src/server.ts) serves the built React index.html
+ * for every non-API dashboard route. React Router owns the page map; legacy
+ * static HTML is no longer a runtime fallback.
  *
  * Currently migrated:
  *   /                       CDS marketing/control-plane home

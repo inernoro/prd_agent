@@ -958,11 +958,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // Returns 200 when ALL of these are healthy:
   //   - state file readable
   //   - Docker socket reachable
-  //   - the SPA can be served (either React `web/dist/index.html` exists, or
-  //     legacy fallback `web-legacy/project-list.html` exists). If both are
-  //     missing, every user-facing route would 404 — the exact failure mode
-  //     that hit prod three times after a self-update where the install path
-  //     drifted out from under the running process.
+  //   - the React SPA can be served from `web/dist/index.html`. Legacy
+  //     static pages are no longer a runtime fallback; if the React build is
+  //     missing, user-facing dashboard routes should be considered unhealthy.
   //   - critical SPA routes are registered on the Express router (catches
   //     regressions where a refactor accidentally drops the route handler).
   //   - (optional, when ?probe=routes) internal HTTP probe of the listening
@@ -1013,25 +1011,18 @@ export function createServer(deps: ServerDeps): express.Express {
       overallOk = false;
     }
 
-    // Check 3: SPA assets present — file-system level. Catches the case
-    // where the install path lost web-legacy/ or web/dist/ (e.g. a botched
-    // self-update that pulled new code without rebuilding, or a docker
-    // volume mount pointing at the wrong path).
+    // Check 3: React SPA assets present — file-system level. Catches the
+    // case where a self-update pulled new dashboard code without rebuilding,
+    // or a docker volume mount points at the wrong path.
     const reactIndex = path.resolve(__dirname, '..', 'web', 'dist', 'index.html');
-    const legacyProjectList = path.resolve(__dirname, '..', 'web-legacy', 'project-list.html');
     const reactExists = fs.existsSync(reactIndex);
-    const legacyExists = fs.existsSync(legacyProjectList);
     checks.reactDist = reactExists
       ? { ok: true, detail: reactIndex }
       : { ok: false, detail: `missing ${reactIndex}` };
-    checks.legacyFallback = legacyExists
-      ? { ok: true, detail: legacyProjectList }
-      : { ok: false, detail: `missing ${legacyProjectList}` };
-    const spaServable = reactExists || legacyExists;
-    if (!spaServable) {
+    if (!reactExists) {
       checks.spaServable = {
         ok: false,
-        detail: 'neither React dist nor legacy fallback present — every user-facing route will 404',
+        detail: 'React dist missing — dashboard routes will 404',
       };
       overallOk = false;
     } else {
@@ -1039,9 +1030,8 @@ export function createServer(deps: ServerDeps): express.Express {
     }
 
     // Check 4: critical SPA routes are registered on the Express router.
-    // Cross-check against MIGRATED_REACT_ROUTES so a refactor that drops
-    // installSpaFallback() (or shadows /project-list with a new mount) is
-    // surfaced before users hit a 404.
+    // The React catch-all owns all non-API dashboard paths, so a wildcard
+    // handler is enough to prove deep links can reach the SPA shell.
     const registeredPaths = collectRegisteredPaths(app);
     const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings'];
     const missingRoutes = expectedSpaPaths.filter((p) => {
@@ -1349,7 +1339,7 @@ export function createServer(deps: ServerDeps): express.Express {
   //
   // When CDS is started with CDS_AUTH_MODE=github, this block wires up
   // the OAuth routes and mounts a session-gate middleware. The middleware
-  // redirects unauthenticated HTML requests to /login-gh.html and rejects
+  // redirects unauthenticated HTML requests to /login and rejects
   // unauthenticated API requests with 401. See:
   //   - cds/src/services/auth-service.ts
   //   - cds/src/middleware/github-auth.ts
@@ -3092,50 +3082,12 @@ export function auditApiLabels(app: express.Express): string[] {
   return missing;
 }
 
-/**
- * Routes that the React app (cds/web/dist/) owns. Anything in this list is
- * served by the SPA shell with client-side routing taking over; deep links
- * land on the matching <Route> in src/App.tsx. Add a route here in the same
- * commit that adds it to App.tsx — they must move together.
- *
- * Everything NOT in this list falls through to the legacy static pages under
- * cds/web-legacy/, so an unmigrated link keeps working unchanged.
- */
-const MIGRATED_REACT_ROUTES: readonly string[] = [
-  '/',
-  '/login',
-  '/preview-preparing',
-  '/hello',
-  '/cds-settings',
-  '/project-list',
-  '/branches',
-  '/branch-list',
-  '/branch-panel',
-  '/branch-topology',
-  '/settings',
-];
-
-/**
- * @internal exported for tests so they can pin a known route list rather than
- * depending on whatever the current production list happens to be.
- */
-export function isMigratedReactRoute(
-  pathname: string,
-  routes: readonly string[] = MIGRATED_REACT_ROUTES,
-): boolean {
-  for (const r of routes) {
-    if (pathname === r || pathname.startsWith(r + '/')) return true;
-  }
-  return false;
-}
-
 export function installSpaFallback(
   app: express.Express,
-  legacyDirOverride?: string,
+  _legacyDirOverride?: string,
   reactDistOverride?: string,
-  migratedRoutes: readonly string[] = MIGRATED_REACT_ROUTES,
+  _migratedRoutes?: readonly string[],
 ): void {
-  const legacyDir = legacyDirOverride || path.resolve(__dirname, '..', 'web-legacy');
   const reactDist = reactDistOverride || path.resolve(__dirname, '..', 'web', 'dist');
 
   // 在 SPA 兜底挂载前做一次 label 覆盖审计。SPA 的 `app.get('*')` 会吃掉
@@ -3143,15 +3095,9 @@ export function installSpaFallback(
   auditApiLabels(app);
 
   // ── React app (cds/web/dist/) ──
-  // The new stack is wired in BEFORE the legacy static fallback, but only
-  // claims (a) the routes named in MIGRATED_REACT_ROUTES and (b) /assets/*
-  // for hashed JS/CSS bundles. /api/* is mounted upstream and has higher
-  // priority than anything below — the recovery endpoint
-  // (POST /api/factory-reset) is therefore never shadowed.
-  //
-  // When the React build is missing (fresh clone before `pnpm build`), we
-  // log a warning and skip the mount. The legacy static fallback below
-  // continues to serve every page unmodified.
+  // React Router is the dashboard authority. Every non-API HTML route is
+  // served from the Vite bundle; old .html filenames are kept only as
+  // explicit redirects below. There is no legacy static-page fallback.
   const reactIndex = path.join(reactDist, 'index.html');
   if (fs.existsSync(reactIndex)) {
     app.use(
@@ -3177,93 +3123,27 @@ export function installSpaFallback(
     app.get('*', (req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api/')) return next();
-      if (!isMigratedReactRoute(req.path, migratedRoutes)) return next();
+      const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      if (req.path === '/projects.html') return res.redirect(301, '/project-list' + qs);
+      if (req.path === '/index.html') return res.redirect(301, '/branch-list' + qs);
+      if (req.path === '/cds-settings.html') return res.redirect(301, '/cds-settings' + qs);
+      if (req.path === '/login.html') return res.redirect(301, '/login' + qs);
+      if (req.path === '/login-gh.html') return res.redirect(302, '/login' + qs);
+      if (req.path === '/settings.html') {
+        const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
+        return project
+          ? res.redirect(301, `/settings/${encodeURIComponent(project)}`)
+          : res.redirect(302, '/project-list');
+      }
+      if (req.path === '/settings') return res.redirect(302, '/project-list');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.sendFile(reactIndex);
     });
   } else {
     console.warn(
-      '[cds-web] cds/web/dist/index.html not found; skipping React mount. Run `cd cds/web && pnpm build` to enable migrated routes.'
+      '[cds-web] cds/web/dist/index.html not found; dashboard routes will not be served. Run `cd cds/web && pnpm build` before starting CDS.'
     );
   }
-
-  // ── Legacy static pages (cds/web-legacy/) ──
-  // Semantic URL routes (preferred, human-readable paths)
-  app.get('/project-list', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'project-list.html'));
-  });
-  app.get('/branch-list', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-  app.get('/branch-panel', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-  app.get('/branch-topology', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-
-  // Backward-compat redirects: old .html paths → semantic paths (301 permanent)
-  app.get('/projects.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/project-list' + qs);
-  });
-  app.get('/index.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/branch-list' + qs);
-  });
-  app.get('/cds-settings.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/cds-settings' + qs);
-  });
-  app.get('/login.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/login' + qs);
-  });
-  app.get('/settings.html', (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
-    if (!project) {
-      res.redirect(302, '/project-list');
-      return;
-    }
-    res.redirect(301, `/settings/${encodeURIComponent(project)}`);
-  });
-  app.get('/settings', (_req, res) => {
-    res.redirect(302, '/project-list');
-  });
-
-  // Root redirect → project list
-  app.get('/', (_req, res) => {
-    res.redirect(302, '/project-list');
-  });
-
-  // HTML pages must never be served from cache — JS/CSS are cache-busted via
-  // ?t=Date.now() in the HTML itself, but if the HTML is stale the wrong JS
-  // version gets loaded. HTTP headers take precedence over meta http-equiv.
-  app.use(express.static(legacyDir, {
-    setHeaders: (res, filePath) => {
-      if (filePath.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      }
-    },
-  }));
-  // SPA fallback for the legacy app (preserves deep-link behavior of
-  // cds/web-legacy/index.html for any path the React app didn't claim).
-  //
-  // CRITICAL(2026-05-04 fix):must skip `/api/*` paths so unknown / missing
-  // endpoints fall through to Express's default 404 instead of being served
-  // the legacy index.html with status 200. Without this guard, callers like
-  // apiRequest() get HTML body + 200 status, JSON.parse fails silently,
-  // typed `as T` returns a string,downstream property access crashes
-  // (e.g. `data.bySource.project` → "Cannot read 'project' of undefined").
-  // The React mount fallback above already has this guard on line 1714;
-  // this is the legacy fallback and needs the same defensive check.
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-
   // Final defense-in-depth:any unhandled /api/* path lands here as a
   // proper JSON 404. Keeps the contract "API endpoints always return JSON
   // (never HTML)" — which the frontend's apiRequest depends on for sane

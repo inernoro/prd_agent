@@ -48,7 +48,7 @@ const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPag
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 
 function shellLoginHref(mode?: string): string {
-  const path = mode === 'github' ? '/login-gh.html' : '/login';
+  const path = mode === 'github' ? '/api/auth/github/login' : '/login';
   if (window.location.port === '5173') {
     return `${window.location.protocol}//${window.location.hostname}:9900${path}`;
   }

@@ -3044,7 +3044,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
 
   // ── Worker server (reverse proxy on workerPort) ──
   // 2026-05-08: 即使 CDS_USE_FORWARDER=1,master 也保留 workerPort 反代作为
-  // legacy fallback。forwarder 监听不同端口(默认 9090),无端口冲突。这样
+  // compatibility fallback。forwarder 监听不同端口(默认 9090),无端口冲突。这样
   // bootstrap 阶段(forwarder 起来但 nginx 还没切 upstream)预览仍能从 master
   // 5500 提供;forwarder 死掉时也不会全量 502。defense in depth。
   const workerServer = http.createServer((req, res) => {

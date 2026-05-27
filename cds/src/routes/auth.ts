@@ -83,7 +83,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     const code = typeof req.query.code === 'string' ? req.query.code : null;
     const state = typeof req.query.state === 'string' ? req.query.state : null;
     if (!code || !state) {
-      res.status(400).send(renderErrorPage('缺少 code 或 state 参数', '/login-gh.html'));
+      res.status(400).send(renderErrorPage('缺少 code 或 state 参数', '/login'));
       return;
     }
 
@@ -105,12 +105,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     } catch (err) {
       if (err instanceof AuthServiceError) {
         const status = err.code === 'org_not_allowed' ? 403 : err.code === 'state_mismatch' ? 400 : 500;
-        res.status(status).send(renderErrorPage(formatError(err), '/login-gh.html'));
+        res.status(status).send(renderErrorPage(formatError(err), '/login'));
         return;
       }
       // eslint-disable-next-line no-console
       console.error('[auth] callback failed:', err);
-      res.status(500).send(renderErrorPage('登录过程中发生未知错误，请稍后重试', '/login-gh.html'));
+      res.status(500).send(renderErrorPage('登录过程中发生未知错误，请稍后重试', '/login'));
     }
   });
 

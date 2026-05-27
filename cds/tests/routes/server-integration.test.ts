@@ -292,7 +292,7 @@ describe('Server route ordering (regression)', () => {
     ]);
     server = await startServer(app);
 
-    const res = await request(server, '/api/http-logs/slow?sample=1000&top=5');
+    const res = await request(server, '/api/http-logs/slow?sample=1000&top=5&includeNoise=1');
 
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body);
@@ -369,7 +369,7 @@ describe('Server route ordering (regression)', () => {
     expect(body).not.toContain?.('DASHBOARD');
   });
 
-  it('regression: SPA fallback still serves index.html for non-API paths', async () => {
+  it('regression: SPA fallback fails closed for non-API paths when React dist is missing', async () => {
     const app = buildApp();
 
     const stateFile = path.join(tmpDir, 'state.json');
@@ -392,30 +392,28 @@ describe('Server route ordering (regression)', () => {
 
     server = await startServer(app);
 
-    // Unknown non-API path should still get the dashboard HTML
+    // Unknown non-API path must not fall through to stale static HTML.
     const res = await request(server, '/some/spa/route');
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     expect(res.contentType).toContain('text/html');
-    expect(res.body).toContain('DASHBOARD');
+    expect(res.body).not.toContain('DASHBOARD');
   });
 
   // ── React migration: per-route progressive replacement ──
   //
-  // installSpaFallback() owns three layers of routing:
+  // installSpaFallback() owns two layers of routing:
   //
   //   1. /api/* — mounted upstream, never shadowed (the recovery endpoint
   //      POST /api/factory-reset lives here and must always reach its
   //      handler regardless of how many routes the React app claims).
-  //   2. The React app (cds/web/dist/) — only owns paths listed in
-  //      MIGRATED_REACT_ROUTES + the /assets/* directory for hashed bundles.
-  //   3. Legacy static pages (cds/web-legacy/) — fall-through for anything
-  //      not claimed above.
+  //   2. The React app (cds/web/dist/) — owns every non-API dashboard path,
+  //      plus the /assets/* directory for hashed bundles.
   //
   // These tests pin the contract so a future refactor can't accidentally let
-  // a migrated route regress to the legacy app, or worse, let the React SPA
-  // fallback start swallowing /api/* or unmigrated legacy paths.
+  // dashboard routes regress to static HTML, or worse, let the React SPA
+  // fallback start swallowing /api/*.
 
-  it('react mount: when cds/web/dist is missing, all paths fall through to legacy', async () => {
+  it('react mount: when cds/web/dist is missing, dashboard paths are not served from legacy static HTML', async () => {
     const app = buildApp();
     // Point reactDistOverride at a directory that doesn't exist; the helper
     // must warn-and-skip cleanly without crashing.
@@ -427,15 +425,15 @@ describe('Server route ordering (regression)', () => {
     expect(apiRes.contentType).toContain('application/json');
     expect(apiRes.body).toContain('"ok":true');
 
-    // /hello would normally be claimed by React, but with no dist on disk
-    // it falls through to the legacy SPA shell.
+    // /hello would normally be claimed by React, but with no dist on disk it
+    // must fail closed instead of serving stale legacy static HTML.
     const hello = await request(server, '/hello');
-    expect(hello.status).toBe(200);
+    expect(hello.status).toBe(404);
     expect(hello.contentType).toContain('text/html');
-    expect(hello.body).toContain('DASHBOARD');
+    expect(hello.body).not.toContain('DASHBOARD');
   });
 
-  it('react mount: serves migrated routes only, leaves legacy + recovery API intact', async () => {
+  it('react mount: serves all dashboard routes from React and leaves recovery API intact', async () => {
     const app = buildApp();
 
     // Build a fake React dist with the same shape Vite emits.
@@ -572,10 +570,11 @@ describe('Server route ordering (regression)', () => {
     expect(loginRedirect.body).toContain('/login?redirect=%2Fcds-settings');
     expect(loginRedirect.body).not.toContain('DASHBOARD');
 
-    // 11. Unmigrated paths still resolve to the legacy SPA shell, not React.
-    const legacy = await request(server, '/some/legacy/route');
-    expect(legacy.body).toContain('DASHBOARD');
-    expect(legacy.body).not.toContain('REACT_BUNDLE');
+    // 11. Unknown non-API paths still resolve to React, which owns the
+    // client-side 404/redirect decision.
+    const unknown = await request(server, '/some/legacy/route');
+    expect(unknown.body).toContain('REACT_BUNDLE');
+    expect(unknown.body).not.toContain('DASHBOARD');
   });
 
   it('regression: SPA fallback installed TOO EARLY now returns JSON 404 (not HTML)', async () => {

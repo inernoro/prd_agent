@@ -228,7 +228,7 @@ export class AuthService {
   /**
    * Validate a session token from the cookie. Returns null if the token
    * is missing/expired/unknown. Callers should treat null as "redirect
-   * to /login-gh.html".
+   * to /login".
    */
   async validateSession(token: string | null): Promise<{
     session: CdsSession;
