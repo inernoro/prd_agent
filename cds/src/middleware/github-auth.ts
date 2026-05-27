@@ -22,6 +22,9 @@ import { GH_SESSION_COOKIE } from '../routes/auth.js';
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
   '/login',
+  // Compatibility URL: installSpaFallback redirects it to the React login
+  // route while preserving ?redirect=...
+  '/login-gh.html',
   '/api/auth/github/login',
   '/api/auth/github/callback',
   '/api/cds-system/connections/authorize',
