@@ -1175,6 +1175,8 @@ export function createServer(deps: ServerDeps): express.Express {
     }
 
     const start = Date.now();
+    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
+    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     const responseCapture = createBodyCapture();
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
@@ -1195,7 +1197,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     res.once('finish', () => {
       const status = res.statusCode || 0;
-      const reqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
+      const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const reqBody = capturedReqBody.bodyBytes > 0 ? capturedReqBody : parsedReqBody;
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({

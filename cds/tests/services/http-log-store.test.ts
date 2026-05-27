@@ -64,6 +64,17 @@ describe('http log body redaction', () => {
     expect(result.bodyPreview).toBe('[cds http log omitted binary body]');
   });
 
+  it('counts raw binary request captures without retaining chunks', () => {
+    const capture = createBodyCapture(undefined, 'application/octet-stream');
+    capture.onChunk(Buffer.alloc(512 * 1024, 1));
+    capture.onChunk(Buffer.alloc(512 * 1024, 2));
+
+    expect(capture.snapshot('application/octet-stream')).toEqual({
+      bodyBytes: 1024 * 1024,
+      bodyPreview: '[cds http log omitted binary body]',
+    });
+  });
+
   it('classifies common upload/download content types', () => {
     expect(isBinaryContentType('image/jpeg')).toBe(true);
     expect(isBinaryContentType('application/octet-stream')).toBe(true);
