@@ -535,8 +535,18 @@ export class MongoStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo' as const;
   private cache: CdsState | null = null;
   private initialized = false;
-  /** Chain of pending writes — every save() awaits the previous one. */
-  private flushChain: Promise<void> = Promise.resolve();
+  private pendingSnapshot: CdsState | null = null;
+  private pendingGeneration = 0;
+  private writeInFlight = false;
+  private writeGeneration = 0;
+  private persistedGeneration = 0;
+  private failedGeneration = 0;
+  private lastWriteError: unknown = null;
+  private flushWaiters: Array<{
+    generation: number;
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  }> = [];
 
   constructor(private readonly handle: IMongoHandle) {}
 
@@ -581,39 +591,76 @@ export class MongoStateBackingStore implements StateBackingStore {
     // mutations by the caller (StateService tends to mutate state
     // members then call save()).
     this.cache = sanitizeStateForPersistence(state);
+    this.pendingSnapshot = this.cache;
+    this.pendingGeneration = ++this.writeGeneration;
+    this.drainWrites();
+  }
 
-    const snapshot = this.cache;
+  private async persistSnapshot(snapshot: CdsState): Promise<void> {
     const col = this.handle.stateCollection();
     const fragmentCol = this.handle.stateFragmentCollection();
     const logRecordCol = this.handle.stateLogRecordCollection();
-    // Chain the next write onto the previous so upserts land in the
-    // same order they were issued. A Promise.all'd fan-out would be
-    // racy — newer writes could land before older ones.
-    this.flushChain = this.flushChain
-      .catch(() => { /* swallow previous errors so the chain keeps moving */ })
-      .then(async () => {
-        const updatedAt = new Date().toISOString();
-        await col.replaceOne(
-          { _id: STATE_DOC_ID },
-          {
-            _id: STATE_DOC_ID,
-            state: withoutDetachedState(snapshot),
-            updatedAt,
-          },
-          { upsert: true },
-        );
-        const fragments = stateToFragments(snapshot, updatedAt);
-        for (const fragment of fragments) {
-          await fragmentCol.replaceOne({ _id: fragment._id }, fragment, { upsert: true });
+    const updatedAt = new Date().toISOString();
+    await col.replaceOne(
+      { _id: STATE_DOC_ID },
+      {
+        _id: STATE_DOC_ID,
+        state: withoutDetachedState(snapshot),
+        updatedAt,
+      },
+      { upsert: true },
+    );
+    const fragments = stateToFragments(snapshot, updatedAt);
+    for (const fragment of fragments) {
+      await fragmentCol.replaceOne({ _id: fragment._id }, fragment, { upsert: true });
+    }
+    await fragmentCol.deleteMany?.({ scope: DETACHED_SCOPE, updatedAt: { $ne: updatedAt } });
+    const records = stateToLogRecords(snapshot, updatedAt);
+    for (const record of records) {
+      await logRecordCol.replaceOne({ _id: record._id }, record, { upsert: true });
+    }
+    await logRecordCol.deleteMany?.({ scope: LOG_RECORD_SCOPE, updatedAt: { $ne: updatedAt } });
+  }
+
+  private drainWrites(): void {
+    if (this.writeInFlight) return;
+    this.writeInFlight = true;
+    void (async () => {
+      let generation = 0;
+      try {
+        while (this.pendingSnapshot) {
+          const snapshot = this.pendingSnapshot;
+          generation = this.pendingGeneration;
+          this.pendingSnapshot = null;
+          await this.persistSnapshot(snapshot);
+          this.persistedGeneration = generation;
+          this.lastWriteError = null;
+          this.resolveFlushWaiters();
         }
-        await fragmentCol.deleteMany?.({ scope: DETACHED_SCOPE, updatedAt: { $ne: updatedAt } });
-        const records = stateToLogRecords(snapshot, updatedAt);
-        for (const record of records) {
-          await logRecordCol.replaceOne({ _id: record._id }, record, { upsert: true });
-        }
-        await logRecordCol.deleteMany?.({ scope: LOG_RECORD_SCOPE, updatedAt: { $ne: updatedAt } });
-      })
-      .then(() => undefined);
+      } catch (err) {
+        this.failedGeneration = Math.max(this.failedGeneration, generation);
+        this.lastWriteError = err;
+        this.rejectFlushWaiters(err);
+      } finally {
+        this.writeInFlight = false;
+        if (this.pendingSnapshot) this.drainWrites();
+      }
+    })();
+  }
+
+  private resolveFlushWaiters(): void {
+    const pending: typeof this.flushWaiters = [];
+    for (const waiter of this.flushWaiters) {
+      if (waiter.generation <= this.persistedGeneration) waiter.resolve();
+      else pending.push(waiter);
+    }
+    this.flushWaiters = pending;
+  }
+
+  private rejectFlushWaiters(err: unknown): void {
+    const waiters = this.flushWaiters;
+    this.flushWaiters = [];
+    for (const waiter of waiters) waiter.reject(err);
   }
 
   /**
@@ -622,7 +669,16 @@ export class MongoStateBackingStore implements StateBackingStore {
    * they need durability guarantees stronger than write-behind.
    */
   async flush(): Promise<void> {
-    await this.flushChain;
+    const targetGeneration = this.writeGeneration;
+    if (targetGeneration <= this.persistedGeneration) return;
+    if (targetGeneration <= this.failedGeneration && this.lastWriteError) {
+      throw this.lastWriteError;
+    }
+    await new Promise<void>((resolve, reject) => {
+      this.flushWaiters.push({ generation: targetGeneration, resolve, reject });
+      this.resolveFlushWaiters();
+      this.drainWrites();
+    });
   }
 
   /**
