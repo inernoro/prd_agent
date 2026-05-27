@@ -162,7 +162,7 @@ describe('MongoStateBackingStore', () => {
       expect(store.load()!.customEnv.KEY).toBe('one');
     });
 
-    it('flush() resolves after all queued writes land in mongo', async () => {
+    it('flush() resolves after the latest queued write lands in mongo', async () => {
       await store.init();
       const a = emptyState();
       a.defaultBranch = 'a';
@@ -177,11 +177,11 @@ describe('MongoStateBackingStore', () => {
 
       await store.flush();
 
-      // Mongo received all three writes in order
-      expect(handle.collection.writeLog.length).toBe(3);
+      // High-frequency saves are coalesced; Mongo does not need every
+      // stale intermediate snapshot as long as the final snapshot lands.
+      expect(handle.collection.writeLog.length).toBeLessThanOrEqual(2);
       expect(handle.collection.writeLog[0].state.defaultBranch).toBe('a');
-      expect(handle.collection.writeLog[1].state.defaultBranch).toBe('b');
-      expect(handle.collection.writeLog[2].state.defaultBranch).toBe('c');
+      expect(handle.collection.writeLog.at(-1)!.state.defaultBranch).toBe('c');
 
       // Final state in mongo matches the last save
       expect(handle.collection.docs.get(STATE_DOC_ID)!.state.defaultBranch).toBe('c');
@@ -460,12 +460,11 @@ describe('MongoStateBackingStore', () => {
       b.defaultBranch = 'b';
 
       store.save(a);
+      await expect(store.flush()).rejects.toThrow('simulated mongo write failure');
       store.save(b);
-
-      // flush() resolves even though one write failed
       await store.flush();
 
-      // The second save landed — the chain kept moving
+      // The next save landed — the writer recovered after surfacing the error.
       expect(handle.collection.docs.get(STATE_DOC_ID)!.state.defaultBranch).toBe('b');
     });
   });

@@ -49,6 +49,8 @@ import {
   type HttpLogSink,
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
+import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
+import { computeBundleFreshness } from './services/bundle-freshness.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -132,6 +134,8 @@ export interface ServerDeps {
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
+  /** Serializes/fences branch container lifecycle writes. */
+  branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -1912,18 +1916,16 @@ export function createServer(deps: ServerDeps): express.Express {
       } catch (err) {
         degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
       }
-      // Bugbot PR #524 第十一轮:headSha 是 short(7-8),webBuildSha 可能是
-      // full(40,新 fix 后)或 short(legacy 老数据)。startsWith 单方向有边角:
-      //   - short headSha vs short webBuildSha 长度相同 → startsWith 退化成相等 OK
-      //   - long webBuildSha startsWith short headSha → 同 commit OK
-      //   - 但 short headSha startsWith short webBuildSha 也合理(legacy)
-      // 改用双向 startsWith:任一方向匹配即同 commit,两边都不匹配才算 stale。
-      const headEqualsBundle = !!(headSha && webBuildSha && (
-        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
-      ));
-      const bundleStale = Boolean(
-        (headSha && webBuildSha && !headEqualsBundle) || webBuildError,
-      );
+      const bundleFreshness = await computeBundleFreshness({
+        repoRoot,
+        shell: deps.shell,
+        headSha,
+        bundleSha: webBuildSha,
+        buildError: webBuildError,
+      });
+      if (bundleFreshness.staleReason === 'diff-failed' || bundleFreshness.staleReason === 'invalid-sha') {
+        degradedReasons.push(`bundleFreshness: ${bundleFreshness.detail || bundleFreshness.staleReason}`);
+      }
 
       res.json({
         currentBranch,
@@ -1939,7 +1941,8 @@ export function createServer(deps: ServerDeps): express.Express {
         selfUpdateHistory: history,
         webBuildSha,
         webBuildError,
-        bundleStale,
+        bundleStale: bundleFreshness.bundleStale,
+        bundleFreshness,
         degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
       });
     } catch (err) {
@@ -2214,10 +2217,22 @@ export function createServer(deps: ServerDeps): express.Express {
   app.get('/api/server-events', async (req, res) => {
     const reader = deps.serverEventLogStore?.findRecent;
     if (!reader) {
-      res.json({ events: [], total: 0, message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。' });
+      res.json({
+        ok: false,
+        disabled: true,
+        events: [],
+        total: 0,
+        message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。',
+      });
       return;
     }
-    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const limitRaw = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const limit = Math.max(1, Math.min(limitRaw, 1000));
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    if (since && Number.isNaN(Date.parse(since))) {
+      res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
     const categoryRaw = typeof req.query.category === 'string' ? req.query.category : undefined;
     const category = categoryRaw === 'container' || categoryRaw === 'docker' || categoryRaw === 'system'
       ? categoryRaw as ServerEventCategory
@@ -2242,9 +2257,15 @@ export function createServer(deps: ServerDeps): express.Express {
       profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
       projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
-      since: typeof req.query.since === 'string' ? req.query.since : undefined,
+      operationId: typeof req.query.operationId === 'string' ? req.query.operationId : undefined,
+      operationKind: typeof req.query.operationKind === 'string' ? req.query.operationKind : undefined,
+      operationTrigger: typeof req.query.operationTrigger === 'string' ? req.query.operationTrigger : undefined,
+      operationActor: typeof req.query.operationActor === 'string' ? req.query.operationActor : undefined,
+      operationSource: typeof req.query.operationSource === 'string' ? req.query.operationSource : undefined,
+      commitSha: typeof req.query.commitSha === 'string' ? req.query.commitSha : undefined,
+      since,
     });
-    res.json({ events, total: events.length });
+    res.json({ ok: true, disabled: false, events, total: events.length });
   });
 
   // ── Durable control-plane mutation audit ──
@@ -2532,7 +2553,7 @@ export function createServer(deps: ServerDeps): express.Express {
       try {
         return (await deps.containerService.discoverAppContainers()) as unknown as Map<
           string,
-          { containerName: string; branchId: string; profileId: string; running: boolean }
+          { containerName: string; branchId: string; profileId: string; running: boolean; network?: string }
         >;
       } catch {
         return new Map();
@@ -2618,6 +2639,7 @@ export function createServer(deps: ServerDeps): express.Express {
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    branchOperationCoordinator: deps.branchOperationCoordinator,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──

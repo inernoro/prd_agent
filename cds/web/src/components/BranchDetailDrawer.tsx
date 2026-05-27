@@ -24,8 +24,8 @@ import type { PhaseLogState } from '@/components/deployment/PhaseTree';
  *   - GET /api/branches/:id              → branch + services
  *   - GET /api/branches/:id/logs         → recent build/run logs (last 5)
  *
- * Escape hatch: header has "完整页面" link → /branch-panel/<id> for the
- * dedicated page when the user wants the full set of tabs.
+ * Escape hatch: header has an external-detail link → /branch-panel/<id> for
+ * the dedicated page when the user wants the full set of tabs.
  */
 
 interface ServiceState {
@@ -1363,14 +1363,12 @@ export function BranchDetailDrawer({
       .reverse();
   }, [activityEvents, branch, selectedService?.profileId]);
 
-  useEffect(() => {
-    if (!open || (activeTab !== 'services' && (activeTab !== 'logs' || logsMode !== 'container')) || !selectedService || serviceLogs.profileId === selectedService.profileId) return;
-    void loadServiceLogs(selectedService.profileId);
-  }, [activeTab, loadServiceLogs, logsMode, open, selectedService, serviceLogs.profileId]);
+  // Passive detail views must not trigger live Docker reads. Container logs are
+  // loaded only from explicit user actions: container-log tab, service selector,
+  // maximize, or refresh.
 
-  // 部署 tab 内联容器日志: 不只失败时显示。running / success / error
-  // 都取一个最相关服务的 docker logs，挂在 PhaseTree 的启动服务阶段，
-  // 避免部署卡片只有阶段占位、真实容器输出还要再切到「日志」tab。
+  // 部署 tab 内联容器日志只消费已经显式加载过的内容。打开详情/部署 tab
+  // 本身不能触发 live Docker 读取，否则被动查看会变成隐式诊断。
   const activeDeploymentPhases = useMemo(() => {
     if (!activeDeployment) return null;
     return deriveBranchPhases(
@@ -1403,31 +1401,6 @@ export function BranchDetailDrawer({
     }
     return autoDeploymentLogProfileId;
   }, [autoDeploymentLogProfileId, selectedDeploymentLogProfileId, services]);
-
-  useEffect(() => {
-    if (!open || activeTab !== 'deployments') return;
-    if (!activeDeployment) return;
-    if (!deploymentLogProfileId) return;
-    if (
-      serviceLogs.profileId === deploymentLogProfileId &&
-      // 2026-05-14 Codex review P2：error 也算"已加载"，否则容器日志拉取
-      // 失败时本 effect 每次 render 都重发请求，造成 loading/error 抖动死循环。
-      // 用户切容器 tab（deploymentLogProfileId 变）或点刷新按钮（显式调
-      // loadServiceLogs 绕过本 guard）才会重新拉。
-      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading' || serviceLogs.status === 'error')
-    ) {
-      return;
-    }
-    void loadServiceLogs(deploymentLogProfileId);
-  }, [
-    activeDeployment,
-    activeTab,
-    deploymentLogProfileId,
-    loadServiceLogs,
-    open,
-    serviceLogs.profileId,
-    serviceLogs.status,
-  ]);
 
   /**
    * 2026-05-14: 内联容器日志的 tab strip + 最大化控制。
@@ -1594,10 +1567,10 @@ export function BranchDetailDrawer({
                 <GitBranch />
               </Button>
             )}
-            <Button asChild variant="ghost" size="sm" title="完整页面">
+            <Button asChild variant="ghost" size="sm" title="打开分支详情页">
               <a href={fullPageHref}>
                 <ExternalLink />
-                完整页面
+                详情页
               </a>
             </Button>
             <Button
@@ -2114,7 +2087,7 @@ export function BranchDetailDrawer({
                   需要修改构建配置 / 环境变量 / 路由？打开
                   <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
                   。需要查看完整日志、Bridge、提交历史？打开
-                  <a href={fullPageHref} className="ml-1 text-primary hover:underline">完整页面</a>
+                  <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
             </>
@@ -2123,7 +2096,7 @@ export function BranchDetailDrawer({
 
         {/* Quick action footer。
             未运行 / 已停止 / 异常时把"重新部署"作为主按钮放在 footer flex-1 位,
-            "打开完整页面"降级为 outline 副按钮——以前 footer 里只有"完整页面"
+            "打开分支详情页"降级为 outline 副按钮——以前 footer 里只有"完整页面"
             一个孤零零的橙色大按钮,用户对着停止的分支找不到启动入口
             (2026-05-07 反馈)。 */}
         {branch ? (
@@ -2151,17 +2124,35 @@ export function BranchDetailDrawer({
                 <Button asChild variant="outline">
                   <a href={fullPageHref}>
                     <ExternalLink />
-                    完整页面
+                    详情页
                   </a>
                 </Button>
               </>
             ) : (
-              <Button asChild className="flex-1">
-                <a href={fullPageHref}>
-                  <Play />
-                  打开完整页面
-                </a>
-              </Button>
+              <>
+                {previewUrl ? (
+                  <Button asChild className="flex-[2_1_0]">
+                    <a href={previewUrl} target="_blank" rel="noreferrer" title="打开预览页">
+                      <Play />
+                      打开预览页
+                    </a>
+                  </Button>
+                ) : (
+                  <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
+                    <Play />
+                    等待预览页
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-[1_1_0]"
+                  onClick={() => setActiveTab('settings')}
+                >
+                  <Settings />
+                  详细设置
+                </Button>
+              </>
             )}
           </footer>
         ) : null}

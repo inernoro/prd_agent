@@ -12,6 +12,10 @@ export interface ArchiveBranchContainerLogsOptions {
   profileIds?: Set<string>;
   tailLines?: number;
   message?: string;
+  requestId?: string | null;
+  operationId?: string | null;
+  actor?: string | null;
+  trigger?: string | null;
   serverEventLogStore?: ServerEventLogSink | null;
 }
 
@@ -34,6 +38,10 @@ export async function archiveBranchContainerLogs(
     profileIds,
     tailLines = 500,
     message,
+    requestId,
+    operationId,
+    actor,
+    trigger,
     serverEventLogStore,
   } = options;
 
@@ -55,9 +63,11 @@ export async function archiveBranchContainerLogs(
         branchId: branch.id,
         profileId,
         containerName: svc.containerName,
+        requestId: requestId ?? null,
+        operationId: operationId ?? null,
         status: svc.status,
         logs: normalizeLogText(maskedLogs, tailLines),
-        details: { archiveSource: source, hostPort: svc.hostPort },
+        details: { archiveSource: source, hostPort: svc.hostPort, actor: actor ?? null, trigger: trigger ?? null },
       });
       archived.push(stateService.appendContainerLogArchive(branch.id, {
         projectId: branch.projectId,
@@ -81,9 +91,11 @@ export async function archiveBranchContainerLogs(
         branchId: branch.id,
         profileId,
         containerName: svc.containerName,
+        requestId: requestId ?? null,
+        operationId: operationId ?? null,
         status: svc.status,
         error: { message: (err as Error)?.message || String(err) },
-        details: { archiveSource: source, hostPort: svc.hostPort },
+        details: { archiveSource: source, hostPort: svc.hostPort, actor: actor ?? null, trigger: trigger ?? null },
       });
       archived.push(stateService.appendContainerLogArchive(branch.id, {
         projectId: branch.projectId,

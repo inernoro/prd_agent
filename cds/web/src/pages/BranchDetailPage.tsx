@@ -255,6 +255,14 @@ function queryValue(name: string): string {
   return new URLSearchParams(window.location.search).get(name) || '';
 }
 
+function parseSseJson<T>(event: Event): T | null {
+  try {
+    return JSON.parse((event as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
+}
+
 function displayName(project?: ProjectSummary): string {
   if (!project) return '';
   return project.aliasName || project.name || project.slug || project.id;
@@ -713,12 +721,16 @@ export function BranchDetailPage(): JSX.Element {
     void load(true);
   }, [load]);
 
+  const branchStreamProjectId = state.status === 'ok' ? state.branch.projectId : '';
+  const branchStreamBranchId = state.status === 'ok' ? state.branch.id : '';
+
   useEffect(() => {
-    if (state.status !== 'ok') return;
-    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(state.branch.projectId)}`);
+    if (!branchStreamProjectId || !branchStreamBranchId) return;
+    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(branchStreamProjectId)}`);
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string; status?: BranchSummary['status'] };
-      if (data.branchId !== state.branch.id || !data.status) return;
+      const data = parseSseJson<{ branchId?: string; projectId?: string; status?: BranchSummary['status'] }>(ev);
+      if (!data || data.branchId !== branchStreamBranchId || !data.status) return;
+      if (data.projectId && data.projectId !== branchStreamProjectId) return;
       setState((current) => (
         current.status === 'ok'
           ? { ...current, branch: { ...current.branch, status: data.status as BranchSummary['status'] } }
@@ -726,12 +738,12 @@ export function BranchDetailPage(): JSX.Element {
       ));
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (!data.branch || data.branch.id !== state.branch.id) return;
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data?.branch || data.branch.id !== branchStreamBranchId || data.branch.projectId !== branchStreamProjectId) return;
       setState((current) => (current.status === 'ok' ? { ...current, branch: { ...current.branch, ...data.branch } } : current));
     });
     return () => source.close();
-  }, [state]);
+  }, [branchStreamBranchId, branchStreamProjectId]);
 
   const proxyStreamKey = state.status === 'ok'
     ? `${state.branch.id}|${state.branch.previewSlug || ''}|${state.aliases.aliases.join(',')}`
@@ -1072,13 +1084,13 @@ export function BranchDetailPage(): JSX.Element {
     updateAction({ label: `正在清理 ${profileId}`, log: [], status: 'running' });
     try {
       const res = await apiRequest<ForceRebuildResponse>(
-        `/api/branches/${encodeURIComponent(state.branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+        `/api/branches/${encodeURIComponent(state.branch.id)}/force-rebuild/${encodeURIComponent(profileId)}?reserveDeploy=1`,
         { method: 'POST' },
       );
       const steps = res.steps || [];
       const failed = steps.some((step) => !step.ok);
       updateAction({
-        label: failed ? `${profileId} 清理部分失败` : (res.message || '已清理构建缓存'),
+        label: failed ? `${profileId} 清理部分失败` : `${profileId} 已清理，正在重新部署`,
         log: [
           ...steps.map((step) => `${step.ok ? 'ok' : 'fail'} ${step.step}${step.detail ? ` - ${step.detail}` : ''}`),
           ...(failed ? ['suggestion: 检查失败步骤后重试；如果只是容器已不存在，可直接重新部署该服务。'] : []),
@@ -1086,6 +1098,11 @@ export function BranchDetailPage(): JSX.Element {
         status: failed ? 'error' : 'done',
       });
       if (failed) setToast('清理部分失败，查看构建日志中的失败步骤');
+      if (!failed) {
+        setToast(`${profileId} 已清理构建缓存，正在重新部署`);
+        await deploy(profileId);
+        return;
+      }
       await load(false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1135,7 +1152,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [state]);
+  }, [deploy, load, state]);
 
   if (!branchId && !projectId) return <Navigate to="/project-list" replace />;
 

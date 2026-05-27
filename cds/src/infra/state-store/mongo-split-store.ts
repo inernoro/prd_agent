@@ -32,7 +32,19 @@
  * 的 fallback 逻辑（见 index.ts）。
  */
 
-import type { CdsState, BranchEntry, Project } from '../../types.js';
+import type {
+  CdsState,
+  BranchEntry,
+  ContainerLogArchiveEntry,
+  OperationLog,
+  OperationLogContainerSnapshot,
+  OperationLogEvent,
+  Project,
+  ProjectActivityLog,
+  SelfUpdateRecord,
+  ServiceDeployment,
+  ServiceDeploymentLogEntry,
+} from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
 
 /** Mongo 集合最小接口 — 与 mongo-backing-store 风格一致，便于单测。 */
@@ -67,11 +79,145 @@ export const GLOBAL_DOC_ID = 'global';
  */
 export type GlobalRest = Omit<CdsState, 'projects' | 'branches'>;
 
+const MAX_LOGS_PER_BRANCH = 5;
+const MAX_EVENTS_PER_OPERATION_LOG = 5;
+const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 3;
+const MAX_ACTIVITY_LOGS_PER_PROJECT = 200;
+const MAX_WEBHOOK_DELIVERIES = 200;
+const MAX_SELF_UPDATE_HISTORY = 20;
+const MAX_SELF_UPDATE_STEPS = 25;
+const MAX_SERVICE_DEPLOYMENT_LOGS = 100;
+const MAX_EVENT_TEXT_BYTES = 4 * 1024;
+const MAX_CONTAINER_SNAPSHOT_LOG_BYTES = 8 * 1024;
+const MAX_CONTAINER_ARCHIVE_LOG_BYTES = 16 * 1024;
+const MAX_SERVICE_DEPLOYMENT_LOG_BYTES = 4 * 1024;
+const MAX_SELF_UPDATE_ERROR_BYTES = 8 * 1024;
+const MAX_SELF_UPDATE_STEP_TEXT_BYTES = 2 * 1024;
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function trimBufferTailToUtf8(buffer: Buffer, maxBytes: number): string {
+  let text = buffer.subarray(Math.max(0, buffer.length - maxBytes)).toString('utf8');
+  while (Buffer.byteLength(text, 'utf8') > maxBytes) text = text.slice(1);
+  return text;
+}
+
+function truncateTail(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes <= maxBytes) return value;
+  const prefix = `[cds persisted tail: original ${bytes} bytes]\n`;
+  const tailBudget = Math.max(0, maxBytes - Buffer.byteLength(prefix, 'utf8'));
+  return `${prefix}${trimBufferTailToUtf8(Buffer.from(value), tailBudget)}`;
+}
+
+function sanitizeEvent(event: OperationLogEvent): OperationLogEvent {
+  return {
+    ...event,
+    log: truncateTail(event.log, MAX_EVENT_TEXT_BYTES),
+    chunk: truncateTail(event.chunk, MAX_EVENT_TEXT_BYTES),
+  };
+}
+
+function sanitizeContainerSnapshot(snapshot: OperationLogContainerSnapshot): OperationLogContainerSnapshot {
+  return {
+    ...snapshot,
+    logs: truncateTail(snapshot.logs, MAX_CONTAINER_SNAPSHOT_LOG_BYTES) || '',
+  };
+}
+
+function sanitizeOperationLog(log: OperationLog): OperationLog {
+  return {
+    ...log,
+    events: (log.events || []).slice(-MAX_EVENTS_PER_OPERATION_LOG).map(sanitizeEvent),
+    containerLogSnapshots: (log.containerLogSnapshots || []).slice(-2).map(sanitizeContainerSnapshot),
+  };
+}
+
+function sanitizeContainerArchive(entry: ContainerLogArchiveEntry): ContainerLogArchiveEntry {
+  return {
+    ...entry,
+    logs: truncateTail(entry.logs, MAX_CONTAINER_ARCHIVE_LOG_BYTES) || '',
+  };
+}
+
+function sanitizeServiceDeploymentLog(entry: ServiceDeploymentLogEntry): ServiceDeploymentLogEntry {
+  return {
+    ...entry,
+    message: truncateTail(entry.message, MAX_SERVICE_DEPLOYMENT_LOG_BYTES) || '',
+  };
+}
+
+function sanitizeServiceDeployment(deployment: ServiceDeployment): ServiceDeployment {
+  return {
+    ...deployment,
+    logs: (deployment.logs || []).slice(-MAX_SERVICE_DEPLOYMENT_LOGS).map(sanitizeServiceDeploymentLog),
+  };
+}
+
+function sanitizeSelfUpdateRecord(record: SelfUpdateRecord): SelfUpdateRecord {
+  return {
+    ...record,
+    error: truncateTail(record.error, MAX_SELF_UPDATE_ERROR_BYTES),
+    steps: record.steps?.slice(-MAX_SELF_UPDATE_STEPS).map((step) => ({
+      ...step,
+      text: truncateTail(step.text, MAX_SELF_UPDATE_STEP_TEXT_BYTES) || '',
+    })),
+  };
+}
+
+function globalRestOf(state: CdsState): GlobalRest {
+  const restOfState: GlobalRest = { ...state } as CdsState;
+  delete (restOfState as Partial<CdsState>).projects;
+  delete (restOfState as Partial<CdsState>).branches;
+  restOfState.logs = Object.fromEntries(
+    Object.entries(state.logs || {}).map(([branchId, logs]) => [
+      branchId,
+      (logs || []).slice(-MAX_LOGS_PER_BRANCH).map(sanitizeOperationLog),
+    ]),
+  );
+  restOfState.containerLogArchives = Object.fromEntries(
+    Object.entries(state.containerLogArchives || {}).map(([branchId, archives]) => [
+      branchId,
+      (archives || []).slice(-MAX_CONTAINER_ARCHIVES_PER_BRANCH).map(sanitizeContainerArchive),
+    ]),
+  );
+  restOfState.activityLogs = Object.fromEntries(
+    Object.entries(state.activityLogs || {}).map(([projectId, logs]) => [
+      projectId,
+      (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT) as ProjectActivityLog[],
+    ]),
+  );
+  restOfState.githubWebhookDeliveries = (state.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
+  restOfState.selfUpdateHistory = (state.selfUpdateHistory || []).slice(-MAX_SELF_UPDATE_HISTORY).map(sanitizeSelfUpdateRecord);
+  restOfState.serviceDeployments = Object.fromEntries(
+    Object.entries(state.serviceDeployments || {}).map(([deploymentId, deployment]) => [
+      deploymentId,
+      sanitizeServiceDeployment(deployment),
+    ]),
+  );
+  return restOfState;
+}
+
 export class MongoSplitStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo-split' as const;
   private cache: CdsState | null = null;
+  private persistedCache: CdsState | null = null;
   private initialized = false;
-  private flushChain: Promise<void> = Promise.resolve();
+  private pendingSnapshot: CdsState | null = null;
+  private pendingGeneration = 0;
+  private writeInFlight = false;
+  private writeGeneration = 0;
+  private persistedGeneration = 0;
+  private failedGeneration = 0;
+  private lastWriteError: unknown = null;
+  private flushWaiters: Array<{
+    generation: number;
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  }> = [];
 
   constructor(private readonly handle: ISplitMongoHandle) {}
 
@@ -111,6 +257,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         branches,
       } as CdsState;
     }
+    this.persistedCache = this.cache ? structuredClone(this.cache) : null;
 
     this.initialized = true;
   }
@@ -120,84 +267,189 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   save(state: CdsState): void {
-    // 同步刷 cache，异步分发到 3 个 collection。
+    // 同步刷 cache；异步写入时只保留最新快照。部署日志会高频 save(),
+    // 如果每个快照都排队写 Mongo，后续 delete/stop 这种终止操作的
+    // flush() 会被旧快照拖住，甚至误判持久化超时。
     this.cache = structuredClone(state);
+    this.pendingSnapshot = this.cache;
+    this.pendingGeneration = ++this.writeGeneration;
+    this.drainWrites();
+  }
 
-    const snapshot = this.cache;
+  private async persistSnapshot(snapshot: CdsState, previous: CdsState | null): Promise<void> {
     const now = new Date().toISOString();
 
-    this.flushChain = this.flushChain
-      .catch(() => { /* 旧错误吞掉,链路继续 */ })
-      .then(async () => {
-        // ── 1) Global rest（单文档，replaceOne 即可）──
-        const restOfState: GlobalRest = { ...snapshot } as CdsState;
-        // 从 rest 里把 projects / branches 拆出来 — 它们各有 collection。
-        delete (restOfState as Partial<CdsState>).projects;
-        delete (restOfState as Partial<CdsState>).branches;
-        await this.handle.globalCollection().replaceOne(
-          { _id: GLOBAL_DOC_ID },
-          { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
-          { upsert: true },
-        );
+    // ── 1) Global rest（单文档，replaceOne 即可）──
+    const restOfState = globalRestOf(snapshot);
+    const previousRest = previous ? globalRestOf(previous) : null;
+    if (!previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
+      await this.handle.globalCollection().replaceOne(
+        { _id: GLOBAL_DOC_ID },
+        { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
+        { upsert: true },
+      );
+    }
 
-        // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
-        // 2026-04-27 (Bugbot Low review): 原来是 for-loop await replaceOne
-        // 一条一条跑，N 个项目 = N 次 mongo round-trip。改用 bulkWrite 把
-        // 所有 upsert 打成一次 op，删除走单次 deleteMany($in: 待删 ids)。
-        // 类文件头部的设计文档明确说"bulkWrite 到对应 collection"，但实
-        // 现一直没落地。
-        const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
-        const existingProjects = await this.handle.projectsCollection().find().toArray();
+    // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
+    const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
+    const previousProjectIds = new Set((previous?.projects || []).map((p) => p.id));
+    const previousProjects = new Map((previous?.projects || []).map((p) => [p.id, p]));
 
-        const projectOps: unknown[] = (snapshot.projects || []).map((project) => ({
+    const projectOps: unknown[] = [];
+    for (const project of snapshot.projects || []) {
+      const previousProject = previousProjects.get(project.id);
+      if (!previousProject || stableJson(project) !== stableJson(previousProject)) {
+        projectOps.push({
           replaceOne: {
             filter: { _id: project.id },
             replacement: { _id: project.id, doc: project, updatedAt: now },
             upsert: true,
           },
-        }));
-        const projectIdsToDelete = existingProjects
-          .map((d) => d._id)
-          .filter((id) => !newProjectIds.has(id));
-        for (const id of projectIdsToDelete) {
-          projectOps.push({ deleteOne: { filter: { _id: id } } });
-        }
-        if (projectOps.length > 0) {
-          await this.handle.projectsCollection().bulkWrite(projectOps);
-        }
+        });
+      }
+    }
+    for (const id of previousProjectIds) {
+      if (newProjectIds.has(id)) continue;
+      projectOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (projectOps.length > 0) {
+      await this.handle.projectsCollection().bulkWrite(projectOps);
+    }
 
-        // ── 3) Branches collection（同样 bulkWrite）──
-        const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
-        const existingBranches = await this.handle.branchesCollection().find().toArray();
+    // ── 3) Branches collection（同样 bulkWrite）──
+    const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
+    const previousBranchIds = new Set(Object.keys(previous?.branches || {}));
 
-        const branchOps: unknown[] = Object.values(snapshot.branches || {}).map(
-          (branch) => ({
-            replaceOne: {
-              filter: { _id: branch.id },
-              replacement: {
-                _id: branch.id,
-                projectId: branch.projectId,
-                doc: branch,
-                updatedAt: now,
-              },
-              upsert: true,
+    const branchOps: unknown[] = [];
+    for (const branch of Object.values(snapshot.branches || {})) {
+      const previousBranch = previous?.branches?.[branch.id];
+      if (!previousBranch || stableJson(branch) !== stableJson(previousBranch)) {
+        branchOps.push({
+          replaceOne: {
+            filter: { _id: branch.id },
+            replacement: {
+              _id: branch.id,
+              projectId: branch.projectId,
+              doc: branch,
+              updatedAt: now,
             },
-          }),
-        );
-        const branchIdsToDelete = existingBranches
-          .map((d) => d._id)
-          .filter((id) => !newBranchIds.has(id));
-        for (const id of branchIdsToDelete) {
-          branchOps.push({ deleteOne: { filter: { _id: id } } });
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of previousBranchIds) {
+      if (newBranchIds.has(id)) continue;
+      branchOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (branchOps.length > 0) {
+      await this.handle.branchesCollection().bulkWrite(branchOps);
+    }
+  }
+
+  private drainWrites(): void {
+    if (this.writeInFlight) return;
+    this.writeInFlight = true;
+    void (async () => {
+      let generation = 0;
+      try {
+        while (this.pendingSnapshot) {
+          const snapshot = this.pendingSnapshot;
+          generation = this.pendingGeneration;
+          this.pendingSnapshot = null;
+          await this.persistSnapshot(snapshot, this.persistedCache);
+          this.persistedCache = structuredClone(snapshot);
+          this.persistedGeneration = generation;
+          this.lastWriteError = null;
+          this.resolveFlushWaiters();
         }
-        if (branchOps.length > 0) {
-          await this.handle.branchesCollection().bulkWrite(branchOps);
-        }
-      });
+      } catch (err) {
+        this.failedGeneration = Math.max(this.failedGeneration, generation);
+        this.lastWriteError = err;
+        this.rejectFlushWaiters(err);
+      } finally {
+        this.writeInFlight = false;
+        if (this.pendingSnapshot) this.drainWrites();
+      }
+    })();
+  }
+
+  private resolveFlushWaiters(): void {
+    const pending: typeof this.flushWaiters = [];
+    for (const waiter of this.flushWaiters) {
+      if (waiter.generation <= this.persistedGeneration) waiter.resolve();
+      else pending.push(waiter);
+    }
+    this.flushWaiters = pending;
+  }
+
+  private rejectFlushWaiters(err: unknown): void {
+    const waiters = this.flushWaiters;
+    this.flushWaiters = [];
+    for (const waiter of waiters) waiter.reject(err);
+  }
+
+  async forceFullSave(state: CdsState): Promise<void> {
+    this.cache = structuredClone(state);
+
+    const snapshot = this.cache;
+    const now = new Date().toISOString();
+
+    await this.handle.globalCollection().replaceOne(
+      { _id: GLOBAL_DOC_ID },
+      { _id: GLOBAL_DOC_ID, state: globalRestOf(snapshot), updatedAt: now },
+      { upsert: true },
+    );
+
+    const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
+    const existingProjects = await this.handle.projectsCollection().find().toArray();
+    const projectOps: unknown[] = (snapshot.projects || []).map((project) => ({
+      replaceOne: {
+        filter: { _id: project.id },
+        replacement: { _id: project.id, doc: project, updatedAt: now },
+        upsert: true,
+      },
+    }));
+    for (const id of existingProjects.map((d) => d._id)) {
+      if (!newProjectIds.has(id)) projectOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (projectOps.length > 0) await this.handle.projectsCollection().bulkWrite(projectOps);
+
+    const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
+    const existingBranches = await this.handle.branchesCollection().find().toArray();
+    const branchOps: unknown[] = Object.values(snapshot.branches || {}).map(
+      (branch) => ({
+        replaceOne: {
+          filter: { _id: branch.id },
+          replacement: {
+            _id: branch.id,
+            projectId: branch.projectId,
+            doc: branch,
+            updatedAt: now,
+          },
+          upsert: true,
+        },
+      }),
+    );
+    for (const id of existingBranches.map((d) => d._id)) {
+      if (!newBranchIds.has(id)) branchOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (branchOps.length > 0) await this.handle.branchesCollection().bulkWrite(branchOps);
+    this.persistedCache = structuredClone(snapshot);
+    this.persistedGeneration = this.writeGeneration;
   }
 
   async flush(): Promise<void> {
-    await this.flushChain;
+    const targetGeneration = this.writeGeneration;
+    if (targetGeneration <= this.persistedGeneration) return;
+    if (targetGeneration <= this.failedGeneration && this.lastWriteError) {
+      throw this.lastWriteError;
+    }
+    await new Promise<void>((resolve, reject) => {
+      this.flushWaiters.push({ generation: targetGeneration, resolve, reject });
+      this.resolveFlushWaiters();
+      this.drainWrites();
+    });
   }
 
   async close(): Promise<void> {
@@ -228,10 +480,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     ]);
     if (globalCount > 0 || projectsCount > 0 || branchesCount > 0) return false;
 
-    // 直接走 save() 的写入逻辑，确保 schema 一致。
-    this.cache = structuredClone(state);
-    this.save(state);
-    await this.flush();
+    await this.forceFullSave(state);
     return true;
   }
 }

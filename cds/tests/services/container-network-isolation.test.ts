@@ -228,6 +228,7 @@ describe('ContainerService 多项目网络隔离', () => {
       expect(psCmd).not.toContain('label=cds.network=');
       // 仍然能正确解析返回 map
       expect(found.has('feat-a/api')).toBe(true);
+      expect(found.get('feat-a/api')?.network).toBe('cds-proj-b');
     });
   });
 });

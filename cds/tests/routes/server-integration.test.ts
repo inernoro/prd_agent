@@ -4,12 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import express from 'express';
-import { installSpaFallback } from '../../src/server.js';
+import { createServer, installSpaFallback } from '../../src/server.js';
 import { createClusterRouter } from '../../src/routes/cluster.js';
 import { createSchedulerRouter } from '../../src/scheduler/routes.js';
 import { StateService } from '../../src/services/state.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
+import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 
 /**
  * Integration regression test: verifies that routes mounted after the
@@ -121,6 +124,109 @@ describe('Server route ordering (regression)', () => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });
   }
+
+  function buildRealServerWithEvents(events: ServerEventRecord[]): express.Express {
+    const stateFile = path.join(tmpDir, 'state.json');
+    const stateService = new StateService(stateFile);
+    stateService.load();
+    const serverEventLogStore: ServerEventLogSink = {
+      record() {},
+      async findRecent(filter = {}) {
+        const severityRank = { info: 10, warn: 20, error: 30 } as const;
+        const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+        return events
+          .filter((event) => {
+            if (filter.category && event.category !== filter.category) return false;
+            if (filter.severity && event.severity !== filter.severity) return false;
+            if (filter.minSeverity && severityRank[event.severity] < severityRank[filter.minSeverity]) return false;
+            if (filter.source && event.source !== filter.source) return false;
+            if (filter.action && event.action !== filter.action) return false;
+            if (filter.containerName && event.containerName !== filter.containerName) return false;
+            if (filter.branchId && event.branchId !== filter.branchId) return false;
+            if (filter.profileId && event.profileId !== filter.profileId) return false;
+            if (filter.projectId && event.projectId !== filter.projectId) return false;
+            if (filter.requestId && event.requestId !== filter.requestId) return false;
+            if (filter.operationId && event.operationId !== filter.operationId && event.details?.operationId !== filter.operationId) return false;
+            if (filter.since && event.ts < new Date(filter.since)) return false;
+            return true;
+          })
+          .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+          .slice(0, limit);
+      },
+    };
+    return createServer({
+      stateService,
+      worktreeService: new WorktreeService(new MockShellExecutor(), tmpDir),
+      containerService: {} as any,
+      proxyService: {
+        getProxyLog: () => [],
+        setOnProxyLog: () => {},
+        handleSwitchFromExpress: (_req: unknown, _res: unknown) => {},
+      } as any,
+      bridgeService: {} as any,
+      shell: new MockShellExecutor(),
+      config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
+      serverEventLogStore,
+    });
+  }
+
+  it('real createServer exposes queryable /api/server-events before branch router fallback', async () => {
+    const app = buildRealServerWithEvents([
+      {
+        _id: 'evt-start',
+        ts: new Date('2026-05-26T23:00:00.000Z'),
+        category: 'system',
+        severity: 'info',
+        source: 'branch-operation-coordinator',
+        action: 'branch.operation.started',
+        projectId: 'prd-agent',
+        branchId: 'prd-agent-main',
+        requestId: 'req-start',
+        operationId: 'op-start',
+        details: { operationId: 'op-start', trigger: 'webhook', commitSha: '1111111' },
+      },
+      {
+        _id: 'evt-cancel',
+        ts: new Date('2026-05-26T23:01:00.000Z'),
+        category: 'system',
+        severity: 'warn',
+        source: 'branch-operation-coordinator',
+        action: 'branch.operation.cancelled',
+        projectId: 'prd-agent',
+        branchId: 'prd-agent-main',
+        requestId: 'req-cancel',
+        operationId: 'op-cancel',
+        details: { operationId: 'op-cancel', trigger: 'manual', actor: 'user' },
+      },
+    ]);
+    server = await startServer(app);
+
+    const res = await request(
+      server,
+      '/api/server-events?operationId=op-cancel&branchId=prd-agent-main&action=branch.operation.cancelled',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.contentType).toContain('application/json');
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.disabled).toBe(false);
+    expect(body.total).toBe(1);
+    expect(body.events[0].operationId).toBe('op-cancel');
+    expect(body.events[0].requestId).toBe('req-cancel');
+    expect(body.events[0].details.trigger).toBe('manual');
+  });
+
+  it('real createServer rejects invalid /api/server-events since timestamps', async () => {
+    const app = buildRealServerWithEvents([]);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/server-events?since=not-a-date');
+
+    expect(res.status).toBe(400);
+    expect(res.contentType).toContain('application/json');
+    expect(JSON.parse(res.body).error).toBe('invalid_since');
+  });
 
   it('cluster router returns JSON when mounted BEFORE installSpaFallback', async () => {
     const app = buildApp();

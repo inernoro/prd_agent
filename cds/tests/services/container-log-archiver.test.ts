@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { StateService } from '../../src/services/state.js';
 import { archiveBranchContainerLogs } from '../../src/services/container-log-archiver.js';
 import type { BranchEntry } from '../../src/types.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 describe('archiveBranchContainerLogs', () => {
   it('persists masked docker logs with lifecycle source before containers disappear', async () => {
@@ -27,6 +28,22 @@ describe('archiveBranchContainerLogs', () => {
     const containerService = {
       getLogs: async () => 'started\nAuthorization: Bearer secret-token\nfailed\n',
     };
+    const serverEvents: Array<{
+      action: string;
+      requestId?: string | null;
+      operationId?: string | null;
+      details?: Record<string, unknown>;
+    }> = [];
+    const serverEventLogStore: ServerEventLogSink = {
+      record(record) {
+        serverEvents.push({
+          action: record.action,
+          requestId: record.requestId,
+          operationId: record.operationId,
+          details: record.details,
+        });
+      },
+    };
 
     await archiveBranchContainerLogs({
       stateService,
@@ -34,6 +51,11 @@ describe('archiveBranchContainerLogs', () => {
       branch,
       source: 'manual-stop',
       message: 'unit-test',
+      requestId: 'req-123',
+      operationId: 'op-123',
+      actor: 'ai',
+      trigger: 'manual',
+      serverEventLogStore,
     });
 
     const archives = stateService.getContainerLogArchives('branch-a');
@@ -43,5 +65,10 @@ describe('archiveBranchContainerLogs', () => {
     expect(archives[0].logs).toContain('started');
     expect(archives[0].logs).not.toContain('secret-token');
     expect(archives[0].message).toBe('unit-test');
+    expect(serverEvents).toHaveLength(1);
+    expect(serverEvents[0].action).toBe('container.logs.archived');
+    expect(serverEvents[0].requestId).toBe('req-123');
+    expect(serverEvents[0].operationId).toBe('op-123');
+    expect(serverEvents[0].details).toMatchObject({ actor: 'ai', trigger: 'manual' });
   });
 });

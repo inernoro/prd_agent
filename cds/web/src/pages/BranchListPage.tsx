@@ -1926,11 +1926,11 @@ export function BranchListPage(): JSX.Element {
     }
   }, [appendActionLog, openRunningPreview, projectId, refresh, setAction]);
 
-  const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = true): Promise<void> => {
+  const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
     if (branch.status !== 'running') {
       if (!deployWhenNeeded || isBusy(branch)) {
-        setToast(`${branch.branch} 还未运行`);
+        setToast(`${branch.branch} 还未运行。预览不会自动部署，请手动点击部署。`);
         return;
       }
       const target = openPreviewPlaceholder(branch.branch);
@@ -2212,21 +2212,21 @@ export function BranchListPage(): JSX.Element {
     }
     setAction(branch.id, createAction('rebuild', `正在重新生成 (${profileIds.length} 个服务)`));
     try {
-      for (const profileId of profileIds) {
+      for (const [index, profileId] of profileIds.entries()) {
+        const reserve = index === profileIds.length - 1 ? '?reserveDeploy=1&deployScope=branch' : '';
         await apiRequest(
-          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}${reserve}`,
           { method: 'POST' },
         );
       }
-      setAction(branch.id, null);
-      setToast(`${branch.branch} 已重新生成 (${profileIds.length} 服务)`);
-      await refresh(false);
+      setToast(`${branch.branch} 已清理构建缓存，正在重新部署`);
+      await deployBranch(branch, false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setAction(branch.id, finishAction(actionRef.current[branch.id], 'rebuild', message, 'error'));
       setToast(message);
     }
-  }, [refresh, setAction]);
+  }, [deployBranch, setAction]);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;
@@ -2880,40 +2880,36 @@ export function BranchListPage(): JSX.Element {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                {sortedBranches.map((branch) => {
-                  const latestBranchActivity = activityEvents.find((event) => activityBranchMatches(event, branch.id));
-                  return (
-                    <BranchCard
-                      key={branch.id}
-                      branch={branch}
-                      action={actions[branch.id]}
-                      now={actionClock}
-                      projectId={projectId}
-                      highlighted={highlightedBranchId === branch.id}
-                      highlightPulse={highlightPulseBranchId === branch.id}
-                      activityEvents={activityEvents
-                        .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
-                        .slice(0, 5)}
-                      activityPulseKey={latestBranchActivity ? `${latestBranchActivity.id}:${latestBranchActivity.ts}` : undefined}
-                      capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
-                      activeTagFilter={activeTagFilter}
-                      onPreview={() => void openPreview(branch, true)}
-                      onDeploy={() => void deployBranch(branch, false)}
-                      onDetail={() => setDetailDrawerBranchId(branch.id)}
-                      onPull={() => void pullBranch(branch)}
-                      onStop={() => void stopBranch(branch)}
-                      onForceRebuild={() => void forceRebuildBranch(branch)}
-                      onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
-                      onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
-                      onReset={() => void resetBranch(branch)}
-                      onDelete={() => void deleteBranch(branch)}
-                      onEditTags={() => void editTags(branch)}
-                      onAddTag={(tag) => void addTagToBranch(branch, tag)}
-                      onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
-                      onClickTag={toggleTagFilter}
-                    />
-                  );
-                })}
+                {sortedBranches.map((branch) => (
+                  <BranchCard
+                    key={branch.id}
+                    branch={branch}
+                    action={actions[branch.id]}
+                    now={actionClock}
+                    projectId={projectId}
+                    highlighted={highlightedBranchId === branch.id}
+                    highlightPulse={highlightPulseBranchId === branch.id}
+                    activityEvents={activityEvents
+                      .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
+                      .slice(0, 5)}
+                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
+                    activeTagFilter={activeTagFilter}
+                    onPreview={() => void openPreview(branch, false)}
+                    onDeploy={() => void deployBranch(branch, false)}
+                    onDetail={() => setDetailDrawerBranchId(branch.id)}
+                    onPull={() => void pullBranch(branch)}
+                    onStop={() => void stopBranch(branch)}
+                    onForceRebuild={() => void forceRebuildBranch(branch)}
+                    onToggleFavorite={() => void patchBranch(branch, { isFavorite: !branch.isFavorite })}
+                    onToggleDebug={() => void patchBranch(branch, { isColorMarked: !branch.isColorMarked })}
+                    onReset={() => void resetBranch(branch)}
+                    onDelete={() => void deleteBranch(branch)}
+                    onEditTags={() => void editTags(branch)}
+                    onAddTag={(tag) => void addTagToBranch(branch, tag)}
+                    onRemoveTag={(tag) => void removeTagFromBranch(branch, tag)}
+                    onClickTag={toggleTagFilter}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -3787,7 +3783,6 @@ function BranchCard({
   highlighted,
   highlightPulse,
   activityEvents = [],
-  activityPulseKey,
   activeTagFilter,
   onPreview,
   // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -3812,7 +3807,6 @@ function BranchCard({
   now: number;
   capacityWarning?: string;
   activityEvents?: ActivityEvent[];
-  activityPulseKey?: string;
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
@@ -3901,15 +3895,13 @@ function BranchCard({
   const footerSha = shortCommitSha(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
-  const [actorOrbitSpinning, setActorOrbitSpinning] = useState(false);
-  const actorPulseSeenRef = useRef(false);
-  const operationPulseKey = action?.status === 'running'
-    ? `action:${action.kind}:${action.startedAt}:running`
-    : '';
-  // visible: 只在构建/操作态把名字变成环绕静止态。
-  // spinning: 只在 visible 期间遇到新事件 / 本地操作开始时短暂转动。
-  // 构建完成、停止、running 回落等收尾状态不触发旋转。
-  const actorPulseSignal = activityPulseKey || operationPulseKey;
+  const actorOrbitTone = isError || action?.status === 'error'
+    ? 'danger'
+    : isAiActive
+      ? 'ai'
+      : branch.status === 'stopping' || action?.kind === 'stop'
+        ? 'warning'
+        : 'build';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3923,19 +3915,6 @@ function BranchCard({
   useEffect(() => {
     setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
-  useEffect(() => {
-    if (!actorPulseSeenRef.current) {
-      actorPulseSeenRef.current = true;
-      return;
-    }
-    if (!actorOrbitVisible || !actorPulseSignal) {
-      setActorOrbitSpinning(false);
-      return;
-    }
-    setActorOrbitSpinning(true);
-    const timer = window.setTimeout(() => setActorOrbitSpinning(false), 1800);
-    return () => window.clearTimeout(timer);
-  }, [actorOrbitVisible, actorPulseSignal]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -3996,7 +3975,7 @@ function BranchCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <h3
-                className="min-w-0 flex-[1_1_14rem] break-all text-[17px] font-semibold leading-7 tracking-tight"
+                className="min-w-0 flex-[0_1_auto] break-all text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
                 {branch.branch}
@@ -4036,18 +4015,17 @@ function BranchCard({
               */}
               {runtime ? (
                 <span
-                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-medium ${runtime.className}`}
+                  className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-medium ${runtime.className}`}
                   title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
                 >
                   <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
-                  {runtime.label}
                 </span>
               ) : (
                 <span
-                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
+                  className="inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] text-[10px] font-medium text-muted-foreground"
                   title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  源码
+                  <Github className="h-2.5 w-2.5" aria-hidden />
                 </span>
               )}
             </div>
@@ -4225,11 +4203,10 @@ function BranchCard({
             <span
               key={service.profileId}
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
-              title={service.profileId}
+              title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${isAiActive ? 'cds-ai-kinetic-dot ' : ''}${chipRailClass}`} aria-hidden />
+              <Server className={`h-3 w-3 ${chipRailClass.replace('bg-', 'text-')}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
-              <span>:{service.hostPort}</span>
             </span>
           );
         }) : (
@@ -4414,7 +4391,7 @@ function BranchCard({
       >
         <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
           <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div className={`cds-actor-orbit ${actorOrbitVisible ? 'cds-actor-orbit--active' : ''} ${actorOrbitSpinning ? 'cds-actor-orbit--spinning' : ''}`}>
+            <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
               {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
                 className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
@@ -4441,7 +4418,7 @@ function BranchCard({
                 ) : null}
               </div>
             </div>
-            {footerBuilder ? (
+            {footerBuilder && !actorOrbitVisible ? (
               <span className="block max-w-full break-all text-center text-[10px] font-medium leading-tight text-foreground/70">
                 {footerBuilder}
               </span>

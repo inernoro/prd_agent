@@ -39,7 +39,7 @@ interface SelfUpdateRecord {
   fromSha: string;
   toSha: string;
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'aborted' | 'deferred';
   durationMs?: number;
   /** 2026-05-07 真实总耗时(含 daemon 重启 + SSE 重连)。 */
   totalElapsedMs?: number;
@@ -1347,6 +1347,8 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
     case 'aborted':
       return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+    case 'deferred':
+      return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
     case 'failed':
       return 'border-destructive/40 bg-destructive/10 text-destructive';
   }
@@ -1356,6 +1358,7 @@ function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
     case 'aborted': return '中止(校验未过)';
+    case 'deferred': return '已延后';
     case 'failed':  return '失败';
   }
 }

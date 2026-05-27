@@ -95,7 +95,11 @@ export function reduceBranchListState<T extends BranchListItem>(
             ? `${action.source} 返回空分支列表，但项目元信息显示仍有 ${action.projectBranchCount} 个分支；请稍后刷新确认。`
             : undefined),
       },
-      needsEmptyRecheck: false,
+      needsEmptyRecheck: Boolean(
+        !action.confirmedEmpty
+        && action.projectBranchCount
+        && action.projectBranchCount > 0,
+      ),
     };
   }
 

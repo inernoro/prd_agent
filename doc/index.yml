@@ -252,6 +252,7 @@ docs:
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.share-link-security: 分享链接安全债务台账
+  debt.daily-tips: 小技巧与首页提醒过时机制债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
@@ -269,6 +270,8 @@ docs:
   report.claude-agent-sdk-map-intrusion-root-cause-2026-05-18: Claude Agent SDK 容器侵入 MAP 主系统 · 根因报告
   report.cds-agent-current-progress: CDS Agent 当前进度面板
   report.cds-agent-workbench-2026-05-15: CDS Agent 工作台完成复盘（2026-05-15）
+  report.2026-W21: 周报 2026-W21 (05-18 ~ 05-24)
+  report.2026-W20: 周报 2026-W20 (05-11 ~ 05-17)
   report.2026-W19: 周报 2026-W19 (05-04 ~ 05-10)
   report.2026-W18: 周报 2026-W18 (04-27 ~ 05-03)
   report.2026-W17: 周报 2026-W17 (04-20 ~ 04-26)

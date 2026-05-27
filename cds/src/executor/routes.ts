@@ -62,7 +62,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, projectId, profiles: profilesData, env: envOverrides } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesData, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
       branchId: string;
       branchName: string;
       // P4 follow-up (2026-04-24): master now passes projectId so the
@@ -73,6 +73,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       projectId?: string;
       profiles: Array<{ id: string; name: string; dockerImage: string; workDir: string; command: string; containerPort: number; env?: Record<string, string>; cacheMounts?: Array<{ hostPath: string; containerPath: string }>; dependsOn?: string[]; readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number }; pathPrefixes?: string[]; containerWorkDir?: string; buildTimeout?: number }>;
       env?: Record<string, string>;
+      requestId?: string | null;
+      operationId?: string | null;
+      actor?: string | null;
+      trigger?: string | null;
     };
 
     // SSE response
@@ -181,7 +185,12 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         try {
           await containerService.runService(entry, profileWithProject, svc, (chunk) => {
             sendEvent('log', { profileId: profile.id, chunk });
-          }, mergedEnv);
+          }, mergedEnv, {
+            requestId: requestId || null,
+            operationId: operationId || null,
+            actor: actor || 'executor',
+            trigger: trigger || 'executor-deploy',
+          });
 
           svc.status = 'running';
           svc.errorMessage = undefined;
@@ -212,7 +221,13 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/stop — stop all services for a branch ──
   router.post('/stop', async (req, res) => {
-    const { branchId } = req.body as { branchId: string };
+    const { branchId, requestId, operationId, actor, trigger } = req.body as {
+      branchId: string;
+      requestId?: string | null;
+      operationId?: string | null;
+      actor?: string | null;
+      trigger?: string | null;
+    };
     const entry = stateService.getBranch(branchId);
     if (!entry) {
       res.status(404).json({ error: `Branch "${branchId}" not found on this executor` });
@@ -226,7 +241,19 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         // await 窗口会把主动停止误判为 crash 并 docker start 抢跑
         // （Codex P1，与 coolFn / auto-lifecycle / 手动 /stop 同款修复）。
         svc.status = 'stopping';
-        try { await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）'); } catch { /* ok */ }
+        try {
+          await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）', {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: svc.profileId,
+            requestId: requestId || null,
+            operationId: operationId || null,
+            actor: actor || 'executor',
+            trigger: trigger || 'executor-stop',
+            operation: 'executor-stop-branch',
+            source: 'executor.stop',
+          });
+        } catch { /* ok */ }
         svc.status = 'stopped';
       }
       entry.status = 'idle';
@@ -239,7 +266,13 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/pull — pull latest code for a branch ──
   router.post('/pull', async (req, res) => {
-    const { branchId } = req.body as { branchId: string };
+    const { branchId, requestId, operationId, actor, trigger } = req.body as {
+      branchId: string;
+      requestId?: string | null;
+      operationId?: string | null;
+      actor?: string | null;
+      trigger?: string | null;
+    };
     const entry = stateService.getBranch(branchId);
     if (!entry) {
       res.status(404).json({ error: `Branch "${branchId}" not found` });
@@ -277,7 +310,13 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/delete — delete branch (stop + remove worktree) ──
   router.post('/delete', async (req, res) => {
-    const { branchId } = req.body as { branchId: string };
+    const { branchId, requestId, operationId, actor, trigger } = req.body as {
+      branchId: string;
+      requestId?: string | null;
+      operationId?: string | null;
+      actor?: string | null;
+      trigger?: string | null;
+    };
     const entry = stateService.getBranch(branchId);
     if (!entry) {
       res.status(404).json({ error: `Branch "${branchId}" not found` });
@@ -285,7 +324,20 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     }
     try {
       for (const svc of Object.values(entry.services)) {
-        try { await containerService.remove(svc.containerName); } catch { /* ok */ }
+        try {
+          await containerService.remove(svc.containerName, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: svc.profileId,
+            requestId: requestId || null,
+            operationId: operationId || null,
+            actor: actor || 'executor',
+            trigger: trigger || 'executor-delete',
+            operation: 'executor-delete-branch',
+            source: 'executor.delete',
+            reason: `执行器删除分支 ${branchId}`,
+          });
+        } catch { /* ok */ }
       }
       // P4 Part 18 (G1.2): executor stays on config.repoRoot.
       try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }

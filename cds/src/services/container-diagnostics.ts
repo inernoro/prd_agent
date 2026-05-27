@@ -5,6 +5,10 @@ import {
   type ServerEventLogSink,
   type ServerEventSeverity,
 } from './server-event-log-store.js';
+import {
+  classifyDockerLifecycleEvent,
+  type DockerLifecycleClassification,
+} from './docker-lifecycle-classifier.js';
 
 const VALID_DOCKER_REF = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
 const INTENT_TTL_MS = 5 * 60 * 1000;
@@ -21,6 +25,17 @@ export interface ContainerLifecycleIntent {
   kind: ContainerLifecycleIntentKind;
   reason: string;
   requestedAt: string;
+  projectId?: string | null;
+  branchId?: string | null;
+  profileId?: string | null;
+  serviceId?: string | null;
+  requestId?: string | null;
+  operationId?: string | null;
+  actor?: string | null;
+  trigger?: string | null;
+  operation?: string | null;
+  source?: string | null;
+  details?: Record<string, unknown>;
 }
 
 const lifecycleIntents = new Map<string, ContainerLifecycleIntent>();
@@ -47,6 +62,17 @@ export function recordContainerLifecycleIntent(intent: Omit<ContainerLifecycleIn
     kind: intent.kind,
     reason: intent.reason,
     requestedAt: intent.requestedAt || new Date().toISOString(),
+    projectId: intent.projectId ?? null,
+    branchId: intent.branchId ?? null,
+    profileId: intent.profileId ?? null,
+    serviceId: intent.serviceId ?? null,
+    requestId: intent.requestId ?? null,
+    operationId: intent.operationId ?? null,
+    actor: intent.actor ?? null,
+    trigger: intent.trigger ?? null,
+    operation: intent.operation ?? null,
+    source: intent.source ?? null,
+    details: intent.details,
   });
 }
 
@@ -158,6 +184,25 @@ function eventSeverity(action: string, attrs: Record<string, string>): ServerEve
   if (normalized === 'stop' || normalized === 'restart') return 'warn';
   const exitCode = attrs.exitCode || attrs.exitcode;
   if (exitCode && exitCode !== '0') return 'error';
+  return 'info';
+}
+
+function dockerLifecycleSeverity(
+  baseSeverity: ServerEventSeverity,
+  action: string,
+  classification?: DockerLifecycleClassification,
+  lifecycleIntent?: ContainerLifecycleIntent,
+): ServerEventSeverity {
+  if (!classification) return baseSeverity;
+  if (classification.unexpected) return 'error';
+
+  const normalized = action.toLowerCase();
+  const lifecycleAction = normalized.includes('oom')
+    || normalized === 'die'
+    || normalized === 'kill'
+    || normalized === 'destroy'
+    || normalized === 'stop';
+  if (lifecycleIntent && lifecycleAction) return 'warn';
   return 'info';
 }
 
@@ -311,11 +356,27 @@ export class DockerEventMonitor {
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
     const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
     const normalizedAction = action.toLowerCase();
-    const recordedSeverity = lifecycleIntent
-      && !normalizedAction.includes('oom')
-      && ['die', 'kill', 'destroy', 'stop'].includes(normalizedAction)
-      ? 'warn'
-      : severity;
+    const exitCode = Number.isFinite(Number(state?.exitCode ?? attrs.exitCode))
+      ? Number(state?.exitCode ?? attrs.exitCode)
+      : undefined;
+    const oomKilled = typeof state?.oomKilled === 'boolean'
+      ? state.oomKilled
+      : action.toLowerCase().includes('oom') || undefined;
+    const status = typeof state?.status === 'string'
+      ? state.status
+      : attrs.exitCode ? 'exited' : undefined;
+    const classification = ['die', 'kill', 'destroy', 'oom'].includes(normalizedAction)
+      ? classifyDockerLifecycleEvent({
+        action,
+        containerName,
+        status,
+        exitCode,
+        oomKilled,
+        attrs,
+        lifecycleIntent,
+      })
+      : undefined;
+    const recordedSeverity = dockerLifecycleSeverity(severity, action, classification, lifecycleIntent);
 
     this.store.record({
       category: 'docker',
@@ -323,13 +384,20 @@ export class DockerEventMonitor {
       source: 'docker-events',
       action,
       message: `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
+      projectId: lifecycleIntent?.projectId || null,
       branchId: branchId || null,
       profileId: profileId || null,
       serviceId: serviceId || null,
+      requestId: lifecycleIntent?.requestId || null,
+      operationId: lifecycleIntent?.operationId || null,
+      operationKind: lifecycleIntent?.operation || lifecycleIntent?.kind || null,
+      operationTrigger: lifecycleIntent?.trigger || null,
+      operationActor: lifecycleIntent?.actor || null,
+      operationSource: lifecycleIntent?.source || null,
       containerName: containerName || null,
-      status: typeof state?.status === 'string' ? state.status : attrs.exitCode ? 'exited' : undefined,
-      exitCode: Number.isFinite(Number(state?.exitCode ?? attrs.exitCode)) ? Number(state?.exitCode ?? attrs.exitCode) : undefined,
-      oomKilled: typeof state?.oomKilled === 'boolean' ? state.oomKilled : action.toLowerCase().includes('oom') || undefined,
+      status,
+      exitCode,
+      oomKilled,
       docker: {
         id: evt.id || evt.Actor?.ID,
         type: evt.Type,
@@ -342,7 +410,19 @@ export class DockerEventMonitor {
       inspect: diagnostics.inspect,
       logs: diagnostics.logs,
       error: diagnostics.error,
-      details: lifecycleIntent ? { lifecycleIntent } : undefined,
+      details: {
+        ...(lifecycleIntent ? { lifecycleIntent } : {}),
+        ...(classification ? {
+          classification: {
+            source: classification.source,
+            stopClass: classification.stopClass,
+            unexpected: classification.unexpected,
+            nextServiceStatus: classification.nextServiceStatus,
+            nextBranchStatus: classification.nextBranchStatus,
+            reason: classification.reason,
+          },
+        } : {}),
+      },
     });
 
     try {
@@ -353,9 +433,9 @@ export class DockerEventMonitor {
         profileId,
         serviceId,
         attrs,
-        status: typeof state?.status === 'string' ? state.status : attrs.exitCode ? 'exited' : undefined,
-        exitCode: Number.isFinite(Number(state?.exitCode ?? attrs.exitCode)) ? Number(state?.exitCode ?? attrs.exitCode) : undefined,
-        oomKilled: typeof state?.oomKilled === 'boolean' ? state.oomKilled : action.toLowerCase().includes('oom') || undefined,
+        status,
+        exitCode,
+        oomKilled,
         inspect: diagnostics.inspect,
         lifecycleIntent,
       });

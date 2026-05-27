@@ -516,7 +516,7 @@ export interface BranchEntry {
   /** Source that created the last deploy dispatch request. */
   lastDeployDispatchSource?: 'webhook' | 'manual' | 'system';
   /** Whether the last deploy dispatch was accepted by the deploy endpoint. */
-  lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed';
+  lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed' | 'interrupted';
   /** Failure reason when the deploy dispatch itself failed before deployment started. */
   lastDeployDispatchError?: string;
   /** GitHub user login that triggered the latest webhook touching this branch. */
@@ -1162,7 +1162,7 @@ export interface SelfUpdateRecord {
   /** 触发源:目前只有 'manual'(/api/self-update);保留枚举给未来 webhook/auto-poll 接入 */
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   /** 终态 */
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'aborted' | 'deferred';
   /** 整个流程耗时(ms);失败也填,便于看是「秒挂」还是「磨蹭半天才失败」。
    *  注意:这只是 process.exit 之前的后端流程时间,**不含 daemon 重启**。 */
   durationMs?: number;
