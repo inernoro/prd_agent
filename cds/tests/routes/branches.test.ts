@@ -1084,6 +1084,39 @@ describe('Branch Routes', () => {
       expect(actions.indexOf('branch.delete.completed')).toBeGreaterThan(actions.indexOf('test.state-flushed'));
     });
 
+    it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'slow-volume-delete',
+        projectId: 'default',
+        branch: 'feature/slow-volume-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'slow-volume-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      const originalExec = mock.exec.bind(mock);
+      let volumeCleanupStarted = false;
+      mock.exec = async (command, options) => {
+        if (command.includes('docker volume ls') && command.includes('--filter name=cds-nm-')) {
+          volumeCleanupStarted = true;
+          await new Promise<void>(() => { /* simulate a hung Docker volume command */ });
+        }
+        return originalExec(command, options);
+      };
+
+      const del = await request(server, 'DELETE', '/api/branches/slow-volume-delete');
+      expect(del.status).toBe(200);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('slow-volume-delete')).toBeUndefined();
+      expect(volumeCleanupStarted).toBe(true);
+      expect(operationEvents.find((event) =>
+        event.branchId === 'slow-volume-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+    });
+
     it('manual delete fences an in-flight webhook deploy and the old deploy cannot recreate branch state', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api',

@@ -4083,14 +4083,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Commit the user-visible deletion before best-effort volume cleanup.
       // A slow/hung Docker volume command or master restart must not leave
       // "containers removed but branch card still present" half-state.
-      await finalizeBranchDelete(`分支 "${id}" 已删除`);
+      const completeMessage = `分支 "${id}" 已删除`;
+      await finalizeBranchDelete(completeMessage);
+      sendSSE(res, 'complete', { message: completeMessage });
 
-      // ⚠ Bugbot 2026-05-06 ea633e03:删除 per-(branch, profile) 的
-      // node_modules docker named volume(container.ts 里给 pnpm 项目挂的
-      // cds-nm-{branchId}-{profileId})。volume 不会随容器删除自动清,长期
-      // create/delete 分支会留下数百 MB × N 个孤儿。这里 docker volume ls
-      // 过滤前缀 + docker volume rm,失败容忍(volume 还被某个容器引用)。
-      try {
+      // Volume cleanup is intentionally detached from the DELETE response.
+      // The branch state and audit completion are already durable; a slow
+      // Docker volume command must not keep the SSE stream open or make the
+      // browser see HTTP/2 INTERNAL_ERROR during process restarts.
+      void (async () => {
         // SSOT: util/node-modules-volume.ts(Bugbot 3e19da66 — 防 sanitize 漂移)
         // ⚠ Bugbot 2c7c4ad2:docker `--filter name=` 是 substring 匹配,**不是** regex,
         // `^` 被当字面量 → 永远 0 命中,cleanup 静默失败,孤儿照样累积。
@@ -4112,12 +4113,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await shell.exec(`docker volume rm ${name}`, { timeout: 10_000 }).catch(() => { /* tolerate */ });
           }
           if (names.length > 0) {
-            sendSSE(res, 'step', { step: 'volume-cleanup', status: 'done', title: `已清理 ${names.length} 个 node_modules volume` });
+            serverEventLogStore?.record({
+              category: 'container',
+              severity: 'info',
+              source: 'branch-delete',
+              action: 'branch.delete.volume-cleanup.completed',
+              message: `cleaned ${names.length} node_modules volume(s) after deleting ${id}`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              requestId: requestId || null,
+              operationId: branchOperationLease?.operationId || null,
+              details: { count: names.length, names },
+            });
           }
         }
-      } catch { /* ok — volume cleanup 是 best-effort */ }
-
-      sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
+      })().catch((err) => {
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'branch-delete',
+          action: 'branch.delete.volume-cleanup.failed',
+          message: `node_modules volume cleanup failed after deleting ${id}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null,
+          error: { message: (err as Error)?.message || String(err) },
+        });
+      });
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       sendSSE(res, 'error', { message: (err as Error).message });
