@@ -232,3 +232,411 @@
   background-color: #a5b4fc !important;
   box-shadow: 0 0 6px rgba(165, 180, 252, 0.6);
 }
+
+/* =======================================================================
+ *  字号自定义系统 — 顶部 bar A- / A / A+ 三档
+ *  通过 data-pa-fontsize 在 PaAgentPage 根 div 控制；CSS 变量级联
+ *  仅作用于 pa-agent 模块；不污染全局
+ * ===================================================================== */
+.pa-agent-root {
+  --pa-fs-scale: 1;
+  --pa-fs-body: calc(14px * var(--pa-fs-scale));
+  --pa-fs-lead: calc(15px * var(--pa-fs-scale));
+  --pa-fs-h1: calc(18px * var(--pa-fs-scale));
+  --pa-fs-h2: calc(16px * var(--pa-fs-scale));
+  --pa-fs-h3: calc(14px * var(--pa-fs-scale));
+  --pa-fs-h4: calc(13px * var(--pa-fs-scale));
+  --pa-fs-caption: calc(12px * var(--pa-fs-scale));
+  --pa-fs-tiny: calc(11px * var(--pa-fs-scale));
+}
+.pa-agent-root[data-pa-fontsize="small"]   { --pa-fs-scale: 0.88; }
+.pa-agent-root[data-pa-fontsize="medium"]  { --pa-fs-scale: 1; }
+.pa-agent-root[data-pa-fontsize="large"]   { --pa-fs-scale: 1.18; }
+
+/* =======================================================================
+ *  主题切换 — dark（默认）↔ parchment（羊皮卷）
+ *  通过 data-pa-theme="parchment" 在 PaAgentPage 根 div 上挂主题
+ *  只覆盖一组 scoped CSS 变量，不污染全局 var(--bg-base) 等
+ *
+ *  深色（默认）：继承全局 surface system 的 var(--bg-base) 等
+ *  羊皮卷：本地化覆盖为温暖米色 + 深棕字
+ * ===================================================================== */
+.pa-agent-root {
+  --pa-bg-base: var(--bg-base);
+  --pa-bg-elevated: var(--bg-elevated);
+  --pa-bg-hover: var(--bg-hover);
+  --pa-border-default: var(--border-default);
+  --pa-text-primary: var(--text-primary);
+  --pa-text-secondary: var(--text-secondary);
+  --pa-text-muted: var(--text-muted);
+  --pa-accent-strong: #6366f1;
+  --pa-accent-soft: #a5b4fc;
+  --pa-md-code-bg: rgba(255,255,255,0.04);
+  --pa-md-code-border: rgba(255,255,255,0.08);
+  --pa-md-quote-bg: rgba(245,158,11,0.06);
+  --pa-md-quote-border: rgba(252,211,77,0.5);
+  --pa-md-strong: #fcd34d;
+  --pa-md-link: #a5b4fc;
+  --pa-md-link-hover: #c7d2fe;
+}
+
+.pa-agent-root[data-pa-theme="parchment"] {
+  --pa-bg-base:
+    radial-gradient(ellipse at top, #FFF6DD 0%, #F5E6BD 60%, #E8D29A 100%);
+  --pa-bg-elevated: #FFF8E0;
+  --pa-bg-hover: #F2E2B5;
+  --pa-border-default: rgba(120, 80, 30, 0.18);
+  --pa-text-primary: #3D2817;
+  --pa-text-secondary: #5C3A20;
+  --pa-text-muted: #8B6F47;
+  --pa-accent-strong: #D97706;
+  --pa-accent-soft: #B45309;
+  --pa-md-code-bg: rgba(120, 80, 30, 0.07);
+  --pa-md-code-border: rgba(120, 80, 30, 0.18);
+  --pa-md-quote-bg: rgba(217, 119, 6, 0.08);
+  --pa-md-quote-border: rgba(217, 119, 6, 0.5);
+  --pa-md-strong: #B45309;
+  --pa-md-link: #92400E;
+  --pa-md-link-hover: #5C2A04;
+}
+
+/* parchment 模式：把 PaAgentPage 用到 var(--bg-base) 等的关键容器换成 pa-* 变量
+   作用域只覆盖到 .pa-agent-root 内部，不影响外面其他页面 */
+.pa-agent-root[data-pa-theme="parchment"] {
+  background: var(--pa-bg-base) !important;
+  color: var(--pa-text-primary) !important;
+}
+
+/* parchment：聊天气泡、看板、quick-cmd 卡片背景同步换成米色 */
+.pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd {
+  background: rgba(255, 252, 239, 0.6) !important;
+  border-color: rgba(120, 80, 30, 0.22) !important;
+  color: var(--pa-text-secondary) !important;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd:hover {
+  background: rgba(255, 252, 239, 0.9) !important;
+  border-color: rgba(217, 119, 6, 0.55) !important;
+  box-shadow: 0 6px 20px -8px rgba(217, 119, 6, 0.4) !important;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-task-card {
+  background: rgba(255, 252, 239, 0.7) !important;
+  border-color: rgba(120, 80, 30, 0.2) !important;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-task-card:hover {
+  border-color: rgba(217, 119, 6, 0.5) !important;
+  box-shadow: 0 4px 14px -6px rgba(120, 80, 30, 0.25) !important;
+}
+
+/* 引用全局 var 的元素在 parchment 下也要替换 */
+.pa-agent-root[data-pa-theme="parchment"] [style*="--bg-elevated"] {
+  /* JIT 无法穿透 inline style，所以用 attribute 选择器做兜底，但实际我们靠 pa-* 变量 */
+}
+
+/* =======================================================================
+ *  ChatMarkdown 排版样式 — 共用于 PaAssistantChat & PaReviewDrawer
+ *  作用域：`.pa-chat-markdown` 前缀严格，不污染其他页面 markdown
+ * ===================================================================== */
+.pa-chat-markdown {
+  font-size: var(--pa-fs-body, 14px);
+  line-height: 1.75;
+  color: var(--pa-text-primary, var(--text-primary));
+  word-wrap: break-word;
+}
+
+/* 标题层级 */
+.pa-chat-markdown .pa-md-h1 {
+  font-size: var(--pa-fs-h1, 18px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+  margin: 18px 0 10px;
+  color: var(--pa-text-primary, var(--text-primary));
+  padding-bottom: 6px;
+  border-bottom: 1px solid currentColor;
+  border-bottom-color: var(--pa-border-default, var(--border-default));
+}
+.pa-chat-markdown .pa-md-h1:first-child { margin-top: 2px; }
+
+.pa-chat-markdown .pa-md-h2 {
+  font-size: var(--pa-fs-h2, 16px);
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  line-height: 1.45;
+  margin: 16px 0 8px;
+  color: var(--pa-text-primary, var(--text-primary));
+}
+.pa-chat-markdown .pa-md-h2:first-child { margin-top: 2px; }
+
+.pa-chat-markdown .pa-md-h3 {
+  font-size: var(--pa-fs-h3, 14px);
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 14px 0 6px;
+  color: var(--pa-text-primary, var(--text-primary));
+}
+.pa-chat-markdown .pa-md-h3:first-child { margin-top: 2px; }
+
+.pa-chat-markdown .pa-md-h4 {
+  font-size: var(--pa-fs-h4, 13px);
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 12px 0 4px;
+  color: var(--pa-text-secondary, var(--text-secondary));
+}
+
+/* 段落 — 14 / 1.75 / 段距明显 */
+.pa-chat-markdown .pa-md-p {
+  margin: 0 0 12px;
+  line-height: 1.75;
+}
+.pa-chat-markdown .pa-md-p:last-child { margin-bottom: 0; }
+
+/* 强调 */
+.pa-chat-markdown .pa-md-strong {
+  font-weight: 700;
+  color: var(--pa-md-strong);
+}
+.pa-chat-markdown .pa-md-em {
+  font-style: italic;
+  color: var(--pa-text-secondary, var(--text-secondary));
+}
+
+/* 引用块 — 左竖条琥珀 + 米色背景 */
+.pa-chat-markdown .pa-md-blockquote {
+  margin: 12px 0;
+  padding: 8px 12px 8px 14px;
+  border-left: 3px solid var(--pa-md-quote-border);
+  background: var(--pa-md-quote-bg);
+  border-radius: 0 8px 8px 0;
+  color: var(--pa-text-secondary, var(--text-secondary));
+  font-style: italic;
+}
+.pa-chat-markdown .pa-md-blockquote .pa-md-p {
+  margin-bottom: 4px;
+}
+.pa-chat-markdown .pa-md-blockquote .pa-md-p:last-child {
+  margin-bottom: 0;
+}
+
+/* 链接 — 紫色下划线 hover */
+.pa-chat-markdown .pa-md-a {
+  color: var(--pa-md-link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(165, 180, 252, 0.45);
+  transition: color 180ms var(--pa-ease-emphasized, ease), text-decoration-color 180ms var(--pa-ease-emphasized, ease);
+}
+.pa-chat-markdown .pa-md-a:hover {
+  color: var(--pa-md-link-hover);
+  text-decoration-color: currentColor;
+}
+
+/* 列表 — ul 走琥珀小方块 marker；ol 走数字徽章 */
+.pa-chat-markdown .pa-md-ul,
+.pa-chat-markdown .pa-md-ol {
+  margin: 8px 0 12px;
+  padding-left: 0;
+  list-style: none;
+}
+.pa-chat-markdown .pa-md-li {
+  position: relative;
+  padding-left: 22px;
+  margin-bottom: 6px;
+  line-height: 1.7;
+}
+.pa-chat-markdown .pa-md-li:last-child { margin-bottom: 0; }
+
+/* ul marker：琥珀小方块 */
+.pa-chat-markdown .pa-md-ul > .pa-md-li::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: calc(0.7em - 3px);
+  width: 6px;
+  height: 6px;
+  border-radius: 1.5px;
+  background: linear-gradient(135deg, #FCD34D, #D97706);
+  box-shadow: 0 0 0 1px rgba(217, 119, 6, 0.18);
+}
+
+/* ol marker：数字徽章 */
+.pa-chat-markdown .pa-md-ol {
+  counter-reset: pa-md-ol;
+}
+.pa-chat-markdown .pa-md-ol > .pa-md-li {
+  counter-increment: pa-md-ol;
+}
+.pa-chat-markdown .pa-md-ol > .pa-md-li::before {
+  content: counter(pa-md-ol);
+  position: absolute;
+  left: 0;
+  top: calc(0.7em - 8px);
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(217, 119, 6, 0.12);
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  color: var(--pa-md-strong);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  tabular-nums: 1;
+}
+
+/* 嵌套列表缩进 + 主色变化 */
+.pa-chat-markdown .pa-md-li > .pa-md-ul,
+.pa-chat-markdown .pa-md-li > .pa-md-ol {
+  margin: 6px 0;
+}
+.pa-chat-markdown .pa-md-li > .pa-md-ul > .pa-md-li::before {
+  background: rgba(165, 180, 252, 0.55);
+}
+
+/* 代码 — 行内 vs 块 */
+.pa-chat-markdown .pa-md-code-inline {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--pa-md-code-bg);
+  border: 1px solid var(--pa-md-code-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--pa-md-strong);
+  word-break: break-word;
+}
+.pa-chat-markdown .pa-md-pre {
+  margin: 10px 0;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+.pa-chat-markdown .pa-md-codeblock {
+  display: block;
+  position: relative;
+  margin: 0;
+  padding: 28px 14px 12px;
+  background: var(--pa-md-code-bg);
+  border: 1px solid var(--pa-md-code-border);
+  border-radius: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: var(--pa-text-primary, var(--text-primary));
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: pre;
+}
+.pa-chat-markdown .pa-md-codeblock-lang {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pa-text-muted, var(--text-muted));
+  opacity: 0.6;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.pa-chat-markdown .pa-md-codeblock > code {
+  display: block;
+  background: transparent;
+  padding: 0;
+  border: none;
+  color: inherit;
+  white-space: pre;
+}
+
+/* 表格 — 条带 + hairline 分隔 */
+.pa-chat-markdown .pa-md-table-wrap {
+  margin: 10px 0;
+  overflow-x: auto;
+  border: 1px solid var(--pa-border-default, var(--border-default));
+  border-radius: 8px;
+}
+.pa-chat-markdown .pa-md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.pa-chat-markdown .pa-md-thead .pa-md-tr {
+  background: rgba(217, 119, 6, 0.08);
+}
+.pa-chat-markdown .pa-md-th {
+  text-align: left;
+  font-weight: 600;
+  padding: 8px 12px;
+  color: var(--pa-text-primary, var(--text-primary));
+  border-bottom: 1px solid var(--pa-border-default, var(--border-default));
+}
+.pa-chat-markdown .pa-md-td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--pa-border-default, var(--border-default));
+  color: var(--pa-text-secondary, var(--text-secondary));
+  vertical-align: top;
+}
+/* 偶数行条带 */
+.pa-chat-markdown .pa-md-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-chat-markdown .pa-md-table tbody tr:nth-child(even) {
+  background: rgba(120, 80, 30, 0.04);
+}
+
+/* 分隔线 — 渐隐 hairline */
+.pa-chat-markdown .pa-md-hr {
+  margin: 18px 0;
+  border: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--pa-border-default, var(--border-default)) 30%,
+    var(--pa-border-default, var(--border-default)) 70%,
+    transparent 100%
+  );
+}
+
+/* ========================================================================
+ *  顶部 bar 工具按钮（主题切换 + 字号切换）
+ * ====================================================================== */
+.pa-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all 180ms var(--pa-ease-emphasized);
+  cursor: pointer;
+}
+.pa-toolbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+.pa-toolbar-btn[data-active="true"] {
+  background: rgba(217, 119, 6, 0.12);
+  color: #fcd34d;
+  border-color: rgba(217, 119, 6, 0.35);
+}
+
+/* 进一步了解我 ghost 按钮 — 二级 CTA */
+.pa-learn-more {
+  transition:
+    background 200ms var(--pa-ease-emphasized),
+    color 200ms var(--pa-ease-emphasized),
+    border-color 200ms var(--pa-ease-emphasized),
+    transform 180ms var(--pa-ease-spring);
+}
+.pa-learn-more:hover {
+  background: rgba(217, 119, 6, 0.08);
+  color: #fcd34d;
+  border-color: rgba(217, 119, 6, 0.55);
+  transform: translateY(-1px);
+}

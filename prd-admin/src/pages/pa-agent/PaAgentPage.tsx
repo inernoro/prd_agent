@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MessageSquare, LayoutGrid, Plus, Trash2, Edit2, Check, X,
-  Zap, ChevronLeft, ChevronRight, Brain,
+  ChevronLeft, ChevronRight, Brain, NotebookPen, BookOpen, Moon,
 } from 'lucide-react';
 import {
   getPaSessions, createPaSession, deletePaSession, renamePaSession,
@@ -12,6 +12,28 @@ import { PaTaskBoard } from './PaTaskBoard';
 import { PaProfilePanel } from './PaProfilePanel';
 import { PaReviewDrawer } from './PaReviewDrawer';
 import './paAgent.css';
+
+/** sessionStorage key — 主题偏好（dark / parchment） */
+const PA_THEME_KEY = 'pa-agent.theme';
+/** sessionStorage key — 字号档位（small / medium / large） */
+const PA_FONTSIZE_KEY = 'pa-agent.fontsize';
+
+type PaTheme = 'dark' | 'parchment';
+type PaFontSize = 'small' | 'medium' | 'large';
+
+function readPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  try {
+    const v = sessionStorage.getItem(key);
+    if (v && (allowed as readonly string[]).includes(v)) return v as T;
+  } catch { /* sessionStorage 不可用时静默 */ }
+  return fallback;
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch { /* 隐私模式下静默 */ }
+}
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
@@ -252,6 +274,25 @@ export function PaAgentPage() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
 
+  // 主题（dark / parchment）与字号档（small / medium / large）— sessionStorage 持久化
+  const [theme, setTheme] = useState<PaTheme>(() =>
+    readPref<PaTheme>(PA_THEME_KEY, 'dark', ['dark', 'parchment']));
+  const [fontSize, setFontSize] = useState<PaFontSize>(() =>
+    readPref<PaFontSize>(PA_FONTSIZE_KEY, 'medium', ['small', 'medium', 'large']));
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next: PaTheme = prev === 'dark' ? 'parchment' : 'dark';
+      writePref(PA_THEME_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const handleSetFontSize = useCallback((next: PaFontSize) => {
+    setFontSize(next);
+    writePref(PA_FONTSIZE_KEY, next);
+  }, []);
+
   const loadSessions = useCallback(async () => {
     const res = await getPaSessions();
     if (res.success && Array.isArray(res.data)) {
@@ -314,7 +355,16 @@ export function PaAgentPage() {
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
   return (
-    <div className="h-full flex" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+    <div
+      className="pa-agent-root h-full flex"
+      data-pa-theme={theme}
+      data-pa-fontsize={fontSize}
+      style={{
+        // parchment 主题下 .pa-agent-root[data-pa-theme="parchment"] 会用 !important 覆盖
+        background: 'var(--bg-base)',
+        color: 'var(--text-primary)',
+      }}
+    >
       {/* ── Sidebar ── */}
       <div
         className="flex flex-col shrink-0 transition-all duration-200 overflow-hidden"
@@ -333,7 +383,7 @@ export function PaAgentPage() {
               className="w-6 h-6 rounded-lg flex items-center justify-center"
               style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
             >
-              <Zap size={12} color="#fff" />
+              <NotebookPen size={12} color="#fff" />
             </div>
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
               毒舌秘书
@@ -454,6 +504,51 @@ export function PaAgentPage() {
               </button>
             ))}
           </div>
+
+          {/* 阅读偏好：字号档 + 主题切换（顶部 bar 右侧） */}
+          <div
+            className="hidden md:flex items-center gap-0.5 rounded-xl p-0.5"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+            title="阅读偏好：字号 A- / A / A+ 三档"
+          >
+            <button
+              className="pa-toolbar-btn"
+              data-active={fontSize === 'small'}
+              onClick={() => handleSetFontSize('small')}
+              title="小号字"
+              style={{ fontSize: 10 }}
+            >
+              A-
+            </button>
+            <button
+              className="pa-toolbar-btn"
+              data-active={fontSize === 'medium'}
+              onClick={() => handleSetFontSize('medium')}
+              title="默认字号"
+              style={{ fontSize: 12 }}
+            >
+              A
+            </button>
+            <button
+              className="pa-toolbar-btn"
+              data-active={fontSize === 'large'}
+              onClick={() => handleSetFontSize('large')}
+              title="大号字"
+              style={{ fontSize: 14 }}
+            >
+              A+
+            </button>
+          </div>
+
+          <button
+            onClick={handleToggleTheme}
+            className="pa-toolbar-btn"
+            data-active={theme === 'parchment'}
+            title={theme === 'parchment' ? '切回深色（暗夜专注）' : '切到羊皮卷（护眼复古）'}
+            style={{ width: 28, height: 28, padding: 0 }}
+          >
+            {theme === 'parchment' ? <Moon size={14} /> : <BookOpen size={14} />}
+          </button>
 
           {/* New chat button (visible when sidebar collapsed) */}
           {!sidebarOpen && (
