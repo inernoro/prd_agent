@@ -45,6 +45,9 @@
 - [毒舌秘书：PA Agent 最小可行升级方案](spec.pa-agent-savage-upgrade) `spec.pa-agent-savage-upgrade`
   > PA Agent 升级为毒舌秘书的最小可行方案，1-2 天内可上线，保留架构只改产品灵魂
 
+- [毒舌秘书 v2 迭代升级方案](spec.pa-agent-savage-iter-v2) `spec.pa-agent-savage-iter-v2`
+  > 毒舌秘书 PA Agent v2 阶段迭代升级方案
+
 - [周报 Agent 产品需求文档](spec.report-agent) `spec.report-agent`
   > 周报 Agent v1.0 的产品需求文档
 
