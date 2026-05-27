@@ -553,6 +553,11 @@ export class BranchOperationCoordinator {
       profileId: request.profileId || null,
       requestId: request.requestId || null,
       operationId,
+      operationKind: request.kind,
+      operationTrigger: request.trigger,
+      operationActor: request.actor || null,
+      operationSource: request.source || null,
+      commitSha: request.commitSha || null,
       details: {
         operationId,
         generation,

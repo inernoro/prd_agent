@@ -24,6 +24,11 @@ export interface ServerEventRecord {
   upstream?: string | null;
   requestId?: string | null;
   operationId?: string | null;
+  operationKind?: string | null;
+  operationTrigger?: string | null;
+  operationActor?: string | null;
+  operationSource?: string | null;
+  commitSha?: string | null;
   docker?: Record<string, unknown>;
   inspect?: Record<string, unknown>;
   command?: {
@@ -72,6 +77,11 @@ export interface ServerEventLogSink {
     projectId?: string;
     requestId?: string;
     operationId?: string;
+    operationKind?: string;
+    operationTrigger?: string;
+    operationActor?: string;
+    operationSource?: string;
+    commitSha?: string;
     since?: Date | string;
   }): Promise<ServerEventRecord[]>;
 }
@@ -116,6 +126,19 @@ function resolveOperationId(record: { operationId?: string | null; details?: Rec
   return typeof nested === 'string' && nested.trim() ? nested.trim() : record.operationId;
 }
 
+function resolveStringField(
+  record: Record<string, unknown>,
+  field: string,
+  detailField = field,
+): string | null | undefined {
+  const direct = record[field];
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const details = record.details;
+  if (!details || typeof details !== 'object') return direct == null ? direct as null | undefined : undefined;
+  const nested = (details as Record<string, unknown>)[detailField];
+  return typeof nested === 'string' && nested.trim() ? nested.trim() : direct as null | undefined;
+}
+
 export function buildServerEventQuery(filter: {
   category?: ServerEventCategory;
   severity?: ServerEventSeverity;
@@ -128,6 +151,11 @@ export function buildServerEventQuery(filter: {
   projectId?: string;
   requestId?: string;
   operationId?: string;
+  operationKind?: string;
+  operationTrigger?: string;
+  operationActor?: string;
+  operationSource?: string;
+  commitSha?: string;
   since?: Date | string;
 } = {}): Record<string, unknown> {
   const query: Record<string, unknown> = {};
@@ -140,6 +168,11 @@ export function buildServerEventQuery(filter: {
   if (filter.profileId) query.profileId = filter.profileId;
   if (filter.projectId) query.projectId = filter.projectId;
   if (filter.requestId) query.requestId = filter.requestId;
+  if (filter.operationKind) query.operationKind = filter.operationKind;
+  if (filter.operationTrigger) query.operationTrigger = filter.operationTrigger;
+  if (filter.operationActor) query.operationActor = filter.operationActor;
+  if (filter.operationSource) query.operationSource = filter.operationSource;
+  if (filter.commitSha) query.commitSha = filter.commitSha;
   if (filter.operationId) {
     query.$or = [
       { operationId: filter.operationId },
@@ -207,6 +240,9 @@ export class ServerEventLogStore implements ServerEventLogSink {
       this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
       this.collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
       this.collection.createIndex({ 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
+      this.collection.createIndex({ operationTrigger: 1, ts: -1 }, { name: 'operationTrigger_ts_desc', sparse: true }),
+      this.collection.createIndex({ operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
+      this.collection.createIndex({ commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
       this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
@@ -239,6 +275,11 @@ export class ServerEventLogStore implements ServerEventLogSink {
       ts: record.ts ? new Date(record.ts) : new Date(),
       severity: record.severity,
       operationId: resolveOperationId(record),
+      operationKind: resolveStringField(record as Record<string, unknown>, 'operationKind', 'kind'),
+      operationTrigger: resolveStringField(record as Record<string, unknown>, 'operationTrigger', 'trigger'),
+      operationActor: resolveStringField(record as Record<string, unknown>, 'operationActor', 'actor'),
+      operationSource: resolveStringField(record as Record<string, unknown>, 'operationSource', 'source'),
+      commitSha: resolveStringField(record as Record<string, unknown>, 'commitSha'),
       message: record.message ? truncateUtf8(record.message, MAX_TEXT_BYTES) : undefined,
       docker: record.docker ? compactObject(record.docker) as Record<string, unknown> : undefined,
       inspect: record.inspect ? compactObject(record.inspect) as Record<string, unknown> : undefined,
@@ -279,6 +320,11 @@ export class ServerEventLogStore implements ServerEventLogSink {
     projectId?: string;
     requestId?: string;
     operationId?: string;
+    operationKind?: string;
+    operationTrigger?: string;
+    operationActor?: string;
+    operationSource?: string;
+    commitSha?: string;
     since?: Date | string;
   } = {}): Promise<ServerEventRecord[]> {
     if (!this.collection) return [];

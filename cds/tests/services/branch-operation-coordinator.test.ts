@@ -2,13 +2,43 @@ import { describe, expect, it } from 'vitest';
 import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
-function eventSink(): { sink: ServerEventLogSink; records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> } {
-  const records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> = [];
+function eventSink(): {
+  sink: ServerEventLogSink;
+  records: Array<{
+    action: string;
+    operationId?: string | null;
+    operationKind?: string | null;
+    operationTrigger?: string | null;
+    operationActor?: string | null;
+    operationSource?: string | null;
+    commitSha?: string | null;
+    details?: Record<string, unknown>;
+  }>;
+} {
+  const records: Array<{
+    action: string;
+    operationId?: string | null;
+    operationKind?: string | null;
+    operationTrigger?: string | null;
+    operationActor?: string | null;
+    operationSource?: string | null;
+    commitSha?: string | null;
+    details?: Record<string, unknown>;
+  }> = [];
   return {
     records,
     sink: {
       record(record) {
-        records.push({ action: record.action, operationId: record.operationId, details: record.details });
+        records.push({
+          action: record.action,
+          operationId: record.operationId,
+          operationKind: record.operationKind,
+          operationTrigger: record.operationTrigger,
+          operationActor: record.operationActor,
+          operationSource: record.operationSource,
+          commitSha: record.commitSha,
+          details: record.details,
+        });
       },
     },
   };
@@ -60,7 +90,14 @@ describe('BranchOperationCoordinator', () => {
     ]));
     for (const record of records) {
       expect(record.operationId).toMatch(/^op_/);
+      expect(record.operationKind).toMatch(/deploy|force-rebuild/);
+      expect(record.operationTrigger).toMatch(/manual|webhook/);
     }
+    const merged = records.find((record) => record.action === 'branch.operation.merged');
+    expect(merged).toMatchObject({
+      operationTrigger: 'webhook',
+      commitSha: '2222222',
+    });
   });
 
   it('starts one operation per branch and rejects a concurrent manual deploy', () => {

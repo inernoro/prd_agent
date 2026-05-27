@@ -2258,6 +2258,11 @@ export function createServer(deps: ServerDeps): express.Express {
       projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
       operationId: typeof req.query.operationId === 'string' ? req.query.operationId : undefined,
+      operationKind: typeof req.query.operationKind === 'string' ? req.query.operationKind : undefined,
+      operationTrigger: typeof req.query.operationTrigger === 'string' ? req.query.operationTrigger : undefined,
+      operationActor: typeof req.query.operationActor === 'string' ? req.query.operationActor : undefined,
+      operationSource: typeof req.query.operationSource === 'string' ? req.query.operationSource : undefined,
+      commitSha: typeof req.query.commitSha === 'string' ? req.query.commitSha : undefined,
       since,
     });
     res.json({ ok: true, disabled: false, events, total: events.length });
