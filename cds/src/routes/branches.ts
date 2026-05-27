@@ -35,6 +35,7 @@ import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
+import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -534,6 +535,17 @@ async function computeSelfStatusPayload(
     degradedReasons.push(`unitDrift: ${(err as Error).message}`);
   }
 
+  const bundleFreshness = await computeBundleFreshness({
+    repoRoot,
+    shell,
+    headSha,
+    bundleSha: webBuildSha,
+    buildError: webBuildError,
+  });
+  if (bundleFreshness.staleReason === 'diff-failed' || bundleFreshness.staleReason === 'invalid-sha') {
+    degradedReasons.push(`bundleFreshness: ${bundleFreshness.detail || bundleFreshness.staleReason}`);
+  }
+
   return {
     currentBranch,
     headSha,
@@ -552,11 +564,8 @@ async function computeSelfStatusPayload(
     // 2026-05-07 timing 审视:暴露 daemonReadyAt 让前端判断"上次重启完成时刻"
     // 用于校验 totalElapsedMs 字段。详见 report.cds-self-update-timing-audit.md
     daemonReadyAt: stateService.getState().daemonReadyAt || null,
-    bundleStale: Boolean(
-      (headSha && webBuildSha && !(
-        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
-      )) || webBuildError,
-    ),
+    bundleStale: bundleFreshness.bundleStale,
+    bundleFreshness,
     degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
     cachedAt: new Date().toISOString(),
   };

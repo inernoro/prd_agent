@@ -50,6 +50,7 @@ import {
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
+import { computeBundleFreshness } from './services/bundle-freshness.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1915,18 +1916,16 @@ export function createServer(deps: ServerDeps): express.Express {
       } catch (err) {
         degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
       }
-      // Bugbot PR #524 第十一轮:headSha 是 short(7-8),webBuildSha 可能是
-      // full(40,新 fix 后)或 short(legacy 老数据)。startsWith 单方向有边角:
-      //   - short headSha vs short webBuildSha 长度相同 → startsWith 退化成相等 OK
-      //   - long webBuildSha startsWith short headSha → 同 commit OK
-      //   - 但 short headSha startsWith short webBuildSha 也合理(legacy)
-      // 改用双向 startsWith:任一方向匹配即同 commit,两边都不匹配才算 stale。
-      const headEqualsBundle = !!(headSha && webBuildSha && (
-        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
-      ));
-      const bundleStale = Boolean(
-        (headSha && webBuildSha && !headEqualsBundle) || webBuildError,
-      );
+      const bundleFreshness = await computeBundleFreshness({
+        repoRoot,
+        shell: deps.shell,
+        headSha,
+        bundleSha: webBuildSha,
+        buildError: webBuildError,
+      });
+      if (bundleFreshness.staleReason === 'diff-failed' || bundleFreshness.staleReason === 'invalid-sha') {
+        degradedReasons.push(`bundleFreshness: ${bundleFreshness.detail || bundleFreshness.staleReason}`);
+      }
 
       res.json({
         currentBranch,
@@ -1942,7 +1941,8 @@ export function createServer(deps: ServerDeps): express.Express {
         selfUpdateHistory: history,
         webBuildSha,
         webBuildError,
-        bundleStale,
+        bundleStale: bundleFreshness.bundleStale,
+        bundleFreshness,
         degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
       });
     } catch (err) {
