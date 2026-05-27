@@ -1168,9 +1168,9 @@ public class ReviewAgentController : ControllerBase
 
     /// <summary>
     /// 应用系统级三层兜底，按顺序：
-    /// L1 evidence gate：非清单维度若 LLM 给到 MaxScore × 0.9 以上，要求 Comment 必须 ≥ 30 字且含具体证据（数字/百分比/引用/章节名），否则该维度降至 floor(MaxScore × 0.89)。
+    /// L1 evidence gate：非清单维度若 LLM 给到 MaxScore × 0.9 以上，要求 Comment 必须 ≥ 15 字且含至少 1 个强标记（≥2 位数字/百分比/章节引用/书名号/直角引号/方括号/URL），否则该维度降至 floor(MaxScore × 0.89)。
     /// L2 数据密度封顶：方案原文「数字/百分比/链接/章节引用」总出现 &lt; 5 处时，整体高分维度（≥ 0.9 得分率）按 0.89 封顶。
-    /// L3 summary 一致性闸：summary 出现明确降级关键词（"75-89"/"未达 90+"/"合格区间"/"有改进空间"），但总分 ≥ 90 时，整体高分维度按 0.89 封顶。
+    /// L3 summary 一致性闸：summary 出现明确降级关键词（"75-89"/"未达 90"/"合格区间"/"未达标杆"/"有改进空间"），但总分 ≥ 90 时，整体高分维度按 0.89 封顶。L1/L2 已把总分压到 90% 以下时本闸自动失效（设计正确：不重复打压）。
     /// 注意：清单类维度（Items != null）由系统按 truth table 强制重算，不在本兜底覆盖范围。
     /// </summary>
     /// <returns>触发的调整日志条目（≥ 0 条）</returns>
@@ -1181,7 +1181,8 @@ public class ReviewAgentController : ControllerBase
         string summary)
     {
         var log = new List<string>();
-        var dimConfigMap = dims.ToDictionary(d => d.Key);
+        // 防御 DB 自定义配置出现重复 Key（UpdateDimensions 未做唯一性校验）—— 取第一条避免抛 ArgumentException
+        var dimConfigMap = dims.GroupBy(d => d.Key).ToDictionary(g => g.Key, g => g.First());
 
         // L1：逐维度 evidence gate
         foreach (var score in dimensionScores)
@@ -1199,6 +1200,7 @@ public class ReviewAgentController : ControllerBase
                 log.Add(
                     $"[L1 证据闸] 维度「{score.Name}」原 {score.Score}/{score.MaxScore} → 调整为 {capped}/{score.MaxScore}：" +
                     $"得分率 ≥90% 但 LLM 评语未提供具体证据（数字/百分比/引用/原文章节），按 89% 封顶。");
+                score.OriginalScore ??= score.Score;
                 score.Score = capped;
                 score.Comment = (string.IsNullOrWhiteSpace(score.Comment) ? "" : score.Comment.TrimEnd() + " ") +
                                 "[系统提示] 因高分缺乏具体证据，已按 89% 封顶。";
@@ -1214,6 +1216,8 @@ public class ReviewAgentController : ControllerBase
         }
 
         // L3：summary 与总分一致性闸
+        // 注：若 L1/L2 已把高分维度压低、total/max 跌破 0.9，则 L3 门槛自动失效，
+        // 这是设计上正确的行为（summary 的降级措辞此时与总分一致，没有矛盾）。
         var totalScoreNow = dimensionScores.Sum(d => d.Score);
         var totalMax = dimensionScores.Sum(d => d.MaxScore);
         if (totalMax > 0 && (double)totalScoreNow / totalMax >= 0.9 && SummaryContainsDowngradeKeyword(summary))
@@ -1226,36 +1230,42 @@ public class ReviewAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 判断 LLM 评语是否含「具体证据」：长度 ≥ 30 且含数字/百分比/章节引用/书名号/方括号引用 任一线索。
-    /// 纯定性形容词（"完整""清晰""凝练"）不视为证据。
+    /// 「具体证据」线索的正则：≥2 位连续数字（排除单数字凑数）、百分比、章节引用（允许中间空格）、
+    /// 书名号 / 直角引号 / 方括号 / URL。纯定性形容词（"完整""清晰""凝练"）不视为证据。
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex EvidenceMarkerRegex = new(
+        @"\d{2,}|\d+[%％]|第\s?[一-龥\d]+\s?[章节段条]|《[^》]+》|「[^」]+」|\[[^\]]+\]|http[s]?://",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// 判断 LLM 评语是否含「具体证据」：长度 ≥ 15 字 且 含至少 1 个强标记
+    /// （≥2 位数字 / 百分比 / 章节引用 / 书名号 / 直角引号 / 方括号 / URL）。
+    /// 长度门槛防纯空话；强标记正则（不含单 `\d`）防 "整体不错…综合判断 1" 这类单数字钻空子。
     /// </summary>
     internal static bool HasSufficientEvidence(string? comment)
     {
         if (string.IsNullOrWhiteSpace(comment)) return false;
         var trimmed = comment.Trim();
-        if (trimmed.Length < 30) return false;
-        // 至少含一种具体证据线索
-        return System.Text.RegularExpressions.Regex.IsMatch(
-            trimmed,
-            @"\d|[%％]|第[一-龥\d]+[章节段条]|《[^》]+》|「[^」]+」|\[[^\]]+\]|http[s]?://");
+        if (trimmed.Length < 15) return false;
+        return EvidenceMarkerRegex.IsMatch(trimmed);
     }
 
     /// <summary>
-    /// 数据密度统计：扫方案原文「数字串(≥2 位) / 百分比 / URL / 章节引用 / 书名号引用」总出现次数。
+    /// 数据密度统计：扫方案原文「数字串(≥2 位非百分比) / 百分比 / URL / 章节引用 / 书名号引用」总出现次数。
     /// 阈值 5 是保守估计：1000 字以上的产品方案普遍能轻松达标，达不到说明确实空话占多数。
     /// </summary>
     internal static int CountDataPoints(string content)
     {
         if (string.IsNullOrWhiteSpace(content)) return 0;
         var count = 0;
-        // 数字串（≥ 2 位连续数字，避免误算单个数字如"3 个"）
-        count += System.Text.RegularExpressions.Regex.Matches(content, @"\d{2,}").Count;
+        // 数字串（≥ 2 位连续数字，且不跟百分号，避免与下一条 \d+% 重复计数）
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"\d{2,}(?![%％])").Count;
         // 百分比
         count += System.Text.RegularExpressions.Regex.Matches(content, @"\d+[%％]").Count;
         // URL
         count += System.Text.RegularExpressions.Regex.Matches(content, @"http[s]?://[^\s一-龥]+").Count;
-        // 章节引用
-        count += System.Text.RegularExpressions.Regex.Matches(content, @"第[一-龥\d]+[章节段条]").Count;
+        // 章节引用（允许"第 3 章"这种带空格写法）
+        count += System.Text.RegularExpressions.Regex.Matches(content, @"第\s?[一-龥\d]+\s?[章节段条]").Count;
         // 书名号引用
         count += System.Text.RegularExpressions.Regex.Matches(content, @"《[^》]{1,40}》").Count;
         return count;
@@ -1263,12 +1273,13 @@ public class ReviewAgentController : ControllerBase
 
     /// <summary>
     /// 检测 summary 是否含明确的「降级」关键词。命中即视为 LLM 自己承认"未达 90+"。
+    /// 关键词清单只保留**单义负面**表述；像"标杆级水平"这种褒贬双向的词不放入（会误伤"达到行业标杆级水平"褒义高分）。
     /// </summary>
     internal static bool SummaryContainsDowngradeKeyword(string? summary)
     {
         if (string.IsNullOrWhiteSpace(summary)) return false;
         string[] keywords = { "75-89", "75 - 89", "75 至 89", "未达 90", "未达到 90", "未达90", "未达到90",
-                              "合格区间", "标杆级水平", "有改进空间", "未达标杆", "未达行业" };
+                              "合格区间", "未达标杆", "未达到标杆", "未到标杆", "未达行业", "有改进空间" };
         return keywords.Any(k => summary.Contains(k, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -1292,6 +1303,7 @@ public class ReviewAgentController : ControllerBase
 
             var capped = (int)Math.Floor(score.MaxScore * 0.89);
             subEntries.Add($"  └ 维度「{score.Name}」{score.Score}/{score.MaxScore} → {capped}/{score.MaxScore}");
+            score.OriginalScore ??= score.Score;
             score.Score = capped;
         }
         if (subEntries.Count > 0)

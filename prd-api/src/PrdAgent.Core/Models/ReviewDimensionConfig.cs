@@ -70,7 +70,7 @@ public static class DefaultReviewDimensions
             Key = "global_rules_checklist",
             Name = "全局规则检查清单",
             MaxScore = 20,
-            Description = "检查方案是否考虑到米多平台的硬性业务/技术规则。对每个检查项做二段判断：① 方案是否涉及该规则？② 若涉及，方案是否已明确写出对应设计？只有「涉及=是 且 覆盖=否」才算未通过，涉及=否直接视为通过。得分 = 30 × 通过项数 / 总项数（向下取整）。",
+            Description = "检查方案是否考虑到米多平台的硬性业务/技术规则。对每个检查项做二段判断：① 方案是否涉及该规则？② 若涉及，方案是否已明确写出对应设计？只有「涉及=是 且 覆盖=否」才算未通过，涉及=否直接视为通过。得分 = MaxScore × 通过项数 / 总项数（向下取整）。",
             OrderIndex = 1,
             Items = new List<DimensionCheckItem>
             {

@@ -47,11 +47,17 @@ public class ReviewDimensionScore
     /// <summary>维度名称快照</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>实得分</summary>
+    /// <summary>实得分（可能被系统兜底调整覆盖；调整前的 LLM 原始分见 OriginalScore）</summary>
     public int Score { get; set; }
 
     /// <summary>满分</summary>
     public int MaxScore { get; set; }
+
+    /// <summary>
+    /// LLM 原始分（清单维度为系统派生前的 LLM 自填值）。仅当被 guardrail 调整时填充，
+    /// 未调整时为 null。用于审计「LLM 给了多少 / 系统改了多少」。
+    /// </summary>
+    public int? OriginalScore { get; set; }
 
     /// <summary>AI 评语（该维度的具体评价）</summary>
     public string Comment { get; set; } = string.Empty;

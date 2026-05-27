@@ -50,6 +50,8 @@ export interface ReviewDimensionScore {
   score: number;
   maxScore: number;
   comment: string;
+  /** LLM 原始分（调整前）。仅当被系统兜底调整时填充，否则为 null/undefined */
+  originalScore?: number | null;
   /** 子检查项判断结果（清单类维度使用） */
   items?: DimensionCheckItemResult[] | null;
 }
