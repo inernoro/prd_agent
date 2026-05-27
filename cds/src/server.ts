@@ -1195,8 +1195,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     res.once('finish', () => {
       const status = res.statusCode || 0;
-      const reqBody = bodyPreviewFromUnknown(req.body);
-      const respBody = responseCapture.snapshot();
+      const reqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
         requestId,
@@ -1216,7 +1217,7 @@ export function createServer(deps: ServerDeps): express.Express {
           ...reqBody,
         },
         response: {
-          headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
+          headers: responseHeaders,
           ...respBody,
         },
       });

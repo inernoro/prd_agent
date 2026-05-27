@@ -8,6 +8,7 @@ import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import {
   createBodyCapture,
+  isBinaryContentType,
   createRequestId,
   redactHeaders,
   type HttpLogSink,
@@ -1729,7 +1730,7 @@ ${shouldAutoRefresh ? `;(function(){
     if (typeof clientRes.setHeader === 'function') {
       clientRes.setHeader('X-CDS-Request-Id', requestId);
     }
-    const requestCapture = createBodyCapture();
+    const requestCapture = createBodyCapture(undefined, clientReq.headers['content-type']);
     if (typeof clientReq.on === 'function') {
       clientReq.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     }
@@ -1757,7 +1758,7 @@ ${shouldAutoRefresh ? `;(function(){
         upstream,
         request: {
           headers: redactHeaders(clientReq.headers),
-          ...requestCapture.snapshot(),
+          ...requestCapture.snapshot(clientReq.headers['content-type']),
         },
         response: {
           headers: redactHeaders(clientRes.getHeaders() as Record<string, unknown>),
@@ -1907,7 +1908,9 @@ ${shouldAutoRefresh ? `;(function(){
           if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
         });
         proxyRes.on('end', () => {
-          const bodyPreview = Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
+          const bodyPreview = isBinaryContentType(contentType)
+            ? ''
+            : Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
           if (shouldLogApiFailure) {
             console.warn(
               `[proxy] api upstream ${statusCode}: ${clientReq.method || 'GET'} ${reqUrl} → ${upstream} (host=${clientReq.headers.host || ''}, branch=${branchCtx?.branchId || 'unknown'}, requestId=${String(proxyRes.headers['x-cds-request-id'] || clientReq.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${String(contentType || '-')})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,

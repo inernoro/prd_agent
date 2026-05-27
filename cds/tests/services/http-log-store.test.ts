@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   bodyPreviewFromUnknown,
   createBodyCapture,
+  isBinaryContentType,
+  isTextualContentType,
   redactBodyText,
 } from '../../src/services/http-log-store.js';
 
@@ -43,5 +45,30 @@ describe('http log body redaction', () => {
   it('redacts bearer tokens in plain text', () => {
     expect(redactBodyText('Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456'))
       .toBe('Authorization: Bearer [redacted]');
+  });
+
+  it('omits image body previews while preserving byte counts', () => {
+    const capture = createBodyCapture(undefined, 'image/png');
+    const bytes = Buffer.alloc(2 * 1024 * 1024, 0xff);
+    capture.onChunk(bytes);
+    const snapshot = capture.snapshot('image/png');
+
+    expect(snapshot.bodyBytes).toBe(bytes.length);
+    expect(snapshot.bodyPreview).toBe('[cds http log omitted binary body]');
+  });
+
+  it('omits multipart upload previews', () => {
+    const result = bodyPreviewFromUnknown('------boundary\r\nraw-image-bytes', 'multipart/form-data; boundary=abc');
+
+    expect(result.bodyBytes).toBeGreaterThan(0);
+    expect(result.bodyPreview).toBe('[cds http log omitted binary body]');
+  });
+
+  it('classifies common upload/download content types', () => {
+    expect(isBinaryContentType('image/jpeg')).toBe(true);
+    expect(isBinaryContentType('application/octet-stream')).toBe(true);
+    expect(isBinaryContentType('multipart/form-data; boundary=x')).toBe(true);
+    expect(isTextualContentType('application/json; charset=utf-8')).toBe(true);
+    expect(isBinaryContentType('application/json; charset=utf-8')).toBe(false);
   });
 });

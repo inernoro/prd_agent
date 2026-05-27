@@ -72,6 +72,48 @@ const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
 const MAX_REDACT_DEPTH = 8;
+const OMITTED_BINARY_BODY_PREVIEW = '[cds http log omitted binary body]';
+
+function normalizeContentType(value: unknown): string {
+  if (Array.isArray(value)) return normalizeContentType(value[0]);
+  return String(value || '').split(';')[0].trim().toLowerCase();
+}
+
+export function isTextualContentType(value: unknown): boolean {
+  const type = normalizeContentType(value);
+  if (!type) return true;
+  if (type.startsWith('text/')) return true;
+  if (type === 'application/json') return true;
+  if (type.endsWith('+json') || type.endsWith('/json')) return true;
+  if (type === 'application/javascript' || type === 'application/x-javascript') return true;
+  if (type === 'application/xml' || type.endsWith('+xml')) return true;
+  if (type === 'application/x-www-form-urlencoded') return true;
+  if (type === 'application/graphql') return true;
+  if (type === 'application/graphql-response+json') return true;
+  if (type === 'application/problem+json') return true;
+  if (type === 'application/x-ndjson') return true;
+  return false;
+}
+
+export function isBinaryContentType(value: unknown): boolean {
+  const type = normalizeContentType(value);
+  if (!type) return false;
+  if (type.startsWith('image/')) return true;
+  if (type.startsWith('audio/')) return true;
+  if (type.startsWith('video/')) return true;
+  if (type.startsWith('font/')) return true;
+  if (type === 'multipart/form-data') return true;
+  if (type === 'application/octet-stream') return true;
+  if (type === 'application/pdf') return true;
+  if (type === 'application/zip') return true;
+  if (type === 'application/gzip') return true;
+  if (type === 'application/x-gzip') return true;
+  if (type === 'application/x-tar') return true;
+  if (type === 'application/x-7z-compressed') return true;
+  if (type === 'application/x-rar-compressed') return true;
+  if (type === 'application/wasm') return true;
+  return !isTextualContentType(type);
+}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -133,6 +175,13 @@ export function redactBodyText(value: string): string {
 }
 
 function sanitizePayload(payload: HttpLogRecord['request'] | HttpLogRecord['response']): typeof payload {
+  const contentType = payload.headers?.['content-type'];
+  if (isBinaryContentType(contentType)) {
+    return {
+      ...payload,
+      bodyPreview: payload.bodyBytes ? OMITTED_BINARY_BODY_PREVIEW : undefined,
+    };
+  }
   const preview = payload.bodyPreview
     ? redactBodyText(truncateUtf8(payload.bodyPreview, MAX_BODY_PREVIEW_BYTES))
     : payload.bodyPreview;
@@ -162,8 +211,22 @@ export function redactHeaders(headers: IncomingHttpHeaders | Record<string, unkn
   return out;
 }
 
-export function bodyPreviewFromUnknown(value: unknown): { bodyPreview?: string; bodyBytes?: number } {
+export function bodyPreviewFromUnknown(value: unknown, contentType?: unknown): { bodyPreview?: string; bodyBytes?: number } {
   if (value == null) return {};
+  if (Buffer.isBuffer(value)) {
+    return {
+      bodyPreview: isBinaryContentType(contentType) && value.length > 0 ? OMITTED_BINARY_BODY_PREVIEW : truncateUtf8(redactBodyText(value.toString('utf8').replace(/\0/g, '')), MAX_BODY_PREVIEW_BYTES),
+      bodyBytes: value.length,
+    };
+  }
+  if (isBinaryContentType(contentType)) {
+    let bodyBytes: number | undefined;
+    if (typeof value === 'string') bodyBytes = Buffer.byteLength(value, 'utf8');
+    else {
+      try { bodyBytes = Buffer.byteLength(JSON.stringify(value), 'utf8'); } catch { bodyBytes = undefined; }
+    }
+    return { bodyPreview: bodyBytes ? OMITTED_BINARY_BODY_PREVIEW : undefined, bodyBytes };
+  }
   let text: string;
   if (typeof value === 'string') text = value;
   else {
@@ -180,18 +243,19 @@ export function bodyPreviewFromUnknown(value: unknown): { bodyPreview?: string; 
   };
 }
 
-export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
+export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType?: unknown): {
   onChunk(chunk: Buffer | string): void;
-  snapshot(): { bodyPreview?: string; bodyBytes: number };
+  snapshot(contentTypeOverride?: unknown): { bodyPreview?: string; bodyBytes: number };
 } {
   let bodyBytes = 0;
   let capturedBytes = 0;
   const chunks: Buffer[] = [];
+  const shouldCapturePreview = (type?: unknown) => !isBinaryContentType(type ?? contentType);
   return {
     onChunk(chunk) {
       if (Buffer.isBuffer(chunk)) {
         bodyBytes += chunk.length;
-        if (capturedBytes < maxBytes) {
+        if (shouldCapturePreview() && capturedBytes < maxBytes) {
           const part = chunk.subarray(0, maxBytes - capturedBytes);
           chunks.push(part);
           capturedBytes += part.length;
@@ -201,6 +265,7 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
 
       const text = String(chunk);
       bodyBytes += Buffer.byteLength(text, 'utf8');
+      if (!shouldCapturePreview()) return;
       if (capturedBytes >= maxBytes) return;
 
       // Do not Buffer.from() the full response string. Some JSON endpoints
@@ -213,7 +278,13 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
       chunks.push(part);
       capturedBytes += part.length;
     },
-    snapshot() {
+    snapshot(contentTypeOverride?: unknown) {
+      if (isBinaryContentType(contentTypeOverride ?? contentType)) {
+        return {
+          bodyPreview: bodyBytes > 0 ? OMITTED_BINARY_BODY_PREVIEW : undefined,
+          bodyBytes,
+        };
+      }
       const preview = redactBodyText(Buffer.concat(chunks).toString('utf8').replace(/\0/g, ''));
       return {
         bodyPreview: preview ? truncateUtf8(preview, maxBytes) : undefined,
