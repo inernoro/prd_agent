@@ -81,8 +81,18 @@ function globalRestOf(state: CdsState): GlobalRest {
 export class MongoSplitStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo-split' as const;
   private cache: CdsState | null = null;
+  private persistedCache: CdsState | null = null;
   private initialized = false;
-  private flushChain: Promise<void> = Promise.resolve();
+  private pendingSnapshot: CdsState | null = null;
+  private pendingGeneration = 0;
+  private writeInFlight = false;
+  private writeGeneration = 0;
+  private persistedGeneration = 0;
+  private flushWaiters: Array<{
+    generation: number;
+    resolve: () => void;
+    reject: (err: unknown) => void;
+  }> = [];
 
   constructor(private readonly handle: ISplitMongoHandle) {}
 
@@ -122,6 +132,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         branches,
       } as CdsState;
     }
+    this.persistedCache = this.cache ? structuredClone(this.cache) : null;
 
     this.initialized = true;
   }
@@ -131,83 +142,122 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   save(state: CdsState): void {
-    // 同步刷 cache，异步分发到 3 个 collection。
-    const previous = this.cache;
+    // 同步刷 cache；异步写入时只保留最新快照。部署日志会高频 save(),
+    // 如果每个快照都排队写 Mongo，后续 delete/stop 这种终止操作的
+    // flush() 会被旧快照拖住，甚至误判持久化超时。
     this.cache = structuredClone(state);
+    this.pendingSnapshot = this.cache;
+    this.pendingGeneration = ++this.writeGeneration;
+    this.drainWrites();
+  }
 
-    const snapshot = this.cache;
+  private async persistSnapshot(snapshot: CdsState, previous: CdsState | null): Promise<void> {
     const now = new Date().toISOString();
 
-    this.flushChain = this.flushChain
-      .catch(() => { /* 旧错误吞掉,链路继续 */ })
-      .then(async () => {
-        // ── 1) Global rest（单文档，replaceOne 即可）──
-        const restOfState = globalRestOf(snapshot);
-        const previousRest = previous ? globalRestOf(previous) : null;
-        if (!previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
-          await this.handle.globalCollection().replaceOne(
-            { _id: GLOBAL_DOC_ID },
-            { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
-            { upsert: true },
-          );
-        }
+    // ── 1) Global rest（单文档，replaceOne 即可）──
+    const restOfState = globalRestOf(snapshot);
+    const previousRest = previous ? globalRestOf(previous) : null;
+    if (!previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
+      await this.handle.globalCollection().replaceOne(
+        { _id: GLOBAL_DOC_ID },
+        { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
+        { upsert: true },
+      );
+    }
 
-        // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
-        const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
-        const previousProjectIds = new Set((previous?.projects || []).map((p) => p.id));
-        const previousProjects = new Map((previous?.projects || []).map((p) => [p.id, p]));
+    // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
+    const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
+    const previousProjectIds = new Set((previous?.projects || []).map((p) => p.id));
+    const previousProjects = new Map((previous?.projects || []).map((p) => [p.id, p]));
 
-        const projectOps: unknown[] = [];
-        for (const project of snapshot.projects || []) {
-          const previousProject = previousProjects.get(project.id);
-          if (!previousProject || stableJson(project) !== stableJson(previousProject)) {
-            projectOps.push({
-              replaceOne: {
-                filter: { _id: project.id },
-                replacement: { _id: project.id, doc: project, updatedAt: now },
-                upsert: true,
-              },
-            });
-          }
-        }
-        for (const id of previousProjectIds) {
-          if (newProjectIds.has(id)) continue;
-          projectOps.push({ deleteOne: { filter: { _id: id } } });
-        }
-        if (projectOps.length > 0) {
-          await this.handle.projectsCollection().bulkWrite(projectOps);
-        }
+    const projectOps: unknown[] = [];
+    for (const project of snapshot.projects || []) {
+      const previousProject = previousProjects.get(project.id);
+      if (!previousProject || stableJson(project) !== stableJson(previousProject)) {
+        projectOps.push({
+          replaceOne: {
+            filter: { _id: project.id },
+            replacement: { _id: project.id, doc: project, updatedAt: now },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of previousProjectIds) {
+      if (newProjectIds.has(id)) continue;
+      projectOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (projectOps.length > 0) {
+      await this.handle.projectsCollection().bulkWrite(projectOps);
+    }
 
-        // ── 3) Branches collection（同样 bulkWrite）──
-        const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
-        const previousBranchIds = new Set(Object.keys(previous?.branches || {}));
+    // ── 3) Branches collection（同样 bulkWrite）──
+    const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
+    const previousBranchIds = new Set(Object.keys(previous?.branches || {}));
 
-        const branchOps: unknown[] = [];
-        for (const branch of Object.values(snapshot.branches || {})) {
-          const previousBranch = previous?.branches?.[branch.id];
-          if (!previousBranch || stableJson(branch) !== stableJson(previousBranch)) {
-            branchOps.push({
-              replaceOne: {
-                filter: { _id: branch.id },
-                replacement: {
-                  _id: branch.id,
-                  projectId: branch.projectId,
-                  doc: branch,
-                  updatedAt: now,
-                },
-                upsert: true,
-              },
-            });
-          }
+    const branchOps: unknown[] = [];
+    for (const branch of Object.values(snapshot.branches || {})) {
+      const previousBranch = previous?.branches?.[branch.id];
+      if (!previousBranch || stableJson(branch) !== stableJson(previousBranch)) {
+        branchOps.push({
+          replaceOne: {
+            filter: { _id: branch.id },
+            replacement: {
+              _id: branch.id,
+              projectId: branch.projectId,
+              doc: branch,
+              updatedAt: now,
+            },
+            upsert: true,
+          },
+        });
+      }
+    }
+    for (const id of previousBranchIds) {
+      if (newBranchIds.has(id)) continue;
+      branchOps.push({ deleteOne: { filter: { _id: id } } });
+    }
+    if (branchOps.length > 0) {
+      await this.handle.branchesCollection().bulkWrite(branchOps);
+    }
+  }
+
+  private drainWrites(): void {
+    if (this.writeInFlight) return;
+    this.writeInFlight = true;
+    void (async () => {
+      try {
+        while (this.pendingSnapshot) {
+          const snapshot = this.pendingSnapshot;
+          const generation = this.pendingGeneration;
+          this.pendingSnapshot = null;
+          await this.persistSnapshot(snapshot, this.persistedCache);
+          this.persistedCache = structuredClone(snapshot);
+          this.persistedGeneration = generation;
+          this.resolveFlushWaiters();
         }
-        for (const id of previousBranchIds) {
-          if (newBranchIds.has(id)) continue;
-          branchOps.push({ deleteOne: { filter: { _id: id } } });
-        }
-        if (branchOps.length > 0) {
-          await this.handle.branchesCollection().bulkWrite(branchOps);
-        }
-      });
+      } catch (err) {
+        this.rejectFlushWaiters(err);
+      } finally {
+        this.writeInFlight = false;
+        if (this.pendingSnapshot) this.drainWrites();
+      }
+    })();
+  }
+
+  private resolveFlushWaiters(): void {
+    const pending: typeof this.flushWaiters = [];
+    for (const waiter of this.flushWaiters) {
+      if (waiter.generation <= this.persistedGeneration) waiter.resolve();
+      else pending.push(waiter);
+    }
+    this.flushWaiters = pending;
+  }
+
+  private rejectFlushWaiters(err: unknown): void {
+    const waiters = this.flushWaiters;
+    this.flushWaiters = [];
+    for (const waiter of waiters) waiter.reject(err);
   }
 
   async forceFullSave(state: CdsState): Promise<void> {
@@ -256,10 +306,18 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       if (!newBranchIds.has(id)) branchOps.push({ deleteOne: { filter: { _id: id } } });
     }
     if (branchOps.length > 0) await this.handle.branchesCollection().bulkWrite(branchOps);
+    this.persistedCache = structuredClone(snapshot);
+    this.persistedGeneration = this.writeGeneration;
   }
 
   async flush(): Promise<void> {
-    await this.flushChain;
+    const targetGeneration = this.writeGeneration;
+    if (targetGeneration <= this.persistedGeneration) return;
+    await new Promise<void>((resolve, reject) => {
+      this.flushWaiters.push({ generation: targetGeneration, resolve, reject });
+      this.resolveFlushWaiters();
+      this.drainWrites();
+    });
   }
 
   async close(): Promise<void> {

@@ -22,6 +22,7 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
   bulkWrites: unknown[][] = [];
   replaceWrites: TDoc[] = [];
   findCalls = 0;
+  bulkWriteGate: Promise<void> | null = null;
 
   async findOne(filter: { _id: string }): Promise<TDoc | null> {
     return this.docs.get(filter._id) || null;
@@ -42,6 +43,11 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
   }
 
   async bulkWrite(operations: Array<unknown>): Promise<void> {
+    if (this.bulkWriteGate) {
+      const gate = this.bulkWriteGate;
+      this.bulkWriteGate = null;
+      await gate;
+    }
     this.bulkWrites.push(operations);
     for (const op of operations as Array<any>) {
       if (op.replaceOne) {
@@ -123,5 +129,43 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.global.docs.has('global')).toBe(true);
     expect(handle.projects.docs.has('prd-agent')).toBe(true);
     expect(handle.branches.docs.has('a')).toBe(true);
+  });
+
+  it('coalesces queued snapshots so a delete is not delayed by stale branch updates', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+    };
+    store.save(state);
+    await store.flush();
+
+    handle.branches.bulkWrites = [];
+    let release!: () => void;
+    handle.branches.bulkWriteGate = new Promise<void>((resolve) => { release = resolve; });
+
+    const building = structuredClone(state);
+    building.branches.a.status = 'building';
+    store.save(building);
+
+    const running = structuredClone(building);
+    running.branches.a.status = 'running';
+    store.save(running);
+
+    const deleted = structuredClone(running);
+    delete deleted.branches.a;
+    store.save(deleted);
+
+    const flushed = store.flush();
+    release();
+    await flushed;
+
+    expect(handle.branches.docs.has('a')).toBe(false);
+    expect(handle.branches.bulkWrites).toHaveLength(2);
+    expect(handle.branches.bulkWrites[1]).toEqual([{ deleteOne: { filter: { _id: 'a' } } }]);
   });
 });
