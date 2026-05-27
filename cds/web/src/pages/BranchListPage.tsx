@@ -3842,6 +3842,7 @@ function BranchCard({
    * the bottom; low-frequency actions live in a kebab dropdown.
    */
   const busy = action?.status === 'running' || isBusy(branch);
+  const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
   const services = Object.values(branch.services || {});
   // 用户反馈(2026-05-04):"+1 显得很多余,明明都可以显示" — 不再 slice(0,1) +
@@ -4035,6 +4036,7 @@ function BranchCard({
         <div className="flex shrink-0 items-start" onClick={(event) => event.stopPropagation()}>
           <BranchMoreMenu
             busy={busy}
+            deleteDisabled={deleteBusy}
             branch={branch}
             onPull={onPull}
             onStop={onStop}
@@ -4500,6 +4502,7 @@ function BranchCard({
 
 function BranchMoreMenu({
   busy,
+  deleteDisabled,
   branch,
   onPull,
   onStop,
@@ -4511,6 +4514,7 @@ function BranchMoreMenu({
   onDelete,
 }: {
   busy: boolean;
+  deleteDisabled: boolean;
   branch: BranchSummary;
   onPull: () => void;
   onStop: () => void;
@@ -4527,7 +4531,7 @@ function BranchMoreMenu({
         title={`删除分支 ${branch.branch}？`}
         description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
         confirmLabel="确认删除(不可恢复)"
-        disabled={busy}
+        disabled={deleteDisabled}
         onConfirm={onDelete}
         trigger={(
           <button
