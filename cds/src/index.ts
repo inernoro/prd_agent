@@ -920,25 +920,42 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
       ts: nowIso(),
     },
   });
+  const lifecycleTrigger = event.lifecycleIntent
+    ? event.lifecycleIntent.trigger || event.lifecycleIntent.actor || 'cds'
+    : classified.unexpected
+      ? 'external'
+      : classified.source;
+  const lifecycleActor = event.lifecycleIntent?.actor || (classified.source === 'cds' ? 'cds' : 'docker-events');
+  const lifecycleSource = event.lifecycleIntent?.source || 'docker-events-state-sync';
+  const syncAction = classified.source === 'cds'
+    ? 'app.cds-stop.synced'
+    : classified.unexpected
+      ? 'app.external-stop.unexpected-synced'
+      : 'app.lifecycle-stop.synced';
   activeServerEventLogStore?.record({
     category: 'container',
     severity: classified.unexpected ? 'error' : 'warn',
     source: 'docker-events-state-sync',
-    action: classified.unexpected ? 'app.external-stop.unexpected-synced' : 'app.external-stop.synced',
+    action: syncAction,
     message: classified.reason,
     projectId: branch.projectId,
     branchId: branch.id,
     profileId: event.profileId,
     requestId: event.lifecycleIntent?.requestId || null,
     operationId: event.lifecycleIntent?.operationId || null,
+    operationKind: event.lifecycleIntent?.operation || event.lifecycleIntent?.kind || null,
+    operationTrigger: lifecycleTrigger,
+    operationActor: lifecycleActor,
+    operationSource: lifecycleSource,
+    commitSha: branch.githubCommitSha || null,
     containerName: event.containerName,
     status: svc.status,
     details: {
       operationId: event.lifecycleIntent?.operationId || null,
       requestId: event.lifecycleIntent?.requestId || null,
-      actor: event.lifecycleIntent?.actor || 'docker-events',
-      trigger: event.lifecycleIntent?.trigger || 'external',
-      source: event.lifecycleIntent?.source || 'docker-events-state-sync',
+      actor: lifecycleActor,
+      trigger: lifecycleTrigger,
+      source: lifecycleSource,
       commitSha: branch.githubCommitSha || null,
       action,
       previousStatus,
