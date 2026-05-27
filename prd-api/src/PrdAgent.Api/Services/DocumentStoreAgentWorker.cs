@@ -34,6 +34,32 @@ public class DocumentStoreAgentWorker : BackgroundService
     {
         _logger.LogInformation("[doc-store-agent] Worker started");
 
+        // 启动兜底回收：上一个容器异常退出（重新部署 / 崩溃 / SIGKILL）时，正在处理的
+        // run 会残留为 Running 状态——此刻已没有任何 worker 在跑它，但前端 getAgentRun
+        // 永远拿到非终态、SSE 续传也收不到 done/error，进度卡片就卡死在「调用 LLM N%」。
+        // 这里把所有残留 Running 标记为失败，让前端刷新后自愈为「加工失败」（server-authority #5）。
+        // 注意：只回收 Running，Queued 留给正常拾取流程，不误杀未开始的任务。
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            var recovered = await db.DocumentStoreAgentRuns.UpdateManyAsync(
+                r => r.Status == DocumentStoreRunStatus.Running,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                    .Set(r => r.ErrorMessage, "服务重启，任务被中断")
+                    .Set(r => r.EndedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            if (recovered.ModifiedCount > 0)
+                _logger.LogWarning(
+                    "[doc-store-agent] 启动兜底：{Count} 个残留 Running 任务标记为失败",
+                    recovered.ModifiedCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[doc-store-agent] 启动兜底回收失败");
+        }
+
         try
         {
             while (!stoppingToken.IsCancellationRequested)
