@@ -193,6 +193,7 @@ describe('Branch Routes', () => {
   });
 
   afterEach(async () => {
+    delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
   });
@@ -1237,8 +1238,10 @@ describe('Branch Routes', () => {
         await new Promise<void>(() => { /* simulate stuck write-behind persistence */ });
       };
 
+      process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS = '500';
       const startedAt = Date.now();
       const del = await request(server, 'DELETE', '/api/branches/hung-flush-delete');
+      delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
       const elapsedMs = Date.now() - startedAt;
 
       expect(elapsedMs).toBeLessThan(2_000);

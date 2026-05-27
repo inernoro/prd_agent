@@ -85,8 +85,14 @@ const selfStatusClients = new Set<import('express').Response>();
 let broadcastInFlight = false;
 let broadcastQueued = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
-const DELETE_STATE_FLUSH_TIMEOUT_MS = 500;
+const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 5_000;
 const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = 1000;
+
+function getDeleteStateFlushTimeoutMs(): number {
+  const raw = Number(process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS;
+  return Math.max(100, Math.min(raw, 30_000));
+}
 
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
@@ -4107,6 +4113,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       sse: true,
     });
     if (branchOperationCoordinator && !branchOperationLease) return;
+    const operationAuditFields = {
+      operationKind: 'delete',
+      operationTrigger: trigger === 'webhook' ? 'webhook' : 'manual',
+      operationActor: actor,
+      operationSource: 'api.delete-branch',
+      commitSha: entry.githubCommitSha || entry.lastDeployDispatchCommitSha || entry.pinnedCommit || null,
+    } as const;
 
     serverEventLogStore?.record({
       category: 'container',
@@ -4118,6 +4131,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: entry.id,
       requestId: requestId || null,
       operationId: branchOperationLease?.operationId || null,
+      ...operationAuditFields,
       details: {
         actor,
         trigger: trigger || null,
@@ -4133,6 +4147,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
+      const deleteStateFlushTimeoutMs = getDeleteStateFlushTimeoutMs();
       const flushResult = await Promise.race([
         stateService.flush().then(() => 'flushed' as const).catch((err) => {
           serverEventLogStore?.record({
@@ -4145,13 +4160,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
             branchId: entry.id,
             requestId: requestId || null,
             operationId: branchOperationLease?.operationId || null,
+            ...operationAuditFields,
             error: { message: (err as Error).message },
             details: { actor, trigger: trigger || null },
           });
           return 'failed' as const;
         }),
         new Promise<'timeout'>((resolve) => {
-          const timer = setTimeout(() => resolve('timeout'), DELETE_STATE_FLUSH_TIMEOUT_MS);
+          const timer = setTimeout(() => resolve('timeout'), deleteStateFlushTimeoutMs);
           timer.unref?.();
         }),
       ]);
@@ -4161,12 +4177,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
           severity: 'warn',
           source: 'branch-delete',
           action: 'branch.delete.state-flush-timeout',
-          message: `state flush timed out while deleting ${id}; continuing delete response`,
+          message: `state flush timed out while deleting ${id}; delete success not reported`,
           projectId: entry.projectId,
           branchId: entry.id,
           requestId: requestId || null,
           operationId: branchOperationLease?.operationId || null,
-          details: { actor, trigger: trigger || null, timeoutMs: DELETE_STATE_FLUSH_TIMEOUT_MS },
+          ...operationAuditFields,
+          details: { actor, trigger: trigger || null, timeoutMs: deleteStateFlushTimeoutMs },
         });
         throw new Error(`分支 "${id}" 已停止容器并移出当前内存状态，但删除状态持久化超时；未返回成功，避免重启后误判为已删除。请稍后刷新确认或重试删除。`);
       }
@@ -4187,6 +4204,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchId: entry.id,
         requestId: requestId || null,
         operationId: branchOperationLease?.operationId || null,
+        ...operationAuditFields,
         details: { actor, trigger: trigger || null },
       } as const;
       if (!serverEventLogStore) return;
@@ -4219,6 +4237,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           branchId: entry.id,
           requestId: requestId || null,
           operationId: branchOperationLease?.operationId || null,
+          ...operationAuditFields,
           details: { actor, trigger: trigger || null, timeoutMs: DELETE_COMPLETION_AUDIT_TIMEOUT_MS },
         });
       }
