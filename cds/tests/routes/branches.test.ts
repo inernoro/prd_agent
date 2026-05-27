@@ -768,6 +768,101 @@ describe('Branch Routes', () => {
       expect(actions).toContain('branch.operation.completed');
       expect(actions).toContain('branch.operation.queued');
     });
+
+    it('keeps force-rebuild deploy continuation on the same operation while merging webhook deploys behind it', async () => {
+      const now = new Date().toISOString();
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'force-webhook',
+        projectId: 'default',
+        branch: 'feature/force-webhook',
+        worktreePath: path.join(tmpDir, 'worktrees', 'force-webhook'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-force-webhook-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+      mock.addResponsePattern(/find .* -type d .* echo done/, () => ({ stdout: 'done\n', stderr: '', exitCode: 0 }));
+
+      const fetchCalls: Array<{ url: string; body: unknown; requestId?: string }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
+            : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const force = await request(
+          server,
+          'POST',
+          '/api/branches/force-webhook/force-rebuild/api?reserveDeploy=1',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-force' },
+        );
+        expect(force.status).toBe(200);
+        const forceOperationId = (force.body as any).operationId;
+        expect(forceOperationId).toMatch(/^op_/);
+
+        const webhook = await request(
+          server,
+          'POST',
+          '/api/branches/force-webhook/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-force-webhook' },
+        );
+        expect(String(webhook.body)).toContain('merged');
+        expect(fetchCalls).toEqual([]);
+
+        const deploy = await request(
+          server,
+          'POST',
+          '/api/branches/force-webhook/deploy/api',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-force-deploy' },
+        );
+        expect(deploy.status).toBe(200);
+        expect(String(deploy.body)).toContain('complete');
+        expect(stateService.getBranch('force-webhook')?.status).toBe('running');
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0].url).toContain('/api/branches/force-webhook/deploy');
+        expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222' });
+        expect(fetchCalls[0].requestId).toBe('req-force-webhook');
+
+        const events = operationEvents.filter((event) => event.branchId === 'force-webhook');
+        expect(events.find((event) => event.action === 'branch.operation.queued')?.operationId).toBe(forceOperationId);
+        expect(events.find((event) => event.action === 'branch.operation.continued')?.operationId).toBe(forceOperationId);
+        const deployStarted = events.find((event) => event.action === 'branch.operation.started' && event.details?.kind === 'deploy-profile');
+        expect(deployStarted?.operationId).toBe(forceOperationId);
+        const pendingDispatch = events.find((event) => event.action === 'branch.operation.pending-dispatch.started');
+        expect(pendingDispatch?.details).toMatchObject({
+          commitSha: '2222222222222222222222222222222222222222',
+          mergedCount: 1,
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('branch operation fencing', () => {
