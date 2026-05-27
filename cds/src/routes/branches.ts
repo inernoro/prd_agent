@@ -919,6 +919,8 @@ export async function validateBuildReadiness(
   const skipCdsTsc = !!cdsLastTscChange && cdsCachedTscSha === cdsLastTscChange;
   const runWebTsc = webExists && webInstallResult && webInstallResult.exitCode === 0;
   const skipWebTsc = runWebTsc && !!webLastTscChange && webCachedTscSha === webLastTscChange;
+  const cdsTscTimeoutMs = Math.max(120_000, Number.parseInt(process.env.CDS_SELF_UPDATE_TSC_TIMEOUT_MS || '300000', 10) || 300_000);
+  const webTscTimeoutMs = Math.max(180_000, Number.parseInt(process.env.CDS_SELF_UPDATE_WEB_TSC_TIMEOUT_MS || '300000', 10) || 300_000);
   progress({
     phase: 'validate-tsc',
     status: 'running',
@@ -941,13 +943,13 @@ export async function validateBuildReadiness(
     timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
       skipCdsTsc
         ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
-        : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
+        : shell.exec('npx tsc --noEmit', { cwd: cdsDir, timeout: cdsTscTimeoutMs }),
     ),
     runWebTsc
       ? timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
           skipWebTsc
             ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc web (input sha unchanged)', stderr: '' })
-            : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: 180_000 }),
+            : shell.exec('npx tsc --noEmit', { cwd: webDir, timeout: webTscTimeoutMs }),
         )
       : Promise.resolve(null),
   ]);
