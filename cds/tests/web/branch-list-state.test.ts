@@ -96,6 +96,19 @@ describe('branch list state reducer', () => {
     expect(second.needsEmptyRecheck).toBe(false);
   });
 
+  it('rechecks an empty response when project metadata says branches still exist', () => {
+    const result = reduceBranchListState(slice([]), {
+      type: 'authoritativeLoaded',
+      branches: [],
+      source: '分支列表刷新',
+      projectBranchCount: 2,
+    });
+
+    expect(result.state.branches).toHaveLength(0);
+    expect(result.state.projectWarning).toContain('仍有 2 个分支');
+    expect(result.needsEmptyRecheck).toBe(true);
+  });
+
   it('does not change branches for malformed SSE events', () => {
     const current = slice(branches(4));
     const result = reduceBranchListState(current, {
