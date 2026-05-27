@@ -1154,6 +1154,71 @@ describe('Branch Routes', () => {
       expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy');
     });
 
+    it('manual delete before docker run prevents a fenced webhook deploy from creating containers', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-delete-before-run',
+        projectId: 'default',
+        branch: 'feature/race-delete-before-run',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-delete-before-run'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseReset!: () => void;
+      const resetRelease = new Promise<void>((resolve) => { releaseReset = resolve; });
+      let markResetStarted!: () => void;
+      const resetStarted = new Promise<void>((resolve) => { markResetStarted = resolve; });
+      let dockerRunCount = 0;
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('git reset --hard')) {
+          markResetStarted();
+          await resetRelease;
+          return { stdout: 'HEAD is now at abc1234', stderr: '', exitCode: 0 };
+        }
+        if (command.includes('docker run -d') && command.includes('--name cds-race-delete-before-run-api')) {
+          dockerRunCount += 1;
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(
+        server,
+        'POST',
+        '/api/branches/race-delete-before-run/deploy',
+        { commitSha: '2222222222222222222222222222222222222222' },
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      await resetStarted;
+
+      const del = await request(server, 'DELETE', '/api/branches/race-delete-before-run');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('race-delete-before-run')).toBeUndefined();
+
+      releaseReset();
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('no longer current');
+      expect(stateService.getBranch('race-delete-before-run')).toBeUndefined();
+      expect(dockerRunCount).toBe(0);
+
+      const events = operationEvents.filter((event) => event.branchId === 'race-delete-before-run');
+      expect(events.map((event) => event.action)).toContain('container.remove.after-fenced-deploy.skipped');
+      expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy');
+    });
+
     it('manual stop clears an active and queued webhook deploy without dispatching the queued commit', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api',

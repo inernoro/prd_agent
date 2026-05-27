@@ -1081,6 +1081,7 @@ interface RunServiceWithPortRetryOptions {
   operationId?: string | null;
   actor?: string | null;
   trigger?: string | null;
+  assertCurrent?: (step: string) => void;
   onOutput?: (chunk: string) => void;
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
 }
@@ -1089,6 +1090,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
   const maxAttempts = 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      options.assertCurrent?.(`before-run-${options.profile.id}`);
       await options.containerService.runService(
         options.entry,
         options.profile,
@@ -4644,6 +4646,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               operationId: branchOperationLease?.operationId || null,
               actor: resolveActorFromRequest(req),
               trigger: triggerFromRequest(req),
+              assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -5193,6 +5196,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           operationId: branchOperationLease?.operationId || null,
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
+          assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
