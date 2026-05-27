@@ -476,37 +476,37 @@
 .pa-agent-main::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -15%;
   z-index: 0;
   pointer-events: none;
   border-radius: inherit;
   background: var(--pa-breath-layer, transparent);
-  opacity: 0.95;
-  will-change: transform, opacity;
-  animation: pa-breath-pan 11s ease-in-out infinite;
+  opacity: 1;
+  will-change: transform, opacity, filter;
+  animation: pa-breath-pan 8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 .pa-agent-sidebar::after,
 .pa-agent-main::after {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -15%;
   z-index: 0;
   pointer-events: none;
   border-radius: inherit;
   background: var(--pa-breath-layer-2, transparent);
-  opacity: 0.85;
+  opacity: 0.95;
   mix-blend-mode: var(--pa-breath-blend, screen);
-  will-change: transform, opacity;
-  animation: pa-breath-pan-alt 13s ease-in-out infinite;
+  will-change: transform, opacity, filter;
+  animation: pa-breath-pan-alt 9.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 @keyframes pa-breath-pan {
-  0%, 100% { transform: scale(1) translate(0, 0); opacity: 0.85; }
-  50% { transform: scale(1.06) translate(-1.5%, 1.2%); opacity: 1; }
+  0%, 100% { transform: scale(1) translate(0, 0); opacity: 0.55; filter: blur(0px); }
+  50% { transform: scale(1.18) translate(-3.2%, 2.6%); opacity: 1; filter: blur(2px); }
 }
 @keyframes pa-breath-pan-alt {
-  0%, 100% { transform: scale(1.04) translate(1%, -1%); opacity: 0.7; }
-  50% { transform: scale(1) translate(-0.8%, 1.5%); opacity: 0.95; }
+  0%, 100% { transform: scale(1.16) translate(2.8%, -2.4%); opacity: 0.55; filter: blur(2px); }
+  50% { transform: scale(1) translate(-2.2%, 3%); opacity: 1; filter: blur(0px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -556,11 +556,11 @@
 .pa-agent-root[data-pa-theme="gemini"] {
   --pa-bg-base: linear-gradient(180deg, #f5f6f8 0%, #f2f3f6 100%);
   --pa-breath-layer:
-    radial-gradient(50% 40% at 28% 30%, rgba(180, 210, 250, 0.55) 0%, transparent 70%),
-    radial-gradient(55% 45% at 78% 70%, rgba(205, 227, 248, 0.6) 0%, transparent 72%);
+    radial-gradient(55% 45% at 25% 28%, rgba(125, 175, 255, 0.85) 0%, rgba(125, 175, 255, 0.25) 45%, transparent 72%),
+    radial-gradient(60% 50% at 82% 72%, rgba(160, 200, 255, 0.85) 0%, rgba(160, 200, 255, 0.22) 45%, transparent 75%);
   --pa-breath-layer-2:
-    radial-gradient(45% 38% at 70% 22%, rgba(196, 181, 253, 0.4) 0%, transparent 75%),
-    radial-gradient(40% 35% at 22% 80%, rgba(186, 230, 253, 0.45) 0%, transparent 75%);
+    radial-gradient(50% 42% at 72% 22%, rgba(168, 140, 255, 0.7) 0%, rgba(168, 140, 255, 0.18) 48%, transparent 78%),
+    radial-gradient(45% 38% at 20% 82%, rgba(110, 200, 255, 0.7) 0%, rgba(110, 200, 255, 0.2) 48%, transparent 78%);
   --pa-breath-blend: screen;
   --pa-bg-elevated: rgba(255, 255, 255, 0.68);
   --pa-bg-hover: rgba(232, 236, 242, 0.92);
@@ -583,11 +583,11 @@
 .pa-agent-root[data-pa-theme="mountain"] {
   --pa-bg-base: linear-gradient(165deg, #0a1628 0%, #0c1e3a 42%, #061018 100%);
   --pa-breath-layer:
-    radial-gradient(60% 45% at 20% 18%, rgba(34, 211, 238, 0.32) 0%, transparent 72%),
-    radial-gradient(55% 45% at 82% 78%, rgba(99, 102, 241, 0.3) 0%, transparent 72%);
+    radial-gradient(65% 50% at 18% 18%, rgba(34, 211, 238, 0.7) 0%, rgba(34, 211, 238, 0.18) 45%, transparent 72%),
+    radial-gradient(60% 50% at 84% 80%, rgba(99, 102, 241, 0.65) 0%, rgba(99, 102, 241, 0.18) 45%, transparent 72%);
   --pa-breath-layer-2:
-    radial-gradient(48% 38% at 72% 16%, rgba(56, 189, 248, 0.22) 0%, transparent 75%),
-    radial-gradient(42% 36% at 24% 84%, rgba(129, 140, 248, 0.22) 0%, transparent 75%);
+    radial-gradient(55% 42% at 74% 14%, rgba(56, 189, 248, 0.55) 0%, rgba(56, 189, 248, 0.15) 48%, transparent 76%),
+    radial-gradient(50% 40% at 22% 86%, rgba(129, 140, 248, 0.55) 0%, rgba(129, 140, 248, 0.15) 48%, transparent 76%);
   --pa-breath-blend: screen;
   --pa-bg-elevated: rgba(255, 255, 255, 0.06);
   --pa-bg-hover: rgba(255, 255, 255, 0.1);
@@ -610,11 +610,11 @@
 .pa-agent-root[data-pa-theme="parchment"] {
   --pa-bg-base: #f8f6f1;
   --pa-breath-layer:
-    radial-gradient(55% 45% at 22% 22%, rgba(255, 244, 214, 0.62) 0%, transparent 72%),
-    radial-gradient(50% 42% at 80% 78%, rgba(232, 220, 192, 0.55) 0%, transparent 72%);
+    radial-gradient(60% 50% at 20% 22%, rgba(255, 220, 150, 0.9) 0%, rgba(255, 220, 150, 0.25) 48%, transparent 76%),
+    radial-gradient(55% 45% at 82% 78%, rgba(214, 175, 110, 0.85) 0%, rgba(214, 175, 110, 0.22) 48%, transparent 76%);
   --pa-breath-layer-2:
-    radial-gradient(45% 38% at 75% 22%, rgba(214, 191, 152, 0.32) 0%, transparent 75%),
-    radial-gradient(42% 36% at 22% 78%, rgba(252, 233, 197, 0.45) 0%, transparent 75%);
+    radial-gradient(50% 42% at 76% 20%, rgba(220, 170, 100, 0.6) 0%, rgba(220, 170, 100, 0.18) 50%, transparent 78%),
+    radial-gradient(45% 38% at 20% 80%, rgba(255, 215, 140, 0.75) 0%, rgba(255, 215, 140, 0.22) 50%, transparent 78%);
   --pa-breath-blend: multiply;
   --pa-bg-elevated: #fffcf8;
   --pa-bg-hover: #f0ebe4;

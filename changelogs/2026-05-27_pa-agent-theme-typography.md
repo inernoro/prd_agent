@@ -31,3 +31,4 @@
 | fix | prd-admin | 空状态 hero 图标重制为深蓝科技风（与首页卡片同款），含 idle/hover 星芒动效 |
 | feat | prd-admin | 毒舌秘书圆角内容层背景加呼吸动效：双层径向光晕错相位 11s/13s 缓慢呼吸，三主题适配，尊重 prefers-reduced-motion |
 | feat | prd-admin | 空状态标题「毒舌秘书」加流星扫光动效（background-clip:text 渐变高光带 5.4s 循环），三主题各自高光色 |
+| fix | prd-admin | 强化圆角层背景呼吸效果：光晕饱和度+亮度提升，scale 拉到 1.18、opacity 0.55↔1，周期缩到 8s/9.5s，并加 blur 微焦交替，呼吸感更明显 |
