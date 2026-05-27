@@ -630,8 +630,8 @@ export default function WebPagesPage() {
 
       {/* Toolbar */}
       <GlassCard className="p-3">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* 我的 / 团队 切换 + 管理团队 */}
+        {/* 顶部行：我的 / 共享文件夹 切换 + 头部 banner 操作 + 我的权限 */}
+        <div className="flex flex-wrap items-center gap-2">
           <TeamScopeBar
             moduleKey="web-hosting"
             value={teamScope}
@@ -646,6 +646,10 @@ export default function WebPagesPage() {
               我的权限：{WEB_HOSTING_ROLE_LABEL[myWebHostingRole]}
             </span>
           )}
+        </div>
+
+        {/* 第二行：筛选 / 视图控件 */}
+        <div className="flex flex-wrap items-center gap-3 mt-3">
           {/* 文件夹管理 + 按文件夹生成 */}
           <button
             type="button"
