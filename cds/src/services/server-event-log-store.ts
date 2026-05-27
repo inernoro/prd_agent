@@ -57,6 +57,7 @@ export interface ServerEventLogStoreOptions {
 
 export interface ServerEventLogSink {
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void;
+  recordImmediate?(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): Promise<void>;
   flush?(): Promise<void>;
   findRecent?(filter?: {
     limit?: number;
@@ -212,7 +213,27 @@ export class ServerEventLogStore implements ServerEventLogSink {
 
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
     if (!this.collection) return;
-    const doc: ServerEventRecord = {
+    const doc = this.buildDocument(record);
+
+    this.chain = this.chain
+      .catch(() => { /* keep chain alive */ })
+      .then(async () => {
+        await this.collection!.insertOne(doc);
+        this.schedulePrune();
+      })
+      .catch((err) => {
+        console.warn(`[server-event-log] write failed: ${(err as Error).message}`);
+      });
+  }
+
+  async recordImmediate(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): Promise<void> {
+    if (!this.collection) return;
+    await this.collection.insertOne(this.buildDocument(record));
+    this.schedulePrune();
+  }
+
+  private buildDocument(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): ServerEventRecord {
+    return {
       ...record,
       _id: `${createServerEventId()}:${Date.now()}`,
       ts: record.ts ? new Date(record.ts) : new Date(),
@@ -243,16 +264,6 @@ export class ServerEventLogStore implements ServerEventLogSink {
         }
         : undefined,
     };
-
-    this.chain = this.chain
-      .catch(() => { /* keep chain alive */ })
-      .then(async () => {
-        await this.collection!.insertOne(doc);
-        this.schedulePrune();
-      })
-      .catch((err) => {
-        console.warn(`[server-event-log] write failed: ${(err as Error).message}`);
-      });
   }
 
   async findRecent(filter: {

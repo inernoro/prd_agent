@@ -3944,7 +3944,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         type: 'branch.removed',
         payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
       });
-      serverEventLogStore?.record({
+      const completedEvent = {
         category: 'container',
         severity: 'warn',
         source: 'branch-delete',
@@ -3955,8 +3955,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         requestId: requestId || null,
         operationId: branchOperationLease?.operationId || null,
         details: { actor, trigger: trigger || null },
-      });
-      await serverEventLogStore?.flush?.();
+      } as const;
+      if (serverEventLogStore?.recordImmediate) {
+        await serverEventLogStore.recordImmediate(completedEvent);
+      } else {
+        serverEventLogStore?.record(completedEvent);
+      }
     };
 
     // ── Cluster-aware delete ──
