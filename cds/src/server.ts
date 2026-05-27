@@ -2072,6 +2072,16 @@ export function createServer(deps: ServerDeps): express.Express {
       if (bundleFreshness.staleReason === 'diff-failed' || bundleFreshness.staleReason === 'invalid-sha') {
         degradedReasons.push(`bundleFreshness: ${bundleFreshness.detail || bundleFreshness.staleReason}`);
       }
+      const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
+      const lastUpdate = history[0] || null;
+      const restartStatus =
+        lastUpdate?.status === 'success'
+          ? pidStartedAt
+            ? 'completed'
+            : 'incomplete'
+          : lastUpdate?.status === 'deferred'
+            ? 'pending'
+            : 'not_required';
 
       res.json({
         currentBranch,
@@ -2083,7 +2093,10 @@ export function createServer(deps: ServerDeps): express.Express {
         remoteAheadCount: 0,
         localAheadCount: 0,
         remoteAheadSubjects: [],
-        lastSelfUpdate: history[0] || null,
+        runningPid: process.pid,
+        pidStartedAt,
+        restartStatus,
+        lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,
         webBuildError,
@@ -2102,6 +2115,9 @@ export function createServer(deps: ServerDeps): express.Express {
         remoteAheadCount: 0,
         localAheadCount: 0,
         remoteAheadSubjects: [],
+        runningPid: process.pid,
+        pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
+        restartStatus: 'not_required',
         lastSelfUpdate: null,
         selfUpdateHistory: [],
         webBuildSha: '',
