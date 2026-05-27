@@ -1625,25 +1625,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     lease?.assertCurrent(step);
   }
 
-  function activeTerminalBranchOperations(): Array<{
+  function activeBranchOperations(): Array<{
     operationId: string;
     branchId: string;
     kind: BranchOperationKind;
     source?: string | null;
     requestId?: string | null;
   }> {
-    const terminalKinds = new Set<BranchOperationKind>([
-      'delete',
-      'stop',
-      'reset',
-      'cleanup-damaged',
-      'cleanup-orphans',
-      'factory-reset',
-      'janitor-remove',
-    ]);
     return branchOperationCoordinator
       ?.getActiveOperations()
-      .filter((active) => terminalKinds.has(active.request.kind))
       .map((active) => ({
         operationId: active.operationId,
         branchId: active.branchId,
@@ -1653,18 +1643,50 @@ export function createBranchRouter(deps: RouterDeps): Router {
       })) || [];
   }
 
-  function blockRestartForTerminalOperations(source: string): boolean {
-    const activeTerminal = activeTerminalBranchOperations();
-    if (activeTerminal.length === 0) return false;
+  async function waitForRestartSafeBranchOperations(
+    source: string,
+    timeoutMs = Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 180_000),
+    intervalMs = 1000,
+  ): Promise<{ ok: boolean; active: ReturnType<typeof activeBranchOperations> }> {
+    const firstActive = activeBranchOperations();
+    if (firstActive.length === 0) return { ok: true, active: [] };
+
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: 'info',
+      source,
+      action: 'self-update.restart.waiting',
+      message: `restart waiting for ${firstActive.length} active branch operation(s) to drain`,
+      details: { activeOperations: firstActive, timeoutMs },
+    });
+
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    let active = firstActive;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      active = activeBranchOperations();
+      if (active.length === 0) {
+        serverEventLogStore?.record({
+          category: 'system',
+          severity: 'info',
+          source,
+          action: 'self-update.restart.wait-completed',
+          message: 'restart branch-operation drain completed',
+          details: { waitedMs: Math.max(0, timeoutMs - (deadline - Date.now())) },
+        });
+        return { ok: true, active: [] };
+      }
+    }
+
     serverEventLogStore?.record({
       category: 'system',
       severity: 'warn',
       source,
       action: 'self-update.restart.deferred',
-      message: `restart deferred because ${activeTerminal.length} terminal branch operation(s) are active`,
-      details: { activeTerminal },
+      message: `restart deferred because ${active.length} branch operation(s) are still active`,
+      details: { activeOperations: active, timeoutMs },
     });
-    return true;
+    return { ok: false, active };
   }
 
   async function captureContainerLogSnapshots(
@@ -12379,10 +12401,11 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      if (blockRestartForTerminalOperations('api.self-update')) {
-        const message = 'CDS 已完成代码更新预检，但检测到删除/停止/清理等终止操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 self-update。';
+      const restartDrain = await waitForRestartSafeBranchOperations('api.self-update');
+      if (!restartDrain.ok) {
+        const message = 'CDS 已完成代码更新预检，但检测到仍有分支部署/删除/停止/清理等写操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 self-update。';
         send('restart', 'warning', message);
-        sendSSE(res, 'error', { message, code: 'terminal-operation-active' });
+        sendSSE(res, 'error', { message, code: 'branch-operation-active', activeOperations: restartDrain.active });
         res.end();
         recordFailure(message);
         return;
@@ -13172,10 +13195,11 @@ cdscli project list --human
       // helper 保证两端口行为一致。
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      if (blockRestartForTerminalOperations('api.self-force-sync')) {
-        const message = 'force-sync 已完成代码更新预检，但检测到删除/停止/清理等终止操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 force-sync。';
+      const restartDrain = await waitForRestartSafeBranchOperations('api.self-force-sync');
+      if (!restartDrain.ok) {
+        const message = 'force-sync 已完成代码更新预检，但检测到仍有分支部署/删除/停止/清理等写操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 force-sync。';
         send('restart', 'warning', message);
-        sendSSE(res, 'error', { message, code: 'terminal-operation-active' });
+        sendSSE(res, 'error', { message, code: 'branch-operation-active', activeOperations: restartDrain.active });
         res.end();
         recordFailure(message);
         return;
