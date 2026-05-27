@@ -11982,6 +11982,10 @@ cdscli project list --human
         durationMs: Date.now() - startedAt,
         actor,
       });
+      // Mongo-backed state is write-behind. This path exits the process about
+      // one second after sending the restart event, so the success record must
+      // be flushed before scheduling the replacement daemon.
+      await stateService.flush();
 
       // Step 4: restart CDS via detached process
       // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
@@ -12758,6 +12762,9 @@ cdscli project list --human
         // 把热路径决策记到流水里,UI 历史可分辨"重启 / 热重载 / no-op"
         ...({ updateMode: hotEligible ? 'hot-reload' : 'restart' } as Record<string, unknown>),
       });
+      // Same durability requirement as /api/self-update: this code path
+      // intentionally exits the daemon, so queued Mongo writes must land first.
+      await stateService.flush();
 
       // ★ 2026-05-06 双模式 self-update 出口:
       // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
