@@ -1250,6 +1250,101 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('records pending webhook drops with queryable operation metadata when the branch is gone', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'pending-gone',
+        projectId: 'default',
+        branch: 'feature/pending-gone',
+        worktreePath: path.join(tmpDir, 'worktrees', 'pending-gone'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-pending-gone-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-pending-gone', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        fetchCalls.push(String(input));
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/pending-gone/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-gone-a' },
+        );
+        await runStarted;
+
+        const merged = await request(
+          server,
+          'POST',
+          '/api/branches/pending-gone/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-gone-b' },
+        );
+        expect(String(merged.body)).toContain('merged');
+
+        stateService.removeBranch('pending-gone');
+        stateService.save();
+        releaseRun();
+
+        const active = await activeDeploy;
+        expect(active.status).toBe(200);
+        expect(fetchCalls).toHaveLength(0);
+
+        const pendingDrop = operationEvents.find((event) =>
+          event.branchId === 'pending-gone' && event.action === 'branch.operation.pending-drop',
+        );
+        expect(pendingDrop).toMatchObject({
+          requestId: 'req-gone-b',
+          operationId: expect.stringMatching(/^op_/),
+          operationKind: 'deploy',
+          operationTrigger: 'webhook',
+          operationActor: 'system:webhook',
+          operationSource: 'api.deploy-branch',
+          commitSha: '2222222222222222222222222222222222222222',
+        });
+        expect(pendingDrop?.details).toMatchObject({
+          operationId: pendingDrop?.operationId,
+          commitSha: '2222222222222222222222222222222222222222',
+          trigger: 'webhook',
+          actor: 'system:webhook',
+          source: 'api.deploy-branch',
+          kind: 'deploy',
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it('manual stop cancels queued webhook deploy dispatch after an active deploy is fenced', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api',
