@@ -32,11 +32,9 @@ import {
   canDeleteInWebHosting,
   canEditInWebHosting,
   canShareInWebHosting,
-  WEB_HOSTING_ROLE_LABEL,
 } from '@/lib/webHostingRole';
-import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { FolderChipBar, type FolderChip } from '@/components/team/FolderChipBar';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
-import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { FolderManager } from '@/components/web-hosting/FolderManager';
@@ -151,7 +149,6 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
 type GroupMode = 'time' | 'folder';
-const GROUP_MODE_KEY = 'web-pages-group-mode';
 
 /** 把日期格式化成分组标题：今天 / 昨天 / M月D日 / YYYY年M月D日 */
 function toDateBucketLabel(iso: string): string {
@@ -223,24 +220,25 @@ export default function WebPagesPage() {
   const [sites, setSites] = useState<HostedSite[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  // 我的 / 团队 作用域（默认我的）
-  const initialScope = useTeamStore.getState().getScope('web-hosting');
-  const [teamScope, setTeamScope] = useState<TeamScope>(initialScope);
+  // 纯文件夹模型：一排文件夹标签驱动（全部 / 个人文件夹 / 共享文件夹），无「我的/共享」模式切换
+  const [activeChip, setActiveChip] = useState<FolderChip>({ kind: 'all' });
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
-  // 团队作用域下我的网页托管有效角色（owner/editor/viewer）；个人作用域为 null（=自己的，全权）
+  // 选中共享文件夹时我的有效角色（owner/editor/viewer）；个人/全部为 null（=自己的，全权）
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
-  const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [activeSourceType, setActiveSourceType] = useState<string | null>(null);
   const [sort, setSort] = useState('newest');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  // 分组方式（与排序不冲突：排序决定组内/整体顺序，分组只在边界插入分节标题）。
-  // 持久化沿用文学创作的 sessionStorage 直存方式（项目禁用 localStorage）。
-  const [groupMode, setGroupMode] = useState<GroupMode>(() => {
-    const saved = sessionStorage.getItem(GROUP_MODE_KEY);
-    return saved === 'folder' ? 'folder' : 'time';
-  });
+
+  // chip → 作用域 / 个人文件夹过滤（派生；下游隔离与角色门控逻辑不变）
+  const teamScope = useMemo(
+    () => (activeChip.kind === 'shared'
+      ? { scope: 'team' as const, teamId: activeChip.teamId }
+      : { scope: 'mine' as const, teamId: null }),
+    [activeChip],
+  );
+  const activeFolder = activeChip.kind === 'personal' ? activeChip.folder : null;
+  const groupMode: GroupMode = 'time';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
   const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
@@ -276,7 +274,6 @@ export default function WebPagesPage() {
       keyword: keyword || undefined,
       folder: activeFolder || undefined,
       tag: activeTag || undefined,
-      sourceType: activeSourceType || undefined,
       sort,
       limit: 200,
       scope: teamScope.scope,
@@ -289,7 +286,7 @@ export default function WebPagesPage() {
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
-  }, [keyword, activeFolder, activeTag, activeSourceType, sort, teamScope]);
+  }, [keyword, activeFolder, activeTag, sort, teamScope]);
 
   // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
   // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
@@ -630,25 +627,15 @@ export default function WebPagesPage() {
 
       {/* Toolbar */}
       <GlassCard className="p-3">
-        {/* 顶部行：我的 / 共享文件夹 切换 + 头部 banner 操作 + 我的权限 */}
-        <div className="flex flex-wrap items-center gap-2">
-          <TeamScopeBar
-            moduleKey="web-hosting"
-            value={teamScope}
-            onChange={(next) => { setTeamScope(next); setSelectedIds(new Set()); }}
-          />
-          {teamScope.scope === 'team' && myWebHostingRole && (
-            <span
-              className="h-8 inline-flex items-center px-2.5 rounded-[8px] text-[12px]"
-              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
-              title="你在该共享文件夹的网页托管权限"
-            >
-              我的权限：{WEB_HOSTING_ROLE_LABEL[myWebHostingRole]}
-            </span>
-          )}
-        </div>
+        {/* 顶部：一排文件夹标签（个人 + 共享并列）+ 共享文件夹上下文条 */}
+        <FolderChipBar
+          moduleKey="web-hosting"
+          personalFolders={folders}
+          active={activeChip}
+          onChange={(c) => { setActiveChip(c); setSelectedIds(new Set()); }}
+        />
 
-        {/* 第二行：筛选 / 视图控件 */}
+        {/* 第二行：搜索 / 文件夹管理 / 视图 */}
         <div className="flex flex-wrap items-center gap-3 mt-3">
           {/* 文件夹管理 + 按文件夹生成 */}
           <button
@@ -658,7 +645,7 @@ export default function WebPagesPage() {
             style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
             onClick={() => setShowFolders(true)}
           >
-            <Folder size={13} /> 文件夹
+            <Folder size={13} /> 管理文件夹
           </button>
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
@@ -677,35 +664,6 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* Folder filter */}
-          {folders.length > 0 && (
-            <div className="w-[150px] shrink-0">
-              <Select
-                uiSize="sm"
-                value={activeFolder ?? ''}
-                onChange={e => setActiveFolder(e.target.value || null)}
-              >
-                <option value="">全部文件夹</option>
-                {folders.map(f => <option key={f} value={f}>{f}</option>)}
-              </Select>
-            </div>
-          )}
-
-          {/* Source type filter */}
-          <div className="w-[140px] shrink-0">
-            <Select
-              uiSize="sm"
-              value={activeSourceType ?? ''}
-              onChange={e => setActiveSourceType(e.target.value || null)}
-            >
-              <option value="">全部来源</option>
-              <option value="upload">手动上传</option>
-              <option value="workflow">工作流</option>
-              <option value="api">API</option>
-              <option value="saved-share">从分享保存</option>
-            </Select>
-          </div>
-
           {/* Sort */}
           <div className="w-[130px] shrink-0">
             <Select
@@ -719,32 +677,6 @@ export default function WebPagesPage() {
               <option value="most-viewed">最多浏览</option>
               <option value="largest">最大体积</option>
             </Select>
-          </div>
-
-          {/* 分组方式：按时间 / 按文件夹（与排序并存，互不冲突） */}
-          <div className="flex items-center rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-default)' }}>
-            <button
-              onClick={() => { setGroupMode('time'); sessionStorage.setItem(GROUP_MODE_KEY, 'time'); }}
-              className="flex items-center gap-1 px-2.5 py-2 text-xs transition-colors"
-              style={{
-                background: groupMode === 'time' ? 'var(--bg-elevated)' : 'var(--bg-sunken)',
-                color: groupMode === 'time' ? 'var(--accent-primary)' : 'var(--text-muted)',
-              }}
-              title="按时间分组"
-            >
-              <Clock size={12} /> 按时间
-            </button>
-            <button
-              onClick={() => { setGroupMode('folder'); sessionStorage.setItem(GROUP_MODE_KEY, 'folder'); }}
-              className="flex items-center gap-1 px-2.5 py-2 text-xs transition-colors"
-              style={{
-                background: groupMode === 'folder' ? 'var(--bg-elevated)' : 'var(--bg-sunken)',
-                color: groupMode === 'folder' ? 'var(--accent-primary)' : 'var(--text-muted)',
-              }}
-              title="按文件夹分组"
-            >
-              <Folder size={12} /> 按文件夹
-            </button>
           </div>
 
           {/* View mode */}
@@ -764,15 +696,6 @@ export default function WebPagesPage() {
               <List size={14} />
             </button>
           </div>
-
-          {/* Refresh */}
-          <button
-            onClick={() => { load(); loadMeta(); }}
-            className="p-2 rounded-lg transition-colors"
-            style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
-          >
-            {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-          </button>
         </div>
 
         {/* Tags */}
@@ -826,9 +749,7 @@ export default function WebPagesPage() {
       {/* Stats */}
       <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--text-muted)' }}>
         <span>共 {total} 个站点</span>
-        {activeFolder && <span>文件夹: {activeFolder}</span>}
         {activeTag && <span>标签: {activeTag}</span>}
-        {activeSourceType && <span>来源: {sourceTypeLabels[activeSourceType] ?? activeSourceType}</span>}
       </div>
 
       {/* Content */}
@@ -850,9 +771,7 @@ export default function WebPagesPage() {
             <div key={group.key} className="flex flex-col gap-2">
               {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
               <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                {groupMode === 'folder'
-                  ? <Folder size={12} style={{ color: 'var(--accent-primary)' }} />
-                  : <Clock size={12} style={{ color: 'var(--accent-primary)' }} />}
+                <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
                 <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
