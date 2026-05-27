@@ -57,6 +57,7 @@ export interface ServerEventLogStoreOptions {
 
 export interface ServerEventLogSink {
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void;
+  flush?(): Promise<void>;
   findRecent?(filter?: {
     limit?: number;
     category?: ServerEventCategory;

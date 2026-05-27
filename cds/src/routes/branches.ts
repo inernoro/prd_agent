@@ -3956,6 +3956,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         operationId: branchOperationLease?.operationId || null,
         details: { actor, trigger: trigger || null },
       });
+      await serverEventLogStore?.flush?.();
     };
 
     // ── Cluster-aware delete ──
