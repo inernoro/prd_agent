@@ -91,6 +91,9 @@ const DEFAULT_RETENTION_DAYS = 14;
 const DEFAULT_MAX_DOCUMENTS = 100_000;
 const MAX_TEXT_BYTES = 16 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
+const MAX_ARRAY_ITEMS = 100;
+const MAX_OBJECT_KEYS = 100;
+const MAX_OBJECT_DEPTH = 8;
 const SEVERITY_RANK: Record<ServerEventSeverity, number> = { info: 10, warn: 20, error: 30 };
 
 function truncateUtf8(value: string, maxBytes: number): string {
@@ -104,18 +107,29 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return `${text}${suffix}`;
 }
 
-function compactObject(value: unknown): unknown {
+export function compactServerEventValue(value: unknown, depth = 0): unknown {
   if (value == null) return value;
   if (typeof value === 'string') return truncateUtf8(value, MAX_TEXT_BYTES);
   if (typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.slice(0, 100).map(compactObject);
+  if (depth >= MAX_OBJECT_DEPTH) return '[cds server event log truncated: max depth reached]';
+  if (Array.isArray(value)) {
+    const out = value.slice(0, MAX_ARRAY_ITEMS).map((item) => compactServerEventValue(item, depth + 1));
+    if (value.length > MAX_ARRAY_ITEMS) {
+      out.push(`[cds server event log truncated: ${value.length - MAX_ARRAY_ITEMS} array item(s) omitted]`);
+    }
+    return out;
+  }
   const out: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [key, raw] of entries.slice(0, MAX_OBJECT_KEYS)) {
     if (/env|password|token|secret|credential|authorization|cookie/i.test(key)) {
       out[key] = '[redacted]';
     } else {
-      out[key] = compactObject(raw);
+      out[key] = compactServerEventValue(raw, depth + 1);
     }
+  }
+  if (entries.length > MAX_OBJECT_KEYS) {
+    out.__cds_truncated_keys = `${entries.length - MAX_OBJECT_KEYS} object key(s) omitted`;
   }
   return out;
 }
@@ -281,9 +295,9 @@ export class ServerEventLogStore implements ServerEventLogSink {
       operationSource: resolveStringField(record as Record<string, unknown>, 'operationSource', 'source'),
       commitSha: resolveStringField(record as Record<string, unknown>, 'commitSha'),
       message: record.message ? truncateUtf8(record.message, MAX_TEXT_BYTES) : undefined,
-      docker: record.docker ? compactObject(record.docker) as Record<string, unknown> : undefined,
-      inspect: record.inspect ? compactObject(record.inspect) as Record<string, unknown> : undefined,
-      details: record.details ? compactObject(record.details) as Record<string, unknown> : undefined,
+      docker: record.docker ? compactServerEventValue(record.docker) as Record<string, unknown> : undefined,
+      inspect: record.inspect ? compactServerEventValue(record.inspect) as Record<string, unknown> : undefined,
+      details: record.details ? compactServerEventValue(record.details) as Record<string, unknown> : undefined,
       command: record.command
         ? {
           name: record.command.name,
