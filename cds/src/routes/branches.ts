@@ -1566,6 +1566,47 @@ export function createBranchRouter(deps: RouterDeps): Router {
     reason: string,
     operationId?: string | null,
   ): Promise<void> {
+    const terminalCleanupKinds = new Set<BranchOperationKind>([
+      'delete',
+      'stop',
+      'cleanup-damaged',
+      'cleanup-orphans',
+      'factory-reset',
+      'janitor-remove',
+    ]);
+    const branchStillExists = Boolean(stateService.getBranch(entry.id));
+    const cleanupOwner = branchOperationCoordinator
+      ?.getActiveOperations(entry.id)
+      .find((active) => active.operationId !== operationId && terminalCleanupKinds.has(active.request.kind));
+
+    if (!branchStillExists || cleanupOwner) {
+      for (const profileId of profileIds) {
+        const svc = entry.services?.[profileId];
+        if (!svc?.containerName) continue;
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'info',
+          source: 'deploy-fenced-cleanup',
+          action: 'container.remove.after-fenced-deploy.skipped',
+          message: `skipped fenced deploy cleanup because terminal operation owns cleanup: ${svc.containerName}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          profileId,
+          containerName: svc.containerName,
+          requestId: requestId || null,
+          operationId: operationId || null,
+          details: {
+            reason,
+            skipReason: branchStillExists ? 'terminal-operation-active' : 'branch-state-removed',
+            cleanupOwnerOperationId: cleanupOwner?.operationId || null,
+            cleanupOwnerKind: cleanupOwner?.request.kind || null,
+            cleanupOwnerSource: cleanupOwner?.request.source || null,
+          },
+        });
+      }
+      return;
+    }
+
     for (const profileId of profileIds) {
       const svc = entry.services?.[profileId];
       if (!svc?.containerName) continue;

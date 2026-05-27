@@ -52,7 +52,7 @@ export interface BranchOperationDecision {
   lease?: BranchOperationLease;
 }
 
-interface ActiveOperation {
+export interface ActiveOperation {
   operationId: string;
   branchId: string;
   generation: number;
@@ -285,6 +285,10 @@ export class BranchOperationCoordinator {
       return this.active.get(this.profileKey(branchId, profileId));
     }
     return [...this.active.values()].find((active) => active.branchId === branchId);
+  }
+
+  getActiveOperations(branchId: string): ActiveOperation[] {
+    return [...this.active.values()].filter((active) => active.branchId === branchId);
   }
 
   getPendingWebhookDeploy(branchId: string): PendingWebhookDeploy | undefined {

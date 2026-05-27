@@ -1150,6 +1150,8 @@ describe('Branch Routes', () => {
       expect(events.find((event) =>
         event.action === 'container.logs.archived' && event.details?.archiveSource === 'branch-delete',
       )?.operationId).toBe(deleteOperationId);
+      expect(events.map((event) => event.action)).toContain('container.remove.after-fenced-deploy.skipped');
+      expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy');
     });
 
     it('manual stop clears an active and queued webhook deploy without dispatching the queued commit', async () => {
