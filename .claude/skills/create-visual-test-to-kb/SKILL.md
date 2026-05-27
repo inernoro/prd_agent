@@ -1,6 +1,6 @@
 ---
 name: create-visual-test-to-kb
-description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进知识库并出分享链。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）、报告归档（命名 状态前置，根治目录 `---`）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无文档空间的仓库退化为本地 md+截图。触发词："验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/验收"。
+description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进知识库并出分享链。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名 状态前置，根治目录 `---`，**每次归档强制输出可达地址**：分享短链优先、拿不到则给 owner 登录路径）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无文档空间的仓库退化为本地 md+截图。触发词："验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/验收"。
 ---
 
 # 验收归档 v2 — 工业级功能验收全流水线
@@ -37,10 +37,10 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 ## 工作流(四步)
 
 1. **定标准与档位**:读 `reference/standard-v2.md`,按改动定 L0/L1/L2(下限见 §3)。
-2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper(`launch/login/gotoByClick/click/type/setTheme/shot`)写一个本次验收的真人路径脚本。跨用户前置(如造分享链)走 API。每关键步骤 `shot(page,outDir,name,caption)`;核心页双主题各一张;结束 `writeManifest(outDir)`。
+2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/login/gotoByClick/click/type/setTheme/shot`。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。核心页双主题各一张;结束 `writeManifest(outDir)`。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
-3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填 `templates/report-template.md` 的速览卡 + 九段 + 用例表 + 缺陷,得出 Verdict。
-4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。正文里用 `{{EVIDENCE}}` 占位,脚本自动替换为内联截图。脚本输出 owner 自看路径 + 分享短链。
+3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填模板得出 Verdict。**默认用 `templates/zz-report.md`(ZZ 照做风:全大标题、一句话一步、`{{IMG:<name>}}` 逐步配图、文字在上图在下、变化处画框、分支顺序讲,见标准 §6.3)**;旧版九段集中证据用 `templates/report-template.md` + `{{EVIDENCE}}`。
+4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。**脚本收尾必打印「验收归档完成 · 必给地址」块**(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
 
 ## 端到端示例(照抄即可)
 
@@ -82,8 +82,9 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | 文件 | 内容 | 何时读 |
 |------|------|--------|
 | `reference/standard-v2.md` | 完整标准:命名/档位/浏览器操作/截图/报告结构/Verdict 规则/国际标准对照 | **必读**,动手前 |
-| `templates/report-template.md` | 报告骨架(frontmatter + 速览卡 + 九段 + 用例表) | 写报告时 |
-| `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题) | 写 driver 时 |
+| `templates/zz-report.md` | **默认** ZZ 照做风骨架(全大标题 + 一句话一步 + `{{IMG:}}` 逐步配图) | 写报告时(首选) |
+| `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
+| `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
 | `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文/分享链) | 归档时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
 

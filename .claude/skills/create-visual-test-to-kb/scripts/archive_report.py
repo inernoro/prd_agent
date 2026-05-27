@@ -22,8 +22,8 @@ local 模式不读任何 env、不发任何网络请求。
 import argparse, json, os, subprocess, datetime, re, shutil, time
 
 
-def curl(args, retries=3):
-    """带超时 + 重试。网关 524/超时等瞬时故障会重试（GET/PUT 幂等安全）。"""
+def curl(args, retries=5):
+    """带超时 + 重试。网关 524/超时等瞬时故障会退避重试（GET/PUT 幂等安全）。"""
     last = ""
     for i in range(retries):
         r = subprocess.run(["curl", "-s", "--max-time", "150"] + args, capture_output=True, text=True)
@@ -31,10 +31,10 @@ def curl(args, retries=3):
         try:
             return json.loads(r.stdout)
         except Exception:
-            # 非 JSON（如 Cloudflare "error code: 524" / 空）→ 退避重试
+            # 非 JSON（如 Cloudflare "error code: 524" / 空 / 预览环境准备中）→ 退避重试
             if i < retries - 1:
-                time.sleep(2 * (i + 1)); continue
-    print("RAW(重试后仍失败):", (last or "")[:300]); raise RuntimeError("curl 返回非 JSON")
+                time.sleep(3 * (i + 1)); continue
+    print("RAW(重试后仍失败):", (last or "")[:200]); raise RuntimeError("curl 返回非 JSON（多为预览环境 524/重启）")
 
 
 def preview_from_cmd(cmd):
@@ -60,9 +60,17 @@ def build_meta(report_id, now, reviewer, a, preview):
     )
 
 
-def assemble(title, body, evidence, meta):
-    """正文以 H1 标题打头（根治目录 `---`，见标准 §2.1），机读字段在文末注释。"""
-    return f"# {title}\n\n" + body.replace("{{EVIDENCE}}", evidence) + meta
+def assemble(title, body, evidence, meta, img_md=None):
+    """正文以 H1 标题打头（根治目录 `---`，见标准 §2.1），机读字段在文末注释。
+    支持两种图片占位：
+      - {{IMG:<截图name>}} —— ZZ 照做风：把该步截图内联到此处（文字在上图在下，逐步配图）
+      - {{EVIDENCE}}       —— 旧版：把所有截图集中堆到此处（§9 证据段）
+    """
+    content = body
+    if img_md:
+        for name, md in img_md.items():
+            content = content.replace("{{IMG:%s}}" % name, md)
+    return f"# {title}\n\n" + content.replace("{{EVIDENCE}}", evidence) + meta
 
 
 def run_local(cfg, a, title, report_id, body, manifest, meta):
@@ -70,14 +78,15 @@ def run_local(cfg, a, title, report_id, body, manifest, meta):
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
     os.makedirs(shot_dir, exist_ok=True)
-    evid_parts = []
+    evid_parts, img_md = [], {}
     for m in manifest:
         dst = os.path.join(shot_dir, f"{m['name']}.png")
         shutil.copyfile(m["path"], dst)
         rel = f"./{report_id}/{m['name']}.png"
         evid_parts.append(f"**{m['caption']}**\n\n![{m['caption']}]({rel})")
+        img_md[m["name"]] = f"![{m['caption']}]({rel})"
         print(f"  拷贝截图 {m['name']} -> {dst}")
-    content = assemble(title, body, "\n\n".join(evid_parts), meta)
+    content = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     md_path = os.path.join(out_dir, f"{report_id}.md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -110,8 +119,9 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview):
         print(f"  上传+清理 {m['name']} -> {d['fileUrl']}")
 
     evidence = "\n\n".join(f"**{m['caption']}**\n\n![{m['caption']}]({url_map[m['name']]})" for m in manifest)
+    img_md = {m["name"]: f"![{m['caption']}]({url_map[m['name']]})" for m in manifest}
     meta = build_meta(report_id, now, imp, a, preview)
-    content = assemble(title, body, evidence, meta)
+    content = assemble(title, body, evidence, meta, img_md)
 
     eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
@@ -120,20 +130,30 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview):
     print(f"  报告条目 id={eid} title={title}")
     w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": content}), f"{base}/entries/{eid}/content"])
     print(f"  写正文 success={w.get('success')}")
-    tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
-                     f"{base}/stores/{rid}/share-links"])["data"]["token"]
+    # E1 强制分享链：条目已建=归档成功；分享链单独 try，失败也给 owner 路径，绝不静默
+    owner_view = "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,主交付）"
+    share_url = None
+    try:
+        tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
+                         f"{base}/stores/{rid}/share-links"])["data"]["token"]
+        share_url = f"{preview.rstrip('/')}/library/share/{tok}"
+    except Exception as e:
+        print("  分享链生成失败（可登录后在该库手动分享）：", str(e)[:120])
     print(json.dumps({
         "mode": "doc-store", "title": title, "report_id": report_id, "entryId": eid, "storeId": rid,
-        "ownerView": "登录后 知识库 → 「" + store_name + "」库 → 本篇（授权路径,正文+截图完整渲染,主交付）",
-        "shareUrl": f"{preview.rstrip('/')}/library/share/{tok}",
+        "ownerView": owner_view, "shareUrl": share_url,
         "shareNote": "share 链接当前只渲染目录、不渲染正文（分享阅读器已知缺陷）;交给第三方请让其登录或设 report.isPublic=true",
     }, ensure_ascii=False))
+    # 醒目收尾：每次必给一个可达地址（分享链优先，拿不到则 owner 路径）
+    print("\n===== 验收归档完成 · 必给地址 =====")
+    print("Owner 查看（登录可达）：" + owner_view)
+    print("分享地址：" + (share_url if share_url else "（分享链接接口超时，未拿到；请登录后在该库「" + store_name + "」手动生成分享，或稍后重跑本命令）"))
 
 
 # ── 准入门槛（入口准则，见 standard-v2.md §3.5）：输入不达标直接拒收 ──
 TIER_MIN_SHOTS = {"L0": 1, "L1": 3, "L2": 5}
 JUNK_TARGETS = {"test", "测试", "xxx", "demo", "tmp", "临时", "aaa", "todo"}
-PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\})")
+PLACEHOLDER_PAT = re.compile(r"\{YYYY|\{target\}|\{project\}|\{verdict|\{date\}|\{commit\}|\{branch\}|\{sha\}|\{url\}|\{\{(?!EVIDENCE\}\}|IMG:)")
 
 
 def validate_inputs(a, body, manifest):
@@ -158,8 +178,8 @@ def validate_inputs(a, body, manifest):
     for kw, label in [("Verdict", "Verdict 行"), ("用例", "验收用例段"), ("缺陷", "缺陷清单段")]:
         if kw not in body:
             errs.append(f"[结构] 报告缺{label}")
-    if "{{EVIDENCE}}" not in body:
-        errs.append("[结构] 报告缺 {{EVIDENCE}} 占位（截图无处内联）")
+    if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
+        errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):
         errs.append("[半成品] 报告含未替换模板占位（{xxx} / 裸 {{）")
     for kw in ("TODO", "待填", "待补"):
@@ -207,10 +227,17 @@ def main():
     if not preview and mode == "doc-store":
         preview = preview_from_cmd(cfg["previewUrlCmd"])
 
-    if mode == "local":
-        run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview))
-    else:
-        run_doc_store(cfg, a, title, report_id, body, manifest, now, preview)
+    try:
+        if mode == "local":
+            run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview))
+        else:
+            run_doc_store(cfg, a, title, report_id, body, manifest, now, preview)
+    except Exception as e:
+        import sys as _sys
+        print("\n[归档失败] 写库未完成（常见原因：预览环境 524 / 容器重启 / API 不可达）。")
+        print("  原因：" + str(e)[:200])
+        print("  报告正文与截图已就绪；待预览环境稳定后用同样命令重跑即可（生成新 report_id）。")
+        _sys.exit(3)
 
 
 if __name__ == "__main__":

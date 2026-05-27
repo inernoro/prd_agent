@@ -670,6 +670,8 @@
 
 - [团队（网页托管 + 知识库）债务台账](debt.team-feature) `debt.team-feature`
   > 团队 wave 1 已知边界：回收站未做 / KB 次要端点仍 owner-only / 公共团队仅留字段 / 邀请链接路由 / 旧条目头像兜底
+- [验收技能（create-visual-test-to-kb）债务台账](debt.visual-acceptance-skill) `debt.visual-acceptance-skill`
+  > 验收技能 wave 1 已落地强制必给地址 + ZZ 照做风 + 画框序号；待补自动 diff 画框 / 流程缩略图 / AI 文案 / AI 视觉判定；明确不做录屏 + 自动镜头
 
 ### 七、周报
 
