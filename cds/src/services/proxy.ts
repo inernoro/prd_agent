@@ -597,7 +597,9 @@ export class ProxyService {
       return;
     }
 
-    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
+    if (process.env.CDS_PROXY_ACCESS_LOG === '1') {
+      console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
+    }
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
     // save) and correctness depends on every request refreshing lastAccessedAt.
