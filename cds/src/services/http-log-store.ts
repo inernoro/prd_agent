@@ -71,6 +71,7 @@ const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?ke
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
+const MAX_REDACT_DEPTH = 8;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -90,14 +91,39 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return `${text}\n[cds http log truncated: original ${buf.length} bytes]`;
 }
 
-function redactBodyText(value: string): string {
-  let out = value.replace(
-    /(["'])([^"']{0,120}?)(["'])\s*:\s*(["'])(?:\\.|(?!\4).){0,200}\4/g,
-    (match, openKey: string, key: string, closeKey: string, quote: string) => {
-      if (!BODY_SECRET_KEY.test(key)) return match;
-      return `${openKey}${key}${closeKey}:${quote}[redacted]${quote}`;
-    },
-  );
+function redactStructuredValue(value: unknown, key = '', depth = 0, seen = new WeakSet<object>()): unknown {
+  if (key && BODY_SECRET_KEY.test(key)) return '[redacted]';
+  if (value == null || typeof value !== 'object') return value;
+  if (depth >= MAX_REDACT_DEPTH) return '[cds http log redaction depth limit]';
+  if (seen.has(value)) return '[cds http log circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactStructuredValue(item, '', depth + 1, seen));
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    out[childKey] = redactStructuredValue(childValue, childKey, depth + 1, seen);
+  }
+  return out;
+}
+
+function redactJsonText(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return null;
+  try {
+    return JSON.stringify(redactStructuredValue(JSON.parse(trimmed)));
+  } catch {
+    return null;
+  }
+}
+
+export function redactBodyText(value: string): string {
+  const jsonRedacted = redactJsonText(value);
+  if (jsonRedacted != null) return jsonRedacted;
+
+  let out = value;
   out = out.replace(
     /(^|[?&\s])([A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|session|jwt|credential)[A-Za-z0-9_.-]*=)[^&\s]{1,300}/gi,
     (_match, prefix: string, key: string) => `${prefix}${key}[redacted]`,
@@ -107,11 +133,12 @@ function redactBodyText(value: string): string {
 }
 
 function sanitizePayload(payload: HttpLogRecord['request'] | HttpLogRecord['response']): typeof payload {
+  const preview = payload.bodyPreview
+    ? redactBodyText(truncateUtf8(payload.bodyPreview, MAX_BODY_PREVIEW_BYTES))
+    : payload.bodyPreview;
   return {
     ...payload,
-    bodyPreview: payload.bodyPreview
-      ? truncateUtf8(redactBodyText(payload.bodyPreview), MAX_BODY_PREVIEW_BYTES)
-      : payload.bodyPreview,
+    bodyPreview: preview ? truncateUtf8(preview, MAX_BODY_PREVIEW_BYTES) : preview,
   };
 }
 
@@ -141,13 +168,14 @@ export function bodyPreviewFromUnknown(value: unknown): { bodyPreview?: string; 
   if (typeof value === 'string') text = value;
   else {
     try {
-      text = JSON.stringify(value);
+      text = JSON.stringify(redactStructuredValue(value));
     } catch {
       text = String(value);
     }
   }
+  const preview = truncateUtf8(text, MAX_BODY_PREVIEW_BYTES);
   return {
-    bodyPreview: truncateUtf8(redactBodyText(text), MAX_BODY_PREVIEW_BYTES),
+    bodyPreview: truncateUtf8(redactBodyText(preview), MAX_BODY_PREVIEW_BYTES),
     bodyBytes: Buffer.byteLength(text, 'utf8'),
   };
 }
