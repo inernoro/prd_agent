@@ -1,4 +1,5 @@
 import { ArrowRight, Atom, Blocks, GitBranch, ShieldCheck, Terminal } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { CdsFloatingBackdrop } from '@/components/brand/CdsFloatingBackdrop';
 import { Button } from '@/components/ui/button';
 
@@ -17,16 +18,16 @@ export function HomePage(): JSX.Element {
 
       <section className="relative z-10 flex min-h-screen flex-col px-6 py-6 sm:px-10 lg:px-14">
         <header className="flex items-center justify-between rounded-full border border-white/20 bg-[rgba(59,41,70,0.54)] px-4 py-3 shadow-[0_24px_80px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-          <a href="/" className="flex items-center gap-3">
+          <Link to="/" className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/5 shadow-[0_0_32px_rgba(255,255,255,0.12)]">
               <Atom className="h-6 w-6" />
             </span>
             <span className="text-sm font-semibold tracking-normal text-white/90">Cloud Dev Suite</span>
-          </a>
+          </Link>
           <nav className="hidden items-center gap-2 text-sm text-white/60 md:flex">
-            <a className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" href="/project-list">Console</a>
-            <a className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" href="/cds-settings">Settings</a>
-            <a className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" href="/login">Access</a>
+            <Link className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" to="/project-list">Console</Link>
+            <Link className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" to="/cds-settings">Settings</Link>
+            <Link className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" to="/login">Access</Link>
           </nav>
         </header>
 
@@ -47,13 +48,13 @@ export function HomePage(): JSX.Element {
             </p>
             <div className="mt-10 flex flex-wrap items-center gap-3">
               <Button asChild size="lg" className="rounded-full bg-white px-6 text-black hover:bg-white/90">
-                <a href="/project-list">
+                <Link to="/project-list">
                   Enter Console
                   <ArrowRight className="ml-2 h-4 w-4" />
-                </a>
+                </Link>
               </Button>
               <Button asChild size="lg" variant="outline" className="rounded-full border-white/20 bg-white/[0.045] px-6 text-white hover:bg-white/10 hover:text-white">
-                <a href="/login">System Access</a>
+                <Link to="/login">System Access</Link>
               </Button>
             </div>
           </div>

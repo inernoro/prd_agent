@@ -44,6 +44,9 @@ type ShellAuthStatus = {
   logoutEndpoint?: string | null;
 };
 
+const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
+const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
+
 function shellLoginHref(mode?: string): string {
   const path = mode === 'github' ? '/login-gh.html' : '/login';
   if (window.location.port === '5173') {
@@ -311,6 +314,8 @@ function AppRail({
         data-active={active === 'projects' ? 'true' : 'false'}
         aria-label="项目列表"
         title="项目列表"
+        onMouseEnter={preloadProjectListPage}
+        onFocus={preloadProjectListPage}
       >
         <LayoutGrid />
         <span>Projects</span>
@@ -321,6 +326,8 @@ function AppRail({
         data-active={active === 'cds-settings' ? 'true' : 'false'}
         aria-label="CDS 系统设置"
         title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
+        onMouseEnter={preloadCdsSettingsPage}
+        onFocus={preloadCdsSettingsPage}
       >
         <Settings />
         <span>Settings</span>

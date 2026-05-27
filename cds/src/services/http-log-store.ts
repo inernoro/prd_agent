@@ -313,7 +313,7 @@ export class HttpLogStore {
         ...(until ? { $lte: until } : {}),
       };
     }
-    const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+    const limit = Math.max(1, Math.min(filter.limit ?? 200, 5000));
     const sort: Sort = filter.sort === 'duration'
       ? { durationMs: -1 as const, ts: -1 as const }
       : { ts: -1 as const };

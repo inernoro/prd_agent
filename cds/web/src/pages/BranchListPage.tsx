@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
   AlertCircle,
@@ -2802,20 +2802,20 @@ export function BranchListPage(): JSX.Element {
             <>
               <PaletteHint />
               <Button asChild variant="ghost" size="sm" title="项目列表">
-                <a href="/project-list">
+                <Link to="/project-list">
                   <ArrowLeft />
                   项目
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm" title="项目设置">
-                <a href={`/settings/${encodeURIComponent(projectId)}`}>
+                <Link to={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm" title="服务拓扑">
-                <a href={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
+                <Link to={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
                   <Network />
-                </a>
+                </Link>
               </Button>
               <Button
                 variant={failedDeployTargets.length > 0 ? 'outline' : 'ghost'}
@@ -3600,6 +3600,7 @@ function ProjectSwitcher({
   currentProjectId: string;
   projects: ProjectSummary[];
 }): JSX.Element {
+  const navigate = useNavigate();
   // 把当前项目排第一,其它按字母序;最多展示 8 个,有更多就给"查看全部"
   const ordered = useMemo(() => {
     const current = projects.find((p) => p.id === currentProjectId);
@@ -3635,7 +3636,7 @@ function ProjectSwitcher({
             key={p.id}
             disabled={isCurrent}
             onSelect={() => {
-              window.location.href = `/branches/${encodeURIComponent(p.id)}`;
+              navigate(`/branches/${encodeURIComponent(p.id)}`);
             }}
           >
             <span className="flex w-full items-start gap-2">
@@ -3659,7 +3660,7 @@ function ProjectSwitcher({
       {hasMore ? (
         <>
           <DropdownDivider />
-          <DropdownItem onSelect={() => { window.location.href = '/project-list'; }}>
+          <DropdownItem onSelect={() => { navigate('/project-list'); }}>
             查看全部项目 →
           </DropdownItem>
         </>

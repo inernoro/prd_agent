@@ -107,6 +107,9 @@ interface SelfStatusResponse {
   /** 仓库里的 systemd unit 文件 vs 已安装的 /etc/systemd/system/cds-master.service
    *  归一化后比对 hash 不一致时填,提示 operator 一行命令重装。 */
   systemdUnitDrift?: SystemdUnitDrift | null;
+  runningPid?: number;
+  pidStartedAt?: string | null;
+  restartStatus?: 'not_required' | 'pending' | 'completed' | 'incomplete';
   lastSelfUpdate: SelfUpdateRecord | null;
   selfUpdateHistory: SelfUpdateRecord[];
 }
@@ -1072,6 +1075,21 @@ function SelfUpdateStatusPanel({
             <RotateCw className="h-3.5 w-3.5" />
             上次更新 · {formatRelativeTime(data.lastSelfUpdate.ts)} · {selfUpdateStatusLabel(data.lastSelfUpdate.status)}
           </button>
+        ) : null}
+
+        {data.restartStatus && data.restartStatus !== 'not_required' ? (
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${
+              data.restartStatus === 'completed'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : data.restartStatus === 'pending'
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                  : 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+            }`}
+            title={`PID ${data.runningPid || '-'} · 启动于 ${data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}`}
+          >
+            PID {data.runningPid || '-'} · 重启{data.restartStatus === 'completed' ? '已确认' : data.restartStatus === 'pending' ? '进行中' : '未确认'}
+          </span>
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">

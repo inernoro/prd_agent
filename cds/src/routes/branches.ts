@@ -555,6 +555,20 @@ async function computeSelfStatusPayload(
     degradedReasons.push(`bundleFreshness: ${bundleFreshness.detail || bundleFreshness.staleReason}`);
   }
 
+  const daemonReadyAt = stateService.getState().daemonReadyAt || null;
+  const lastSelfUpdate = history[0] || null;
+  let restartStatus: 'not_required' | 'pending' | 'completed' | 'incomplete' = 'not_required';
+  if (activeSelfUpdate) {
+    restartStatus = 'pending';
+  } else if (lastSelfUpdate?.status === 'success' && lastSelfUpdate.updateMode !== 'web-only') {
+    const readyMs = daemonReadyAt ? Date.parse(daemonReadyAt) : Number.NaN;
+    const updateMs = lastSelfUpdate.ts ? Date.parse(lastSelfUpdate.ts) : Number.NaN;
+    restartStatus = Number.isFinite(readyMs) && Number.isFinite(updateMs) && readyMs >= updateMs
+      ? 'completed'
+      : 'incomplete';
+  }
+  const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
+
   return {
     currentBranch,
     headSha,
@@ -564,7 +578,7 @@ async function computeSelfStatusPayload(
     remoteAheadCount,
     localAheadCount,
     remoteAheadSubjects,
-    lastSelfUpdate: history[0] || null,
+    lastSelfUpdate,
     selfUpdateHistory: history,
     activeSelfUpdate,
     webBuildSha,
@@ -572,7 +586,10 @@ async function computeSelfStatusPayload(
     systemdUnitDrift,
     // 2026-05-07 timing 审视:暴露 daemonReadyAt 让前端判断"上次重启完成时刻"
     // 用于校验 totalElapsedMs 字段。详见 report.cds-self-update-timing-audit.md
-    daemonReadyAt: stateService.getState().daemonReadyAt || null,
+    daemonReadyAt,
+    runningPid: process.pid,
+    pidStartedAt,
+    restartStatus,
     bundleStale: bundleFreshness.bundleStale,
     bundleFreshness,
     degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
@@ -11911,6 +11928,9 @@ cdscli project list --human
         bundleStale: false,
         activeSelfUpdate: degradedActive,
         systemdUnitDrift: degradedDrift,
+        runningPid: process.pid,
+        pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
+        restartStatus: degradedActive ? 'pending' : 'not_required',
         degraded: { reasons: [(err as Error).message] },
         cachedAt: new Date().toISOString(),
       });
@@ -12708,6 +12728,15 @@ cdscli project list --human
           summary: result.summary,
           durationMs,
           timings: result.timings,
+          plannedMode: 'full-validate',
+          plannedCommands: [
+            'pnpm install --frozen-lockfile (cds, skipped when stamp matches)',
+            'pnpm install --frozen-lockfile (cds/web, skipped when stamp matches)',
+            'tsc --noEmit (cds)',
+            'tsc --noEmit (cds/web)',
+            'node scripts/build-dist-esbuild.mjs (only when self-update touches backend)',
+            'vite build (only when web bundle is stale)',
+          ],
           ...(result.webWarning ? { webWarning: result.webWarning } : {}),
         });
       } else {

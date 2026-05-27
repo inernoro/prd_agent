@@ -121,12 +121,27 @@ function percentile(sortedAsc: number[], p: number): number {
   return sortedAsc[idx];
 }
 
+function isNoiseHttpLog(log: HttpLogRecord): boolean {
+  const pathValue = (log.path || '').split('?')[0] || '/';
+  const headers = log.request?.headers || {};
+  if (headers['x-cds-poll'] === 'true') return true;
+  if (pathValue === '/healthz' || pathValue === '/readyz' || pathValue === '/api/health') return true;
+  if (pathValue === '/api/self-status/stream' || pathValue === '/api/branches/stream') return true;
+  if (pathValue.startsWith('/api/bridge/')) return true;
+  if (/^\/api\/projects\/[^/]+\/instances$/.test(pathValue)) return true;
+  return false;
+}
+
 function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
   endpoint: string;
   method: string;
   count: number;
+  rps: number;
+  windowMs: number;
   errorCount: number;
   errorRate: number;
+  cacheHitCount: number;
+  cacheHitRate: number;
   avgMs: number;
   p50Ms: number;
   p95Ms: number;
@@ -146,6 +161,9 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
     method: string;
     durations: number[];
     errorCount: number;
+    cacheHitCount: number;
+    firstTs: number;
+    lastTs: number;
     slowest: HttpLogRecord;
   }>();
   for (const log of logs) {
@@ -159,12 +177,21 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
         method,
         durations: [log.durationMs],
         errorCount: log.status >= 400 ? 1 : 0,
+        cacheHitCount: log.response?.headers?.['x-cds-cache'] === 'hit' ? 1 : 0,
+        firstTs: new Date(log.ts).getTime(),
+        lastTs: new Date(log.ts).getTime(),
         slowest: log,
       });
       continue;
     }
     existing.durations.push(log.durationMs);
     if (log.status >= 400) existing.errorCount += 1;
+    if (log.response?.headers?.['x-cds-cache'] === 'hit') existing.cacheHitCount += 1;
+    const ts = new Date(log.ts).getTime();
+    if (Number.isFinite(ts)) {
+      existing.firstTs = Math.min(existing.firstTs, ts);
+      existing.lastTs = Math.max(existing.lastTs, ts);
+    }
     if (log.durationMs > existing.slowest.durationMs) existing.slowest = log;
   }
   return [...groups.values()]
@@ -172,12 +199,17 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
       const sorted = [...group.durations].sort((a, b) => a - b);
       const count = sorted.length;
       const sum = sorted.reduce((acc, value) => acc + value, 0);
+      const windowMs = Math.max(1000, group.lastTs - group.firstTs);
       return {
         endpoint: group.endpoint,
         method: group.method,
         count,
+        rps: Number((count / (windowMs / 1000)).toFixed(3)),
+        windowMs,
         errorCount: group.errorCount,
         errorRate: count > 0 ? group.errorCount / count : 0,
+        cacheHitCount: group.cacheHitCount,
+        cacheHitRate: count > 0 ? group.cacheHitCount / count : 0,
         avgMs: Math.round(sum / Math.max(1, count)),
         p50Ms: percentile(sorted, 50),
         p95Ms: percentile(sorted, 95),
@@ -194,6 +226,11 @@ function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
       };
     })
     .sort((a, b) => (b.p95Ms - a.p95Ms) || (b.avgMs - a.avgMs) || (b.maxMs - a.maxMs));
+}
+
+function summarizeFrequentHttpLogs(logs: HttpLogRecord[]): ReturnType<typeof summarizeSlowHttpLogs> {
+  return summarizeSlowHttpLogs(logs)
+    .sort((a, b) => (b.count - a.count) || (b.rps - a.rps) || (b.p95Ms - a.p95Ms));
 }
 
 export interface ServerDeps {
@@ -1157,6 +1194,12 @@ export function createServer(deps: ServerDeps): express.Express {
     };
     (res as any).end = function (chunk?: unknown, ...args: unknown[]) {
       if (chunk != null) responseCapture.onChunk(chunk as Buffer | string);
+      if (!res.headersSent) {
+        const dur = Math.max(0, Date.now() - start);
+        const existing = res.getHeader('Server-Timing');
+        const value = `app;dur=${dur}`;
+        res.setHeader('Server-Timing', existing ? `${existing}, ${value}` : value);
+      }
       return origEnd(chunk as never, ...(args as never[]));
     };
 
@@ -2344,28 +2387,88 @@ export function createServer(deps: ServerDeps): express.Express {
       res.status(400).json({ error: 'invalid_until', message: 'until must be an ISO timestamp' });
       return;
     }
-    const logs = await reader.call(deps.httpLogStore, {
+    const includeNoise = req.query.includeNoise === '1' || req.query.includeNoise === 'true';
+    const layerRaw = typeof req.query.layer === 'string' ? req.query.layer : undefined;
+    const layer = layerRaw === 'master' || layerRaw === 'master-proxy' || layerRaw === 'forwarder'
+      ? layerRaw
+      : undefined;
+    const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
+    const minDurationMs = Number.isFinite(minDurationRaw) ? minDurationRaw : undefined;
+    const rawLogs = await reader.call(deps.httpLogStore, {
       limit: sample,
       since,
       until,
+      layer,
       method: typeof req.query.method === 'string' ? req.query.method : undefined,
       minStatus: typeof req.query.minStatus === 'string' ? Number.parseInt(req.query.minStatus, 10) || undefined : undefined,
+      minDurationMs,
       pathContains: typeof req.query.pathContains === 'string'
         ? req.query.pathContains
         : (typeof req.query.path === 'string' ? req.query.path : undefined),
       sort: 'recent',
     });
+    const logs = includeNoise ? rawLogs : rawLogs.filter((log) => !isNoiseHttpLog(log));
     const endpoints = summarizeSlowHttpLogs(logs).slice(0, top);
     res.json({
       ok: true,
       disabled: false,
-      sampleSize: logs.length,
+      includeNoise,
+      sampleSize: rawLogs.length,
+      filteredSampleSize: logs.length,
+      noiseExcludedCount: rawLogs.length - logs.length,
       total: endpoints.length,
+      window: {
+        newest: rawLogs[0]?.ts || null,
+        oldest: rawLogs[rawLogs.length - 1]?.ts || null,
+      },
+      endpoints,
+    });
+  });
+
+  app.get('/api/perf/overview', async (req, res) => {
+    const reader = deps.httpLogStore?.findRecent;
+    if (!reader) {
+      res.json({
+        ok: false,
+        disabled: true,
+        message: 'HTTP 持久化日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_HTTP_LOGS_ENABLED=0。',
+      });
+      return;
+    }
+    const sampleRaw = Number.parseInt(String(req.query.sample || req.query.limit || '1000'), 10) || 1000;
+    const sample = Math.max(1, Math.min(sampleRaw, 5000));
+    const topRaw = Number.parseInt(String(req.query.top || '10'), 10) || 10;
+    const top = Math.max(1, Math.min(topRaw, 50));
+    const logs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
+    const normalLogs = logs.filter((log) => !isNoiseHttpLog(log));
+    const noiseLogs = logs.filter(isNoiseHttpLog);
+    const errorLogs = logs.filter((log) => log.status >= 500);
+    const recentSelfUpdateTimings = deps.stateService.getSelfUpdateHistory(20).map((record) => ({
+      ts: record.ts,
+      branch: record.branch,
+      fromSha: record.fromSha,
+      toSha: record.toSha,
+      status: record.status,
+      durationMs: record.durationMs,
+      totalElapsedMs: record.totalElapsedMs,
+      updateMode: record.updateMode,
+      timings: record.timings,
+      error: record.error,
+    }));
+    res.json({
+      ok: true,
+      disabled: false,
+      sampleSize: logs.length,
+      noiseCount: noiseLogs.length,
       window: {
         newest: logs[0]?.ts || null,
         oldest: logs[logs.length - 1]?.ts || null,
       },
-      endpoints,
+      slowEndpoints: summarizeSlowHttpLogs(normalLogs).slice(0, top),
+      frequentEndpoints: summarizeFrequentHttpLogs(normalLogs).slice(0, top),
+      errorEndpoints: summarizeSlowHttpLogs(errorLogs).slice(0, top),
+      noiseEndpoints: summarizeFrequentHttpLogs(noiseLogs).slice(0, top),
+      recentSelfUpdateTimings,
     });
   });
 

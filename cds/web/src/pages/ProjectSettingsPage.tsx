@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -426,15 +426,15 @@ export function ProjectSettingsPage(): JSX.Element {
           right={
             <>
               <Button asChild variant="ghost" size="sm" title="项目列表">
-                <a href="/project-list">
+                <Link to="/project-list">
                   <ArrowLeft />
                   项目
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm" title="分支控制台">
-                <a href={`/branches/${encodeURIComponent(projectId || '')}`}>
+                <Link to={`/branches/${encodeURIComponent(projectId || '')}`}>
                   <GitBranch />
-                </a>
+                </Link>
               </Button>
               <Button
                 variant="ghost"
@@ -456,10 +456,10 @@ export function ProjectSettingsPage(): JSX.Element {
           <div className="space-y-4">
             <ErrorBlock message={state.message} />
             <Button asChild variant="outline">
-              <a href="/project-list">
+              <Link to="/project-list">
                 <ArrowLeft />
                 返回项目列表
-              </a>
+              </Link>
             </Button>
           </div>
         ) : null}
@@ -564,9 +564,9 @@ function ProjectEnvTab({
         description={
           <>
             只注入 <CodePill>{name}</CodePill> 的分支容器。CDS 系统级配置请放到{' '}
-            <a className="text-primary underline-offset-4 hover:underline" href="/cds-settings#global-vars">
+            <Link className="text-primary underline-offset-4 hover:underline" to="/cds-settings#global-vars">
               CDS 全局变量
-            </a>
+            </Link>
             。
           </>
         }

@@ -38,6 +38,8 @@ import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } fr
 import { shouldRetryInterruptedWebhookDispatch } from './services/deploy-dispatch-retry.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+
+(globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
 import { DockerEventMonitor } from './services/container-diagnostics.js';
 import { classifyDockerLifecycleEvent } from './services/docker-lifecycle-classifier.js';
