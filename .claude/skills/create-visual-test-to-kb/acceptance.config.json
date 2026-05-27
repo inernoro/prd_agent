@@ -1,0 +1,58 @@
+{
+  "_comment": "MAP 验收技能配置。项目无关——别的仓库改本文件即可复用。密码/密钥一律走 env 变量名引用，禁止写明文。",
+  "project": "prd-agent",
+  "previewUrlCmd": "python3 .claude/skills/cds/cli/cdscli.py --human preview-url",
+  "previewUrlOverride": "",
+
+  "auth": {
+    "browser": {
+      "_comment": "headless 浏览器登录（取证用）。走表单，不注入 token。",
+      "loginPath": "/login",
+      "userSelector": "input[type=text]",
+      "passSelector": "input[type=password]",
+      "submitSelector": "button:has-text(\"进入控制台\")",
+      "userEnv": "MAP_AI_USER",
+      "passEnv": "MAP_ACCEPT_PASS",
+      "loggedInWhen": "leave-login-path"
+    },
+    "api": {
+      "_comment": "归档落库用。prd-agent 走 AI 超级密钥模拟登录。",
+      "type": "ai-access-key",
+      "keyHeader": "X-AI-Access-Key",
+      "keyEnv": "AI_ACCESS_KEY",
+      "impersonateHeader": "X-AI-Impersonate",
+      "impersonateEnv": "MAP_AI_USER"
+    }
+  },
+
+  "report": {
+    "_comment": "归档目标。无文档空间的仓库把 mode 改 local，落本地 md + 截图目录。",
+    "mode": "doc-store",
+    "isPublic": false,
+    "_isPublicNote": "默认私有：owner 登录后走「知识库→验收报告」授权路径查看（正文+截图完整渲染）。设 true 才能让登出第三方经殿堂/分享看正文——注意分享阅读器当前不渲染 reference markdown 正文，跨人分享建议让对方登录或导出本地。",
+    "apiBasePath": "/api/document-store",
+    "storeName": "验收报告",
+    "storeDescription": "标准化功能验收报告归档（MAP 验收标准 v2）",
+    "naming": "[{verdict_cn}] {target} · 验收报告 · {project} · {date}",
+    "_namingNote": "业界风格(状态前置)。可用占位符:{verdict_cn}{target}{project}{date}{datetime}。{verdict_cn}=通过/有条件通过/不通过。",
+    "datetimeFormat": "%Y-%m-%d %H:%M",
+    "localOutDir": "doc/acceptance"
+  },
+
+  "screenshot": {
+    "width": 1440,
+    "height": 900,
+    "deviceScaleFactor": 2,
+    "dualTheme": false,
+    "_dualThemeNote": "prd-admin 实测为暗色 only：data-theme='light' 仅 report-agent 页面局部设置，全局无亮色主题切换。故知识库等页面双主题不适用，单张暗色 + 报告注明。仅验收 report-agent 相关页面时才开 dualTheme。",
+    "themeAttr": "data-theme",
+    "outDir": "/tmp/acc_shots"
+  },
+
+  "navigation": {
+    "_comment": "模拟人类：禁止 goto 直达业务页。gotoByClick 从首页点击导航进入。sidebarItemSelector 用于按可见文本点击侧边导航。",
+    "homePath": "/",
+    "forbidDirectGoto": true,
+    "navClickByText": true
+  }
+}
