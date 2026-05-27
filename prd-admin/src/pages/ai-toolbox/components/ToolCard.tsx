@@ -49,6 +49,7 @@ import {
   Layers,
   Swords,
   HardHat,
+  NotebookPen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -69,6 +70,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
+  NotebookPen,
 };
 
 const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
@@ -104,6 +106,8 @@ const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
   Search:       { from: '#14B8A6', soft: '#5EEAD4' },
   Layers:       { from: '#8B5CF6', soft: '#C4B5FD' },
   Swords:       { from: '#F97316', soft: '#FDBA74' },
+  // 毒舌秘书：羊皮卷琥珀色，与 PaAgentCardArt 内联插画呼应
+  NotebookPen:  { from: '#D97706', soft: '#FCD34D' },
 };
 
 /** Agent 封面图 CDN 路径映射 */
