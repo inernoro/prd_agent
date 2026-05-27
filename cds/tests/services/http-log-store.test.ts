@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bodyPreviewFromUnknown,
   createBodyCapture,
+  HttpLogStore,
   isBinaryContentType,
   isTextualContentType,
   redactBodyText,
@@ -81,5 +82,34 @@ describe('http log body redaction', () => {
     expect(isBinaryContentType('multipart/form-data; boundary=x')).toBe(true);
     expect(isTextualContentType('application/json; charset=utf-8')).toBe(true);
     expect(isBinaryContentType('application/json; charset=utf-8')).toBe(false);
+  });
+
+  it('uses content-length as binary body size when the server responds before fully draining', async () => {
+    const docs: unknown[] = [];
+    const store = new HttpLogStore({ uri: 'mongodb://unused' });
+    (store as unknown as { collection: { insertOne(doc: unknown): Promise<void>; countDocuments(): Promise<number> } }).collection = {
+      async insertOne(doc: unknown) { docs.push(doc); },
+      async countDocuments() { return docs.length; },
+    };
+
+    store.record({
+      layer: 'master',
+      requestId: 'binary-size',
+      method: 'POST',
+      path: '/api/client-events',
+      status: 202,
+      durationMs: 2,
+      outcome: 'ok',
+      request: {
+        headers: { 'content-type': 'image/png', 'content-length': '1048576' },
+        bodyPreview: '[cds http log omitted binary body]',
+        bodyBytes: 64975,
+      },
+      response: {},
+    });
+    await store.flush();
+
+    expect((docs[0] as any).request.bodyBytes).toBe(1048576);
+    expect((docs[0] as any).request.bodyPreview).toBe('[cds http log omitted binary body]');
   });
 });

@@ -79,6 +79,12 @@ function normalizeContentType(value: unknown): string {
   return String(value || '').split(';')[0].trim().toLowerCase();
 }
 
+function parseContentLength(value: unknown): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number.parseInt(String(raw || ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 export function isTextualContentType(value: unknown): boolean {
   const type = normalizeContentType(value);
   if (!type) return true;
@@ -177,9 +183,15 @@ export function redactBodyText(value: string): string {
 function sanitizePayload(payload: HttpLogRecord['request'] | HttpLogRecord['response']): typeof payload {
   const contentType = payload.headers?.['content-type'];
   if (isBinaryContentType(contentType)) {
+    const declaredBytes = parseContentLength(payload.headers?.['content-length']);
+    const observedBytes = payload.bodyBytes ?? 0;
+    const bodyBytes = declaredBytes != null
+      ? Math.max(observedBytes, declaredBytes)
+      : payload.bodyBytes;
     return {
       ...payload,
-      bodyPreview: payload.bodyBytes ? OMITTED_BINARY_BODY_PREVIEW : undefined,
+      bodyBytes,
+      bodyPreview: bodyBytes ? OMITTED_BINARY_BODY_PREVIEW : undefined,
     };
   }
   const preview = payload.bodyPreview
