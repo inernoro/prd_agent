@@ -533,6 +533,68 @@ describe('ProxyService', () => {
       expect(upstreamCalledWith!.branchId).toBe('prd-agent-claude-fix-refresh-error-handling-2xayx');
     });
 
+    it('①.1 v3 冲突：多个项目产出同一 preview slug 时优先运行中的分支', () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'shared-sidecar-pool-mp4anabh',
+        slug: 'shared-sidecar-pool-mp4anabh',
+        name: 'Shared Sidecar Pool',
+        kind: 'git',
+        githubRepoFullName: 'inernoro/prd_agent',
+        createdAt: now,
+      } as any);
+      stateService.addProject({
+        id: 'prd-agent',
+        slug: 'prd-agent',
+        name: 'PRD Agent',
+        kind: 'git',
+        githubRepoFullName: 'inernoro/prd_agent',
+        createdAt: now,
+      } as any);
+      stateService.addBranch({
+        id: 'shared-sidecar-pool-mp4anabh-main',
+        projectId: 'shared-sidecar-pool-mp4anabh',
+        branch: 'main',
+        worktreePath: '/tmp/shared-main',
+        services: { admin: { profileId: 'admin', containerName: 'cds-shared-admin', hostPort: 9001, status: 'stopped' } },
+        status: 'idle',
+        createdAt: now,
+      });
+      stateService.addBranch({
+        id: 'prd-agent-main',
+        projectId: 'prd-agent',
+        branch: 'main',
+        worktreePath: '/tmp/prd-main',
+        services: { admin: { profileId: 'admin', containerName: 'cds-prd-admin', hostPort: 9002, status: 'running' } },
+        status: 'running',
+        createdAt: now,
+        lastReadyAt: now,
+      });
+      const previewProxy = new ProxyService(stateService, {
+        masterPort: 9900, workerPort: 5500,
+        repoRoot: '/tmp', worktreeBase: '/tmp', portStart: 9000,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      } as any);
+
+      let upstreamCalledWith: { branchId: string } | null = null;
+      previewProxy.setResolveUpstream((branchId) => {
+        upstreamCalledWith = { branchId };
+        return 'http://127.0.0.1:9002';
+      });
+
+      const req = {
+        headers: { host: 'main-prd-agent.preview.example.com' },
+        url: '/',
+        pipe: () => {},
+      } as unknown as http.IncomingMessage;
+      const { res } = makeRes();
+      previewProxy.handleRequest(req, res);
+
+      expect(upstreamCalledWith).not.toBeNull();
+      expect(upstreamCalledWith!.branchId).toBe('prd-agent-main');
+    });
+
     it('③ v2 兼容：旧 `prd-agent-claude-fix-foo.miduo.org` 链接仍可解析', () => {
       // ceb2c01 ~ 本次改造之间外发的链接，proxy 必须继续解析
       stateService.addProject({

@@ -175,14 +175,19 @@ export class ProxyService {
     const projectById = new Map(projects.map((p) => [p.id, p]));
 
     // ① v3 前向匹配
+    const previewMatches: BranchEntry[] = [];
     for (const entry of Object.values(state.branches)) {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
       for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
         if (computePreviewSlug(entry.branch, projectSlug) === slug) {
-          return entry;
+          previewMatches.push(entry);
+          break;
         }
       }
+    }
+    if (previewMatches.length > 0) {
+      return previewMatches.sort((a, b) => this.comparePreviewCandidates(a, b))[0];
     }
 
     // ② v1 兼容：裸 slug 直查
@@ -196,6 +201,24 @@ export class ProxyService {
       if (candidate) return candidate;
     }
     return undefined;
+  }
+
+  private comparePreviewCandidates(a: BranchEntry, b: BranchEntry): number {
+    const score = (entry: BranchEntry): number => {
+      const status = String(entry.status || '');
+      if (status === 'running') return 5;
+      if (status === 'starting' || status === 'building' || status === 'restarting') return 4;
+      if (status === 'error') return 2;
+      return 1;
+    };
+    const scoreDelta = score(b) - score(a);
+    if (scoreDelta !== 0) return scoreDelta;
+    const timeValue = (entry: BranchEntry): number => {
+      const raw = entry.lastReadyAt || entry.lastDeployAt || entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
+      const parsed = raw ? Date.parse(raw) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return timeValue(b) - timeValue(a);
   }
 
   /**
