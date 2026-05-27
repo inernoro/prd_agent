@@ -27,17 +27,17 @@ import {
   setSiteTeams,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
-import type { WebHostingRole } from '@/services/real/teams';
+import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
   canDeleteInWebHosting,
   canEditInWebHosting,
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
-import { FolderChipBar, type FolderChip } from '@/components/team/FolderChipBar';
-import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
+import { SpaceBar, type Space } from '@/components/team/SpaceBar';
+import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
-import { FolderManager } from '@/components/web-hosting/FolderManager';
+import { createPortal } from 'react-dom';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
 
@@ -75,6 +75,8 @@ import {
   AlertTriangle,
   Folder,
   Users,
+  User,
+  FolderInput,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -220,24 +222,26 @@ export default function WebPagesPage() {
   const [sites, setSites] = useState<HostedSite[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  // 纯文件夹模型：一排文件夹标签驱动（全部 / 个人文件夹 / 共享文件夹），无「我的/共享」模式切换
-  const [activeChip, setActiveChip] = useState<FolderChip>({ kind: 'all' });
+  // SaaS 空间模型：个人空间 / 团队空间（协作边界）；空间内文件夹由内容派生（纯组织）
+  const [currentSpace, setCurrentSpace] = useState<Space>({ kind: 'personal' });
+  const [activeFolder, setActiveFolder] = useState<string | null>(null);
+  const { teams, loadTeams } = useTeamStore();
+  const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
-  // 选中共享文件夹时我的有效角色（owner/editor/viewer）；个人/全部为 null（=自己的，全权）
+  // 团队空间下我的有效角色（owner/editor/viewer）；个人空间为 null（=自己的，全权）
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [sort, setSort] = useState('newest');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-  // chip → 作用域 / 个人文件夹过滤（派生；下游隔离与角色门控逻辑不变）
+  // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
   const teamScope = useMemo(
-    () => (activeChip.kind === 'shared'
-      ? { scope: 'team' as const, teamId: activeChip.teamId }
+    () => (currentSpace.kind === 'team'
+      ? { scope: 'team' as const, teamId: currentSpace.teamId }
       : { scope: 'mine' as const, teamId: null }),
-    [activeChip],
+    [currentSpace],
   );
-  const activeFolder = activeChip.kind === 'personal' ? activeChip.folder : null;
   const groupMode: GroupMode = 'time';
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
@@ -262,9 +266,7 @@ export default function WebPagesPage() {
   // 拖文件到卡片触发的"替换网页"二次确认（非 null 时弹出确认框）
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
-  const [showShareToTeam, setShowShareToTeam] = useState(false);
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
-  const [showFolders, setShowFolders] = useState(false);
 
   // ─── Load ───
 
@@ -272,7 +274,6 @@ export default function WebPagesPage() {
     setLoading(true);
     const res = await listSites({
       keyword: keyword || undefined,
-      folder: activeFolder || undefined,
       tag: activeTag || undefined,
       sort,
       limit: 200,
@@ -286,7 +287,7 @@ export default function WebPagesPage() {
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
-  }, [keyword, activeFolder, activeTag, sort, teamScope]);
+  }, [keyword, activeTag, sort, teamScope]);
 
   // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
   // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
@@ -318,6 +319,7 @@ export default function WebPagesPage() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadMeta(); }, [loadMeta]);
   useEffect(() => { loadShares(); }, [loadShares]);
+  useEffect(() => { void loadTeams(); }, [loadTeams]);
 
   // 把刚上传成功的站点 ID 加入 freshIds，1.3s 后自动移除（与 CSS 动画时长匹配）。
   // 仅在用户主动创建时触发；筛选/排序导致的 sites 重组不动它。
@@ -458,7 +460,35 @@ export default function WebPagesPage() {
   };
 
   // 分组：保持服务端排序顺序，仅按 first-seen 切分节（排序与分组并存）
-  const siteGroups = useMemo(() => buildSiteGroups(sites, groupMode), [sites, groupMode]);
+  // 当前空间的网页：个人空间=我拥有且未进任何团队空间的（客户端剔除）；团队空间=后端已按 Id 过滤
+  const spaceSites = useMemo(
+    () => (currentSpace.kind === 'team' ? sites : sites.filter((s) => !(s.sharedTeamIds && s.sharedTeamIds.length))),
+    [sites, currentSpace],
+  );
+  // 空间内文件夹由内容派生（站点的 folder 字段）
+  const spaceFolders = useMemo(
+    () => Array.from(new Set(spaceSites.map((s) => s.folder).filter((f): f is string => !!f && !!f.trim()))).sort(),
+    [spaceSites],
+  );
+  const displaySites = useMemo(
+    () => (activeFolder ? spaceSites.filter((s) => s.folder === activeFolder) : spaceSites),
+    [spaceSites, activeFolder],
+  );
+  const siteGroups = useMemo(() => buildSiteGroups(displaySites, groupMode), [displaySites, groupMode]);
+
+  const enterSpace = (s: Space) => { setCurrentSpace(s); setActiveFolder(null); setSelectedIds(new Set()); };
+
+  const handleMoveSite = async (targetSpace: Space, folder: string | null) => {
+    if (!movingSite) return;
+    const teamIds = targetSpace.kind === 'team' ? [targetSpace.teamId] : [];
+    const r1 = await setSiteTeams(movingSite.id, teamIds);
+    if (!r1.success) { toast.error('移动失败', r1.error?.message); return; }
+    // 同步文件夹（空间内组织）；移到个人空间也允许带文件夹名
+    await updateSite(movingSite.id, { folder: folder ?? '' });
+    setMovingSite(null);
+    await load();
+    toast.success('已移动', targetSpace.kind === 'team' ? '已移动到团队空间' : '已移动到个人空间');
+  };
 
   // 单组内的卡片/列表渲染，按 viewMode 复用
   const renderGroupItems = (items: HostedSite[]) =>
@@ -489,6 +519,7 @@ export default function WebPagesPage() {
             onTransferToLibrary={() => setLibraryTargetSite(site)}
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
             onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
+            onMove={() => setMovingSite(site)}
           />
         ))}
       </div>
@@ -627,26 +658,40 @@ export default function WebPagesPage() {
 
       {/* Toolbar */}
       <GlassCard className="p-3">
-        {/* 顶部：一排文件夹标签（个人 + 共享并列）+ 共享文件夹上下文条 */}
-        <FolderChipBar
-          moduleKey="web-hosting"
-          personalFolders={folders}
-          active={activeChip}
-          onChange={(c) => { setActiveChip(c); setSelectedIds(new Set()); }}
-        />
+        {/* 顶部：空间切换器（个人空间 / 团队空间）+ 团队空间协作头部 */}
+        <SpaceBar current={currentSpace} onChange={enterSpace} myWebHostingRole={myWebHostingRole} />
 
-        {/* 第二行：搜索 / 文件夹管理 / 视图 */}
+        {/* 空间内文件夹（内容派生）：全部 + 各文件夹 */}
+        {spaceFolders.length > 0 && (
+          <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+            <button
+              type="button"
+              onClick={() => setActiveFolder(null)}
+              className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
+              style={activeFolder === null
+                ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' }
+                : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+            >
+              全部
+            </button>
+            {spaceFolders.map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setActiveFolder(f)}
+                className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
+                style={activeFolder === f
+                  ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' }
+                  : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+              >
+                <Folder size={11} /> {f}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 第二行：搜索 / 视图 */}
         <div className="flex flex-wrap items-center gap-3 mt-3">
-          {/* 文件夹管理 + 按文件夹生成 */}
-          <button
-            type="button"
-            data-tour-id="webpages-folders"
-            className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5"
-            style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
-            onClick={() => setShowFolders(true)}
-          >
-            <Folder size={13} /> 管理文件夹
-          </button>
           {/* Search */}
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -735,9 +780,6 @@ export default function WebPagesPage() {
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
               <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
             )}
-            {teamScope.scope !== 'team' && (
-              <Button size="xs" variant="secondary" onClick={() => setShowShareToTeam(true)}><Users size={12} className="mr-1" /> 分享到共享文件夹</Button>
-            )}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
               <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
             )}
@@ -757,10 +799,10 @@ export default function WebPagesPage() {
         <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
           加载中...
         </div>
-      ) : sites.length === 0 ? (
+      ) : displaySites.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
           <UploadCloud size={48} strokeWidth={1} />
-          <p>还没有托管的网页</p>
+          <p>{currentSpace.kind === 'team' ? '这个团队空间还没有网页' : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
           <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
             <Upload size={14} className="mr-1" /> 上传第一个站点
           </Button>
@@ -880,30 +922,86 @@ export default function WebPagesPage() {
         />
       )}
 
-      {showFolders && (
-        <FolderManager
-          onClose={() => setShowFolders(false)}
-          onGenerated={() => load()}
-        />
-      )}
-
-      {showShareToTeam && (
-        <ShareToTeamDialog
-          title={`分享到共享文件夹（已选 ${selectedIds.size} 项）`}
-          onConfirm={async (teamIds) => {
-            const ids = [...selectedIds];
-            for (const id of ids) {
-              await setSiteTeams(id, teamIds);
-            }
-            setShowShareToTeam(false);
-            setSelectedIds(new Set());
-            toast.success('已分享到共享文件夹', `${ids.length} 个站点已更新分享`);
-            load();
-          }}
-          onClose={() => setShowShareToTeam(false)}
+      {movingSite && (
+        <MoveSiteDialog
+          site={movingSite}
+          teams={teams}
+          onClose={() => setMovingSite(null)}
+          onMove={handleMoveSite}
         />
       )}
     </div>
+  );
+}
+
+// ─── 移动到空间 / 文件夹 ───
+
+function MoveSiteDialog({
+  site,
+  teams,
+  onClose,
+  onMove,
+}: {
+  site: HostedSite;
+  teams: TeamListItem[];
+  onClose: () => void;
+  onMove: (space: Space, folder: string | null) => void | Promise<void>;
+}) {
+  const inTeam = !!(site.sharedTeamIds && site.sharedTeamIds.length);
+  const initial: Space = inTeam ? { kind: 'team', teamId: site.sharedTeamIds![0] } : { kind: 'personal' };
+  const [space, setSpace] = useState<Space>(initial);
+  const [folder, setFolder] = useState(site.folder ?? '');
+
+  const row = (label: React.ReactNode, on: boolean, onClick: () => void, key: string) => (
+    <button
+      key={key}
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-2 rounded-[8px] text-[13px] text-left"
+      style={on
+        ? { background: 'rgba(212,175,55,0.16)', color: 'var(--text-primary)', border: '1px solid var(--accent-gold, #d4af37)' }
+        : { background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}
+    >
+      {label}
+    </button>
+  );
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
+      <div className="rounded-[14px] w-full flex flex-col" style={{ maxWidth: 420, maxHeight: '80vh', background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-5 h-[52px] flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>移动「{site.title}」</span>
+          <button type="button" onClick={onClose} style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3" style={{ overscrollBehavior: 'contain' }}>
+          <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>移动到哪个空间</div>
+          <div className="flex flex-col gap-1.5">
+            {row(<><User size={14} /> 个人空间</>, space.kind === 'personal', () => setSpace({ kind: 'personal' }), 'personal')}
+            {teams.map((t) =>
+              row(
+                <><Users size={14} /> {t.team.name}</>,
+                space.kind === 'team' && space.teamId === t.team.id,
+                () => setSpace({ kind: 'team', teamId: t.team.id }),
+                t.team.id,
+              ),
+            )}
+          </div>
+          <div className="text-[12px] pt-1" style={{ color: 'var(--text-muted)' }}>文件夹（空间内组织，可留空）</div>
+          <input
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+            placeholder="文件夹名（留空 = 不归档）"
+            className="w-full h-9 px-3 rounded-[8px] text-[13px] outline-none"
+            style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+          />
+        </div>
+        <div className="shrink-0 flex justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+          <Button size="sm" variant="ghost" onClick={onClose}>取消</Button>
+          <Button size="sm" variant="primary" onClick={() => onMove(space, folder.trim() || null)}>移动</Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1104,7 +1202,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers }: {
+function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -1121,6 +1219,7 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
   onQrCode: () => void;
   onTransferToLibrary: () => void;
   onReplaceFile: (file: File) => void;
+  onMove?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -1312,6 +1411,7 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
             {onViewers && (
               <IconAction icon={<Eye size={12} />} label="访客" onClick={onViewers} />
             )}
+            {c.canEdit && onMove && <IconAction icon={<FolderInput size={12} />} label="移动到空间/文件夹" onClick={onMove} />}
             {c.canEdit && <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />}
             {c.canDelete && <IconAction icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />}
           </div>
