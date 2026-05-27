@@ -75,7 +75,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 ## 交付(可靠路径 + Verdict)
 
 - **owner 自看(唯一可靠,默认私有库恒可用)**:登录 MAP → 点击左侧「知识库」→ 打开「验收报告」库 → 本次报告(最新一篇)。走授权 DocBrowser,正文 + 内联截图完整渲染。**这是交给用户验收的主路径。**
-- **分享给登出第三方**:`/library/share/{token}`(脚本输出)当前**只渲染目录、不渲染 reference markdown 正文**(实测 LibraryShareReader 的已知缺陷,2026-05-26)。要给第三方看,二选一:① 让对方登录后走授权路径;② 把报告库设 `isPublic:true` 并走殿堂页(需文档空间侧支持)。**别直接把 share 链接当"点开即看正文"交付。**
+- **分享给登出第三方**:`/s/lib/{token}`(脚本输出,2026-05-27 实测正确路由——旧 `/library/share/{token}` 不存在、会落到首页)。`LibraryShareViewPage` 会渲染**书册目录 + 正文 + 内联截图**(实测点开报告 4 张图全出、Verdict/用例/缺陷段齐全),可直接当"点开即看"交付给登出第三方。分享是**库级**(整个报告库一个 token,内含多篇),对方在左侧目录点具体报告阅读。
 - **聊天内直给**:截图发给用户(authed 渲染图)是最稳的"立即可读"方式,不依赖任何链接。
 - 禁止把 `/library/{storeId}` 当私有库入口(会撞"未对外开放")。
 
