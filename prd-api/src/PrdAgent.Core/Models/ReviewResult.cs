@@ -28,6 +28,13 @@ public class ReviewResult
     /// <summary>解析错误信息（为空表示解析成功）</summary>
     public string? ParseError { get; set; }
 
+    /// <summary>
+    /// 系统兜底调整日志。记录三层 guardrail（evidence gate / 数据密度封顶 / summary 一致性闸）
+    /// 触发后的调整原文，便于用户/审计追踪「LLM 给了 X 分，系统按规则 Y 改为 Z 分」。
+    /// 空列表表示 LLM 原始打分未被系统调整。
+    /// </summary>
+    public List<string> AdjustmentLog { get; set; } = new();
+
     public DateTime ScoredAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -40,11 +47,17 @@ public class ReviewDimensionScore
     /// <summary>维度名称快照</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>实得分</summary>
+    /// <summary>实得分（可能被系统兜底调整覆盖；调整前的 LLM 原始分见 OriginalScore）</summary>
     public int Score { get; set; }
 
     /// <summary>满分</summary>
     public int MaxScore { get; set; }
+
+    /// <summary>
+    /// LLM 原始分（清单维度为系统派生前的 LLM 自填值）。仅当被 guardrail 调整时填充，
+    /// 未调整时为 null。用于审计「LLM 给了多少 / 系统改了多少」。
+    /// </summary>
+    public int? OriginalScore { get; set; }
 
     /// <summary>AI 评语（该维度的具体评价）</summary>
     public string Comment { get; set; } = string.Empty;

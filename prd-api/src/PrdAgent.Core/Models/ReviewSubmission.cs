@@ -40,8 +40,18 @@ public class ReviewSubmission
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
 
-    /// <summary>该提交被「重新评审」的次数；0 表示从未 rerun。用于一次性通过率统计。</summary>
+    /// <summary>
+    /// 该提交被用户「重新上传方案救机会」的次数；语义 = 用户主动改/换内容的次数。
+    /// 0 = 首次提交从未折腾过；≥1 = 用户至少救过一次。一次性通过率统计依赖此字段。
+    /// 注意：不含 LLM 网关 Error 后的"重新评审"重跑（那是系统恢复，不归咎用户），见 ErrorRetryCount。
+    /// </summary>
     public int RerunCount { get; set; } = 0;
+
+    /// <summary>
+    /// LLM 网关 Error 后用户点「重新评审」触发的系统重跑次数；与用户方案质量无关，仅用于运维统计。
+    /// 一次性通过率公式不消费此字段。
+    /// </summary>
+    public int ErrorRetryCount { get; set; } = 0;
 
     /// <summary>申诉状态：null（未申诉）/ Pending / Approved / Rejected</summary>
     public string? AppealStatus { get; set; }

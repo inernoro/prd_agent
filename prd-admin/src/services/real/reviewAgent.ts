@@ -50,6 +50,8 @@ export interface ReviewDimensionScore {
   score: number;
   maxScore: number;
   comment: string;
+  /** LLM 原始分（调整前）。仅当被系统兜底调整时填充，否则为 null/undefined */
+  originalScore?: number | null;
   /** 子检查项判断结果（清单类维度使用） */
   items?: DimensionCheckItemResult[] | null;
 }
@@ -84,6 +86,8 @@ export interface ReviewResult {
   summary: string;
   fullMarkdown: string;
   parseError?: string;
+  /** 系统三层兜底（evidence gate / 数据密度封顶 / summary 一致性闸）的调整日志，空数组表示未触发任何调整 */
+  adjustmentLog?: string[];
   scoredAt: string;
 }
 
@@ -152,6 +156,26 @@ export async function getSubmission(
 
 export async function rerunSubmission(id: string): Promise<ApiResponse<{ message: string }>> {
   return apiRequest(`/api/review-agent/submissions/${id}/rerun`, { method: 'POST' });
+}
+
+/**
+ * 未通过救机会：替换附件并触发重新评审。仅当 isPassed=false 且 RerunCount=0 时可调用。
+ */
+export async function reuploadOnFailure(
+  id: string,
+  attachmentId: string
+): Promise<ApiResponse<{ message: string }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(id)}/reupload-on-failure`, {
+    method: 'POST',
+    body: { attachmentId },
+  });
+}
+
+/** 获取该 submission 的所有评审历史（按时间倒序） */
+export async function getSubmissionResults(
+  id: string
+): Promise<ApiResponse<{ results: ReviewResult[] }>> {
+  return apiRequest(`/api/review-agent/submissions/${encodeURIComponent(id)}/results`);
 }
 
 export interface LeaderboardItem {

@@ -1757,6 +1757,8 @@ export {
   getAllSubmissions as getAllReviewSubmissions,
   getSubmission as getReviewSubmission,
   rerunSubmission as rerunReviewSubmission,
+  reuploadOnFailure as reuploadReviewOnFailure,
+  getSubmissionResults as getReviewSubmissionResults,
   getResultStreamUrl as getReviewResultStreamUrl,
   getSubmitters as getReviewSubmitters,
   listReviewWebhooks,
