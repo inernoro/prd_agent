@@ -1127,6 +1127,108 @@ describe('Branch Routes', () => {
       }
     });
 
+    it('manual stop cancels queued webhook deploy dispatch after an active deploy is fenced', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'stop-pending',
+        projectId: 'default',
+        branch: 'feature/stop-pending',
+        worktreePath: path.join(tmpDir, 'worktrees', 'stop-pending'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-stop-pending-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-stop-pending', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: Array<{ url: string; body: unknown; requestId?: string }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
+            : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/stop-pending/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-a' },
+        );
+        await runStarted;
+
+        const mergedB = await request(
+          server,
+          'POST',
+          '/api/branches/stop-pending/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-b' },
+        );
+        expect(String(mergedB.body)).toContain('merged');
+
+        const stop = await request(
+          server,
+          'POST',
+          '/api/branches/stop-pending/stop',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-stop-manual' },
+        );
+        expect(stop.status).toBe(200);
+
+        releaseRun();
+        const active = await activeDeploy;
+        expect(active.status).toBe(200);
+        expect(String(active.body)).toContain('error');
+        expect(fetchCalls).toHaveLength(0);
+        expect(stateService.getBranch('stop-pending')?.status).toBe('idle');
+
+        const events = operationEvents.filter((event) => event.branchId === 'stop-pending');
+        expect(events.some((event) =>
+          event.action === 'branch.operation.cancelled'
+          && event.operationKind === 'deploy'
+          && event.details?.reason === 'superseded by stop',
+        )).toBe(true);
+        expect(events.some((event) =>
+          event.action === 'branch.operation.cancelled'
+          && event.operationKind === 'deploy'
+          && event.details?.pending === true
+          && event.details?.reason === 'superseded by stop',
+        )).toBe(true);
+        expect(events.find((event) => event.action === 'branch.operation.pending-dispatch.started')).toBeUndefined();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it('records branch delete completion only after state flush succeeds', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
