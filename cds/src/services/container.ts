@@ -475,6 +475,7 @@ export class ContainerService {
     network: string,
     aliases: string[],
     onOutput?: (chunk: string) => void,
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> = {},
   ): Promise<void> {
     if (aliases.length === 0) return;
     const removed = new Set<string>();
@@ -485,8 +486,44 @@ export class ContainerService {
       const target = id || cleanName;
       if (cleanName === service.containerName || removed.has(target)) return;
       onOutput?.(`── 清理同 alias 的旧 endpoint(${source}): ${cleanName} (${staleAliases.join(', ')}) ──\n`);
-      this.noteLifecycleIntent(cleanName, 'cds-stale-cleanup', `清理同 alias 的旧 endpoint(${source})`);
+      const reason = `清理同 alias 的旧 endpoint(${source})`;
+      this.noteLifecycleIntent(cleanName, 'cds-stale-cleanup', reason, {
+        projectId: entry.projectId,
+        branchId: entry.id,
+        profileId: profile.id,
+        requestId: context.requestId ?? null,
+        operationId: context.operationId ?? null,
+        actor: context.actor ?? null,
+        trigger: context.trigger ?? null,
+        operation: 'deploy-stale-alias-cleanup',
+        source: 'container.pruneStaleAppContainersForProfile',
+      });
       const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(target)}`);
+      this.recordContainerEvent({
+        severity: rm.exitCode === 0 ? 'warn' : 'error',
+        source: 'cds-container-service',
+        action: 'app.stale-alias-rm',
+        message: `stale alias cleanup for ${cleanName}`,
+        projectId: entry.projectId,
+        branchId: entry.id,
+        profileId: profile.id,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
+        containerName: cleanName,
+        command: {
+          name: 'docker rm -f',
+          exitCode: rm.exitCode,
+          stdoutPreview: rm.stdout,
+          stderrPreview: rm.stderr,
+        },
+        details: {
+          reason,
+          staleAliases,
+          target,
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+        },
+      });
       if (rm.exitCode !== 0) {
         await this.shell.exec(
           `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(target)}`,
@@ -614,7 +651,7 @@ export class ContainerService {
       profile.id,
       this.getProjectMarkers(entry.projectId),
     );
-    await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput);
+    await this.pruneStaleAppContainersForProfile(entry, profile, service, network, profileAliases, onOutput, context);
 
     context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
     // Remove any existing container
@@ -1375,7 +1412,7 @@ export class ContainerService {
   async stop(
     containerName: string,
     reason = 'cds-stop',
-    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
   ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
@@ -1383,6 +1420,10 @@ export class ContainerService {
       source: 'cds-container-service',
       action: 'container.stop.requested',
       message: `CDS requested docker stop for ${containerName}: ${reason}`,
+      projectId: context.projectId ?? undefined,
+      branchId: context.branchId ?? undefined,
+      profileId: context.profileId ?? undefined,
+      serviceId: context.serviceId ?? undefined,
       requestId: context.requestId ?? undefined,
       operationId: context.operationId ?? undefined,
       containerName,
@@ -1398,6 +1439,10 @@ export class ContainerService {
     });
     await this.writeStopSentinel(containerName, reason);
     this.noteLifecycleIntent(containerName, 'cds-stop', reason, {
+      projectId: context.projectId ?? null,
+      branchId: context.branchId ?? null,
+      profileId: context.profileId ?? null,
+      serviceId: context.serviceId ?? null,
       requestId: context.requestId ?? null,
       operationId: context.operationId ?? null,
       actor: context.actor ?? null,
@@ -1413,6 +1458,10 @@ export class ContainerService {
       source: 'cds-container-service',
       action: 'container.stop.completed',
       message: `docker stop completed for ${containerName}: ${reason}`,
+      projectId: context.projectId ?? undefined,
+      branchId: context.branchId ?? undefined,
+      profileId: context.profileId ?? undefined,
+      serviceId: context.serviceId ?? undefined,
       requestId: context.requestId ?? undefined,
       operationId: context.operationId ?? undefined,
       containerName,

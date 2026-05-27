@@ -1068,6 +1068,9 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopping';
       try {
         await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId: svc.profileId,
           operationId: branchOperationLease?.operationId || null,
           actor: 'scheduler',
           trigger: 'scheduler',
@@ -1258,6 +1261,9 @@ const autoLifecycleService = new AutoLifecycleService(
           svc.status = 'stopping';
           try {
             await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId: svc.profileId,
               operationId: branchOperationLease?.operationId || null,
               actor: 'auto-lifecycle',
               trigger: 'auto-lifecycle',

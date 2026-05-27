@@ -32,6 +32,7 @@ describe('classifyDockerLifecycleEvent', () => {
     expect(result.nextServiceStatus).toBe('stopped');
     expect(result.stopClass).toBe('cds-pre-run-replace');
     expect(result.reason).toContain('requestId=req-123');
+    expect(result.reason).toContain('operationId=op-123');
     expect(result.reason).toContain('operation=deploy-pre-run-replace');
     expect(result.reason).toContain('trigger=webhook');
   });

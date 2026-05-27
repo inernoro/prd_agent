@@ -5885,6 +5885,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         try {
           await containerService.stop(svc.containerName, '用户手动停止', {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: svc.profileId,
             requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
             operationId: branchOperationLease?.operationId || null,
             actor: resolveActorFromRequest(req),

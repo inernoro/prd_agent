@@ -34,6 +34,7 @@ export function classifyDockerLifecycleEvent(
         intent.operation ? `operation=${intent.operation}` : '',
         intent.source ? `source=${intent.source}` : '',
         intent.requestId ? `requestId=${intent.requestId}` : '',
+        intent.operationId ? `operationId=${intent.operationId}` : '',
         intent.actor ? `actor=${intent.actor}` : '',
         intent.trigger ? `trigger=${intent.trigger}` : '',
       ].filter(Boolean).join(' ')

@@ -113,7 +113,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
 
-      await service.runService(makeEntry(), makeProfile(), makeService(), undefined, undefined, {
+      await service.runService({ ...makeEntry(), projectId: 'default' }, makeProfile(), makeService(), undefined, undefined, {
         requestId: 'req-123',
         operationId: 'op-123',
         actor: 'ai',
@@ -127,6 +127,28 @@ describe('ContainerService', () => {
     });
 
     it('should remove stale same branch/profile app containers before attaching service aliases', async () => {
+      const records: Array<{
+        action: string;
+        projectId?: string | null;
+        branchId?: string | null;
+        profileId?: string | null;
+        operationId?: string | null;
+        details?: Record<string, unknown>;
+      }> = [];
+      service = new ContainerService(mock, makeConfig(), undefined, {
+        record(record) {
+          records.push({
+            action: record.action,
+            projectId: record.projectId,
+            branchId: record.branchId,
+            profileId: record.profileId,
+            operationId: record.operationId,
+            details: record.details,
+          });
+        },
+      });
+      aliveStub?.mockRestore();
+      aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true" --filter "label=cds\.type=app"/, () => ({
         stdout: [
@@ -150,7 +172,12 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
 
-      await service.runService(makeEntry(), makeProfile(), makeService());
+      await service.runService({ ...makeEntry(), projectId: 'default' }, makeProfile(), makeService(), undefined, undefined, {
+        requestId: 'req-stale',
+        operationId: 'op-stale',
+        actor: 'system:webhook',
+        trigger: 'webhook',
+      });
 
       const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
       expect(rmCommands.some(c => c.includes("'cds-feature-a-api-old'"))).toBe(true);
@@ -160,6 +187,12 @@ describe('ContainerService', () => {
       const currentRmIndex = mock.commands.findIndex(c => c.includes('docker rm -f cds-feature-a-api'));
       expect(staleRmIndex).toBeGreaterThanOrEqual(0);
       expect(currentRmIndex).toBeGreaterThan(staleRmIndex);
+      const staleRecord = records.find((record) => record.action === 'app.stale-alias-rm');
+      expect(staleRecord?.projectId).toBe('default');
+      expect(staleRecord?.branchId).toBe('feature-a');
+      expect(staleRecord?.profileId).toBe('api');
+      expect(staleRecord?.operationId).toBe('op-stale');
+      expect(staleRecord?.details?.trigger).toBe('webhook');
     });
 
     it('should remove unlabeled stale network endpoints only for the same service container prefix', async () => {
@@ -389,17 +422,34 @@ describe('ContainerService', () => {
       expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
     });
 
-    it('records operationId on stop events', async () => {
-      const records: Array<{ action: string; operationId?: string | null; details?: Record<string, unknown> }> = [];
+    it('records operationId and branch identity on stop events', async () => {
+      const records: Array<{
+        action: string;
+        projectId?: string | null;
+        branchId?: string | null;
+        profileId?: string | null;
+        operationId?: string | null;
+        details?: Record<string, unknown>;
+      }> = [];
       service = new ContainerService(mock, makeConfig(), undefined, {
         record(record) {
-          records.push({ action: record.action, operationId: record.operationId, details: record.details });
+          records.push({
+            action: record.action,
+            projectId: record.projectId,
+            branchId: record.branchId,
+            profileId: record.profileId,
+            operationId: record.operationId,
+            details: record.details,
+          });
         },
       });
       mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
       await service.stop('cds-feature-a-api', '用户手动停止', {
+        projectId: 'default',
+        branchId: 'feature-a',
+        profileId: 'api',
         requestId: 'req-stop',
         operationId: 'op-stop',
         actor: 'user:1',
@@ -410,6 +460,8 @@ describe('ContainerService', () => {
 
       expect(records.find((record) => record.action === 'container.stop.requested')?.operationId).toBe('op-stop');
       expect(records.find((record) => record.action === 'container.stop.completed')?.operationId).toBe('op-stop');
+      expect(records.find((record) => record.action === 'container.stop.requested')?.branchId).toBe('feature-a');
+      expect(records.find((record) => record.action === 'container.stop.requested')?.profileId).toBe('api');
       expect(records.find((record) => record.action === 'container.stop.requested')?.details?.operation).toBe('branch-stop');
     });
   });
