@@ -225,6 +225,10 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
   const [hovering, setHovering] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const Icon = getIcon(item.icon);
+  const isPaAgent = item.agentKey === 'pa-agent';
+  const cardDescription = isPaAgent
+    ? '把模糊想法转成 MECE 执行清单的 MBB 级私人助理'
+    : item.description;
 
   const handleMouseEnter = () => {
     setHovering(true);
@@ -355,10 +359,10 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           {item.name}
         </h3>
         <p
-          className="text-[13px] leading-relaxed mt-1.5 line-clamp-2 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
+          className="text-[13px] leading-relaxed mt-1.5 line-clamp-1 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
           style={{ color: 'rgba(255,255,255,0.95)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.8)' }}
         >
-          {item.description}
+          {cardDescription}
         </p>
       </div>
     </button>

@@ -184,6 +184,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
+  const isPaAgent = item.agentKey === 'pa-agent';
+  const paPrimaryCopy = '把模糊想法转成 MECE 执行清单的 MBB 级私人助理';
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
   // 资源解析优先级：上传图 (homepageAssetsStore) > CDN 默认硬编码
@@ -607,10 +609,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         </div>
 
         {/* 描述 */}
-        <div
-          className="toolbox-card-description text-token-secondary text-[11px] line-clamp-1 leading-snug mb-2 transition-colors duration-300"
-        >
-          {item.description}
+        <div className="toolbox-card-description text-token-secondary text-[11px] line-clamp-1 leading-snug mb-2 transition-colors duration-300">
+          {isPaAgent ? paPrimaryCopy : item.description}
         </div>
 
         {/* Tags — 可点击进行过滤 */}
@@ -651,7 +651,21 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         <div
           className="toolbox-card-footer flex items-center justify-between gap-1 pt-1.5"
         >
-          {(isOwnCustomCard || isMarketplaceCard) ? (
+          {isPaAgent ? (
+            <div className="flex items-center gap-1 min-w-0">
+              <span
+                className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                style={{
+                  background: 'rgba(59,130,246,0.2)',
+                  color: '#93c5fd',
+                  border: '1px solid rgba(59,130,246,0.45)',
+                }}
+                title="定位：私人助理"
+              >
+                私人助理
+              </span>
+            </div>
+          ) : (isOwnCustomCard || isMarketplaceCard) ? (
             <>
               {/* 用户创建的智能体：左侧 头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">

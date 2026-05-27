@@ -248,10 +248,17 @@
   --pa-fs-h4: calc(13px * var(--pa-fs-scale));
   --pa-fs-caption: calc(12px * var(--pa-fs-scale));
   --pa-fs-tiny: calc(11px * var(--pa-fs-scale));
+  --bg-base: var(--pa-bg-base);
+  --bg-elevated: var(--pa-bg-elevated);
+  --bg-hover: var(--pa-bg-hover);
+  --border-default: var(--pa-border-default);
+  --text-primary: var(--pa-text-primary);
+  --text-secondary: var(--pa-text-secondary);
+  --text-muted: var(--pa-text-muted);
 }
-.pa-agent-root[data-pa-fontsize="small"]   { --pa-fs-scale: 0.88; }
+.pa-agent-root[data-pa-fontsize="small"]   { --pa-fs-scale: 0.8; }
 .pa-agent-root[data-pa-fontsize="medium"]  { --pa-fs-scale: 1; }
-.pa-agent-root[data-pa-fontsize="large"]   { --pa-fs-scale: 1.18; }
+.pa-agent-root[data-pa-fontsize="large"]   { --pa-fs-scale: 1.28; }
 
 /* =======================================================================
  *  主题切换 — dark（默认）↔ parchment（羊皮卷）
@@ -282,19 +289,19 @@
 
 .pa-agent-root[data-pa-theme="parchment"] {
   --pa-bg-base:
-    radial-gradient(ellipse at top, #FFF6DD 0%, #F5E6BD 60%, #E8D29A 100%);
-  --pa-bg-elevated: #FFF8E0;
-  --pa-bg-hover: #F2E2B5;
-  --pa-border-default: rgba(120, 80, 30, 0.18);
-  --pa-text-primary: #3D2817;
-  --pa-text-secondary: #5C3A20;
-  --pa-text-muted: #8B6F47;
+    radial-gradient(circle at 16% 12%, #fff6df 0%, #f3e5c0 46%, #dfc48c 100%);
+  --pa-bg-elevated: #f8edd2;
+  --pa-bg-hover: #efe0b8;
+  --pa-border-default: rgba(92, 58, 20, 0.2);
+  --pa-text-primary: #2f1f12;
+  --pa-text-secondary: #4a311c;
+  --pa-text-muted: #705633;
   --pa-accent-strong: #D97706;
   --pa-accent-soft: #B45309;
-  --pa-md-code-bg: rgba(120, 80, 30, 0.07);
-  --pa-md-code-border: rgba(120, 80, 30, 0.18);
+  --pa-md-code-bg: rgba(120, 80, 30, 0.1);
+  --pa-md-code-border: rgba(120, 80, 30, 0.25);
   --pa-md-quote-bg: rgba(217, 119, 6, 0.08);
-  --pa-md-quote-border: rgba(217, 119, 6, 0.5);
+  --pa-md-quote-border: rgba(217, 119, 6, 0.6);
   --pa-md-strong: #B45309;
   --pa-md-link: #92400E;
   --pa-md-link-hover: #5C2A04;
@@ -610,20 +617,28 @@
   padding: 4px 8px;
   border-radius: 8px;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--pa-text-muted);
   background: transparent;
   border: 1px solid transparent;
   transition: all 180ms var(--pa-ease-emphasized);
   cursor: pointer;
 }
 .pa-toolbar-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
+  background: var(--pa-bg-elevated);
+  color: var(--pa-text-secondary);
 }
 .pa-toolbar-btn[data-active="true"] {
   background: rgba(217, 119, 6, 0.12);
-  color: #fcd34d;
+  color: var(--pa-accent-strong);
   border-color: rgba(217, 119, 6, 0.35);
+}
+
+.pa-secretary-avatar-shell {
+  background: linear-gradient(135deg, #0e2c5b 0%, #123b74 60%, #0b2448 100%);
+  box-shadow:
+    0 18px 40px -12px rgba(6, 35, 80, 0.6),
+    0 0 0 1px rgba(173, 216, 255, 0.2) inset,
+    0 1px 0 rgba(255, 255, 255, 0.18) inset;
 }
 
 /* 进一步了解我 ghost 按钮 — 二级 CTA */

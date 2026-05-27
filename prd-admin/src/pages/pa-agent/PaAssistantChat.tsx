@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Paperclip, X, ChevronRight, Loader2, Plus, Zap, Check, CheckCircle,
   Scissors, AlarmClock, AlertTriangle, ListChecks, Brain, Eye, ExternalLink,
-  NotebookPen,
   FileText, FileSpreadsheet, FileType, File as FileIcon,
 } from 'lucide-react';
 import type {
@@ -446,35 +445,33 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
         ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full gap-7 px-4 pa-empty-enter">
             <div className="text-center max-w-md">
-              <div
-                className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon"
-                style={{
-                  // 改为 AI 秘书主题配色（琥珀 → 深棕 → 一抹青色高亮），与 PaAgentCardArt 呼应
-                  background: 'linear-gradient(135deg,#FCD34D 0%,#D97706 55%,#92400E 100%)',
-                  boxShadow:
-                    '0 18px 40px -12px rgba(217,119,6,0.55),' +
-                    ' 0 0 0 1px rgba(255,255,255,0.08) inset,' +
-                    ' 0 1px 0 rgba(255,255,255,0.2) inset',
-                }}
-              >
-                <NotebookPen size={36} color="#FFFCEF" strokeWidth={2} />
+              <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon pa-secretary-avatar-shell">
+                <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden>
+                  <circle cx="22" cy="16.5" r="9" fill="#ffd7b7" />
+                  <path d="M11 15 C12 6,32 5,33 15 C29 9,15 10,11 15Z" fill="#16233f" />
+                  <rect x="14" y="25" width="16" height="11" rx="5.5" fill="#2b4f88" />
+                  <path d="M30 16 C35 15,37 19,36 24" stroke="#67e8f9" strokeWidth="2" fill="none" />
+                  <circle cx="36" cy="24" r="2.2" fill="#22d3ee" />
+                  <circle cx="17.5" cy="16.7" r="1.3" fill="#101726" />
+                  <circle cx="24.8" cy="16.7" r="1.3" fill="#101726" />
+                </svg>
               </div>
               {/* display 标题层 */}
               <div
                 className="font-semibold mb-2"
-                style={{ fontSize: 22, lineHeight: '28px', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}
+                style={{ fontSize: 'calc(22px * var(--pa-fs-scale))', lineHeight: 'calc(28px * var(--pa-fs-scale))', letterSpacing: '-0.01em', color: 'var(--text-primary)' }}
               >
                 毒舌秘书
               </div>
               {/* 一段两行：用户指定的新文案 */}
               <div
                 className="mb-1"
-                style={{ fontSize: 13.5, lineHeight: '22px', color: 'var(--text-secondary)' }}
+                style={{ fontSize: 'calc(13.5px * var(--pa-fs-scale))', lineHeight: 'calc(22px * var(--pa-fs-scale))', color: 'var(--text-secondary)' }}
               >
                 把模糊想法转成 MECE 执行清单的 MBB 级私人助理。
               </div>
               <div
-                style={{ fontSize: 12, lineHeight: '20px', color: 'var(--text-muted)', opacity: 0.85 }}
+                style={{ fontSize: 'calc(12px * var(--pa-fs-scale))', lineHeight: 'calc(20px * var(--pa-fs-scale))', color: 'var(--text-muted)', opacity: 0.85 }}
               >
                 毒舌幽默、不堆鸡汤、能落盘。
               </div>
