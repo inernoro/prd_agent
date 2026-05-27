@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Paperclip, X, ChevronRight, Loader2, Plus, Zap, Check, CheckCircle,
-  Scissors, AlarmClock, AlertTriangle, ListChecks, Brain, Eye,
+  Scissors, AlarmClock, AlertTriangle, ListChecks, Brain, Eye, ExternalLink,
+  NotebookPen,
   FileText, FileSpreadsheet, FileType, File as FileIcon,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import type {
   PaMessage, PaTask, PaUploadResult, PaTaskEvent, PaSessionInfo, PaProfileEvent,
 } from '@/services/real/paAgentService';
@@ -13,6 +12,10 @@ import {
   getPaMessages, streamPaChat, createPaTask, uploadPaFile,
 } from '@/services/real/paAgentService';
 import { StreamingText } from '@/components/streaming';
+import { ChatMarkdown } from './ChatMarkdown';
+
+/** 「进一步了解我」外链 — 米多内部 wp 链接，承载毒舌秘书完整产品介绍 */
+const LEARN_MORE_URL = 'https://map.ebcone.net/s/wp/0q1-vbQ9HehA';
 
 // ── Quick commands（毒舌秘书风格，零 emoji） ──────────────────────────────
 
@@ -243,16 +246,15 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, profileEvent, onT
       </div>
       <div className="max-w-[82%]">
         <div
-          className="rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
+          className="rounded-2xl rounded-tl-sm px-4 py-3"
           style={{
             background: 'var(--bg-elevated)',
             border: '1px solid var(--border-default)',
             color: 'var(--text-primary)',
           }}
         >
-          <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
-          </div>
+          {/* ChatMarkdown：H1/H2/列表/代码/表格/引用全部走精致排版 */}
+          <ChatMarkdown content={displayContent} />
         </div>
         {/* Auto-saved toast */}
         {autoEvent && !autoDismissed && (
@@ -447,14 +449,15 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
               <div
                 className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon"
                 style={{
-                  background: 'linear-gradient(135deg,#6366f1 0%,#8b5cf6 60%,#22d3ee 110%)',
+                  // 改为 AI 秘书主题配色（琥珀 → 深棕 → 一抹青色高亮），与 PaAgentCardArt 呼应
+                  background: 'linear-gradient(135deg,#FCD34D 0%,#D97706 55%,#92400E 100%)',
                   boxShadow:
-                    '0 18px 40px -12px rgba(139,92,246,0.55),' +
-                    ' 0 0 0 1px rgba(255,255,255,0.06) inset,' +
-                    ' 0 1px 0 rgba(255,255,255,0.15) inset',
+                    '0 18px 40px -12px rgba(217,119,6,0.55),' +
+                    ' 0 0 0 1px rgba(255,255,255,0.08) inset,' +
+                    ' 0 1px 0 rgba(255,255,255,0.2) inset',
                 }}
               >
-                <Zap size={36} color="#fff" strokeWidth={2.2} />
+                <NotebookPen size={36} color="#FFFCEF" strokeWidth={2} />
               </div>
               {/* display 标题层 */}
               <div
@@ -463,17 +466,17 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
               >
                 毒舌秘书
               </div>
-              {/* lead 描述层 */}
+              {/* 一段两行：用户指定的新文案 */}
               <div
                 className="mb-1"
                 style={{ fontSize: 13.5, lineHeight: '22px', color: 'var(--text-secondary)' }}
               >
-                我不是来陪聊的，是来帮你把混乱变成清单的。
+                把模糊想法转成 MECE 执行清单的 MBB 级私人助理。
               </div>
               <div
-                style={{ fontSize: 12, lineHeight: '20px', color: 'var(--text-muted)', opacity: 0.8 }}
+                style={{ fontSize: 12, lineHeight: '20px', color: 'var(--text-muted)', opacity: 0.85 }}
               >
-                说「挺好的」我会装没听见——把你最难的事丢过来。
+                毒舌幽默、不堆鸡汤、能落盘。
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2.5 w-full max-w-md">
@@ -499,6 +502,27 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                 </button>
               ))}
             </div>
+
+            {/* 二级 CTA：进一步了解我（ghost 按钮，外链新窗口） */}
+            <a
+              href={LEARN_MORE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="pa-learn-more group inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-medium"
+              style={{
+                background: 'transparent',
+                color: 'var(--text-muted)',
+                border: '1px solid rgba(217,119,6,0.3)',
+              }}
+              title="打开毒舌秘书完整介绍（外链 · 新窗口）"
+            >
+              <span>进一步了解我</span>
+              <ExternalLink
+                size={10}
+                className="opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+              />
+            </a>
+
             <div className="flex items-center gap-2 text-[10.5px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
               <kbd
                 className="px-1.5 py-0.5 rounded font-mono text-[10px]"

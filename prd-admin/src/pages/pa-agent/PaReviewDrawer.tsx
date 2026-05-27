@@ -11,12 +11,11 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
   X, ChevronDown, Calendar, Play, Loader2, RotateCcw, CheckCircle, AlertTriangle,
 } from 'lucide-react';
 import { StreamingText } from '@/components/streaming';
+import { ChatMarkdown } from './ChatMarkdown';
 import {
   streamPaReview,
   type PaReviewRange,
@@ -290,16 +289,13 @@ export function PaReviewDrawer({ open, onClose }: Props) {
               </div>
             </div>
           ) : content ? (
-            <article
-              className="prose prose-sm max-w-none leading-relaxed"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {/* 流式期间按 token 渲染（blur focus），完成后切到最终 markdown 渲染表格 / 加粗等 */}
+            <article style={{ color: 'var(--text-primary)' }}>
+              {/* 流式期间按 token 渲染（blur focus），完成后切到 ChatMarkdown 精致排版 */}
               <StreamingText
                 text={content}
                 streaming={running}
                 markdown
-                renderMarkdown={c => <ReactMarkdown remarkPlugins={[remarkGfm]}>{c}</ReactMarkdown>}
+                renderMarkdown={c => <ChatMarkdown content={c} />}
                 cursorContent="dot"
               />
             </article>
