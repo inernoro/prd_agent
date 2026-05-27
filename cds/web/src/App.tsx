@@ -1,16 +1,25 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { BranchDetailPage } from '@/pages/BranchDetailPage';
-import { BranchListPage } from '@/pages/BranchListPage';
-import { BranchTopologyPage } from '@/pages/BranchTopologyPage';
-import { CdsSettingsPage } from '@/pages/CdsSettingsPage';
-import { HelloPage } from '@/pages/HelloPage';
-import { HomePage } from '@/pages/HomePage';
-import { LoginPage } from '@/pages/LoginPage';
-import { PreviewPreparingPage } from '@/pages/PreviewPreparingPage';
-import { ProjectListPage } from '@/pages/ProjectListPage';
-import { ProjectSettingsPage } from '@/pages/ProjectSettingsPage';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
+
+const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
+const BranchListPage = lazy(() => import('@/pages/BranchListPage').then((m) => ({ default: m.BranchListPage })));
+const BranchTopologyPage = lazy(() => import('@/pages/BranchTopologyPage').then((m) => ({ default: m.BranchTopologyPage })));
+const CdsSettingsPage = lazy(() => import('@/pages/CdsSettingsPage').then((m) => ({ default: m.CdsSettingsPage })));
+const HelloPage = lazy(() => import('@/pages/HelloPage').then((m) => ({ default: m.HelloPage })));
+const HomePage = lazy(() => import('@/pages/HomePage').then((m) => ({ default: m.HomePage })));
+const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
+const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
+const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
+const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
+
+function RouteFallback(): JSX.Element {
+  return (
+    <div className="min-h-screen bg-background p-8 text-sm text-muted-foreground">
+      加载中...
+    </div>
+  );
+}
 
 class DashboardErrorBoundary extends Component<{ children: ReactNode }, { message: string | null }> {
   state = { message: null };
@@ -76,21 +85,23 @@ export function App(): JSX.Element {
   return (
     <DashboardErrorBoundary>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
-          <Route path="/hello" element={<HelloPage />} />
-          <Route path="/cds-settings" element={<CdsSettingsPage />} />
-          <Route path="/project-list" element={<ProjectListPage />} />
-          <Route path="/branches/:projectId" element={<BranchListPage />} />
-          <Route path="/branch-list" element={<BranchListPage />} />
-          <Route path="/branch-panel" element={<BranchDetailPage />} />
-          <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
-          <Route path="/branch-topology" element={<BranchTopologyPage />} />
-          <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
-          <Route path="*" element={<Navigate to="/project-list" replace />} />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
+            <Route path="/hello" element={<HelloPage />} />
+            <Route path="/cds-settings" element={<CdsSettingsPage />} />
+            <Route path="/project-list" element={<ProjectListPage />} />
+            <Route path="/branches/:projectId" element={<BranchListPage />} />
+            <Route path="/branch-list" element={<BranchListPage />} />
+            <Route path="/branch-panel" element={<BranchDetailPage />} />
+            <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
+            <Route path="/branch-topology" element={<BranchTopologyPage />} />
+            <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
+            <Route path="*" element={<Navigate to="/project-list" replace />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </DashboardErrorBoundary>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
@@ -304,8 +305,8 @@ function AppRail({
       </div>
 
       <div className="cds-rail-section">
-      <a
-        href="/project-list"
+      <Link
+        to="/project-list"
         className="cds-rail-item"
         data-active={active === 'projects' ? 'true' : 'false'}
         aria-label="项目列表"
@@ -313,9 +314,9 @@ function AppRail({
       >
         <LayoutGrid />
         <span>Projects</span>
-      </a>
-      <a
-        href="/cds-settings"
+      </Link>
+      <Link
+        to="/cds-settings"
         className="cds-rail-item"
         data-active={active === 'cds-settings' ? 'true' : 'false'}
         aria-label="CDS 系统设置"
@@ -323,7 +324,7 @@ function AppRail({
       >
         <Settings />
         <span>Settings</span>
-      </a>
+      </Link>
       </div>
       <div className="flex-1" />
       {canLogout ? (
