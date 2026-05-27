@@ -131,9 +131,9 @@ export class BranchOperationCoordinator {
 
   begin(request: BranchOperationRequest): BranchOperationDecision {
     const branchId = request.branchId;
-    const active = this.active.get(branchId);
+    const active = this.findBlockingActive(request);
     if (!active) {
-      const reserved = this.getUsableReservedContinuation(branchId);
+      const reserved = this.getUsableReservedContinuation(branchId, request);
       if (reserved) return this.beginAgainstReservedContinuation(request, reserved);
       return this.start(request);
     }
@@ -170,13 +170,15 @@ export class BranchOperationCoordinator {
     const incomingPriority = priorityOf(request);
     const activePriority = priorityOf(active.request);
     if (incomingPriority > activePriority) {
-      active.cancelled = true;
-      active.cancelReason = `superseded by ${request.kind}`;
-      this.record('branch.operation.cancelled', active.request, active.operationId, active.generation, 'warn', {
-        reason: active.cancelReason,
-        supersededBy: request.kind,
-        supersededByTrigger: request.trigger,
-      });
+      for (const item of this.findBlockingActives(request)) {
+        item.cancelled = true;
+        item.cancelReason = `superseded by ${request.kind}`;
+        this.record('branch.operation.cancelled', item.request, item.operationId, item.generation, 'warn', {
+          reason: item.cancelReason,
+          supersededBy: request.kind,
+          supersededByTrigger: request.trigger,
+        });
+      }
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
         this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
       }
@@ -200,9 +202,10 @@ export class BranchOperationCoordinator {
   }
 
   complete(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy | null {
-    const active = this.active.get(lease.branchId);
-    if (active?.operationId === lease.operationId) {
-      this.active.delete(lease.branchId);
+    const activeEntry = this.findActiveEntryByOperation(lease.operationId);
+    const active = activeEntry?.active;
+    if (activeEntry && active?.operationId === lease.operationId) {
+      this.active.delete(activeEntry.key);
     }
     this.record(`branch.operation.${status}`, lease.request, lease.operationId, lease.generation, status === 'failed' ? 'error' : status === 'cancelled' ? 'warn' : 'info', {
       error: error || null,
@@ -223,11 +226,12 @@ export class BranchOperationCoordinator {
   }
 
   cancelBranch(branchId: string, reason: string): void {
-    const active = this.active.get(branchId);
-    if (active) {
+    const activeEntries = [...this.active.entries()].filter(([, active]) => active.branchId === branchId);
+    for (const [key, active] of activeEntries) {
       active.cancelled = true;
       active.cancelReason = reason;
       this.record('branch.operation.cancelled', active.request, active.operationId, active.generation, 'warn', { reason });
+      this.active.delete(key);
     }
     const pending = this.pendingWebhookDeploys.get(branchId);
     if (pending) {
@@ -272,12 +276,15 @@ export class BranchOperationCoordinator {
   }
 
   isCurrent(branchId: string, operationId: string, generation: number): boolean {
-    const active = this.active.get(branchId);
+    const active = [...this.active.values()].find((item) => item.branchId === branchId && item.operationId === operationId);
     return Boolean(active && active.operationId === operationId && active.generation === generation && !active.cancelled);
   }
 
-  getActive(branchId: string): ActiveOperation | undefined {
-    return this.active.get(branchId);
+  getActive(branchId: string, profileId?: string | null): ActiveOperation | undefined {
+    if (profileId) {
+      return this.active.get(this.profileKey(branchId, profileId));
+    }
+    return [...this.active.values()].find((active) => active.branchId === branchId);
   }
 
   getPendingWebhookDeploy(branchId: string): PendingWebhookDeploy | undefined {
@@ -293,6 +300,7 @@ export class BranchOperationCoordinator {
 
   private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
     const branchId = request.branchId;
+    const key = this.operationKey(request);
     const generation = existing?.generation ?? this.nextGeneration(branchId);
     const operationId = existing?.operationId ?? this.createOperationId();
     const active: ActiveOperation = {
@@ -303,7 +311,7 @@ export class BranchOperationCoordinator {
       startedAt: nowIso(),
       cancelled: false,
     };
-    this.active.set(branchId, active);
+    this.active.set(key, active);
     const lease: BranchOperationLease = {
       operationId,
       branchId,
@@ -441,9 +449,10 @@ export class BranchOperationCoordinator {
     });
   }
 
-  private getUsableReservedContinuation(branchId: string): ReservedContinuation | null {
+  private getUsableReservedContinuation(branchId: string, request?: BranchOperationRequest): ReservedContinuation | null {
     const reserved = this.reservedContinuations.get(branchId);
     if (!reserved) return null;
+    if (request && !this.operationsConflict(request, reserved.request)) return null;
     if (Date.now() <= reserved.expiresAt) return reserved;
     this.reservedContinuations.delete(branchId);
     this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
@@ -469,6 +478,50 @@ export class BranchOperationCoordinator {
 
   private currentGeneration(branchId: string): number {
     return this.generations.get(branchId) || 0;
+  }
+
+  private findActiveEntryByOperation(operationId: string): { key: string; active: ActiveOperation } | null {
+    for (const [key, active] of this.active.entries()) {
+      if (active.operationId === operationId) return { key, active };
+    }
+    return null;
+  }
+
+  private findBlockingActive(request: BranchOperationRequest): ActiveOperation | undefined {
+    return this.findBlockingActives(request)[0];
+  }
+
+  private findBlockingActives(request: BranchOperationRequest): ActiveOperation[] {
+    return [...this.active.values()].filter((active) => this.operationsConflict(request, active.request));
+  }
+
+  private operationsConflict(a: BranchOperationRequest, b: BranchOperationRequest): boolean {
+    if (a.branchId !== b.branchId) return false;
+    if (this.isBranchWide(a) || this.isBranchWide(b)) return true;
+    return (a.profileId || null) === (b.profileId || null);
+  }
+
+  private operationKey(request: BranchOperationRequest): string {
+    return this.isBranchWide(request)
+      ? this.branchKey(request.branchId)
+      : this.profileKey(request.branchId, request.profileId || '');
+  }
+
+  private branchKey(branchId: string): string {
+    return `${branchId}::*`;
+  }
+
+  private profileKey(branchId: string, profileId: string): string {
+    return `${branchId}::${profileId}`;
+  }
+
+  private isBranchWide(request: BranchOperationRequest): boolean {
+    if (!request.profileId) return true;
+    return !(
+      request.kind === 'deploy-profile' ||
+      request.kind === 'force-rebuild' ||
+      request.kind === 'auto-restart'
+    );
   }
 
   private createOperationId(): string {

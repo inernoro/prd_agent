@@ -359,6 +359,94 @@ describe('BranchOperationCoordinator', () => {
     expect(a.operationId).not.toBe(b.operationId);
   });
 
+  it('serializes per branch/profile without blocking another profile on the same branch', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const api = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      profileId: 'api',
+    });
+    const admin = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      profileId: 'admin',
+    });
+    const apiAgain = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      profileId: 'api',
+    });
+
+    expect(api.status).toBe('started');
+    expect(admin.status).toBe('started');
+    expect(api.operationId).not.toBe(admin.operationId);
+    expect(apiAgain.status).toBe('rejected');
+    expect(apiAgain.activeOperationId).toBe(api.operationId);
+  });
+
+  it('branch-wide delete cancels all active profile operations on that branch', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const api = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      profileId: 'api',
+    });
+    const admin = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      profileId: 'admin',
+    });
+
+    const del = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(del.status).toBe('started');
+    expect(api.lease?.isCurrent()).toBe(false);
+    expect(admin.lease?.isCurrent()).toBe(false);
+    expect(records.filter((r) => r.action === 'branch.operation.cancelled')).toHaveLength(2);
+  });
+
+  it('reserved force-rebuild continuation only blocks the same profile or branch-wide operations', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const force = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'force-rebuild',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'api',
+      continueWith: 'deploy-profile',
+    });
+    coordinator.complete(force.lease!, 'completed');
+
+    const admin = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy-profile',
+      trigger: 'manual',
+      actor: 'user',
+      profileId: 'admin',
+    });
+    const branchDeploy = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(admin.status).toBe('started');
+    expect(branchDeploy.status).toBe('rejected');
+    expect([force.operationId, admin.operationId]).toContain(branchDeploy.activeOperationId);
+  });
+
   it('reserves the same operationId for force-rebuild deploy continuation', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);
