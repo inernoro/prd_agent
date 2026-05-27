@@ -293,6 +293,54 @@ describe('BranchOperationCoordinator', () => {
     expect(() => restart.lease?.assertCurrent('after-docker-start')).toThrow(BranchOperationSupersededError);
   });
 
+  it('manual delete cancels an active auto-lifecycle redeploy override write', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const auto = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'auto-lifecycle-redeploy',
+      trigger: 'auto-lifecycle',
+      actor: 'auto-lifecycle',
+      source: 'autoLifecycleService.applyAutoPublish',
+    });
+
+    const del = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'delete',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    expect(del.status).toBe('started');
+    expect(auto.lease?.isCurrent()).toBe(false);
+    expect(() => auto.lease?.assertCurrent('auto-publish after override write')).toThrow(BranchOperationSupersededError);
+    expect(records.find((r) => r.action === 'branch.operation.cancelled')?.operationId).toBe(auto.operationId);
+  });
+
+  it('auto-lifecycle redeploy yields to an active manual deploy instead of rewriting state', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    const manual = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'deploy',
+      trigger: 'manual',
+      actor: 'user',
+    });
+
+    const auto = coordinator.begin({
+      branchId: 'prd-agent-main',
+      kind: 'auto-lifecycle-redeploy',
+      trigger: 'auto-lifecycle',
+      actor: 'auto-lifecycle',
+      source: 'autoLifecycleService.applyAutoPublish',
+    });
+
+    expect(auto.status).toBe('rejected');
+    expect(auto.activeOperationId).toBe(manual.operationId);
+    expect(coordinator.getActive('prd-agent-main')?.operationId).toBe(manual.operationId);
+    expect(records.map((r) => r.action)).toContain('branch.operation.rejected');
+  });
+
   it('serializes per branch without blocking other branches', () => {
     const coordinator = new BranchOperationCoordinator();
     const a = coordinator.begin({

@@ -1350,6 +1350,22 @@ const autoLifecycleService = new AutoLifecycleService(
         completeBackgroundBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
     },
+    beginAutoPublishOperation: (slug: string) => {
+      const lease = beginBackgroundBranchOperation({
+        branchId: slug,
+        kind: 'auto-lifecycle-redeploy',
+        trigger: 'auto-lifecycle',
+        actor: 'auto-lifecycle',
+        source: 'autoLifecycleService.applyAutoPublish',
+        reason: 'auto-lifecycle 写入发布版 override 并触发重部署',
+      });
+      if (!lease) return null;
+      return {
+        operationId: lease.operationId,
+        assertCurrent: (step?: string) => lease.assertCurrent(step),
+        complete: (status, error) => completeBackgroundBranchOperation(lease, status, error),
+      };
+    },
     // 2026-05-14 用户决策：auto-publish 必须全自动「停源码 → 重建发布版」，
     // 不靠懒唤醒（懒唤醒路径 index.ts 用 raw profile 不 resolve override）。
     // 复用 webhook dispatcher 同款"内部 HTTP 自调 /deploy"机制：deploy 路由
