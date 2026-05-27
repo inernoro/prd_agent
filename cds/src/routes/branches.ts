@@ -49,6 +49,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
+import { waitForRestartSafeBranchOperations } from '../services/restart-drain.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 为什么放模块级而不是闭包内:
@@ -1625,68 +1626,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     lease?.assertCurrent(step);
   }
 
-  function activeBranchOperations(): Array<{
-    operationId: string;
-    branchId: string;
-    kind: BranchOperationKind;
-    source?: string | null;
-    requestId?: string | null;
-  }> {
-    return branchOperationCoordinator
-      ?.getActiveOperations()
-      .map((active) => ({
-        operationId: active.operationId,
-        branchId: active.branchId,
-        kind: active.request.kind,
-        source: active.request.source || null,
-        requestId: active.request.requestId || null,
-      })) || [];
-  }
-
-  async function waitForRestartSafeBranchOperations(
+  async function waitForRestartSafeBranchOperationsForRoute(
     source: string,
     timeoutMs = Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 180_000),
     intervalMs = 1000,
-  ): Promise<{ ok: boolean; active: ReturnType<typeof activeBranchOperations> }> {
-    const firstActive = activeBranchOperations();
-    if (firstActive.length === 0) return { ok: true, active: [] };
-
-    serverEventLogStore?.record({
-      category: 'system',
-      severity: 'info',
+  ) {
+    return waitForRestartSafeBranchOperations({
       source,
-      action: 'self-update.restart.waiting',
-      message: `restart waiting for ${firstActive.length} active branch operation(s) to drain`,
-      details: { activeOperations: firstActive, timeoutMs },
+      getActiveOperations: () => branchOperationCoordinator?.getActiveOperations() || [],
+      serverEventLogStore,
+      timeoutMs,
+      intervalMs,
     });
-
-    const deadline = Date.now() + Math.max(0, timeoutMs);
-    let active = firstActive;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      active = activeBranchOperations();
-      if (active.length === 0) {
-        serverEventLogStore?.record({
-          category: 'system',
-          severity: 'info',
-          source,
-          action: 'self-update.restart.wait-completed',
-          message: 'restart branch-operation drain completed',
-          details: { waitedMs: Math.max(0, timeoutMs - (deadline - Date.now())) },
-        });
-        return { ok: true, active: [] };
-      }
-    }
-
-    serverEventLogStore?.record({
-      category: 'system',
-      severity: 'warn',
-      source,
-      action: 'self-update.restart.deferred',
-      message: `restart deferred because ${active.length} branch operation(s) are still active`,
-      details: { activeOperations: active, timeoutMs },
-    });
-    return { ok: false, active };
   }
 
   async function captureContainerLogSnapshots(
@@ -12401,7 +12352,7 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      const restartDrain = await waitForRestartSafeBranchOperations('api.self-update');
+      const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-update');
       if (!restartDrain.ok) {
         const message = 'CDS 已完成代码更新预检，但检测到仍有分支部署/删除/停止/清理等写操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 self-update。';
         send('restart', 'warning', message);
@@ -13195,7 +13146,7 @@ cdscli project list --human
       // helper 保证两端口行为一致。
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
-      const restartDrain = await waitForRestartSafeBranchOperations('api.self-force-sync');
+      const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync');
       if (!restartDrain.ok) {
         const message = 'force-sync 已完成代码更新预检，但检测到仍有分支部署/删除/停止/清理等写操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 force-sync。';
         send('restart', 'warning', message);
