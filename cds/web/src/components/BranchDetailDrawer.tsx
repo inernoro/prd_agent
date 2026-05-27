@@ -1363,14 +1363,12 @@ export function BranchDetailDrawer({
       .reverse();
   }, [activityEvents, branch, selectedService?.profileId]);
 
-  useEffect(() => {
-    if (!open || (activeTab !== 'services' && (activeTab !== 'logs' || logsMode !== 'container')) || !selectedService || serviceLogs.profileId === selectedService.profileId) return;
-    void loadServiceLogs(selectedService.profileId);
-  }, [activeTab, loadServiceLogs, logsMode, open, selectedService, serviceLogs.profileId]);
+  // Passive detail views must not trigger live Docker reads. Container logs are
+  // loaded only from explicit user actions: container-log tab, service selector,
+  // maximize, or refresh.
 
-  // 部署 tab 内联容器日志: 不只失败时显示。running / success / error
-  // 都取一个最相关服务的 docker logs，挂在 PhaseTree 的启动服务阶段，
-  // 避免部署卡片只有阶段占位、真实容器输出还要再切到「日志」tab。
+  // 部署 tab 内联容器日志只消费已经显式加载过的内容。打开详情/部署 tab
+  // 本身不能触发 live Docker 读取，否则被动查看会变成隐式诊断。
   const activeDeploymentPhases = useMemo(() => {
     if (!activeDeployment) return null;
     return deriveBranchPhases(
@@ -1403,31 +1401,6 @@ export function BranchDetailDrawer({
     }
     return autoDeploymentLogProfileId;
   }, [autoDeploymentLogProfileId, selectedDeploymentLogProfileId, services]);
-
-  useEffect(() => {
-    if (!open || activeTab !== 'deployments') return;
-    if (!activeDeployment) return;
-    if (!deploymentLogProfileId) return;
-    if (
-      serviceLogs.profileId === deploymentLogProfileId &&
-      // 2026-05-14 Codex review P2：error 也算"已加载"，否则容器日志拉取
-      // 失败时本 effect 每次 render 都重发请求，造成 loading/error 抖动死循环。
-      // 用户切容器 tab（deploymentLogProfileId 变）或点刷新按钮（显式调
-      // loadServiceLogs 绕过本 guard）才会重新拉。
-      (serviceLogs.status === 'ok' || serviceLogs.status === 'loading' || serviceLogs.status === 'error')
-    ) {
-      return;
-    }
-    void loadServiceLogs(deploymentLogProfileId);
-  }, [
-    activeDeployment,
-    activeTab,
-    deploymentLogProfileId,
-    loadServiceLogs,
-    open,
-    serviceLogs.profileId,
-    serviceLogs.status,
-  ]);
 
   /**
    * 2026-05-14: 内联容器日志的 tab strip + 最大化控制。
