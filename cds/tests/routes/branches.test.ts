@@ -107,6 +107,7 @@ describe('Branch Routes', () => {
   let mock: MockShellExecutor;
   let stateService: StateService;
   let containerService: ContainerService;
+  let serverEventLogStore: ServerEventLogSink;
   let operationEvents: Array<{
     category?: string;
     source?: string;
@@ -154,7 +155,7 @@ describe('Branch Routes', () => {
     (containerService as any).waitForContainerAlive = async () => undefined;
     (containerService as any).waitForReadiness = async () => true;
     operationEvents = [];
-    const serverEventLogStore: ServerEventLogSink = {
+    serverEventLogStore = {
       record(record) {
         operationEvents.push({
           category: record.category,
@@ -1121,6 +1122,72 @@ describe('Branch Routes', () => {
         .map((event) => event.action);
       expect(actions.indexOf('test.state-flushed')).toBeGreaterThanOrEqual(0);
       expect(actions.indexOf('branch.delete.completed')).toBeGreaterThan(actions.indexOf('test.state-flushed'));
+    });
+
+    it('does not keep delete SSE open when immediate delete completion audit hangs', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'hung-audit-delete',
+        projectId: 'default',
+        branch: 'feature/hung-audit-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'hung-audit-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      serverEventLogStore.recordImmediate = async () => {
+        await new Promise<void>(() => { /* simulate a stuck Mongo write */ });
+      };
+
+      const startedAt = Date.now();
+      const del = await request(server, 'DELETE', '/api/branches/hung-audit-delete');
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(del.status).toBe(200);
+      expect(elapsedMs).toBeLessThan(2_000);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('hung-audit-delete')).toBeUndefined();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-audit-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-audit-delete' && event.action === 'branch.delete.audit-timeout',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-audit-delete' && event.action === 'branch.operation.completed',
+      )).toBeTruthy();
+    });
+
+    it('does not fail branch delete when immediate delete completion audit throws', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'failed-audit-delete',
+        projectId: 'default',
+        branch: 'feature/failed-audit-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'failed-audit-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      serverEventLogStore.recordImmediate = async () => {
+        throw new Error('mongo temporarily unavailable');
+      };
+
+      const del = await request(server, 'DELETE', '/api/branches/failed-audit-delete');
+
+      expect(del.status).toBe(200);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('failed-audit-delete')).toBeUndefined();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'failed-audit-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'failed-audit-delete' && event.action === 'branch.operation.completed',
+      )).toBeTruthy();
     });
 
     it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {

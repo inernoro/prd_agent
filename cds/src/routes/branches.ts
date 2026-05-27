@@ -82,6 +82,7 @@ const selfStatusClients = new Set<import('express').Response>();
 // 客户端只收到 ≤2 条 update,不再风暴。
 let broadcastInFlight = false;
 let broadcastQueued = false;
+const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
 
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
@@ -4073,10 +4074,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
         operationId: branchOperationLease?.operationId || null,
         details: { actor, trigger: trigger || null },
       } as const;
-      if (serverEventLogStore?.recordImmediate) {
-        await serverEventLogStore.recordImmediate(completedEvent);
-      } else {
-        serverEventLogStore?.record(completedEvent);
+      if (!serverEventLogStore) return;
+      if (!serverEventLogStore.recordImmediate) {
+        serverEventLogStore.record(completedEvent);
+        return;
+      }
+      const immediateWrite = serverEventLogStore.recordImmediate(completedEvent)
+        .then(() => 'written' as const)
+        .catch((err) => {
+          console.warn(`[branch-delete] completion audit write failed for ${id}: ${(err as Error).message}`);
+          serverEventLogStore.record(completedEvent);
+          return 'failed' as const;
+        });
+      const timeout = new Promise<'timeout'>((resolve) => {
+        const timer = setTimeout(() => resolve('timeout'), DELETE_COMPLETION_AUDIT_TIMEOUT_MS);
+        timer.unref?.();
+      });
+      const auditResult = await Promise.race([immediateWrite, timeout]);
+      if (auditResult === 'timeout') {
+        console.warn(`[branch-delete] completion audit write timed out for ${id}; continuing delete response`);
+        serverEventLogStore.record(completedEvent);
+        serverEventLogStore.record({
+          category: 'container',
+          severity: 'warn',
+          source: 'branch-delete',
+          action: 'branch.delete.audit-timeout',
+          message: `delete completion audit write timed out for ${id}`,
+          projectId: entry.projectId,
+          branchId: entry.id,
+          requestId: requestId || null,
+          operationId: branchOperationLease?.operationId || null,
+          details: { actor, trigger: trigger || null, timeoutMs: DELETE_COMPLETION_AUDIT_TIMEOUT_MS },
+        });
       }
     };
 
