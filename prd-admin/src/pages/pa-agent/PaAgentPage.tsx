@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MessageSquare, LayoutGrid, Plus, Trash2, Edit2, Check, X,
-  ChevronLeft, ChevronRight, Brain, BookOpen, Moon,
+  ChevronLeft, ChevronRight, Brain, BookOpen, Sparkles, Mountain,
 } from 'lucide-react';
 import {
   getPaSessions, createPaSession, deletePaSession, renamePaSession,
@@ -14,13 +14,24 @@ import { PaReviewDrawer } from './PaReviewDrawer';
 import { PaSecretaryIcon } from '@/pages/ai-toolbox/components/PaSecretaryIcon';
 import './paAgent.css';
 
-/** sessionStorage key — 主题偏好（dark / parchment） */
+/** sessionStorage key — 主题偏好（gemini / mountain / parchment） */
 const PA_THEME_KEY = 'pa-agent.theme';
 /** sessionStorage key — 字号档位（small / medium / large） */
 const PA_FONTSIZE_KEY = 'pa-agent.fontsize';
 
-type PaTheme = 'dark' | 'parchment';
+type PaTheme = 'gemini' | 'mountain' | 'parchment';
 type PaFontSize = 'small' | 'medium' | 'large';
+
+const PA_THEME_CYCLE: PaTheme[] = ['gemini', 'mountain', 'parchment'];
+
+function readThemePref(): PaTheme {
+  try {
+    const v = sessionStorage.getItem(PA_THEME_KEY);
+    if (v === 'dark') return 'mountain';
+    if (v && (PA_THEME_CYCLE as readonly string[]).includes(v)) return v as PaTheme;
+  } catch { /* sessionStorage 不可用时静默 */ }
+  return 'gemini';
+}
 
 function readPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
   try {
@@ -80,7 +91,7 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
 
   return (
     <div
-      className="pa-session-item group relative flex items-start gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition-all"
+      className="pa-session-item group relative flex items-center gap-1 px-2 cursor-pointer transition-colors"
       data-active={active ? 'true' : 'false'}
       onClick={onSelect}
       onMouseMove={(e) => {
@@ -91,44 +102,35 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
         e.currentTarget.style.setProperty('--pa-hover-y', `${y}px`);
       }}
     >
-      <div
-        className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center mt-0.5"
-        style={{ background: active ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'var(--bg-elevated)' }}
-      >
-        <MessageSquare size={11} color={active ? '#fff' : 'var(--text-muted)'} />
-      </div>
-
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
         {editing ? (
-          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
             <input
               ref={inputRef}
               value={editTitle}
               onChange={e => setEditTitle(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={confirmEdit}
-              className="flex-1 text-xs bg-transparent outline-none border-b"
-              style={{ color: 'var(--text-primary)', borderColor: '#6366f1' }}
+              className="flex-1 text-xs bg-transparent outline-none border-b min-w-0"
+              style={{ color: 'var(--text-primary)', borderColor: 'var(--pa-accent-strong, #6366f1)' }}
             />
-            <button onClick={confirmEdit} className="p-0.5 text-green-500"><Check size={11} /></button>
-            <button onClick={() => setEditing(false)} className="p-0.5" style={{ color: 'var(--text-muted)' }}><X size={11} /></button>
+            <button onClick={confirmEdit} className="p-0.5 text-green-500 shrink-0"><Check size={11} /></button>
+            <button onClick={() => setEditing(false)} className="p-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}><X size={11} /></button>
           </div>
         ) : (
           <>
             <div
-              className="pa-fs-xs font-medium truncate"
-              style={{ color: active ? '#67e8f9' : 'var(--text-secondary)' }}
+              className="pa-fs-xs font-medium truncate min-w-0"
+              style={{ color: active ? 'var(--pa-accent-strong, #4f46e5)' : 'var(--text-secondary)' }}
             >
               {session.title || '新对话'}
             </div>
-            {session.lastMessagePreview && (
-              <div className="pa-fs-tiny truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                {session.lastMessagePreview}
-              </div>
-            )}
-            <div className="pa-fs-tiny mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+            <span
+              className="pa-fs-tiny shrink-0 tabular-nums"
+              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+            >
               {dayjs(session.updatedAt).fromNow()}
-            </div>
+            </span>
           </>
         )}
       </div>
@@ -136,7 +138,8 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
       {/* Actions */}
       {!editing && (
         <div
-          className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity absolute right-1 top-1/2 -translate-y-1/2"
+          style={{ background: 'var(--pa-bg-hover, var(--bg-hover))' }}
           onClick={e => e.stopPropagation()}
         >
           <button
@@ -165,18 +168,11 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
 
 function SessionSkeleton() {
   return (
-    <div className="space-y-1.5 px-1 pt-2">
-      {[0, 1, 2].map(i => (
-        <div
-          key={i}
-          className="rounded-xl px-2.5 py-2 flex items-start gap-2"
-          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}
-        >
-          <div className="shrink-0 w-6 h-6 rounded-lg pa-skeleton-shimmer" />
-          <div className="flex-1 min-w-0 space-y-1.5">
-            <div className="h-2.5 rounded pa-skeleton-shimmer" style={{ width: `${60 + i * 10}%` }} />
-            <div className="h-2 rounded pa-skeleton-shimmer" style={{ width: `${40 + i * 8}%`, opacity: 0.6 }} />
-          </div>
+    <div className="pa-session-list pt-1">
+      {[0, 1, 2, 3].map(i => (
+        <div key={i} className="pa-session-item flex items-center justify-between gap-2 px-2">
+          <div className="h-2.5 rounded pa-skeleton-shimmer flex-1" style={{ maxWidth: `${55 + i * 8}%` }} />
+          <div className="h-2 w-10 rounded pa-skeleton-shimmer shrink-0 opacity-60" />
         </div>
       ))}
     </div>
@@ -243,7 +239,7 @@ function GroupedSessions({ sessions, activeSessionId, onSelect, onDelete, onRena
               <span>{g.label}</span>
               <span className="text-[9px] opacity-70 tabular-nums">{g.items.length}</span>
             </div>
-            <div className="space-y-1">
+            <div className="pa-session-list">
               {g.items.map(s => (
                 <SessionItem
                   key={s.id}
@@ -273,19 +269,25 @@ export function PaAgentPage() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
 
-  // 主题（dark / parchment）与字号档（small / medium / large）— sessionStorage 持久化
-  const [theme, setTheme] = useState<PaTheme>(() =>
-    readPref<PaTheme>(PA_THEME_KEY, 'dark', ['dark', 'parchment']));
+  // 主题（gemini / mountain / parchment）与字号档 — sessionStorage 持久化
+  const [theme, setTheme] = useState<PaTheme>(() => readThemePref());
   const [fontSize, setFontSize] = useState<PaFontSize>(() =>
     readPref<PaFontSize>(PA_FONTSIZE_KEY, 'medium', ['small', 'medium', 'large']));
 
   const handleToggleTheme = useCallback(() => {
     setTheme(prev => {
-      const next: PaTheme = prev === 'dark' ? 'parchment' : 'dark';
+      const idx = PA_THEME_CYCLE.indexOf(prev);
+      const next = PA_THEME_CYCLE[(idx + 1) % PA_THEME_CYCLE.length]!;
       writePref(PA_THEME_KEY, next);
       return next;
     });
   }, []);
+
+  const themeToggleMeta: Record<PaTheme, { title: string; icon: React.ReactNode }> = {
+    gemini: { title: '当前：Gemini 浅色 — 点击切换山蓝深色', icon: <Sparkles size={14} /> },
+    mountain: { title: '当前：山蓝深色 — 点击切换羊皮卷', icon: <Mountain size={14} /> },
+    parchment: { title: '当前：羊皮卷 — 点击切换 Gemini 浅色', icon: <BookOpen size={14} /> },
+  };
 
   const handleSetFontSize = useCallback((next: PaFontSize) => {
     setFontSize(next);
@@ -355,12 +357,11 @@ export function PaAgentPage() {
 
   return (
     <div
-      className="pa-agent-root h-full flex"
+      className="pa-agent-root h-full flex min-h-0"
       data-pa-theme={theme}
       data-pa-fontsize={fontSize}
       style={{
-        // parchment 主题下 .pa-agent-root[data-pa-theme="parchment"] 会用 !important 覆盖
-        background: 'var(--bg-base)',
+        background: 'var(--pa-shell-bg, var(--bg-base))',
         color: 'var(--text-primary)',
       }}
     >
@@ -380,9 +381,12 @@ export function PaAgentPage() {
           <div className="flex items-center gap-2">
             <div
               className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{ background: 'linear-gradient(135deg,#0c3d6e,#2563eb)' }}
+              style={{
+                background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(238,242,248,0.9))',
+                boxShadow: '0 1px 4px rgba(66,133,244,0.15)',
+              }}
             >
-              <PaSecretaryIcon size={12} color="#fff" />
+              <PaSecretaryIcon size={14} />
             </div>
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
               毒舌秘书
@@ -420,8 +424,8 @@ export function PaAgentPage() {
 
       </div>
 
-      {/* ── Main area ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* ── Main area（四角圆角内容区） ── */}
+      <div className="pa-agent-main flex-1 flex flex-col min-w-0 min-h-0">
         {/* Top bar */}
         <div
           className="shrink-0 flex items-center gap-2 px-3 py-2"
@@ -511,11 +515,11 @@ export function PaAgentPage() {
           <button
             onClick={handleToggleTheme}
             className="pa-toolbar-btn"
-            data-active={theme === 'parchment'}
-            title={theme === 'parchment' ? '切回深色（暗夜专注）' : '切到羊皮卷（护眼复古）'}
+            data-active={theme !== 'gemini'}
+            title={themeToggleMeta[theme].title}
             style={{ width: 28, height: 28, padding: 0 }}
           >
-            {theme === 'parchment' ? <Moon size={14} /> : <BookOpen size={14} />}
+            {themeToggleMeta[theme].icon}
           </button>
           <button
             onClick={() => setProfileOpen(true)}

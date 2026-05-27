@@ -366,13 +366,21 @@
   line-height: 1.55 !important;
 }
 
-/* 侧栏历史会话 — 每条线框卡片，便于区隔不同对话 */
+/* 侧栏历史会话 — 统一高度，细线分隔，鼠标跟随高亮 */
+.pa-session-list .pa-session-item {
+  min-height: 40px;
+  max-height: 40px;
+  border-bottom: 1px solid var(--pa-border-default, var(--border-default));
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+.pa-session-list .pa-session-item:last-child {
+  border-bottom-color: transparent;
+}
 .pa-session-item {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--pa-border-default, var(--border-default));
-  background: var(--pa-bg-elevated, var(--bg-elevated));
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .pa-session-item::before {
   content: "";
@@ -383,49 +391,54 @@
   transition: opacity 180ms var(--pa-ease-emphasized);
   background:
     radial-gradient(
-      140px circle at var(--pa-hover-x, 50%) var(--pa-hover-y, 50%),
-      rgba(147, 197, 253, 0.2) 0%,
-      rgba(147, 197, 253, 0.08) 26%,
-      transparent 72%
+      120px circle at var(--pa-hover-x, 50%) var(--pa-hover-y, 50%),
+      rgba(147, 197, 253, 0.22) 0%,
+      rgba(147, 197, 253, 0.06) 28%,
+      transparent 70%
     );
 }
 .pa-session-item:hover {
-  border-color: rgba(56, 189, 248, 0.28);
   background: var(--pa-bg-hover, var(--bg-hover));
 }
 .pa-session-item:hover::before {
   opacity: 1;
 }
 .pa-session-item[data-active="true"] {
-  border-color: rgba(37, 99, 235, 0.45);
-  background: rgba(37, 99, 235, 0.1);
-  box-shadow:
-    0 0 0 1px rgba(56, 189, 248, 0.12) inset,
-    0 8px 20px -12px rgba(37, 99, 235, 0.35);
+  background: rgba(66, 133, 244, 0.08);
 }
-.pa-agent-root[data-pa-theme="parchment"] .pa-session-item {
-  background: rgba(255, 255, 252, 0.85);
-  border-color: rgba(120, 108, 88, 0.2);
-  box-shadow: 0 1px 2px rgba(120, 108, 88, 0.06);
+.pa-session-item[data-active="true"]::before {
+  opacity: 0.35;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-session-item[data-active="true"] {
+  background: rgba(56, 189, 248, 0.12);
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-session-item[data-active="true"] {
-  border-color: rgba(74, 124, 111, 0.45);
   background: rgba(74, 124, 111, 0.1);
-  box-shadow: 0 4px 14px -8px rgba(74, 124, 111, 0.25);
 }
 .pa-session-group + .pa-session-group {
   margin-top: 4px;
 }
 
+/* 主内容区 — 四角圆角 */
+.pa-agent-main {
+  margin: 8px 8px 8px 0;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--pa-border-default, var(--border-default));
+  background: var(--pa-bg-base, var(--bg-base));
+  box-shadow: 0 2px 16px -8px rgba(15, 23, 42, 0.12);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-agent-main {
+  box-shadow: 0 4px 24px -10px rgba(0, 0, 0, 0.45);
+}
+
 /* =======================================================================
- *  主题切换 — dark（默认）↔ parchment（羊皮卷）
- *  通过 data-pa-theme="parchment" 在 PaAgentPage 根 div 上挂主题
- *  只覆盖一组 scoped CSS 变量，不污染全局 var(--bg-base) 等
- *
- *  深色（默认）：继承全局 surface system 的 var(--bg-base) 等
- *  羊皮卷：本地化覆盖为温暖米色 + 深棕字
+ *  主题切换 — gemini（默认）→ mountain（山蓝深色）→ parchment（羊皮卷）
+ *  通过 data-pa-theme 在 PaAgentPage 根 div 上挂主题
  * ===================================================================== */
-.pa-agent-root {
+.pa-agent-root,
+.pa-agent-root[data-pa-theme="gemini"] {
+  --pa-shell-bg: #e8eaef;
   --pa-bg-base:
     radial-gradient(110% 68% at 66% 58%, rgba(205, 227, 248, 0.68) 0%, rgba(233, 240, 248, 0.26) 45%, transparent 72%),
     linear-gradient(180deg, #f5f6f8 0%, #f2f3f6 100%);
@@ -435,18 +448,45 @@
   --pa-text-primary: #30343b;
   --pa-text-secondary: #454b54;
   --pa-text-muted: #6b7280;
-  --pa-accent-strong: #6366f1;
-  --pa-accent-soft: #a5b4fc;
+  --pa-accent-strong: #4285f4;
+  --pa-accent-soft: #93c5fd;
   --pa-md-code-bg: rgba(149, 157, 169, 0.12);
   --pa-md-code-border: rgba(149, 157, 169, 0.25);
-  --pa-md-quote-bg: rgba(99, 102, 241, 0.08);
-  --pa-md-quote-border: rgba(99, 102, 241, 0.3);
-  --pa-md-strong: #4f46e5;
-  --pa-md-link: #4f46e5;
-  --pa-md-link-hover: #3730a3;
+  --pa-md-quote-bg: rgba(66, 133, 244, 0.08);
+  --pa-md-quote-border: rgba(66, 133, 244, 0.28);
+  --pa-md-strong: #1a73e8;
+  --pa-md-link: #1a73e8;
+  --pa-md-link-hover: #1557b0;
+}
+
+/* 山蓝深色 — 原暗夜专注背景 */
+.pa-agent-root[data-pa-theme="mountain"] {
+  --pa-shell-bg: #060a14;
+  --pa-bg-base:
+    radial-gradient(120% 80% at 20% 0%, rgba(14, 116, 144, 0.35) 0%, transparent 55%),
+    radial-gradient(90% 70% at 100% 100%, rgba(37, 99, 235, 0.22) 0%, transparent 50%),
+    linear-gradient(165deg, #0a1628 0%, #0c1e3a 42%, #061018 100%);
+  --pa-bg-elevated: rgba(255, 255, 255, 0.06);
+  --pa-bg-hover: rgba(255, 255, 255, 0.1);
+  --pa-border-default: rgba(148, 163, 184, 0.18);
+  --pa-text-primary: #e2e8f0;
+  --pa-text-secondary: #cbd5e1;
+  --pa-text-muted: #94a3b8;
+  --pa-accent-strong: #67e8f9;
+  --pa-accent-soft: #a5f3fc;
+  --pa-md-code-bg: rgba(15, 23, 42, 0.65);
+  --pa-md-code-border: rgba(148, 163, 184, 0.22);
+  --pa-md-quote-bg: rgba(34, 211, 238, 0.08);
+  --pa-md-quote-border: rgba(34, 211, 238, 0.35);
+  --pa-md-strong: #67e8f9;
+  --pa-md-link: #7dd3fc;
+  --pa-md-link-hover: #bae6fd;
+  background-color: var(--pa-shell-bg) !important;
+  color: var(--pa-text-primary) !important;
 }
 
 .pa-agent-root[data-pa-theme="parchment"] {
+  --pa-shell-bg: #ebe6dc;
   --pa-bg-base: #f8f6f1;
   --pa-bg-elevated: #fffcf8;
   --pa-bg-hover: #f0ebe4;

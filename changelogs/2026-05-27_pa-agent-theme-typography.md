@@ -21,3 +21,6 @@
 | feat | prd-admin | 空状态换 PaSecretaryHeroArt 全息人像；卡片秘书 bust 重绘为 AI 科技风 |
 | feat | prd-admin | 主背景切换为 Gemini 风格浅灰+淡蓝渐变，列表卡片改鼠标跟随 hover 光斑 |
 | fix | prd-admin | “我的画像”按钮移到右上角 toolbar；删除左下角两个入口按钮 |
+| feat | prd-admin | 背景三态循环：默认 Gemini 浅色 → 山蓝深色 → 羊皮卷；旧 dark 偏好自动映射 mountain |
+| fix | prd-admin | 侧栏会话项统一 40px 高度，仅标题+时间，细线分隔；主内容区四角 18px 圆角 |
+| feat | prd-admin | PaSecretaryIcon / PaAgentCardArt 改为 Gemini 风四色星芒与浅色卡片插画 |
