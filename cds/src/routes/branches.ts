@@ -12559,7 +12559,17 @@ cdscli project list --human
         send('restart', 'warning', message);
         sendSSE(res, 'error', { message, code: 'branch-operation-active', activeOperations: restartDrain.active });
         res.end();
-        recordFailure(message);
+        recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || '',
+          fromSha,
+          toSha: newHead || fromSha,
+          trigger: 'manual',
+          status: 'deferred',
+          durationMs: Date.now() - startedAt,
+          error: message.slice(0, 300),
+          actor,
+        });
         return;
       }
 
@@ -13353,7 +13363,17 @@ cdscli project list --human
         send('restart', 'warning', message);
         sendSSE(res, 'error', { message, code: 'branch-operation-active', activeOperations: restartDrain.active });
         res.end();
-        recordFailure(message);
+        recordSelfUpdate({
+          ts: new Date().toISOString(),
+          branch: branch || target || '',
+          fromSha,
+          toSha: newHead || fromSha,
+          trigger: 'force-sync',
+          status: 'deferred',
+          durationMs: Date.now() - startedAt,
+          error: message.slice(0, 300),
+          actor,
+        });
         return;
       }
 
