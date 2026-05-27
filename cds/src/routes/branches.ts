@@ -4168,6 +4168,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           operationId: branchOperationLease?.operationId || null,
           details: { actor, trigger: trigger || null, timeoutMs: DELETE_STATE_FLUSH_TIMEOUT_MS },
         });
+        throw new Error(`分支 "${id}" 已停止容器并移出当前内存状态，但删除状态持久化超时；未返回成功，避免重启后误判为已删除。请稍后刷新确认或重试删除。`);
+      }
+      if (flushResult === 'failed') {
+        throw new Error(`分支 "${id}" 已停止容器并移出当前内存状态，但删除状态持久化失败；未返回成功，避免重启后误判为已删除。请检查 server-events 后重试删除。`);
       }
       branchEvents.emitEvent({
         type: 'branch.removed',

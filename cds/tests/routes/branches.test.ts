@@ -1220,7 +1220,7 @@ describe('Branch Routes', () => {
       )).toBeTruthy();
     });
 
-    it('does not keep delete SSE open when state flush hangs after removing branch state', async () => {
+    it('does not report delete success when state flush hangs after removing branch state', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'hung-flush-delete',
@@ -1241,18 +1241,18 @@ describe('Branch Routes', () => {
       const del = await request(server, 'DELETE', '/api/branches/hung-flush-delete');
       const elapsedMs = Date.now() - startedAt;
 
-      expect(del.status).toBe(200);
       expect(elapsedMs).toBeLessThan(2_000);
-      expect(String(del.body)).toContain('complete');
+      expect(String(del.body)).toContain('error');
+      expect(String(del.body)).toContain('持久化超时');
       expect(stateService.getBranch('hung-flush-delete')).toBeUndefined();
       expect(operationEvents.find((event) =>
         event.branchId === 'hung-flush-delete' && event.action === 'branch.delete.state-flush-timeout',
       )).toBeTruthy();
       expect(operationEvents.find((event) =>
         event.branchId === 'hung-flush-delete' && event.action === 'branch.delete.completed',
-      )).toBeTruthy();
+      )).toBeFalsy();
       expect(operationEvents.find((event) =>
-        event.branchId === 'hung-flush-delete' && event.action === 'branch.operation.completed',
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.operation.failed',
       )).toBeTruthy();
     });
 
