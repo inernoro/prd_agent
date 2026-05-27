@@ -191,4 +191,62 @@ describe('MongoSplitStateBackingStore', () => {
 
     await expect(store.flush()).rejects.toThrow('mongo bulk write failed');
   });
+
+  it('bounds log-like global state so a single mongo document cannot grow without limit', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.logs = {
+      'branch-a': Array.from({ length: 8 }, (_, index) => ({
+        type: 'build',
+        startedAt: `t-${index}`,
+        status: 'completed',
+        events: Array.from({ length: 8 }, () => ({
+          step: 'line',
+          status: 'info',
+          chunk: 'x'.repeat(20 * 1024),
+        })),
+        containerLogSnapshots: [{
+          profileId: 'api',
+          containerName: 'c',
+          logs: 'y'.repeat(64 * 1024),
+        }],
+      })),
+    };
+    state.containerLogArchives = {
+      'branch-a': Array.from({ length: 8 }, (_, index) => ({
+        id: `archive-${index}`,
+        ts: `t-${index}`,
+        profileId: 'api',
+        containerName: 'c',
+        logs: 'z'.repeat(64 * 1024),
+      })),
+    };
+    state.selfUpdateHistory = Array.from({ length: 30 }, (_, index) => ({
+      ts: `t-${index}`,
+      branch: 'main',
+      fromSha: 'a',
+      toSha: 'b',
+      trigger: 'manual',
+      status: 'failed',
+      error: 'e'.repeat(64 * 1024),
+      steps: Array.from({ length: 40 }, () => ({ ts: 't', level: 'info', text: 's'.repeat(16 * 1024) })),
+    }));
+
+    store.save(state);
+    await store.flush();
+
+    const global = handle.global.docs.get('global')!.state;
+    expect(global.logs['branch-a']).toHaveLength(5);
+    expect(global.logs['branch-a'][0].events).toHaveLength(5);
+    expect(Buffer.byteLength(global.logs['branch-a'][0].events[0].chunk || '', 'utf8')).toBeLessThanOrEqual(4 * 1024);
+    expect(global.containerLogArchives['branch-a']).toHaveLength(3);
+    expect(Buffer.byteLength(global.containerLogArchives['branch-a'][0].logs, 'utf8')).toBeLessThanOrEqual(16 * 1024);
+    expect(global.selfUpdateHistory).toHaveLength(20);
+    expect(global.selfUpdateHistory?.[0].steps).toHaveLength(25);
+    expect(Buffer.byteLength(global.selfUpdateHistory?.[0].steps?.[0].text || '', 'utf8')).toBeLessThanOrEqual(2 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(global), 'utf8')).toBeLessThan(2 * 1024 * 1024);
+  });
 });

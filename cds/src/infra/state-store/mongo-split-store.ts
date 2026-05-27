@@ -32,7 +32,19 @@
  * 的 fallback 逻辑（见 index.ts）。
  */
 
-import type { CdsState, BranchEntry, Project } from '../../types.js';
+import type {
+  CdsState,
+  BranchEntry,
+  ContainerLogArchiveEntry,
+  OperationLog,
+  OperationLogContainerSnapshot,
+  OperationLogEvent,
+  Project,
+  ProjectActivityLog,
+  SelfUpdateRecord,
+  ServiceDeployment,
+  ServiceDeploymentLogEntry,
+} from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
 
 /** Mongo 集合最小接口 — 与 mongo-backing-store 风格一致，便于单测。 */
@@ -67,14 +79,125 @@ export const GLOBAL_DOC_ID = 'global';
  */
 export type GlobalRest = Omit<CdsState, 'projects' | 'branches'>;
 
+const MAX_LOGS_PER_BRANCH = 5;
+const MAX_EVENTS_PER_OPERATION_LOG = 5;
+const MAX_CONTAINER_ARCHIVES_PER_BRANCH = 3;
+const MAX_ACTIVITY_LOGS_PER_PROJECT = 200;
+const MAX_WEBHOOK_DELIVERIES = 200;
+const MAX_SELF_UPDATE_HISTORY = 20;
+const MAX_SELF_UPDATE_STEPS = 25;
+const MAX_SERVICE_DEPLOYMENT_LOGS = 100;
+const MAX_EVENT_TEXT_BYTES = 4 * 1024;
+const MAX_CONTAINER_SNAPSHOT_LOG_BYTES = 8 * 1024;
+const MAX_CONTAINER_ARCHIVE_LOG_BYTES = 16 * 1024;
+const MAX_SERVICE_DEPLOYMENT_LOG_BYTES = 4 * 1024;
+const MAX_SELF_UPDATE_ERROR_BYTES = 8 * 1024;
+const MAX_SELF_UPDATE_STEP_TEXT_BYTES = 2 * 1024;
+
 function stableJson(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function trimBufferTailToUtf8(buffer: Buffer, maxBytes: number): string {
+  let text = buffer.subarray(Math.max(0, buffer.length - maxBytes)).toString('utf8');
+  while (Buffer.byteLength(text, 'utf8') > maxBytes) text = text.slice(1);
+  return text;
+}
+
+function truncateTail(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const bytes = Buffer.byteLength(value, 'utf8');
+  if (bytes <= maxBytes) return value;
+  const prefix = `[cds persisted tail: original ${bytes} bytes]\n`;
+  const tailBudget = Math.max(0, maxBytes - Buffer.byteLength(prefix, 'utf8'));
+  return `${prefix}${trimBufferTailToUtf8(Buffer.from(value), tailBudget)}`;
+}
+
+function sanitizeEvent(event: OperationLogEvent): OperationLogEvent {
+  return {
+    ...event,
+    log: truncateTail(event.log, MAX_EVENT_TEXT_BYTES),
+    chunk: truncateTail(event.chunk, MAX_EVENT_TEXT_BYTES),
+  };
+}
+
+function sanitizeContainerSnapshot(snapshot: OperationLogContainerSnapshot): OperationLogContainerSnapshot {
+  return {
+    ...snapshot,
+    logs: truncateTail(snapshot.logs, MAX_CONTAINER_SNAPSHOT_LOG_BYTES) || '',
+  };
+}
+
+function sanitizeOperationLog(log: OperationLog): OperationLog {
+  return {
+    ...log,
+    events: (log.events || []).slice(-MAX_EVENTS_PER_OPERATION_LOG).map(sanitizeEvent),
+    containerLogSnapshots: (log.containerLogSnapshots || []).slice(-2).map(sanitizeContainerSnapshot),
+  };
+}
+
+function sanitizeContainerArchive(entry: ContainerLogArchiveEntry): ContainerLogArchiveEntry {
+  return {
+    ...entry,
+    logs: truncateTail(entry.logs, MAX_CONTAINER_ARCHIVE_LOG_BYTES) || '',
+  };
+}
+
+function sanitizeServiceDeploymentLog(entry: ServiceDeploymentLogEntry): ServiceDeploymentLogEntry {
+  return {
+    ...entry,
+    message: truncateTail(entry.message, MAX_SERVICE_DEPLOYMENT_LOG_BYTES) || '',
+  };
+}
+
+function sanitizeServiceDeployment(deployment: ServiceDeployment): ServiceDeployment {
+  return {
+    ...deployment,
+    logs: (deployment.logs || []).slice(-MAX_SERVICE_DEPLOYMENT_LOGS).map(sanitizeServiceDeploymentLog),
+  };
+}
+
+function sanitizeSelfUpdateRecord(record: SelfUpdateRecord): SelfUpdateRecord {
+  return {
+    ...record,
+    error: truncateTail(record.error, MAX_SELF_UPDATE_ERROR_BYTES),
+    steps: record.steps?.slice(-MAX_SELF_UPDATE_STEPS).map((step) => ({
+      ...step,
+      text: truncateTail(step.text, MAX_SELF_UPDATE_STEP_TEXT_BYTES) || '',
+    })),
+  };
 }
 
 function globalRestOf(state: CdsState): GlobalRest {
   const restOfState: GlobalRest = { ...state } as CdsState;
   delete (restOfState as Partial<CdsState>).projects;
   delete (restOfState as Partial<CdsState>).branches;
+  restOfState.logs = Object.fromEntries(
+    Object.entries(state.logs || {}).map(([branchId, logs]) => [
+      branchId,
+      (logs || []).slice(-MAX_LOGS_PER_BRANCH).map(sanitizeOperationLog),
+    ]),
+  );
+  restOfState.containerLogArchives = Object.fromEntries(
+    Object.entries(state.containerLogArchives || {}).map(([branchId, archives]) => [
+      branchId,
+      (archives || []).slice(-MAX_CONTAINER_ARCHIVES_PER_BRANCH).map(sanitizeContainerArchive),
+    ]),
+  );
+  restOfState.activityLogs = Object.fromEntries(
+    Object.entries(state.activityLogs || {}).map(([projectId, logs]) => [
+      projectId,
+      (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT) as ProjectActivityLog[],
+    ]),
+  );
+  restOfState.githubWebhookDeliveries = (state.githubWebhookDeliveries || []).slice(-MAX_WEBHOOK_DELIVERIES);
+  restOfState.selfUpdateHistory = (state.selfUpdateHistory || []).slice(-MAX_SELF_UPDATE_HISTORY).map(sanitizeSelfUpdateRecord);
+  restOfState.serviceDeployments = Object.fromEntries(
+    Object.entries(state.serviceDeployments || {}).map(([deploymentId, deployment]) => [
+      deploymentId,
+      sanitizeServiceDeployment(deployment),
+    ]),
+  );
   return restOfState;
 }
 
