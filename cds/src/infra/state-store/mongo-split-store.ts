@@ -88,6 +88,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private writeInFlight = false;
   private writeGeneration = 0;
   private persistedGeneration = 0;
+  private failedGeneration = 0;
+  private lastWriteError: unknown = null;
   private flushWaiters: Array<{
     generation: number;
     resolve: () => void;
@@ -226,17 +228,21 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (this.writeInFlight) return;
     this.writeInFlight = true;
     void (async () => {
+      let generation = 0;
       try {
         while (this.pendingSnapshot) {
           const snapshot = this.pendingSnapshot;
-          const generation = this.pendingGeneration;
+          generation = this.pendingGeneration;
           this.pendingSnapshot = null;
           await this.persistSnapshot(snapshot, this.persistedCache);
           this.persistedCache = structuredClone(snapshot);
           this.persistedGeneration = generation;
+          this.lastWriteError = null;
           this.resolveFlushWaiters();
         }
       } catch (err) {
+        this.failedGeneration = Math.max(this.failedGeneration, generation);
+        this.lastWriteError = err;
         this.rejectFlushWaiters(err);
       } finally {
         this.writeInFlight = false;
@@ -313,6 +319,9 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   async flush(): Promise<void> {
     const targetGeneration = this.writeGeneration;
     if (targetGeneration <= this.persistedGeneration) return;
+    if (targetGeneration <= this.failedGeneration && this.lastWriteError) {
+      throw this.lastWriteError;
+    }
     await new Promise<void>((resolve, reject) => {
       this.flushWaiters.push({ generation: targetGeneration, resolve, reject });
       this.resolveFlushWaiters();

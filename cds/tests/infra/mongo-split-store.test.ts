@@ -23,6 +23,7 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
   replaceWrites: TDoc[] = [];
   findCalls = 0;
   bulkWriteGate: Promise<void> | null = null;
+  failNextBulkWrite: Error | null = null;
 
   async findOne(filter: { _id: string }): Promise<TDoc | null> {
     return this.docs.get(filter._id) || null;
@@ -47,6 +48,11 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
       const gate = this.bulkWriteGate;
       this.bulkWriteGate = null;
       await gate;
+    }
+    if (this.failNextBulkWrite) {
+      const err = this.failNextBulkWrite;
+      this.failNextBulkWrite = null;
+      throw err;
     }
     this.bulkWrites.push(operations);
     for (const op of operations as Array<any>) {
@@ -167,5 +173,22 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.branches.docs.has('a')).toBe(false);
     expect(handle.branches.bulkWrites).toHaveLength(2);
     expect(handle.branches.bulkWrites[1]).toEqual([{ deleteOne: { filter: { _id: 'a' } } }]);
+  });
+
+  it('does not leave flush hanging when a write fails before flush is awaited', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD Agent', kind: 'git', createdAt: 't', updatedAt: 't' }];
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+    };
+    handle.branches.failNextBulkWrite = new Error('mongo bulk write failed');
+    store.save(state);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await expect(store.flush()).rejects.toThrow('mongo bulk write failed');
   });
 });
