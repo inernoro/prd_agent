@@ -48,22 +48,20 @@
   animation: pa-empty-in 320ms var(--pa-ease-deceleration) both;
 }
 
-/* hero icon：缓慢轻微呼吸，强调"在等你" */
+/* hero icon：Gemini 风浅色底轻微呼吸 */
 @keyframes pa-hero-breath {
   0%, 100% {
     transform: translateY(0) scale(1);
     box-shadow:
-      0 18px 40px -12px rgba(139, 92, 246, 0.55),
-      0 0 0 1px rgba(255, 255, 255, 0.06) inset,
-      0 1px 0 rgba(255, 255, 255, 0.15) inset;
+      0 10px 28px -10px rgba(66, 133, 244, 0.22),
+      0 0 0 1px rgba(218, 220, 224, 0.9) inset;
   }
   50% {
     transform: translateY(-2px) scale(1.02);
     box-shadow:
-      0 22px 50px -10px rgba(139, 92, 246, 0.65),
-      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-      0 1px 0 rgba(255, 255, 255, 0.18) inset,
-      0 0 24px rgba(34, 211, 238, 0.18);
+      0 14px 32px -8px rgba(66, 133, 244, 0.28),
+      0 0 0 1px rgba(218, 220, 224, 1) inset,
+      0 0 20px rgba(66, 133, 244, 0.12);
   }
 }
 .pa-hero-icon {
@@ -366,54 +364,97 @@
   line-height: 1.55 !important;
 }
 
-/* 侧栏历史会话 — 统一高度，细线分隔，鼠标跟随高亮 */
+/* 侧栏历史会话 — 更细更浅分隔线 + Gemini 风圆角选中 */
+.pa-session-list {
+  padding: 0 6px;
+}
 .pa-session-list .pa-session-item {
   min-height: 40px;
   max-height: 40px;
-  border-bottom: 1px solid var(--pa-border-default, var(--border-default));
+  margin-bottom: 1px;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-bottom: none;
+  border-radius: 20px;
   background: transparent;
-  border-radius: 0;
   box-shadow: none;
-}
-.pa-session-list .pa-session-item:last-child {
-  border-bottom-color: transparent;
 }
 .pa-session-item {
   position: relative;
   overflow: hidden;
+  transition:
+    background-color 160ms var(--pa-ease-emphasized),
+    color 160ms var(--pa-ease-emphasized);
+}
+.pa-session-item::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 0.5px;
+  background: rgba(60, 64, 67, 0.1);
+  pointer-events: none;
+}
+.pa-session-list .pa-session-item:last-child::after {
+  display: none;
 }
 .pa-session-item::before {
   content: "";
   position: absolute;
   inset: 0;
+  border-radius: inherit;
   pointer-events: none;
   opacity: 0;
   transition: opacity 180ms var(--pa-ease-emphasized);
   background:
     radial-gradient(
-      120px circle at var(--pa-hover-x, 50%) var(--pa-hover-y, 50%),
-      rgba(147, 197, 253, 0.22) 0%,
-      rgba(147, 197, 253, 0.06) 28%,
-      transparent 70%
+      100px circle at var(--pa-hover-x, 50%) var(--pa-hover-y, 50%),
+      rgba(60, 64, 67, 0.07) 0%,
+      rgba(60, 64, 67, 0.03) 30%,
+      transparent 72%
     );
 }
 .pa-session-item:hover {
-  background: var(--pa-bg-hover, var(--bg-hover));
+  background: rgba(60, 64, 67, 0.06);
 }
 .pa-session-item:hover::before {
   opacity: 1;
 }
 .pa-session-item[data-active="true"] {
-  background: rgba(66, 133, 244, 0.08);
+  background: #e9eef6;
+  font-weight: 500;
 }
-.pa-session-item[data-active="true"]::before {
-  opacity: 0.35;
+.pa-session-item[data-active="true"]::after {
+  opacity: 0;
+}
+.pa-session-item[data-active="true"] .pa-session-title {
+  color: #1f1f1f !important;
+  font-weight: 600;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-session-item::after {
+  background: rgba(148, 163, 184, 0.14);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-session-item:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 .pa-agent-root[data-pa-theme="mountain"] .pa-session-item[data-active="true"] {
-  background: rgba(56, 189, 248, 0.12);
+  background: rgba(255, 255, 255, 0.12);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-session-item[data-active="true"] .pa-session-title {
+  color: #e8eaed !important;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-session-item::after {
+  background: rgba(120, 108, 88, 0.12);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-session-item:hover {
+  background: rgba(120, 108, 88, 0.06);
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-session-item[data-active="true"] {
-  background: rgba(74, 124, 111, 0.1);
+  background: rgba(74, 124, 111, 0.12);
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-session-item[data-active="true"] .pa-session-title {
+  color: #2a322e !important;
 }
 .pa-session-group + .pa-session-group {
   margin-top: 4px;
@@ -864,11 +905,22 @@
 }
 
 .pa-secretary-avatar-shell {
-  background: linear-gradient(135deg, #0e2c5b 0%, #123b74 60%, #0b2448 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%);
   box-shadow:
-    0 18px 40px -12px rgba(6, 35, 80, 0.6),
-    0 0 0 1px rgba(173, 216, 255, 0.2) inset,
-    0 1px 0 rgba(255, 255, 255, 0.18) inset;
+    0 10px 28px -10px rgba(66, 133, 244, 0.22),
+    0 0 0 1px rgba(218, 220, 224, 0.95) inset;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-secretary-avatar-shell {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+  box-shadow:
+    0 10px 28px -10px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(148, 163, 184, 0.2) inset;
+}
+.pa-agent-root[data-pa-theme="parchment"] .pa-secretary-avatar-shell {
+  background: linear-gradient(180deg, #fffcf8 0%, #f4f0e8 100%);
+  box-shadow:
+    0 8px 24px -10px rgba(120, 108, 88, 0.15),
+    0 0 0 1px rgba(120, 108, 88, 0.12) inset;
 }
 
 /* 快捷指令图标底色 */

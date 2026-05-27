@@ -120,8 +120,8 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
         ) : (
           <>
             <div
-              className="pa-fs-xs font-medium truncate min-w-0"
-              style={{ color: active ? 'var(--pa-accent-strong, #4f46e5)' : 'var(--text-secondary)' }}
+              className="pa-fs-xs pa-session-title truncate min-w-0"
+              style={{ color: active ? undefined : 'var(--text-secondary)' }}
             >
               {session.title || '新对话'}
             </div>

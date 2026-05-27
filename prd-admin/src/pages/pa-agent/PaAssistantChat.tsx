@@ -464,8 +464,8 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
         ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full gap-7 px-4 pa-empty-enter">
             <div className="text-center max-w-md">
-              <div className="w-[88px] h-[88px] rounded-3xl flex items-center justify-center mx-auto mb-4 pa-hero-icon pa-secretary-avatar-shell">
-                <PaSecretaryHeroArt size={72} />
+              <div className="w-[88px] h-[88px] rounded-[22px] flex items-center justify-center mx-auto mb-4 pa-hero-icon pa-secretary-avatar-shell">
+                <PaSecretaryHeroArt size={56} />
               </div>
               {/* display 标题层 */}
               <div

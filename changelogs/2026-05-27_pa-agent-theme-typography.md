@@ -26,3 +26,4 @@
 | feat | prd-admin | PaSecretaryIcon / PaAgentCardArt 改为 Gemini 风四色星芒与浅色卡片插画 |
 | fix | prd-admin | 毒舌秘书首页卡片改回深蓝科技风；hover 时星芒增加旋转脉冲与轨迹流动动态效果 |
 | fix | prd-admin | 页面四角改为外层容器圆角（左侧栏+右主区拼接）；对话主区左侧恢复直角，避免对话框额外倒圆角 |
+| fix | prd-admin | 侧栏会话分隔线改 0.5px 浅色；选中态改 Gemini 圆角灰底；空状态图标换浅色底四色星芒 |
