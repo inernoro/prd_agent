@@ -2691,6 +2691,7 @@ export function BranchListPage(): JSX.Element {
   const totalExecutors = onlineExecutors + offlineExecutors;
   const executorFreePercent = typeof executorCapacity?.freePercent === 'number' ? Math.round(executorCapacity.freePercent) : 0;
   const clusterMode = opsStatus.status === 'ok' ? opsStatus.cluster.mode : 'unknown';
+  const slowHttpData = slowHttpState.status === 'ok' ? slowHttpState.data : null;
 
   /*
    * Render — Week 4.6 visual rebuild.
@@ -3133,23 +3134,23 @@ export function BranchListPage(): JSX.Element {
                   <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
                     {slowHttpState.message}
                   </div>
-                ) : slowHttpState.data.disabled ? (
+                ) : slowHttpData?.disabled ? (
                   <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
-                    {slowHttpState.data.message || 'HTTP 持久化日志未启用'}
+                    {slowHttpData.message || 'HTTP 持久化日志未启用'}
                   </div>
-                ) : slowHttpState.data.endpoints.length === 0 ? (
+                ) : !slowHttpData || slowHttpData.endpoints.length === 0 ? (
                   <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
                     暂无 HTTP 耗时样本。
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <div className="grid grid-cols-3 gap-2">
-                      <MetricTile label="样本" value={`${slowHttpState.data.sampleSize}`} />
-                      <MetricTile label="端点" value={`${slowHttpState.data.total}`} />
-                      <MetricTile label="窗口" value={slowHttpState.data.window?.oldest ? formatShortTime(slowHttpState.data.window.oldest) : '--:--'} />
+                      <MetricTile label="样本" value={`${slowHttpData.sampleSize}`} />
+                      <MetricTile label="端点" value={`${slowHttpData.total}`} />
+                      <MetricTile label="窗口" value={slowHttpData.window?.oldest ? formatShortTime(slowHttpData.window.oldest) : '--:--'} />
                     </div>
                     <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
-                      {slowHttpState.data.endpoints.slice(0, 10).map((item, index) => (
+                      {slowHttpData.endpoints.slice(0, 10).map((item, index) => (
                         <div key={`${item.method}:${item.endpoint}`} className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-xs">
                           <div className="flex items-center gap-2">
                             <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
