@@ -75,6 +75,10 @@ export function TeamScopeBar({
   const [inviteResults, setInviteResults] = useState<UserCard[]>([]);
   const [inviteAdding, setInviteAdding] = useState<string | null>(null);
   const inviteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // fetch 防 stale 响应：快速切换 panel/输入搜索时，旧请求回填会覆盖新数据
+  const detailFetchSeq = useRef(0);
+  const activityFetchSeq = useRef(0);
+  const inviteSearchSeq = useRef(0);
 
   useEffect(() => {
     void loadTeams();
@@ -121,7 +125,9 @@ export function TeamScopeBar({
   };
 
   const loadDetail = async (teamId: string) => {
+    const mySeq = ++detailFetchSeq.current;
     const res = await getTeam(teamId);
+    if (detailFetchSeq.current !== mySeq) return; // 旧团队的响应丢弃
     if (res.success) {
       setMembers(res.data.members);
       setWebRoles(res.data.webHostingRoles ?? {});
@@ -138,7 +144,9 @@ export function TeamScopeBar({
     }
     if ((p === 'members' || p === 'invite') && value.teamId) await loadDetail(value.teamId);
     if (p === 'activity' && value.teamId) {
+      const mySeq = ++activityFetchSeq.current;
       const res = await listTeamActivity(value.teamId, { limit: 50 });
+      if (activityFetchSeq.current !== mySeq) return;
       if (res.success) setActivity(res.data.items);
     }
   };
@@ -148,7 +156,9 @@ export function TeamScopeBar({
     if (inviteTimer.current) clearTimeout(inviteTimer.current);
     if (!inviteQuery.trim()) { setInviteResults([]); return; }
     inviteTimer.current = setTimeout(() => {
+      const mySeq = ++inviteSearchSeq.current;
       void searchTeamUsers(inviteQuery.trim()).then((res) => {
+        if (inviteSearchSeq.current !== mySeq) return; // 用户继续输入，旧结果丢弃
         if (res.success) {
           const existing = new Set(members.map((m) => m.userId));
           setInviteResults(res.data.items.filter((u) => !existing.has(u.userId)));

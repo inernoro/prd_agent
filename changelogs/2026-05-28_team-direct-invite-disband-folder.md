@@ -13,3 +13,6 @@
 | docs | doc | 新增 debt.library-doc-reader（殿堂阅读器留债）+ debt.report-detail（周报详情页留债）+ 追加 debt.team-feature wave 2.5 章节 |
 | docs | prd-admin | CLAUDE.md「已注册共享组件」表新增 DocBrowser 一行（含 3 个调用方 + 4 个关键 props 说明） |
 | docs | doc | 同步 index.yml + guide.list.directory.md 收录两个新 debt 文件 |
+| fix | prd-admin | TeamManagerPanel activity fetch + TeamScopeBar openPanel/invite search 加 fetchSeq stale guard（bugbot #1/#4） |
+| fix | prd-api | DocumentStore DELETE 改为 owner-only，避免共享团队成员级联删除 owner 整个 store（codex P1 #2） |
+| fix | prd-api | WebPageAnalyticsController 路由前缀改为 api/web-page-analytics，避开 AdminPermissionMiddleware 对 web-pages.write 的拦截，恢复访客浏览埋点（codex P2 #6） |

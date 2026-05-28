@@ -70,6 +70,9 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
   // 活动
   const [activity, setActivity] = useState<TeamActivityItem[]>([]);
 
+  // fetch 防 stale 响应：每次发起 fetch 递增 seq，回填前比对，避免快速切换团队/切 tab 时旧响应覆盖新结果
+  const activityFetchSeq = useRef(0);
+
   // 创建团队
   const [creating, setCreating] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
@@ -119,7 +122,9 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
 
   useEffect(() => {
     if (selectedId && tab === 'activity') {
+      const mySeq = ++activityFetchSeq.current;
       void listTeamActivity(selectedId, { limit: 100 }).then((res) => {
+        if (activityFetchSeq.current !== mySeq) return; // 已被更新的请求覆盖，丢弃
         if (res.success) setActivity(res.data.items);
       });
     }

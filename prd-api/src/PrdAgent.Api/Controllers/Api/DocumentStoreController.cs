@@ -343,13 +343,18 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { primaryEntryId = request.EntryId }));
     }
 
-    /// <summary>删除文档空间（级联清理所有关联数据）</summary>
+    /// <summary>删除文档空间（级联清理所有关联数据）。
+    /// 仅 owner 可删——团队成员能写条目不等于能删整个 store，
+    /// 否则任何被分享团队的成员都能级联抹掉 owner 的所有条目/附件/分享/评论/点赞/收藏（codex-bot 2026-05-28 P1）。</summary>
     [HttpDelete("stores/{storeId}")]
     public async Task<IActionResult> DeleteStore(string storeId)
     {
         var userId = GetUserId();
-        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
-        if (error != null) return error;
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        if (store.OwnerId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以删除文档空间"));
 
         // 1) 先拿到所有条目，收集正文/附件 ID 列表
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();

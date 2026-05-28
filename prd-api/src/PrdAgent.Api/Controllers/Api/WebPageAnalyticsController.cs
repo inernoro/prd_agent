@@ -10,10 +10,15 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 托管站点访客痕迹 —— 记录登录用户访问站点 + 向 owner/共享团队回放访客列表。
 /// 仅需登录（任何访客都能埋点），不挂 [AdminController]；
 /// 访客列表的可见性在 Service 层按 owner / 团队成员判定。
-/// 与 WebPagesController 共用 route 前缀 `api/web-pages`，action 子路径不重叠。
+///
+/// 路由前缀刻意走 `api/web-page-analytics` 而非 `api/web-pages`：
+/// AdminPermissionMiddleware 用前缀匹配把 `api/web-pages/*` 都判给 [AdminController("web-pages", WritePermission=web-pages.write)]
+/// 的 WebPagesController，导致 POST record-view 在 middleware 阶段就被拦截，
+/// 访客如果没有 web-pages.write 权限（普通用户/团队 viewer）会被静默挡掉，丢失浏览埋点。
+/// 改前缀后不再被 admin middleware 抓走。codex-bot 2026-05-28 P2 修复。
 /// </summary>
 [ApiController]
-[Route("api/web-pages")]
+[Route("api/web-page-analytics")]
 [Authorize]
 public class WebPageAnalyticsController : ControllerBase
 {
