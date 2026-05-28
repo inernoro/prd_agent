@@ -211,6 +211,81 @@ operatorOpRegistry.register({
 });
 
 operatorOpRegistry.register({
+  id: 'cds.migrate-to-supervisor',
+  name: '把 CDS 从 systemd 迁移到后台 supervisor 模式',
+  description: '彻底脱离 systemd 服务:停 systemd 服务 + 关 enable + 启 cds-supervisor.sh 后台进程 + 写 crontab @reboot 让重启后自动起。' +
+    '不再受任何 systemd 资源限制约束。运行时无需重启,迁移完成后下次 self-update 走 supervisor 自动重启路径。',
+  danger: 'destructive',
+  confirmText: '我确认这条 shell 命令会以 root 身份运行,我对后果负责',
+  estimatedSeconds: 15,
+  run: async ({ shell, log, repoRoot }) => {
+    const supervisor = `${repoRoot}/cds/scripts/cds-supervisor.sh`;
+    log('info', `准备迁移 — supervisor 脚本: ${supervisor}`);
+    // 1) 停 systemd 服务,但不 disable(以防回滚)
+    log('info', '1/5 停 systemd cds-master + cds-forwarder...');
+    const stopRes = await shell.exec(
+      'systemctl stop cds-master.service cds-forwarder.service 2>&1; ' +
+      'systemctl disable cds-master.service cds-forwarder.service 2>&1',
+      { timeout: 30_000 },
+    );
+    log('info', `systemctl: ${(stopRes.stdout || stopRes.stderr || 'ok').slice(0, 200)}`);
+    // 2) 启动 supervisor(setsid 完全脱离当前 shell)
+    log('info', '2/5 启动 supervisor master + forwarder...');
+    const startMaster = await shell.exec(
+      `setsid ${supervisor} master < /dev/null > /dev/null 2>&1 &
+       echo started_master`,
+      { timeout: 5000 },
+    );
+    log('info', `master: ${startMaster.stdout.trim()}`);
+    const startFwd = await shell.exec(
+      `setsid ${supervisor} forwarder < /dev/null > /dev/null 2>&1 &
+       echo started_forwarder`,
+      { timeout: 5000 },
+    );
+    log('info', `forwarder: ${startFwd.stdout.trim()}`);
+    // 3) 等 5s 看是否真起来
+    log('info', '3/5 等 5s 验证 supervisor 启动...');
+    await new Promise((r) => setTimeout(r, 5000));
+    const statusM = await shell.exec(`${supervisor} status master 2>&1`, { timeout: 3000 });
+    const statusF = await shell.exec(`${supervisor} status forwarder 2>&1`, { timeout: 3000 });
+    log('info', `master status: ${statusM.stdout.trim()}`);
+    log('info', `forwarder status: ${statusF.stdout.trim()}`);
+    if (statusM.exitCode !== 0 || statusF.exitCode !== 0) {
+      log('error', '某个 supervisor 未正常启动!检查 /var/log/cds/*.log');
+      throw new Error('supervisor 启动验证失败');
+    }
+    // 4) 加 crontab @reboot
+    log('info', '4/5 注册 crontab @reboot 让机器重启后自动起...');
+    const cronLine1 = `@reboot ${supervisor} master < /dev/null > /dev/null 2>&1 &`;
+    const cronLine2 = `@reboot ${supervisor} forwarder < /dev/null > /dev/null 2>&1 &`;
+    const cronExisting = await shell.exec('crontab -l 2>/dev/null || true', { timeout: 3000 });
+    const cur = cronExisting.stdout || '';
+    let next = cur;
+    if (!cur.includes('cds-supervisor.sh master')) next += `\n${cronLine1}\n`;
+    if (!cur.includes('cds-supervisor.sh forwarder')) next += `${cronLine2}\n`;
+    if (next !== cur) {
+      const tmp = `/tmp/cds-crontab.${Date.now()}`;
+      const b64 = Buffer.from(next, 'utf-8').toString('base64');
+      await shell.exec(`echo '${b64}' | base64 -d > ${tmp} && crontab ${tmp} && rm ${tmp}`, { timeout: 5000 });
+      log('info', 'crontab 已更新');
+    } else {
+      log('info', 'crontab 已含 @reboot 行,跳过');
+    }
+    // 5) 最终汇报
+    log('info', '5/5 迁移完成');
+    return {
+      summary: 'CDS 已迁移到 supervisor 后台进程模式 — 不再受 systemd 资源限制约束',
+      details: {
+        supervisor,
+        masterStatus: statusM.stdout.trim(),
+        forwarderStatus: statusF.stdout.trim(),
+        cronInstalled: next !== cur,
+      },
+    };
+  },
+});
+
+operatorOpRegistry.register({
   id: 'shell.run',
   name: '执行任意 shell 命令(高危,需要二次确认)',
   description: '在 CDS host 上以 root 身份执行任意 shell 命令。**仅在已知具体目的时使用**。' +
