@@ -932,24 +932,27 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
     return result;
   }, [entryId, entryMap]);
 
+  // 标题用小灰字呈现（2026-05-28 用户反馈：和 markdown 正文 H1 重复显示像 bug）：
+  // 文件名只是个"我在哪"的位置提示，不该跟正文标题抢主角；走 text-[11px] muted
+  // 风格，类似 macOS 标题栏小字 / 浏览器标签的位置。
   if (path.length <= 1) {
     return (
-      <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+      <span
+        className="text-[11px] truncate"
+        style={{ color: 'var(--text-muted)' }}
+        title={path[0]?.title ?? ''}
+      >
         {path[0]?.title ?? ''}
       </span>
     );
   }
 
   return (
-    <div className="flex items-center gap-1 text-[13px] min-w-0">
+    <div className="flex items-center gap-1 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
       {path.map((entry, i) => (
         <span key={entry.id} className="flex items-center gap-1 min-w-0">
-          {i > 0 && <ChevronRight size={11} className="flex-shrink-0" style={{ color: 'var(--text-muted)' }} />}
-          <span
-            className={i === path.length - 1 ? 'font-medium truncate' : 'truncate'}
-            style={{ color: i === path.length - 1 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-            {entry.title}
-          </span>
+          {i > 0 && <ChevronRight size={10} className="flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.6 }} />}
+          <span className="truncate" title={entry.title}>{entry.title}</span>
         </span>
       ))}
     </div>

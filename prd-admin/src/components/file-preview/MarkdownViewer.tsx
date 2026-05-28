@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useRef } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -67,10 +67,35 @@ export function MarkdownViewer({ content }: { content: string }) {
   const body = useMemo(() => parseFrontmatter(content).body, [content]);
 
   // 图片 lightbox：点击 markdown 中任意 <img> 打开放大模态，支持 ← → 切换。
-  // 收集所有图片 URL + alt 的列表通过 ref（在 img renderer 中 push）；
-  // ref 在每次渲染前重置，避免重复积累。
-  const imageListRef = useRef<{ src: string; alt: string }[]>([]);
-  imageListRef.current = [];
+  // ⚠ 不能用"每次渲染重置 ref + img renderer 中 push"的方式收集图片！
+  // ReactMarkdown 在 body 不变时会缓存子树，img 自定义 renderer 不会重跑，
+  // 重置后的 ref 永远是空数组，导致 lightbox 永远不显示（2026-05-28 用户反馈）。
+  // 正确做法：用 useMemo 一次性扫 markdown 源码里的 ![alt](src) 模式，
+  // 列表稳定与 body 同生命周期，src 顺序与正文显示顺序一致。
+  const imageList = useMemo<{ src: string; alt: string }[]>(() => {
+    const list: { src: string; alt: string }[] = [];
+    // 标准 markdown 图片语法：![alt](src "title")
+    // 容错：alt 可空、src 可带 query、title 部分忽略
+    const re = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      list.push({ alt: m[1] || '', src: m[2] });
+    }
+    // 兜底：内嵌 HTML <img src="..."> 也扫一遍（rehypeRaw 启用时正文可能直接含 HTML img）
+    const htmlRe = /<img[^>]+src=["']([^"']+)["'][^>]*(?:alt=["']([^"']*)["'])?[^>]*>/gi;
+    while ((m = htmlRe.exec(body)) !== null) {
+      const matched = m;
+      // 避免与 markdown 语法重复
+      if (!list.some(i => i.src === matched[1])) list.push({ src: matched[1], alt: matched[2] || '' });
+    }
+    return list;
+  }, [body]);
+  // src → 索引映射，img renderer 内 O(1) 查表
+  const imageIndexBySrc = useMemo(() => {
+    const map = new Map<string, number>();
+    imageList.forEach((it, idx) => map.set(it.src, idx));
+    return map;
+  }, [imageList]);
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   // 每次 body 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,10 +254,8 @@ export function MarkdownViewer({ content }: { content: string }) {
           pre: ({ children }) => <>{children}</>,
           hr: () => <hr className="my-7" style={{ borderColor: 'var(--border-subtle)' }} />,
           img: ({ src, alt }) => {
-            // 把图片登记到 lightbox 列表，记下本图在列表里的索引
-            const list = imageListRef.current;
-            const myIdx = list.length;
-            if (src) list.push({ src, alt: alt || '' });
+            // 用 useMemo 预扫的 imageList 查索引，避免依赖 renderer 是否重跑
+            const myIdx = src ? (imageIndexBySrc.get(src) ?? -1) : -1;
             return (
               <img
                 src={src}
@@ -241,10 +264,12 @@ export function MarkdownViewer({ content }: { content: string }) {
                 style={{
                   maxHeight: '400px',
                   border: '1px solid rgba(255,255,255,0.06)',
-                  cursor: 'zoom-in',
+                  cursor: myIdx >= 0 ? 'zoom-in' : 'default',
                 }}
-                onClick={() => setLightboxIdx(myIdx)}
-                title="点击放大 · 支持 ← → 切换"
+                onClick={() => {
+                  if (myIdx >= 0) setLightboxIdx(myIdx);
+                }}
+                title={myIdx >= 0 ? '点击放大 · 支持 ← → 切换' : (alt || '')}
               />
             );
           },
@@ -252,11 +277,11 @@ export function MarkdownViewer({ content }: { content: string }) {
       >
         {body}
       </ReactMarkdown>
-      {lightboxIdx !== null && imageListRef.current.length > 0 && (
+      {lightboxIdx !== null && imageList.length > 0 && (
         <ImageLightbox
-          images={imageListRef.current.map((i) => i.src)}
-          captions={imageListRef.current.map((i) => i.alt)}
-          index={Math.min(lightboxIdx, imageListRef.current.length - 1)}
+          images={imageList.map((i) => i.src)}
+          captions={imageList.map((i) => i.alt)}
+          index={Math.min(lightboxIdx, imageList.length - 1)}
           onClose={() => setLightboxIdx(null)}
         />
       )}
