@@ -50,7 +50,7 @@ import {
 } from '@/components/ui/dialog';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -1757,7 +1757,7 @@ export function BranchListPage(): JSX.Element {
   }, [branchSearchOpen]);
 
   useEffect(() => {
-    const source = new EventSource('/api/activity-stream');
+    const source = new EventSource(apiUrl('/api/activity-stream'));
     source.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data) as ActivityEvent;

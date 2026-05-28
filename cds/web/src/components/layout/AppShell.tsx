@@ -8,6 +8,7 @@ import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
+import { apiUrl } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -82,7 +83,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetch('/api/auth/status', {
+    fetch(apiUrl('/api/auth/status'), {
       credentials: 'include',
       headers: { Accept: 'application/json' },
       signal: ctrl.signal,
@@ -101,7 +102,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
     if (!endpoint) return;
     setLogoutState('running');
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(apiUrl(endpoint), {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'application/json' },

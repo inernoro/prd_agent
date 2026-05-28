@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -742,7 +742,7 @@ export function BranchDetailPage(): JSX.Element {
   useEffect(() => {
     if (state.status !== 'ok') return;
     const labels = branchProxyLabels(state.branch, state.aliases);
-    const source = new EventSource('/api/proxy-log/stream');
+    const source = new EventSource(apiUrl('/api/proxy-log/stream'));
     source.onmessage = (ev) => {
       try {
         const event = JSON.parse(ev.data) as ProxyLogEvent;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { apiUrl } from '@/lib/api';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -223,7 +224,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     try {
       const ctrl = new AbortController();
       const timeoutId = window.setTimeout(() => ctrl.abort(), 10_000);
-      const r = await fetch('/api/self-status?probe=remote&force=1', {
+      const r = await fetch(apiUrl('/api/self-status?probe=remote&force=1'), {
         credentials: 'include',
         cache: 'no-store',
         signal: ctrl.signal,
@@ -268,7 +269,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       const tick = async (): Promise<void> => {
         if (cancelled) return;
         try {
-          const r = await fetch('/api/self-status', {
+          const r = await fetch(apiUrl('/api/self-status'), {
             credentials: 'include',
             cache: 'no-store',
             headers: { 'X-CDS-Poll': 'true' },
@@ -330,7 +331,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       consecutiveErrors = 0;
       firstErrorAt = 0;
       try {
-        es = new EventSource('/api/self-status/stream', { withCredentials: true });
+        es = new EventSource(apiUrl('/api/self-status/stream'), { withCredentials: true });
       } catch {
         // 浏览器不支持 EventSource(极老 IE 等)→ 直接降级
         startFallbackPolling();
@@ -439,7 +440,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       try {
         const ctrl = new AbortController();
         timeoutId = window.setTimeout(() => ctrl.abort(), 6_000);
-        const r = await fetch('/api/self-status', {
+        const r = await fetch(apiUrl('/api/self-status'), {
           credentials: 'include',
           cache: 'no-store',
           headers: { 'X-CDS-Poll': 'true' },
@@ -478,7 +479,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     const abortTimer = window.setTimeout(() => ctrl.abort(), 5000);
     let acceptedFirstEvent = false;
     try {
-      const response = await fetch('/api/self-update', {
+      const response = await fetch(apiUrl('/api/self-update'), {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },

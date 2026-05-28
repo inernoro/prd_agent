@@ -1,3 +1,5 @@
+import { apiUrl } from '@/lib/api';
+
 let lastRenderErrorSignature = '';
 let lastRenderErrorAt = 0;
 
@@ -30,10 +32,10 @@ export function reportDashboardRenderError(error: unknown, componentStack?: stri
 
   try {
     if (navigator.sendBeacon) {
-      const sent = navigator.sendBeacon('/api/client-events', new Blob([body], { type: 'application/json' }));
+      const sent = navigator.sendBeacon(apiUrl('/api/client-events'), new Blob([body], { type: 'application/json' }));
       if (sent) return;
     }
-    void fetch('/api/client-events', {
+    void fetch(apiUrl('/api/client-events'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       credentials: 'include',

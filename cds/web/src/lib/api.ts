@@ -1,8 +1,9 @@
 /*
  * Thin fetch wrapper for the CDS REST API.
  *
- * - Always uses relative `/api/...` URLs so dev (vite proxy) and prod
- *   (Express on same origin) both work.
+ * - In production, prefer `/_cds/api/...` so dashboard/control-plane calls
+ *   bypass preview branch routing and always reach the CDS master.
+ * - In local dev, keep `/api/...` so the Vite proxy continues to work.
  * - Throws ApiError with status + body on non-2xx responses, so callers can
  *   distinguish 401 (login required) from 500 (server bug).
  * - JSON only. Multipart uploads should fetch directly.
@@ -27,32 +28,56 @@ export interface ApiOptions {
   headers?: Record<string, string>;
 }
 
+export function apiUrl(path: string, hostname = currentHostname()): string {
+  const url = path.startsWith('/') ? path : `/${path}`;
+  if (url.startsWith('/_cds/') || !url.startsWith('/api/')) return url;
+  return shouldPreferCdsPassthrough(hostname) ? `/_cds${url}` : url;
+}
+
+export function shouldPreferCdsPassthrough(hostname = currentHostname()): boolean {
+  if (!hostname) return false;
+  const normalized = hostname.toLowerCase();
+  return !['localhost', '127.0.0.1', '::1'].includes(normalized);
+}
+
 export async function apiRequest<T = unknown>(
   path: string,
   options: ApiOptions = {}
 ): Promise<T> {
   const { method = 'GET', body, signal, headers } = options;
-  const url = path.startsWith('/') ? path : `/${path}`;
+  const rawUrl = path.startsWith('/') ? path : `/${path}`;
+  const url = apiUrl(rawUrl);
   const init: RequestInit = buildRequestInit(method, body, signal, headers);
 
   const first = await fetchAndParse(url, init);
   if (first.res.ok) return first.parsed as T;
 
-  const shouldRetryViaCdsPassthrough =
+  const retryUrl = alternateApiUrl(rawUrl, url);
+  const shouldRetryAlternate =
     method === 'GET' &&
-    url.startsWith('/api/') &&
-    !url.startsWith('/_cds/') &&
+    Boolean(retryUrl) &&
     !first.requestId &&
     hasNoReadableError(first.parsed);
 
-  if (shouldRetryViaCdsPassthrough) {
-    const retryUrl = `/_cds${url}`;
+  if (shouldRetryAlternate && retryUrl) {
     const retry = await fetchAndParse(retryUrl, init);
     if (retry.res.ok) return retry.parsed as T;
     throwApiError(method, retryUrl, retry.res, retry.parsed, retry.requestId);
   }
 
   throwApiError(method, url, first.res, first.parsed, first.requestId);
+}
+
+function alternateApiUrl(rawUrl: string, primaryUrl: string): string | null {
+  if (!rawUrl.startsWith('/api/')) return null;
+  if (primaryUrl.startsWith('/_cds/api/')) return rawUrl;
+  if (primaryUrl.startsWith('/api/')) return `/_cds${primaryUrl}`;
+  return null;
+}
+
+function currentHostname(): string {
+  if (typeof window === 'undefined') return '';
+  return window.location.hostname;
 }
 
 function buildRequestInit(

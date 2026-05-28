@@ -3,6 +3,7 @@ import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
 import { CdsFloatingBackdrop } from '@/components/brand/CdsFloatingBackdrop';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
+import { apiUrl } from '@/lib/api';
 
 function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
@@ -18,14 +19,14 @@ export function LoginPage(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const target = useMemo(() => redirectTarget(), []);
-  const githubLoginHref = useMemo(() => `/api/auth/github/login?redirect=${encodeURIComponent(target)}`, [target]);
+  const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     setBusy(true);
     try {
-      const res = await fetch('/api/login', {
+      const res = await fetch(apiUrl('/api/login'), {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

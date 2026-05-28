@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 
 interface BranchMeta {
@@ -216,7 +216,7 @@ async function waitForRestartAndReload(
   // 1. 在轮询前先记录"当前 commit"(老进程 process.exit 之前能拿到)
   let preRestartCommit = '';
   try {
-    const pre = await fetch('/api/self-status', { credentials: 'include' });
+    const pre = await fetch(apiUrl('/api/self-status'), { credentials: 'include' });
     if (pre.ok) {
       const json = await pre.json();
       preRestartCommit = String(json?.headSha || '');
@@ -251,7 +251,7 @@ async function waitForRestartAndReload(
   let sawDowntime = false;
   while (Date.now() - startedAt < TIMEOUT_MS) {
     try {
-      const r = await fetch('/api/self-status', { credentials: 'include', cache: 'no-store' });
+      const r = await fetch(apiUrl('/api/self-status'), { credentials: 'include', cache: 'no-store' });
       if (r.ok) {
         const json = await r.json().catch(() => null);
         const nowCommit = String(json?.headSha || '');
@@ -1187,7 +1187,7 @@ function SelfUpdateHistoryList({
     if (!open) return;
     let cancelled = false;
     setHistoryState({ status: 'loading' });
-    fetch('/api/self-update-history?limit=20', { credentials: 'include' })
+    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as { records: SelfUpdateRecord[] };
