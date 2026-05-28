@@ -64,6 +64,7 @@ public class ProjectRoutePlan
 /// <summary>
 /// AI 抽出的某个仓库引用。用于本次分析的克隆 + routemap 扫描。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ProjectRouteExtractedRepo
 {
     /// <summary>应用 / 仓库展示名（AI 推断）</summary>
@@ -90,7 +91,10 @@ public class ProjectRouteExtractedRepo
 
 /// <summary>
 /// 解析结果（V2 重构后按仓库分组）：一个仓库 → 该仓库下命中的项目路径 + 关联到的方案应用/模块。
+/// 必须有 BsonIgnoreExtraElements：DB 里有 V1 时按 module 分组的老字段（如 appName / module / projectPath），
+/// 反序列化时遇到这些 driver 默认会抛 BsonSerializationException 让整个 plan 查询变 500。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ProjectRouteResolution
 {
     /// <summary>仓库 url（来自 plan.ExtractedRepos[*]）</summary>
@@ -127,6 +131,7 @@ public class ProjectRouteResolution
 /// <summary>
 /// 一份 routemap .md 文件的完整快照（前端可点开查看）。
 /// </summary>
+[BsonIgnoreExtraElements]
 public class ProjectRouteRoutemapFile
 {
     public string Path { get; set; } = string.Empty;
