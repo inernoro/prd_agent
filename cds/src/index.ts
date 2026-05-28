@@ -2900,6 +2900,29 @@ function listenWithRetry(
   onSuccess: () => void,
   opts: { force?: boolean; optional?: boolean; onServer?: (server: http.Server) => void } = {},
 ) {
+  // 2026-05-28 keepalive 匹配修复 — nginx upstream `keepalive_timeout` 默认 60s,
+  // Node `http.Server.keepAliveTimeout` 默认 **5s**。
+  //
+  // 场景:nginx 代理 → CDS,nginx 把 idle 连接保留进自己的 upstream 池(60s);
+  //   - 5 秒后 Node 主动 FIN 这条 idle TCP socket
+  //   - nginx 仍以为它能复用,把下条请求写过去 → recv() 返 ECONNRESET
+  //   - nginx 上抛 502/400(SSE 场景观测到 400 比例 ≈ 50%)
+  //
+  // SSH 现场诊断证据(2026-05-28):
+  //   - nginx upstream 单 backend,SSE 端点 200/400 严格交替 50%
+  //   - `docker logs cds_nginx`:upstream prematurely closed connection / recv() failed (104)
+  //   - 直连 master:9900 5/5 全 200(绕过 nginx pool 就好)
+  //
+  // 修复:Node keepAliveTimeout 必须**大于** nginx upstream idle timeout,
+  // 这样 socket 总是由 nginx 先回收(它知道自己不再用),Node 不会先主动 RST。
+  // Node 文档同时要求 headersTimeout >= keepAliveTimeout(否则 EBADF 风险)。
+  const applyKeepAliveTimings = (s: http.Server): void => {
+    // 65s > nginx 60s 上限,留 5s 余量
+    s.keepAliveTimeout = 65_000;
+    // 70s > keepAliveTimeout 5s,Node ≥ 18 文档要求
+    s.headersTimeout = 70_000;
+  };
+
   const MAX_ATTEMPTS = 5;
   // Track success so a late-arriving retry setTimeout doesn't call
   // `server.listen()` again on an already-bound socket and crash with
@@ -2916,6 +2939,9 @@ function listenWithRetry(
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
       onSuccess();
     });
+    // 2026-05-28: 给所有 listenWithRetry 的 server 统一应用 keepalive 超时,
+    // 解决 nginx idle pool 比 Node 长导致的 stale-socket 50% 失败。
+    applyKeepAliveTimings(s as http.Server);
     opts.onServer?.(s as http.Server);
     s.on('error', (err: Error & { code?: string }) => {
       if (listening) return; // same late-retry guard after listening flipped

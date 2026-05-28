@@ -12,3 +12,4 @@
 | fix | cds/web | ErrorBlock 加 transient 参数,transient=true 时完全不渲染(配合 ApiError.transient),为 20+ 处现有调用提供逃生通道 |
 | fix | cds | infra auto-restart crash loop 检测 — 跟踪 lastSuccessfulStart 时间戳,启动后 < 60s 又死的标软失败,N 次软失败后 svc.status=error 停止重试。修复 minio "docker start 永远成功但 5s 后死" 的 30s 死循环 |
 | fix | cds/web | App.tsx ErrorToastPortal 硬编码 #fff/#ef4444 改走 hsl(var(--destructive)) token,符合 cds-theme-tokens 双主题规则 |
+| fix | cds | Node http.Server.keepAliveTimeout 5s → 65s + headersTimeout 70s,匹配 nginx upstream idle pool 60s。修复 nginx-reverse-proxy 场景下 stale-keepalive 导致 SSE 端点 50% 严格交替 400/200 的根因(SSH 现场诊断证实) |
