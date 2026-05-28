@@ -869,19 +869,11 @@ export class ContainerService {
         onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
       }
 
-      // Phase 2 resilience: enforce per-container cgroup limits when configured.
-      //
-      // 用户反馈 2026-05-06:"每一个容器都不限制内存,尽情释放"。
-      // 不再下发 --memory / --memory-swap;profile.resources.memoryMB 仅作
-      // capacity 调度规划的提示(见 capacityMessage),不再硬限制运行时。
-      // CPU 限制保留 — 它是配额不是 OOM,语义不同。
+      // 2026-05-28 用户反馈"100GB 内存,不允许任何容器限制":彻底删除所有
+      // docker 运行时资源限制(--memory / --memory-swap / --cpus)。
+      // memoryMB / cpus 字段仅作 capacity 调度规划提示,不下发到 docker run。
+      // 不下发任何 --memory / --memory-swap / --cpus,避免任何容器构造慢。
       const resourceFlags: string[] = [];
-      if (profile.resources?.cpus && profile.resources.cpus > 0) {
-        resourceFlags.push(`--cpus ${profile.resources.cpus}`);
-      }
-      if (resourceFlags.length > 0) {
-        onOutput?.(`── 资源限制: ${resourceFlags.join(' ')} ──\n`);
-      }
 
       // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
       // 默认不传(走 image 自带 ENTRYPOINT)。指定时:

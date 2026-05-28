@@ -88,17 +88,12 @@ SyslogIdentifier=cds-master
 
 # Resource accounting (requires cgroup v2)
 #
-# 2026-05-06 Bugbot be8dc4f5 / 2c22c57a 反馈 + 用户授权:
-# 之前 MemoryMax=512M 是 master 自身 + 它 spawn 的所有 child(tsc / vite / pnpm)
-# 共享的 cgroup 上限。我们已经移除了 NODE_OPTIONS=--max-old-space-size,V8 默认
-# 会按主机 RAM 自适应,但 V8 看不到 cgroup 限制 → 跑大型 tsc/vite 时会被
-# SIGKILL(uncatchable,无 graceful 错误)。
-#
-# 用户明确策略:"每个容器都不限制内存,尽情释放" + "不要刻意放大"。
-# MemoryMax 解除(infinity = 无限制),让 master + child 跟随主机 RAM。
-# CPUQuota 保留作为防爆 host 的兜底。
+# 2026-05-28 用户彻底拆除所有资源限制(理由:100GB RAM + 18 cores,无限制反
+# 而比 tsc 编译被 cgroup 卡住要好;CPUQuota=100% 等于只能用 1 core,导致 tsc
+# /vite/pnpm 编译 5+ min 仍跑不完反复 fail)。
+# 现状:MemoryMax 不设上限,CPUQuota 不设上限 → 由 Linux 公平调度,与其他进程共享。
 MemoryMax=infinity
-CPUQuota=100%
+# 不限 CPU,让 master + child(tsc/vite/pnpm)用满 18 cores
 
 # Security hardening — soft, compatible with docker CLI usage
 NoNewPrivileges=true

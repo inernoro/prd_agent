@@ -15,3 +15,4 @@
 | fix | cds | Node http.Server.keepAliveTimeout 5s → 65s + headersTimeout 70s,匹配 nginx upstream idle pool 60s。修复 nginx-reverse-proxy 场景下 stale-keepalive 导致 SSE 端点 50% 严格交替 400/200 的根因(SSH 现场诊断证实) |
 | feat | cds | 运维控制台改弹窗审批流 — AI 通过 POST /operator/request 发起 → 全局 Modal 在任何页面弹出「允许本次 / 允许本 session(1h) / 拒绝」三按钮 → CDS 后端按 caller key + opId 记 session,1h 内同一发起方+同一 op 自动通过,免重复点击 |
 | fix | cds | operator host.stats op 命令优化 — 简化 docker ps format 字符串避免 shell escape bug,加显式 `> cmd` log,超时延长到 8s |
+| fix | cds | 拆除所有资源限制 — cds-master.service CPUQuota 100%→不限制(原只允许 1 core,导致 tsc/vite 编译被卡 5min+ 后 fail);cds-forwarder.service MemoryMax 256M→infinity + CPUQuota 50%→不限制;container.ts 移除 --cpus docker flag;100GB RAM + 18 cores 不需要任何 cgroup 防爆 |
