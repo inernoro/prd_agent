@@ -3,20 +3,22 @@
  *
  * 路径：/s/lib/:token （统一分享路由，对齐 /s/wp/、/s/skill/）
  *
+ * 直接复用知识库的 DocBrowser 组件（只读模式：不传任何写操作 callback，
+ * UI 自动隐藏新建/上传/编辑/删除/重命名等入口）。这样：
+ *   - 样式/能力与 DocumentStorePage 永远一致
+ *   - 后续 DocBrowser 的优化（懒加载、TOC、搜索高亮、响应式）分享页自动获得
+ *   - 不再有「分享页和知识库自己看长得不一样」的漂移
+ *
  * 数据层走 main 的 token 门禁匿名端点（getDocStoreShareView / listDocStoreShareEntries /
  * getDocStoreShareEntryContent），可展示「私有库的分享」，支持两种范围：
  *   - 整库分享（entryId 为空）：文件树 + 全部文档只读浏览
  *   - 单篇分享（entryId 非空）：只展示那一篇
- *
- * 呈现采用极简深色风（对齐网页托管分享页 ShareViewPage 的观感）：
- *   #0a0a0a 深色壳 + 玻璃顶栏（作者 + 标题）+ 低饱和简介条 + 深色阅读器。
- * 全屏渲染，不依赖登录。
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText } from 'lucide-react';
-import { LibraryShareReader } from './LibraryShareReader';
-import type { LibraryShareReaderPreview } from './LibraryShareReader';
+import { DocBrowser } from '@/components/doc-browser/DocBrowser';
+import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import {
   getDocStoreShareView,
   listDocStoreShareEntries,
@@ -36,6 +38,7 @@ export function LibraryShareViewPage() {
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!token) return;
@@ -55,7 +58,21 @@ export function LibraryShareViewPage() {
     return () => { mounted = false; };
   }, [token]);
 
-  const loadContent = useCallback(async (entryId: string): Promise<LibraryShareReaderPreview | null> => {
+  // 单篇分享 / 整库分享：默认选中的条目
+  const initialSelectedId = useMemo<string | undefined>(() => {
+    if (!view || entries.length === 0) return undefined;
+    if (view.entryId) return view.entryId;
+    if (view.store.primaryEntryId && entries.some((e) => e.id === view.store.primaryEntryId)) {
+      return view.store.primaryEntryId;
+    }
+    return entries.find((e) => !e.isFolder)?.id;
+  }, [view, entries]);
+
+  useEffect(() => {
+    if (initialSelectedId && !selectedEntryId) setSelectedEntryId(initialSelectedId);
+  }, [initialSelectedId, selectedEntryId]);
+
+  const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     if (!token) return null;
     const res = await getDocStoreShareEntryContent(token, entryId);
     if (!res.success) return null;
@@ -65,6 +82,9 @@ export function LibraryShareViewPage() {
       contentType: res.data.contentType,
     };
   }, [token]);
+
+  // DocumentEntry 字段是 DocBrowserEntry 的超集，可直接传入
+  const browserEntries = entries as unknown as DocBrowserEntry[];
 
   if (loading) {
     return (
@@ -110,7 +130,7 @@ export function LibraryShareViewPage() {
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: SANS }}>
-      {/* 顶栏：深色玻璃（借鉴网页托管 ShareViewPage） */}
+      {/* 顶栏：深色玻璃 */}
       <div style={{
         padding: '10px 16px',
         display: 'flex',
@@ -149,7 +169,7 @@ export function LibraryShareViewPage() {
         </div>
       </div>
 
-      {/* 简介条：低饱和度，不抢阅读 */}
+      {/* 简介条：低饱和度 */}
       {hasMeta && (
         <div style={{
           padding: '8px 16px',
@@ -173,12 +193,15 @@ export function LibraryShareViewPage() {
         </div>
       )}
 
-      {/* 阅读器填满剩余高度（深色） */}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <LibraryShareReader
-          entries={entries}
-          primaryEntryId={view.entryId ?? store.primaryEntryId}
+      {/* 阅读器：直接复用 DocBrowser。
+          只读模式 = 不传任何 onXxx 写操作 callback，按钮自动隐藏。 */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        <DocBrowser
+          entries={browserEntries}
+          primaryEntryId={store.primaryEntryId}
           pinnedEntryIds={store.pinnedEntryIds ?? []}
+          selectedEntryId={selectedEntryId}
+          onSelectEntry={setSelectedEntryId}
           loadContent={loadContent}
         />
       </div>
