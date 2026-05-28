@@ -106,6 +106,24 @@ export type DocBrowserProps = {
   loading?: boolean;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
+  /**
+   * 外观：
+   * - 'inset'：默认，单容器无 gap（知识库 / 分享页，连续阅读体验）
+   * - 'cards'：左右两个独立圆角卡片 + 12px gap（更新中心-周报，强分区视觉）
+   */
+  appearance?: 'inset' | 'cards';
+  /**
+   * 自定义"新鲜"判定（控制条目右侧 NEW 徽章）。
+   * 不传时走默认规则（lastChangedAt < 24h）。
+   * 更新中心-周报传入「自上次查看以来 cutoff」规则。
+   */
+  isEntryFresh?: (entry: DocBrowserEntry) => boolean;
+  /**
+   * 左侧 sidebar 顶部自定义头部内容（搜索框上方）。
+   * 用于显示「周报列表 · 按最近提交 · N 篇」这类列表标题 + 计数。
+   * 不传则不渲染。
+   */
+  sidebarHeader?: React.ReactNode;
 };
 
 // ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
@@ -559,11 +577,13 @@ function TreeNode({
   onShareEntry,
   onMoveEntry,
   onOpenSubscription,
+  isEntryFresh,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
   depth: number;
   selectedEntryId?: string;
+  isEntryFresh?: (entry: DocBrowserEntry) => boolean;
   primaryEntryId?: string;
   pinnedEntryIds: Set<string>;
   folderPrimaryMap: Map<string, string>;
@@ -753,8 +773,8 @@ function TreeNode({
           </span>
         )}
 
-        {/* (new) 徽标：lastChangedAt 在 24 小时以内 — ShinyText 流光（reactbits） */}
-        {!isFolder && isRecentlyChanged(entry.lastChangedAt) && (
+        {/* (new) 徽标：默认 lastChangedAt 24 小时内；外部可通过 isEntryFresh 自定义规则 */}
+        {!isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt)) && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
             style={{
@@ -842,6 +862,7 @@ function TreeNode({
           onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
+          isEntryFresh={isEntryFresh}
         />
       ))}
     </>
@@ -923,6 +944,9 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
+  appearance = 'inset',
+  isEntryFresh,
+  sidebarHeader,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -1356,16 +1380,32 @@ export function DocBrowser({
     return <>{emptyState}</>;
   }
 
+  const isCards = appearance === 'cards';
+  // cards: 双独立圆角卡片 + 12px gap（周报风格）；inset: 单容器无 gap（知识库/分享）
+  const rootClass = isCards
+    ? 'flex flex-1 gap-3 overflow-hidden p-3 rounded-2xl surface-raised'
+    : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]';
+  // cards 模式下左右各自包圆角卡片；inset 模式下走原生分隔线
+  const sidebarClass = isCards
+    ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
+    : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
+
   return (
-    <div className="surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]" style={{ minHeight: 0 }}>
+    <div className={rootClass} style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
-      <div ref={sidebarRef} className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
+      <div ref={sidebarRef} className={sidebarClass}
         style={{
           width: `${sidebarWidth}px`,
           minHeight: 0,
         }}>
 
+        {/* 外部自定义 sidebar 头部（如「周报列表 · 按最近提交 · N 篇」），可选 */}
+        {sidebarHeader && (
+          <div className="shrink-0 px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            {sidebarHeader}
+          </div>
+        )}
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
         <div className="surface-panel-header space-y-2.5 px-3 py-3">
           {/* 标题模式切换（正文标题/文件名）+ 显示设置 */}
@@ -1598,6 +1638,7 @@ export function DocBrowser({
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
+              isEntryFresh={isEntryFresh}
             />
             </motion.div>
           ))}
@@ -1648,7 +1689,7 @@ export function DocBrowser({
 
       {/* 右侧：文档预览 */}
       <div
-        className="flex-1 min-w-0 flex flex-col overflow-hidden"
+        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
         style={{ minHeight: 0 }}
       >
         {selectedEntryId ? (

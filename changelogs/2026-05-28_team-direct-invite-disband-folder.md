@@ -8,3 +8,5 @@
 | feat | prd-admin | DocBrowser 新增 sortMode prop（default/created-desc/updated-desc），分享页默认按创建时间倒序 |
 | feat | prd-admin | LibraryShareViewPage 支持 URL ?entry={id} 指定默认选中，无指定时默认选最新创建条目 |
 | feat | skill | 验收归档脚本生成的分享链带 ?entry={eid}，分享对象一打开就看到新报告 |
+| refactor | prd-admin | 更新中心-周报 WeeklyReportsTab 改为复用 DocBrowser（appearance="cards" 保留双卡片布局），删除 ~200 行自实现的 list+content 渲染 |
+| feat | prd-admin | DocBrowser 新增 appearance (inset/cards)、isEntryFresh、sidebarHeader 三个可选 prop，支持周报场景的双圆角卡片布局和自定义 NEW 徽章规则 |
