@@ -132,8 +132,9 @@ public interface IHostedSiteService
     /// <summary>
     /// 用户分享统计聚合：当前所有未撤销分享 + 活跃链接 + 时间窗内访问总量 / 独立 IP / 时间线。
     /// 用于「分享统计」Drawer（参考 Cloudflare 风格简化版）。
+    /// siteId 非空时把统计范围收窄到该站点（用于站点卡上的「本站点统计」过滤按钮）。
     /// </summary>
-    Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, CancellationToken ct = default);
+    Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default);
 
     /// <summary>
     /// 分享诊断（admin only）：返回某个 Token 完整状态 + 续期历史 + 最近访问 + 一句话原因诊断，

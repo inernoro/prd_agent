@@ -623,11 +623,14 @@ public class WebPagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { newExpiresAt = result.NewExpiresAt }));
     }
 
-    /// <summary>用户分享统计聚合（参考 Cloudflare 简化版）</summary>
+    /// <summary>
+    /// 用户分享统计聚合（参考 Cloudflare 简化版）。
+    /// 可选 ?siteId=xxx 把统计范围收窄到单个站点（用于站点卡上的「本站点统计」按钮）。
+    /// </summary>
     [HttpGet("shares/analytics")]
-    public async Task<IActionResult> GetShareAnalytics([FromQuery] int rangeDays = 7)
+    public async Task<IActionResult> GetShareAnalytics([FromQuery] int rangeDays = 7, [FromQuery] string? siteId = null)
     {
-        var result = await _siteService.GetShareAnalyticsAsync(GetUserId(), rangeDays);
+        var result = await _siteService.GetShareAnalyticsAsync(GetUserId(), rangeDays, siteId);
         return Ok(ApiResponse<object>.Ok(result));
     }
 

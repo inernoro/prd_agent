@@ -398,6 +398,8 @@ export async function renewShare(shareId: string, extendDays: number): Promise<A
 }
 
 /** 用户分享统计聚合（参考 Cloudflare 简化版，含活跃链接 / 时间窗内访问 / 独立 IP / 时间线 / Top 链接） */
-export async function getShareAnalytics(rangeDays = 7): Promise<ApiResponse<ShareAnalyticsResult>> {
-  return apiRequest(`/api/web-pages/shares/analytics?rangeDays=${rangeDays}`);
+export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise<ApiResponse<ShareAnalyticsResult>> {
+  const params = new URLSearchParams({ rangeDays: String(rangeDays) });
+  if (siteId) params.set('siteId', siteId);
+  return apiRequest(`/api/web-pages/shares/analytics?${params.toString()}`);
 }

@@ -1243,15 +1243,18 @@ public class HostedSiteService : IHostedSiteService
         return new RenewShareResult { Ok = true, NewExpiresAt = newExpiresAt };
     }
 
-    public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, CancellationToken ct = default)
+    public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default)
     {
         if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
         var rangeStart = DateTime.UtcNow.AddDays(-rangeDays);
 
         // 全量 shares（含已过期、不含 visit 链）
         var fbLink = Builders<WebPageShareLink>.Filter;
+        var siteScopedFilter = string.IsNullOrEmpty(siteId)
+            ? fbLink.Empty
+            : (fbLink.Eq(x => x.SiteId, siteId) | fbLink.AnyEq(x => x.SiteIds, siteId));
         var allShares = await _db.WebPageShareLinks
-            .Find(fbLink.Eq(x => x.CreatedBy, userId) & fbLink.Ne(x => x.Purpose, "visit"))
+            .Find(fbLink.Eq(x => x.CreatedBy, userId) & fbLink.Ne(x => x.Purpose, "visit") & siteScopedFilter)
             .ToListAsync(ct);
 
         var now = DateTime.UtcNow;

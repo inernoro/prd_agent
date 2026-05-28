@@ -908,6 +908,7 @@ export default function WebPagesPage() {
           shares={shares}
           setShares={setShares}
           scopedSiteId={shareTargetId}
+          scopedSiteTitle={shareTargetId ? (sites.find(s => s.id === shareTargetId)?.title ?? null) : null}
           onClose={() => {
             setShowSharesPanel(false);
             setShareTargetId(null);
@@ -2291,12 +2292,14 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
 
 // ─── Shares Panel ───
 
-function SharesPanel({ shares, setShares, onClose, scopedSiteId }: {
+function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle }: {
   shares: ShareLinkItem[];
   setShares: (s: ShareLinkItem[]) => void;
   onClose: () => void;
   /** 若提供，则只展示与该站点关联的分享 + 新建按钮限定到该站点 */
   scopedSiteId?: string | null;
+  /** scopedSiteId 时用于「本站点统计」标题 */
+  scopedSiteTitle?: string | null;
 }) {
   const [loading, setLoading] = useState(true);
   const [viewLogsToken, setViewLogsToken] = useState<string | null>(null);
@@ -2305,6 +2308,8 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId }: {
   // 嵌套创建：在面板内点「新建分享」会拉起 ShareDialog
   const [showCreate, setShowCreate] = useState(false);
   const [renewingId, setRenewingId] = useState<string | null>(null);
+  // 本站点统计 Drawer（scopedSiteId 模式下可用）
+  const [showScopedAnalytics, setShowScopedAnalytics] = useState(false);
   const refreshShares = useCallback(async () => {
     setLoading(true);
     const res = await listSiteShares();
@@ -2391,9 +2396,14 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId }: {
                 : '查看所有分享链接、续期、撤销，或查看访问日志。'}
             </div>
             {scopedSiteId && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus size={14} className="mr-1" />新建分享
-              </Button>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button size="sm" variant="ghost" onClick={() => setShowScopedAnalytics(true)} title="只看本站点的访问统计">
+                  <BarChart3 size={14} className="mr-1" />本站点统计
+                </Button>
+                <Button size="sm" onClick={() => setShowCreate(true)}>
+                  <Plus size={14} className="mr-1" />新建分享
+                </Button>
+              </div>
             )}
           </div>
 
@@ -2537,6 +2547,15 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId }: {
               siteId={scopedSiteId}
               onClose={() => { setShowCreate(false); }}
               onCreated={refreshShares}
+            />
+          )}
+
+          {/* 嵌套 ShareAnalyticsDrawer：本站点 scoped 统计 */}
+          {showScopedAnalytics && scopedSiteId && (
+            <ShareAnalyticsDrawer
+              onClose={() => setShowScopedAnalytics(false)}
+              scopedSiteId={scopedSiteId}
+              scopedSiteTitle={scopedSiteTitle ?? undefined}
             />
           )}
         </>

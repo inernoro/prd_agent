@@ -19,7 +19,17 @@ import {
  * overscrollBehavior:contain、ESC + 蒙版点击关闭、z-[10000]。
  * 主题：var(--bg-elevated) 底 + var(--text-primary/secondary) 字，两套主题自动翻转。
  */
-export function ShareAnalyticsDrawer({ onClose }: { onClose: () => void }) {
+export function ShareAnalyticsDrawer({
+  onClose,
+  scopedSiteId,
+  scopedSiteTitle,
+}: {
+  onClose: () => void;
+  /** 非空 = 仅统计该站点的分享；为空 = 跨所有站点的总分享统计 */
+  scopedSiteId?: string | null;
+  /** scopedSiteId 时用于标题展示 */
+  scopedSiteTitle?: string | null;
+}) {
   const [loading, setLoading] = useState(true);
   const [rangeDays, setRangeDays] = useState<7 | 30 | 90>(7);
   const [data, setData] = useState<ShareAnalyticsResult | null>(null);
@@ -28,14 +38,14 @@ export function ShareAnalyticsDrawer({ onClose }: { onClose: () => void }) {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await getSiteShareAnalytics(rangeDays);
+    const res = await getSiteShareAnalytics(rangeDays, scopedSiteId ?? undefined);
     if (res.success) {
       setData(res.data);
     } else {
       setError(res.error?.message ?? '加载统计失败');
     }
     setLoading(false);
-  }, [rangeDays]);
+  }, [rangeDays, scopedSiteId]);
 
   useEffect(() => {
     void load();
@@ -111,9 +121,20 @@ export function ShareAnalyticsDrawer({ onClose }: { onClose: () => void }) {
           className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b"
           style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
             <BarChart3 size={18} style={{ color: 'var(--text-secondary)' }} />
-            <span className="text-sm font-semibold">分享统计</span>
+            <span className="text-sm font-semibold">
+              {scopedSiteId ? '本站点分享统计' : '分享统计'}
+            </span>
+            {scopedSiteId && scopedSiteTitle && (
+              <span
+                className="text-xs truncate"
+                style={{ color: 'var(--text-secondary)' }}
+                title={scopedSiteTitle}
+              >
+                · {scopedSiteTitle}
+              </span>
+            )}
             <select
               value={rangeDays}
               onChange={(e) => setRangeDays(Number(e.target.value) as 7 | 30 | 90)}

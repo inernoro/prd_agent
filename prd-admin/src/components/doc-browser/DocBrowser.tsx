@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -231,8 +232,47 @@ function ContextMenu({
   const showReprocess = canReprocess(entry) && !!onReprocess;
   const showShare = !entry.isFolder && !!onShareEntry;
 
-  return (
-    <div ref={menuRef} className="surface-popover fixed z-50 min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
+  // 只读项（即使所有写回调都为空也始终可用）：
+  // - 在新窗口打开（只有非文件夹有效）
+  // - 复制条目链接（带 ?entry=ID 高亮）
+  // 这两条在 share readonly 模式下也保证菜单有内容,不再是空壳。
+  const showOpenInNewWindow = !entry.isFolder;
+  const showCopyEntryLink = !entry.isFolder;
+
+  // createPortal 挂 body + z-[10000]：合规 frontend-modal 规则;
+  // 旧版 z-50 会被 modal/drawer (z-[100]~z-[10000]) 盖住;且祖先 overflow:hidden 会裁剪。
+  const menu = (
+    <div ref={menuRef} className="surface-popover fixed z-[10000] min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
+      {showOpenInNewWindow && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => {
+            // 当前页 URL 上换 ?entry={id}，方便对方/自己分享/记忆条目锚点
+            const u = new URL(window.location.href);
+            u.searchParams.set('entry', entry.id);
+            window.open(u.toString(), '_blank', 'noopener');
+            onClose();
+          }}>
+          <ExternalLink size={12} />
+          在新窗口打开
+        </button>
+      )}
+      {showCopyEntryLink && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => {
+            const u = new URL(window.location.href);
+            u.searchParams.set('entry', entry.id);
+            navigator.clipboard.writeText(u.toString()).catch(() => {});
+            onClose();
+          }}>
+          <Copy size={12} />
+          复制条目链接
+        </button>
+      )}
+      {(showOpenInNewWindow || showCopyEntryLink) && (showSubtitle || showReprocess || showShare || onRename || onTogglePin || onEditTags || onSetPrimary || onReplaceFile || onDelete) && (
+        <div className="my-1 border-t border-token-subtle" />
+      )}
       {showSubtitle && (
         <button
           className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
@@ -316,6 +356,9 @@ function ContextMenu({
       )}
     </div>
   );
+
+  // createPortal 到 document.body,避免被祖先 overflow:hidden 裁剪 / 被低 z-index 容器盖住
+  return createPortal(menu, document.body);
 }
 
 function EntryTagEditor({
