@@ -500,8 +500,19 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       setBranchState({ status: 'ok', data });
       setSelectedBranch((current) => current || data.current || data.branches?.[0] || '');
     } catch (err) {
-      // /api/self-branches 现在永远 200,这里只在网络层失败(断网/CORS)才命中
-      setBranchState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      // /api/self-branches 现在永远 200,这里只在网络层失败(断网/CORS)才命中。
+      // 2026-05-28 用户反馈"主面板里不能出现红色提示":
+      //   即使本端点真失败了,也优先保留上次状态(loading→保持 loading 兜底),
+      //   绝不在主区里渲染红色 ErrorBlock。CDN/边缘抖动(transient)更要静默。
+      // eslint-disable-next-line no-console
+      console.warn('[MaintenanceTab] loadBranches failed:', err);
+      if (err instanceof ApiError && err.transient) {
+        // 抖动:保留 loading / 上次 ok 状态,不让用户看到红色横幅
+        setBranchState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
+        return;
+      }
+      // 持续真错也不再用 ErrorBlock 占主区,降级为 loading 状态(空 branch 选项)
+      setBranchState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
     }
   }, []);
 
