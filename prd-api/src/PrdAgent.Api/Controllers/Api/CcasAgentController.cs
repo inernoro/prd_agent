@@ -98,7 +98,20 @@ public class CcasAgentController : ControllerBase
 
         /// <summary>当 phase=B 时，传入用户确认过的 Part A 内容（拼到上下文，让 LLM 不重复输出）</summary>
         public string? ConfirmedPartA { get; set; }
+
+        /// <summary>
+        /// 可选：从「文档空间 / 知识库」（document_store）中选择的参考条目 ID 列表，
+        /// 后端会读取每条 entry 的内容（ParsedPrd.RawContent / Attachment.ExtractedText），
+        /// 按 token 预算（默认 24K 字符）拼接到 system prompt 末尾「## 领域参考资料」段。
+        /// 权限校验：只能引用「自己创建的空间」或「公开的空间（IsPublic=true）」中的条目。
+        /// </summary>
+        public List<string>? ReferenceEntryIds { get; set; }
     }
+
+    /// <summary>知识库参考资料注入预算：单条最大字符数</summary>
+    private const int ReferenceEntryMaxChars = 8000;
+    /// <summary>知识库参考资料注入预算：所有条目合计最大字符数</summary>
+    private const int ReferenceTotalBudget = 24000;
 
     /// <summary>
     /// PRD 生成 SSE 流：每收到一个文本 chunk 就推 typing 事件，结束后推 done。
@@ -127,6 +140,27 @@ public class CcasAgentController : ControllerBase
         if (phase != "A" && phase != "B") phase = "A";
 
         var systemPrompt = CcasPrdPrompts.BuildSystemPrompt(templateKey, phase);
+
+        // 知识库参考资料注入（可选）：从用户拥有的或公开的 document_store 条目中读内容，
+        // 按 token 预算追加到 system prompt 末尾。
+        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, userId);
+        if (!string.IsNullOrEmpty(referenceInfo.AppendedContent))
+        {
+            systemPrompt += referenceInfo.AppendedContent;
+        }
+
+        // 即使没启用，只要前端传了 ID 也回个 reference 事件让用户知道实际状况（被跳过几条 / 注入几条）
+        if (req.ReferenceEntryIds != null && req.ReferenceEntryIds.Count > 0)
+        {
+            await WriteSseAsync("reference", new
+            {
+                requested = req.ReferenceEntryIds.Count,
+                included = referenceInfo.IncludedCount,
+                totalChars = referenceInfo.TotalChars,
+                budget = ReferenceTotalBudget,
+                skipped = referenceInfo.Skipped,
+            });
+        }
 
         // 拼装用户消息 — 保留 markdown 上传 + Part A 确认上下文
         var userPromptSb = new StringBuilder();
@@ -732,6 +766,156 @@ public class CcasAgentController : ControllerBase
     // ──────────────────────────────────────────────
     // 私有工具
     // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// 知识库参考资料注入结果（提取出来便于上层做 SSE 通知 + 落库 / 日志）。
+    /// </summary>
+    private sealed record ReferenceContext(string AppendedContent, int IncludedCount, int TotalChars, List<string> Skipped);
+
+    /// <summary>
+    /// 按用户传入的 entryIds，从「文档空间」(document_store) 拉取内容拼装为 system prompt 末尾追加段。
+    /// 权限校验：只引用「自己创建的空间」或「公开空间（IsPublic=true）」中的条目。
+    /// 预算控制：单条 ≤ 8K 字符截断；总和 ≤ 24K 字符按选中顺序裁剪。
+    /// 内容来源：优先 ParsedPrd.RawContent，回退 Attachment.ExtractedText。
+    /// </summary>
+    private async Task<ReferenceContext> BuildReferenceContextAsync(List<string>? entryIds, string userId)
+    {
+        if (entryIds == null || entryIds.Count == 0)
+        {
+            return new ReferenceContext(string.Empty, 0, 0, new List<string>());
+        }
+
+        // 去重 + 限上限（最多 20 条，防止爆数据库查询）
+        var ids = entryIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Take(20)
+            .ToList();
+        if (ids.Count == 0)
+        {
+            return new ReferenceContext(string.Empty, 0, 0, new List<string>());
+        }
+
+        var entries = await _db.DocumentEntries
+            .Find(e => ids.Contains(e.Id))
+            .ToListAsync(CancellationToken.None);
+
+        // 按用户传入的 ID 顺序排序（用户在前端勾选的顺序应该被保留）
+        var orderMap = ids.Select((id, idx) => new { id, idx }).ToDictionary(x => x.id, x => x.idx);
+        entries = entries.OrderBy(e => orderMap.TryGetValue(e.Id, out var i) ? i : int.MaxValue).ToList();
+
+        // 一次性把所有相关空间拉出来做权限映射，避免 N+1
+        var storeIds = entries.Select(e => e.StoreId).Distinct().ToList();
+        var stores = await _db.DocumentStores
+            .Find(s => storeIds.Contains(s.Id))
+            .ToListAsync(CancellationToken.None);
+        var storeById = stores.ToDictionary(s => s.Id, s => s);
+
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("## 领域参考资料（来自知识库）");
+        sb.AppendLine();
+        sb.AppendLine("以下材料来自米多内部知识库，作为本次 PRD 生成的事实依据。生成时优先采纳这里的术语、规则、流程定义；与用户输入冲突时按用户输入为准并在文档中标注。");
+        sb.AppendLine();
+
+        var includedCount = 0;
+        var totalChars = 0;
+        var skipped = new List<string>();
+
+        foreach (var entry in entries)
+        {
+            if (totalChars >= ReferenceTotalBudget)
+            {
+                skipped.Add($"{entry.Title}（已达总预算 {ReferenceTotalBudget} 字符上限，跳过）");
+                continue;
+            }
+
+            // 权限：必须是用户自己的空间或公开空间
+            if (!storeById.TryGetValue(entry.StoreId, out var store)
+                || (store.OwnerId != userId && !store.IsPublic))
+            {
+                skipped.Add($"{entry.Title}（无访问权限）");
+                continue;
+            }
+
+            // 文件夹本身不带正文，跳过
+            if (entry.IsFolder)
+            {
+                skipped.Add($"{entry.Title}（是文件夹，无正文）");
+                continue;
+            }
+
+            // 读内容：优先 ParsedPrd，回退 Attachment
+            string? content = null;
+            if (!string.IsNullOrEmpty(entry.DocumentId))
+            {
+                var doc = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync(CancellationToken.None);
+                if (doc != null) content = doc.RawContent;
+            }
+            if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+            {
+                var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync(CancellationToken.None);
+                if (att != null) content = att.ExtractedText;
+            }
+
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                skipped.Add($"{entry.Title}（无可读正文）");
+                continue;
+            }
+
+            // 单条裁剪
+            var truncated = false;
+            if (content.Length > ReferenceEntryMaxChars)
+            {
+                content = content[..ReferenceEntryMaxChars];
+                truncated = true;
+            }
+
+            // 总预算裁剪：剩余预算 < 单条长度时进一步裁剪
+            var remaining = ReferenceTotalBudget - totalChars;
+            if (content.Length > remaining)
+            {
+                content = content[..Math.Max(0, remaining)];
+                truncated = true;
+            }
+
+            if (string.IsNullOrEmpty(content))
+            {
+                skipped.Add($"{entry.Title}（预算已耗尽）");
+                continue;
+            }
+
+            sb.AppendLine($"### 参考 #{includedCount + 1}：{entry.Title}");
+            if (!string.IsNullOrWhiteSpace(entry.Summary))
+            {
+                sb.AppendLine($"> {entry.Summary.Trim()}");
+            }
+            sb.AppendLine();
+            sb.AppendLine(content);
+            if (truncated)
+            {
+                sb.AppendLine();
+                sb.AppendLine("（…该条已截断）");
+            }
+            sb.AppendLine();
+
+            includedCount++;
+            totalChars += content.Length;
+        }
+
+        if (includedCount == 0)
+        {
+            // 没有任何条目可用，不污染 prompt
+            return new ReferenceContext(string.Empty, 0, 0, skipped);
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"_（共注入 {includedCount} 条参考资料，约 {totalChars} 字符）_");
+        return new ReferenceContext(sb.ToString(), includedCount, totalChars, skipped);
+    }
 
     private async Task WriteSseAsync(string eventType, object data)
     {

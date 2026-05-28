@@ -164,3 +164,60 @@ export async function deleteCcasFlowDiagram(id: string): Promise<ApiResponse<{ d
 
 export const CCAS_PRD_STREAM_URL = '/api/ccas-agent/prd/stream';
 export const CCAS_FLOW_PARSE_STREAM_URL = '/api/ccas-agent/flow/parse-stream';
+
+// ──────────────────────────────────────────────
+// 知识库（document-store）轻量代理
+// 只提供 PRD 引用知识库面板需要用的 3 个端点；
+// 完整的知识库 CRUD 见 services/real/documentStore.ts
+// ──────────────────────────────────────────────
+
+export interface CcasKnowledgeStore {
+  id: string;
+  name: string;
+  description?: string | null;
+  appKey?: string | null;
+  tags: string[];
+  isPublic: boolean;
+  documentCount: number;
+  ownerId: string;
+  updatedAt: string;
+}
+
+export interface CcasKnowledgeEntry {
+  id: string;
+  storeId: string;
+  parentId?: string | null;
+  isFolder: boolean;
+  title: string;
+  summary?: string | null;
+  contentType?: string | null;
+  fileSize?: number;
+  tags?: string[] | null;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
+/** 列出当前用户的所有知识库空间（一次拉满 100 个，给抽屉用） */
+export async function listMyKnowledgeStores(): Promise<ApiResponse<{ items: CcasKnowledgeStore[]; total: number }>> {
+  return apiRequest('/api/document-store/stores?page=1&pageSize=100');
+}
+
+/** 列出某个空间的所有条目（all=true 返回全部，关键词支持搜索标题+摘要） */
+export async function listKnowledgeEntries(
+  storeId: string,
+  keyword?: string
+): Promise<ApiResponse<{ items: CcasKnowledgeEntry[]; total: number }>> {
+  const qs = new URLSearchParams({ pageSize: '500', all: 'true' });
+  if (keyword?.trim()) {
+    qs.set('keyword', keyword.trim());
+    qs.set('searchContent', 'true');
+  }
+  return apiRequest(`/api/document-store/stores/${encodeURIComponent(storeId)}/entries?${qs.toString()}`);
+}
+
+/** 获取条目正文（用于本地估算 token） */
+export async function getKnowledgeEntryContent(
+  entryId: string
+): Promise<ApiResponse<{ entryId: string; title: string; content: string; hasContent: boolean }>> {
+  return apiRequest(`/api/document-store/entries/${encodeURIComponent(entryId)}/content`);
+}

@@ -1904,6 +1904,9 @@ export {
   listCcasFlowDiagrams,
   getCcasFlowDiagram,
   deleteCcasFlowDiagram,
+  listMyKnowledgeStores,
+  listKnowledgeEntries,
+  getKnowledgeEntryContent,
   CCAS_PRD_STREAM_URL,
   CCAS_FLOW_PARSE_STREAM_URL,
 } from '@/services/real/ccasAgent';
@@ -1915,4 +1918,6 @@ export type {
   CcasEquipmentAsset,
   CcasFlowDiagram,
   CcasFlowDiagramSummary,
+  CcasKnowledgeStore,
+  CcasKnowledgeEntry,
 } from '@/services/real/ccasAgent';
