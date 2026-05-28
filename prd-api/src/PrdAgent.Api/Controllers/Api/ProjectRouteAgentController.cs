@@ -322,6 +322,15 @@ public class ProjectRouteAgentController : ControllerBase
 
         var userId = GetUserId();
         var displayName = GetDisplayName() ?? userId;
+        var normalizedTitle = req.Title.Trim();
+
+        // 同一用户下方案标题不允许重复（按 trim 后比较）。
+        // 主因：列表里全是同名「智能营销T3.1.11」会让用户分不清是哪个版本的分析。
+        var duplicate = await _db.ProjectRoutePlans
+            .Find(x => x.SubmitterId == userId && x.Title == normalizedTitle)
+            .FirstOrDefaultAsync(ct);
+        if (duplicate != null)
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.PLAN_TITLE_DUPLICATE, $"方案标题「{normalizedTitle}」已存在，请换一个标题"));
 
         // 安全：必须限制只能用自己上传的 attachment 创建 plan。
         // 否则 attachmentId 一旦泄漏（UI / API 日志 / 邮件分享）任何登录用户都能
@@ -338,7 +347,7 @@ public class ProjectRouteAgentController : ControllerBase
         {
             SubmitterId = userId,
             SubmitterName = displayName,
-            Title = req.Title.Trim(),
+            Title = normalizedTitle,
             AttachmentId = req.AttachmentId,
             FileName = attachment.FileName,
             ExtractedContent = attachment.ExtractedText,

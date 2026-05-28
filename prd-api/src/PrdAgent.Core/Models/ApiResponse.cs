@@ -104,6 +104,8 @@ public static class ErrorCodes
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
 
+    public const string PLAN_TITLE_DUPLICATE = "PLAN_TITLE_DUPLICATE";
+
     // 配额相关
     public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
 

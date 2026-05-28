@@ -123,7 +123,26 @@ function AnalyzeView() {
   const [streamUrl, setStreamUrl] = useState<string>('');
 
   useEffect(() => {
-    void refreshRecent();
+    // 初次加载：拉最近方案 + 公共站点说明 + GitHub 状态；
+    // 然后把最新一条方案自动选中展示到右侧（避免进页面一片空白）。
+    void (async () => {
+      const res = await listMyPlans(1, 10);
+      if (res.success) {
+        const items = res.data!.items;
+        setRecent(items);
+        if (items.length > 0) {
+          const top = items[0];
+          setPlan(top);
+          setApps(top.extractedApps ?? []);
+          setModules(top.extractedModules ?? []);
+          setExtractedRepos(top.extractedRepos ?? []);
+          setResolutions(top.resolutions ?? []);
+          setRepos([]);
+          setModel(top.model ?? null);
+          setPlatform(top.modelPlatform ?? null);
+        }
+      }
+    })();
     void refreshSiteSpec();
     void refreshGhStatus();
   }, []);
@@ -146,11 +165,7 @@ function AnalyzeView() {
   }
 
   async function handleDeletePlan(p: ProjectRoutePlan) {
-    const ok = window.confirm(
-      `确定要删除方案「${p.title}」吗？\n\n` +
-      `提交于 ${new Date(p.submittedAt).toLocaleString()}\n` +
-      `此操作不可恢复，分析结果将一并删除。`,
-    );
+    const ok = window.confirm(`删除方案「${p.title}」？`);
     if (!ok) return;
     const res = await deletePlan(p.id);
     if (!res.success) {
@@ -423,10 +438,10 @@ function AnalyzeView() {
                             </div>
                           )}
                         </button>
-                        {/* 删除按钮，hover / 选中时显示 */}
+                        {/* 删除按钮始终常驻显示，任何状态的方案都可删 */}
                         <button
                           onClick={(e) => { e.stopPropagation(); void handleDeletePlan(p); }}
-                          className={`absolute top-2 right-2 p-1 rounded transition-opacity ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-white/40 hover:text-red-300 hover:bg-red-500/10`}
+                          className="absolute top-2 right-2 p-1 rounded text-white/50 hover:text-red-300 hover:bg-red-500/10 transition-colors"
                           title="删除此方案"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
