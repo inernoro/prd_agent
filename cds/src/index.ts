@@ -2030,7 +2030,21 @@ janitorService.setRemoveFn(async (slug: string) => {
     for (const svc of stateService.getInfraServices()) {
       if (svc.status !== 'running') continue;
       const found = infraContainers.get(svc.containerName);
-      if (found && found.running) continue;
+      if (found && found.running) {
+        // 2026-05-28 真恢复检测:容器活着 + 距离上次启动 >= SOFT_FAIL_WINDOW_MS
+        // 才视为真正恢复,清掉软失败计数。这之前一直保留 attempts,即使
+        // crash-loop 期间 docker start 偶尔成功也不会洗白。
+        const key = `infra:${svc.containerName}`;
+        const lastSuccess = lastSuccessfulStartMs.get(key);
+        if (lastSuccess && now - lastSuccess >= SOFT_FAIL_WINDOW_MS) {
+          if (restartAttempts.has(key)) {
+            console.log(`[auto-restart] infra ${svc.containerName} 已稳定存活 ${Math.round((now - lastSuccess) / 1000)}s,清除软失败计数`);
+            restartAttempts.delete(key);
+          }
+          lastSuccessfulStartMs.delete(key);
+        }
+        continue;
+      }
       if (!found) continue;
 
       const attemptKey = `infra:${svc.containerName}`;
@@ -2098,8 +2112,10 @@ janitorService.setRemoveFn(async (slug: string) => {
       });
       if (startRes.exitCode === 0) {
         console.log(`[auto-restart] infra ${svc.containerName} 已重启(attempt ${att.count + 1})`);
-        restartAttempts.delete(attemptKey);
-        // 2026-05-28 记录启动成功时刻,用于检测 crash loop
+        // 2026-05-28 修复:**不**清 restartAttempts。crash loop 场景下 docker start
+        // 永远会返 exit 0(容器先 spawn 再内部崩),不能因为 spawn 成功就清零软失败
+        // 计数 — 否则 soft-fail → start success → delete → soft-fail → ... 永远累积不到 MAX_RETRIES。
+        // 只在下一 tick 看到容器存活 >= SOFT_FAIL_WINDOW_MS 才视为真"恢复",到时统一清。
         lastSuccessfulStartMs.set(attemptKey, now);
       } else {
         att.count += 1;
