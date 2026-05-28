@@ -70,6 +70,7 @@ export async function apiRequest<T = unknown>(
 
 function alternateApiUrl(rawUrl: string, primaryUrl: string): string | null {
   if (!rawUrl.startsWith('/api/')) return null;
+  if (shouldPreferCdsPassthrough() && primaryUrl.startsWith('/_cds/api/')) return null;
   if (primaryUrl.startsWith('/_cds/api/')) return rawUrl;
   if (primaryUrl.startsWith('/api/')) return `/_cds${primaryUrl}`;
   return null;

@@ -253,6 +253,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     let fallbackTimer: number | null = null;
     let firstErrorAt = 0;
     let consecutiveErrors = 0;
+    let consecutiveFallbackFailures = 0;
     let fallbackActive = false;
     let fallbackSuccessCount = 0;
     // ⚠ Bugbot Review 2026-05-06 0005a515: fallback polling 启动后永远不再尝
@@ -278,11 +279,18 @@ export function GlobalUpdateBadge(): JSX.Element | null {
             const data = (await r.json()) as SelfStatusLite;
             if (!cancelled) applyPayload(data, 'update');
             fallbackSuccessCount += 1;
+            consecutiveFallbackFailures = 0;
           } else if (!cancelled) {
-            setState({ kind: 'restarting', sinceMs: Date.now() });
+            consecutiveFallbackFailures += 1;
+            if (consecutiveFallbackFailures >= 2 || r.status >= 500) {
+              setState({ kind: 'restarting', sinceMs: Date.now() });
+            }
           }
         } catch {
-          if (!cancelled) setState({ kind: 'restarting', sinceMs: Date.now() });
+          consecutiveFallbackFailures += 1;
+          if (!cancelled && consecutiveFallbackFailures >= 2) {
+            setState({ kind: 'restarting', sinceMs: Date.now() });
+          }
         }
         if (cancelled) return;
         // 每 FALLBACK_POLLS_PER_SSE_RETRY 次成功 poll 后,试着重连 SSE。失败
@@ -392,7 +400,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         const now = Date.now();
         if (consecutiveErrors === 0) firstErrorAt = now;
         consecutiveErrors += 1;
-        setState({ kind: 'restarting', sinceMs: firstErrorAt || now });
+        if (consecutiveErrors >= 2) {
+          setState({ kind: 'restarting', sinceMs: firstErrorAt || now });
+        }
 
         const elapsed = now - firstErrorAt;
         if (consecutiveErrors >= SSE_FAIL_THRESHOLD_COUNT && elapsed > SSE_FAIL_THRESHOLD_MS) {
