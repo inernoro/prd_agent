@@ -268,7 +268,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       const tick = async (): Promise<void> => {
         if (cancelled) return;
         try {
-          const r = await fetch('/api/self-status?probe=remote', {
+          const r = await fetch('/api/self-status', {
             credentials: 'include',
             cache: 'no-store',
             headers: { 'X-CDS-Poll': 'true' },
@@ -439,7 +439,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       try {
         const ctrl = new AbortController();
         timeoutId = window.setTimeout(() => ctrl.abort(), 6_000);
-        const r = await fetch('/api/self-status?probe=remote', {
+        const r = await fetch('/api/self-status', {
           credentials: 'include',
           cache: 'no-store',
           headers: { 'X-CDS-Poll': 'true' },
@@ -482,9 +482,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-        // body 必传 — handler `req.body` 在 json middleware 下,空 body 会被
-        // 解析成 undefined,再解构 `const { branch }` 会抛 TypeError。空对象 OK。
-        body: '{}',
+        body: JSON.stringify({ branch: lastSuccessRef.current?.currentBranch || 'main' }),
         signal: ctrl.signal,
       });
       window.clearTimeout(abortTimer);

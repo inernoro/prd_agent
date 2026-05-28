@@ -12074,7 +12074,7 @@ cdscli project list --human
   router.post('/self-update', async (req, res) => {
     // 2026-05-08:同 self-force-sync,body.force=true 跳过同 commit 的 no-op
     // fast-path,让"重复测试同一版本更新"成为可能。详见 self-force-sync 上方注释。
-    const { branch, force } = req.body as { branch?: string; force?: boolean };
+    let { branch, force } = req.body as { branch?: string; force?: boolean };
     const forceMode = force === true;
 
     initSSE(res);
@@ -12091,6 +12091,17 @@ cdscli project list --human
       cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'unknown';
+
+    branch = typeof branch === 'string' ? branch.trim() : '';
+    if (!branch) {
+      try {
+        const currentBranch = (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot }))
+          .stdout.trim();
+        branch = currentBranch && currentBranch !== 'HEAD' ? currentBranch : 'main';
+      } catch {
+        branch = 'main';
+      }
+    }
 
     const existingActive = stateService.getActiveSelfUpdate();
     if (isSelfUpdateBusy(existingActive)) {

@@ -24,6 +24,18 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
+import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
+import goIconUrl from 'devicon/icons/go/go-original.svg';
+import javaIconUrl from 'devicon/icons/java/java-original.svg';
+import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
+import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
+import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
+import phpIconUrl from 'devicon/icons/php/php-original.svg';
+import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
+import pythonIconUrl from 'devicon/icons/python/python-original.svg';
+import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
+import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
+import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -1236,42 +1248,36 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
-function GlyphIcon({ glyph }: { glyph: string }): JSX.Element {
+function DeviconIcon({ src }: { src: string }): JSX.Element {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
-      <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" strokeWidth="1.8" opacity="0.72" />
-      <text
-        x="12"
-        y="14.8"
-        textAnchor="middle"
-        fontSize={glyph.length > 2 ? 6.5 : 8}
-        fontWeight="800"
-        fill="currentColor"
-      >
-        {glyph}
-      </text>
-    </svg>
+    <img
+      aria-hidden
+      alt=""
+      className="cds-project-node-icon cds-project-node-devicon"
+      draggable={false}
+      src={src}
+    />
   );
 }
 
 function MongoIcon(): JSX.Element {
-  return <GlyphIcon glyph="MDB" />;
+  return <DeviconIcon src={mongoIconUrl} />;
 }
 
 function RedisIcon(): JSX.Element {
-  return <GlyphIcon glyph="R" />;
+  return <DeviconIcon src={redisIconUrl} />;
 }
 
 function MysqlIcon(): JSX.Element {
-  return <GlyphIcon glyph="MY" />;
+  return <DeviconIcon src={mysqlIconUrl} />;
 }
 
 function PostgresIcon(): JSX.Element {
-  return <GlyphIcon glyph="PG" />;
+  return <DeviconIcon src={postgresIconUrl} />;
 }
 
 function RabbitIcon(): JSX.Element {
-  return <GlyphIcon glyph="MQ" />;
+  return <DeviconIcon src={rabbitIconUrl} />;
 }
 
 function MilvusIcon(): JSX.Element {
@@ -1312,31 +1318,31 @@ function MinioIcon(): JSX.Element {
 }
 
 function DotnetIcon(): JSX.Element {
-  return <GlyphIcon glyph=".NET" />;
+  return <DeviconIcon src={dotnetIconUrl} />;
 }
 
 function NodeIcon(): JSX.Element {
-  return <GlyphIcon glyph="JS" />;
+  return <DeviconIcon src={nodeIconUrl} />;
 }
 
 function PythonIcon(): JSX.Element {
-  return <GlyphIcon glyph="PY" />;
+  return <DeviconIcon src={pythonIconUrl} />;
 }
 
 function JavaIcon(): JSX.Element {
-  return <GlyphIcon glyph="J" />;
+  return <DeviconIcon src={javaIconUrl} />;
 }
 
 function GoIcon(): JSX.Element {
-  return <GlyphIcon glyph="GO" />;
+  return <DeviconIcon src={goIconUrl} />;
 }
 
 function RustIcon(): JSX.Element {
-  return <GlyphIcon glyph="RS" />;
+  return <DeviconIcon src={rustIconUrl} />;
 }
 
 function PhpIcon(): JSX.Element {
-  return <GlyphIcon glyph="PHP" />;
+  return <DeviconIcon src={phpIconUrl} />;
 }
 
 function NacosIcon(): JSX.Element {
