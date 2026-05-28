@@ -30,6 +30,11 @@ export type CdsEventType =
   | 'self.update.step'
   | 'self.update.done'
   | 'self.update.failed'
+  // 2026-05-28:agent 导入审批 + infra flap 告警
+  | 'pending-import.created'
+  | 'pending-import.decided'
+  | 'pending-import.count'
+  | 'infra.flap.circuit-breaker'
   | 'heartbeat';
 
 export type ConnectionState =
@@ -103,6 +108,10 @@ interface StoreState {
   updating: { startedAt: string; branch?: string; step?: string } | null;
   /** 最近收到 heartbeat 的时间(检测连接是否真的活着) */
   lastHeartbeatAt: string | null;
+  /** 2026-05-28:agent 导入审批事件的最新 envelope(组件用 ts 触发刷新) */
+  lastPendingImportEvent: { type: 'created' | 'decided' | 'count'; ts: string; pendingCount?: number; importId?: string } | null;
+  /** 2026-05-28:infra flap 熔断告警(组件展示右下角 toast) */
+  lastFlapEvent: { containerName: string; restartCount: number; message: string; ts: string } | null;
   /** 连续失败次数(用于退避 + 是否进 disconnected) */
   consecutiveErrors: number;
   /** 最近一次错误 */
@@ -116,6 +125,8 @@ const INITIAL_STATE: StoreState = {
   refreshing: null,
   updating: null,
   lastHeartbeatAt: null,
+  lastPendingImportEvent: null,
+  lastFlapEvent: null,
   consecutiveErrors: 0,
   lastError: null,
 };
@@ -194,6 +205,10 @@ function openConnection(): void {
     'self.update.step',
     'self.update.done',
     'self.update.failed',
+    'pending-import.created',
+    'pending-import.decided',
+    'pending-import.count',
+    'infra.flap.circuit-breaker',
     'heartbeat',
   ];
   for (const type of types) {
@@ -257,6 +272,34 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
         const data = envelope.data as { status?: string };
         setState({ lastError: `self-update ${data.status ?? 'failed'}` });
       }
+      break;
+    }
+    case 'pending-import.created':
+    case 'pending-import.decided':
+    case 'pending-import.count': {
+      const data = (envelope.data || {}) as { pendingCount?: number; importId?: string };
+      const evtType = type === 'pending-import.created' ? 'created'
+        : type === 'pending-import.decided' ? 'decided' : 'count';
+      setState({
+        lastPendingImportEvent: {
+          type: evtType,
+          ts: envelope.ts,
+          pendingCount: data.pendingCount,
+          importId: data.importId,
+        },
+      });
+      break;
+    }
+    case 'infra.flap.circuit-breaker': {
+      const data = (envelope.data || {}) as { containerName?: string; restartCount?: number; message?: string };
+      setState({
+        lastFlapEvent: {
+          containerName: String(data.containerName || ''),
+          restartCount: Number(data.restartCount || 0),
+          message: String(data.message || ''),
+          ts: envelope.ts,
+        },
+      });
       break;
     }
     case 'heartbeat': {
