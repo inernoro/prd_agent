@@ -34,6 +34,30 @@ interface SelfBranchesResponse {
 }
 
 /** GET /api/self-status — CDS 自更新可见性面板用 */
+interface SelfUpdateTimings {
+  totalMs?: number;
+  fetchMs?: number;
+  checkoutMs?: number;
+  pullMs?: number;
+  resetMs?: number;
+  nginxRenderMs?: number;
+  analyzeMs?: number;
+  validateMs?: number;
+  validateInstallMs?: number;
+  validateTscMs?: number;
+  cacheMs?: number;
+  buildBackendMs?: number;
+  webBuildMs?: number;
+  webOnlyMs?: number;
+  docOnlyMs?: number;
+  noOpMs?: number;
+  restartMs?: number;
+  validate?: Record<string, number>;
+  webBuildSkipped?: boolean;
+  webBuildReason?: string;
+  [key: string]: number | boolean | string | Record<string, number> | undefined;
+}
+
 interface SelfUpdateRecord {
   ts: string;
   branch: string;
@@ -62,6 +86,9 @@ interface SelfUpdateRecord {
   /** /api/self-status slim 模式下返回:本 record 完整 SSE 步骤行数。前端
    *  据此显示「完整步骤(N 行)」按钮 + 用户点开时再 lazy fetch /api/self-update-history。 */
   stepsCount?: number;
+  /** 2026-05-28:阶段耗时分解。后端 `SelfUpdateTimingBreakdown`。
+   *  历史一直存在,但前端类型漏 → 渲染丢失。用户反馈"可观测性不强"的根因。 */
+  timings?: SelfUpdateTimings;
 }
 
 interface SystemdUnitDrift {
@@ -1218,8 +1245,10 @@ function SelfUpdateHistoryList({
       <div className="py-8 text-center text-sm text-muted-foreground">尚无历史</div>
     );
   }
+  const stats = summariseHistory(historyState.records);
   return (
     <div className="max-h-[60vh] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+      <SelfUpdateHistoryStats stats={stats} />
       <ul className="divide-y divide-[hsl(var(--hairline))]">
         {historyState.records.map((rec, idx) => (
           <li key={`${rec.ts}-${idx}`} className="flex flex-col gap-1 py-3 text-sm">
@@ -1300,6 +1329,7 @@ function SelfUpdateHistoryList({
                 </span>
               ) : null}
             </div>
+            {rec.timings ? <SelfUpdateStageBar timings={rec.timings} totalMs={rec.durationMs} /> : null}
             {rec.error ? (
               <div className="mt-0.5 text-xs text-destructive/80" title={rec.error}>
                 {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
@@ -1376,4 +1406,168 @@ function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
     case 'auto-poll':  return '自动轮询';
     case 'webhook':    return 'GitHub webhook';
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 2026-05-28 自更新可观测性加强
+// 用户反馈:"返回日志不正确" — 根因是前端类型缺 timings 字段,
+// 后端 SelfUpdateTimingBreakdown 数据全在但 UI 没渲染。下面三件:
+//   1. 聚合统计:成功率 / 平均/中位/p95 耗时 / 最长一条 + 阶段
+//   2. 单条阶段耗时条:fetch / install / tsc / build / web-build 各占多少
+//   3. 上述都按"实际有数据的字段"做,缺失字段不假装(以前没有就标 -)
+// ─────────────────────────────────────────────────────────────
+
+interface SelfUpdateHistoryStatsData {
+  total: number;
+  success: number;
+  failed: number;
+  deferred: number;
+  aborted: number;
+  avgMs: number | null;
+  medianMs: number | null;
+  p95Ms: number | null;
+  fastestMs: number | null;
+  slowestRec: SelfUpdateRecord | null;
+}
+
+function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsData {
+  const total = records.length;
+  let success = 0, failed = 0, deferred = 0, aborted = 0;
+  const durations: number[] = [];
+  let slowestRec: SelfUpdateRecord | null = null;
+  for (const r of records) {
+    if (r.status === 'success') success += 1;
+    else if (r.status === 'failed') failed += 1;
+    else if (r.status === 'deferred') deferred += 1;
+    else if (r.status === 'aborted') aborted += 1;
+    if (typeof r.durationMs === 'number' && r.durationMs > 0) {
+      durations.push(r.durationMs);
+      if (!slowestRec || (r.durationMs > (slowestRec.durationMs || 0))) slowestRec = r;
+    }
+  }
+  durations.sort((a, b) => a - b);
+  const sum = durations.reduce((s, v) => s + v, 0);
+  const avgMs = durations.length > 0 ? Math.round(sum / durations.length) : null;
+  const medianMs = durations.length > 0 ? durations[Math.floor(durations.length / 2)] : null;
+  const p95Idx = Math.max(0, Math.floor(durations.length * 0.95) - 1);
+  const p95Ms = durations.length > 0 ? durations[Math.min(p95Idx, durations.length - 1)] : null;
+  const fastestMs = durations.length > 0 ? durations[0] : null;
+  return { total, success, failed, deferred, aborted, avgMs, medianMs, p95Ms, fastestMs, slowestRec };
+}
+
+function fmtMs(ms: number | null | undefined): string {
+  if (ms == null) return '-';
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }): JSX.Element {
+  const successRate = stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
+  return (
+    <div className="sticky top-0 z-10 mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span className="font-semibold">最近 {stats.total} 次:</span>
+        <span className="rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5">
+          成功 {stats.success}
+        </span>
+        {stats.failed > 0 ? (
+          <span className="rounded bg-red-500/10 text-red-700 dark:text-red-300 px-2 py-0.5">
+            失败 {stats.failed}
+          </span>
+        ) : null}
+        {stats.deferred > 0 ? (
+          <span className="rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5">
+            延后 {stats.deferred}
+          </span>
+        ) : null}
+        {stats.aborted > 0 ? (
+          <span className="rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2 py-0.5">
+            中止 {stats.aborted}
+          </span>
+        ) : null}
+        <span className="text-muted-foreground">成功率 {successRate}%</span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <div>
+          <div className="text-muted-foreground">最快</div>
+          <div className="font-mono">{fmtMs(stats.fastestMs)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">中位</div>
+          <div className="font-mono">{fmtMs(stats.medianMs)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">平均</div>
+          <div className="font-mono">{fmtMs(stats.avgMs)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">P95</div>
+          <div className="font-mono">{fmtMs(stats.p95Ms)}</div>
+        </div>
+      </div>
+      {stats.slowestRec ? (
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          最长一次:{fmtMs(stats.slowestRec.durationMs)} ·{' '}
+          {selfUpdateStatusLabel(stats.slowestRec.status)} · {formatRelativeTime(stats.slowestRec.ts)}
+          {stats.slowestRec.timings?.webBuildMs && stats.slowestRec.timings.webBuildMs > 60_000
+            ? ` · web build 占 ${fmtMs(stats.slowestRec.timings.webBuildMs)}`
+            : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// 阶段耗时条:把 timings 里的各阶段按比例横向铺出来,鼠标悬停看每段名字 + 数值。
+// 之前用户看的只是 "X.Xs 流程" 一个数字,完全看不出 25s 是 tsc 还是 web build 占的。
+interface StageSeg { key: string; label: string; ms: number; color: string }
+
+function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; totalMs?: number }): JSX.Element | null {
+  const segments: StageSeg[] = [];
+  const push = (key: string, label: string, ms: number | undefined, color: string): void => {
+    if (typeof ms === 'number' && ms > 0) segments.push({ key, label, ms, color });
+  };
+  push('fetch', '拉取', (timings.fetchMs ?? 0) + (timings.pullMs ?? 0), 'bg-sky-500/70');
+  push('checkout', '切分支', (timings.checkoutMs ?? 0) + (timings.resetMs ?? 0), 'bg-cyan-500/70');
+  push('nginx', 'nginx 渲染', timings.nginxRenderMs, 'bg-violet-500/70');
+  push('install', 'pnpm install', timings.validateInstallMs, 'bg-indigo-500/70');
+  push('tsc', '类型校验', timings.validateTscMs, 'bg-amber-500/70');
+  push('cache', '清缓存', timings.cacheMs, 'bg-stone-500/70');
+  push('backend', '后端 esbuild', timings.buildBackendMs, 'bg-emerald-500/70');
+  push('web', 'web 重建', timings.webBuildMs, 'bg-rose-500/70');
+  push('restart', '重启', timings.restartMs, 'bg-fuchsia-500/70');
+
+  if (segments.length === 0) return null;
+
+  const totalSeg = segments.reduce((s, v) => s + v.ms, 0);
+  const total = Math.max(totalSeg, timings.totalMs ?? 0, totalMs ?? 0);
+  if (total === 0) return null;
+
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex h-2 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
+        {segments.map((seg) => (
+          <div
+            key={seg.key}
+            className={seg.color}
+            style={{ width: `${(seg.ms / total) * 100}%` }}
+            title={`${seg.label}: ${fmtMs(seg.ms)}`}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        {segments.map((seg) => (
+          <span key={seg.key}>
+            <span className={`inline-block h-2 w-2 align-middle ${seg.color}`} />{' '}
+            {seg.label} {fmtMs(seg.ms)}
+          </span>
+        ))}
+        {timings.webBuildSkipped ? (
+          <span className="text-emerald-700 dark:text-emerald-300">
+            (web 命中缓存 · {timings.webBuildReason})
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
 }
