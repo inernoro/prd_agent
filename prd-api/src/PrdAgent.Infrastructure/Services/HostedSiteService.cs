@@ -584,8 +584,17 @@ public class HostedSiteService : IHostedSiteService
         string? title, string? description,
         string? password, int expiresInDays,
         CancellationToken ct = default,
-        string purpose = "share")
+        string purpose = "share",
+        bool forceNew = false,
+        string visibility = "owner-only")
     {
+        // 规范化 visibility 入参（白名单），缺省回退 owner-only
+        var normalizedVisibility = visibility?.ToLowerInvariant() switch
+        {
+            "public" => "public",
+            "logged-in" => "logged-in",
+            _ => "owner-only",
+        };
         var allIds = shareType == "collection" ? (siteIds ?? new()) : new List<string>();
         if (shareType != "collection")
         {
@@ -625,36 +634,41 @@ public class HostedSiteService : IHostedSiteService
         var nowUtc = DateTime.UtcNow;
         var newExpiresAt = expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
 
-        var fb = Builders<WebPageShareLink>.Filter;
-        var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
-            & fb.Eq(x => x.IsRevoked, false)
-            & fb.Eq(x => x.AccessLevel, wantAccess)
-            // 已过期的链接不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
-            // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
-            & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc))
-            & (effShareType == "collection"
-                ? fb.Eq(x => x.ShareType, "collection")
-                : fb.Eq(x => x.ShareType, effShareType) & fb.Eq(x => x.SiteId, siteId))
-            & (effPurpose == "visit"
-                ? fb.Eq(x => x.Purpose, "visit")
-                : fb.Ne(x => x.Purpose, "visit"));
-
-        var reuseCandidates = await _db.WebPageShareLinks.Find(reuseFilter)
-            .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
-
-        WebPageShareLink? reusable;
-        if (effShareType == "collection")
+        // forceNew=true（PR 2026-05-28 起，用户在分享面板显式点新建）：跳过复用直接新建。
+        // visit 便捷链恒走复用路径（避免每次进入页面都创建一条便捷链污染列表）。
+        WebPageShareLink? reusable = null;
+        if (!forceNew || effPurpose == "visit")
         {
-            var want = allIds.OrderBy(s => s).ToList();
-            reusable = reuseCandidates.FirstOrDefault(s =>
+            var fb = Builders<WebPageShareLink>.Filter;
+            var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
+                & fb.Eq(x => x.IsRevoked, false)
+                & fb.Eq(x => x.AccessLevel, wantAccess)
+                // 已过期的链接不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
+                // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
+                & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc))
+                & (effShareType == "collection"
+                    ? fb.Eq(x => x.ShareType, "collection")
+                    : fb.Eq(x => x.ShareType, effShareType) & fb.Eq(x => x.SiteId, siteId))
+                & (effPurpose == "visit"
+                    ? fb.Eq(x => x.Purpose, "visit")
+                    : fb.Ne(x => x.Purpose, "visit"));
+
+            var reuseCandidates = await _db.WebPageShareLinks.Find(reuseFilter)
+                .SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+            if (effShareType == "collection")
             {
-                var have = (s.SiteIds ?? new List<string>()).OrderBy(v => v).ToList();
-                return have.Count == want.Count && have.SequenceEqual(want);
-            });
-        }
-        else
-        {
-            reusable = reuseCandidates.FirstOrDefault();
+                var want = allIds.OrderBy(s => s).ToList();
+                reusable = reuseCandidates.FirstOrDefault(s =>
+                {
+                    var have = (s.SiteIds ?? new List<string>()).OrderBy(v => v).ToList();
+                    return have.Count == want.Count && have.SequenceEqual(want);
+                });
+            }
+            else
+            {
+                reusable = reuseCandidates.FirstOrDefault();
+            }
         }
 
         // 标题/描述在复用与新建两条路径上必须一致，且复用时也要刷新——
@@ -705,6 +719,21 @@ public class HostedSiteService : IHostedSiteService
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Description, effDescription));
                 reuse.Description = effDescription;
             }
+            // 复用即视为续期事件 —— 写一条审计记录，便于事后排查"为什么过期时间变了"
+            if (reuse.ExpiresAt != newExpiresAt || ups.Count > 0)
+            {
+                var renewEvent = new ShareRenewalEvent
+                {
+                    Action = "reused",
+                    ByUserId = userId,
+                    OldExpiresAt = reuse.ExpiresAt == newExpiresAt ? null : (DateTime?)null,
+                    NewExpiresAt = newExpiresAt,
+                    Note = "create-share reused existing link",
+                };
+                ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, renewEvent));
+                reuse.RenewalHistory.Add(renewEvent);
+            }
+
             if (ups.Count > 0)
             {
                 await _db.WebPageShareLinks.UpdateOneAsync(
@@ -719,6 +748,8 @@ public class HostedSiteService : IHostedSiteService
 
         // 新分享：同时写明文（去重 + 展示给分享者）和 Hash/Salt（校验主路径）
         var pwdHash = wantPassword != null ? (SharePasswordHash?)_sharePwd.Hash(wantPassword) : null;
+        // visit 链恒为 public（站点访问便捷链），其余按调用方传入的 visibility
+        var effVisibility = effPurpose == "visit" ? "public" : normalizedVisibility;
         var share = new WebPageShareLink
         {
             SiteId = shareType != "collection" ? siteId : null,
@@ -732,8 +763,19 @@ public class HostedSiteService : IHostedSiteService
             PasswordHash = pwdHash?.Hash,
             PasswordSalt = pwdHash?.Salt,
             ExpiresAt = newExpiresAt,
+            Visibility = effVisibility,
             CreatedBy = userId,
             CreatedByName = displayName,
+            RenewalHistory = new List<ShareRenewalEvent>
+            {
+                new()
+                {
+                    Action = "created",
+                    ByUserId = userId,
+                    NewExpiresAt = newExpiresAt,
+                    Note = forceNew ? "force-new create" : "create",
+                },
+            },
         };
 
         await _db.WebPageShareLinks.InsertOneAsync(share, cancellationToken: ct);
@@ -768,12 +810,62 @@ public class HostedSiteService : IHostedSiteService
     public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)
     {
         // 排除 visit 便捷链（自动创建，非用户主动分享，不应污染分享管理列表）；
-        // Ne("visit") 能命中无 Purpose 字段的旧记录，旧分享照常列出。
-        return await _db.WebPageShareLinks
-            .Find(x => x.CreatedBy == userId && !x.IsRevoked && x.Purpose != "visit")
+        // 排除已撤销链接（用户主动取消后立即从列表消失）；
+        // 时间过滤：未设过期 / 未过期 / 过期 ≤ 7 天（宽限期，允许续期，避免链接突然失效）；
+        // 过期 > 7 天的链接保留 DB 行用于审计 (diagnostics)，但不返回给用户列表。
+        var graceCutoff = DateTime.UtcNow.AddDays(-7);
+        var fb = Builders<WebPageShareLink>.Filter;
+        var filter = fb.Eq(x => x.CreatedBy, userId)
+            & fb.Eq(x => x.IsRevoked, false)
+            & fb.Ne(x => x.Purpose, "visit")
+            & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, graceCutoff));
+
+        var items = await _db.WebPageShareLinks
+            .Find(filter)
             .SortByDescending(x => x.CreatedAt)
             .Limit(100)
             .ToListAsync(ct);
+
+        // 异步刷新 UniqueIpCount 缓存（仅当 ViewCount 与缓存严重偏离时）
+        // 不阻塞列表返回主路径；后续可独立做后台聚合任务
+        await RefreshUniqueIpCacheAsync(items, ct);
+        return items;
+    }
+
+    /// <summary>
+    /// 对一批分享链接刷新 UniqueIpCount 缓存。
+    /// 仅当 ViewCount > UniqueIpCount + 5（缓存严重落后）时才走聚合，避免对静态数据反复打 ShareViewLogs。
+    /// </summary>
+    private async Task RefreshUniqueIpCacheAsync(List<WebPageShareLink> shares, CancellationToken ct)
+    {
+        var stale = shares.Where(s => s.ViewCount > s.UniqueIpCount + 5 && s.ViewCount > 0).ToList();
+        if (stale.Count == 0) return;
+
+        foreach (var share in stale)
+        {
+            try
+            {
+                var fb = Builders<ShareViewLog>.Filter;
+                var distinctIps = await _db.ShareViewLogs
+                    .Distinct<string>("IpAddress",
+                        fb.Eq(x => x.ShareId, share.Id) & fb.Ne(x => x.IpAddress, null),
+                        cancellationToken: ct)
+                    .ToListAsync(ct);
+                var uniqueCount = distinctIps.Count(s => !string.IsNullOrWhiteSpace(s));
+                if (uniqueCount != share.UniqueIpCount)
+                {
+                    await _db.WebPageShareLinks.UpdateOneAsync(
+                        x => x.Id == share.Id,
+                        Builders<WebPageShareLink>.Update.Set(x => x.UniqueIpCount, uniqueCount),
+                        cancellationToken: ct);
+                    share.UniqueIpCount = uniqueCount;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "刷新 UniqueIpCount 失败: share={ShareId}", share.Id);
+            }
+        }
     }
 
     public async Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct)
@@ -850,14 +942,62 @@ public class HostedSiteService : IHostedSiteService
     {
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
         if (share == null || share.IsRevoked)
-            return new ShareViewResult { Error = "分享链接不存在或已失效", HttpStatus = 404 };
+            return new ShareViewResult { Error = "分享链接不存在或已失效", HttpStatus = 404, ErrorCode = "not_found" };
 
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
-            return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400 };
+            return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400, ErrorCode = "expired" };
+
+        // Visibility 校验（防盗：链接被复制后不能被任意第三方长期访问）
+        // visit 便捷链恒为 public（站点访问短链），不走此分支
+        var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
+        if (effVisibility == "owner-only")
+        {
+            // 未登录直接拒绝
+            if (string.IsNullOrEmpty(viewerUserId))
+                return new ShareViewResult
+                {
+                    Error = "此链接仅限创建者访问，请登录后再试",
+                    HttpStatus = 403,
+                    ErrorCode = "visibility_denied",
+                };
+
+            // 创建者本人 ✓
+            if (viewerUserId != share.CreatedBy)
+            {
+                // 团队成员：检查所有目标站点的 SharedTeamIds 与当前用户的团队成员关系
+                var ownerCheckIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
+                if (share.SiteId != null && !ownerCheckIds.Contains(share.SiteId))
+                    ownerCheckIds.Insert(0, share.SiteId);
+
+                var targetSites = await _db.HostedSites.Find(x => ownerCheckIds.Contains(x.Id)).ToListAsync(ct);
+                var allTeamIds = targetSites.SelectMany(s => s.SharedTeamIds ?? new List<string>()).Distinct().ToList();
+                var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(viewerUserId, ct);
+                var inTeam = allTeamIds.Any(tid => myRoles.ContainsKey(tid));
+
+                if (!inTeam)
+                    return new ShareViewResult
+                    {
+                        Error = "此链接仅限创建者或团队成员访问",
+                        HttpStatus = 403,
+                        ErrorCode = "visibility_denied",
+                    };
+            }
+        }
+        else if (effVisibility == "logged-in")
+        {
+            if (string.IsNullOrEmpty(viewerUserId))
+                return new ShareViewResult
+                {
+                    Error = "此链接需要登录后访问",
+                    HttpStatus = 403,
+                    ErrorCode = "visibility_denied",
+                };
+        }
+        // "public": 任何人，下面 password gate 仍然生效
 
         var gate = await EnforceShareAccessAsync(share, password, ct);
         if (gate is { } g)
-            return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter };
+            return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter, ErrorCode = g.HttpStatus == 429 ? "rate_limited" : "wrong_password" };
 
         // 更新浏览量
         await _db.WebPageShareLinks.UpdateOneAsync(
@@ -1026,6 +1166,242 @@ public class HostedSiteService : IHostedSiteService
             .SortByDescending(x => x.ViewedAt)
             .Limit(Math.Clamp(limit, 1, 500))
             .ToListAsync(ct);
+    }
+
+    public async Task<List<ShareViewLog>> ListShareViewLogsForSiteAsync(
+        string siteId, string userId, int limit = 50, CancellationToken ct = default)
+    {
+        // 仅站点 owner 可查；按站点的所有分享链接聚合日志
+        var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (site == null) return new List<ShareViewLog>();
+
+        var fbLink = Builders<WebPageShareLink>.Filter;
+        var linkFilter = fbLink.Eq(x => x.CreatedBy, userId) &
+            (fbLink.Eq(x => x.SiteId, siteId) | fbLink.AnyEq(x => x.SiteIds, siteId));
+        var tokens = await _db.WebPageShareLinks.Find(linkFilter)
+            .Project(x => x.Token).ToListAsync(ct);
+        if (tokens.Count == 0) return new List<ShareViewLog>();
+
+        var fbLog = Builders<ShareViewLog>.Filter;
+        return await _db.ShareViewLogs
+            .Find(fbLog.In(x => x.ShareToken, tokens))
+            .SortByDescending(x => x.ViewedAt)
+            .Limit(Math.Clamp(limit, 1, 500))
+            .ToListAsync(ct);
+    }
+
+    // ─────────────────────────────────────────────
+    // 续期 / 统计 / 诊断
+    // ─────────────────────────────────────────────
+
+    public async Task<RenewShareResult> RenewShareAsync(string shareId, string userId, int extendDays, CancellationToken ct = default)
+    {
+        if (extendDays <= 0 || extendDays > 365)
+            return new RenewShareResult { Error = "续期天数必须在 1 到 365 之间" };
+
+        var share = await _db.WebPageShareLinks.Find(x => x.Id == shareId && x.CreatedBy == userId)
+            .FirstOrDefaultAsync(ct);
+        if (share == null)
+            return new RenewShareResult { Error = "分享不存在或无权操作" };
+        if (share.IsRevoked)
+            return new RenewShareResult { Error = "链接已撤销，无法续期" };
+
+        var now = DateTime.UtcNow;
+        var graceCutoff = now.AddDays(-7);
+        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < graceCutoff)
+            return new RenewShareResult { Error = "链接已过期超过 7 天，请新建分享" };
+
+        // 续期基准：未过期时从当前 ExpiresAt 累加；过期 ≤ 7d 时以 now 为起点
+        var basis = share.ExpiresAt.HasValue && share.ExpiresAt.Value > now ? share.ExpiresAt.Value : now;
+        var newExpiresAt = basis.AddDays(extendDays);
+
+        var renewEvent = new ShareRenewalEvent
+        {
+            Action = "renewed",
+            ByUserId = userId,
+            OldExpiresAt = share.ExpiresAt,
+            NewExpiresAt = newExpiresAt,
+            Note = $"manual renew +{extendDays}d",
+        };
+
+        await _db.WebPageShareLinks.UpdateOneAsync(
+            x => x.Id == shareId,
+            Builders<WebPageShareLink>.Update
+                .Set(x => x.ExpiresAt, newExpiresAt)
+                .Push(x => x.RenewalHistory, renewEvent),
+            cancellationToken: ct);
+
+        _logger.LogInformation("用户 {UserId} 续期分享 {ShareId} 至 {ExpiresAt}", userId, shareId, newExpiresAt);
+        return new RenewShareResult { Ok = true, NewExpiresAt = newExpiresAt };
+    }
+
+    public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, CancellationToken ct = default)
+    {
+        if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
+        var rangeStart = DateTime.UtcNow.AddDays(-rangeDays);
+
+        // 全量 shares（含已过期、不含 visit 链）
+        var fbLink = Builders<WebPageShareLink>.Filter;
+        var allShares = await _db.WebPageShareLinks
+            .Find(fbLink.Eq(x => x.CreatedBy, userId) & fbLink.Ne(x => x.Purpose, "visit"))
+            .ToListAsync(ct);
+
+        var now = DateTime.UtcNow;
+        var totalShares = allShares.Count;
+        var activeShares = allShares.Count(s => !s.IsRevoked && (!s.ExpiresAt.HasValue || s.ExpiresAt.Value > now));
+        var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
+
+        var tokens = allShares.Select(s => s.Token).ToList();
+        var fbLog = Builders<ShareViewLog>.Filter;
+        var recentLogs = tokens.Count == 0
+            ? new List<ShareViewLog>()
+            : await _db.ShareViewLogs
+                .Find(fbLog.In(x => x.ShareToken, tokens) & fbLog.Gte(x => x.ViewedAt, rangeStart))
+                .SortByDescending(x => x.ViewedAt)
+                .Limit(500)
+                .ToListAsync(ct);
+
+        var totalViews = recentLogs.Count;
+        var uniqueIps = recentLogs.Where(l => !string.IsNullOrEmpty(l.IpAddress))
+            .Select(l => l.IpAddress!).Distinct().Count();
+
+        // 时间线（脱敏 IP：前两段保留，后两段打码，避免泄露给非 admin）
+        var titleByToken = allShares.ToDictionary(s => s.Token, s => s.Title);
+        var timeline = recentLogs.Take(100).Select(l => new ShareAnalyticsTimelineEntry
+        {
+            ViewedAt = l.ViewedAt,
+            ShareToken = l.ShareToken,
+            ShareTitle = titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null,
+            ViewerName = l.ViewerName,
+            IpAddress = MaskIp(l.IpAddress),
+            UserAgent = l.UserAgent,
+        }).ToList();
+
+        // Top 链接（按 ViewCount 排序，最多 10 条）
+        var topLinks = allShares
+            .Where(s => !s.IsRevoked)
+            .OrderByDescending(s => s.ViewCount)
+            .Take(10)
+            .Select(s => new ShareAnalyticsLinkSummary
+            {
+                ShareId = s.Id,
+                Token = s.Token,
+                Title = s.Title,
+                ViewCount = s.ViewCount,
+                UniqueIpCount = s.UniqueIpCount,
+                LastViewedAt = s.LastViewedAt,
+                CreatedAt = s.CreatedAt,
+                ExpiresAt = s.ExpiresAt,
+                Visibility = s.Visibility ?? "owner-only",
+            })
+            .ToList();
+
+        return new ShareAnalyticsResult
+        {
+            TotalShares = totalShares,
+            ActiveShares = activeShares,
+            ExpiredShares = expiredShares,
+            TotalViews = totalViews,
+            UniqueIpCount = uniqueIps,
+            Timeline = timeline,
+            TopLinks = topLinks,
+        };
+    }
+
+    /// <summary>
+    /// 简单 IP 脱敏：v4 保留前两段 (a.b.*.*)，v6 截断为前 3 段。仅用于面向所有者的统计 UI。
+    /// </summary>
+    private static string? MaskIp(string? ip)
+    {
+        if (string.IsNullOrWhiteSpace(ip)) return ip;
+        if (ip.Contains('.'))
+        {
+            var parts = ip.Split('.');
+            return parts.Length >= 2 ? $"{parts[0]}.{parts[1]}.*.*" : ip;
+        }
+        if (ip.Contains(':'))
+        {
+            var parts = ip.Split(':');
+            return parts.Length >= 3 ? $"{parts[0]}:{parts[1]}:{parts[2]}::*" : ip;
+        }
+        return ip;
+    }
+
+    public async Task<ShareDiagnosticsResult?> GetShareDiagnosticsAsync(string token, CancellationToken ct = default)
+    {
+        var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
+        if (share == null) return null;
+
+        var recentViews = await _db.ShareViewLogs
+            .Find(x => x.ShareId == share.Id)
+            .SortByDescending(x => x.ViewedAt)
+            .Limit(10)
+            .ToListAsync(ct);
+
+        var summary = BuildDiagnosticsSummary(share);
+
+        return new ShareDiagnosticsResult
+        {
+            Token = share.Token,
+            Id = share.Id,
+            CreatedAt = share.CreatedAt,
+            CreatedBy = share.CreatedBy,
+            CreatedByName = share.CreatedByName,
+            ExpiresAt = share.ExpiresAt,
+            IsRevoked = share.IsRevoked,
+            Visibility = share.Visibility ?? "owner-only",
+            AccessLevel = share.AccessLevel,
+            ViewCount = share.ViewCount,
+            LastViewedAt = share.LastViewedAt,
+            RenewalHistory = share.RenewalHistory ?? new List<ShareRenewalEvent>(),
+            RecentViews = recentViews,
+            DiagnosisSummary = summary,
+        };
+    }
+
+    private static string BuildDiagnosticsSummary(WebPageShareLink share)
+    {
+        var now = DateTime.UtcNow;
+        if (share.IsRevoked)
+            return "链接已被创建者主动撤销，无法访问。";
+        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < now)
+        {
+            var daysExpired = (now - share.ExpiresAt.Value).TotalDays;
+            return daysExpired <= 7
+                ? $"链接已过期 {daysExpired:F1} 天，仍在 7 天宽限期内，创建者可续期。"
+                : $"链接已过期 {daysExpired:F1} 天，超出 7 天宽限期，须新建。";
+        }
+        if (share.Visibility == "owner-only")
+            return "链接当前仅限创建者或所属团队成员访问。";
+        if (share.Visibility == "logged-in")
+            return "链接当前仅限登录用户访问。";
+        return "链接当前可正常访问。";
+    }
+
+    public async Task<int> BackfillShareVisibilityAsync(CancellationToken ct = default)
+    {
+        // 一次性迁移：把所有还是默认 "owner-only" / 空值 / 缺字段 的存量分享（除 visit 链）
+        // 改为 "public"，避免本次发布把旧公开链路全断。仅对当前时刻之前创建的链接生效，
+        // 未来新建链接走 owner-only 默认。
+        // 用 CreatedAt < now 作为时间窗（避免重跑时把新链接也改了）；首次运行后即使重跑也幂等。
+        var cutoff = DateTime.UtcNow;
+        var fb = Builders<WebPageShareLink>.Filter;
+        var filter = fb.Lt(x => x.CreatedAt, cutoff)
+            & fb.Ne(x => x.Purpose, "visit")
+            & (fb.Eq(x => x.Visibility, "owner-only") | fb.Eq(x => x.Visibility, (string?)null) | fb.Exists(x => x.Visibility, false));
+
+        var result = await _db.WebPageShareLinks.UpdateManyAsync(
+            filter,
+            Builders<WebPageShareLink>.Update.Set(x => x.Visibility, "public"),
+            cancellationToken: ct);
+
+        var modified = result.ModifiedCount;
+        if (modified > 0)
+        {
+            _logger.LogInformation("BackfillShareVisibility: 把 {Count} 条存量分享链接迁移为 public（仅本次发布前已存在的）", modified);
+        }
+        return (int)modified;
     }
 
     // ─────────────────────────────────────────────

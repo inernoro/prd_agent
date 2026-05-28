@@ -181,9 +181,57 @@ public class WebPageShareLink
     public DateTime? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }
 
+    /// <summary>
+    /// 链接可见性：
+    /// - owner-only（默认）：仅创建者或所属站点的 SharedTeamIds 成员可访问
+    /// - logged-in：任何登录用户可访问
+    /// - public：任何人（含未登录）可访问，受 AccessLevel 密码门控
+    ///
+    /// 旧记录反序列化为默认值 "owner-only"；为保证不破坏存量公开链接，
+    /// 一次性 backfill service 启动时会把所有现存 share 改为 "public"，仅新建链接生效新默认。
+    /// visit 链恒为 public（站点访问便捷链）。
+    /// </summary>
+    public string Visibility { get; set; } = "owner-only";
+
+    /// <summary>
+    /// 续期审计历史（每次创建复用 / 显式续期都追加一条）。
+    /// 用于排查"莫名其妙过期"——可以看到这个链接的 ExpiresAt 被谁、什么时候、改成什么值。
+    /// </summary>
+    public List<ShareRenewalEvent> RenewalHistory { get; set; } = new();
+
+    /// <summary>
+    /// 唯一 IP 数（基于 ShareViewLogs 的 distinct IP 聚合缓存）。
+    /// 列表查询时如发现该值与 ViewCount 比例严重失衡（如 ViewCount > 缓存值 + 50）则在线重算；
+    /// 不参与高频写路径（避免每次访问聚合 distinct count）。
+    /// </summary>
+    public long UniqueIpCount { get; set; }
+
     private static string GenerateToken()
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))
             .Replace("+", "-").Replace("/", "_").TrimEnd('=');
+}
+
+/// <summary>
+/// 分享链接续期/有效期变更审计记录（写入 WebPageShareLink.RenewalHistory）
+/// </summary>
+public class ShareRenewalEvent
+{
+    public DateTime At { get; set; } = DateTime.UtcNow;
+
+    /// <summary>操作类型：created | reused | renewed | revoked | visibility-changed</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>触发操作的用户 ID</summary>
+    public string? ByUserId { get; set; }
+
+    /// <summary>变更前的过期时间</summary>
+    public DateTime? OldExpiresAt { get; set; }
+
+    /// <summary>变更后的过期时间</summary>
+    public DateTime? NewExpiresAt { get; set; }
+
+    /// <summary>变更说明（如 "extended by 30 days" / "reuse refreshed"）</summary>
+    public string? Note { get; set; }
 }
 
 /// <summary>

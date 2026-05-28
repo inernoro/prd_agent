@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 
@@ -24,15 +25,34 @@ public class AdminWebPagesController : ControllerBase
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
     private readonly IConfiguration _cfg;
     private readonly ILogger<AdminWebPagesController> _logger;
+    private readonly IHostedSiteService _siteService;
 
     public AdminWebPagesController(
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         IConfiguration cfg,
-        ILogger<AdminWebPagesController> logger)
+        ILogger<AdminWebPagesController> logger,
+        IHostedSiteService siteService)
     {
         _db = db;
         _cfg = cfg;
         _logger = logger;
+        _siteService = siteService;
+    }
+
+    /// <summary>
+    /// 分享诊断（admin）—— 用于排查"链接为什么过期/不能访问"投诉。
+    /// 返回链接完整状态、续期审计历史、最近 10 条访问、一句话诊断结论。
+    /// </summary>
+    [HttpGet("share-diagnostics/{token}")]
+    public async Task<IActionResult> GetShareDiagnostics(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "token 必填"));
+
+        var result = await _siteService.GetShareDiagnosticsAsync(token);
+        if (result == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
+        return Ok(ApiResponse<object>.Ok(result));
     }
 
     private string GetUserId() => this.GetRequiredUserId();

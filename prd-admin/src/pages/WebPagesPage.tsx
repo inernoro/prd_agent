@@ -21,6 +21,7 @@ import {
   createSiteShareLink,
   listSiteShares,
   revokeSiteShare,
+  renewSiteShare,
   listShareViewLogs,
   listDocumentStores,
   addDocumentEntry,
@@ -37,6 +38,7 @@ import { SpaceBar, TeamSpaceHeader, type Space } from '@/components/team/SpaceBa
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
+import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import { createPortal } from 'react-dom';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
@@ -77,6 +79,8 @@ import {
   Users,
   User,
   FolderInput,
+  BarChart3,
+  Plus,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -261,6 +265,7 @@ export default function WebPagesPage() {
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [shares, setShares] = useState<ShareLinkItem[]>([]);
   const [qrSite, setQrSite] = useState<HostedSite | null>(null);
   // 拖文件到卡片触发的"替换网页"二次确认（非 null 时弹出确认框）
@@ -361,9 +366,12 @@ export default function WebPagesPage() {
     }
   };
 
+  // 点击站点卡上的「分享」按钮：打开 SharesPanel scoped 到该站点。
+  // 面板内既显示已有分享列表（含续期/取消），也提供「新建分享」CTA → 弹出 ShareDialog。
+  // PR 2026-05-28 起：不再「一键直接生成新链接」，避免用户重复创建后链接互相覆盖。
   const handleShare = (id: string) => {
     setShareTargetId(id);
-    setShowShareDialog(true);
+    setShowSharesPanel(true);
   };
 
   const handleMakePublic = useCallback(async (site: HostedSite) => {
@@ -646,7 +654,10 @@ export default function WebPagesPage() {
         description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setShowSharesPanel(true)}>
+            <Button size="sm" variant="ghost" onClick={() => setShowAnalytics(true)} title="查看分享统计（PV/IP/时间线）">
+              <BarChart3 size={14} className="mr-1" /> 分享统计
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}>
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
@@ -882,7 +893,7 @@ export default function WebPagesPage() {
         }
       />
 
-      {/* Share Dialog */}
+      {/* Share Dialog（保留：拖拽快速分享场景等非 SharesPanel 路径仍使用） */}
       {showShareDialog && (
         <ShareDialog
           siteId={shareTargetId}
@@ -891,13 +902,23 @@ export default function WebPagesPage() {
         />
       )}
 
-      {/* Shares Panel */}
+      {/* Shares Panel：分享按钮主入口 — 列表 + 续期 + 取消 + 新建 一体化 */}
       {showSharesPanel && (
         <SharesPanel
           shares={shares}
           setShares={setShares}
-          onClose={() => setShowSharesPanel(false)}
+          scopedSiteId={shareTargetId}
+          onClose={() => {
+            setShowSharesPanel(false);
+            setShareTargetId(null);
+            loadShares();
+          }}
         />
+      )}
+
+      {/* 分享统计 Drawer — 全局聚合（参考 Cloudflare 简化版） */}
+      {showAnalytics && (
+        <ShareAnalyticsDrawer onClose={() => setShowAnalytics(false)} />
       )}
 
       {/* QR Code Dialog */}
@@ -1883,10 +1904,12 @@ function genStrongPassword(len = 12) {
 
 const STRONG_PWD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_=+]).{12,}$/;
 
-function ShareDialog({ siteId, siteIds, onClose }: {
+function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
   siteId: string | null;
   siteIds?: string[];
   onClose: () => void;
+  /** 创建成功回调（用于 SharesPanel 嵌套场景，触发列表刷新） */
+  onCreated?: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string; linkType: 'long' | 'short' } | null>(null);
@@ -1895,6 +1918,9 @@ function ShareDialog({ siteId, siteIds, onClose }: {
   const [usePassword, setUsePassword] = useState(true);
   const [password, setPassword] = useState(() => genPassword());
   const [expiresInDays, setExpiresInDays] = useState(7);
+  // 默认 owner-only（PR 2026-05-28 防盗：分享链接被复制后不能被任意第三方访问）；
+  // 用户需要显式升级到 logged-in / public
+  const [visibility, setVisibility] = useState<'owner-only' | 'logged-in' | 'public'>('owner-only');
   // 默认走字母长链 /s/wp/{token}（不可枚举）；短链 /s/{seq} 作为"高级选项"
   const [linkType, setLinkType] = useState<'long' | 'short'>('long');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -1953,8 +1979,12 @@ function ShareDialog({ siteId, siteIds, onClose }: {
         shareType: isCollection ? 'collection' : 'single',
         password: pwd,
         expiresInDays,
+        // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
+        forceNew: true,
+        visibility,
       });
       if (res.success) {
+        onCreated?.();
         // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准
         const effPwd = res.data.password ?? pwd;
         // P1 调整（2026-05-21 用户反馈）：
@@ -2129,6 +2159,42 @@ function ShareDialog({ siteId, siteIds, onClose }: {
                 </select>
               </label>
 
+              {/* 访问可见性 — 防盗核心控件（PR 2026-05-28） */}
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  <Lock size={12} className="inline mr-1" />谁能访问
+                </span>
+                <div className="flex flex-col gap-1.5">
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={visibility === 'owner-only'} onChange={() => setVisibility('owner-only')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: 'var(--text-secondary)' }}>仅我自己 / 团队成员（默认 · 推荐）</span>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接被复制也无法被外人访问，最安全</span>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={visibility === 'logged-in'} onChange={() => setVisibility('logged-in')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: 'var(--text-secondary)' }}>任何登录用户</span>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>需登录平台才能查看，未登录拒绝</span>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm">
+                    <input type="radio" checked={visibility === 'public'} onChange={() => setVisibility('public')} className="mt-1" />
+                    <div className="flex flex-col">
+                      <span style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }}>
+                        任何人（公开链接）
+                      </span>
+                      <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
+                        {visibility === 'public'
+                          ? '任何拿到链接的人都可访问，建议同时设置密码'
+                          : '链接可被任何人访问'}
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
               {/* 高级选项 — 链接类型 */}
               <button
                 type="button"
@@ -2225,30 +2291,58 @@ function ShareDialog({ siteId, siteIds, onClose }: {
 
 // ─── Shares Panel ───
 
-function SharesPanel({ shares, setShares, onClose }: {
+function SharesPanel({ shares, setShares, onClose, scopedSiteId }: {
   shares: ShareLinkItem[];
   setShares: (s: ShareLinkItem[]) => void;
   onClose: () => void;
+  /** 若提供，则只展示与该站点关联的分享 + 新建按钮限定到该站点 */
+  scopedSiteId?: string | null;
 }) {
   const [loading, setLoading] = useState(true);
   const [viewLogsToken, setViewLogsToken] = useState<string | null>(null);
   const [viewLogs, setViewLogs] = useState<ShareViewLogItem[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const res = await listSiteShares();
-      if (res.success) setShares(res.data.items);
-      setLoading(false);
-    })();
+  // 嵌套创建：在面板内点「新建分享」会拉起 ShareDialog
+  const [showCreate, setShowCreate] = useState(false);
+  const [renewingId, setRenewingId] = useState<string | null>(null);
+  const refreshShares = useCallback(async () => {
+    setLoading(true);
+    const res = await listSiteShares();
+    if (res.success) setShares(res.data.items);
+    setLoading(false);
   }, [setShares]);
 
+  useEffect(() => { void refreshShares(); }, [refreshShares]);
+
+  // scope 过滤：scopedSiteId 提供时只显示与该站点相关的分享
+  const visibleShares = scopedSiteId
+    ? shares.filter(s => s.siteId === scopedSiteId || (s.siteIds && s.siteIds.includes(scopedSiteId)))
+    : shares;
+
   const handleRevoke = async (shareId: string) => {
-    if (!confirm('确定撤销此分享链接？')) return;
+    if (!confirm('确定撤销此分享链接？撤销后任何人都无法再访问。')) return;
     const res = await revokeSiteShare(shareId);
     if (res.success) {
       setShares(shares.filter(s => s.id !== shareId));
+    }
+  };
+
+  const handleRenew = async (shareId: string, extendDays: number) => {
+    setRenewingId(shareId);
+    try {
+      const res = await renewSiteShare(shareId, extendDays);
+      if (res.success) {
+        // 局部更新该条链接的 expiresAt，避免全列表重拉
+        setShares(shares.map(s =>
+          s.id === shareId
+            ? { ...s, expiresAt: res.data.newExpiresAt, isExpired: false, inGracePeriod: false }
+            : s,
+        ));
+      } else {
+        alert(res.error?.message || '续期失败');
+      }
+    } finally {
+      setRenewingId(null);
     }
   };
 
@@ -2269,30 +2363,69 @@ function SharesPanel({ shares, setShares, onClose }: {
     setLogsLoading(false);
   };
 
+  const visibilityChip = (v?: string) => {
+    const eff = v || 'public';
+    if (eff === 'owner-only')
+      return <span title="仅我自己/团队成员可访问"><Badge variant="success">仅我可见</Badge></span>;
+    if (eff === 'logged-in')
+      return <span title="任何登录用户可访问"><Badge variant="subtle">需登录</Badge></span>;
+    return <span title="任何拿到链接的人都可访问"><Badge variant="warning">公开</Badge></span>;
+  };
+
   return (
     <Dialog
       open={true}
       onOpenChange={v => { if (!v) onClose(); }}
-      title="分享管理"
+      title={scopedSiteId ? '此网页的分享管理' : '分享管理'}
       maxWidth={900}
       content={
         <>
+          {/* 顶部 CTA：新建分享按钮 */}
+          <div
+            className="flex items-center justify-between gap-3 p-3 mb-3 rounded-lg"
+            style={{ background: 'var(--bg-elevated)', border: '1px dashed var(--border-default)' }}
+          >
+            <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {scopedSiteId
+                ? '每次创建都生成新链接（不会复用旧链接）；过期 7 天内仍可续期。'
+                : '查看所有分享链接、续期、撤销，或查看访问日志。'}
+            </div>
+            {scopedSiteId && (
+              <Button size="sm" onClick={() => setShowCreate(true)}>
+                <Plus size={14} className="mr-1" />新建分享
+              </Button>
+            )}
+          </div>
+
           {loading ? (
             <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
-          ) : shares.length === 0 ? (
-            <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-              还没有创建过分享链接
+          ) : visibleShares.length === 0 ? (
+            <div className="py-8 text-center text-sm flex flex-col items-center gap-3" style={{ color: 'var(--text-muted)' }}>
+              <div>{scopedSiteId ? '此网页还没有分享链接' : '还没有创建过分享链接'}</div>
+              {scopedSiteId && (
+                <Button size="sm" variant="primary" onClick={() => setShowCreate(true)}>
+                  <Plus size={14} className="mr-1" />创建第一个
+                </Button>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
-              {shares.map(share => (
+              {visibleShares.map(share => {
+                const now = Date.now();
+                const expMs = share.expiresAt ? new Date(share.expiresAt).getTime() : null;
+                const isExpired = expMs != null && expMs < now;
+                const inGrace = isExpired && expMs! > now - 7 * 24 * 3600 * 1000;
+                return (
                 <div key={share.id}>
                   <div
                     className="flex items-center gap-3 p-3 rounded-lg"
-                    style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
+                    style={{
+                      background: isExpired ? 'rgba(249, 115, 22, 0.05)' : 'var(--bg-sunken)',
+                      border: isExpired ? '1px solid rgba(249, 115, 22, 0.3)' : '1px solid var(--border-default)',
+                    }}
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
                         <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
@@ -2306,20 +2439,45 @@ function SharesPanel({ shares, setShares, onClose }: {
                             <Badge variant="subtle">长链</Badge>
                           </span>
                         )}
-                        <Badge variant={share.accessLevel === 'password' ? 'warning' : 'success'}>
-                          {share.accessLevel === 'password' ? '密码保护' : '公开'}
+                        {visibilityChip(share.visibility)}
+                        <Badge variant={share.accessLevel === 'password' ? 'warning' : 'subtle'}>
+                          {share.accessLevel === 'password' ? '密码保护' : '无密码'}
                         </Badge>
                         {share.shareType === 'collection' && (
                           <Badge variant="subtle">{share.siteIds.length} 站合集</Badge>
                         )}
+                        {isExpired && (
+                          <span title={inGrace ? '可续期，将于 7 天宽限期后彻底失效' : '已彻底失效'}>
+                            <Badge variant="warning">
+                              {inGrace ? '已过期 · 可续期' : '已过期'}
+                            </Badge>
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} 次浏览</span>
+                        <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} PV</span>
+                        {(share.uniqueIpCount ?? 0) > 0 && (
+                          <span title="独立 IP 数">{share.uniqueIpCount} 个 IP</span>
+                        )}
                         <span>创建于 {fmtDate(share.createdAt)}</span>
-                        {share.expiresAt && <span>过期于 {fmtDate(share.expiresAt)}</span>}
+                        {share.expiresAt && <span>{isExpired ? '过期于' : '到期'} {fmtDate(share.expiresAt)}</span>}
+                        {(share.renewalCount ?? 0) > 1 && (
+                          <span title="历次续期 / 复用次数">续 {(share.renewalCount ?? 0) - 1} 次</span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
+                      {inGrace && (
+                        <Button
+                          size="xs"
+                          variant="primary"
+                          disabled={renewingId === share.id}
+                          onClick={() => handleRenew(share.id, 30)}
+                          title="续期 30 天"
+                        >
+                          {renewingId === share.id ? <MapSpinner size={12} /> : <><RefreshCw size={12} className="mr-1" />续期</>}
+                        </Button>
+                      )}
                       <Button
                         size="xs"
                         variant={viewLogsToken === share.token ? 'secondary' : 'ghost'}
@@ -2334,7 +2492,7 @@ function SharesPanel({ shares, setShares, onClose }: {
                       <Button size="xs" variant="ghost" onClick={() => window.open(shareUrlOf(share), '_blank')} title="预览">
                         <ExternalLink size={12} />
                       </Button>
-                      <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="撤销">
+                      <Button size="xs" variant="danger" onClick={() => handleRevoke(share.id)} title="取消分享">
                         <X size={12} />
                       </Button>
                     </div>
@@ -2366,12 +2524,21 @@ function SharesPanel({ shares, setShares, onClose }: {
                     </div>
                   )}
                 </div>
-              ))}
+              );})}
             </div>
           )}
           <div className="flex justify-end mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
             <Button variant="ghost" onClick={onClose}>关闭</Button>
           </div>
+
+          {/* 嵌套 ShareDialog：在 SharesPanel 内点「新建分享」时弹出 */}
+          {showCreate && scopedSiteId && (
+            <ShareDialog
+              siteId={scopedSiteId}
+              onClose={() => { setShowCreate(false); }}
+              onCreated={refreshShares}
+            />
+          )}
         </>
       }
     />

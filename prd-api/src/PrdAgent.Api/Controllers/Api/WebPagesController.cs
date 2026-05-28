@@ -526,12 +526,21 @@ public class WebPagesController : ControllerBase
     {
         try
         {
+            // visit 便捷链恒走 force=false（保留服务端去重 + 复用）；
+            // 用户主动 share 默认走 forceNew=true（PR 2026-05-28：分享面板每次显式新建），
+            // 除非 client 显式传 forceNew=false（少数兼容场景，保留逃生口）
+            var isVisit = req.Purpose == "visit";
+            var forceNew = !isVisit && (req.ForceNew ?? true);
+            var visibility = isVisit ? "public" : (req.Visibility ?? "owner-only");
+
             var share = await _siteService.CreateShareAsync(
                 GetUserId(), GetDisplayName(),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
                 req.Password, req.ExpiresInDays,
-                purpose: req.Purpose == "visit" ? "visit" : "share");
+                purpose: isVisit ? "visit" : "share",
+                forceNew: forceNew,
+                visibility: visibility);
 
             // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
             //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
@@ -546,6 +555,7 @@ public class WebPagesController : ControllerBase
                 share.Password,
                 share.ExpiresAt,
                 share.ShortSeq,
+                share.Visibility,
                 shareUrl = $"/s/wp/{share.Token}",
                 // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
                 // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
@@ -563,12 +573,62 @@ public class WebPagesController : ControllerBase
         }
     }
 
-    /// <summary>获取当前用户的分享链接列表</summary>
+    /// <summary>获取当前用户的分享链接列表（含未过期 + 过期 ≤ 7 天宽限期）</summary>
     [HttpGet("shares")]
     public async Task<IActionResult> ListShares()
     {
         var items = await _siteService.ListSharesAsync(GetUserId());
-        return Ok(ApiResponse<object>.Ok(new { items }));
+        var now = DateTime.UtcNow;
+        var enriched = items.Select(x => new
+        {
+            x.Id,
+            x.Token,
+            x.ShortSeq,
+            x.SiteId,
+            x.SiteIds,
+            x.ShareType,
+            x.Title,
+            x.Description,
+            x.AccessLevel,
+            x.Password,
+            x.ExpiresAt,
+            x.Visibility,
+            x.CreatedAt,
+            x.CreatedByName,
+            x.ViewCount,
+            x.UniqueIpCount,
+            x.LastViewedAt,
+            isExpired = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now,
+            inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > now.AddDays(-7),
+            renewalCount = x.RenewalHistory?.Count ?? 0,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = enriched }));
+    }
+
+    /// <summary>列出某个站点的分享访问日志（仅站点 owner 可查）</summary>
+    [HttpGet("{siteId}/share-logs")]
+    public async Task<IActionResult> ListShareLogsForSite(string siteId, [FromQuery] int limit = 50)
+    {
+        var logs = await _siteService.ListShareViewLogsForSiteAsync(siteId, GetUserId(), limit);
+        return Ok(ApiResponse<object>.Ok(new { items = logs }));
+    }
+
+    /// <summary>续期分享链接</summary>
+    [HttpPost("shares/{shareId}/renew")]
+    public async Task<IActionResult> RenewShare(string shareId, [FromBody] RenewShareRequest req)
+    {
+        var result = await _siteService.RenewShareAsync(shareId, GetUserId(), req.ExtendDays);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "续期失败"));
+        return Ok(ApiResponse<object>.Ok(new { newExpiresAt = result.NewExpiresAt }));
+    }
+
+    /// <summary>用户分享统计聚合（参考 Cloudflare 简化版）</summary>
+    [HttpGet("shares/analytics")]
+    public async Task<IActionResult> GetShareAnalytics([FromQuery] int rangeDays = 7)
+    {
+        var result = await _siteService.GetShareAnalyticsAsync(GetUserId(), rangeDays);
+        return Ok(ApiResponse<object>.Ok(result));
     }
 
     /// <summary>撤销分享链接</summary>
@@ -607,6 +667,7 @@ public class WebPagesController : ControllerBase
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
+                403 => StatusCode(403, ApiResponse<object>.Fail(result.ErrorCode ?? "VISIBILITY_DENIED", result.Error)),
                 400 => BadRequest(ApiResponse<object>.Fail("EXPIRED", result.Error)),
                 _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, result.Error)),
             };
@@ -713,4 +774,19 @@ public class CreateWebPageShareRequest
     public int ExpiresInDays { get; set; }
     /// <summary>用途：visit = 站点访问便捷链（公开永久、独立池）；其余/缺省 = 用户分享</summary>
     public string? Purpose { get; set; }
+
+    /// <summary>
+    /// 是否强制新建（绕过服务端复用）。默认 true（分享面板每次显式新建）；
+    /// 调用方明确传 false 才走旧版复用逻辑。
+    /// </summary>
+    public bool? ForceNew { get; set; }
+
+    /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
+    public string? Visibility { get; set; }
+}
+
+public class RenewShareRequest
+{
+    /// <summary>续期天数（1-365）</summary>
+    public int ExtendDays { get; set; } = 30;
 }

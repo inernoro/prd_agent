@@ -1694,8 +1694,11 @@ export {
   viewShare as viewSiteShare,
   saveSharedSite,
   listShareViewLogs,
+  listShareLogsForSite,
+  renewShare as renewSiteShare,
+  getShareAnalytics as getSiteShareAnalytics,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry } from '@/services/real/webPages';
 
 // ── Team 团队（跨应用协作） ──
 export {
