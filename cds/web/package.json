@@ -6,7 +6,7 @@
   "description": "CDS Dashboard — React + Vite + TypeScript + Tailwind + shadcn/ui",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "echo 'lint placeholder — wire eslint when needed'"
@@ -33,7 +33,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react-swc": "^3.7.2",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
@@ -43,7 +43,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "@swc/core"
     ]
   }
 }

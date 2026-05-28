@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import react from '@vitejs/plugin-react-swc';
 import path from 'node:path';
 
 // CDS web build config (React + Vite + Tailwind + shadcn/ui).
