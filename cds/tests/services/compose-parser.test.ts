@@ -289,6 +289,65 @@ services:
     expect(cfg!.infraServices).toHaveLength(1);
     expect(cfg!.infraServices[0].id).toBe('postgres');
   });
+
+  // 2026-05-28 minio 灾难回归测试:command / entrypoint 必须从 yaml 提取
+  // 到 InfraService,否则 docker run 漏传 cmd → 容器死循环。
+  it('infra command(数组形态)必须被解析并传到 InfraService', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "9000:9000"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('minio');
+    expect(cfg!.infraServices[0].command).toEqual(['server', '/data', '--console-address', ':9001']);
+  });
+
+  it('infra command(string 形态)和 entrypoint 同时支持', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  custom:
+    image: my-custom:latest
+    entrypoint: /usr/local/bin/start.sh
+    command: --verbose --port 8080
+    ports:
+      - "8080:8080"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].command).toBe('--verbose --port 8080');
+    expect(cfg!.infraServices[0].entrypoint).toBe('/usr/local/bin/start.sh');
+  });
+
+  it('infra 缺 command:字段保持 undefined(不强制 default)', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices[0].command).toBeUndefined();
+    expect(cfg!.infraServices[0].entrypoint).toBeUndefined();
+  });
 });
 
 describe('parseStandardCompose — agent runtime sidecar isolation', () => {

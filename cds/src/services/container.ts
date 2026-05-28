@@ -928,7 +928,7 @@ export class ContainerService {
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
-        this.appLabels(entry.id, profile.id, network),
+        this.appLabels(entry.projectId, entry.id, profile.id, network),
         profile.dockerImage,
         `sh -c "${command.replace(/"/g, '\\"')}"`,
       ].join(' ');
@@ -1674,22 +1674,30 @@ export class ContainerService {
 
   // ── Container labels & discovery ──
 
-  /** Docker labels applied to all CDS-managed app containers */
-  private appLabels(branchId: string, profileId: string, network: string): string {
+  /**
+   * Docker labels applied to all CDS-managed app containers.
+   * 2026-05-28 起新增 `cds.project.id` 用于跨项目隔离与按项目过滤清理。
+   */
+  private appLabels(projectId: string, branchId: string, profileId: string, network: string): string {
     return [
       '--label cds.managed=true',
       '--label cds.type=app',
+      `--label cds.project.id=${projectId || '_unknown'}`,
       `--label cds.branch.id=${branchId}`,
       `--label cds.profile.id=${profileId}`,
       `--label cds.network=${network}`,
     ].join(' ');
   }
 
-  /** Docker labels applied to all CDS-managed infra containers */
+  /**
+   * Docker labels applied to all CDS-managed infra containers.
+   * 2026-05-28 起新增 `cds.project.id`(老 legacy infra 用 `_legacy`)。
+   */
   private infraLabels(service: InfraService, network: string): string {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
+      `--label cds.project.id=${service.projectId || '_legacy'}`,
       `--label cds.service.id=${service.id}`,
       `--label cds.network=${network}`,
     ].join(' ');
@@ -1886,6 +1894,27 @@ export class ContainerService {
       this.getProjectMarkers(service.projectId),
     ).map((a) => `--network-alias ${a}`);
 
+    // 2026-05-28 灾难修复:
+    //   1) yaml 的 `command:` / `entrypoint:` 必须传给 docker run,否则容器
+    //      用 image 默认 ENTRYPOINT,minio/elasticsearch 这类需要子命令的
+    //      image 会立刻 exit 0 → unless-stopped 无限重启拖垮整个 host
+    //   2) `--restart` 默认从 unless-stopped 改成 on-failure:3,避免烂配
+    //      置一直 churn;可在 yaml 用 restart: 字段覆盖
+    //   3) image 之后跟 cmd suffix,顺序符合 docker run [OPTIONS] IMAGE [COMMAND]
+    const cmdParts = service.command === undefined
+      ? []
+      : Array.isArray(service.command)
+        ? service.command.map((c) => this.shellQuote(String(c)))
+        : [String(service.command)]; // string 形态 yaml 中通常是 shell 语法,不再 quote
+    const entrypointFlag = service.entrypoint === undefined
+      ? ''
+      : Array.isArray(service.entrypoint)
+        ? `--entrypoint ${this.shellQuote(String(service.entrypoint[0] ?? ''))}`
+        : `--entrypoint ${this.shellQuote(String(service.entrypoint))}`;
+    const restartPolicy = (typeof service.restartPolicy === 'string' && service.restartPolicy.trim())
+      ? service.restartPolicy.trim()
+      : 'on-failure:3';
+
     const cmd = [
       'docker run -d',
       `--name ${service.containerName}`,
@@ -1895,10 +1924,12 @@ export class ContainerService {
       ...volumeFlags,
       ...envFlags,
       ...healthFlags,
+      ...(entrypointFlag ? [entrypointFlag] : []),
       this.infraLabels(service, network),
-      '--restart unless-stopped',
+      `--restart ${restartPolicy}`,
       service.dockerImage,
-    ].join(' ');
+      ...cmdParts,
+    ].filter(Boolean).join(' ');
 
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {

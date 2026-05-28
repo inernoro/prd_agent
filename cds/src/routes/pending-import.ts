@@ -33,6 +33,7 @@ import { randomBytes } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
 
 export interface PendingImportRouterDeps {
   stateService: StateService;
@@ -205,6 +206,41 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
           });
           return;
         }
+
+        // 2026-05-28:infra 容器 cmd 白名单校验。已知某些 image 必须显式
+        // 带子命令(minio 必须 `server /data` / elasticsearch 类似),否则
+        // 容器启动后立即 exit 0 引发 unless-stopped 无限重启。
+        // 历史灾难:openvisual 的 minio cmd 缺失导致 288 次重启拖垮 host。
+        const NEEDS_CMD: Array<{ pattern: RegExp; example: string }> = [
+          { pattern: /^minio\/minio/i, example: 'command: ["server", "/data", "--console-address", ":9001"]' },
+          { pattern: /^(docker\.io\/library\/)?elasticsearch:/i, example: 'command: ["elasticsearch", "-Ediscovery.type=single-node"]' },
+        ];
+        const badInfra = check.infraServices
+          .filter((s) => {
+            const match = NEEDS_CMD.find((r) => r.pattern.test(s.dockerImage));
+            if (!match) return false;
+            const cmdEmpty = s.command === undefined
+              || (typeof s.command === 'string' && !s.command.trim())
+              || (Array.isArray(s.command) && s.command.length === 0);
+            return cmdEmpty;
+          });
+        if (badInfra.length > 0) {
+          const hint = badInfra
+            .map((s) => {
+              const example = NEEDS_CMD.find((r) => r.pattern.test(s.dockerImage))?.example
+                || 'command: ["<start subcommand>"]';
+              return `${s.id} (${s.dockerImage}) → ${example}`;
+            })
+            .join('; ');
+          res.status(400).json({
+            error: 'invalid_infra_cmd',
+            field: 'composeYaml',
+            message:
+              `以下 infra 服务的 image 必须在 yaml 里显式声明 command,否则容器启动后会立即退出导致无限重启:\n` +
+              hint,
+          });
+          return;
+        }
       }
     } catch { /* parser already succeeded once above */ }
 
@@ -219,6 +255,21 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       status: 'pending',
     };
     stateService.addPendingImport(item);
+
+    // 2026-05-28:广播事件,前端全局徽章/抽屉实时弹起,无需用户主动开 URL
+    try {
+      const all = stateService.getPendingImports();
+      const pendingCount = all.filter((i) => i.status === 'pending').length;
+      cdsEventsBus.publish('pending-import.created', {
+        importId: item.id,
+        projectId: item.projectId,
+        agentName: item.agentName,
+        purpose: item.purpose,
+        summary: item.summary,
+        submittedAt: item.submittedAt,
+      });
+      cdsEventsBus.publish('pending-import.count', { pendingCount });
+    } catch { /* event publish 失败不影响主流程 */ }
 
     res.status(201).json({
       importId: item.id,
@@ -369,6 +420,9 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         volumes: def.volumes || [],
         env: def.env || {},
         healthCheck: def.healthCheck,
+        // 2026-05-28:命令/入口透传(修 minio 灾难)
+        ...(def.command !== undefined ? { command: def.command } : {}),
+        ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);
@@ -380,6 +434,19 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       decidedAt: new Date().toISOString(),
     });
     stateService.save();
+
+    try {
+      cdsEventsBus.publish('pending-import.decided', {
+        importId: item.id,
+        projectId: item.projectId,
+        decision: 'approved',
+        appliedProfiles,
+        appliedInfra,
+        appliedEnvKeys,
+      });
+      const pendingCount = stateService.getPendingImports().filter((i) => i.status === 'pending').length;
+      cdsEventsBus.publish('pending-import.count', { pendingCount });
+    } catch { /* ignore */ }
 
     res.json({
       applied: true,
@@ -401,11 +468,24 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       return;
     }
     const body = (req.body || {}) as { reason?: string };
+    const rejectReason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : undefined;
     stateService.updatePendingImport(item.id, {
       status: 'rejected',
-      rejectReason: typeof body.reason === 'string' ? body.reason.slice(0, 500) : undefined,
+      rejectReason,
       decidedAt: new Date().toISOString(),
     });
+
+    try {
+      cdsEventsBus.publish('pending-import.decided', {
+        importId: item.id,
+        projectId: item.projectId,
+        decision: 'rejected',
+        rejectReason,
+      });
+      const pendingCount = stateService.getPendingImports().filter((i) => i.status === 'pending').length;
+      cdsEventsBus.publish('pending-import.count', { pendingCount });
+    } catch { /* ignore */ }
+
     res.json({ rejected: true });
   });
 

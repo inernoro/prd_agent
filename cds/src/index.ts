@@ -17,6 +17,7 @@ import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
+import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrl } from './services/comment-template.js';
 import { computePreviewSlug, previewProjectSlug, previewSlugMatchPercent } from './services/preview-slug.js';
@@ -1174,6 +1175,19 @@ const janitorService = new JanitorService(
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+const infraFlapWatchdog = new InfraFlapWatchdog(
+  {
+    shell,
+    serverEventLogStore: activeServerEventLogStore,
+    stateService,
+  },
+  {
+    tickIntervalMs: Number(process.env.CDS_INFRA_FLAP_TICK_MS) || 60_000,
+    restartDeltaThreshold: Number(process.env.CDS_INFRA_FLAP_THRESHOLD) || 5,
+    windowMs: Number(process.env.CDS_INFRA_FLAP_WINDOW_MS) || 300_000,
+  },
+);
+
 const autoLifecycleService = new AutoLifecycleService(
   {
     stateService,
@@ -2155,6 +2169,12 @@ janitorService.setRemoveFn(async (slug: string) => {
       console.log('[auto-lifecycle] skipped on executor node (lifecycle decisions are coordinator-only)');
     }
     startAutoRestartLoop();
+    // 2026-05-28:infra 容器 flap 熔断守卫。每 60s 扫 RestartCount,5 分钟内
+    // delta ≥ 5 → 自动 docker stop 打破 unless-stopped 循环。openvisual minio
+    // 缺 cmd 灾难的根因防御。standalone / scheduler 角色启用,executor 跳过。
+    if (config.mode !== 'executor') {
+      infraFlapWatchdog.start();
+    }
   }
   function stopBackgroundServices(): void {
     dockerEventMonitor.stop();
@@ -2163,6 +2183,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     janitorService.stop();
     autoLifecycleService.stop();
     stopAutoRestartLoop();
+    infraFlapWatchdog.stop();
   }
 
   startBackgroundServices();

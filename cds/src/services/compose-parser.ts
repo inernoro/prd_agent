@@ -25,6 +25,15 @@ export interface ComposeServiceDef {
   volumes: InfraVolume[];
   env: Record<string, string>;
   healthCheck?: InfraHealthCheck;
+  /**
+   * 2026-05-28:infra 容器的启动命令(yaml 里的 `command:` 字段)。可以是
+   * string 或 string[]。container.ts 的 docker run 会把它拼到 image 之后。
+   * 历史上漏掉这个字段,导致 minio 之类需要 `server /data` 子命令的 image
+   * 启动后立即 exit 0 → unless-stopped 无限重启的 prod 事故。
+   */
+  command?: string | string[];
+  /** Docker `--entrypoint` 覆盖,与 command 同时存在则一起传 */
+  entrypoint?: string | string[];
 }
 
 /** Raw compose YAML structure */
@@ -254,6 +263,8 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
+      ...(entry.command !== undefined ? { command: entry.command } : {}),
+      ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
     };
 
     results.push(parsed);
@@ -290,6 +301,8 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
+      ...(entry.command !== undefined ? { command: entry.command } : {}),
+      ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
     });
   }
 
@@ -337,6 +350,15 @@ export function toComposeYaml(services: InfraService[]): string {
         interval: `${svc.healthCheck.interval}s`,
         retries: svc.healthCheck.retries,
       };
+    }
+
+    // 2026-05-28:command / entrypoint 必须随 InfraService 一起出回 yaml,
+    // 否则 export 后再 import 会丢失启动命令(minio 灾难复现路径)。
+    if (svc.command !== undefined) {
+      entry.command = svc.command;
+    }
+    if (svc.entrypoint !== undefined) {
+      entry.entrypoint = svc.entrypoint;
     }
 
     servicesMap[svc.id] = entry;
@@ -492,6 +514,8 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           env: extractEnv(entry.environment),
 
           healthCheck: extractHealthCheck(entry.healthcheck),
+          ...(entry.command !== undefined ? { command: entry.command } : {}),
+          ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
         });
       }
     }

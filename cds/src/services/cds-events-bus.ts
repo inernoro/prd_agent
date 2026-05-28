@@ -33,6 +33,12 @@ export type CdsEventType =
   | 'operator.request.log'
   | 'operator.request.completed'
   | 'operator.request.failed'
+  // 2026-05-28:agent 导入审批事件(替代 ProjectListPage 10s 轮询)
+  | 'pending-import.created'
+  | 'pending-import.decided'
+  | 'pending-import.count'
+  // 2026-05-28:infra flap 熔断告警(watchdog 自动停掉烂配置容器)
+  | 'infra.flap.circuit-breaker'
   | 'heartbeat';
 
 export interface CdsEventEnvelope<T = unknown> {

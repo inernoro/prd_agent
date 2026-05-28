@@ -2055,6 +2055,18 @@ export interface InfraService {
   env: Record<string, string>;
   /** Health check configuration */
   healthCheck?: InfraHealthCheck;
+  /**
+   * 2026-05-28:容器启动命令(yaml `command:`)。docker run 时拼到 image 之后。
+   * 历史漏掉这个字段导致 minio/elasticsearch 这类需要子命令的 image 无法启动。
+   */
+  command?: string | string[];
+  /** Docker `--entrypoint` 覆盖,与 image 默认 ENTRYPOINT 不一致时使用 */
+  entrypoint?: string | string[];
+  /**
+   * Docker `--restart` 策略。默认 `on-failure:3`(2026-05-28 起,从旧硬编码
+   * `unless-stopped` 改来)。可在 yaml 用 `restart:` 字段覆盖。
+   */
+  restartPolicy?: string;
   /** When this service was created */
   createdAt: string;
 }

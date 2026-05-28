@@ -9363,6 +9363,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       volumes: [...def.volumes],
       env: { ...def.env },
       healthCheck: def.healthCheck ? { ...def.healthCheck } : undefined,
+      // 2026-05-28:命令/入口透传,修 minio 缺 cmd 灾难
+      ...(def.command !== undefined ? { command: def.command } : {}),
+      ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
       createdAt: new Date().toISOString(),
     };
   }
@@ -9561,6 +9564,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         volumes,
         env: body.env || {},
         healthCheck: body.healthCheck,
+        // 2026-05-28:手工 POST /api/infra 也支持 command/entrypoint
+        ...(body.command !== undefined ? { command: body.command } : {}),
+        ...(body.entrypoint !== undefined ? { entrypoint: body.entrypoint } : {}),
+        ...(typeof body.restartPolicy === 'string' ? { restartPolicy: body.restartPolicy } : {}),
         createdAt: new Date().toISOString(),
       };
 
