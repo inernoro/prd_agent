@@ -33,6 +33,9 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
     // eslint-disable-next-line no-console
     console.error('[cds-dashboard] render failed', error, info.componentStack);
     reportDashboardRenderError(error, info.componentStack || undefined);
+    if (isDynamicImportFailure(error) && shouldAutoReloadAfterChunkFailure()) {
+      window.location.reload();
+    }
   }
 
   render(): ReactNode {
@@ -58,6 +61,21 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
       </div>
     );
   }
+}
+
+function isDynamicImportFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed/i
+    .test(message);
+}
+
+function shouldAutoReloadAfterChunkFailure(): boolean {
+  const key = 'cds:chunk-load-reload-at';
+  const now = Date.now();
+  const last = Number(window.sessionStorage.getItem(key) || '0');
+  if (Number.isFinite(last) && now - last < 60_000) return false;
+  window.sessionStorage.setItem(key, String(now));
+  return true;
 }
 
 /*

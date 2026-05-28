@@ -417,6 +417,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 export function ProjectListPage(): JSX.Element {
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
@@ -462,11 +463,22 @@ export function ProjectListPage(): JSX.Element {
         apiRequest<ProjectsResponse>('/api/projects'),
         apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null),
       ]);
+      const nextProjects = projectsRes.projects || [];
+      const lastKnownGood = lastKnownGoodProjectsRef.current;
+      if (nextProjects.length > 0) {
+        lastKnownGoodProjectsRef.current = nextProjects;
+      }
+      const suspiciousEmpty =
+        nextProjects.length === 0 &&
+        ((projectsRes.total || 0) > 0 || lastKnownGood.length > 0);
       setState({
         status: 'ok',
-        projects: projectsRes.projects || [],
+        projects: suspiciousEmpty ? lastKnownGood : nextProjects,
         legacy: legacyRes,
       });
+      if (suspiciousEmpty) {
+        setToast('项目列表返回可疑空结果，已保留上一次有效列表');
+      }
       void loadPendingImports();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
