@@ -1388,15 +1388,17 @@ public class HostedSiteService : IHostedSiteService
 
     public async Task<int> BackfillShareVisibilityAsync(CancellationToken ct = default)
     {
-        // 一次性迁移：把所有还是默认 "owner-only" / 空值 / 缺字段 的存量分享（除 visit 链）
-        // 改为 "public"，避免本次发布把旧公开链路全断。仅对当前时刻之前创建的链接生效，
-        // 未来新建链接走 owner-only 默认。
-        // 用 CreatedAt < now 作为时间窗（避免重跑时把新链接也改了）；首次运行后即使重跑也幂等。
+        // 操作性 backfill（非功能必需）：把仍是空 / 缺字段的存量分享显式写为 "public"。
+        // 功能上 ViewShareAsync 已把空 Visibility 当 public 兼容；这里写实值让 admin diagnostics
+        // 和列表 UI 不再展示"未设置"，纯粹清理。新建链接已显式赋值（owner-only/logged-in/public），
+        // 不在过滤范围内；visit 链已写 "public"，也不需要重复。
         var cutoff = DateTime.UtcNow;
         var fb = Builders<WebPageShareLink>.Filter;
         var filter = fb.Lt(x => x.CreatedAt, cutoff)
             & fb.Ne(x => x.Purpose, "visit")
-            & (fb.Eq(x => x.Visibility, "owner-only") | fb.Eq(x => x.Visibility, (string?)null) | fb.Exists(x => x.Visibility, false));
+            & (fb.Eq(x => x.Visibility, "")
+                | fb.Eq(x => x.Visibility, (string?)null)
+                | fb.Exists(x => x.Visibility, false));
 
         var result = await _db.WebPageShareLinks.UpdateManyAsync(
             filter,
@@ -1406,7 +1408,7 @@ public class HostedSiteService : IHostedSiteService
         var modified = result.ModifiedCount;
         if (modified > 0)
         {
-            _logger.LogInformation("BackfillShareVisibility: 把 {Count} 条存量分享链接迁移为 public（仅本次发布前已存在的）", modified);
+            _logger.LogInformation("BackfillShareVisibility: 把 {Count} 条空 Visibility 的存量分享显式写为 public（清理性 backfill）", modified);
         }
         return (int)modified;
     }
