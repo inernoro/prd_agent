@@ -55,7 +55,7 @@ interface BranchSummary {
   lastDeployAt?: string;
   lastStoppedAt?: string;
   lastStopReason?: string;
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
   errorMessage?: string;
   commitSha?: string;
   subject?: string;
@@ -176,18 +176,10 @@ interface ProxyLogResponse {
   events: ProxyLogEvent[];
 }
 
-interface BridgeCheckResponse {
-  active: boolean;
-}
-
 interface BridgeConnection {
   branchId: string;
   url: string;
   connectedAt: string;
-}
-
-interface BridgeConnectionsResponse {
-  connections: BridgeConnection[];
 }
 
 interface ForceRebuildResponse {
@@ -253,6 +245,14 @@ type ContainerLogState =
 
 function queryValue(name: string): string {
   return new URLSearchParams(window.location.search).get(name) || '';
+}
+
+function parseSseJson<T>(event: Event): T | null {
+  try {
+    return JSON.parse((event as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
 }
 
 function displayName(project?: ProjectSummary): string {
@@ -644,7 +644,7 @@ export function BranchDetailPage(): JSX.Element {
     });
   }, [updateAction]);
 
-  const load = useCallback(async (showLoading = false) => {
+  const load = useCallback(async (showLoading = false, forceLive = false) => {
     if (showLoading) setState({ status: 'loading' });
     try {
       if (!branchId) {
@@ -654,15 +654,15 @@ export function BranchDetailPage(): JSX.Element {
         }
         const [project, branchesRes] = await Promise.all([
           apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
-          apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
+          apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         ]);
         setState({ status: 'select', project, branches: branchesRes.branches || [] });
         return;
       }
 
       const branchesPath = projectId
-        ? `/api/branches?project=${encodeURIComponent(projectId)}`
-        : '/api/branches';
+        ? `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`
+        : `/api/branches?live=${forceLive ? 'true' : 'false'}`;
       const branchesRes = await apiRequest<BranchesResponse>(branchesPath);
       const branch = (branchesRes.branches || []).find((item) => item.id === branchId);
       if (!branch) {
@@ -671,7 +671,7 @@ export function BranchDetailPage(): JSX.Element {
       }
 
       const realProjectId = branch.projectId || projectId;
-      const [project, operationLogs, commits, profiles, aliases, proxyLogs, bridgeCheck, bridgeConnections, previewMode, config] = await Promise.all([
+      const [project, operationLogs, commits, profiles, aliases, proxyLogs, previewMode, config] = await Promise.all([
         realProjectId
           ? apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(realProjectId)}`).catch(() => undefined)
           : Promise.resolve(undefined),
@@ -680,8 +680,6 @@ export function BranchDetailPage(): JSX.Element {
         apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`).catch(() => ({ profiles: [] })),
         apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`).catch(() => ({ aliases: [] })),
         apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })),
-        apiRequest<BridgeCheckResponse>(`/api/bridge/check/${encodeURIComponent(branch.id)}`).catch(() => ({ active: false })),
-        apiRequest<BridgeConnectionsResponse>('/api/bridge/connections').catch(() => ({ connections: [] })),
         realProjectId
           ? apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const }))
           : Promise.resolve({ mode: 'multi' as const }),
@@ -696,8 +694,8 @@ export function BranchDetailPage(): JSX.Element {
         profiles: profiles.profiles || [],
         aliases,
         proxyLogs: filterProxyLogsForBranch(proxyLogs.events || [], branch, aliases),
-        bridgeActive: !!bridgeCheck.active,
-        bridgeConnection: (bridgeConnections.connections || []).find((item) => item.branchId === branch.id),
+        bridgeActive: false,
+        bridgeConnection: undefined,
         previewMode: previewMode.mode || 'multi',
         config,
       });
@@ -713,12 +711,16 @@ export function BranchDetailPage(): JSX.Element {
     void load(true);
   }, [load]);
 
+  const branchStreamProjectId = state.status === 'ok' ? state.branch.projectId : '';
+  const branchStreamBranchId = state.status === 'ok' ? state.branch.id : '';
+
   useEffect(() => {
-    if (state.status !== 'ok') return;
-    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(state.branch.projectId)}`);
+    if (!branchStreamProjectId || !branchStreamBranchId) return;
+    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(branchStreamProjectId)}`);
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string; status?: BranchSummary['status'] };
-      if (data.branchId !== state.branch.id || !data.status) return;
+      const data = parseSseJson<{ branchId?: string; projectId?: string; status?: BranchSummary['status'] }>(ev);
+      if (!data || data.branchId !== branchStreamBranchId || !data.status) return;
+      if (data.projectId && data.projectId !== branchStreamProjectId) return;
       setState((current) => (
         current.status === 'ok'
           ? { ...current, branch: { ...current.branch, status: data.status as BranchSummary['status'] } }
@@ -726,12 +728,12 @@ export function BranchDetailPage(): JSX.Element {
       ));
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (!data.branch || data.branch.id !== state.branch.id) return;
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data?.branch || data.branch.id !== branchStreamBranchId || data.branch.projectId !== branchStreamProjectId) return;
       setState((current) => (current.status === 'ok' ? { ...current, branch: { ...current.branch, ...data.branch } } : current));
     });
     return () => source.close();
-  }, [state]);
+  }, [branchStreamBranchId, branchStreamProjectId]);
 
   const proxyStreamKey = state.status === 'ok'
     ? `${state.branch.id}|${state.branch.previewSlug || ''}|${state.aliases.aliases.join(',')}`
@@ -1072,13 +1074,13 @@ export function BranchDetailPage(): JSX.Element {
     updateAction({ label: `正在清理 ${profileId}`, log: [], status: 'running' });
     try {
       const res = await apiRequest<ForceRebuildResponse>(
-        `/api/branches/${encodeURIComponent(state.branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+        `/api/branches/${encodeURIComponent(state.branch.id)}/force-rebuild/${encodeURIComponent(profileId)}?reserveDeploy=1`,
         { method: 'POST' },
       );
       const steps = res.steps || [];
       const failed = steps.some((step) => !step.ok);
       updateAction({
-        label: failed ? `${profileId} 清理部分失败` : (res.message || '已清理构建缓存'),
+        label: failed ? `${profileId} 清理部分失败` : `${profileId} 已清理，正在重新部署`,
         log: [
           ...steps.map((step) => `${step.ok ? 'ok' : 'fail'} ${step.step}${step.detail ? ` - ${step.detail}` : ''}`),
           ...(failed ? ['suggestion: 检查失败步骤后重试；如果只是容器已不存在，可直接重新部署该服务。'] : []),
@@ -1086,6 +1088,11 @@ export function BranchDetailPage(): JSX.Element {
         status: failed ? 'error' : 'done',
       });
       if (failed) setToast('清理部分失败，查看构建日志中的失败步骤');
+      if (!failed) {
+        setToast(`${profileId} 已清理构建缓存，正在重新部署`);
+        await deploy(profileId);
+        return;
+      }
       await load(false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1135,7 +1142,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [state]);
+  }, [deploy, load, state]);
 
   if (!branchId && !projectId) return <Navigate to="/project-list" replace />;
 
@@ -1225,7 +1232,7 @@ export function BranchDetailPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void load(false)}
+                onClick={() => void load(false, true)}
                 aria-label="刷新"
                 title="刷新"
               >
@@ -1315,6 +1322,9 @@ export function BranchDetailPage(): JSX.Element {
                             {state.branch.lastStopSource === 'user' ? '用户'
                               : state.branch.lastStopSource === 'scheduler' ? '调度器'
                               : state.branch.lastStopSource === 'executor' ? '执行器'
+                              : state.branch.lastStopSource === 'cds' ? 'CDS'
+                              : state.branch.lastStopSource === 'oom' ? 'OOM'
+                              : state.branch.lastStopSource === 'external' ? '外部'
                               : state.branch.lastStopSource === 'crash' ? '崩溃'
                               : '系统'}
                           </span>
@@ -1712,26 +1722,19 @@ export function BranchDetailPage(): JSX.Element {
               <DisclosurePanel
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Bridge 操作"
-                subtitle={state.bridgeConnection ? 'widget connected' : 'widget offline'}
+                subtitle="paused"
                 contentClassName="space-y-3 p-5 text-sm"
               >
                   <div className="flex flex-wrap gap-2 text-xs">
-                    <span className={`rounded border px-2 py-0.5 ${state.bridgeActive ? statusClass('running') : statusClass('idle')}`}>
-                      {state.bridgeActive ? 'session active' : 'session idle'}
-                    </span>
-                    <span className={`rounded border px-2 py-0.5 ${state.bridgeConnection ? statusClass('running') : statusClass('idle')}`}>
-                      {state.bridgeConnection ? 'widget connected' : 'widget offline'}
+                    <span className={`rounded border px-2 py-0.5 ${statusClass('idle')}`}>
+                      bridge paused
                     </span>
                   </div>
-                  {state.bridgeConnection ? (
-                    <Field label="页面" value={state.bridgeConnection.url || '未上报'} />
-                  ) : (
-                    <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
-                      打开分支预览页后，Widget 会建立 Bridge 连接；这里可读取页面状态。
-                    </div>
-                  )}
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground">
+                    Page Agent Bridge HTTP 轮询已暂停。预览页不会建立 Bridge 连接，也不会静默轮询控制面。
+                  </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => void startBridgeSession()}>
+                    <Button size="sm" variant="outline" onClick={() => void startBridgeSession()} disabled>
                       <Play />
                       激活
                     </Button>

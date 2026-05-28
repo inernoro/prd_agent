@@ -1,17 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
-import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
-import goIconUrl from 'devicon/icons/go/go-original.svg';
-import javaIconUrl from 'devicon/icons/java/java-original.svg';
-import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
-import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
-import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
-import phpIconUrl from 'devicon/icons/php/php-original.svg';
-import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
-import pythonIconUrl from 'devicon/icons/python/python-original.svg';
-import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
-import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
-import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import {
   AlertTriangle,
   ArrowRight,
@@ -414,6 +403,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -759,7 +749,7 @@ export function ProjectListPage(): JSX.Element {
               // 用 sessionStorage 把"跳过去就部署"信号传给 BranchListPage
               sessionStorage.setItem(`cds:autoDeployOnArrival:${projectId}`, '1');
             }
-            window.location.href = `/branches/${encodeURIComponent(projectId)}`;
+            navigate(`/branches/${encodeURIComponent(projectId)}`);
           }}
         />
         <AgentKeyManagerDialog
@@ -1246,28 +1236,42 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   );
 }
 
-function DeviconIcon({ src }: { src: string }): JSX.Element {
-  return <img aria-hidden alt="" className="cds-project-node-icon cds-project-node-devicon" draggable={false} src={src} />;
+function GlyphIcon({ glyph }: { glyph: string }): JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className="cds-project-node-icon">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" strokeWidth="1.8" opacity="0.72" />
+      <text
+        x="12"
+        y="14.8"
+        textAnchor="middle"
+        fontSize={glyph.length > 2 ? 6.5 : 8}
+        fontWeight="800"
+        fill="currentColor"
+      >
+        {glyph}
+      </text>
+    </svg>
+  );
 }
 
 function MongoIcon(): JSX.Element {
-  return <DeviconIcon src={mongoIconUrl} />;
+  return <GlyphIcon glyph="MDB" />;
 }
 
 function RedisIcon(): JSX.Element {
-  return <DeviconIcon src={redisIconUrl} />;
+  return <GlyphIcon glyph="R" />;
 }
 
 function MysqlIcon(): JSX.Element {
-  return <DeviconIcon src={mysqlIconUrl} />;
+  return <GlyphIcon glyph="MY" />;
 }
 
 function PostgresIcon(): JSX.Element {
-  return <DeviconIcon src={postgresIconUrl} />;
+  return <GlyphIcon glyph="PG" />;
 }
 
 function RabbitIcon(): JSX.Element {
-  return <DeviconIcon src={rabbitIconUrl} />;
+  return <GlyphIcon glyph="MQ" />;
 }
 
 function MilvusIcon(): JSX.Element {
@@ -1308,31 +1312,31 @@ function MinioIcon(): JSX.Element {
 }
 
 function DotnetIcon(): JSX.Element {
-  return <DeviconIcon src={dotnetIconUrl} />;
+  return <GlyphIcon glyph=".NET" />;
 }
 
 function NodeIcon(): JSX.Element {
-  return <DeviconIcon src={nodeIconUrl} />;
+  return <GlyphIcon glyph="JS" />;
 }
 
 function PythonIcon(): JSX.Element {
-  return <DeviconIcon src={pythonIconUrl} />;
+  return <GlyphIcon glyph="PY" />;
 }
 
 function JavaIcon(): JSX.Element {
-  return <DeviconIcon src={javaIconUrl} />;
+  return <GlyphIcon glyph="J" />;
 }
 
 function GoIcon(): JSX.Element {
-  return <DeviconIcon src={goIconUrl} />;
+  return <GlyphIcon glyph="GO" />;
 }
 
 function RustIcon(): JSX.Element {
-  return <DeviconIcon src={rustIconUrl} />;
+  return <GlyphIcon glyph="RS" />;
 }
 
 function PhpIcon(): JSX.Element {
-  return <DeviconIcon src={phpIconUrl} />;
+  return <GlyphIcon glyph="PHP" />;
 }
 
 function NacosIcon(): JSX.Element {
@@ -3269,10 +3273,10 @@ function GithubRepoPickerDialog({
             <ErrorBlock message={state.message} />
             {state.action === 'connect' || state.action === 'configure' ? (
               <Button asChild variant="outline">
-                <a href="/cds-settings#github">
+                <Link to="/cds-settings#github">
                   <ExternalLink />
                   打开 GitHub 设置
-                </a>
+                </Link>
               </Button>
             ) : (
               <Button type="button" variant="outline" onClick={() => void loadPage(1)}>

@@ -60,6 +60,11 @@ public class PaSession
     public string? LastMessagePreview { get; set; }
     /// <summary>消息总数</summary>
     public int MessageCount { get; set; } = 0;
+    /// <summary>
+    /// 会话类型：chat（默认主对话） / review（复盘归档会话）。
+    /// 旧数据缺失字段反序列化为 "chat"，向后兼容。
+    /// </summary>
+    public string Type { get; set; } = "chat";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -34,6 +34,7 @@ import type { StateService } from '../services/state.js';
 import type { GithubWebhookDelivery, GithubAppWhitelistSettings } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { IShellExecutor, CdsConfig, OperationLog } from '../types.js';
+import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import {
   GitHubAppClient,
   buildInstallUrl,
@@ -55,6 +56,7 @@ import {
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
+import { previewProjectSlug } from '../services/preview-slug.js';
 import { broadcastSelfStatus } from './branches.js';
 
 export interface GitHubWebhookRouterDeps {
@@ -72,6 +74,8 @@ export interface GitHubWebhookRouterDeps {
    * so tests can observe without spinning a full Express server.
    */
   dispatchDeploy?: (branchId: string, commitSha: string) => Promise<void>;
+  /** Optional persistent diagnostics sink. Used for webhook lifecycle breadcrumbs beyond the in-state ring buffer. */
+  serverEventLogStore?: ServerEventLogSink | null;
 }
 
 /**
@@ -176,6 +180,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     config,
     githubApp,
     dispatchDeploy,
+    serverEventLogStore,
   } = deps;
 
   const dispatcher = new GitHubWebhookDispatcher({
@@ -224,13 +229,39 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     };
     res.on('finish', () => {
       try {
-        stateService.recordGithubWebhookDelivery({
+        const delivery: GithubWebhookDelivery = {
           id: recordId,
           receivedAt: new Date(startedAt).toISOString(),
           durationMs: Date.now() - startedAt,
           deliveryId: headerDelivery,
           event: headerEvent || 'unknown',
           ...outcome,
+        };
+        stateService.recordGithubWebhookDelivery(delivery);
+        serverEventLogStore?.record({
+          category: 'system',
+          severity: outcome.dispatchAction === 'error' ? 'error' : 'info',
+          source: 'github-webhook',
+          action: 'github.webhook.delivery',
+          message: `${delivery.event}: ${delivery.dispatchAction}${delivery.dispatchReason ? ` - ${delivery.dispatchReason}` : ''}`,
+          projectId: outcome.branchId ? stateService.getBranch(outcome.branchId)?.projectId : undefined,
+          branchId: outcome.branchId,
+          details: {
+            id: delivery.id,
+            deliveryId: delivery.deliveryId,
+            event: delivery.event,
+            repoFullName: delivery.repoFullName,
+            ref: delivery.ref,
+            commitSha: delivery.commitSha,
+            actor: delivery.actor,
+            signatureValid: delivery.signatureValid,
+            dispatchAction: delivery.dispatchAction,
+            dispatchReason: delivery.dispatchReason,
+            deployDispatched: delivery.deployDispatched,
+            deployDedupSkipped: delivery.deployDedupSkipped,
+            durationMs: delivery.durationMs,
+          },
+          error: delivery.error ? { message: delivery.error } : undefined,
         });
       } catch (recErr) {
         // eslint-disable-next-line no-console
@@ -487,7 +518,34 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     }
     if (result.stopRequest) {
       const stopReq = result.stopRequest;
+      const stopBranch = stateService.getBranch(stopReq.branchId);
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'github-webhook',
+        action: 'github.webhook.stop-dispatch.requested',
+        message: `webhook requested stop for ${stopReq.branchId}`,
+        projectId: stopBranch?.projectId,
+        branchId: stopReq.branchId,
+        details: {
+          webhookEvent: eventName,
+          deliveryId,
+          dispatchAction: result.action,
+          dispatchReason: result.message,
+        },
+      });
       void defaultLocalhostStop(config, stateService, stopReq.branchId).catch((err) => {
+        serverEventLogStore?.record({
+          category: 'container',
+          severity: 'error',
+          source: 'github-webhook',
+          action: 'github.webhook.stop-dispatch.failed',
+          message: `webhook stop dispatch failed for ${stopReq.branchId}`,
+          projectId: stopBranch?.projectId,
+          branchId: stopReq.branchId,
+          error: { message: (err as Error).message },
+          details: { webhookEvent: eventName, deliveryId },
+        });
         // eslint-disable-next-line no-console
         console.warn(
           `[webhook] stop dispatch failed for branch=${stopReq.branchId}:`,
@@ -503,8 +561,36 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // 野容器残留(虽然 DELETE 路由内部也会 stop,但顺序排好更可控)。
     if (result.branchDeleteRequest) {
       const delReq = result.branchDeleteRequest;
+      const deleteBranch = stateService.getBranch(delReq.branchId);
+      serverEventLogStore?.record({
+        category: 'container',
+        severity: 'warn',
+        source: 'github-webhook',
+        action: 'github.webhook.branch-delete.scheduled',
+        message: `webhook scheduled branch delete cleanup for ${delReq.branchId}`,
+        projectId: deleteBranch?.projectId,
+        branchId: delReq.branchId,
+        details: {
+          webhookEvent: eventName,
+          deliveryId,
+          delayMs: 3000,
+          dispatchAction: result.action,
+          dispatchReason: result.message,
+        },
+      });
       setTimeout(() => {
         void defaultLocalhostBranchDelete(config, stateService, delReq.branchId).catch((err) => {
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'github-webhook',
+            action: 'github.webhook.branch-delete.failed',
+            message: `webhook branch delete cleanup failed for ${delReq.branchId}`,
+            projectId: deleteBranch?.projectId,
+            branchId: delReq.branchId,
+            error: { message: (err as Error).message },
+            details: { webhookEvent: eventName, deliveryId },
+          });
           // eslint-disable-next-line no-console
           console.warn(
             `[webhook] branch delete cleanup failed for branch=${delReq.branchId}:`,
@@ -845,7 +931,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       const repoMatches = !repoFullName || item.repoFullName === repoFullName;
       if (branchId) {
         if (item.branchId) return item.branchId === branchId;
-        return repoMatches && refMatches;
+        // Fallback matching only makes sense when the caller provided
+        // repo/ref as extra evidence. A bare branchId query must not return
+        // every delivery that simply lacks branchId.
+        return Boolean(repoFullName || ref) && repoMatches && refMatches;
       }
       if (!repoMatches) return false;
       if (!refMatches) return false;
@@ -1046,6 +1135,7 @@ async function defaultLocalhostBranchDelete(config: CdsConfig, stateService: Sta
   if (!res.ok && res.status !== 404) {
     throw new Error(`DELETE /api/branches/${branchId} -> ${await responseErrorSummary(res)}`);
   }
+  drainResponseBody(res);
 }
 
 async function defaultLocalhostStop(config: CdsConfig, stateService: StateService, branchId: string): Promise<void> {
@@ -1106,7 +1196,7 @@ async function postOrUpdatePrComment(
   // 走 v3 公式（tail-prefix-projectSlug）需要分支原名 + 项目 slug，
   // 不能再传 entry id（那是内部存储 key）。详见 preview-slug.ts 头部注释。
   const project = branch.projectId ? stateService.getProject(branch.projectId) : undefined;
-  const projectSlug = project?.slug || branch.projectId;
+  const projectSlug = previewProjectSlug(project, branch.projectId);
   const previewUrl = buildPreviewUrl(host, branch.branch, projectSlug);
   const dashboardUrl = buildDashboardUrl(config.publicBaseUrl, branchId);
   // 走 per-project 模板：项目自己的优先，未设回退到旧 state.commentTemplate。

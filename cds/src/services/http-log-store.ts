@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
-import { MongoClient, type Collection } from 'mongodb';
+import { MongoClient, type Collection, type Sort } from 'mongodb';
 
 export interface HttpLogRecord {
   _id: string;
@@ -51,6 +51,14 @@ export interface HttpLogSink {
     host?: string;
     layer?: HttpLogRecord['layer'];
     minStatus?: number;
+    method?: string;
+    pathContains?: string;
+    branchId?: string;
+    profileId?: string;
+    since?: string | Date;
+    until?: string | Date;
+    minDurationMs?: number;
+    sort?: 'recent' | 'duration';
   }): Promise<HttpLogRecord[]>;
 }
 
@@ -63,6 +71,65 @@ const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?ke
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
+const MAX_REDACT_DEPTH = 8;
+const OMITTED_BINARY_BODY_PREVIEW = '[cds http log omitted binary body]';
+
+function normalizeContentType(value: unknown): string {
+  if (Array.isArray(value)) return normalizeContentType(value[0]);
+  return String(value || '').split(';')[0].trim().toLowerCase();
+}
+
+function parseContentLength(value: unknown): number | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number.parseInt(String(raw || ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+export function isTextualContentType(value: unknown): boolean {
+  const type = normalizeContentType(value);
+  if (!type) return true;
+  if (type.startsWith('text/')) return true;
+  if (type === 'application/json') return true;
+  if (type.endsWith('+json') || type.endsWith('/json')) return true;
+  if (type === 'application/javascript' || type === 'application/x-javascript') return true;
+  if (type === 'application/xml' || type.endsWith('+xml')) return true;
+  if (type === 'application/x-www-form-urlencoded') return true;
+  if (type === 'application/graphql') return true;
+  if (type === 'application/graphql-response+json') return true;
+  if (type === 'application/problem+json') return true;
+  if (type === 'application/x-ndjson') return true;
+  return false;
+}
+
+export function isBinaryContentType(value: unknown): boolean {
+  const type = normalizeContentType(value);
+  if (!type) return false;
+  if (type.startsWith('image/')) return true;
+  if (type.startsWith('audio/')) return true;
+  if (type.startsWith('video/')) return true;
+  if (type.startsWith('font/')) return true;
+  if (type === 'multipart/form-data') return true;
+  if (type === 'application/octet-stream') return true;
+  if (type === 'application/pdf') return true;
+  if (type === 'application/zip') return true;
+  if (type === 'application/gzip') return true;
+  if (type === 'application/x-gzip') return true;
+  if (type === 'application/x-tar') return true;
+  if (type === 'application/x-7z-compressed') return true;
+  if (type === 'application/x-rar-compressed') return true;
+  if (type === 'application/wasm') return true;
+  return !isTextualContentType(type);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function coerceDate(value: string | Date | undefined): Date | undefined {
+  if (!value) return undefined;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const buf = Buffer.from(value);
@@ -72,14 +139,39 @@ function truncateUtf8(value: string, maxBytes: number): string {
   return `${text}\n[cds http log truncated: original ${buf.length} bytes]`;
 }
 
-function redactBodyText(value: string): string {
-  let out = value.replace(
-    /(["'])([^"']{0,120}?)(["'])\s*:\s*(["'])(?:\\.|(?!\4).){0,200}\4/g,
-    (match, openKey: string, key: string, closeKey: string, quote: string) => {
-      if (!BODY_SECRET_KEY.test(key)) return match;
-      return `${openKey}${key}${closeKey}:${quote}[redacted]${quote}`;
-    },
-  );
+function redactStructuredValue(value: unknown, key = '', depth = 0, seen = new WeakSet<object>()): unknown {
+  if (key && BODY_SECRET_KEY.test(key)) return '[redacted]';
+  if (value == null || typeof value !== 'object') return value;
+  if (depth >= MAX_REDACT_DEPTH) return '[cds http log redaction depth limit]';
+  if (seen.has(value)) return '[cds http log circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactStructuredValue(item, '', depth + 1, seen));
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    out[childKey] = redactStructuredValue(childValue, childKey, depth + 1, seen);
+  }
+  return out;
+}
+
+function redactJsonText(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return null;
+  try {
+    return JSON.stringify(redactStructuredValue(JSON.parse(trimmed)));
+  } catch {
+    return null;
+  }
+}
+
+export function redactBodyText(value: string): string {
+  const jsonRedacted = redactJsonText(value);
+  if (jsonRedacted != null) return jsonRedacted;
+
+  let out = value;
   out = out.replace(
     /(^|[?&\s])([A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|session|jwt|credential)[A-Za-z0-9_.-]*=)[^&\s]{1,300}/gi,
     (_match, prefix: string, key: string) => `${prefix}${key}[redacted]`,
@@ -89,11 +181,25 @@ function redactBodyText(value: string): string {
 }
 
 function sanitizePayload(payload: HttpLogRecord['request'] | HttpLogRecord['response']): typeof payload {
+  const contentType = payload.headers?.['content-type'];
+  if (isBinaryContentType(contentType)) {
+    const declaredBytes = parseContentLength(payload.headers?.['content-length']);
+    const observedBytes = payload.bodyBytes ?? 0;
+    const bodyBytes = declaredBytes != null
+      ? Math.max(observedBytes, declaredBytes)
+      : payload.bodyBytes;
+    return {
+      ...payload,
+      bodyBytes,
+      bodyPreview: bodyBytes ? OMITTED_BINARY_BODY_PREVIEW : undefined,
+    };
+  }
+  const preview = payload.bodyPreview
+    ? redactBodyText(truncateUtf8(payload.bodyPreview, MAX_BODY_PREVIEW_BYTES))
+    : payload.bodyPreview;
   return {
     ...payload,
-    bodyPreview: payload.bodyPreview
-      ? truncateUtf8(redactBodyText(payload.bodyPreview), MAX_BODY_PREVIEW_BYTES)
-      : payload.bodyPreview,
+    bodyPreview: preview ? truncateUtf8(preview, MAX_BODY_PREVIEW_BYTES) : preview,
   };
 }
 
@@ -117,35 +223,51 @@ export function redactHeaders(headers: IncomingHttpHeaders | Record<string, unkn
   return out;
 }
 
-export function bodyPreviewFromUnknown(value: unknown): { bodyPreview?: string; bodyBytes?: number } {
+export function bodyPreviewFromUnknown(value: unknown, contentType?: unknown): { bodyPreview?: string; bodyBytes?: number } {
   if (value == null) return {};
+  if (Buffer.isBuffer(value)) {
+    return {
+      bodyPreview: isBinaryContentType(contentType) && value.length > 0 ? OMITTED_BINARY_BODY_PREVIEW : truncateUtf8(redactBodyText(value.toString('utf8').replace(/\0/g, '')), MAX_BODY_PREVIEW_BYTES),
+      bodyBytes: value.length,
+    };
+  }
+  if (isBinaryContentType(contentType)) {
+    let bodyBytes: number | undefined;
+    if (typeof value === 'string') bodyBytes = Buffer.byteLength(value, 'utf8');
+    else {
+      try { bodyBytes = Buffer.byteLength(JSON.stringify(value), 'utf8'); } catch { bodyBytes = undefined; }
+    }
+    return { bodyPreview: bodyBytes ? OMITTED_BINARY_BODY_PREVIEW : undefined, bodyBytes };
+  }
   let text: string;
   if (typeof value === 'string') text = value;
   else {
     try {
-      text = JSON.stringify(value);
+      text = JSON.stringify(redactStructuredValue(value));
     } catch {
       text = String(value);
     }
   }
+  const preview = truncateUtf8(text, MAX_BODY_PREVIEW_BYTES);
   return {
-    bodyPreview: truncateUtf8(redactBodyText(text), MAX_BODY_PREVIEW_BYTES),
+    bodyPreview: truncateUtf8(redactBodyText(preview), MAX_BODY_PREVIEW_BYTES),
     bodyBytes: Buffer.byteLength(text, 'utf8'),
   };
 }
 
-export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
+export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType?: unknown): {
   onChunk(chunk: Buffer | string): void;
-  snapshot(): { bodyPreview?: string; bodyBytes: number };
+  snapshot(contentTypeOverride?: unknown): { bodyPreview?: string; bodyBytes: number };
 } {
   let bodyBytes = 0;
   let capturedBytes = 0;
   const chunks: Buffer[] = [];
+  const shouldCapturePreview = (type?: unknown) => !isBinaryContentType(type ?? contentType);
   return {
     onChunk(chunk) {
       if (Buffer.isBuffer(chunk)) {
         bodyBytes += chunk.length;
-        if (capturedBytes < maxBytes) {
+        if (shouldCapturePreview() && capturedBytes < maxBytes) {
           const part = chunk.subarray(0, maxBytes - capturedBytes);
           chunks.push(part);
           capturedBytes += part.length;
@@ -155,6 +277,7 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
 
       const text = String(chunk);
       bodyBytes += Buffer.byteLength(text, 'utf8');
+      if (!shouldCapturePreview()) return;
       if (capturedBytes >= maxBytes) return;
 
       // Do not Buffer.from() the full response string. Some JSON endpoints
@@ -167,7 +290,13 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES): {
       chunks.push(part);
       capturedBytes += part.length;
     },
-    snapshot() {
+    snapshot(contentTypeOverride?: unknown) {
+      if (isBinaryContentType(contentTypeOverride ?? contentType)) {
+        return {
+          bodyPreview: bodyBytes > 0 ? OMITTED_BINARY_BODY_PREVIEW : undefined,
+          bodyBytes,
+        };
+      }
       const preview = redactBodyText(Buffer.concat(chunks).toString('utf8').replace(/\0/g, ''));
       return {
         bodyPreview: preview ? truncateUtf8(preview, maxBytes) : undefined,
@@ -210,6 +339,7 @@ export class HttpLogStore {
       this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1' }),
       this.collection.createIndex({ host: 1, ts: -1 }, { name: 'host_ts_desc' }),
       this.collection.createIndex({ status: 1, ts: -1 }, { name: 'status_ts_desc' }),
+      this.collection.createIndex({ durationMs: -1, ts: -1 }, { name: 'duration_ts_desc' }),
       this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
@@ -261,6 +391,14 @@ export class HttpLogStore {
     host?: string;
     layer?: HttpLogRecord['layer'];
     minStatus?: number;
+    method?: string;
+    pathContains?: string;
+    branchId?: string;
+    profileId?: string;
+    since?: string | Date;
+    until?: string | Date;
+    minDurationMs?: number;
+    sort?: 'recent' | 'duration';
   } = {}): Promise<HttpLogRecord[]> {
     if (!this.collection) return [];
     const query: Record<string, unknown> = {};
@@ -268,8 +406,29 @@ export class HttpLogStore {
     if (filter.host) query.host = filter.host;
     if (filter.layer) query.layer = filter.layer;
     if (filter.minStatus) query.status = { $gte: filter.minStatus };
-    const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
-    return await this.collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
+    if (filter.method) query.method = filter.method.toUpperCase();
+    if (filter.branchId) query.branchId = filter.branchId;
+    if (filter.profileId) query.profileId = filter.profileId;
+    if (typeof filter.minDurationMs === 'number' && Number.isFinite(filter.minDurationMs) && filter.minDurationMs > 0) {
+      query.durationMs = { $gte: Math.floor(filter.minDurationMs) };
+    }
+    const pathContains = filter.pathContains?.trim();
+    if (pathContains) {
+      query.path = { $regex: escapeRegExp(pathContains.slice(0, 200)), $options: 'i' };
+    }
+    const since = coerceDate(filter.since);
+    const until = coerceDate(filter.until);
+    if (since || until) {
+      query.ts = {
+        ...(since ? { $gte: since } : {}),
+        ...(until ? { $lte: until } : {}),
+      };
+    }
+    const limit = Math.max(1, Math.min(filter.limit ?? 200, 5000));
+    const sort: Sort = filter.sort === 'duration'
+      ? { durationMs: -1 as const, ts: -1 as const }
+      : { ts: -1 as const };
+    return await this.collection.find(query).sort(sort).limit(limit).toArray();
   }
 
   async flush(): Promise<void> {

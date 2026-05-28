@@ -2172,7 +2172,9 @@ function ShareDialog({ siteId, siteIds, onClose }: {
               <div
                 style={{
                   position: 'fixed', inset: 0, zIndex: 200,
-                  background: 'rgba(0, 0, 0, 0.55)',
+                  background: 'rgba(0, 0, 0, 0.8)',
+                  backdropFilter: 'blur(3px)',
+                  WebkitBackdropFilter: 'blur(3px)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   padding: 16,
                 }}
@@ -2180,30 +2182,36 @@ function ShareDialog({ siteId, siteIds, onClose }: {
               >
                 <div
                   style={{
-                    background: 'var(--bg-card)',
-                    border: '1px solid #f97316',
+                    background: 'var(--bg-elevated)',
+                    border: '2px solid #ef4444',
                     borderRadius: 12,
-                    padding: 24,
+                    boxShadow: '0 0 0 1px rgba(239, 68, 68, 0.35), 0 24px 70px rgba(0, 0, 0, 0.55)',
                     maxWidth: 480,
                     width: '100%',
+                    overflow: 'hidden',
                   }}
                 >
-                  <div className="flex items-center gap-2 mb-3">
-                    <Lock size={20} style={{ color: '#f97316' }} />
-                    <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <div
+                    className="flex items-center gap-2 px-6 py-4"
+                    style={{ background: 'rgba(239, 68, 68, 0.16)', borderBottom: '1px solid rgba(239, 68, 68, 0.4)' }}
+                  >
+                    <AlertTriangle size={20} style={{ color: '#ef4444', flexShrink: 0 }} />
+                    <h3 className="text-base font-bold" style={{ color: '#ef4444' }}>
                       风险确认：短链无密码 = 任何人可枚举访问
                     </h3>
                   </div>
-                  <ul className="text-sm flex flex-col gap-1.5 mb-4" style={{ color: 'var(--text-secondary)' }}>
-                    <li>· 数字短链 /s/123 是全局自增 ID，攻击者可从 1 起逐个尝试</li>
-                    <li>· 没有密码的短链意味着任何获得链接（甚至猜对数字）的人都能查看内容</li>
-                    <li>· 你即将分享的内容如果包含未公开信息，请改用字母长链或保留密码</li>
-                  </ul>
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" onClick={() => setShowRiskGate(false)}>放弃，保留密码</Button>
-                    <Button onClick={handleRiskAccept} disabled={riskCountdown > 0}>
-                      {riskCountdown > 0 ? `我已知晓继续 (${riskCountdown}s)` : '我已知晓继续'}
-                    </Button>
+                  <div className="px-6 pt-4 pb-5">
+                    <ul className="text-sm flex flex-col gap-1.5 mb-4" style={{ color: 'var(--text-secondary)' }}>
+                      <li>· 数字短链 /s/123 是全局自增 ID，攻击者可从 1 起逐个尝试</li>
+                      <li>· 没有密码的短链意味着任何获得链接（甚至猜对数字）的人都能查看内容</li>
+                      <li>· 你即将分享的内容如果包含未公开信息，请改用字母长链或保留密码</li>
+                    </ul>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="ghost" onClick={() => setShowRiskGate(false)}>放弃，保留密码</Button>
+                      <Button onClick={handleRiskAccept} disabled={riskCountdown > 0}>
+                        {riskCountdown > 0 ? `我已知晓继续 (${riskCountdown}s)` : '我已知晓继续'}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

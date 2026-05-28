@@ -105,6 +105,10 @@ public sealed class DailyTipsController : ControllerBase
         if (items.Count == 0)
         {
             items = BuildDefaultTips(now);
+            // 兜底集合同样走发布窗口过滤,否则带固定 EndAt 的时效公告在空环境永不过期(与 DB 路径口径一致)
+            items = items.Where(t =>
+                (t.StartAt == null || t.StartAt <= now)
+                && (t.EndAt == null || t.EndAt > now)).ToList();
             if (foreverDismissed.Count > 0)
             {
                 items = items.Where(t =>
@@ -339,13 +343,20 @@ public sealed class DailyTipsController : ControllerBase
     /// 全部为「text / card」类,带 ActionUrl 可跳转。DisplayOrder 预留 10-90,方便管理员插入。
     /// AdminDailyTipsController 的 /seed 端点复用此列表批量写库。
     /// </summary>
+    // 2026-W20/W21 新功能公告的固定下线时间。必须锚定发布日，不能用 now.AddDays(7)——
+    // 否则 /visible 兜底路径每次请求重建 BuildDefaultTips(now) 时会刷新 EndAt，导致空环境永不过期
+    // （Cursor Bugbot / Codex review）。过此日期后两条公告在全平台（含兜底）消失。
+    private static readonly DateTime FeatureTip2026W21ExpireAt =
+        new(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
+
     internal static List<DailyTip> BuildDefaultTips(DateTime now)
     {
         DailyTip T(
             string id, string kind, string title, string? body,
             string actionUrl, string ctaText,
             string? targetSelector, int order,
-            DailyTipAutoAction? autoAction = null)
+            DailyTipAutoAction? autoAction = null,
+            DateTime? endAt = null, string sourceType = "seed")
             => new()
             {
                 Id = $"seed-{id}",
@@ -357,10 +368,11 @@ public sealed class DailyTipsController : ControllerBase
                 TargetSelector = targetSelector,
                 AutoAction = autoAction,
                 TargetUserId = null,
-                SourceType = "seed",
+                SourceType = sourceType,
                 SourceId = id,
                 DisplayOrder = order,
                 IsActive = true,
+                EndAt = endAt,
                 CreatedBy = "system:seed",
                 CreatedAt = now,
                 UpdatedAt = now
@@ -370,6 +382,31 @@ public sealed class DailyTipsController : ControllerBase
         // 的短 tip 全部删掉;用户说「短短的流程一条流程的给删掉」。
         return new List<DailyTip>
         {
+            // ===== 新功能公告（feature-release，7 天后自动过期，避免过时弹窗堆首页）=====
+            // 这两条对应 2026-W20/W21 上线的能力，默认推送给所有用户。过期后由 /visible 的
+            // EndAt 过滤自动隐藏；下一批新功能上线时替换此处两条即可（属时效内容，定期更新）。
+            T("feature-2026w21-report-editor", "card",
+                "周报编辑器全新升级",
+                "参考 Notion / Linear 重做了编辑器：章节大纲、条目拖动排序、还有「我的周报」时间树视图（年/月/周折叠）。打开看看本周更新。",
+                "/report-agent",
+                "看看新编辑器",
+                null,
+                2,
+                autoAction: null,
+                endAt: FeatureTip2026W21ExpireAt,
+                sourceType: "feature-release"),
+
+            T("feature-2026w21-knowledge-browser", "card",
+                "知识库阅读体验升级",
+                "文档浏览器新增本页目录导航（TOC）、章节分组、不选中文字也能对整篇文档评论，还能一键替换文件。去知识库翻翻看。",
+                "/document-store",
+                "去知识库",
+                null,
+                3,
+                autoAction: null,
+                endAt: FeatureTip2026W21ExpireAt,
+                sourceType: "feature-release"),
+
             // 1. 自定义导航顺序 —— 排第一,新用户上手第一件事就是配自己的菜单
             T("nav-order-customize", "card",
                 "把常用 Agent 拖到最上面",

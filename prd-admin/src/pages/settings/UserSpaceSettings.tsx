@@ -38,8 +38,10 @@ import {
 import { useAuthStore } from '@/stores/authStore';
 import { getLauncherCatalog, type LauncherItem } from '@/lib/launcherCatalog';
 import { MyFavoriteSkills } from './MyFavoriteSkills';
+import { isPaSecretaryIcon, renderPaSecretaryIconNode } from '@/lib/paSecretaryIconRegistry';
 
 function getIcon(name: string, size = 16) {
+  if (isPaSecretaryIcon(name)) return renderPaSecretaryIconNode(size);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Icon = (LucideIcons as any)[name] ?? LucideIcons.Circle;
   return <Icon size={size} />;

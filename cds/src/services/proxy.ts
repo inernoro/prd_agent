@@ -5,9 +5,10 @@ import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
-import { computePreviewSlug } from './preview-slug.js';
+import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import {
   createBodyCapture,
+  isBinaryContentType,
   createRequestId,
   redactHeaders,
   type HttpLogSink,
@@ -175,14 +176,19 @@ export class ProxyService {
     const projectById = new Map(projects.map((p) => [p.id, p]));
 
     // ① v3 前向匹配
+    const previewMatches: BranchEntry[] = [];
     for (const entry of Object.values(state.branches)) {
       if (!entry.branch) continue;
       const project = entry.projectId ? projectById.get(entry.projectId) : undefined;
-      const projectSlug = project?.slug || entry.projectId;
-      if (!projectSlug) continue;
-      if (computePreviewSlug(entry.branch, projectSlug) === slug) {
-        return entry;
+      for (const projectSlug of previewProjectSlugCandidates(project, entry.projectId)) {
+        if (computePreviewSlug(entry.branch, projectSlug) === slug) {
+          previewMatches.push(entry);
+          break;
+        }
       }
+    }
+    if (previewMatches.length > 0) {
+      return previewMatches.sort((a, b) => this.comparePreviewCandidates(a, b))[0];
     }
 
     // ② v1 兼容：裸 slug 直查
@@ -196,6 +202,24 @@ export class ProxyService {
       if (candidate) return candidate;
     }
     return undefined;
+  }
+
+  private comparePreviewCandidates(a: BranchEntry, b: BranchEntry): number {
+    const score = (entry: BranchEntry): number => {
+      const status = String(entry.status || '');
+      if (status === 'running') return 5;
+      if (status === 'starting' || status === 'building' || status === 'restarting') return 4;
+      if (status === 'error') return 2;
+      return 1;
+    };
+    const scoreDelta = score(b) - score(a);
+    if (scoreDelta !== 0) return scoreDelta;
+    const timeValue = (entry: BranchEntry): number => {
+      const raw = entry.lastReadyAt || entry.lastDeployAt || entry.lastDeployDispatchAt || entry.lastPushAt || entry.createdAt;
+      const parsed = raw ? Date.parse(raw) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return timeValue(b) - timeValue(a);
   }
 
   /**
@@ -574,7 +598,9 @@ export class ProxyService {
       return;
     }
 
-    console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
+    if (process.env.CDS_PROXY_ACCESS_LOG === '1') {
+      console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
+    }
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
     // save) and correctness depends on every request refreshing lastAccessedAt.
@@ -1704,7 +1730,7 @@ ${shouldAutoRefresh ? `;(function(){
     if (typeof clientRes.setHeader === 'function') {
       clientRes.setHeader('X-CDS-Request-Id', requestId);
     }
-    const requestCapture = createBodyCapture();
+    const requestCapture = createBodyCapture(undefined, clientReq.headers['content-type']);
     if (typeof clientReq.on === 'function') {
       clientReq.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     }
@@ -1732,7 +1758,7 @@ ${shouldAutoRefresh ? `;(function(){
         upstream,
         request: {
           headers: redactHeaders(clientReq.headers),
-          ...requestCapture.snapshot(),
+          ...requestCapture.snapshot(clientReq.headers['content-type']),
         },
         response: {
           headers: redactHeaders(clientRes.getHeaders() as Record<string, unknown>),
@@ -1882,7 +1908,9 @@ ${shouldAutoRefresh ? `;(function(){
           if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
         });
         proxyRes.on('end', () => {
-          const bodyPreview = Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
+          const bodyPreview = isBinaryContentType(contentType)
+            ? ''
+            : Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
           if (shouldLogApiFailure) {
             console.warn(
               `[proxy] api upstream ${statusCode}: ${clientReq.method || 'GET'} ${reqUrl} → ${upstream} (host=${clientReq.headers.host || ''}, branch=${branchCtx?.branchId || 'unknown'}, requestId=${String(proxyRes.headers['x-cds-request-id'] || clientReq.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${String(contentType || '-')})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,
@@ -1903,7 +1931,7 @@ ${shouldAutoRefresh ? `;(function(){
       // 转发日志：明确记录上游错误类型，方便用户看到"502 但服务器无日志"时的真实原因
       const codeHintMap: Record<string, string> = {
         ECONNREFUSED: '上游端口未监听 — 容器可能还没启动完，或服务崩溃了。查 container logs。',
-        ECONNRESET: '上游主动断开 — 服务启动到一半挂了，或进程 OOM 被杀。查容器 dmesg / crash dump。',
+        ECONNRESET: '上游主动断开 — 服务启动中退出、被 stop/kill、或真实 OOM。以容器事件里的 OOMKilled/kernel OOM 为准。',
         ETIMEDOUT: '上游不响应 — 可能卡在启动（例如 restore 还没跑完），或进程 hang 住。',
         EHOSTUNREACH: 'Docker 网络不通 — 容器 IP 失效或跨 network 没配好。',
         ENOTFOUND: 'DNS 无法解析 upstream host — 检查 routing rule 里的 host 是否拼错。',

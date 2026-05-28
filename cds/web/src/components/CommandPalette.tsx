@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   CornerDownLeft,
@@ -107,6 +108,7 @@ const STATIC_ACTIONS: ResultItem[] = [
 ];
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
+  const routerNavigate = useNavigate();
   const [query, setQuery] = useState('');
   const [data, setData] = useState<PaletteData>({ projects: [], branches: [] });
   const [loading, setLoading] = useState(false);
@@ -121,7 +123,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       const projects = projectRes.projects || [];
       const branchLists = await Promise.all(
         projects.map((project) =>
-          apiRequest<{ branches: BranchRow[] }>(`/api/branches?project=${encodeURIComponent(project.id)}`).catch(
+          apiRequest<{ branches: BranchRow[] }>(`/api/branches?project=${encodeURIComponent(project.id)}&live=false`).catch(
             () => ({ branches: [] as BranchRow[] }),
           ),
         ),
@@ -206,9 +208,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     (item: ResultItem) => {
       if (!item.href) return;
       onClose();
-      window.location.href = item.href;
+      routerNavigate(item.href);
     },
-    [onClose],
+    [onClose, routerNavigate],
   );
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {

@@ -51,6 +51,7 @@ import {
   HardHat,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
 
 interface ToolCardProps {
   item: ToolboxItem;
@@ -68,7 +69,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Code2, Languages, FileSearch, BarChart3,
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
-  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
+  GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,   Swords,
+  PaSecretary,
 };
 
 const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
@@ -104,6 +106,8 @@ const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
   Search:       { from: '#14B8A6', soft: '#5EEAD4' },
   Layers:       { from: '#8B5CF6', soft: '#C4B5FD' },
   Swords:       { from: '#F97316', soft: '#FDBA74' },
+  // 毒舌秘书：科幻深蓝 + 青色高光，与 PaAgentCardArt 内联插画呼应
+  PaSecretary:  { from: '#2563EB', soft: '#67E8F9' },
 };
 
 /** Agent 封面图 CDN 路径映射 */
@@ -158,6 +162,8 @@ function getPalette(iconName: string) {
 
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
+import { PaAgentCardArt } from './PaAgentCardArt';
+import { useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
 
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const {
@@ -178,10 +184,16 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
+  const isPaAgent = item.agentKey === 'pa-agent';
+  const paPrimaryCopy = '把模糊想法转成 MECE 执行清单的 MBB 级私人助理';
   const isCustomized = !!item.routePath;
   const favorited = isFavorite(item.id);
-  const coverUrl = getCoverImageUrl(item.agentKey);
-  const videoUrl = getCoverVideoUrl(item.agentKey);
+  // 资源解析优先级：上传图 (homepageAssetsStore) > CDN 默认硬编码
+  // —— 与首页 FeaturedCard 行为一致，运维上传 `agent.{key}.image/.video` 后自动覆盖
+  const uploadedCover = useAgentImageUrl(item.agentKey);
+  const uploadedVideo = useAgentVideoUrl(item.agentKey);
+  const coverUrl = uploadedCover ?? getCoverImageUrl(item.agentKey);
+  const videoUrl = uploadedVideo ?? getCoverVideoUrl(item.agentKey);
   const [coverFailed, setCoverFailed] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
@@ -384,9 +396,28 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         '--toolbox-accent-line': `${palette.from}66`,
       } as React.CSSProperties}
     >
-      {/* Cover visual — 内联插画 / CDN 图片 / 渐变兜底 */}
+      {/* Cover visual — 内联插画 / 上传图 / CDN 默认 / 渐变兜底
+          毒舌秘书：用户没上传图时走 PaAgentCardArt 内联插画（无 CDN 也能用），
+          上传后立即走上传图（uploadedCover 优先于硬编码 CDN）。视频规则不变。 */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
+        <>
+          <PaAgentCardArt />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="toolbox-card-media absolute inset-0 w-full h-full object-cover z-[1] transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : coverUrl && !coverFailed ? (
         <>
           <img
@@ -578,10 +609,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         </div>
 
         {/* 描述 */}
-        <div
-          className="toolbox-card-description text-token-secondary text-[11px] line-clamp-1 leading-snug mb-2 transition-colors duration-300"
-        >
-          {item.description}
+        <div className="toolbox-card-description text-token-secondary text-[11px] line-clamp-1 leading-snug mb-2 transition-colors duration-300">
+          {isPaAgent ? paPrimaryCopy : item.description}
         </div>
 
         {/* Tags — 可点击进行过滤 */}
@@ -622,7 +651,21 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         <div
           className="toolbox-card-footer flex items-center justify-between gap-1 pt-1.5"
         >
-          {(isOwnCustomCard || isMarketplaceCard) ? (
+          {isPaAgent ? (
+            <div className="flex items-center gap-1 min-w-0">
+              <span
+                className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                style={{
+                  background: 'rgba(59,130,246,0.2)',
+                  color: '#93c5fd',
+                  border: '1px solid rgba(59,130,246,0.45)',
+                }}
+                title="定位：私人助理"
+              >
+                私人助理
+              </span>
+            </div>
+          ) : (isOwnCustomCard || isMarketplaceCard) ? (
             <>
               {/* 用户创建的智能体：左侧 头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">

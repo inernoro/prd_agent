@@ -162,7 +162,10 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 Level = level,
                 Source = source,
                 TargetUserId = targetUserId,
-                Status = "open"
+                Status = "open",
+                // 故障转移是「持续到恢复为止」的运营告警:就地更新 + 恢复时由 CloseNotificationByKeyAsync 关闭。
+                // 显式置空覆盖 AdminNotification 的 7 天默认过期,避免未恢复的故障 7 天后从首页静默消失。
+                ExpiresAt = null
             };
 
             await _db.AdminNotifications.InsertOneAsync(notification, cancellationToken: ct);

@@ -3,6 +3,9 @@ import type { IShellExecutor } from '../types.js';
 import type { ServerEventLogSink, ServerEventSeverity } from './server-event-log-store.js';
 
 const DEFAULT_UNITS = ['cds-master.service', 'cds-forwarder.service'];
+const DEFAULT_JOURNAL_PRIORITY = 'warning..alert';
+const MAX_TAIL_QUEUE_LINES = 2000;
+const TAIL_PROCESS_BATCH = 100;
 
 function severityFromJournal(priority: unknown, message: string): ServerEventSeverity {
   const p = Number(priority);
@@ -16,7 +19,7 @@ function severityFromJournal(priority: unknown, message: string): ServerEventSev
   return 'info';
 }
 
-function shouldRecordJournalMessage(severity: ServerEventSeverity, message: string): boolean {
+export function shouldRecordJournalMessage(severity: ServerEventSeverity, message: string): boolean {
   if (severity !== 'info') return true;
   const lower = message.toLowerCase();
   if (/persistent .* enabled|listening on|worker proxy listening|started cds-|stopped cds-/.test(lower)) return true;
@@ -27,7 +30,7 @@ function shouldRecordJournalMessage(severity: ServerEventSeverity, message: stri
   return false;
 }
 
-function parseJournalLine(line: string): Record<string, unknown> | null {
+export function parseJournalLine(line: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(line);
     return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
@@ -36,11 +39,23 @@ function parseJournalLine(line: string): Record<string, unknown> | null {
   }
 }
 
+export function journalPriorityArgs(): string[] {
+  const value = (process.env.CDS_JOURNAL_PRIORITY || DEFAULT_JOURNAL_PRIORITY).trim();
+  if (!value || value.toLowerCase() === 'all') return [];
+  return ['-p', value];
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export class SystemLogMonitor {
   private child: ChildProcess | null = null;
   private stopping = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private seenCursors = new Set<string>();
+  private tailQueue: string[] = [];
+  private tailDrainScheduled = false;
 
   constructor(
     private readonly shell: IShellExecutor,
@@ -67,8 +82,9 @@ export class SystemLogMonitor {
     if (!this.store) return;
     const since = process.env.CDS_JOURNAL_BACKFILL_SINCE || '15 minutes ago';
     const unitFlags = this.units.map((unit) => `-u ${unit}`).join(' ');
+    const priorityFlags = journalPriorityArgs().map(shellQuote).join(' ');
     const result = await this.shell.exec(
-      `journalctl ${unitFlags} --since ${JSON.stringify(since)} -o json --no-pager`,
+      `journalctl ${unitFlags}${priorityFlags ? ` ${priorityFlags}` : ''} --since ${JSON.stringify(since)} -o json --no-pager`,
       { timeout: 8000 },
     );
     if (result.exitCode !== 0) {
@@ -91,6 +107,7 @@ export class SystemLogMonitor {
     if (this.stopping || !this.store) return;
     const args = [
       ...this.units.flatMap((unit) => ['-u', unit]),
+      ...journalPriorityArgs(),
       '-f',
       '-n',
       '0',
@@ -106,7 +123,8 @@ export class SystemLogMonitor {
       const lines = stdoutBuffer.split(/\r?\n/);
       stdoutBuffer = lines.pop() || '';
       for (const line of lines) {
-        if (line.trim()) this.recordLine(line.trim(), 'journal.tail');
+        const trimmed = line.trim();
+        if (trimmed) this.enqueueTailLine(trimmed);
       }
     });
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -141,6 +159,38 @@ export class SystemLogMonitor {
       });
       this.restartTimer = setTimeout(() => this.spawnTail(), 5000);
     });
+  }
+
+  private enqueueTailLine(line: string): void {
+    this.tailQueue.push(line);
+    if (this.tailQueue.length > MAX_TAIL_QUEUE_LINES) {
+      this.tailQueue.splice(0, this.tailQueue.length - MAX_TAIL_QUEUE_LINES);
+      this.store?.record({
+        category: 'system',
+        severity: 'warn',
+        source: 'journalctl',
+        action: 'tail.backpressure',
+        message: `journalctl tail queue exceeded ${MAX_TAIL_QUEUE_LINES}; dropped oldest lines to protect CDS control plane`,
+      });
+    }
+    if (!this.tailDrainScheduled) {
+      this.tailDrainScheduled = true;
+      setImmediate(() => this.drainTailQueue());
+    }
+  }
+
+  private drainTailQueue(): void {
+    this.tailDrainScheduled = false;
+    if (this.stopping || !this.store) {
+      this.tailQueue = [];
+      return;
+    }
+    const batch = this.tailQueue.splice(0, TAIL_PROCESS_BATCH);
+    for (const line of batch) this.recordLine(line, 'journal.tail');
+    if (this.tailQueue.length > 0) {
+      this.tailDrainScheduled = true;
+      setImmediate(() => this.drainTailQueue());
+    }
   }
 
   private recordLine(line: string, action: string): void {

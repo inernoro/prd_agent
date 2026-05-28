@@ -3,17 +3,20 @@
  *
  * 路径：/s/lib/:token （统一分享路由，对齐 /s/wp/、/s/skill/）
  *
- * 与 LibraryStoreDetailPage 同源（复用 LibraryDocReader + claymorphism 外壳），
- * 区别在于数据走 token 门禁的匿名端点，可展示「私有库的分享」，且支持两种范围：
+ * 数据层走 main 的 token 门禁匿名端点（getDocStoreShareView / listDocStoreShareEntries /
+ * getDocStoreShareEntryContent），可展示「私有库的分享」，支持两种范围：
  *   - 整库分享（entryId 为空）：文件树 + 全部文档只读浏览
  *   - 单篇分享（entryId 非空）：只展示那一篇
+ *
+ * 呈现采用极简深色风（对齐网页托管分享页 ShareViewPage 的观感）：
+ *   #0a0a0a 深色壳 + 玻璃顶栏（作者 + 标题）+ 低饱和简介条 + 深色阅读器。
  * 全屏渲染，不依赖登录。
  */
 import { useEffect, useState, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
-import { BookOpen, Eye, Library, FileText, AlertCircle } from 'lucide-react';
-import { LibraryDocReader } from './LibraryDocReader';
-import type { LibraryDocReaderPreview } from './LibraryDocReader';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText } from 'lucide-react';
+import { LibraryShareReader } from './LibraryShareReader';
+import type { LibraryShareReaderPreview } from './LibraryShareReader';
 import {
   getDocStoreShareView,
   listDocStoreShareEntries,
@@ -22,27 +25,12 @@ import {
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 
-function useFredokaFonts() {
-  useEffect(() => {
-    const id = 'library-claymorphism-fonts';
-    if (document.getElementById(id)) return;
-    const link = document.createElement('link');
-    link.id = id;
-    link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap';
-    document.head.appendChild(link);
-  }, []);
-}
-
-const BG = {
-  background: '#FEF3C7',
-  fontFamily: "'Nunito', system-ui, sans-serif",
-  color: '#1E1B4B',
-} as const;
+const PAGE_BG = '#0a0a0a';
+const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export function LibraryShareViewPage() {
   const { token } = useParams<{ token: string }>();
-  useFredokaFonts();
+  const navigate = useNavigate();
 
   const [view, setView] = useState<DocStoreShareView | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -67,7 +55,7 @@ export function LibraryShareViewPage() {
     return () => { mounted = false; };
   }, [token]);
 
-  const loadContent = useCallback(async (entryId: string): Promise<LibraryDocReaderPreview | null> => {
+  const loadContent = useCallback(async (entryId: string): Promise<LibraryShareReaderPreview | null> => {
     if (!token) return null;
     const res = await getDocStoreShareEntryContent(token, entryId);
     if (!res.success) return null;
@@ -80,7 +68,7 @@ export function LibraryShareViewPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={BG}>
+      <div style={{ height: '100vh', background: PAGE_BG, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <MapSectionLoader text="正在打开分享..." />
       </div>
     );
@@ -88,133 +76,112 @@ export function LibraryShareViewPage() {
 
   if (error || !view) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-5 px-6 text-center" style={BG}>
-        <div
-          className="w-20 h-20 rounded-3xl flex items-center justify-center"
-          style={{ background: '#FEF3C7', border: '4px solid #1E1B4B', boxShadow: '6px 6px 0 #1E1B4B' }}
-        >
-          <AlertCircle size={32} style={{ color: '#DC2626' }} strokeWidth={2.5} />
+      <div style={{ height: '100vh', background: PAGE_BG, fontFamily: SANS, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: '50%',
+          background: 'rgba(239, 68, 68, 0.15)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <AlertCircle size={30} color="rgba(239, 68, 68, 0.9)" />
         </div>
-        <p className="text-[16px] font-semibold" style={{ color: '#64748B' }}>
+        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 15, margin: 0 }}>
           {error ?? '分享链接不存在或已撤销'}
         </p>
+        <button
+          onClick={() => navigate('/library')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)',
+            background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
+            fontSize: 13, cursor: 'pointer',
+          }}
+        >
+          去智识殿堂逛逛 <ArrowRight size={14} />
+        </button>
       </div>
     );
   }
 
+  const store = view.store;
   const isSingleDoc = Boolean(view.entryId);
-  const headerTitle = isSingleDoc ? (view.entryTitle ?? view.store.name) : view.store.name;
+  const title = isSingleDoc ? (view.entryTitle ?? store.name) : (view.title || store.name);
+  const desc = view.description || store.description;
+  const hasMeta = Boolean(desc) || (!isSingleDoc && store.documentCount > 0) || store.viewCount > 0;
 
   return (
-    <div className="min-h-screen w-full overflow-y-auto" style={BG}>
-      {/* 顶部悬浮 Navbar */}
-      <nav className="z-50 px-4 md:px-6" style={{ position: 'fixed', top: 24, left: 0, right: 0 }}>
-        <div
-          className="max-w-6xl mx-auto rounded-[28px] px-5 md:px-6 py-3 flex items-center gap-4"
-          style={{ background: '#FFFFFF', border: '4px solid #1E1B4B', boxShadow: '0 6px 0 #1E1B4B' }}
-        >
-          <div
-            className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
-            style={{ background: '#FECACA', border: '3px solid #1E1B4B', boxShadow: '0 3px 0 #1E1B4B' }}
-          >
-            <BookOpen size={20} style={{ color: '#DC2626' }} strokeWidth={2.8} />
-          </div>
-          <span
-            className="text-[18px] md:text-[20px] font-black hidden sm:inline"
-            style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
-          >
-            知识库 · 分享
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: SANS }}>
+      {/* 顶栏：深色玻璃（借鉴网页托管 ShareViewPage） */}
+      <div style={{
+        padding: '10px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 16,
+        background: 'rgba(17, 17, 17, 0.85)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" style={{ flexShrink: 0 }} />
+          {view.createdByName && (
+            <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
+              {view.createdByName}
+            </span>
+          )}
+          <span style={{
+            color: '#fff', fontSize: 14, fontWeight: 500,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
+          }}>
+            {view.createdByName ? `分享给你的「${title}」` : title}
           </span>
           <span
-            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold flex-shrink-0"
-            style={{ background: '#FEF3C7', border: '2px solid #D97706', color: '#78350F' }}
-            title="本页是点对点分享，不是殿堂；只有持此链接者可看"
+            className="hidden sm:inline-flex"
+            style={{
+              alignItems: 'center', gap: 4, flexShrink: 0,
+              padding: '2px 8px', borderRadius: 999,
+              background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.45)',
+              fontSize: 11, fontWeight: 600,
+            }}
           >
-            私有分享 · 仅持链接者可看
+            {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
-          <div
-            className="flex-1 text-center text-[13px] md:text-[14px] font-bold truncate hidden md:block"
-            style={{ color: '#64748B' }}
-          >
-            分享 · <span style={{ color: '#1E1B4B' }}>{headerTitle}</span>
-          </div>
         </div>
-      </nav>
+      </div>
 
-      {/* Hero 头部 */}
-      <section className="relative pt-32 pb-8 px-6">
-        <div className="max-w-6xl mx-auto">
-          <div
-            className="p-8 rounded-[32px] relative"
-            style={{ background: '#FFFFFF', border: '4px solid #1E1B4B', boxShadow: '8px 8px 0 #1E1B4B' }}
-          >
-            <div className="flex flex-col md:flex-row items-start gap-6">
-              <div
-                className="w-24 h-24 rounded-3xl flex items-center justify-center flex-shrink-0"
-                style={{ background: '#FEF3C7', border: '4px solid #F59E0B', boxShadow: '0 5px 0 #D97706' }}
-              >
-                {isSingleDoc
-                  ? <FileText size={42} style={{ color: '#D97706' }} strokeWidth={2.5} />
-                  : <Library size={42} style={{ color: '#D97706' }} strokeWidth={2.5} />}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  <span
-                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-bold"
-                    style={{ background: '#D1FAE5', border: '2.5px solid #10B981', boxShadow: '0 2px 0 #059669', color: '#064E3B' }}
-                  >
-                    {isSingleDoc ? 'SHARED DOCUMENT' : 'SHARED LIBRARY'}
-                  </span>
-                  {!isSingleDoc && (
-                    <span className="text-[12px] font-bold" style={{ color: '#64748B' }}>
-                      · {view.store.documentCount} 篇文档
-                    </span>
-                  )}
-                </div>
-                <h1
-                  className="text-[32px] md:text-[44px] font-bold leading-tight mb-3"
-                  style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
-                >
-                  {headerTitle}
-                </h1>
-                {view.description && (
-                  <p className="text-[15px] mb-5 max-w-3xl font-medium" style={{ color: '#475569', lineHeight: 1.6 }}>
-                    {view.description}
-                  </p>
-                )}
-                <div className="flex items-center gap-4 flex-wrap text-[12px] font-semibold" style={{ color: '#64748B' }}>
-                  {view.createdByName && (
-                    <span className="flex items-center gap-2">
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold"
-                        style={{ background: '#FCE7F3', border: '2px solid #EC4899', color: '#831843' }}
-                      >
-                        {view.createdByName.charAt(0)}
-                      </div>
-                      <span style={{ color: '#1E1B4B' }}>{view.createdByName}</span>
-                    </span>
-                  )}
-                  <span className="flex items-center gap-1.5">
-                    <Eye size={13} strokeWidth={2.8} /> {view.store.viewCount} 次浏览
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
+      {/* 简介条：低饱和度，不抢阅读 */}
+      {hasMeta && (
+        <div style={{
+          padding: '8px 16px',
+          display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+          background: 'rgba(255,255,255,0.012)',
+          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          flexShrink: 0,
+          fontSize: 12,
+          color: 'rgba(255,255,255,0.4)',
+        }}>
+          <BookOpen size={12} style={{ flexShrink: 0 }} />
+          {desc && (
+            <span style={{ color: 'rgba(255,255,255,0.55)', maxWidth: 640, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {desc}
+            </span>
+          )}
+          {!isSingleDoc && <span>{store.documentCount} 篇文档</span>}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Eye size={12} /> {store.viewCount} 次浏览
+          </span>
         </div>
-      </section>
+      )}
 
-      {/* 文档阅读器 */}
-      <section className="relative px-6 pb-16">
-        <div className="max-w-6xl mx-auto" style={{ height: 'calc(100vh - 320px)', minHeight: 560 }}>
-          <LibraryDocReader
-            entries={entries}
-            primaryEntryId={view.entryId ?? view.store.primaryEntryId}
-            pinnedEntryIds={view.store.pinnedEntryIds ?? []}
-            loadContent={loadContent}
-          />
-        </div>
-      </section>
+      {/* 阅读器填满剩余高度（深色） */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <LibraryShareReader
+          entries={entries}
+          primaryEntryId={view.entryId ?? store.primaryEntryId}
+          pinnedEntryIds={store.pinnedEntryIds ?? []}
+          loadContent={loadContent}
+        />
+      </div>
     </div>
   );
 }

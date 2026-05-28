@@ -23,6 +23,12 @@ export interface ServerEventRecord {
   oomKilled?: boolean | null;
   upstream?: string | null;
   requestId?: string | null;
+  operationId?: string | null;
+  operationKind?: string | null;
+  operationTrigger?: string | null;
+  operationActor?: string | null;
+  operationSource?: string | null;
+  commitSha?: string | null;
   docker?: Record<string, unknown>;
   inspect?: Record<string, unknown>;
   command?: {
@@ -56,6 +62,8 @@ export interface ServerEventLogStoreOptions {
 
 export interface ServerEventLogSink {
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void;
+  recordImmediate?(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): Promise<void>;
+  flush?(): Promise<void>;
   findRecent?(filter?: {
     limit?: number;
     category?: ServerEventCategory;
@@ -68,6 +76,12 @@ export interface ServerEventLogSink {
     profileId?: string;
     projectId?: string;
     requestId?: string;
+    operationId?: string;
+    operationKind?: string;
+    operationTrigger?: string;
+    operationActor?: string;
+    operationSource?: string;
+    commitSha?: string;
     since?: Date | string;
   }): Promise<ServerEventRecord[]>;
 }
@@ -77,31 +91,114 @@ const DEFAULT_RETENTION_DAYS = 14;
 const DEFAULT_MAX_DOCUMENTS = 100_000;
 const MAX_TEXT_BYTES = 16 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
+const MAX_ARRAY_ITEMS = 100;
+const MAX_OBJECT_KEYS = 100;
+const MAX_OBJECT_DEPTH = 8;
 const SEVERITY_RANK: Record<ServerEventSeverity, number> = { info: 10, warn: 20, error: 30 };
 
 function truncateUtf8(value: string, maxBytes: number): string {
   const masked = maskSecrets(value, { mask: true });
   const buf = Buffer.from(masked);
   if (buf.length <= maxBytes) return masked;
-  let text = buf.subarray(0, maxBytes).toString('utf8');
-  while (Buffer.byteLength(text, 'utf8') > maxBytes) text = text.slice(0, -1);
-  return `${text}\n[cds server event log truncated: original ${buf.length} bytes]`;
+  const suffix = `\n[cds server event log truncated: original ${buf.length} bytes]`;
+  const textBudget = Math.max(0, maxBytes - Buffer.byteLength(suffix, 'utf8'));
+  let text = buf.subarray(0, textBudget).toString('utf8');
+  while (Buffer.byteLength(text, 'utf8') > textBudget) text = text.slice(0, -1);
+  return `${text}${suffix}`;
 }
 
-function compactObject(value: unknown): unknown {
+export function compactServerEventValue(value: unknown, depth = 0): unknown {
   if (value == null) return value;
   if (typeof value === 'string') return truncateUtf8(value, MAX_TEXT_BYTES);
   if (typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.slice(0, 100).map(compactObject);
+  if (depth >= MAX_OBJECT_DEPTH) return '[cds server event log truncated: max depth reached]';
+  if (Array.isArray(value)) {
+    const out = value.slice(0, MAX_ARRAY_ITEMS).map((item) => compactServerEventValue(item, depth + 1));
+    if (value.length > MAX_ARRAY_ITEMS) {
+      out.push(`[cds server event log truncated: ${value.length - MAX_ARRAY_ITEMS} array item(s) omitted]`);
+    }
+    return out;
+  }
   const out: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [key, raw] of entries.slice(0, MAX_OBJECT_KEYS)) {
     if (/env|password|token|secret|credential|authorization|cookie/i.test(key)) {
       out[key] = '[redacted]';
     } else {
-      out[key] = compactObject(raw);
+      out[key] = compactServerEventValue(raw, depth + 1);
     }
   }
+  if (entries.length > MAX_OBJECT_KEYS) {
+    out.__cds_truncated_keys = `${entries.length - MAX_OBJECT_KEYS} object key(s) omitted`;
+  }
   return out;
+}
+
+function resolveOperationId(record: { operationId?: string | null; details?: Record<string, unknown> }): string | null | undefined {
+  if (typeof record.operationId === 'string' && record.operationId.trim()) return record.operationId.trim();
+  const nested = record.details?.operationId;
+  return typeof nested === 'string' && nested.trim() ? nested.trim() : record.operationId;
+}
+
+function resolveStringField(
+  record: Record<string, unknown>,
+  field: string,
+  detailField = field,
+): string | null | undefined {
+  const direct = record[field];
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const details = record.details;
+  if (!details || typeof details !== 'object') return direct == null ? direct as null | undefined : undefined;
+  const nested = (details as Record<string, unknown>)[detailField];
+  return typeof nested === 'string' && nested.trim() ? nested.trim() : direct as null | undefined;
+}
+
+export function buildServerEventQuery(filter: {
+  category?: ServerEventCategory;
+  severity?: ServerEventSeverity;
+  minSeverity?: ServerEventSeverity;
+  source?: string;
+  action?: string;
+  containerName?: string;
+  branchId?: string;
+  profileId?: string;
+  projectId?: string;
+  requestId?: string;
+  operationId?: string;
+  operationKind?: string;
+  operationTrigger?: string;
+  operationActor?: string;
+  operationSource?: string;
+  commitSha?: string;
+  since?: Date | string;
+} = {}): Record<string, unknown> {
+  const query: Record<string, unknown> = {};
+  if (filter.category) query.category = filter.category;
+  if (filter.severity) query.severity = filter.severity;
+  if (filter.source) query.source = filter.source;
+  if (filter.action) query.action = filter.action;
+  if (filter.containerName) query.containerName = filter.containerName;
+  if (filter.branchId) query.branchId = filter.branchId;
+  if (filter.profileId) query.profileId = filter.profileId;
+  if (filter.projectId) query.projectId = filter.projectId;
+  if (filter.requestId) query.requestId = filter.requestId;
+  if (filter.operationKind) query.operationKind = filter.operationKind;
+  if (filter.operationTrigger) query.operationTrigger = filter.operationTrigger;
+  if (filter.operationActor) query.operationActor = filter.operationActor;
+  if (filter.operationSource) query.operationSource = filter.operationSource;
+  if (filter.commitSha) query.commitSha = filter.commitSha;
+  if (filter.operationId) {
+    query.$or = [
+      { operationId: filter.operationId },
+      { 'details.operationId': filter.operationId },
+    ];
+  }
+  if (filter.since) query.ts = { $gte: new Date(filter.since) };
+  if (filter.minSeverity) {
+    const min = SEVERITY_RANK[filter.minSeverity];
+    query.severity = { $in: Object.entries(SEVERITY_RANK).filter(([, rank]) => rank >= min).map(([sev]) => sev) };
+  }
+  return query;
 }
 
 export function createServerEventId(): string {
@@ -153,22 +250,54 @@ export class ServerEventLogStore implements ServerEventLogSink {
       this.collection.createIndex({ severity: 1, ts: -1 }, { name: 'severity_ts_desc' }),
       this.collection.createIndex({ containerName: 1, ts: -1 }, { name: 'container_ts_desc' }),
       this.collection.createIndex({ branchId: 1, ts: -1 }, { name: 'branch_ts_desc' }),
+      this.collection.createIndex({ profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
       this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
+      this.collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
+      this.collection.createIndex({ 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
+      this.collection.createIndex({ operationTrigger: 1, ts: -1 }, { name: 'operationTrigger_ts_desc', sparse: true }),
+      this.collection.createIndex({ operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
+      this.collection.createIndex({ commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
       this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
 
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
     if (!this.collection) return;
-    const doc: ServerEventRecord = {
+    const doc = this.buildDocument(record);
+
+    this.chain = this.chain
+      .catch(() => { /* keep chain alive */ })
+      .then(async () => {
+        await this.collection!.insertOne(doc);
+        this.schedulePrune();
+      })
+      .catch((err) => {
+        console.warn(`[server-event-log] write failed: ${(err as Error).message}`);
+      });
+  }
+
+  async recordImmediate(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): Promise<void> {
+    if (!this.collection) return;
+    await this.collection.insertOne(this.buildDocument(record));
+    this.schedulePrune();
+  }
+
+  private buildDocument(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): ServerEventRecord {
+    return {
       ...record,
       _id: `${createServerEventId()}:${Date.now()}`,
       ts: record.ts ? new Date(record.ts) : new Date(),
       severity: record.severity,
+      operationId: resolveOperationId(record),
+      operationKind: resolveStringField(record as Record<string, unknown>, 'operationKind', 'kind'),
+      operationTrigger: resolveStringField(record as Record<string, unknown>, 'operationTrigger', 'trigger'),
+      operationActor: resolveStringField(record as Record<string, unknown>, 'operationActor', 'actor'),
+      operationSource: resolveStringField(record as Record<string, unknown>, 'operationSource', 'source'),
+      commitSha: resolveStringField(record as Record<string, unknown>, 'commitSha'),
       message: record.message ? truncateUtf8(record.message, MAX_TEXT_BYTES) : undefined,
-      docker: record.docker ? compactObject(record.docker) as Record<string, unknown> : undefined,
-      inspect: record.inspect ? compactObject(record.inspect) as Record<string, unknown> : undefined,
-      details: record.details ? compactObject(record.details) as Record<string, unknown> : undefined,
+      docker: record.docker ? compactServerEventValue(record.docker) as Record<string, unknown> : undefined,
+      inspect: record.inspect ? compactServerEventValue(record.inspect) as Record<string, unknown> : undefined,
+      details: record.details ? compactServerEventValue(record.details) as Record<string, unknown> : undefined,
       command: record.command
         ? {
           name: record.command.name,
@@ -190,16 +319,6 @@ export class ServerEventLogStore implements ServerEventLogSink {
         }
         : undefined,
     };
-
-    this.chain = this.chain
-      .catch(() => { /* keep chain alive */ })
-      .then(async () => {
-        await this.collection!.insertOne(doc);
-        this.schedulePrune();
-      })
-      .catch((err) => {
-        console.warn(`[server-event-log] write failed: ${(err as Error).message}`);
-      });
   }
 
   async findRecent(filter: {
@@ -214,24 +333,16 @@ export class ServerEventLogStore implements ServerEventLogSink {
     profileId?: string;
     projectId?: string;
     requestId?: string;
+    operationId?: string;
+    operationKind?: string;
+    operationTrigger?: string;
+    operationActor?: string;
+    operationSource?: string;
+    commitSha?: string;
     since?: Date | string;
   } = {}): Promise<ServerEventRecord[]> {
     if (!this.collection) return [];
-    const query: Record<string, unknown> = {};
-    if (filter.category) query.category = filter.category;
-    if (filter.severity) query.severity = filter.severity;
-    if (filter.source) query.source = filter.source;
-    if (filter.action) query.action = filter.action;
-    if (filter.containerName) query.containerName = filter.containerName;
-    if (filter.branchId) query.branchId = filter.branchId;
-    if (filter.profileId) query.profileId = filter.profileId;
-    if (filter.projectId) query.projectId = filter.projectId;
-    if (filter.requestId) query.requestId = filter.requestId;
-    if (filter.since) query.ts = { $gte: new Date(filter.since) };
-    if (filter.minSeverity) {
-      const min = SEVERITY_RANK[filter.minSeverity];
-      query.severity = { $in: Object.entries(SEVERITY_RANK).filter(([, rank]) => rank >= min).map(([sev]) => sev) };
-    }
+    const query = buildServerEventQuery(filter);
     const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
     return await this.collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
   }

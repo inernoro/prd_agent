@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
@@ -70,6 +71,7 @@ const SSE_FAIL_THRESHOLD_COUNT = 3;
 const SSE_FAIL_THRESHOLD_MS = 30_000;
 
 export function GlobalUpdateBadge(): JSX.Element | null {
+  const navigate = useNavigate();
   const [state, setState] = useState<BadgeState>({ kind: 'idle' });
   // 2026-05-06 用户反馈"我要的是常开":徽章默认就展开显示完整状态,鼠标移开
   // 也不主动收。要让它收只能点 X 关闭(dismiss 1h)。Pin 按钮变成"自动收起切换"
@@ -269,6 +271,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           const r = await fetch('/api/self-status?probe=remote', {
             credentials: 'include',
             cache: 'no-store',
+            headers: { 'X-CDS-Poll': 'true' },
           });
           if (r.ok) {
             const data = (await r.json()) as SelfStatusLite;
@@ -439,6 +442,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         const r = await fetch('/api/self-status?probe=remote', {
           credentials: 'include',
           cache: 'no-store',
+          headers: { 'X-CDS-Poll': 'true' },
           signal: ctrl.signal,
         });
         if (!r.ok || cancelled) return;
@@ -598,7 +602,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   if (!visible) return null;
 
-  const visual = visualForState(state, { onRetry: () => { void triggerManualRefresh(); } });
+  const visual = visualForState(state, {
+    onRetry: () => { void triggerManualRefresh(); },
+    onNavigate: navigate,
+  });
 
   // 2026-05-07 wave 3.2:重启 overlay — restarting 状态超过 5s 时显示全屏
   // 半透明 backdrop,让用户更明确感知"等几秒"。<5s 时只 banner,避免抖动。
@@ -710,7 +717,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
 function visualForState(
   state: Exclude<BadgeState, { kind: 'idle' }>,
-  opts: { onRetry: () => void } = { onRetry: () => {} },
+  opts: { onRetry: () => void; onNavigate: (to: string) => void } = {
+    onRetry: () => {},
+    onNavigate: (to) => { window.location.href = to; },
+  },
 ): {
   icon: JSX.Element;
   label: string;
@@ -744,7 +754,7 @@ function visualForState(
         borderClass: 'border-amber-500/40',
         textClass: 'text-amber-700 dark:text-amber-300',
         onClick: () => {
-          window.location.href = '/cds-settings';
+          opts.onNavigate('/cds-settings');
         },
       };
     case 'activeUpdating': {
@@ -763,7 +773,7 @@ function visualForState(
         borderClass: 'border-amber-500/40',
         textClass: 'text-amber-700 dark:text-amber-300',
         onClick: () => {
-          window.location.href = '/cds-settings#maintenance';
+          opts.onNavigate('/cds-settings#maintenance');
         },
       };
     }
@@ -792,7 +802,7 @@ function visualForState(
         borderClass: 'border-red-500/40',
         textClass: 'text-red-700 dark:text-red-300',
         onClick: () => {
-          window.location.href = '/cds-settings';
+          opts.onNavigate('/cds-settings');
         },
       };
     default: {

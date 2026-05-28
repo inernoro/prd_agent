@@ -24,6 +24,7 @@ import {
   type LauncherItem,
   type LauncherGroup,
 } from '@/lib/launcherCatalog';
+import { isPaSecretaryIcon, renderPaSecretaryIconNode } from '@/lib/paSecretaryIconRegistry';
 
 interface Section {
   key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility' | 'infra' | 'menu';
@@ -34,6 +35,7 @@ interface Section {
 }
 
 function getIcon(name: string, size = 18) {
+  if (isPaSecretaryIcon(name)) return renderPaSecretaryIconNode(size);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Icon = (LucideIcons as any)[name] ?? LucideIcons.Circle;
   return <Icon size={size} />;

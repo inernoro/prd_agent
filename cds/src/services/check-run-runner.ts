@@ -21,6 +21,7 @@ import type { StateService } from './state.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import type { BranchEntry, CdsConfig } from '../types.js';
 import { buildPreviewUrl } from './comment-template.js';
+import { previewProjectSlug } from './preview-slug.js';
 
 export interface CheckRunRunnerDeps {
   stateService: StateService;
@@ -246,7 +247,7 @@ export class CheckRunRunner {
     const project = entry.projectId
       ? this.deps.stateService.getProject(entry.projectId)
       : undefined;
-    const projectSlug = project?.slug || entry.projectId;
+    const projectSlug = previewProjectSlug(project, entry.projectId);
     if (!projectSlug) return undefined;
     return buildPreviewUrl(host, entry.branch, projectSlug) || undefined;
   }

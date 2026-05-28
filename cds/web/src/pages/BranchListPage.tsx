@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
   AlertCircle,
@@ -51,6 +51,7 @@ import {
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError } from '@/lib/api';
+import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
@@ -67,6 +68,7 @@ interface ProjectSummary {
   gitRepoUrl?: string;
   gitDefaultBranch?: string | null;
   defaultBranch?: string | null;
+  branchCount?: number;
 }
 
 interface ServiceState {
@@ -185,6 +187,40 @@ interface ActivityEvent {
   userAgent?: string;
 }
 
+interface SlowHttpEndpoint {
+  endpoint: string;
+  method: string;
+  count: number;
+  errorCount: number;
+  errorRate: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  slowest: {
+    ts: string;
+    requestId: string;
+    status: number;
+    durationMs: number;
+    path: string;
+    branchId?: string | null;
+    profileId?: string | null;
+  };
+}
+
+interface SlowHttpResponse {
+  ok: boolean;
+  disabled?: boolean;
+  sampleSize: number;
+  total: number;
+  window?: {
+    newest?: string | null;
+    oldest?: string | null;
+  };
+  endpoints: SlowHttpEndpoint[];
+  message?: string;
+}
+
 interface FocusBranchEventDetail {
   projectId?: string;
   branchId?: string;
@@ -245,6 +281,7 @@ type LoadState =
       status: 'ok';
       project: ProjectSummary;
       branches: BranchSummary[];
+      lastKnownGoodBranches: BranchSummary[];
       remoteBranches: RemoteBranch[];
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
@@ -256,10 +293,46 @@ type LoadState =
       hasSchemafulInfra: boolean;
     };
 
+type OkLoadState = Extract<LoadState, { status: 'ok' }>;
+
+function applyBranchListAction(
+  current: OkLoadState,
+  action: BranchListAction<BranchSummary>,
+): { state: OkLoadState; needsEmptyRecheck: boolean } {
+  const slice: BranchListSlice<BranchSummary> = {
+    branches: current.branches,
+    lastKnownGoodBranches: current.lastKnownGoodBranches,
+    projectWarning: current.projectWarning,
+  };
+  const result = reduceBranchListState(slice, action);
+  return {
+    state: {
+      ...current,
+      branches: result.state.branches,
+      lastKnownGoodBranches: result.state.lastKnownGoodBranches,
+      projectWarning: result.state.projectWarning,
+    },
+    needsEmptyRecheck: result.needsEmptyRecheck,
+  };
+}
+
+function parseSseJson<T>(event: Event): T | null {
+  try {
+    return JSON.parse((event as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
+}
+
 type OpsStatusState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok'; capacity: ExecutorCapacityResponse; cluster: ClusterStatusResponse };
+
+type SlowHttpState =
+  | { status: 'idle' | 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: SlowHttpResponse };
 
 type BranchAction = {
   kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
@@ -364,6 +437,12 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function formatLatency(ms: number): string {
+  if (!Number.isFinite(ms)) return '0ms';
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  return formatDuration(ms);
 }
 
 function formatShortTime(value: string): string {
@@ -494,6 +573,84 @@ function githubAvatarUrlFromHandle(value?: string): string {
   const handle = (value || '').trim().replace(/^@/, '');
   if (!/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i.test(handle)) return '';
   return `https://github.com/${encodeURIComponent(handle)}.png?size=64`;
+}
+
+type AvatarLoadStatus = 'idle' | 'loading' | 'loaded' | 'failed';
+
+const AVATAR_CACHE_STORAGE_KEY = 'cds.branch.avatarLoadStatus.v1';
+const AVATAR_CACHE_MAX_ENTRIES = 160;
+const avatarLoadStatusCache = new Map<string, AvatarLoadStatus>();
+
+function readAvatarStorage(): Record<string, { status: 'loaded' | 'failed'; ts: number }> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(AVATAR_CACHE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAvatarStorage(
+  url: string,
+  status: 'loaded' | 'failed',
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const next = readAvatarStorage();
+    next[url] = { status, ts: Date.now() };
+    const entries = Object.entries(next).sort((a, b) => b[1].ts - a[1].ts).slice(0, AVATAR_CACHE_MAX_ENTRIES);
+    window.localStorage.setItem(AVATAR_CACHE_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {
+    // localStorage may be blocked or full; in-memory cache still avoids same-session flicker.
+  }
+}
+
+function cachedAvatarStatus(url: string): AvatarLoadStatus {
+  if (!url) return 'failed';
+  const memory = avatarLoadStatusCache.get(url);
+  if (memory) return memory;
+  const stored = readAvatarStorage()[url]?.status;
+  if (stored) {
+    avatarLoadStatusCache.set(url, stored);
+    return stored;
+  }
+  return 'idle';
+}
+
+function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
+  if (!url) return;
+  avatarLoadStatusCache.set(url, status);
+  writeAvatarStorage(url, status);
+}
+
+function circularActorText(value: string): string {
+  const base = (value || '').trim() || 'CDS';
+  const compact = base.replace(/\s+/g, '');
+  const clipped = compact.length > 18 ? compact.slice(0, 18) : compact;
+  return `${clipped} • ${clipped} •`;
+}
+
+function CircularActorText({ text }: { text: string }): JSX.Element {
+  const chars = Array.from(circularActorText(text));
+  return (
+    <span className="cds-actor-orbit__ring" aria-hidden>
+      {chars.map((char, index) => {
+        const angle = (360 / chars.length) * index;
+        return (
+          <span
+            // eslint-disable-next-line react/no-array-index-key
+            key={`${char}-${index}`}
+            className="cds-actor-orbit__char"
+            style={{ transform: `rotate(${angle}deg) translateY(-23px) rotate(90deg)` }}
+          >
+            {char}
+          </span>
+        );
+      })}
+    </span>
+  );
 }
 
 function formatBytesFromMB(value?: number): string {
@@ -1040,6 +1197,7 @@ export function BranchListPage(): JSX.Element {
   const [activityBranchFilter, setActivityBranchFilter] = useState('');
   const [selectedActivityId, setSelectedActivityId] = useState<number | null>(null);
   const [opsStatus, setOpsStatus] = useState<OpsStatusState>({ status: 'loading' });
+  const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [hostStats, setHostStats] = useState<HostStatsState>({ status: 'loading' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
@@ -1111,33 +1269,98 @@ export function BranchListPage(): JSX.Element {
   //   - 远程分支由独立 useEffect 触发,首次走 cache(后端 5 分钟内
   //     不再 git fetch),用户主动刷新时才 force refresh
   //   - UI 在远程区独立显示"加载远程分支..."chip,不阻塞主链路
-  const refreshLiveBranches = useCallback(async () => {
+  const confirmEmptyBranchList = useCallback(async (source: string) => {
     if (!projectId) return;
     try {
-      const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
-      setState((prev) => prev.status === 'ok' ? {
-        ...prev,
-        branches: branchesRes.branches || [],
-        capacity: branchesRes.capacity,
-      } : prev);
-    } catch {
-      // 首屏已显示缓存态;后台 live reconcile 失败时保留现状,让 SSE 和手动刷新兜底。
+      const [projectResult, branchesResult] = await Promise.allSettled([
+        apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
+        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
+      ]);
+      if (branchesResult.status === 'rejected') {
+        const message = readableError(branchesResult.reason);
+        setState((prev) => {
+          if (prev.status !== 'ok') return prev;
+          return applyBranchListAction(prev, {
+            type: 'refreshFailed',
+            message: `${source} 复核失败，已保留上次可用内容。${message}`,
+          }).state;
+        });
+        return;
+      }
+      const project = projectResult.status === 'fulfilled' ? projectResult.value : undefined;
+      const projectWarning = projectResult.status === 'rejected'
+        ? `项目元信息复核失败，分支列表已保留当前可用内容。${readableError(projectResult.reason)}`
+        : undefined;
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        const applied = applyBranchListAction(prev, {
+          type: 'authoritativeLoaded',
+          branches: branchesResult.value.branches || [],
+          source,
+          confirmedEmpty: true,
+          projectBranchCount: project?.branchCount,
+          warning: projectWarning,
+        });
+        return {
+          ...applied.state,
+          project: project || prev.project,
+          capacity: branchesResult.value.capacity || prev.capacity,
+          projectWarning: applied.state.projectWarning || projectWarning,
+        };
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        return applyBranchListAction(prev, {
+          type: 'refreshFailed',
+          message: `${source} 复核失败，已保留上次可用内容。${message}`,
+        }).state;
+      });
     }
   }, [projectId]);
 
-  const refresh = useCallback(async (showLoading = false) => {
+  const refreshLiveBranches = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const branchesRes = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
+      let needsEmptyRecheck = false;
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        const applied = applyBranchListAction(prev, {
+          type: 'authoritativeLoaded',
+          branches: branchesRes.branches || [],
+          source: '后台刷新',
+          projectBranchCount: prev.project.branchCount,
+        });
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
+        return {
+          ...applied.state,
+          capacity: branchesRes.capacity,
+        };
+      });
+      if (needsEmptyRecheck) void confirmEmptyBranchList('后台刷新');
+    } catch (err) {
+      const message = readableError(err);
+      setState((prev) => {
+        if (prev.status !== 'ok') return prev;
+        return applyBranchListAction(prev, {
+          type: 'refreshFailed',
+          message: `后台刷新失败，已保留上次可用内容。${message}`,
+        }).state;
+      });
+      // 首屏已显示缓存态;后台快照刷新失败时保留现状,让 SSE 和手动刷新兜底。
+    }
+  }, [confirmEmptyBranchList, projectId]);
+
+  const refresh = useCallback(async (showLoading = false, forceLive = false) => {
     if (!projectId) return;
     if (showLoading) {
       setState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
     }
     try {
-      const fast = showLoading;
-      const branchUrl = fast
-        ? `/api/branches?project=${encodeURIComponent(projectId)}&live=false`
-        : `/api/branches?project=${encodeURIComponent(projectId)}`;
-      const infraUrl = fast
-        ? `/api/infra?project=${encodeURIComponent(projectId)}&live=false`
-        : `/api/infra?project=${encodeURIComponent(projectId)}`;
+      const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
+      const infraUrl = `/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
       const [projectResult, branchesResult, previewModeResult, configResult, infraResult] = await Promise.allSettled([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(branchUrl),
@@ -1150,10 +1373,10 @@ export function BranchListPage(): JSX.Element {
       if (branchesResult.status === 'rejected') {
         const message = readableError(branchesResult.reason);
         setState((prev) => prev.status === 'ok'
-          ? {
-            ...prev,
-            projectWarning: `分支列表刷新失败，已保留上次可用内容。${message}`,
-          }
+          ? applyBranchListAction(prev, {
+            type: 'refreshFailed',
+            message: `分支列表刷新失败，已保留上次可用内容。${message}`,
+          }).state
           : { status: 'error', message });
         return;
       }
@@ -1176,24 +1399,49 @@ export function BranchListPage(): JSX.Element {
       const hasSchemafulInfra = (infraRes.services || []).some((s) =>
         /(mysql|mariadb|postgres)/i.test(`${s.dockerImage || ''} ${s.id || ''}`),
       );
-      setState((prev) => ({
-        status: 'ok',
-        project,
-        branches: branchesRes.branches || [],
-        // 保留之前已加载的远程分支(若有),避免主刷新时远程区闪空
-        remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
-        previewMode: previewModeRes.mode || 'multi',
-        config,
-        capacity: branchesRes.capacity,
-        projectWarning,
-        hasSchemafulInfra,
-      }));
-      if (fast) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
+      let needsEmptyRecheck = false;
+      setState((prev) => {
+        const base: OkLoadState = prev.status === 'ok'
+          ? prev
+          : {
+            status: 'ok',
+            project,
+            branches: [],
+            lastKnownGoodBranches: [],
+            remoteBranches: [],
+            previewMode: previewModeRes.mode || 'multi',
+            config,
+            capacity: branchesRes.capacity,
+            projectWarning,
+            hasSchemafulInfra,
+          };
+        const applied = applyBranchListAction(base, {
+          type: 'authoritativeLoaded',
+          branches: branchesRes.branches || [],
+          source: '分支列表刷新',
+          projectBranchCount: project.branchCount,
+          warning: projectWarning,
+        });
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
+        return {
+          ...applied.state,
+          project,
+          // 保留之前已加载的远程分支(若有),避免主刷新时远程区闪空
+          remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
+          previewMode: previewModeRes.mode || 'multi',
+          config,
+          capacity: branchesRes.capacity,
+          projectWarning: applied.state.projectWarning || projectWarning,
+          hasSchemafulInfra,
+        };
+      });
+      if (needsEmptyRecheck) void confirmEmptyBranchList('分支列表刷新');
+      if (showLoading) window.setTimeout(() => { void refreshLiveBranches(); }, 0);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
-  }, [projectId, refreshLiveBranches]);
+  }, [confirmEmptyBranchList, projectId, refreshLiveBranches]);
 
   const refreshRemoteBranches = useCallback(async (forceFetch = false) => {
     if (!projectId) return;
@@ -1245,11 +1493,29 @@ export function BranchListPage(): JSX.Element {
     }
   }, []);
 
+  const refreshSlowHttp = useCallback(async () => {
+    setSlowHttpState((current) => current.status === 'ok' ? current : { status: 'loading' });
+    try {
+      const data = await apiRequest<SlowHttpResponse>('/api/http-logs/slow?sample=1000&top=10', {
+        headers: { 'X-CDS-Poll': 'true' },
+      });
+      setSlowHttpState({ status: 'ok', data });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setSlowHttpState({ status: 'error', message });
+    }
+  }, []);
+
   useEffect(() => {
+    if (!opsDrawerOpen) return;
     void refreshOpsStatus();
-    const timer = window.setInterval(() => void refreshOpsStatus(), 15_000);
+    void refreshSlowHttp();
+    const timer = window.setInterval(() => {
+      void refreshOpsStatus();
+      void refreshSlowHttp();
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [refreshOpsStatus]);
+  }, [opsDrawerOpen, refreshOpsStatus, refreshSlowHttp]);
 
   const refreshHostStats = useCallback(async () => {
     try {
@@ -1389,58 +1655,84 @@ export function BranchListPage(): JSX.Element {
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
     source.onopen = () => setSseConnected(true);
     source.onerror = () => setSseConnected(false);
-    const upsert = (branch: BranchSummary) => {
+    const applySseAction = (action: BranchListAction<BranchSummary>) => {
+      let needsEmptyRecheck = false;
       setState((current) => {
         if (current.status !== 'ok') return current;
-        const existing = current.branches.find((item) => item.id === branch.id);
-        const branches = existing
-          ? current.branches.map((item) => (item.id === branch.id ? { ...item, ...branch } : item))
-          : [branch, ...current.branches];
-        return { ...current, branches };
+        const applied = applyBranchListAction(current, action);
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
+        return applied.state;
       });
+      if (needsEmptyRecheck) void confirmEmptyBranchList(action.type === 'sseSnapshot' ? action.source : '实时事件');
     };
     source.addEventListener('snapshot', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branches?: BranchSummary[] };
-      setState((current) => (current.status === 'ok' ? { ...current, branches: data.branches || [] } : current));
+      const data = parseSseJson<{ branches?: BranchSummary[]; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: '实时快照' });
+        return;
+      }
+      if (data.projectId && data.projectId !== projectId) return;
+      applySseAction({ type: 'sseSnapshot', branches: data.branches, source: '实时快照' });
     });
     source.addEventListener('branch.created', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (data.branch) upsert(data.branch);
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.created' });
+        return;
+      }
+      if (!data.branch || data.branch.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      if (data.branch) upsert(data.branch);
+      const data = parseSseJson<{ branch?: BranchSummary; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.updated' });
+        return;
+      }
+      if (!data.branch || data.branch.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
     });
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as {
+      const data = parseSseJson<{
         branchId?: string;
+        projectId?: string;
         status?: BranchSummary['status'];
         branch?: BranchSummary;
-      };
+      }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.status' });
+        return;
+      }
       if (!data.branchId || !data.status) return;
-      setState((current) => {
-        if (current.status !== 'ok') return current;
-        return {
-          ...current,
-          branches: current.branches.map((branch) =>
-            branch.id === data.branchId
-              ? { ...branch, ...(data.branch || {}), status: data.status as BranchSummary['status'] }
-              : branch,
-          ),
-        };
+      const eventProjectId = data.branch?.projectId || data.projectId;
+      if (eventProjectId !== projectId) return;
+      if (data.branch) {
+        applySseAction({
+          type: 'sseBranchUpsert',
+          branch: { ...data.branch, status: data.status },
+          projectId,
+        });
+        return;
+      }
+      applySseAction({
+        type: 'sseBranchPatch',
+        branchId: data.branchId,
+        projectId,
+        patch: { status: data.status } as Partial<BranchSummary>,
       });
     });
     source.addEventListener('branch.removed', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string };
+      const data = parseSseJson<{ branchId?: string; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.removed' });
+        return;
+      }
       if (!data.branchId) return;
-      setState((current) => (
-        current.status === 'ok'
-          ? { ...current, branches: current.branches.filter((branch) => branch.id !== data.branchId) }
-          : current
-      ));
+      if (data.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchRemove', branchId: data.branchId, projectId });
     });
     return () => source.close();
-  }, [projectId]);
+  }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1656,7 +1948,7 @@ export function BranchListPage(): JSX.Element {
       });
       let latestBranch: BranchSummary | undefined;
       if (projectId) {
-        const latest = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`);
+        const latest = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
         latestBranch = latest.branches.find((item) => item.id === branch.id);
       }
       const failure = deployFailureMessage(latestBranch);
@@ -1698,11 +1990,11 @@ export function BranchListPage(): JSX.Element {
     }
   }, [appendActionLog, openRunningPreview, projectId, refresh, setAction]);
 
-  const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = true): Promise<void> => {
+  const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
     if (branch.status !== 'running') {
       if (!deployWhenNeeded || isBusy(branch)) {
-        setToast(`${branch.branch} 还未运行`);
+        setToast(`${branch.branch} 还未运行。预览不会自动部署，请手动点击部署。`);
         return;
       }
       const target = openPreviewPlaceholder(branch.branch);
@@ -1831,6 +2123,15 @@ export function BranchListPage(): JSX.Element {
       }
       setAction(branch.id, null);
       setToast(`${branch.branch} 已删除`);
+      setState((current) => (
+        current.status === 'ok'
+          ? applyBranchListAction(current, {
+            type: 'sseBranchRemove',
+            branchId: branch.id,
+            projectId: branch.projectId,
+          }).state
+          : current
+      ));
       if (refreshAfter) await refresh(false);
       return true;
     } catch (err) {
@@ -1975,21 +2276,21 @@ export function BranchListPage(): JSX.Element {
     }
     setAction(branch.id, createAction('rebuild', `正在重新生成 (${profileIds.length} 个服务)`));
     try {
-      for (const profileId of profileIds) {
+      for (const [index, profileId] of profileIds.entries()) {
+        const reserve = index === profileIds.length - 1 ? '?reserveDeploy=1&deployScope=branch' : '';
         await apiRequest(
-          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}`,
+          `/api/branches/${encodeURIComponent(branch.id)}/force-rebuild/${encodeURIComponent(profileId)}${reserve}`,
           { method: 'POST' },
         );
       }
-      setAction(branch.id, null);
-      setToast(`${branch.branch} 已重新生成 (${profileIds.length} 服务)`);
-      await refresh(false);
+      setToast(`${branch.branch} 已清理构建缓存，正在重新部署`);
+      await deployBranch(branch, false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setAction(branch.id, finishAction(actionRef.current[branch.id], 'rebuild', message, 'error'));
       setToast(message);
     }
-  }, [refresh, setAction]);
+  }, [deployBranch, setAction]);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;
@@ -2383,10 +2684,14 @@ export function BranchListPage(): JSX.Element {
     ? Math.max(0, state.capacity.maxContainers - state.capacity.runningContainers)
     : null;
   const selectedCapacityWarning = state.status === 'ok' ? capacityMessage(state.capacity, selectedBranches) : '';
-  const onlineExecutors = opsStatus.status === 'ok' ? opsStatus.capacity.online : 0;
-  const totalExecutors = opsStatus.status === 'ok' ? opsStatus.capacity.online + opsStatus.capacity.offline : 0;
-  const executorFreePercent = opsStatus.status === 'ok' ? Math.round(opsStatus.capacity.freePercent) : 0;
+  const executorCapacity = opsStatus.status === 'ok' ? opsStatus.capacity : null;
+  const executorNodes = Array.isArray(executorCapacity?.nodes) ? executorCapacity.nodes : [];
+  const onlineExecutors = typeof executorCapacity?.online === 'number' ? executorCapacity.online : 0;
+  const offlineExecutors = typeof executorCapacity?.offline === 'number' ? executorCapacity.offline : 0;
+  const totalExecutors = onlineExecutors + offlineExecutors;
+  const executorFreePercent = typeof executorCapacity?.freePercent === 'number' ? Math.round(executorCapacity.freePercent) : 0;
   const clusterMode = opsStatus.status === 'ok' ? opsStatus.cluster.mode : 'unknown';
+  const slowHttpData = slowHttpState.status === 'ok' ? slowHttpState.data : null;
 
   /*
    * Render — Week 4.6 visual rebuild.
@@ -2497,20 +2802,20 @@ export function BranchListPage(): JSX.Element {
             <>
               <PaletteHint />
               <Button asChild variant="ghost" size="sm" title="项目列表">
-                <a href="/project-list">
+                <Link to="/project-list">
                   <ArrowLeft />
                   项目
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm" title="项目设置">
-                <a href={`/settings/${encodeURIComponent(projectId)}`}>
+                <Link to={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
-                </a>
+                </Link>
               </Button>
               <Button asChild variant="ghost" size="sm" title="服务拓扑">
-                <a href={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
+                <Link to={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
                   <Network />
-                </a>
+                </Link>
               </Button>
               <Button
                 variant={failedDeployTargets.length > 0 ? 'outline' : 'ghost'}
@@ -2545,7 +2850,7 @@ export function BranchListPage(): JSX.Element {
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => void refresh(false)}
+                  onClick={() => void refresh(false, true)}
                   aria-label="重新拉取(SSE 已中断)"
                   title="实时连接中断,点击手动刷新"
                   className="text-amber-500 hover:text-amber-600"
@@ -2657,7 +2962,7 @@ export function BranchListPage(): JSX.Element {
                       .slice(0, 5)}
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
-                    onPreview={() => void openPreview(branch, true)}
+                    onPreview={() => void openPreview(branch, false)}
                     onDeploy={() => void deployBranch(branch, false)}
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
                     onPull={() => void pullBranch(branch)}
@@ -2813,6 +3118,65 @@ export function BranchListPage(): JSX.Element {
               <div className="p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
+                    <h2 className="text-sm font-semibold">慢接口排行</h2>
+                    <div className="mt-1 text-xs text-muted-foreground">最近 1000 次 HTTP 请求按 p95 排序</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="ghost" size="icon" onClick={() => void refreshSlowHttp()} title="刷新慢接口排行">
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                    <Gauge className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
+                {slowHttpState.status === 'idle' || slowHttpState.status === 'loading' ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">正在读取 HTTP 耗时样本</div>
+                ) : slowHttpState.status === 'error' ? (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-3 text-xs text-destructive">
+                    {slowHttpState.message}
+                  </div>
+                ) : slowHttpData?.disabled ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    {slowHttpData.message || 'HTTP 持久化日志未启用'}
+                  </div>
+                ) : !slowHttpData || slowHttpData.endpoints.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    暂无 HTTP 耗时样本。
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      <MetricTile label="样本" value={`${slowHttpData.sampleSize}`} />
+                      <MetricTile label="端点" value={`${slowHttpData.total}`} />
+                      <MetricTile label="窗口" value={slowHttpData.window?.oldest ? formatShortTime(slowHttpData.window.oldest) : '--:--'} />
+                    </div>
+                    <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                      {slowHttpData.endpoints.slice(0, 10).map((item, index) => (
+                        <div key={`${item.method}:${item.endpoint}`} className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 text-right font-mono text-muted-foreground">#{index + 1}</span>
+                            <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
+                            <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
+                              {item.endpoint}
+                            </code>
+                            <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
+                            <span>count {item.count}</span>
+                            <span>avg {formatLatency(item.avgMs)}</span>
+                            <span>max {formatLatency(item.maxMs)}</span>
+                            {item.errorCount > 0 ? <span className="text-destructive">error {item.errorCount}</span> : null}
+                            <span className="ml-auto font-mono">requestId {item.slowest.requestId}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
                     <h2 className="text-sm font-semibold">主机健康</h2>
                     <div className="mt-1 text-xs text-muted-foreground">本机 CPU、内存和运行时长</div>
                   </div>
@@ -2869,10 +3233,10 @@ export function BranchListPage(): JSX.Element {
                       <MetricTile label="空闲" value={`${executorFreePercent}%`} />
                     </div>
                     <div className="space-y-2">
-                      {opsStatus.capacity.nodes.length === 0 ? (
+                      {executorNodes.length === 0 ? (
                         <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">暂无执行节点</div>
                       ) : null}
-                      {opsStatus.capacity.nodes.map((node) => (
+                      {executorNodes.map((node) => (
                         <ExecutorNodeRow
                           key={node.id}
                           node={node}
@@ -3236,6 +3600,7 @@ function ProjectSwitcher({
   currentProjectId: string;
   projects: ProjectSummary[];
 }): JSX.Element {
+  const navigate = useNavigate();
   // 把当前项目排第一,其它按字母序;最多展示 8 个,有更多就给"查看全部"
   const ordered = useMemo(() => {
     const current = projects.find((p) => p.id === currentProjectId);
@@ -3271,7 +3636,7 @@ function ProjectSwitcher({
             key={p.id}
             disabled={isCurrent}
             onSelect={() => {
-              window.location.href = `/branches/${encodeURIComponent(p.id)}`;
+              navigate(`/branches/${encodeURIComponent(p.id)}`);
             }}
           >
             <span className="flex w-full items-start gap-2">
@@ -3295,7 +3660,7 @@ function ProjectSwitcher({
       {hasMore ? (
         <>
           <DropdownDivider />
-          <DropdownItem onSelect={() => { window.location.href = '/project-list'; }}>
+          <DropdownItem onSelect={() => { navigate('/project-list'); }}>
             查看全部项目 →
           </DropdownItem>
         </>
@@ -3605,6 +3970,7 @@ function BranchCard({
    * the bottom; low-frequency actions live in a kebab dropdown.
    */
   const busy = action?.status === 'running' || isBusy(branch);
+  const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
   const services = Object.values(branch.services || {});
   // 用户反馈(2026-05-04):"+1 显得很多余,明明都可以显示" — 不再 slice(0,1) +
@@ -3640,7 +4006,6 @@ function BranchCard({
   const [tagDraftError, setTagDraftError] = useState('');
   const [tagDeleteTarget, setTagDeleteTarget] = useState<string | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
-  const [builderAvatarFailed, setBuilderAvatarFailed] = useState(false);
   const tagInputRef = useRef<HTMLInputElement | null>(null);
   // 整卡淡化:非 running 且非异常(异常需要醒目,不淡化)且非中间态。
   // 中间态保持正常亮度让 loading 动画清晰可见。
@@ -3657,6 +4022,15 @@ function BranchCard({
   const builderInitial = builderLabel ? (builderLabel.trim().charAt(0) || '?').toUpperCase() : '?';
   const footerBuilder = builderHandle(branch);
   const footerSha = shortCommitSha(branch);
+  const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
+  const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
+  const actorOrbitTone = isError || action?.status === 'error'
+    ? 'danger'
+    : isAiActive
+      ? 'ai'
+      : branch.status === 'stopping' || action?.kind === 'stop'
+        ? 'warning'
+        : 'build';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -3668,7 +4042,7 @@ function BranchCard({
     }
   }, [aiPanelOpen, isAiOperated]);
   useEffect(() => {
-    setBuilderAvatarFailed(false);
+    setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
@@ -3690,7 +4064,7 @@ function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -3728,9 +4102,9 @@ function BranchCard({
             aria-hidden
           />
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <h3
-                className="min-w-0 truncate text-[17px] font-semibold leading-7 tracking-tight"
+                className="min-w-0 flex-[0_1_auto] break-all text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
                 {branch.branch}
@@ -3770,18 +4144,17 @@ function BranchCard({
               */}
               {runtime ? (
                 <span
-                  className={`inline-flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-[10px] font-medium ${runtime.className}`}
+                  className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-medium ${runtime.className}`}
                   title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
                 >
                   <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
-                  {runtime.label}
                 </span>
               ) : (
                 <span
-                  className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-medium text-muted-foreground"
+                  className="inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] text-[10px] font-medium text-muted-foreground"
                   title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
                 >
-                  源码
+                  <Github className="h-2.5 w-2.5" aria-hidden />
                 </span>
               )}
             </div>
@@ -3791,6 +4164,7 @@ function BranchCard({
         <div className="flex shrink-0 items-start" onClick={(event) => event.stopPropagation()}>
           <BranchMoreMenu
             busy={busy}
+            deleteDisabled={deleteBusy}
             branch={branch}
             onPull={onPull}
             onStop={onStop}
@@ -3959,11 +4333,10 @@ function BranchCard({
             <span
               key={service.profileId}
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
-              title={service.profileId}
+              title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${isAiActive ? 'cds-ai-kinetic-dot ' : ''}${chipRailClass}`} aria-hidden />
+              <Server className={`h-3 w-3 ${chipRailClass.replace('bg-', 'text-')}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
-              <span>:{service.hostPort}</span>
             </span>
           );
         }) : (
@@ -4147,24 +4520,36 @@ function BranchCard({
         }}
       >
         <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
-          <div className="flex w-11 shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div
-              className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
-              aria-label={builderTitle}
-            >
-              <span className="absolute inset-0 flex items-center justify-center">{builderInitial}</span>
-              {builderAvatarUrl && !builderAvatarFailed ? (
-                <img
-                  src={builderAvatarUrl}
-                  alt=""
-                  className="relative h-full w-full object-cover"
-                  referrerPolicy="no-referrer"
-                  onError={() => setBuilderAvatarFailed(true)}
-                />
-              ) : null}
+          <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
+            <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
+              {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
+              <div
+                className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                aria-label={builderTitle}
+              >
+                <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
+                  {builderInitial}
+                </span>
+                {builderAvatarUrl && builderAvatarStatus !== 'failed' ? (
+                  <img
+                    src={builderAvatarUrl}
+                    alt=""
+                    className="relative h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
+                    onLoad={() => {
+                      rememberAvatarStatus(builderAvatarUrl, 'loaded');
+                      setBuilderAvatarStatus('loaded');
+                    }}
+                    onError={() => {
+                      rememberAvatarStatus(builderAvatarUrl, 'failed');
+                      setBuilderAvatarStatus('failed');
+                    }}
+                  />
+                ) : null}
+              </div>
             </div>
-            {footerBuilder ? (
-              <span className="block max-w-full truncate text-center text-[10px] font-medium leading-none text-foreground/70">
+            {footerBuilder && !actorOrbitVisible ? (
+              <span className="block max-w-full break-all text-center text-[10px] font-medium leading-tight text-foreground/70">
                 {footerBuilder}
               </span>
             ) : null}
@@ -4245,6 +4630,7 @@ function BranchCard({
 
 function BranchMoreMenu({
   busy,
+  deleteDisabled,
   branch,
   onPull,
   onStop,
@@ -4256,6 +4642,7 @@ function BranchMoreMenu({
   onDelete,
 }: {
   busy: boolean;
+  deleteDisabled: boolean;
   branch: BranchSummary;
   onPull: () => void;
   onStop: () => void;
@@ -4272,7 +4659,7 @@ function BranchMoreMenu({
         title={`删除分支 ${branch.branch}？`}
         description={`将停止 ${Object.keys(branch.services || {}).length} 个服务,删除该分支工作区与构建产物 — 此操作不可撤销。git 历史不受影响(仅 CDS 端忘记这个分支),分支可重新部署但 CDS 内的部署历史/日志/指标会丢失。`}
         confirmLabel="确认删除(不可恢复)"
-        disabled={busy}
+        disabled={deleteDisabled}
         onConfirm={onDelete}
         trigger={(
           <button
@@ -4339,26 +4726,36 @@ function BranchFailureHint({
   branch: BranchSummary;
 }): JSX.Element | null {
   /*
-   * 简化版(2026-05-03 用户反馈"不要在卡片里展开,样式错乱了"):
-   *
-   * 旧版在每个异常分支底部塞一条带 [详情] [重置] 按钮的红色横幅,卡片
-   * 高度跳变 + 网格对不齐。状态 chip 已经显示「异常」,卡片整体 onClick
-   * 走详情抽屉,详情抽屉里有完整的「重置异常 / 容器日志 / 构建日志」
-   * 入口 + BranchMoreMenu 也有「重置异常」—— 卡片本身不再需要重复操作。
-   *
-   * 这里只保留一行极简提示:点击告知用户「展开详情看原因」,鼠标悬停
-   * 显示完整失败消息,不展开任何按钮、不展开任何额外信息。
+   * 默认只占一条稳定高度的摘要，避免异常文案把整行 card 撑高。
+   * hover / keyboard focus 时用绝对定位浮层展开完整原因；浮层盖在网格
+   * 上方，不参与当前 card 的布局计算。
    */
   const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
   if (branch.status !== 'error' && failedServices.length === 0) return null;
   const message = deployFailureMessage(branch) || '分支处于异常状态';
+  const hintId = `branch-failure-hint-${branch.id}`;
   return (
     <div
-      className={`flex items-start gap-2 px-5 pb-3 pt-1 text-xs leading-5 ${branchIssueHintTextClass(branch)}`}
+      className={`group/failure relative mx-5 mb-3 mt-1 h-8 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-current/35 ${branchIssueHintTextClass(branch)}`}
       title={message}
+      tabIndex={0}
+      aria-describedby={hintId}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
     >
-      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      <span className="min-w-0 line-clamp-2">{message}</span>
+      <div className="flex h-8 min-w-0 items-center gap-2 rounded-md border border-current/30 bg-[hsl(var(--surface-raised))]/70 px-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{message}</span>
+      </div>
+      <div
+        id={hintId}
+        className="pointer-events-auto absolute left-0 right-0 top-0 z-[120] hidden max-h-36 overflow-auto rounded-md border border-current/45 bg-[hsl(var(--surface-raised))] px-3 py-2.5 leading-5 shadow-2xl ring-1 ring-black/5 group-hover/failure:block group-focus/failure:block"
+      >
+        <div className="flex items-start gap-2">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 whitespace-pre-wrap break-words">{message}</span>
+        </div>
+      </div>
     </div>
   );
 }

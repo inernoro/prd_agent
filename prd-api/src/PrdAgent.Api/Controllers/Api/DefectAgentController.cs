@@ -2241,7 +2241,7 @@ public class DefectAgentController : ControllerBase
             DisplayOrder = -100, // 定向推送默认置顶
             IsActive = true,
             StartAt = now,
-            EndAt = now.AddDays(14), // 两周后自动过期，避免首页堆积
+            EndAt = now.AddDays(7), // 一周后自动过期，避免首页堆积
             CreatedBy = "system:defect-fix",
             CreatedAt = now,
             UpdatedAt = now

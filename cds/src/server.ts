@@ -32,6 +32,7 @@ import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
+import { resolveActorFromRequest } from './services/actor-resolver.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
@@ -45,11 +46,192 @@ import {
   createBodyCapture,
   createRequestId,
   redactHeaders,
+  type HttpLogRecord,
   type HttpLogSink,
 } from './services/http-log-store.js';
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
+import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
+import { computeBundleFreshness } from './services/bundle-freshness.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function getRemoteAddr(req: express.Request): string | undefined {
+  return (req.headers['cf-connecting-ip'] as string)
+    || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+    || req.ip
+    || req.socket?.remoteAddress;
+}
+
+function extractApiMutationContext(req: express.Request, deps: ServerDeps): {
+  branchId?: string;
+  projectId?: string;
+  profileId?: string;
+} {
+  const branchMatch = req.path.match(/^\/branches\/([^/]+)/);
+  const projectMatch = req.path.match(/^\/projects\/([^/]+)/);
+  const profileMatch = req.path.match(/\/profiles\/([^/]+)/);
+  const branchId = branchMatch ? decodeURIComponent(branchMatch[1]) : undefined;
+  const stateBranch = branchId ? deps.stateService.getBranch(branchId) : undefined;
+  const projectId =
+    stateBranch?.projectId
+    || (projectMatch ? decodeURIComponent(projectMatch[1]) : undefined)
+    || (typeof req.body?.projectId === 'string' ? req.body.projectId : undefined)
+    || (typeof req.query.project === 'string' ? req.query.project : undefined);
+  const profileId =
+    (profileMatch ? decodeURIComponent(profileMatch[1]) : undefined)
+    || (typeof req.body?.profileId === 'string' ? req.body.profileId : undefined)
+    || (typeof req.query.profileId === 'string' ? req.query.profileId : undefined);
+  return { branchId, projectId, profileId };
+}
+
+function shouldAuditApiMutation(req: express.Request): boolean {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase())) return false;
+  if (req.path.startsWith('/bridge/heartbeat')) return false;
+  if (req.path.startsWith('/bridge/navigate-requests/')) return false;
+  if (req.path.startsWith('/bridge/handshake-requests/')) return false;
+  if (req.path.startsWith('/bridge/check/')) return false;
+  if (req.path === '/bridge/result') return false;
+  return true;
+}
+
+function normalizeHttpLogPath(pathValue: string): string {
+  const rawPath = (pathValue || '').split('?')[0] || '/';
+  const segments = rawPath.split('/');
+  const staticBranchRoutes = new Set(['stream', 'state-audit', 'cleanup-damaged-containers', 'cleanup-orphan-containers']);
+  const staticExecutorRoutes = new Set(['register', 'capacity', 'dispatch']);
+  return segments
+    .map((segment, index) => {
+      if (!segment) return segment;
+      const decoded = decodeURIComponent(segment);
+      if (segments[1] === 'api' && segments[2] === 'branches' && index === 3 && !staticBranchRoutes.has(decoded)) return ':branchId';
+      if (segments[1] === 'api' && segments[2] === 'projects' && index === 3) return ':projectId';
+      if (segments[1] === 'api' && segments[2] === 'executors' && index === 3 && !staticExecutorRoutes.has(decoded)) return ':executorId';
+      if (/^[0-9a-f]{7,40}$/i.test(decoded)) return ':sha';
+      if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(decoded)) return ':uuid';
+      if (/^op_[A-Za-z0-9_-]+$/.test(decoded)) return ':operationId';
+      if (/^[A-Za-z0-9_-]+-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+-[A-Za-z0-9_-]+/.test(decoded)) return ':id';
+      return decoded;
+    })
+    .join('/');
+}
+
+function percentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return 0;
+  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1));
+  return sortedAsc[idx];
+}
+
+function isNoiseHttpLog(log: HttpLogRecord): boolean {
+  const pathValue = (log.path || '').split('?')[0] || '/';
+  const headers = log.request?.headers || {};
+  if (headers['x-cds-poll'] === 'true') return true;
+  if (pathValue === '/healthz' || pathValue === '/readyz' || pathValue === '/api/health') return true;
+  if (pathValue === '/api/self-status/stream' || pathValue === '/api/branches/stream') return true;
+  if (pathValue.startsWith('/api/bridge/')) return true;
+  if (/^\/api\/projects\/[^/]+\/instances$/.test(pathValue)) return true;
+  return false;
+}
+
+function summarizeSlowHttpLogs(logs: HttpLogRecord[]): Array<{
+  endpoint: string;
+  method: string;
+  count: number;
+  rps: number;
+  windowMs: number;
+  errorCount: number;
+  errorRate: number;
+  cacheHitCount: number;
+  cacheHitRate: number;
+  avgMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  slowest: {
+    ts: Date;
+    requestId: string;
+    status: number;
+    durationMs: number;
+    path: string;
+    branchId?: string | null;
+    profileId?: string | null;
+  };
+}> {
+  const groups = new Map<string, {
+    endpoint: string;
+    method: string;
+    durations: number[];
+    errorCount: number;
+    cacheHitCount: number;
+    firstTs: number;
+    lastTs: number;
+    slowest: HttpLogRecord;
+  }>();
+  for (const log of logs) {
+    const method = (log.method || 'GET').toUpperCase();
+    const endpoint = normalizeHttpLogPath(log.path);
+    const key = `${method} ${endpoint}`;
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, {
+        endpoint,
+        method,
+        durations: [log.durationMs],
+        errorCount: log.status >= 400 ? 1 : 0,
+        cacheHitCount: log.response?.headers?.['x-cds-cache'] === 'hit' ? 1 : 0,
+        firstTs: new Date(log.ts).getTime(),
+        lastTs: new Date(log.ts).getTime(),
+        slowest: log,
+      });
+      continue;
+    }
+    existing.durations.push(log.durationMs);
+    if (log.status >= 400) existing.errorCount += 1;
+    if (log.response?.headers?.['x-cds-cache'] === 'hit') existing.cacheHitCount += 1;
+    const ts = new Date(log.ts).getTime();
+    if (Number.isFinite(ts)) {
+      existing.firstTs = Math.min(existing.firstTs, ts);
+      existing.lastTs = Math.max(existing.lastTs, ts);
+    }
+    if (log.durationMs > existing.slowest.durationMs) existing.slowest = log;
+  }
+  return [...groups.values()]
+    .map((group) => {
+      const sorted = [...group.durations].sort((a, b) => a - b);
+      const count = sorted.length;
+      const sum = sorted.reduce((acc, value) => acc + value, 0);
+      const windowMs = Math.max(1000, group.lastTs - group.firstTs);
+      return {
+        endpoint: group.endpoint,
+        method: group.method,
+        count,
+        rps: Number((count / (windowMs / 1000)).toFixed(3)),
+        windowMs,
+        errorCount: group.errorCount,
+        errorRate: count > 0 ? group.errorCount / count : 0,
+        cacheHitCount: group.cacheHitCount,
+        cacheHitRate: count > 0 ? group.cacheHitCount / count : 0,
+        avgMs: Math.round(sum / Math.max(1, count)),
+        p50Ms: percentile(sorted, 50),
+        p95Ms: percentile(sorted, 95),
+        maxMs: sorted[sorted.length - 1] || 0,
+        slowest: {
+          ts: group.slowest.ts,
+          requestId: group.slowest.requestId,
+          status: group.slowest.status,
+          durationMs: group.slowest.durationMs,
+          path: group.slowest.path,
+          branchId: group.slowest.branchId,
+          profileId: group.slowest.profileId,
+        },
+      };
+    })
+    .sort((a, b) => (b.p95Ms - a.p95Ms) || (b.avgMs - a.avgMs) || (b.maxMs - a.maxMs));
+}
+
+function summarizeFrequentHttpLogs(logs: HttpLogRecord[]): ReturnType<typeof summarizeSlowHttpLogs> {
+  return summarizeSlowHttpLogs(logs)
+    .sort((a, b) => (b.count - a.count) || (b.rps - a.rps) || (b.p95Ms - a.p95Ms));
+}
 
 export interface ServerDeps {
   stateService: StateService;
@@ -92,6 +274,8 @@ export interface ServerDeps {
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
+  /** Serializes/fences branch container lifecycle writes. */
+  branchOperationCoordinator?: BranchOperationCoordinator;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -774,11 +958,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // Returns 200 when ALL of these are healthy:
   //   - state file readable
   //   - Docker socket reachable
-  //   - the SPA can be served (either React `web/dist/index.html` exists, or
-  //     legacy fallback `web-legacy/project-list.html` exists). If both are
-  //     missing, every user-facing route would 404 — the exact failure mode
-  //     that hit prod three times after a self-update where the install path
-  //     drifted out from under the running process.
+  //   - the React SPA can be served from `web/dist/index.html`. Legacy
+  //     static pages are no longer a runtime fallback; if the React build is
+  //     missing, user-facing dashboard routes should be considered unhealthy.
   //   - critical SPA routes are registered on the Express router (catches
   //     regressions where a refactor accidentally drops the route handler).
   //   - (optional, when ?probe=routes) internal HTTP probe of the listening
@@ -829,25 +1011,18 @@ export function createServer(deps: ServerDeps): express.Express {
       overallOk = false;
     }
 
-    // Check 3: SPA assets present — file-system level. Catches the case
-    // where the install path lost web-legacy/ or web/dist/ (e.g. a botched
-    // self-update that pulled new code without rebuilding, or a docker
-    // volume mount pointing at the wrong path).
+    // Check 3: React SPA assets present — file-system level. Catches the
+    // case where a self-update pulled new dashboard code without rebuilding,
+    // or a docker volume mount points at the wrong path.
     const reactIndex = path.resolve(__dirname, '..', 'web', 'dist', 'index.html');
-    const legacyProjectList = path.resolve(__dirname, '..', 'web-legacy', 'project-list.html');
     const reactExists = fs.existsSync(reactIndex);
-    const legacyExists = fs.existsSync(legacyProjectList);
     checks.reactDist = reactExists
       ? { ok: true, detail: reactIndex }
       : { ok: false, detail: `missing ${reactIndex}` };
-    checks.legacyFallback = legacyExists
-      ? { ok: true, detail: legacyProjectList }
-      : { ok: false, detail: `missing ${legacyProjectList}` };
-    const spaServable = reactExists || legacyExists;
-    if (!spaServable) {
+    if (!reactExists) {
       checks.spaServable = {
         ok: false,
-        detail: 'neither React dist nor legacy fallback present — every user-facing route will 404',
+        detail: 'React dist missing — dashboard routes will 404',
       };
       overallOk = false;
     } else {
@@ -855,9 +1030,8 @@ export function createServer(deps: ServerDeps): express.Express {
     }
 
     // Check 4: critical SPA routes are registered on the Express router.
-    // Cross-check against MIGRATED_REACT_ROUTES so a refactor that drops
-    // installSpaFallback() (or shadows /project-list with a new mount) is
-    // surfaced before users hit a 404.
+    // The React catch-all owns all non-API dashboard paths, so a wildcard
+    // handler is enough to prove deep links can reach the SPA shell.
     const registeredPaths = collectRegisteredPaths(app);
     const expectedSpaPaths = ['/project-list', '/branch-list', '/cds-settings'];
     const missingRoutes = expectedSpaPaths.filter((p) => {
@@ -1001,6 +1175,8 @@ export function createServer(deps: ServerDeps): express.Express {
     }
 
     const start = Date.now();
+    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
+    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     const responseCapture = createBodyCapture();
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
@@ -1010,13 +1186,22 @@ export function createServer(deps: ServerDeps): express.Express {
     };
     (res as any).end = function (chunk?: unknown, ...args: unknown[]) {
       if (chunk != null) responseCapture.onChunk(chunk as Buffer | string);
+      if (!res.headersSent) {
+        const dur = Math.max(0, Date.now() - start);
+        const existing = res.getHeader('Server-Timing');
+        const value = `app;dur=${dur}`;
+        res.setHeader('Server-Timing', existing ? `${existing}, ${value}` : value);
+      }
       return origEnd(chunk as never, ...(args as never[]));
     };
 
     res.once('finish', () => {
       const status = res.statusCode || 0;
-      const reqBody = bodyPreviewFromUnknown(req.body);
-      const respBody = responseCapture.snapshot();
+      const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
+      const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const reqBody = capturedReqBody.bodyBytes > 0 ? capturedReqBody : parsedReqBody;
+      const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
+      const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
         layer: 'master',
         requestId,
@@ -1036,7 +1221,7 @@ export function createServer(deps: ServerDeps): express.Express {
           ...reqBody,
         },
         response: {
-          headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
+          headers: responseHeaders,
           ...respBody,
         },
       });
@@ -1159,7 +1344,7 @@ export function createServer(deps: ServerDeps): express.Express {
   //
   // When CDS is started with CDS_AUTH_MODE=github, this block wires up
   // the OAuth routes and mounts a session-gate middleware. The middleware
-  // redirects unauthenticated HTML requests to /login-gh.html and rejects
+  // redirects unauthenticated HTML requests to /login and rejects
   // unauthenticated API requests with 401. See:
   //   - cds/src/services/auth-service.ts
   //   - cds/src/middleware/github-auth.ts
@@ -1379,6 +1564,7 @@ export function createServer(deps: ServerDeps): express.Express {
           /^\/api\/branches\/[^/]+\/container-logs(\?|$)/,
           /^\/api\/branches\/[^/]+\/deploy(\?|$)/,
           /^\/api\/branches\/[^/]+\/deploy\/[^/]+/,
+          /^\/api\/branches\/[^/]+\/stop(\?|$)/,
           /^\/api\/bridge\/(heartbeat|result|end-session|dismiss|approve|reject)/,
         ];
         const ALLOW_PUT: RegExp[] = [
@@ -1871,18 +2057,26 @@ export function createServer(deps: ServerDeps): express.Express {
       } catch (err) {
         degradedReasons.push(`webBuildSha: ${(err as Error).message}`);
       }
-      // Bugbot PR #524 第十一轮:headSha 是 short(7-8),webBuildSha 可能是
-      // full(40,新 fix 后)或 short(legacy 老数据)。startsWith 单方向有边角:
-      //   - short headSha vs short webBuildSha 长度相同 → startsWith 退化成相等 OK
-      //   - long webBuildSha startsWith short headSha → 同 commit OK
-      //   - 但 short headSha startsWith short webBuildSha 也合理(legacy)
-      // 改用双向 startsWith:任一方向匹配即同 commit,两边都不匹配才算 stale。
-      const headEqualsBundle = !!(headSha && webBuildSha && (
-        webBuildSha.startsWith(headSha) || headSha.startsWith(webBuildSha)
-      ));
-      const bundleStale = Boolean(
-        (headSha && webBuildSha && !headEqualsBundle) || webBuildError,
-      );
+      const bundleFreshness = await computeBundleFreshness({
+        repoRoot,
+        shell: deps.shell,
+        headSha,
+        bundleSha: webBuildSha,
+        buildError: webBuildError,
+      });
+      if (bundleFreshness.staleReason === 'diff-failed' || bundleFreshness.staleReason === 'invalid-sha') {
+        degradedReasons.push(`bundleFreshness: ${bundleFreshness.detail || bundleFreshness.staleReason}`);
+      }
+      const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
+      const lastUpdate = history[0] || null;
+      const restartStatus =
+        lastUpdate?.status === 'success'
+          ? pidStartedAt
+            ? 'completed'
+            : 'incomplete'
+          : lastUpdate?.status === 'deferred'
+            ? 'pending'
+            : 'not_required';
 
       res.json({
         currentBranch,
@@ -1894,11 +2088,15 @@ export function createServer(deps: ServerDeps): express.Express {
         remoteAheadCount: 0,
         localAheadCount: 0,
         remoteAheadSubjects: [],
-        lastSelfUpdate: history[0] || null,
+        runningPid: process.pid,
+        pidStartedAt,
+        restartStatus,
+        lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,
         webBuildError,
-        bundleStale,
+        bundleStale: bundleFreshness.bundleStale,
+        bundleFreshness,
         degraded: degradedReasons.length > 0 ? { reasons: degradedReasons } : null,
       });
     } catch (err) {
@@ -1912,6 +2110,9 @@ export function createServer(deps: ServerDeps): express.Express {
         remoteAheadCount: 0,
         localAheadCount: 0,
         remoteAheadSubjects: [],
+        runningPid: process.pid,
+        pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
+        restartStatus: 'not_required',
         lastSelfUpdate: null,
         selfUpdateHistory: [],
         webBuildSha: '',
@@ -2136,21 +2337,171 @@ export function createServer(deps: ServerDeps): express.Express {
     const minStatus = Number.parseInt(String(req.query.minStatus || ''), 10) || undefined;
     const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
     const host = typeof req.query.host === 'string' ? req.query.host : undefined;
+    const method = typeof req.query.method === 'string' ? req.query.method : undefined;
+    const pathContains = typeof req.query.pathContains === 'string'
+      ? req.query.pathContains
+      : (typeof req.query.path === 'string' ? req.query.path : undefined);
+    const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+    const profileId = typeof req.query.profileId === 'string' ? req.query.profileId : undefined;
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const until = typeof req.query.until === 'string' ? req.query.until : undefined;
+    const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
+    const minDurationMs = Number.isFinite(minDurationRaw) ? minDurationRaw : undefined;
+    const sortRaw = typeof req.query.sort === 'string' ? req.query.sort : undefined;
+    const sort = sortRaw === 'duration' ? 'duration' : 'recent';
     const layerRaw = typeof req.query.layer === 'string' ? req.query.layer : undefined;
     const layer = layerRaw === 'master' || layerRaw === 'master-proxy' || layerRaw === 'forwarder'
       ? layerRaw
       : undefined;
-    const logs = await reader.call(deps.httpLogStore, { limit, requestId, host, layer, minStatus });
+    const logs = await reader.call(deps.httpLogStore, {
+      limit,
+      requestId,
+      host,
+      layer,
+      minStatus,
+      method,
+      pathContains,
+      branchId,
+      profileId,
+      since,
+      until,
+      minDurationMs,
+      sort,
+    });
     res.json({ logs, total: logs.length });
+  });
+
+  app.get('/api/http-logs/slow', async (req, res) => {
+    const reader = deps.httpLogStore?.findRecent;
+    if (!reader) {
+      res.json({
+        ok: false,
+        disabled: true,
+        sampleSize: 0,
+        total: 0,
+        endpoints: [],
+        message: 'HTTP 持久化日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_HTTP_LOGS_ENABLED=0。',
+      });
+      return;
+    }
+    const sampleRaw = Number.parseInt(String(req.query.sample || req.query.limit || '1000'), 10) || 1000;
+    const sample = Math.max(1, Math.min(sampleRaw, 5000));
+    const topRaw = Number.parseInt(String(req.query.top || '20'), 10) || 20;
+    const top = Math.max(1, Math.min(topRaw, 100));
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    if (since && Number.isNaN(Date.parse(since))) {
+      res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
+    const until = typeof req.query.until === 'string' ? req.query.until : undefined;
+    if (until && Number.isNaN(Date.parse(until))) {
+      res.status(400).json({ error: 'invalid_until', message: 'until must be an ISO timestamp' });
+      return;
+    }
+    const includeNoise = req.query.includeNoise === '1' || req.query.includeNoise === 'true';
+    const layerRaw = typeof req.query.layer === 'string' ? req.query.layer : undefined;
+    const layer = layerRaw === 'master' || layerRaw === 'master-proxy' || layerRaw === 'forwarder'
+      ? layerRaw
+      : undefined;
+    const minDurationRaw = typeof req.query.minDurationMs === 'string' ? Number.parseInt(req.query.minDurationMs, 10) : undefined;
+    const minDurationMs = Number.isFinite(minDurationRaw) ? minDurationRaw : undefined;
+    const rawLogs = await reader.call(deps.httpLogStore, {
+      limit: sample,
+      since,
+      until,
+      layer,
+      method: typeof req.query.method === 'string' ? req.query.method : undefined,
+      minStatus: typeof req.query.minStatus === 'string' ? Number.parseInt(req.query.minStatus, 10) || undefined : undefined,
+      minDurationMs,
+      pathContains: typeof req.query.pathContains === 'string'
+        ? req.query.pathContains
+        : (typeof req.query.path === 'string' ? req.query.path : undefined),
+      sort: 'recent',
+    });
+    const logs = includeNoise ? rawLogs : rawLogs.filter((log) => !isNoiseHttpLog(log));
+    const endpoints = summarizeSlowHttpLogs(logs).slice(0, top);
+    res.json({
+      ok: true,
+      disabled: false,
+      includeNoise,
+      sampleSize: rawLogs.length,
+      filteredSampleSize: logs.length,
+      noiseExcludedCount: rawLogs.length - logs.length,
+      total: endpoints.length,
+      window: {
+        newest: rawLogs[0]?.ts || null,
+        oldest: rawLogs[rawLogs.length - 1]?.ts || null,
+      },
+      endpoints,
+    });
+  });
+
+  app.get('/api/perf/overview', async (req, res) => {
+    const reader = deps.httpLogStore?.findRecent;
+    if (!reader) {
+      res.json({
+        ok: false,
+        disabled: true,
+        message: 'HTTP 持久化日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_HTTP_LOGS_ENABLED=0。',
+      });
+      return;
+    }
+    const sampleRaw = Number.parseInt(String(req.query.sample || req.query.limit || '1000'), 10) || 1000;
+    const sample = Math.max(1, Math.min(sampleRaw, 5000));
+    const topRaw = Number.parseInt(String(req.query.top || '10'), 10) || 10;
+    const top = Math.max(1, Math.min(topRaw, 50));
+    const logs = await reader.call(deps.httpLogStore, { limit: sample, sort: 'recent' });
+    const normalLogs = logs.filter((log) => !isNoiseHttpLog(log));
+    const noiseLogs = logs.filter(isNoiseHttpLog);
+    const errorLogs = logs.filter((log) => log.status >= 500);
+    const recentSelfUpdateTimings = deps.stateService.getSelfUpdateHistory(20).map((record) => ({
+      ts: record.ts,
+      branch: record.branch,
+      fromSha: record.fromSha,
+      toSha: record.toSha,
+      status: record.status,
+      durationMs: record.durationMs,
+      totalElapsedMs: record.totalElapsedMs,
+      updateMode: record.updateMode,
+      timings: record.timings,
+      error: record.error,
+    }));
+    res.json({
+      ok: true,
+      disabled: false,
+      sampleSize: logs.length,
+      noiseCount: noiseLogs.length,
+      window: {
+        newest: logs[0]?.ts || null,
+        oldest: logs[logs.length - 1]?.ts || null,
+      },
+      slowEndpoints: summarizeSlowHttpLogs(normalLogs).slice(0, top),
+      frequentEndpoints: summarizeFrequentHttpLogs(normalLogs).slice(0, top),
+      errorEndpoints: summarizeSlowHttpLogs(errorLogs).slice(0, top),
+      noiseEndpoints: summarizeFrequentHttpLogs(noiseLogs).slice(0, top),
+      recentSelfUpdateTimings,
+    });
   });
 
   app.get('/api/server-events', async (req, res) => {
     const reader = deps.serverEventLogStore?.findRecent;
     if (!reader) {
-      res.json({ events: [], total: 0, message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。' });
+      res.json({
+        ok: false,
+        disabled: true,
+        events: [],
+        total: 0,
+        message: '服务器事件日志未启用；请配置 CDS_MONGO_URI，且不要设置 CDS_SERVER_EVENT_LOGS_ENABLED=0。',
+      });
       return;
     }
-    const limit = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const limitRaw = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
+    const limit = Math.max(1, Math.min(limitRaw, 1000));
+    const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    if (since && Number.isNaN(Date.parse(since))) {
+      res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
     const categoryRaw = typeof req.query.category === 'string' ? req.query.category : undefined;
     const category = categoryRaw === 'container' || categoryRaw === 'docker' || categoryRaw === 'system'
       ? categoryRaw as ServerEventCategory
@@ -2175,9 +2526,65 @@ export function createServer(deps: ServerDeps): express.Express {
       profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
       projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
-      since: typeof req.query.since === 'string' ? req.query.since : undefined,
+      operationId: typeof req.query.operationId === 'string' ? req.query.operationId : undefined,
+      operationKind: typeof req.query.operationKind === 'string' ? req.query.operationKind : undefined,
+      operationTrigger: typeof req.query.operationTrigger === 'string' ? req.query.operationTrigger : undefined,
+      operationActor: typeof req.query.operationActor === 'string' ? req.query.operationActor : undefined,
+      operationSource: typeof req.query.operationSource === 'string' ? req.query.operationSource : undefined,
+      commitSha: typeof req.query.commitSha === 'string' ? req.query.commitSha : undefined,
+      since,
     });
-    res.json({ events, total: events.length });
+    res.json({ ok: true, disabled: false, events, total: events.length });
+  });
+
+  // ── Durable control-plane mutation audit ──
+  //
+  // Activity stream is a live UI aid; route-specific logs are easy to miss.
+  // This middleware records one persistent, queryable audit row for every
+  // mutating /api request that can change CDS state or containers.
+  app.use('/api', (req, res, next) => {
+    if (!shouldAuditApiMutation(req)) return next();
+    const start = Date.now();
+    const requestId =
+      (res.locals as { cdsRequestId?: string }).cdsRequestId
+      || (req as any).cdsRequestId
+      || crypto.randomUUID().slice(0, 8);
+    (req as any).cdsRequestId = requestId;
+    (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
+    res.setHeader('X-CDS-Request-Id', requestId);
+    const { branchId, projectId, profileId } = extractApiMutationContext(req, deps);
+    const actor = resolveActorFromRequest(req);
+    res.on('finish', () => {
+      const status = res.statusCode || 200;
+      const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
+      const fullPath = `/api${req.path}`;
+      deps.serverEventLogStore?.record({
+        category: 'system',
+        severity,
+        source: 'api-mutation',
+        action: 'api.request.completed',
+        message: `${req.method.toUpperCase()} ${fullPath} -> ${status}`,
+        projectId,
+        branchId,
+        profileId,
+        status: String(status),
+        requestId,
+        details: {
+          method: req.method.toUpperCase(),
+          path: fullPath,
+          originalUrl: req.originalUrl,
+          status,
+          durationMs: Date.now() - start,
+          actor,
+          trigger: req.headers['x-cds-trigger'] || req.headers['x-github-event'] || null,
+          remoteAddr: getRemoteAddr(req),
+          userAgent: req.headers['user-agent'] || null,
+          referer: req.headers['referer'] || req.headers['origin'] || null,
+          contentLength: req.headers['content-length'] || null,
+        },
+      });
+    });
+    next();
   });
 
   // ── API activity tracking middleware (before routes, after auth) ──
@@ -2415,7 +2822,7 @@ export function createServer(deps: ServerDeps): express.Express {
       try {
         return (await deps.containerService.discoverAppContainers()) as unknown as Map<
           string,
-          { containerName: string; branchId: string; profileId: string; running: boolean }
+          { containerName: string; branchId: string; profileId: string; running: boolean; network?: string }
         >;
       } catch {
         return new Map();
@@ -2501,6 +2908,7 @@ export function createServer(deps: ServerDeps): express.Express {
     getClusterStrategy: deps.getClusterStrategy,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    branchOperationCoordinator: deps.branchOperationCoordinator,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──
@@ -2517,6 +2925,7 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     config: deps.config,
     githubApp: githubAppClient,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
 
   // P4 Part 18 (D.3): storage-mode management endpoints. Requires the
@@ -2678,50 +3087,12 @@ export function auditApiLabels(app: express.Express): string[] {
   return missing;
 }
 
-/**
- * Routes that the React app (cds/web/dist/) owns. Anything in this list is
- * served by the SPA shell with client-side routing taking over; deep links
- * land on the matching <Route> in src/App.tsx. Add a route here in the same
- * commit that adds it to App.tsx — they must move together.
- *
- * Everything NOT in this list falls through to the legacy static pages under
- * cds/web-legacy/, so an unmigrated link keeps working unchanged.
- */
-const MIGRATED_REACT_ROUTES: readonly string[] = [
-  '/',
-  '/login',
-  '/preview-preparing',
-  '/hello',
-  '/cds-settings',
-  '/project-list',
-  '/branches',
-  '/branch-list',
-  '/branch-panel',
-  '/branch-topology',
-  '/settings',
-];
-
-/**
- * @internal exported for tests so they can pin a known route list rather than
- * depending on whatever the current production list happens to be.
- */
-export function isMigratedReactRoute(
-  pathname: string,
-  routes: readonly string[] = MIGRATED_REACT_ROUTES,
-): boolean {
-  for (const r of routes) {
-    if (pathname === r || pathname.startsWith(r + '/')) return true;
-  }
-  return false;
-}
-
 export function installSpaFallback(
   app: express.Express,
-  legacyDirOverride?: string,
+  _legacyDirOverride?: string,
   reactDistOverride?: string,
-  migratedRoutes: readonly string[] = MIGRATED_REACT_ROUTES,
+  _migratedRoutes?: readonly string[],
 ): void {
-  const legacyDir = legacyDirOverride || path.resolve(__dirname, '..', 'web-legacy');
   const reactDist = reactDistOverride || path.resolve(__dirname, '..', 'web', 'dist');
 
   // 在 SPA 兜底挂载前做一次 label 覆盖审计。SPA 的 `app.get('*')` 会吃掉
@@ -2729,15 +3100,9 @@ export function installSpaFallback(
   auditApiLabels(app);
 
   // ── React app (cds/web/dist/) ──
-  // The new stack is wired in BEFORE the legacy static fallback, but only
-  // claims (a) the routes named in MIGRATED_REACT_ROUTES and (b) /assets/*
-  // for hashed JS/CSS bundles. /api/* is mounted upstream and has higher
-  // priority than anything below — the recovery endpoint
-  // (POST /api/factory-reset) is therefore never shadowed.
-  //
-  // When the React build is missing (fresh clone before `pnpm build`), we
-  // log a warning and skip the mount. The legacy static fallback below
-  // continues to serve every page unmodified.
+  // React Router is the dashboard authority. Every non-API HTML route is
+  // served from the Vite bundle; old .html filenames are kept only as
+  // explicit redirects below. There is no legacy static-page fallback.
   const reactIndex = path.join(reactDist, 'index.html');
   if (fs.existsSync(reactIndex)) {
     app.use(
@@ -2763,93 +3128,27 @@ export function installSpaFallback(
     app.get('*', (req, res, next) => {
       if (req.method !== 'GET' && req.method !== 'HEAD') return next();
       if (req.path.startsWith('/api/')) return next();
-      if (!isMigratedReactRoute(req.path, migratedRoutes)) return next();
+      const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      if (req.path === '/projects.html') return res.redirect(301, '/project-list' + qs);
+      if (req.path === '/index.html') return res.redirect(301, '/branch-list' + qs);
+      if (req.path === '/cds-settings.html') return res.redirect(301, '/cds-settings' + qs);
+      if (req.path === '/login.html') return res.redirect(301, '/login' + qs);
+      if (req.path === '/login-gh.html') return res.redirect(302, '/login' + qs);
+      if (req.path === '/settings.html') {
+        const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
+        return project
+          ? res.redirect(301, `/settings/${encodeURIComponent(project)}`)
+          : res.redirect(302, '/project-list');
+      }
+      if (req.path === '/settings') return res.redirect(302, '/project-list');
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.sendFile(reactIndex);
     });
   } else {
     console.warn(
-      '[cds-web] cds/web/dist/index.html not found; skipping React mount. Run `cd cds/web && pnpm build` to enable migrated routes.'
+      '[cds-web] cds/web/dist/index.html not found; dashboard routes will not be served. Run `cd cds/web && pnpm build` before starting CDS.'
     );
   }
-
-  // ── Legacy static pages (cds/web-legacy/) ──
-  // Semantic URL routes (preferred, human-readable paths)
-  app.get('/project-list', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'project-list.html'));
-  });
-  app.get('/branch-list', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-  app.get('/branch-panel', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-  app.get('/branch-topology', (_req, res) => {
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-
-  // Backward-compat redirects: old .html paths → semantic paths (301 permanent)
-  app.get('/projects.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/project-list' + qs);
-  });
-  app.get('/index.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/branch-list' + qs);
-  });
-  app.get('/cds-settings.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/cds-settings' + qs);
-  });
-  app.get('/login.html', (req, res) => {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    res.redirect(301, '/login' + qs);
-  });
-  app.get('/settings.html', (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project.trim() : '';
-    if (!project) {
-      res.redirect(302, '/project-list');
-      return;
-    }
-    res.redirect(301, `/settings/${encodeURIComponent(project)}`);
-  });
-  app.get('/settings', (_req, res) => {
-    res.redirect(302, '/project-list');
-  });
-
-  // Root redirect → project list
-  app.get('/', (_req, res) => {
-    res.redirect(302, '/project-list');
-  });
-
-  // HTML pages must never be served from cache — JS/CSS are cache-busted via
-  // ?t=Date.now() in the HTML itself, but if the HTML is stale the wrong JS
-  // version gets loaded. HTTP headers take precedence over meta http-equiv.
-  app.use(express.static(legacyDir, {
-    setHeaders: (res, filePath) => {
-      if (filePath.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-      }
-    },
-  }));
-  // SPA fallback for the legacy app (preserves deep-link behavior of
-  // cds/web-legacy/index.html for any path the React app didn't claim).
-  //
-  // CRITICAL(2026-05-04 fix):must skip `/api/*` paths so unknown / missing
-  // endpoints fall through to Express's default 404 instead of being served
-  // the legacy index.html with status 200. Without this guard, callers like
-  // apiRequest() get HTML body + 200 status, JSON.parse fails silently,
-  // typed `as T` returns a string,downstream property access crashes
-  // (e.g. `data.bySource.project` → "Cannot read 'project' of undefined").
-  // The React mount fallback above already has this guard on line 1714;
-  // this is the legacy fallback and needs the same defensive check.
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
-    res.sendFile(path.join(legacyDir, 'index.html'));
-  });
-
   // Final defense-in-depth:any unhandled /api/* path lands here as a
   // proper JSON 404. Keeps the contract "API endpoints always return JSON
   // (never HTML)" — which the frontend's apiRequest depends on for sane

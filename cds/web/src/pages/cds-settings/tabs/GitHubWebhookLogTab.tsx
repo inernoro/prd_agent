@@ -155,7 +155,9 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
     if (!silent) setState({ status: 'loading' });
     setRefreshing(true);
     try {
-      const data = await apiRequest<ListResponse>('/api/cds-system/github/webhook-deliveries?limit=100');
+      const data = await apiRequest<ListResponse>('/api/cds-system/github/webhook-deliveries?limit=100', silent
+        ? { headers: { 'X-CDS-Poll': 'true' } }
+        : undefined);
       setState({ status: 'ok', deliveries: data.deliveries, total: data.total });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);

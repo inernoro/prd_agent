@@ -7,7 +7,7 @@
  * 2026-05-14：回应用户"你测了吗"。
  */
 import { describe, it, expect, vi } from 'vitest';
-import { AutoLifecycleService } from '../../src/services/auto-lifecycle.js';
+import { AutoLifecycleService, type AutoLifecycleOperationLease } from '../../src/services/auto-lifecycle.js';
 import type { BranchEntry, BuildProfile, ServiceState } from '../../src/types.js';
 
 function profile(id: string): BuildProfile {
@@ -44,6 +44,7 @@ function makeHarness(
     autoStopAfterMinutes: 0,
   },
   nowMs: number = NOW_MS,
+  beginAutoPublishOperation?: (branchId: string) => AutoLifecycleOperationLease | null,
 ) {
   const profiles = [profile('web')];
   const stateService = {
@@ -63,7 +64,7 @@ function makeHarness(
   const redeployBranch = vi.fn(async () => {});
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const service = new AutoLifecycleService(
-    { stateService: stateService as any, stopBranch, redeployBranch, clock: { now: () => nowMs } },
+    { stateService: stateService as any, stopBranch, redeployBranch, beginAutoPublishOperation, clock: { now: () => nowMs } },
     { tickIntervalSeconds: 30, enabled: true },
   );
   return { service, stateService, stopBranch, redeployBranch, branch };
@@ -141,6 +142,36 @@ describe('AutoLifecycleService.tick — auto-publish 真实重部署', () => {
     // 下一拍：依然未收敛 → 会再次尝试 redeploy（证明没被误判收敛）
     await h.service.tick();
     expect(h.redeployBranch).toHaveBeenCalledTimes(2);
+  });
+
+  it('auto-publish 拿不到 operation lease 时不写 override、不触发重部署', async () => {
+    const beginAutoPublishOperation = vi.fn(() => null);
+    const h = makeHarness(branch(), undefined, NOW_MS, beginAutoPublishOperation);
+
+    await h.service.tick();
+
+    expect(beginAutoPublishOperation).toHaveBeenCalledWith('b1');
+    expect(h.branch.profileOverrides?.web?.activeDeployMode).toBeUndefined();
+    expect(h.redeployBranch).not.toHaveBeenCalled();
+  });
+
+  it('auto-publish override 写入后若 operation 被抢占，则回滚且不触发重部署', async () => {
+    const lease = {
+      operationId: 'op_auto',
+      assertCurrent: vi.fn((step?: string) => {
+        if (step === 'auto-publish after override write') {
+          throw new Error('superseded by user delete');
+        }
+      }),
+      complete: vi.fn(),
+    };
+    const h = makeHarness(branch(), undefined, NOW_MS, vi.fn(() => lease));
+
+    await h.service.tick();
+
+    expect(h.branch.profileOverrides?.web?.activeDeployMode).toBeUndefined();
+    expect(h.redeployBranch).not.toHaveBeenCalled();
+    expect(lease.complete).toHaveBeenCalledWith('cancelled');
   });
 });
 

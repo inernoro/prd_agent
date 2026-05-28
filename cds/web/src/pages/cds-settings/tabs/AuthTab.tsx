@@ -7,7 +7,7 @@ import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../component
 import type { AuthStatusResponse, LoadState } from '../types';
 
 function loginHref(mode?: string): string {
-  const path = mode === 'github' ? '/login-gh.html' : '/login';
+  const path = mode === 'github' ? '/api/auth/github/login' : '/login';
   if (window.location.port === '5173') {
     return `${window.location.protocol}//${window.location.hostname}:9900${path}`;
   }

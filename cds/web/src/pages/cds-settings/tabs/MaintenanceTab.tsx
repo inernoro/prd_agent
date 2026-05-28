@@ -39,7 +39,7 @@ interface SelfUpdateRecord {
   fromSha: string;
   toSha: string;
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'aborted' | 'deferred';
   durationMs?: number;
   /** 2026-05-07 真实总耗时(含 daemon 重启 + SSE 重连)。 */
   totalElapsedMs?: number;
@@ -107,6 +107,9 @@ interface SelfStatusResponse {
   /** 仓库里的 systemd unit 文件 vs 已安装的 /etc/systemd/system/cds-master.service
    *  归一化后比对 hash 不一致时填,提示 operator 一行命令重装。 */
   systemdUnitDrift?: SystemdUnitDrift | null;
+  runningPid?: number;
+  pidStartedAt?: string | null;
+  restartStatus?: 'not_required' | 'pending' | 'completed' | 'incomplete';
   lastSelfUpdate: SelfUpdateRecord | null;
   selfUpdateHistory: SelfUpdateRecord[];
 }
@@ -1074,6 +1077,21 @@ function SelfUpdateStatusPanel({
           </button>
         ) : null}
 
+        {data.restartStatus && data.restartStatus !== 'not_required' ? (
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${
+              data.restartStatus === 'completed'
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                : data.restartStatus === 'pending'
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                  : 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+            }`}
+            title={`PID ${data.runningPid || '-'} · 启动于 ${data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}`}
+          >
+            PID {data.runningPid || '-'} · 重启{data.restartStatus === 'completed' ? '已确认' : data.restartStatus === 'pending' ? '进行中' : '未确认'}
+          </span>
+        ) : null}
+
         <div className="ml-auto flex items-center gap-2">
           {selfUpdateHistory.length > 0 ? (
             <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory}>
@@ -1347,6 +1365,8 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
     case 'aborted':
       return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+    case 'deferred':
+      return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
     case 'failed':
       return 'border-destructive/40 bg-destructive/10 text-destructive';
   }
@@ -1356,6 +1376,7 @@ function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
     case 'aborted': return '中止(校验未过)';
+    case 'deferred': return '已延后';
     case 'failed':  return '失败';
   }
 }

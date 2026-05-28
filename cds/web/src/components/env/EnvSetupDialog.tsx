@@ -225,7 +225,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
     (async () => {
       try {
         const res = await apiRequest<{ services: Array<{ dockerImage?: string }> }>(
-          `/api/infra?project=${encodeURIComponent(projectId)}`,
+          `/api/infra?project=${encodeURIComponent(projectId)}&live=false`,
         );
         if (aborted) return;
         const images = (res.services || [])

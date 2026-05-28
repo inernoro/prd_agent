@@ -18,6 +18,7 @@ export function LoginPage(): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const target = useMemo(() => redirectTarget(), []);
+  const githubLoginHref = useMemo(() => `/api/auth/github/login?redirect=${encodeURIComponent(target)}`, [target]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -123,7 +124,7 @@ export function LoginPage(): JSX.Element {
 
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <Button asChild type="button" variant="outline" className="rounded-lg border-white/20 bg-black/20 text-white hover:bg-white/10 hover:text-white">
-                  <a href="/login-gh.html">
+                  <a href={githubLoginHref}>
                     <Github className="mr-2 h-4 w-4" />
                     GitHub
                   </a>

@@ -47,6 +47,7 @@ import * as LucideIcons from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
+import { PA_SECRETARY_ICON, PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
@@ -157,6 +158,7 @@ const iconMap: Record<string, LucideIcon> = {
   HardDrive,
   Home,
   BarChart3,
+  [PA_SECRETARY_ICON]: PaSecretary,
 };
 
 const notificationTone = {

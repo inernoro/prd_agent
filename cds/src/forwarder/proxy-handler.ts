@@ -27,6 +27,7 @@ import { buildWidgetScript } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import {
   createBodyCapture,
+  isBinaryContentType,
   createRequestId,
   redactHeaders,
   type HttpLogSink,
@@ -152,7 +153,7 @@ export class ProxyHandler {
     const requestId = String(req.headers['x-cds-request-id'] || '').trim() || createRequestId();
     req.headers['x-cds-request-id'] = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const requestCapture = createBodyCapture();
+    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     // 原始 URL 留给日志用(/_cds/api/branches → /_cds/api/branches),
     // 不污染 req 共享对象。Cursor Bugbot Low:之前 mutate req.url 让 forward 日志
@@ -219,7 +220,7 @@ export class ProxyHandler {
             || req.socket?.remoteAddress,
           request: {
             headers: redactHeaders(req.headers),
-            ...requestCapture.snapshot(),
+            ...requestCapture.snapshot(req.headers['content-type']),
           },
           response: {
             headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
@@ -259,7 +260,7 @@ export class ProxyHandler {
         upstream: `${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? outgoingPath : ''}`,
         request: {
           headers: redactHeaders(req.headers),
-          ...requestCapture.snapshot(),
+          ...requestCapture.snapshot(req.headers['content-type']),
         },
         response: {
           headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
@@ -268,11 +269,11 @@ export class ProxyHandler {
         error,
       });
     };
-    // 每请求一条 forward 日志:用原始 URL(含 /_cds 前缀如有),journalctl 能直接
-    // 关联客户端真实请求,不被 passthrough 的 path strip 干扰。对应 master proxy.ts:530。
-    this.opts.logger?.info?.(
-      `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
-    );
+    if (process.env.CDS_FORWARDER_ACCESS_LOG === '1') {
+      this.opts.logger?.info?.(
+        `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
+      );
+    }
 
     // 透传 headers + X-Forwarded-* 累积。先复制 req.headers 不 mutate,
     // 再合并 passthrough 注入的 extraHeaders(如 x-cds-internal)。
@@ -379,7 +380,9 @@ export class ProxyHandler {
               if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
             });
             upstreamRes.on('end', () => {
-              const bodyPreview = Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
+              const bodyPreview = isBinaryContentType(contentType)
+                ? ''
+                : Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
               if (shouldLogApiFailure) {
                 this.opts.logger?.warn?.(
                   `[forward] api upstream ${status}: ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` path=${outgoingPath}` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'}, requestId=${String(upstreamRes.headers['x-cds-request-id'] || req.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${contentType || '-'})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,
