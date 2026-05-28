@@ -250,6 +250,7 @@ type TabValue =
   | 'comment-template'
   | 'env'
   | 'runtime-defaults'
+  | 'infra'
   | 'cache'
   | 'stats'
   | 'activity'
@@ -280,6 +281,7 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
+      { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
@@ -501,6 +503,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="runtime-defaults">
                   <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="infra">
+                  <ProjectInfraTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="comment-template">
                   <CommentTemplateTab projectId={project.id} onToast={setToast} />
@@ -2498,3 +2503,221 @@ const activityTypeLabels: Record<string, string> = {
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
 };
+
+// ─────────────────────────────────────────────────────────────
+// 项目基础设施 Tab(2026-05-28 新增)
+// 用户反馈:openvisual 的烂 minio infra 配置没法在 UI 里删,只能调
+// `/api/infra/:id?project=<id>` DELETE。本 Tab 把列表 + 启停 + 删除做出来。
+// ─────────────────────────────────────────────────────────────
+
+interface ProjectInfraService {
+  id: string;
+  projectId: string;
+  name: string;
+  dockerImage: string;
+  containerPort: number;
+  hostPort: number;
+  containerName: string;
+  status: 'running' | 'stopped' | 'error';
+  errorMessage?: string;
+  command?: string | string[];
+  entrypoint?: string | string[];
+  restartPolicy?: string;
+  createdAt: string;
+}
+
+function ProjectInfraTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [services, setServices] = useState<ProjectInfraService[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      const data = await apiRequest<{ services?: ProjectInfraService[] }>(
+        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`,
+      );
+      setServices(data.services || []);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      setError(msg || '加载失败');
+      setServices([]);
+    }
+  }, [projectId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const doStart = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(id)}/start?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+      onToast(`已启动 ${id}`);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      onToast(`启动失败:${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [projectId, refresh, onToast]);
+
+  const doStop = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(id)}/stop?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+      onToast(`已停止 ${id}`);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      onToast(`停止失败:${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [projectId, refresh, onToast]);
+
+  const doDelete = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(id)}?project=${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+      onToast(`已删除 ${id}`);
+      setConfirmDeleteId(null);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      onToast(`删除失败:${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [projectId, refresh, onToast]);
+
+  if (services === null) return <LoadingBlock label="加载基础设施列表…" />;
+  if (error && services.length === 0) return <ErrorBlock message={error} />;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold">项目基础设施</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
+          <RefreshCw className="h-3 w-3" /> 刷新
+        </Button>
+      </div>
+
+      {services.length === 0 ? (
+        <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-6 text-center text-sm text-muted-foreground">
+          该项目尚无 infra 容器
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {services.map((svc) => {
+            const isBusy = busy === svc.id;
+            const cmdText = svc.command === undefined ? null
+              : Array.isArray(svc.command) ? svc.command.join(' ')
+              : String(svc.command);
+            return (
+              <div
+                key={svc.id}
+                className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-foreground">{svc.name}</span>
+                      <CodePill>{svc.id}</CodePill>
+                      <span className={
+                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ` +
+                        (svc.status === 'running'
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : svc.status === 'error'
+                            ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                            : 'bg-muted text-muted-foreground')
+                      }>
+                        {svc.status === 'running' ? '运行中' : svc.status === 'error' ? '错误' : '已停止'}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground font-mono">
+                      {svc.dockerImage}
+                      {' · '}
+                      :{svc.hostPort}→{svc.containerPort}
+                    </div>
+                    {cmdText ? (
+                      <div className="mt-1 text-[11px] text-foreground/70 font-mono break-all">
+                        cmd: {cmdText}
+                      </div>
+                    ) : null}
+                    {svc.errorMessage ? (
+                      <div className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">
+                        {svc.errorMessage}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {svc.status === 'running' ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
+                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        停止
+                      </Button>
+                    ) : (
+                      <Button type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
+                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        启动
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setConfirmDeleteId(svc.id)}
+                      disabled={isBusy}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      删除
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={confirmDeleteId !== null} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              确认删除 infra 服务
+            </DialogTitle>
+            <DialogDescription>
+              将停止并删除容器 <code className="font-mono">{confirmDeleteId}</code>,以及对应的持久卷映射记录。
+              数据卷本身不会被删(volumes 由 docker 单独管理),但服务不会再启动。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setConfirmDeleteId(null)}>取消</Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => confirmDeleteId && doDelete(confirmDeleteId)}
+              disabled={busy !== null}
+            >
+              {busy !== null ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

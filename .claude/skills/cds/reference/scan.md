@@ -66,8 +66,9 @@ cdscli scan --apply-to-cds <projectId>
   ├─ 拼装 compose YAML
   ├─ POST /api/projects/<projectId>/pending-import
   │    body: { agentName, purpose, composeYaml }
-  └─ 返回 importId + 审批 URL
-     https://$CDS_HOST/project-list?pendingImport=<importId>
+  └─ 返回 importId
+     CDS Dashboard 右下角自动弹出"Agent 导入 N"徽章(2026-05-28 起)
+     备用直达链接：https://$CDS_HOST/project-list?pendingImport=<importId>
 ```
 
 用户点批准 → CDS 自动创建 infra 容器 + build profile。
