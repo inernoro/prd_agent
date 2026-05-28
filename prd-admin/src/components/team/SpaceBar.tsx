@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Plus, Settings, User, Users } from 'lucide-react';
+import { Plus, Settings, User, UserPlus, Users } from 'lucide-react';
 import { useTeamStore } from '@/stores/teamStore';
 import { TeamManagerPanel } from '@/components/team/TeamManagerPanel';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -122,8 +122,9 @@ export function TeamSpaceHeader({
   const { teams, loadTeams } = useTeamStore();
   const team = teams.find((t) => t.team.id === teamId) ?? null;
   const [members, setMembers] = useState<TeamMember[]>([]);
-  const [copied, setCopied] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
+  // null：默认 / 'invite'：打开管理面板并跳到「添加成员」tab
+  const [managerInitialTab, setManagerInitialTab] = useState<'invite' | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -132,14 +133,10 @@ export function TeamSpaceHeader({
   }, [teamId]);
 
   if (!team) return null;
-  const inviteLink = `${window.location.origin}/join/${team.team.inviteCode}`;
-  const copyInvite = () => {
-    void navigator.clipboard.writeText(inviteLink).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
-  };
 
   return (
     <div className="flex items-center gap-3 mt-3">
-      <button type="button" className="flex items-center -space-x-1.5" title="成员（点击管理）" onClick={() => setManagerOpen(true)}>
+      <button type="button" className="flex items-center -space-x-1.5" title="成员（点击管理）" onClick={() => { setManagerInitialTab(null); setManagerOpen(true); }}>
         {members.slice(0, 5).map((m) => (
           <UserAvatar key={m.userId} src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-6 h-6 rounded-full" style={{ border: '1.5px solid var(--bg-card)' }} />
         ))}
@@ -147,25 +144,28 @@ export function TeamSpaceHeader({
           <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px]" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1.5px solid var(--bg-card)' }}>+{team.memberCount - 5}</span>
         )}
       </button>
-      <button type="button" className="h-8 px-3 rounded-[8px] text-[12px] flex items-center gap-1.5"
-        style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-        onClick={copyInvite} title={inviteLink}>
-        {copied ? <Check size={13} style={{ color: '#22c55e' }} /> : <Copy size={13} />}
-        {copied ? '链接已复制' : '邀请协作（复制链接）'}
-      </button>
+      {team.myRole === 'admin' && (
+        <button type="button" className="h-8 px-3 rounded-[8px] text-[12px] flex items-center gap-1.5"
+          style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+          onClick={() => { setManagerInitialTab('invite'); setManagerOpen(true); }} title="搜索用户并直接添加为成员">
+          <UserPlus size={13} />
+          邀请成员
+        </button>
+      )}
       {myWebHostingRole === 'viewer' && (
         <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>你是查看者（只读）</span>
       )}
       {team.myRole === 'admin' && (
         <button type="button" className="h-8 w-8 rounded-[8px] flex items-center justify-center ml-auto"
           style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
-          title="成员与角色 / 重命名 / 删除空间" onClick={() => setManagerOpen(true)}>
+          title="成员与角色 / 重命名 / 删除空间" onClick={() => { setManagerInitialTab(null); setManagerOpen(true); }}>
           <Settings size={15} />
         </button>
       )}
       {managerOpen && (
-        <TeamManagerPanel onClose={() => {
+        <TeamManagerPanel initialTab={managerInitialTab ?? undefined} initialTeamId={teamId} onClose={() => {
           setManagerOpen(false);
+          setManagerInitialTab(null);
           void loadTeams(true);
           void getTeam(teamId).then((r) => { if (r.success) setMembers(r.data.members); });
         }} />

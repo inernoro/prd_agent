@@ -48,13 +48,17 @@ const ACTION_LABEL: Record<string, string> = {
   'entry.deleted': '删除了文档',
 };
 
-export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
+export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
+  onClose: () => void;
+  initialTab?: Tab;
+  initialTeamId?: string;
+}) {
   const myUserId = useAuthStore((s) => s.user?.userId ?? '');
 
   const [teams, setTeams] = useState<TeamListItem[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('members');
+  const [selectedId, setSelectedId] = useState<string | null>(initialTeamId ?? null);
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'members');
 
   // 详情
   const [team, setTeam] = useState<Team | null>(null);
