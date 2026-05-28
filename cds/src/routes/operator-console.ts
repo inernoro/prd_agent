@@ -200,13 +200,26 @@ export function createOperatorConsoleRouter(deps: {
       }
       const durationMs = Date.now() - startedAt;
       send('done', { opId: op.id, durationMs, ...result });
+      // 2026-05-28:把 op 的 details(含 shell.run 的 stdout/stderr)也存进
+      // server-event-log,这样即便 SSE 流被中间层切断,客户端仍能从
+      // /api/server-events 拉回完整产出。stdout/stderr 单字段截断到 32KB
+      // 避免单 event 巨大撑爆 log store。
+      const truncate = (s: unknown, limit = 32_000): unknown => {
+        if (typeof s !== 'string') return s;
+        return s.length <= limit ? s : `${s.slice(0, limit)}\n... [truncated ${s.length - limit} chars]`;
+      };
+      const safeDetails = result.details
+        ? Object.fromEntries(
+            Object.entries(result.details).map(([k, v]) => [k, truncate(v)]),
+          )
+        : undefined;
       deps.serverEventLogStore?.record({
         category: 'system',
         severity: 'info',
         source: 'operator-console',
         action: 'operator.op.completed',
         message: `operator op completed: ${op.id} (${durationMs}ms) — ${result.summary}`,
-        details: { opId: op.id, durationMs, summary: result.summary, actor },
+        details: { opId: op.id, durationMs, summary: result.summary, actor, ...(safeDetails ? { output: safeDetails } : {}) },
       });
     } catch (err) {
       const message = (err as Error).message || String(err);
