@@ -255,6 +255,32 @@ describe('Server route ordering (regression)', () => {
     expect(body.events[0].details.trigger).toBe('manual');
   });
 
+  it('real createServer treats /_cds/api/* as a master API alias, not SPA HTML', async () => {
+    const app = buildRealServerWithEvents([
+      {
+        _id: 'evt-cds-alias',
+        ts: new Date('2026-05-28T09:00:00.000Z'),
+        category: 'system',
+        severity: 'info',
+        source: 'test',
+        action: 'alias.probe',
+        requestId: 'req-alias',
+      },
+    ]);
+    installSpaFallback(app, webDir);
+    server = await startServer(app);
+
+    const res = await request(server, '/_cds/api/server-events?action=alias.probe');
+
+    expect(res.status).toBe(200);
+    expect(res.contentType).toContain('application/json');
+    expect(res.body).not.toContain('DASHBOARD');
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.total).toBe(1);
+    expect(body.events[0].requestId).toBe('req-alias');
+  });
+
   it('real createServer rejects invalid /api/server-events since timestamps', async () => {
     const app = buildRealServerWithEvents([]);
     server = await startServer(app);

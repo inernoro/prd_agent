@@ -935,6 +935,19 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
+  // `/_cds/api/*` is the control-plane passthrough path used by preview
+  // pages and the dashboard when `/api/*` might be claimed by a branch app.
+  // The forwarder already strips `/_cds`; direct master traffic must do the
+  // same before body parsing/routing, otherwise Express falls through to the
+  // React SPA and returns HTML for an API request.
+  app.use((req, _res, next) => {
+    const url = req.url || '';
+    if (url === '/_cds/api' || url.startsWith('/_cds/api/')) {
+      req.url = url.slice('/_cds'.length) || '/api';
+      req.headers['x-cds-internal'] = '1';
+    }
+    next();
+  });
   // `verify` is called with the raw buffer before body-parser parses it.
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
