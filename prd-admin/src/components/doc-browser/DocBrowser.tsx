@@ -1666,25 +1666,29 @@ export function DocBrowser({
           <span style={{ opacity: 0.8 }}>个文件</span>
         </div>
 
-        {/* 拖拽调整宽度的把手 */}
-        <div
-          className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
-            setResizing(true);
-          }}
-          style={{ zIndex: 10 }}
-        >
+        {/* 拖拽调整宽度的把手（仅 inset 模式）。cards 模式下双卡片有 12px gap，
+            把手挂在 sidebar 内部右边缘会被 overflow-hidden + rounded-xl 剪成孤立小方块，
+            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。 */}
+        {!isCards && (
           <div
-            className="absolute top-0 left-0 h-full transition-all duration-150"
-            style={{
-              width: resizing ? '2px' : '1px',
-              background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+            className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+              setResizing(true);
             }}
-          />
-          <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
-        </div>
+            style={{ zIndex: 10 }}
+          >
+            <div
+              className="absolute top-0 left-0 h-full transition-all duration-150"
+              style={{
+                width: resizing ? '2px' : '1px',
+                background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+              }}
+            />
+            <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
+          </div>
+        )}
       </div>
 
       {/* 右侧：文档预览 */}
