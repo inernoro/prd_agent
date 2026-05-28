@@ -1660,7 +1660,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function waitForRestartSafeBranchOperationsForRoute(
     source: string,
-    timeoutMs = Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 180_000),
+    timeoutMs = Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 5_000),
     intervalMs = 1000,
   ) {
     return waitForRestartSafeBranchOperations({
@@ -12608,24 +12608,19 @@ cdscli project list --human
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
+      // 2026-05-28 用户反馈"为什么一定要等?":砍掉等待+deferred 路径。
+      // 5s 优雅窗口给即将完成的 op,但即便等不到也直接 restart——docker
+      // 容器归 daemon 管,cds-master 重启后已存在的容器继续跑;断掉的 SSE
+      // 由 webhook/UI auto-reconnect 兜底;重启后 reconcile 用 docker ps 核对。
+      // 仍保留 server-event-log 审计("self-update.restart.deferred" 这条
+      // event 在 restart-drain.ts 里仍会写),但不再阻塞 restart。
       const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-update');
       if (!restartDrain.ok) {
-        const message = 'CDS 已完成代码更新预检，但检测到仍有分支部署/删除/停止/清理等写操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 self-update。';
-        send('restart', 'warning', message);
-        sendSSE(res, 'error', { message, code: 'branch-operation-active', activeOperations: restartDrain.active });
-        res.end();
-        recordSelfUpdate({
-          ts: new Date().toISOString(),
-          branch: branch || '',
-          fromSha,
-          toSha: newHead || fromSha,
-          trigger: 'manual',
-          status: 'deferred',
-          durationMs: Date.now() - startedAt,
-          error: message.slice(0, 300),
-          actor,
-        });
-        return;
+        send(
+          'restart',
+          'warning',
+          `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
+        );
       }
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
@@ -13421,24 +13416,14 @@ cdscli project list --human
       // helper 保证两端口行为一致。
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
+      // 同 self-update:5s 优雅窗口 + 不阻塞 restart。详见上一处注释。
       const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync');
       if (!restartDrain.ok) {
-        const message = 'force-sync 已完成代码更新预检，但检测到仍有分支部署/删除/停止/清理等写操作正在执行，已延后重启以免打断容器生命周期操作。请稍后重试 force-sync。';
-        send('restart', 'warning', message);
-        sendSSE(res, 'error', { message, code: 'branch-operation-active', activeOperations: restartDrain.active });
-        res.end();
-        recordSelfUpdate({
-          ts: new Date().toISOString(),
-          branch: branch || target || '',
-          fromSha,
-          toSha: newHead || fromSha,
-          trigger: 'force-sync',
-          status: 'deferred',
-          durationMs: Date.now() - startedAt,
-          error: message.slice(0, 300),
-          actor,
-        });
-        return;
+        send(
+          'restart',
+          'warning',
+          `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
+        );
       }
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。

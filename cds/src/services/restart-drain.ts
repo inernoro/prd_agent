@@ -37,7 +37,12 @@ export function summarizeActiveBranchOperations(active: ActiveOperation[]): Rest
 export async function waitForRestartSafeBranchOperations(
   options: WaitForRestartSafeBranchOperationsOptions,
 ): Promise<RestartDrainResult> {
-  const timeoutMs = options.timeoutMs ?? Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 180_000);
+  // 2026-05-28 用户反馈:"为什么一定要等?" — 答案是没必要。docker 容器归 docker
+  // daemon 管,cds-master 重启后已存在的容器继续跑;in-flight deploy 的 SSE 连接
+  // 断掉但 webhook 5s 内会重试,UI 也 auto-reconnect;重启后 reconcile 会用
+  // `docker ps` 扫一遍核对状态。180s 默认是过度防御 → 砍到 5s 给即将完成的 op
+  // 一点优雅窗口。配 CDS_RESTART_DRAIN_TIMEOUT_MS=0 可彻底不等。
+  const timeoutMs = options.timeoutMs ?? Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 5_000);
   const intervalMs = options.intervalMs ?? 1000;
   const sleep = options.sleep || ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = options.now || (() => Date.now());

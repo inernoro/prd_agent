@@ -313,7 +313,9 @@ describe('ContainerService', () => {
       expect(runCmd).not.toContain('--memory-swap');
     });
 
-    it('should apply --cpus when cpus is set', async () => {
+    // 2026-05-28 用户授权"关闭所有容器资源限制" — 不再下发 --cpus 也不再下发
+    // --memory。cpus / memoryMB 字段保留作 capacity 调度规划提示,不进 docker run。
+    it('should NOT apply --cpus even when cpus is set (no-cpu-limit policy)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
@@ -325,10 +327,10 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
-      expect(runCmd).toContain('--cpus 1.5');
+      expect(runCmd).not.toContain('--cpus');
     });
 
-    it('should keep --cpus but drop --memory when both are set (no-mem-limit policy)', async () => {
+    it('should drop both --memory AND --cpus when both are set (no-resource-limit policy)', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
@@ -341,7 +343,7 @@ describe('ContainerService', () => {
 
       const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
       expect(runCmd).not.toContain('--memory');
-      expect(runCmd).toContain('--cpus 2');
+      expect(runCmd).not.toContain('--cpus');
     });
 
     it('should emit NO resource flags when resources is unset (backward compat)', async () => {
