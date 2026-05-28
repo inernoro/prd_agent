@@ -123,7 +123,14 @@ export function LibraryShareViewPage() {
             className="text-[18px] md:text-[20px] font-black hidden sm:inline"
             style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
           >
-            智识殿堂
+            知识库 · 分享
+          </span>
+          <span
+            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold flex-shrink-0"
+            style={{ background: '#FEF3C7', border: '2px solid #D97706', color: '#78350F' }}
+            title="本页是点对点分享，不是殿堂；只有持此链接者可看"
+          >
+            私有分享 · 仅持链接者可看
           </span>
           <div
             className="flex-1 text-center text-[13px] md:text-[14px] font-bold truncate hidden md:block"
