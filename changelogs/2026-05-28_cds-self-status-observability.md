@@ -13,3 +13,5 @@
 | fix | cds | infra auto-restart crash loop 检测 — 跟踪 lastSuccessfulStart 时间戳,启动后 < 60s 又死的标软失败,N 次软失败后 svc.status=error 停止重试。修复 minio "docker start 永远成功但 5s 后死" 的 30s 死循环 |
 | fix | cds/web | App.tsx ErrorToastPortal 硬编码 #fff/#ef4444 改走 hsl(var(--destructive)) token,符合 cds-theme-tokens 双主题规则 |
 | fix | cds | Node http.Server.keepAliveTimeout 5s → 65s + headersTimeout 70s,匹配 nginx upstream idle pool 60s。修复 nginx-reverse-proxy 场景下 stale-keepalive 导致 SSE 端点 50% 严格交替 400/200 的根因(SSH 现场诊断证实) |
+| feat | cds | 运维控制台改弹窗审批流 — AI 通过 POST /operator/request 发起 → 全局 Modal 在任何页面弹出「允许本次 / 允许本 session(1h) / 拒绝」三按钮 → CDS 后端按 caller key + opId 记 session,1h 内同一发起方+同一 op 自动通过,免重复点击 |
+| fix | cds | operator host.stats op 命令优化 — 简化 docker ps format 字符串避免 shell escape bug,加显式 `> cmd` log,超时延长到 8s |

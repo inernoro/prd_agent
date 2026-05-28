@@ -27,6 +27,12 @@ export type CdsEventType =
   | 'self.update.step'
   | 'self.update.done'
   | 'self.update.failed'
+  | 'operator.request.created'
+  | 'operator.request.approved'
+  | 'operator.request.rejected'
+  | 'operator.request.log'
+  | 'operator.request.completed'
+  | 'operator.request.failed'
   | 'heartbeat';
 
 export interface CdsEventEnvelope<T = unknown> {

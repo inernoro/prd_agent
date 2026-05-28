@@ -73,23 +73,29 @@ operatorOpRegistry.register({
   run: async ({ shell, log }) => {
     log('info', '采集主机资源...');
     const out: Record<string, string> = {};
+    // 2026-05-28 修 stuck:每条命令都要带 shell wrapper 才能跑 pipe。
+    // 原 docker ps 命令含 {{.Names}} 这种 docker 模板语法,直接 exec 会把
+    // 双引号 escape 出 bug。改用更简单的 docker ps --format,不嵌 template。
     for (const [k, cmd] of Object.entries({
       uptime: 'uptime',
-      memory: "free -h | head -3",
+      memory: 'free -h | head -3',
       disk: 'df -h / | tail -1',
-      cpuInfo: 'lscpu | head -10',
-      topProc: "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -8",
-      docker: 'docker ps --format "table {{.Names}}\\t{{.Status}}\\t{{.RunningFor}}" 2>&1 | head -15',
+      load: 'cat /proc/loadavg',
+      topProc: 'ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu --no-headers | head -8',
+      docker: 'docker ps --no-trunc --format "{{.Names}} | {{.Status}}" | head -20',
     })) {
       try {
-        const r = await shell.exec(cmd, { timeout: 5000 });
-        out[k] = (r.stdout || '').trim();
-        log('info', `${k}: ${out[k].split('\n')[0].slice(0, 80)}`);
+        log('info', `> ${cmd}`);
+        const r = await shell.exec(cmd, { timeout: 8000 });
+        const sample = (r.stdout || r.stderr || '').trim();
+        out[k] = sample;
+        log('info', `${k}: ${sample.split('\n')[0].slice(0, 100)}`);
       } catch (err) {
         out[k] = `ERR: ${(err as Error).message}`;
         log('warning', `${k}: ${out[k]}`);
       }
     }
+    log('info', '采集完成');
     return { summary: '主机资源采集完成', details: out };
   },
 });

@@ -4,12 +4,14 @@
 // 2026-05-28:用户反馈"不希望在前端 agent 和 SSH agent 之间反复 bounce"。
 // 本路由提供 CDS Dashboard 一键自助修复运维问题的能力,替代外部 SSH。
 
+import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import { operatorOpRegistry, type OperatorOpContext } from '../services/operator-console.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { operatorApprovalService } from '../services/operator-approval.js';
 
 export function createOperatorConsoleRouter(deps: {
   stateService: StateService;
@@ -17,12 +19,94 @@ export function createOperatorConsoleRouter(deps: {
   repoRoot: string;
   serverEventLogStore?: ServerEventLogSink | null;
 }): Router {
+  // 初始化审批服务(单例)
+  operatorApprovalService.init({
+    shell: deps.shell,
+    stateService: deps.stateService,
+    repoRoot: deps.repoRoot,
+    serverEventLogStore: deps.serverEventLogStore,
+  });
+
   const router = Router();
+
+  // 把 caller 标识哈希成 session key(用 AI access key / cookie token / IP 兜底)
+  const callerKeyFor = (req: Request): string => {
+    const aiKey = String(req.headers['x-ai-access-key'] || '').trim();
+    const cookieToken = (req.headers.cookie || '').match(/cds_token=([^;]+)/)?.[1] || '';
+    const raw = aiKey || cookieToken || String(req.socket?.remoteAddress || 'anon');
+    return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  };
 
   router.get('/cds-system/operator/ops', (_req, res) => {
     res.json({
       ok: true,
       ops: operatorOpRegistry.list(),
+    });
+  });
+
+  // ── 弹窗审批流(AI 发起) ────────────────────────────────────────
+  router.post('/cds-system/operator/request', async (req, res) => {
+    const { opId, args } = (req.body ?? {}) as { opId?: string; args?: Record<string, unknown> };
+    if (!opId || typeof opId !== 'string') {
+      res.status(400).json({ ok: false, error: 'opId 必填' });
+      return;
+    }
+    const actor =
+      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      resolveActorFromRequest(req) ||
+      'ai';
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket?.remoteAddress;
+    const callerKey = callerKeyFor(req);
+    const pending = await operatorApprovalService.submitRequest({ opId, args, actor, ip, callerKey });
+    res.status(pending.status === 'pending' ? 202 : 200).json({
+      ok: pending.status !== 'rejected',
+      request: pending,
+    });
+  });
+
+  router.post('/cds-system/operator/requests/:id/approve', (req, res) => {
+    const scope = (req.body ?? {}).scope === 'session' ? 'session' : 'once';
+    const approver =
+      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      resolveActorFromRequest(req) ||
+      'admin';
+    const updated = operatorApprovalService.approve({ requestId: req.params.id, scope, approver });
+    if (!updated) {
+      res.status(404).json({ ok: false, error: 'request not found 或已审批' });
+      return;
+    }
+    res.json({ ok: true, request: updated });
+  });
+
+  router.post('/cds-system/operator/requests/:id/reject', (req, res) => {
+    const approver =
+      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      resolveActorFromRequest(req) ||
+      'admin';
+    const updated = operatorApprovalService.reject({ requestId: req.params.id, approver });
+    if (!updated) {
+      res.status(404).json({ ok: false, error: 'request not found 或已审批' });
+      return;
+    }
+    res.json({ ok: true, request: updated });
+  });
+
+  router.get('/cds-system/operator/requests/:id', (req, res) => {
+    const r = operatorApprovalService.get(req.params.id);
+    if (!r) { res.status(404).json({ ok: false, error: 'not found' }); return; }
+    res.json({ ok: true, request: r });
+  });
+
+  router.get('/cds-system/operator/requests', (_req, res) => {
+    res.json({
+      ok: true,
+      pending: operatorApprovalService.listPending(),
+      recent: operatorApprovalService.listRecent(20),
+      sessions: operatorApprovalService.listSessions(),
     });
   });
 

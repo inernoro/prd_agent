@@ -537,6 +537,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /self-refresh': '触发自更新刷新',
     'GET /cds-system/operator/ops': '列出运维控制台操作',
     'POST /cds-system/operator/run': '执行运维控制台操作',
+    'POST /cds-system/operator/request': '发起运维操作审批请求',
+    'GET /cds-system/operator/requests': '列出运维审批请求',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
@@ -649,6 +651,9 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
+    [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
+    [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
     [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
