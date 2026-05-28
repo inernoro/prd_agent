@@ -89,14 +89,151 @@ export async function assertText(page, text) {
 }
 
 // 截图 + caption。返回 {name, caption, path} 供归档脚本消费。
+// v2.2: 自动 waitForReady() 等页面真就绪，截后再 validate；不达标 retry 1 次后仍记录但打 warning。
 const shots = [];
-export async function shot(page, outDir, name, caption, { fullPage = false } = {}) {
+
+/**
+ * 截图前主动等"页面真就绪"，截图后做内容校验。
+ * 调用方仍可手动 waitForTimeout 强化等待；本函数是兜底，让"忘了等"也不至于截一张半成品。
+ *
+ * 就绪判定（三层 AND）：
+ *  1. networkidle:500ms 内无网络请求（最多等 8s，超时不阻塞）
+ *  2. 已知 loader 元素消失（[aria-busy="true"], .skeleton, .skeleton-loader, .map-spinner,
+ *     .animate-pulse, [data-loading="true"], `text=加载中`, `text=Loading`）
+ *  3. body 可见文本 ≥ 100 字（防"白屏 / 仅有空容器"）
+ *
+ * 截图后校验：
+ *  - 文件大小 < 8KB 视为空白图（黑屏 / 1px 大小）—— 警告
+ *  - body text 含明显失败词（"Cannot GET" / "Application Error" / "500 Internal"）—— 警告
+ *  - 满足 expectText 选项时断言文本命中（精确锁住"这张图证明了什么"）
+ */
+export async function waitForReady(page, { timeout = 12000, minTextLen = 100, customLoaderSelectors = [] } = {}) {
+  const t0 = Date.now();
+  // 1) networkidle（最多等 8s；超时不抛错，继续走下游）
+  try {
+    await page.waitForLoadState('networkidle', { timeout: Math.min(8000, timeout) });
+  } catch { /* 慢站/长轮询页面允许超时 */ }
+
+  // 2) loader 消失（已知模式 + 调用方追加）
+  const loaderSelectors = [
+    '[aria-busy="true"]',
+    '.skeleton',
+    '.skeleton-loader',
+    '.map-spinner',
+    '.animate-pulse',
+    '[data-loading="true"]',
+    ...customLoaderSelectors,
+  ];
+  const loaderRe = /^(加载中|Loading|Loading\.+|正在加载|载入中|请稍候)/;
+  const remaining = timeout - (Date.now() - t0);
+  try {
+    await page.waitForFunction(
+      ({ selectors, reSource }) => {
+        const re = new RegExp(reSource);
+        // 任一 loader selector 还可见 → false
+        for (const s of selectors) {
+          const el = document.querySelector(s);
+          if (el && el.offsetParent !== null) return false;
+        }
+        // 任一可见元素的 textContent 命中 loader 文案 → false
+        const all = document.querySelectorAll('div, span, p, button');
+        for (const el of all) {
+          if (el.offsetParent === null) continue;
+          const t = (el.textContent || '').trim();
+          if (t && t.length < 30 && re.test(t)) return false;
+        }
+        return true;
+      },
+      { selectors: loaderSelectors, reSource: loaderRe.source },
+      { timeout: Math.max(1000, remaining), polling: 200 },
+    );
+  } catch { /* 部分应用 loader 长期残留（如 keepalive 心跳），不阻塞 */ }
+
+  // 3) 内容下限（防白屏）
+  try {
+    await page.waitForFunction(
+      (min) => {
+        const t = (document.body && document.body.innerText) || '';
+        return t.trim().length >= min;
+      },
+      minTextLen,
+      { timeout: Math.max(800, timeout - (Date.now() - t0)), polling: 150 },
+    );
+  } catch { /* 失败也不抛错，下游 validate 会把这种识别为问题 */ }
+
+  // 微稳定窗：让 CSS transition / 渐入动画落幕（截到不正在变化的帧）
+  await page.waitForTimeout(400);
+}
+
+/**
+ * 截图后内容校验。命中失败词 / 太空 / 文件过小都记录 warning 到返回值。
+ * expectText: 字符串或正则，断言截图时页面 body 文本中应包含此内容。
+ */
+async function validateShot(page, path, expectText) {
+  const warnings = [];
+  const fs = require('fs');
+  try {
+    const size = fs.statSync(path).size;
+    if (size < 8 * 1024) warnings.push(`文件过小 ${size}B（疑似白屏/黑屏）`);
+  } catch { warnings.push('截图文件读取失败'); }
+
+  let bodyText = '';
+  try { bodyText = await page.locator('body').innerText(); } catch {}
+  if (!bodyText || bodyText.trim().length < 60) warnings.push('页面文本过少（< 60 字，疑似未渲染）');
+
+  const failureKeywords = ['Cannot GET', 'Application Error', 'Internal Server Error', 'NS_ERROR', 'ChunkLoadError', 'preview is not ready', '502 Bad Gateway', '503 Service Unavailable'];
+  for (const k of failureKeywords) {
+    if (bodyText.includes(k)) warnings.push(`页面含失败关键字: ${k}`);
+  }
+
+  if (expectText) {
+    const ok = expectText instanceof RegExp ? expectText.test(bodyText) : bodyText.includes(expectText);
+    if (!ok) warnings.push(`expectText 未命中: ${expectText}`);
+  }
+
+  return warnings;
+}
+
+/**
+ * shot(): 截图主入口。
+ * v2.2 起：自动 waitForReady() + validateShot() + 失败重试 1 次。
+ *
+ * @param {object} opts
+ *   - fullPage: 整页截图
+ *   - expectText: 断言页面含此文本（强烈推荐：让 caption 不只是描述、更是断言）
+ *   - skipReady: 跳过就绪等待（仅极少数确知场景，如登录页输入框未就绪）
+ *   - customLoaderSelectors: 项目特有的 loader 选择器
+ */
+export async function shot(page, outDir, name, caption, opts = {}) {
+  const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [] } = opts;
   require('fs').mkdirSync(outDir, { recursive: true });
   const path = `${outDir}/${name}.png`;
+
+  // 1) 等就绪
+  if (!skipReady) await waitForReady(page, { customLoaderSelectors });
+
+  // 2) 第一次截图
   await page.screenshot({ path, fullPage });
-  const rec = { name, caption, path };
+
+  // 3) 校验
+  let warnings = await validateShot(page, path, expectText);
+
+  // 4) 有 warning 时再等 2s 重试一次（覆盖"刚好慢一拍"的情况）
+  if (warnings.length > 0) {
+    console.log(`  ! ${name} 首次截图有问题：${warnings.join(' | ')} —— 等 2.5s 后重试`);
+    await page.waitForTimeout(2500);
+    if (!skipReady) await waitForReady(page, { timeout: 8000, customLoaderSelectors });
+    await page.screenshot({ path, fullPage });
+    warnings = await validateShot(page, path, expectText);
+  }
+
+  const rec = { name, caption, path, warnings: warnings.length ? warnings : undefined };
   shots.push(rec);
-  console.log(`  截图 ${name} | ${caption}`);
+  if (warnings.length > 0) {
+    console.log(`  ⚠ 截图 ${name} | ${caption} | 仍有警告: ${warnings.join(' | ')}`);
+  } else {
+    console.log(`  截图 ${name} | ${caption}`);
+  }
   return rec;
 }
 
@@ -140,18 +277,20 @@ export async function clearBoxes(page) {
 
 // 一步「点击导航/按钮」：框住目标 + 标序号 → 截「点这里」图 → 清框 → 真点击。
 // locator 由调用方构造（getByRole/getByText/...），caption 写"点这里去哪"。
-export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000 } = {}) {
+// v2.2: 支持 opts.expectText 透传给 shot()，让"点这里"图也能断言页面已就绪
+export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000, expectText } = {}) {
   await locator.first().waitFor({ state: 'visible', timeout }).catch(() => {});
   await box(page, locator, stepNo);
-  await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`);
+  await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`, { expectText });
   await clearBoxes(page);
   await locator.first().click({ timeout }).catch((e) => console.log('  stepClick 点击失败', name, e.message));
   await page.waitForTimeout(1800);
 }
 
 // 结果/验证截图：可选框住"变化处"(toast/卡片/激活态)，序号入 caption。
-export async function stepShot(page, outDir, stepNo, name, caption, highlight) {
+// v2.2: 支持 expectText 锁定结果断言（强烈推荐：结果图就是要证明 X 文本出现了）
+export async function stepShot(page, outDir, stepNo, name, caption, highlight, { expectText } = {}) {
   if (highlight) await box(page, highlight, stepNo);
-  await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`);
+  await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`, { expectText });
   if (highlight) await clearBoxes(page);
 }

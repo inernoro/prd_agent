@@ -215,6 +215,39 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 
 ---
 
+## 4.1 截图就绪准则（v2.2 新增 硬规矩）
+
+> 历史教训（2026-05-28）：用户当场抓到「2 张截图页面没加载完就拍了」（站点卡缩略图都是占位方块）。根因是 `shot()` 没主动等就绪，全靠调用方 `waitForTimeout(2000)` 兜底，忘加一处即漏。
+
+**新硬规矩**（harness v2.2 + archive_report v2.2 联动）：
+
+1. **截图前自动 `waitForReady()`**：三层 AND 判定：
+   - networkidle 500ms（最多等 8s）
+   - 已知 loader 选择器消失（`[aria-busy="true"]` / `.skeleton` / `.skeleton-loader` / `.map-spinner` / `.animate-pulse` / `[data-loading="true"]`，以及含"加载中/Loading/正在加载"短文本的可见元素）
+   - `body.innerText.trim().length >= 100`（防白屏）
+   - 微稳定窗 400ms（让 CSS transition 落幕）
+
+2. **截图后自动 `validateShot()`**：
+   - 文件 < 8KB → 警告（疑似白屏/黑屏）
+   - body 文本 < 60 字 → 警告
+   - 含失败关键字 `Cannot GET` / `Application Error` / `502 Bad Gateway` / `preview is not ready` / `ChunkLoadError` 等 → 警告
+   - 传入 `expectText` 时强制断言文本命中（强烈推荐：让 caption 不只是描述、更是断言）
+
+3. **有警告 → 自动重试 1 次**（再等 2.5s + 重新 waitForReady + 重拍）；仍有警告则写入 manifest `warnings` 数组。
+
+4. **准入校验把 warnings 升为拒收硬条件**（archive_report.py）：任何一张截图带 warnings 都拒收，**强迫调用方修 driver 或加 `expectText` 锁定，而不是放水**。
+
+5. **特例 escape hatch**：登录页表单未渲染、空状态本身就是断言对象等场景，调用方传 `{ skipReady: true }` 显式跳过；这是被记录在案的"我知道在做什么"。
+
+写 driver 时推荐用 `expectText`：
+```js
+await shot(page, OUT, '04-share-analytics-drawer', '分享统计 Drawer ...', {
+  expectText: '活跃链接',  // 锁住"Drawer 真渲染出来了"
+});
+```
+
+---
+
 ## 6.5 业界精华吸收（v2.1 新增）
 
 本节梳理国际/工程界常用验收模板的关键做法，挑出值得纳入的，**已纳入**或**作为可选段**两类标明。无需全套照搬，照搬反成形式主义；吸收的是"被用 20 年还没废"的硬核做法。
