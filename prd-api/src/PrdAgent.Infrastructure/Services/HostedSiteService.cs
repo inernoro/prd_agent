@@ -691,6 +691,8 @@ public class HostedSiteService : IHostedSiteService
             // "改密码=轮换"）：否则用户重设新密码却被静默丢弃、旧密码仍可用——既是展示
             // 错误也是安全隐患；标题/描述不刷新则站点改名后展示陈旧元数据。
             var ups = new List<UpdateDefinition<WebPageShareLink>>();
+            // 保留 mutate 前的 ExpiresAt，供下方审计 RenewalHistory.OldExpiresAt 使用
+            var oldExpiresAtForAudit = reuse.ExpiresAt;
             if (reuse.ExpiresAt != newExpiresAt)
             {
                 ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, newExpiresAt));
@@ -720,17 +722,20 @@ public class HostedSiteService : IHostedSiteService
                 reuse.Description = effDescription;
             }
             // 复用即视为续期事件 —— 写一条审计记录，便于事后排查"为什么过期时间变了"
-            if (reuse.ExpiresAt != newExpiresAt || ups.Count > 0)
+            if (oldExpiresAtForAudit != newExpiresAt || ups.Count > 0)
             {
                 var renewEvent = new ShareRenewalEvent
                 {
                     Action = "reused",
                     ByUserId = userId,
-                    OldExpiresAt = reuse.ExpiresAt == newExpiresAt ? null : (DateTime?)null,
+                    OldExpiresAt = oldExpiresAtForAudit,
                     NewExpiresAt = newExpiresAt,
-                    Note = "create-share reused existing link",
+                    Note = oldExpiresAtForAudit != newExpiresAt
+                        ? $"create-share reused link, ExpiresAt {oldExpiresAtForAudit?.ToString("o") ?? "null"} -> {newExpiresAt?.ToString("o") ?? "null"}"
+                        : "create-share reused link (metadata refreshed, expiry unchanged)",
                 };
                 ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, renewEvent));
+                reuse.RenewalHistory ??= new List<ShareRenewalEvent>();
                 reuse.RenewalHistory.Add(renewEvent);
             }
 
@@ -948,7 +953,9 @@ public class HostedSiteService : IHostedSiteService
             return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400, ErrorCode = "expired" };
 
         // Visibility 校验（防盗：链接被复制后不能被任意第三方长期访问）
-        // visit 便捷链恒为 public（站点访问短链），不走此分支
+        // - 空字符串 / null = 旧记录（本次发布前已存在，没有此字段）→ 按 public 兼容，保护历史公开链路
+        // - visit 便捷链恒为 public（站点访问短链）
+        // - 新建分享必显式赋值 owner-only / logged-in / public
         var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
         if (effVisibility == "owner-only")
         {

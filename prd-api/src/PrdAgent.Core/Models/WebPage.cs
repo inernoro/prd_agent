@@ -183,15 +183,19 @@ public class WebPageShareLink
 
     /// <summary>
     /// 链接可见性：
-    /// - owner-only（默认）：仅创建者或所属站点的 SharedTeamIds 成员可访问
+    /// - owner-only：仅创建者或所属站点的 SharedTeamIds 成员可访问（新建分享面板默认勾选）
     /// - logged-in：任何登录用户可访问
     /// - public：任何人（含未登录）可访问，受 AccessLevel 密码门控
     ///
-    /// 旧记录反序列化为默认值 "owner-only"；为保证不破坏存量公开链接，
-    /// 一次性 backfill service 启动时会把所有现存 share 改为 "public"，仅新建链接生效新默认。
-    /// visit 链恒为 public（站点访问便捷链）。
+    /// 字段默认值为空字符串：
+    /// (a) 旧分享文档没这个字段，反序列化得到 "" → ViewShareAsync 识别为 legacy → 按 public 处理
+    ///     这样保护存量公开链接，避免发布瞬间所有旧链接被拒绝
+    /// (b) 新建分享时 CreateShareAsync 必须显式赋值（owner-only / logged-in / public），杜绝裸默认
+    /// (c) visit 便捷链恒为 public
+    ///
+    /// 不再依赖延迟 30s 的 backfill —— legacy 兼容直接在读路径完成。
     /// </summary>
-    public string Visibility { get; set; } = "owner-only";
+    public string Visibility { get; set; } = string.Empty;
 
     /// <summary>
     /// 续期审计历史（每次创建复用 / 显式续期都追加一条）。
