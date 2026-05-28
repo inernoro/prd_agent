@@ -397,7 +397,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
-  const [historyOpen, setHistoryOpen] = useState(false);
+  // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
   // ⚠ 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
   // 检测到 backend 有 in-progress self-update(可能是别 session/webhook 触发),
@@ -754,7 +754,6 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           <SelfUpdateStatusPanel
             state={selfStatus}
             onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
-            onOpenHistory={() => setHistoryOpen(true)}
           />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
@@ -988,20 +987,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         </Dialog>
       </DisclosurePanel>
 
-      {/* 自更新历史抽屉 — 用 shadcn Dialog 自动满足布局 3 硬约束(createPortal /
-          inline 高度 / min-h-0),不会被外层 Section 的 overflow 裁切。
-          状态栏 chip 点击打开,显示最近 20 条流水。*/}
-      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>CDS 自更新历史</DialogTitle>
-            <DialogDescription>
-              最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。
-            </DialogDescription>
-          </DialogHeader>
-          <SelfUpdateHistoryList open={historyOpen} fallback={selfStatus} />
-        </DialogContent>
-      </Dialog>
+      {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
+          用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。 */}
+      <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
+        <SelfUpdateHistoryList />
+      </Section>
     </div>
   );
 }
@@ -1018,11 +1008,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 function SelfUpdateStatusPanel({
   state,
   onRefresh,
-  onOpenHistory,
 }: {
   state: SelfStatusState;
   onRefresh: () => void;
-  onOpenHistory: () => void;
 }): JSX.Element {
   if (state.status === 'loading') {
     return (
@@ -1081,15 +1069,13 @@ function SelfUpdateStatusPanel({
         ) : null}
 
         {data.lastSelfUpdate ? (
-          <button
-            type="button"
-            onClick={onOpenHistory}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors hover:bg-[hsl(var(--surface-sunken))] ${selfUpdateStatusClass(data.lastSelfUpdate.status)}`}
-            title="点击查看完整历史"
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(data.lastSelfUpdate.status)}`}
+            title="完整历史见下方"
           >
             <RotateCw className="h-3.5 w-3.5" />
             上次更新 · {formatRelativeTime(data.lastSelfUpdate.ts)} · {selfUpdateStatusLabel(data.lastSelfUpdate.status)}
-          </button>
+          </span>
         ) : null}
 
         {data.restartStatus && data.restartStatus !== 'not_required' ? (
@@ -1109,9 +1095,7 @@ function SelfUpdateStatusPanel({
 
         <div className="ml-auto flex items-center gap-2">
           {selfUpdateHistory.length > 0 ? (
-            <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory}>
-              历史 {Math.min(selfUpdateHistory.length, 20)}
-            </Button>
+            <span className="text-xs text-muted-foreground">下方有最近 {Math.min(selfUpdateHistory.length, 20)} 条历史</span>
           ) : null}
           <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
             <RefreshCw />
@@ -1185,23 +1169,34 @@ type HistoryFetchState =
   | { status: 'error'; message: string }
   | { status: 'ok'; records: SelfUpdateRecord[] };
 
-function SelfUpdateHistoryList({
-  open,
-  fallback,
-}: {
-  open: boolean;
-  fallback: SelfStatusState;
-}): JSX.Element {
+function SelfUpdateHistoryList(): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
 
-  // 只有当 dialog 打开时才拉完整版(含 steps)。/api/self-status 默认 slim
-  // payload 没有 steps,展开"完整步骤"也看不到东西;切到独立 endpoint 才有。
   const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const events = useCdsEvents();
+
+  // 2026-05-28 用户反馈"我还没看明白就被闪了一下":
+  // 不再用 snapshot.selfUpdateHistory(每次 self.status 都 re-render),
+  // 改用独立 endpoint /api/self-update-history,只在两个时刻 re-fetch:
+  //   1. 首次 mount(打开页面)
+  //   2. 自更新真正完成时(self.update.done / self.update.failed)
+  //   3. 用户点"刷新"按钮
+  // 中间的 status / heartbeat / step 事件全部忽略 — 列表内容不会变就不刷。
+  const updatingPrev = useRef<typeof events.updating>(null);
   useEffect(() => {
-    if (!open) return;
+    const wasUpdating = !!updatingPrev.current;
+    const isUpdating = !!events.updating;
+    updatingPrev.current = events.updating;
+    // updating: true → false 表示一次更新结束,这时候才有新历史可拉
+    if (wasUpdating && !isUpdating) {
+      setRefreshNonce((n) => n + 1);
+    }
+  }, [events.updating]);
+
+  useEffect(() => {
     let cancelled = false;
-    setHistoryState({ status: 'loading' });
     fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1213,22 +1208,21 @@ function SelfUpdateHistoryList({
       })
       .catch((err: Error) => {
         if (cancelled) return;
-        // 拉完整版失败 → 优雅降级到 selfStatus 里的 slim history(虽然没 steps
-        // 但元数据齐全),前端不至于一片空白。
-        const fallbackList =
-          fallback.status === 'ok' ? fallback.data.selfUpdateHistory ?? [] : [];
-        setHistoryState({
-          status: 'ok',
-          records: fallbackList,
-        });
         // 不强制 error 态;静默 console 给运维看
         // eslint-disable-next-line no-console
-        console.warn('[self-update-history] 拉取失败,回退到 slim 元数据:', err.message);
+        console.warn('[self-update-history] 拉取失败:', err.message);
+        // 保留当前状态不变,避免刷成空
+        if (historyState.status === 'loading') {
+          setHistoryState({ status: 'error', message: err.message });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [open, fallback]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
+
+  const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
 
   if (historyState.status === 'loading') {
     return (
@@ -1247,7 +1241,12 @@ function SelfUpdateHistoryList({
   }
   const stats = summariseHistory(historyState.records);
   return (
-    <div className="max-h-[60vh] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+    <div className="max-h-[70vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
+      <div className="flex items-center justify-end pb-2">
+        <Button type="button" variant="ghost" size="sm" onClick={manualRefresh}>
+          <RefreshCw className="h-3 w-3" /> 刷新
+        </Button>
+      </div>
       <SelfUpdateHistoryStats stats={stats} />
       <ul className="divide-y divide-[hsl(var(--hairline))]">
         {historyState.records.map((rec, idx) => (
