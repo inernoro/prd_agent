@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
+import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
@@ -534,6 +535,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /self-status/stream': '订阅自更新状态',
     'GET /cds-events': '订阅 CDS 事件流',
     'POST /self-refresh': '触发自更新刷新',
+    'GET /cds-system/operator/ops': '列出运维控制台操作',
+    'POST /cds-system/operator/run': '执行运维控制台操作',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
@@ -2930,6 +2933,16 @@ export function createServer(deps: ServerDeps): express.Express {
   // 必须挂在 createBranchRouter 之后,因为 cache.init() 在 branches.ts 里执行,
   // cds-events 路由要读已 init 好的 cache。
   app.use('/api', createCdsEventsRouter());
+
+  // 2026-05-28: 运维控制台 — 取代"需要 SSH 上服务器"的运维操作。
+  // 提供 nginx reload / 配置 dump / shell 等高级操作的 UI 一键执行入口。
+  // 所有 op 走 access key 鉴权 + 服务端注册表(不接受任意命令),destructive 需 confirm。
+  app.use('/api', createOperatorConsoleRouter({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    repoRoot: deps.config.repoRoot,
+    serverEventLogStore: deps.serverEventLogStore,
+  }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──
   //

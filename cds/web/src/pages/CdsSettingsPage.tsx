@@ -32,6 +32,7 @@ const GitHubWebhookLogTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubW
 const GlobalVarsTab = lazy(() => import('@/pages/cds-settings/tabs/GlobalVarsTab').then((m) => ({ default: m.GlobalVarsTab })));
 const LoadingPagesTab = lazy(() => import('@/pages/cds-settings/tabs/LoadingPagesTab').then((m) => ({ default: m.LoadingPagesTab })));
 const MaintenanceTab = lazy(() => import('@/pages/cds-settings/tabs/MaintenanceTab').then((m) => ({ default: m.MaintenanceTab })));
+const OperatorConsoleTab = lazy(() => import('@/pages/cds-settings/tabs/OperatorConsoleTab').then((m) => ({ default: m.OperatorConsoleTab })));
 const MirrorTab = lazy(() => import('@/pages/cds-settings/tabs/MirrorTab').then((m) => ({ default: m.MirrorTab })));
 const OverviewTab = lazy(() => import('@/pages/cds-settings/tabs/OverviewTab').then((m) => ({ default: m.OverviewTab })));
 const RemoteHostsTab = lazy(() => import('@/pages/cds-settings/tabs/RemoteHostsTab').then((m) => ({ default: m.RemoteHostsTab })));
@@ -59,7 +60,8 @@ type TabValue =
   | 'global-vars'
   | 'loading-pages'
   | 'snapshots'
-  | 'maintenance';
+  | 'maintenance'
+  | 'operator';
 
 interface TabItem {
   value: TabValue;
@@ -81,6 +83,7 @@ const tabGroups: TabGroup[] = [
     label: '常用',
     items: [
       { value: 'maintenance', label: '更新与重启', icon: Wrench },
+      { value: 'operator', label: '运维控制台', icon: TerminalSquare },
       { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
       { value: 'overview', label: '概览', icon: Settings },
     ],
@@ -198,6 +201,9 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="operator">
+                  {activeTab === 'operator' ? <OperatorConsoleTab onToast={setToast} /> : null}
                 </TabsContent>
                 <TabsContent value="github">
                   {activeTab === 'github' ? <GitHubAppTab onToast={setToast} /> : null}
