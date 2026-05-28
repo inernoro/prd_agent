@@ -5,3 +5,6 @@
 | fix | prd-admin | TeamSpaceHeader 移除「邀请协作（复制链接）」按钮，改为「邀请成员」直达管理面板「添加成员」tab |
 | feat | prd-admin | TeamManagerPanel 支持 initialTab/initialTeamId props，外部入口可指定初始展示 |
 | refactor | prd-admin | 知识库分享阅读页（/s/lib/:token）改为复用 DocBrowser，删除 1225 行重复实现的 LibraryShareReader |
+| feat | prd-admin | DocBrowser 新增 sortMode prop（default/created-desc/updated-desc），分享页默认按创建时间倒序 |
+| feat | prd-admin | LibraryShareViewPage 支持 URL ?entry={id} 指定默认选中，无指定时默认选最新创建条目 |
+| feat | skill | 验收归档脚本生成的分享链带 ?entry={eid}，分享对象一打开就看到新报告 |

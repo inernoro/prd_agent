@@ -40,6 +40,7 @@ export type DocBrowserEntry = {
   contentType: string;
   fileSize: number;
   tags?: string[];
+  createdAt?: string;
   updatedAt?: string;
   updatedByName?: string;
   summary?: string;
@@ -50,6 +51,14 @@ export type DocBrowserEntry = {
   lastChangedAt?: string;
   metadata?: Record<string, string>;
 };
+
+/**
+ * 目录排序模式：
+ * - 'default'：置顶 → 文件夹 → 主文档 → 按标题升序（用于编辑场景，结构稳定）
+ * - 'created-desc'：置顶 → 文件夹 → 按创建时间倒序（用于阅读/分享场景，新内容先看到）
+ * - 'updated-desc'：置顶 → 文件夹 → 按更新时间倒序
+ */
+export type DocBrowserSortMode = 'default' | 'created-desc' | 'updated-desc';
 
 export type DocBrowserProps = {
   entries: DocBrowserEntry[];
@@ -95,6 +104,8 @@ export type DocBrowserProps = {
   sharedEntryIds?: Set<string>;
   emptyState?: React.ReactNode;
   loading?: boolean;
+  /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
+  sortMode?: DocBrowserSortMode;
 };
 
 // ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
@@ -911,6 +922,7 @@ export function DocBrowser({
   sharedEntryIds,
   emptyState,
   loading,
+  sortMode = 'default',
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -1052,7 +1064,13 @@ export function DocBrowser({
       }
     }
 
-    // 排序：置顶优先 → 文件夹优先 → 主文档优先 → 按标题
+    // 排序：置顶优先 → 文件夹优先 → 主文档优先 → 按 sortMode 决定剩余顺序
+    const tsOf = (e: DocBrowserEntry, field: 'createdAt' | 'updatedAt'): number => {
+      const v = e[field];
+      if (!v) return 0;
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
     const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => {
       const aPinned = pinnedSet.has(a.id) || a.id === primaryEntryId;
       const bPinned = pinnedSet.has(b.id) || b.id === primaryEntryId;
@@ -1060,6 +1078,13 @@ export function DocBrowser({
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
       if (a.id === primaryEntryId) return -1;
       if (b.id === primaryEntryId) return 1;
+      if (sortMode === 'created-desc') {
+        const d = tsOf(b, 'createdAt') - tsOf(a, 'createdAt');
+        if (d !== 0) return d;
+      } else if (sortMode === 'updated-desc') {
+        const d = tsOf(b, 'updatedAt') - tsOf(a, 'updatedAt');
+        if (d !== 0) return d;
+      }
       return a.title.localeCompare(b.title);
     };
     roots.sort(sortFn);
@@ -1068,7 +1093,7 @@ export function DocBrowser({
     const fCount = entries.filter(e => !e.isFolder).length;
 
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
-  }, [entries, primaryEntryId, pinnedSet]);
+  }, [entries, primaryEntryId, pinnedSet, sortMode]);
 
   // 从 summary 提取显示标题：优先 YAML frontmatter 的 title（去引号），
   // 没有 frontmatter / 没有 title 时回退到 frontmatter 之后的首个正文标题，

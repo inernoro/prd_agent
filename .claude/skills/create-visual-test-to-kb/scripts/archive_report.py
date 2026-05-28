@@ -173,7 +173,10 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     try:
         tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": title, "expiresInDays": 0}),
                          f"{base}/stores/{rid}/share-links"])["data"]["token"]
-        share_url = f"{preview.rstrip('/')}/s/lib/{tok}"  # 正确路由(实测 2026-05-27)：App.tsx 是 /s/lib/:token，旧 /library/share/ 会落到首页
+        # 正确路由(实测 2026-05-27)：App.tsx 是 /s/lib/:token，旧 /library/share/ 会落到首页。
+        # 带 ?entry={eid}(2026-05-28)：让分享对象一打开就高亮本次归档的新报告，不用在目录里翻找。
+        # LibraryShareViewPage 读 useSearchParams('entry')，优先级最高(高于 view.entryId / primaryEntryId / 最新创建)。
+        share_url = f"{preview.rstrip('/')}/s/lib/{tok}?entry={eid}"
     except Exception as e:
         print("  分享链生成失败（可登录后在该库手动分享）：", str(e)[:120])
     print(json.dumps({

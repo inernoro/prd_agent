@@ -15,7 +15,7 @@
  *   - 单篇分享（entryId 非空）：只展示那一篇
  */
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText } from 'lucide-react';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
@@ -33,6 +33,9 @@ const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
 export function LibraryShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
+  const entryFromUrl = searchParams.get('entry');
 
   const [view, setView] = useState<DocStoreShareView | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -58,15 +61,26 @@ export function LibraryShareViewPage() {
     return () => { mounted = false; };
   }, [token]);
 
-  // 单篇分享 / 整库分享：默认选中的条目
+  // 默认选中：URL ?entry= > 单篇分享 entryId > 最新创建的非 folder > primaryEntryId > 第一个非 folder
+  // 「最新创建」放在 primaryEntryId 之前：分享场景下"刚归档的新报告"是最常见的查看目标，
+  // 让分享对象一打开就看到最新内容，不用先在目录里翻。
   const initialSelectedId = useMemo<string | undefined>(() => {
     if (!view || entries.length === 0) return undefined;
+    if (entryFromUrl && entries.some((e) => e.id === entryFromUrl)) return entryFromUrl;
     if (view.entryId) return view.entryId;
-    if (view.store.primaryEntryId && entries.some((e) => e.id === view.store.primaryEntryId)) {
+    const docs = entries.filter((e) => !e.isFolder);
+    if (docs.length === 0) return undefined;
+    const newest = docs.reduce((best, e) => {
+      const t = e.createdAt ? new Date(e.createdAt).getTime() : 0;
+      const bt = best.createdAt ? new Date(best.createdAt).getTime() : 0;
+      return t > bt ? e : best;
+    }, docs[0]);
+    if (newest) return newest.id;
+    if (view.store.primaryEntryId && docs.some((e) => e.id === view.store.primaryEntryId)) {
       return view.store.primaryEntryId;
     }
-    return entries.find((e) => !e.isFolder)?.id;
-  }, [view, entries]);
+    return docs[0]?.id;
+  }, [view, entries, entryFromUrl]);
 
   useEffect(() => {
     if (initialSelectedId && !selectedEntryId) setSelectedEntryId(initialSelectedId);
@@ -203,6 +217,7 @@ export function LibraryShareViewPage() {
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
           loadContent={loadContent}
+          sortMode="created-desc"
         />
       </div>
     </div>
