@@ -1,6 +1,8 @@
-import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { reportDashboardRenderError } from '@/lib/client-diagnostics';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
 const BranchListPage = lazy(() => import('@/pages/BranchListPage').then((m) => ({ default: m.BranchListPage })));
@@ -13,19 +15,24 @@ const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').t
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
 
+/**
+ * 路由切换时 Suspense fallback。用品牌 logo + 加载文案,跟 CDS 视觉调性一致。
+ * 2026-05-28 用户反馈:之前是裸 <div>加载中...</div> 一行小字,丑爆。
+ */
 function RouteFallback(): JSX.Element {
   return (
-    <div className="min-h-screen bg-background p-8 text-sm text-muted-foreground">
-      加载中...
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <CdsLogoLoader size="xl" inline={false} label={<span className="text-sm text-muted-foreground">加载中…</span>} />
     </div>
   );
 }
 
-class DashboardErrorBoundary extends Component<{ children: ReactNode }, { message: string | null }> {
-  state = { message: null };
+class DashboardErrorBoundary extends Component<{ children: ReactNode }, { message: string | null; isChunkLoad: boolean }> {
+  state = { message: null as string | null, isChunkLoad: false };
 
-  static getDerivedStateFromError(error: unknown): { message: string } {
-    return { message: error instanceof Error ? error.message : String(error) };
+  static getDerivedStateFromError(error: unknown): { message: string; isChunkLoad: boolean } {
+    const message = error instanceof Error ? error.message : String(error);
+    return { message, isChunkLoad: isDynamicImportFailure(error) };
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
@@ -33,6 +40,11 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
     // eslint-disable-next-line no-console
     console.error('[cds-dashboard] render failed', error, info.componentStack);
     reportDashboardRenderError(error, info.componentStack || undefined);
+    // 2026-05-28 用户反馈"chunk-load 失败大面板太可怕":
+    //   chunk hash 失效是部署后的正常代价,**唯一正确处理是静默自动 reload**。
+    //   - 用 5s 冷却而非 60s(失败一次就 reload,不要看到 banner)
+    //   - 即使冷却内再次失败,也只显示**右下角小 toast**(见 render 里 isChunkLoad 分支)
+    //     绝不在主区域显示红色大面板。
     if (isDynamicImportFailure(error) && shouldAutoReloadAfterChunkFailure()) {
       window.location.reload();
     }
@@ -40,40 +52,157 @@ class DashboardErrorBoundary extends Component<{ children: ReactNode }, { messag
 
   render(): ReactNode {
     if (!this.state.message) return this.props.children;
+    // chunk-load 失败:右下角小 toast(冷却期内的二次失败才会到这里 — 一般用户看不到)
+    // 普通 runtime 错误:也走右下角小 toast,绝不占满主区
+    // 主区继续渲染 children,让用户能继续操作其他路由
+    const isChunkLoad = this.state.isChunkLoad;
     return (
-      <div className="min-h-screen bg-background p-8 text-foreground">
-        <div className="mx-auto max-w-3xl rounded-md border border-destructive/35 bg-destructive/10 p-5 text-sm text-destructive">
-          <div className="mb-2 text-base font-semibold">页面局部渲染异常</div>
-          <div className="text-destructive/85">
-            CDS 控制台没有退出，当前页面渲染失败。请刷新页面；若反复出现，把下面错误发给开发者定位。
-          </div>
-          <pre className="mt-4 max-h-48 overflow-auto rounded-md bg-background/70 p-3 text-xs text-foreground">
-            {this.state.message}
-          </pre>
-          <button
-            type="button"
-            className="mt-4 rounded-md bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground"
-            onClick={() => window.location.reload()}
-          >
-            刷新页面
-          </button>
-        </div>
-      </div>
+      <>
+        {this.props.children}
+        <ErrorToastPortal
+          message={this.state.message}
+          isChunkLoad={isChunkLoad}
+          onDismiss={() => this.setState({ message: null, isChunkLoad: false })}
+        />
+      </>
     );
   }
 }
 
+/**
+ * 右下角小 toast 错误提示。
+ *
+ * 2026-05-28 设计意图:用户反馈"右上左下都不行,绝不允许占满主区"。
+ * 这里走 createPortal 挂到 document.body,position:fixed 右下角,
+ * z-index 99999(toast 顶级层,见 .claude/rules/cds-theme-tokens.md #4)。
+ * 双主题适配:用 var(--bg-card) + var(--text-primary) + var(--destructive)
+ * 边框,跟主题自动翻转。
+ */
+function ErrorToastPortal({
+  message,
+  isChunkLoad,
+  onDismiss,
+}: {
+  message: string;
+  isChunkLoad: boolean;
+  onDismiss: () => void;
+}): JSX.Element | null {
+  // chunk-load 错误:5s 后自动消失(冷却期一般会自动 reload,toast 只是兜底)
+  // 普通错误:不自动消失,用户点 X 关闭
+  useEffect(() => {
+    if (!isChunkLoad) return;
+    const t = window.setTimeout(onDismiss, 5_000);
+    return () => window.clearTimeout(t);
+  }, [isChunkLoad, onDismiss]);
+
+  if (typeof document === 'undefined') return null;
+  const toast = (
+    <div
+      style={{
+        position: 'fixed',
+        right: 16,
+        bottom: 16,
+        zIndex: 99999,
+        maxWidth: 360,
+        background: 'var(--card, #1E1F20)',
+        color: 'var(--card-foreground, #e8e8ec)',
+        border: '1px solid rgba(220, 38, 38, 0.45)',
+        borderRadius: 8,
+        padding: '12px 14px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+        fontSize: 13,
+        lineHeight: 1.5,
+      }}
+      role="alert"
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+        <strong style={{ color: '#ef4444' }}>
+          {isChunkLoad ? '前端代码已更新,正在刷新…' : '页面渲染异常'}
+        </strong>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="关闭提示"
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'inherit',
+            cursor: 'pointer',
+            opacity: 0.6,
+            fontSize: 16,
+            lineHeight: 1,
+            padding: 0,
+          }}
+        >
+          ×
+        </button>
+      </div>
+      <div style={{ opacity: 0.85, marginBottom: 8 }}>
+        {isChunkLoad
+          ? 'CDS 已部署新版本,旧的页面代码片段已失效。如果几秒后仍未自动刷新,请手动刷新。'
+          : '当前操作触发了一个未捕获的错误,主面板已保留。点下方刷新或继续浏览其它页面。'}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          style={{
+            background: '#ef4444',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            padding: '6px 12px',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}
+        >
+          刷新页面
+        </button>
+        {!isChunkLoad ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            style={{
+              background: 'transparent',
+              color: 'inherit',
+              border: '1px solid rgba(127,127,127,0.35)',
+              borderRadius: 6,
+              padding: '6px 12px',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            继续浏览
+          </button>
+        ) : null}
+      </div>
+      <details style={{ marginTop: 8, opacity: 0.55, fontSize: 11 }}>
+        <summary style={{ cursor: 'pointer' }}>错误详情</summary>
+        <pre style={{ marginTop: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
+          {message}
+        </pre>
+      </details>
+    </div>
+  );
+  return createPortal(toast, document.body);
+}
+
 function isDynamicImportFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed/i
+  return /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|ChunkLoadError|Loading chunk \d+ failed/i
     .test(message);
 }
 
 function shouldAutoReloadAfterChunkFailure(): boolean {
+  // 2026-05-28 改:60s → 5s。chunk-load 失败的根因是部署后旧 SPA 引用了
+  // 不存在的 chunk hash,reload 加载新 HTML + 新 chunks 后就好。
+  // 60s 冷却太长 → 部署当下 5-10s 内必出 reload 风暴误报,误把用户暴露给大红面板。
+  // 改 5s 后:正常部署只会 reload 一次(因为 reload 后 SPA 拿到的就是新代码),
+  // 5s 内连发两次基本只可能是真的网络问题,这时候 toast 提示就够了。
   const key = 'cds:chunk-load-reload-at';
   const now = Date.now();
   const last = Number(window.sessionStorage.getItem(key) || '0');
-  if (Number.isFinite(last) && now - last < 60_000) return false;
+  if (Number.isFinite(last) && now - last < 5_000) return false;
   window.sessionStorage.setItem(key, String(now));
   return true;
 }

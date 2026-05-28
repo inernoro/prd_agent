@@ -10,14 +10,27 @@
  */
 
 export class ApiError extends Error {
+  /**
+   * 2026-05-28 增:transient 标志。
+   *
+   * 当后端 / CDN 临时返非 2xx 但响应**没有可读错误体**(典型 Cloudflare 边缘
+   * 偶发 400/502/503,无 `error/message` 字段、无 x-cds-request-id)时打 true。
+   * 调用方可以据此选择"静默吞掉 + 保留 lastKnownGood"而非弹错。
+   *
+   * 注意:有 body 或有 request-id 的失败不算 transient(那是真实的业务/服务端错)。
+   */
+  transient: boolean;
+
   constructor(
     public status: number,
     public body: unknown,
     message: string,
-    public requestId?: string
+    public requestId?: string,
+    transient = false,
   ) {
     super(message);
     this.name = 'ApiError';
+    this.transient = transient;
   }
 }
 
@@ -148,10 +161,28 @@ function throwApiError(
   } else if (typeof parsed === 'string' && parsed.trim()) {
     details.push(parsed.trim().slice(0, 240));
   }
-  const reason = details.length
-    ? details.join(' · ')
-    : '服务拒绝了请求，但没有返回可读错误原因；请在 HTTP 活动详情里用 requestId 追踪。';
-  const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
-  const message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
-  throw new ApiError(res.status, parsed, message, requestId);
+
+  // 2026-05-28 用户反馈"GET /_cds/api/branches?...失败 (HTTP 400)"太吓人:
+  // 当后端 / CDN 临时拒绝且**没给可读错误体也没 requestId**,几乎肯定是
+  // Cloudflare 边缘抖动 / 临时连接重置。这种情况标 transient,UI 端用一句
+  // 友好文案("网络抖动,已保留缓存"),完整诊断只去 console。
+  const isTransient = !details.length && !requestId && (
+    res.status === 400 || res.status === 502 || res.status === 503 || res.status === 504
+  );
+
+  let message: string;
+  if (isTransient) {
+    // 用户可见文案:短 + 友好,不带 URL / status / requestId
+    message = '网络抖动,稍后会自动恢复';
+    // 完整诊断到 console,方便 F12 复盘
+    // eslint-disable-next-line no-console
+    console.warn('[cds-api transient]', method, url, `HTTP ${res.status}`, parsed);
+  } else {
+    const reason = details.length
+      ? details.join(' · ')
+      : '服务拒绝了请求，但没有返回可读错误原因';
+    const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
+    message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
+  }
+  throw new ApiError(res.status, parsed, message, requestId, isTransient);
 }

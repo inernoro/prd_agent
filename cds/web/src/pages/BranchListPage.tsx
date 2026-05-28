@@ -1277,6 +1277,10 @@ export function BranchListPage(): JSX.Element {
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
       ]);
       if (branchesResult.status === 'rejected') {
+        if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
+          // 边缘 / CDN 抖动,静默保留缓存
+          return;
+        }
         const message = readableError(branchesResult.reason);
         setState((prev) => {
           if (prev.status !== 'ok') return prev;
@@ -1309,6 +1313,7 @@ export function BranchListPage(): JSX.Element {
         };
       });
     } catch (err) {
+      if (err instanceof ApiError && err.transient) return;
       const message = err instanceof Error ? err.message : String(err);
       setState((prev) => {
         if (prev.status !== 'ok') return prev;
@@ -1341,6 +1346,12 @@ export function BranchListPage(): JSX.Element {
       });
       if (needsEmptyRecheck) void confirmEmptyBranchList('后台刷新');
     } catch (err) {
+      // 2026-05-28:Cloudflare 边缘偶发 400 / 5xx 走 ApiError.transient,
+      // 这种情况下不弹横幅(用户根本不需要看见),只在 console 留痕。
+      // 真实持续失败才弹 toast。
+      if (err instanceof ApiError && err.transient) {
+        return;
+      }
       const message = readableError(err);
       setState((prev) => {
         if (prev.status !== 'ok') return prev;
@@ -1371,6 +1382,9 @@ export function BranchListPage(): JSX.Element {
         ),
       ]);
       if (branchesResult.status === 'rejected') {
+        if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
+          return;
+        }
         const message = readableError(branchesResult.reason);
         setState((prev) => prev.status === 'ok'
           ? applyBranchListAction(prev, {

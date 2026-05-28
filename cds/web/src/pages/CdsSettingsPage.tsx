@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import {
   Activity,
   Boxes,
@@ -118,9 +119,10 @@ function getInitialTab(): TabValue {
 }
 
 function SettingsTabFallback(): JSX.Element {
+  // 2026-05-28:用品牌 loader 替换裸"加载设置..." 文本,跟 CDS 视觉调性一致。
   return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4 text-sm text-muted-foreground">
-      加载设置...
+    <div className="flex min-h-[200px] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
+      <CdsLogoLoader size="lg" inline={false} label={<span className="text-sm text-muted-foreground">加载设置…</span>} />
     </div>
   );
 }
