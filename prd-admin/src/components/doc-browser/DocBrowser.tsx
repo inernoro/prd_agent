@@ -19,6 +19,7 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
 
 // ── 类型 ──
@@ -1044,6 +1045,11 @@ export function DocBrowser({
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  // 2026-05-28 用户反馈："看不到别人留在这里的评论气泡"。
+  // 进入条目时主动预拉评论计数，让正文上方常驻一颗 chip：
+  //   "💬 N 条评论" 点击打开 InlineCommentDrawer。
+  // 仅 best-effort：失败/无权（私有库无分享访问）默认 0，不影响主流程。
+  const [commentCount, setCommentCount] = useState(0);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1067,6 +1073,22 @@ export function DocBrowser({
     const e = entries.find(x => x.id === selectedEntryId);
     return e && !e.isFolder ? e : null;
   }, [selectedEntryId, entries]);
+
+  // 进入条目时预拉评论计数，让正文上方常驻入口（共享视图也能看到他人评论的存在）
+  useEffect(() => {
+    if (!trackedEntryForComments) {
+      setCommentCount(0);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await listInlineComments(trackedEntryForComments.id);
+        if (!cancelled && res.success) setCommentCount(res.data.items.length);
+      } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [trackedEntryForComments]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
@@ -1896,9 +1918,10 @@ export function DocBrowser({
                     border: '1px solid rgba(168,85,247,0.18)',
                     color: 'rgba(216,180,254,0.95)',
                   }}
-                  title="查看或添加划词评论"
+                  title={commentCount > 0 ? `已有 ${commentCount} 条评论 — 点击查看 / 添加` : '划词评论 — 选中文本后浮起「添加评论」'}
                 >
-                  <MessageSquareText size={11} /> 评论
+                  <MessageSquareText size={11} />
+                  {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
                 </button>
               )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
@@ -2098,6 +2121,13 @@ export function DocBrowser({
           onClose={() => {
             setInlineCommentsOpen(false);
             setPendingSelection(null);
+            // 关闭时刷新评论计数（新建/删除/无变化都通用）
+            if (trackedEntryForComments) {
+              const entryId = trackedEntryForComments.id;
+              listInlineComments(entryId).then((res) => {
+                if (res.success) setCommentCount(res.data.items.length);
+              }).catch(() => {});
+            }
           }}
         />
       )}

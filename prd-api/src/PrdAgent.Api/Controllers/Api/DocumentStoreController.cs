@@ -2913,7 +2913,23 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
-        if (store == null || store.OwnerId != userId)
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 权限放宽（2026-05-28 用户反馈"分享视图无法评论"）：
+        // - owner 总能评论
+        // - 公开库 (IsPublic=true) 的登录用户能评论
+        // - 私有库但有活跃（未撤销）分享链的登录用户也能评论（验收报告分享场景）
+        // 匿名访问仍然拒绝（防垃圾评论）。
+        var allowed = store.OwnerId == userId || store.IsPublic;
+        if (!allowed)
+        {
+            var hasActiveShare = await _db.DocumentStoreShareLinks
+                .Find(s => s.StoreId == store.Id && !s.IsRevoked)
+                .AnyAsync();
+            if (hasActiveShare) allowed = true;
+        }
+        if (!allowed)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         // B4：允许"不选中也能评论"——SelectedText 为空时视为对整篇文档的通用评论（无锚点）
@@ -2974,23 +2990,32 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 非 owner + 非公开 → 403
-        var isOwner = false;
-        try
-        {
-            var currentUser = this.GetRequiredUserId();
-            isOwner = store.OwnerId == currentUser;
-        }
-        catch { }
-        if (!isOwner && !store.IsPublic)
+        // 权限分级（2026-05-28 用户反馈"分享视图无法看到/添加评论"）：
+        // - owner：可读 + 可写
+        // - 公开库：登录用户可读 + 可写；匿名仅可读
+        // - 私有库 + 有活跃分享链：登录用户可读 + 可写；匿名拒绝（避免分享链泄露后被刷垃圾评论）
+        // - 私有库无分享链：仅 owner
+        string? currentUser = null;
+        try { currentUser = this.GetRequiredUserId(); } catch { }
+        var isOwner = currentUser != null && store.OwnerId == currentUser;
+
+        var hasActiveShare = await _db.DocumentStoreShareLinks
+            .Find(s => s.StoreId == store.Id && !s.IsRevoked)
+            .AnyAsync();
+
+        var canRead = isOwner || store.IsPublic || hasActiveShare;
+        if (!canRead)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 匿名访问私有库分享时仅可读；登录用户在公开/分享库中可写
+        var canCreate = isOwner || (currentUser != null && (store.IsPublic || hasActiveShare));
 
         var comments = await _db.DocumentInlineComments
             .Find(c => c.EntryId == entryId)
             .SortBy(c => c.CreatedAt)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate = isOwner }));
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate }));
     }
 
     /// <summary>删除划词评论</summary>

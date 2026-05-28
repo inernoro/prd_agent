@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -11,6 +11,7 @@ import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseFrontmatter } from '@/lib/frontmatter';
+import { ImageLightbox } from '@/components/ui/ImageLightbox';
 // SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
 // 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
 import { headingTextToSlug } from '@/lib/markdownToc';
@@ -64,6 +65,13 @@ export function MarkdownViewer({ content }: { content: string }) {
   // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
   // 与左侧标题提取共用 parseFrontmatter（SSOT）。
   const body = useMemo(() => parseFrontmatter(content).body, [content]);
+
+  // 图片 lightbox：点击 markdown 中任意 <img> 打开放大模态，支持 ← → 切换。
+  // 收集所有图片 URL + alt 的列表通过 ref（在 img renderer 中 push）；
+  // ref 在每次渲染前重置，避免重复积累。
+  const imageListRef = useRef<{ src: string; alt: string }[]>([]);
+  imageListRef.current = [];
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   // 每次 body 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const slugger = useMemo(() => new GithubSlugger(), [body]);
@@ -102,7 +110,16 @@ export function MarkdownViewer({ content }: { content: string }) {
     // F2：文档站观感——更大行距、自适应宽度（窄屏占满，宽屏给到 1180 上限避免长行不利阅读）、底部留白
     <div
       className="prose-invert text-[14px]"
-      style={{ lineHeight: 1.78, maxWidth: 'min(100%, 1180px)', paddingBottom: '96px' }}
+      style={{
+        lineHeight: 1.78,
+        maxWidth: 'min(100%, 1180px)',
+        paddingBottom: '96px',
+        // 显式允许文本选中（划词评论硬依赖）。
+        // 修复 2026-05-28 用户反馈："选中的内容会自动消失"——
+        // 任何祖先一旦 user-select:none 都会让选区瞬间清空，这里硬复位为 text。
+        userSelect: 'text',
+        WebkitUserSelect: 'text',
+      }}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
@@ -211,13 +228,38 @@ export function MarkdownViewer({ content }: { content: string }) {
           },
           pre: ({ children }) => <>{children}</>,
           hr: () => <hr className="my-7" style={{ borderColor: 'var(--border-subtle)' }} />,
-          img: ({ src, alt }) => (
-            <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-3" style={{ maxHeight: '400px', border: '1px solid rgba(255,255,255,0.06)' }} />
-          ),
+          img: ({ src, alt }) => {
+            // 把图片登记到 lightbox 列表，记下本图在列表里的索引
+            const list = imageListRef.current;
+            const myIdx = list.length;
+            if (src) list.push({ src, alt: alt || '' });
+            return (
+              <img
+                src={src}
+                alt={alt || ''}
+                className="max-w-full rounded-lg my-3"
+                style={{
+                  maxHeight: '400px',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  cursor: 'zoom-in',
+                }}
+                onClick={() => setLightboxIdx(myIdx)}
+                title="点击放大 · 支持 ← → 切换"
+              />
+            );
+          },
         }}
       >
         {body}
       </ReactMarkdown>
+      {lightboxIdx !== null && imageListRef.current.length > 0 && (
+        <ImageLightbox
+          images={imageListRef.current.map((i) => i.src)}
+          captions={imageListRef.current.map((i) => i.alt)}
+          index={Math.min(lightboxIdx, imageListRef.current.length - 1)}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
     </div>
   );
 }
