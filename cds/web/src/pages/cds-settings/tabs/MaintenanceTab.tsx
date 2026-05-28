@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 
 interface BranchMeta {
@@ -485,92 +486,64 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, [activeSelfUpdate, runState, isStale, isInterrupted, lastTickStaleMs, lastSelfUpdate, runStartedAt]);
 
+  // 2026-05-28 重构:/api/self-branches 永远返 200 + (可能 degraded)。
+  // 即使 degraded 也尽量给 branchDetails/branches/current 等字段。
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
     try {
-      const data = await apiRequest<SelfBranchesResponse>('/api/self-branches');
+      const data = await apiRequest<SelfBranchesResponse & {
+        ok?: boolean;
+        degraded?: boolean;
+        reason?: string | null;
+        message?: string | null;
+      }>('/api/self-branches');
       setBranchState({ status: 'ok', data });
       setSelectedBranch((current) => current || data.current || data.branches?.[0] || '');
     } catch (err) {
+      // /api/self-branches 现在永远 200,这里只在网络层失败(断网/CORS)才命中
       setBranchState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, []);
 
-  // self-status 单独拉,fetch 远端比 self-branches 慢(网络),不阻塞 UI 主链路。
-  // 自更新历史顶部 chip 在数据回来前显示骨架占位。
-  //
-  // 2026-05-04 v3 fix(用户反馈"banner 一直显示 400"):
-  // 之前 loadSelfStatus 每次都先 setSelfStatus({status:'loading'}),失败后 status='error',
-  // useEffect 只在 mount 时跑一次,error 状态永远不自动清除。用户在 self-update
-  // 进程切换的 1-3s 窗口里 load 过一次拿到 4xx,banner 就卡死了。
-  //
-  // 现在:loadSelfStatus 不重置成 'loading'(保留上次的数据);成功 → status='ok'
-  // 自动覆盖 error。下方加 30s 轮询 + error 时 5s 快重试,banner 自动消失,
-  // 不需要手动按"重试"按钮。
-  const loadSelfStatus = useCallback(async () => {
-    try {
-      // 用户反馈 2026-05-06:面板永远显示 "fetch 失败 / 远端不可达 — top-level
-      // lightweight version"。根因:server.ts:1114 顶层 handler 抢答 /api/self-status,
-      // 默认走"轻量"分支(不调 git fetch),fetchOk 永远 false,remoteAheadCount 永远 0。
-      // 必须 ?probe=remote 才会 next() 流到 branches.ts:8116 的完整版,真实 fetch + 算 ahead。
-      const data = await apiRequest<SelfStatusResponse>('/api/self-status?probe=remote');
-      setSelfStatus({ status: 'ok', data });
-    } catch (err) {
-      setSelfStatus((prev) => {
-        // 之前已有数据 → 保留,只标记 error(banner 还是显示,但 chip 仍在)
-        // 还没数据 → 走 error-only(初次 load 失败)
-        const message = err instanceof ApiError ? err.message : String(err);
-        if (prev.status === 'ok') {
-          return { status: 'ok', data: prev.data };
-        }
-        return { status: 'error', message };
-      });
-    }
-  }, []);
+  // 2026-05-28 重构:不再独立轮询 /api/self-status?probe=remote。改为订阅
+  // useCdsEvents store 的 self.status 事件。任何 tab/webhook 触发的自更新都会
+  // 经由 cds-events bus 实时推过来,远比 30s 轮询新鲜。窗口事件
+  // 'cds:active-self-update' 不再需要(原本就是 GlobalUpdateBadge 转发的,
+  // 现在两边读同一个 store)。
+  const cdsEvents = useCdsEvents();
 
   useEffect(() => {
     void loadBranches();
-    void loadSelfStatus();
-    // 30s 轮询 + error 状态下加倍频率(5s)。banner 一旦后端恢复立即自动消失。
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = (delay: number): void => {
-      if (disposed) return;
-      timer = setTimeout(async () => {
-        await loadSelfStatus();
-        // 用 useState getter 拿最新 status 决定下次 delay
-        // 这里用 setSelfStatus 只读不写
-        setSelfStatus((prev) => {
-          tick(prev.status === 'error' ? 5000 : 30000);
-          return prev;
-        });
-      }, delay);
-    };
-    tick(30000);
+  }, [loadBranches]);
 
-    // ⚠ Bugbot 59568cb0:GlobalUpdateBadge 已订阅 /api/self-status/stream,
-    // 接收 SSE snapshot/update 事件后会 dispatch 'cds:active-self-update'。
-    // 这里监听该事件,把 activeSelfUpdate 立刻 patch 进本地 selfStatus,
-    // 不再等 30s 轮询周期 — 别 tab/webhook 触发的自更新进度实时跨 tab 同步。
-    const onActive = (e: Event): void => {
-      const detail = (e as CustomEvent<ActiveSelfUpdate | null>).detail ?? null;
-      setSelfStatus((prev) => {
-        if (prev.status !== 'ok') return prev;
-        // detail 与现状相等就不触发重渲染,避免 useEffect 噪音。
-        const cur = prev.data.activeSelfUpdate ?? null;
-        const same = (cur?.startedAt === detail?.startedAt) && (cur?.step === detail?.step) && (cur?.trigger === detail?.trigger);
-        if (same) return prev;
-        return { status: 'ok', data: { ...prev.data, activeSelfUpdate: detail } };
-      });
+  // snapshot → selfStatus 同步;degraded 时保留旧值显示
+  useEffect(() => {
+    const snap = cdsEvents.snapshot ?? cdsEvents.lastKnownGood;
+    if (!snap) return;
+    // 把 useCdsEvents 的 SelfStatusSnapshot 映射回 MaintenanceTab 的 SelfStatusResponse 形状
+    const mapped: SelfStatusResponse = {
+      currentBranch: snap.currentBranch ?? '',
+      headSha: snap.headSha ?? '',
+      headIso: snap.headIso ?? '',
+      fetchOk: snap.fetchOk ?? true,
+      fetchError: snap.fetchError ?? undefined,
+      remoteAheadCount: snap.remoteAheadCount ?? 0,
+      localAheadCount: snap.localAheadCount ?? 0,
+      remoteAheadSubjects: (snap.remoteAheadSubjects ?? []) as Array<{
+        sha: string;
+        subject: string;
+        date: string;
+      }>,
+      activeSelfUpdate: snap.activeSelfUpdate as ActiveSelfUpdate | null,
+      systemdUnitDrift: snap.systemdUnitDrift as SystemdUnitDrift | null,
+      runningPid: snap.runningPid,
+      pidStartedAt: snap.pidStartedAt ?? null,
+      restartStatus: snap.restartStatus,
+      lastSelfUpdate: (snap.lastSelfUpdate ?? null) as SelfUpdateRecord | null,
+      selfUpdateHistory: (snap.selfUpdateHistory ?? []) as SelfUpdateRecord[],
     };
-    window.addEventListener('cds:active-self-update', onActive);
-
-    return () => {
-      disposed = true;
-      if (timer) clearTimeout(timer);
-      window.removeEventListener('cds:active-self-update', onActive);
-    };
-  }, [loadBranches, loadSelfStatus]);
+    setSelfStatus({ status: 'ok', data: mapped });
+  }, [cdsEvents.snapshot, cdsEvents.lastKnownGood]);
 
   // 关闭 dropdown 当用户点外面
   useEffect(() => {
@@ -670,7 +643,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       });
       setRunState((current) => (current === 'error' ? 'error' : 'success'));
       onToast(`${label} 已提交，正在等待 CDS 验证`);
-      void loadSelfStatus();
+      // 2026-05-28: 旧的 loadSelfStatus() 已删,改为触发后端 refresh job。
+      // 状态变化通过 useCdsEvents 的 self.status / self.refresh.* 事件自动推送。
+      void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ });
       // 2026-05-04 fix(用户反馈"显示已提交重启,但实际未重启"):
       // SSE 'done' 只代表后端发起了 process.exit + spawn,不代表新进程**真起来了**。
       // 之前 UI 没有任何 verification,用户得手动 refresh 才能知道是否成功。
@@ -701,7 +676,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       setRunTitle(message);
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
-      void loadSelfStatus();
+      // 2026-05-28: 旧的 loadSelfStatus() 已删,改为触发后端 refresh job。
+      // 状态变化通过 useCdsEvents 的 self.status / self.refresh.* 事件自动推送。
+      void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ });
       setRunEndedAt(Date.now());
     }
   }
@@ -738,7 +715,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         <div className="space-y-5">
           <SelfUpdateStatusPanel
             state={selfStatus}
-            onRefresh={() => void loadSelfStatus()}
+            onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
             onOpenHistory={() => setHistoryOpen(true)}
           />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}

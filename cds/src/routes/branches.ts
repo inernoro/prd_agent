@@ -33,6 +33,9 @@ import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
+import { selfStatusCache, type RemoteBranchEntry } from '../services/self-status-cache.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { installSelfUpdateEventProjector } from '../services/self-update-event-projector.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
@@ -52,12 +55,15 @@ import {
 import { waitForRestartSafeBranchOperations } from '../services/restart-drain.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
-// 为什么放模块级而不是闭包内:
-//   - GET /api/self-status/stream 客户端池需要被 broadcastSelfStatus()
-//     从模块外(github-webhook.ts)触达。
-//   - selfStatusContext 由 createBranchRouter() 在启动时填充,提供给
-//     broadcastSelfStatus() 重新计算 payload 所需的依赖(repoRoot/shell/state)。
-// 注意:CDS 单进程单实例,Set 不需要并发锁。
+// 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
+//
+// - selfStatusContext 仍保留:旧的 /api/self-status/stream 端点(向后兼容)
+//   和 broadcastSelfStatus()(被 github-webhook.ts 调用)依赖它来 compute
+//   payload。新代码不要再从这里读;一律用 selfStatusCache.getSnapshot()。
+// - selfStatusClients:旧 SSE 端点的客户端池。新的统一通道
+//   GET /api/cds-events 走 cdsEventsBus,不再加入这个池。
+// - broadcastSelfStatus():改为薄包装,委托给 selfStatusCache.enqueueRefresh()。
+//   cache 跑完后会通过 bus 发 self.status 事件,旧客户端池由本模块兼容订阅。
 let selfStatusContext: {
   repoRoot: string;
   shell: IShellExecutor;
@@ -65,6 +71,27 @@ let selfStatusContext: {
   gitAuthEnvProvider?: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>;
 } | null = null;
 const selfStatusClients = new Set<import('express').Response>();
+
+// 启动时把 bus 的 self.status 事件桥接到旧 selfStatusClients 池,保证
+// 旧的 /api/self-status/stream 订阅者仍能收到 update。新的 cds-events 端点
+// 独立订阅 bus,不走这个桥。
+let busBridgeInstalled = false;
+function installLegacyStreamBridge(): void {
+  if (busBridgeInstalled) return;
+  busBridgeInstalled = true;
+  cdsEventsBus.subscribe((envelope) => {
+    if (envelope.type !== 'self.status') return;
+    if (selfStatusClients.size === 0) return;
+    const line = `event: update\ndata: ${JSON.stringify(envelope.data)}\n\n`;
+    for (const client of Array.from(selfStatusClients)) {
+      try {
+        client.write(line);
+      } catch {
+        selfStatusClients.delete(client);
+      }
+    }
+  });
+}
 
 /**
  * 重新计算 self-status payload 并向所有 SSE 客户端推送 update 事件。
@@ -77,14 +104,11 @@ const selfStatusClients = new Set<import('express').Response>();
  *   - 远端不可达 → 用 fetchOk=false + cached refs 兜底,不阻塞推送
  *   - 写失败的 client 从池里清除(对端已断开)
  */
-// ⚠ Bugbot 2026-05-06 7433fb85: webhook fire-and-forget 会触发并发的
-// computeSelfStatusPayload(都做 git fetch,撞 .git/refs/.../<branch>.lock),
-// 引发 fetchWithLockRetry × 3 次回退,N 个 webhook 放大成 O(N×3) fetch + N
-// 个 SSE update。coalesce:正在跑就排队 1 次,跑完检查 pending 再跑一次。
-// 多个 webhook 突发只会造成最多 2 轮(当前 + 一次合并),git fetch 串行,
-// 客户端只收到 ≤2 条 update,不再风暴。
+// 2026-05-28 重构后,broadcast 的 coalesce / queue 逻辑收敛到 selfStatusCache。
+// 这里保留 broadcastInFlight = false 哨兵给 /api/self-status/stream 端点的
+// per-client first-update 检测用(它依赖这个标志判断"现在是否已经有 broadcast
+// 在跑,我不要再 fetch 一遍")。cache 同时刻只允许一个 job,行为等价。
 let broadcastInFlight = false;
-let broadcastQueued = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
 const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 30_000;
 const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = 1000;
@@ -95,55 +119,27 @@ function getDeleteStateFlushTimeoutMs(): number {
   return Math.max(100, Math.min(raw, 30_000));
 }
 
+/**
+ * 2026-05-28 重构后:薄包装,委托给 selfStatusCache。
+ *
+ * github-webhook.ts 在 push 命中本机当前分支时调用本函数。cache 会:
+ *   - 若已有 refresh job 在跑 → 复用,不重复 fetch
+ *   - 否则启动新 job,跑完发 self.status 事件
+ *   - 旧 selfStatusClients 池由 installLegacyStreamBridge() 订阅 bus 自动同步
+ *
+ * 节流由 cache 自己处理(webhook trigger 默认 5s 去重),无需调用方再 coalesce。
+ */
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
-  if (selfStatusClients.size === 0) return;
-  if (broadcastInFlight) {
-    broadcastQueued = true;
-    return;
-  }
+  // 进入 in-flight 标记,只为兼容旧 /api/self-status/stream 端点的
+  // per-client first-update 跳过逻辑(避免 snapshot → broadcast → per-client 三连闪)
   broadcastInFlight = true;
   try {
-    // ⚠ Bugbot 2026-05-06 97af6861:do/while 在 compute 持续抛 + webhook
-    // 持续到来时形成 tight loop(catch 后 continue 不 sleep,broadcastQueued
-    // 又被新 webhook 立刻置 true → 立刻再尝试)。给两道护栏:
-    //   - 最多 4 轮(初始 + 3 次合并),超出就放弃当前 burst,下个 webhook 重启
-    //   - 失败后 sleep 1s 再循环,避免 CPU/git fetch 风暴
-    const MAX_LOOPS = 4;
-    let loops = 0;
-    do {
-      // ⚠ Bugbot 2026-05-06 93db4981:loops 必须在循环顶部统一 +1,否则
-      // success / failure 路径分别 +1 会让有效上限随交错变化(off-by-one)。
-      loops += 1;
-      broadcastQueued = false;
-      let payload: unknown;
-      try {
-        payload = await computeSelfStatusPayload(selfStatusContext, { skipFetch: false });
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[self-status] broadcast 重新计算失败:', (err as Error).message);
-        if (loops >= MAX_LOOPS) {
-          // ⚠ Bugbot 2026-05-06 bd579e3d:错误退出时 broadcastQueued 残留 true
-          // 不会被消费,与 coalesce 心智模型不一致(下次 fresh call 会复位但
-          // 留状态残影)。显式复位以便 finally 后调用方看到干净状态。
-          broadcastQueued = false;
-          break;
-        }
-        // 失败后给事件循环让出 1s,避免持续故障下的 hot loop
-        await new Promise((r) => setTimeout(r, 1_000));
-        continue;
-      }
-      if (!selfStatusContext) return;
-      const line = `event: update\ndata: ${JSON.stringify(payload)}\n\n`;
-      for (const client of Array.from(selfStatusClients)) {
-        try {
-          client.write(line);
-        } catch {
-          selfStatusClients.delete(client);
-        }
-      }
-    } while (broadcastQueued && loops < MAX_LOOPS);
+    selfStatusCache.enqueueRefresh('webhook');
   } finally {
+    // 立即放标记 — cache 是异步跑的,这里只阻止 stream handler 在同一 tick 内
+    // 启动 per-client fetch。cache 的 job 内部 publish self.status 后,
+    // bus bridge 会把 update 推给 selfStatusClients,客户端体验等价。
     broadcastInFlight = false;
   }
 }
@@ -11680,107 +11676,109 @@ cdscli project list --human
 
   // GET /api/self-branches — list git branches of the CDS repo itself
   //
-  // 2026-05-04 增强:返回每个分支的 committer date + commit hash + 是否
-  // 改动了 cds/ 目录,前端 combobox 按时间倒排显示 + 标识"动了 CDS"。
-  // 旧字段 `branches: string[]` 保留向后兼容。
-  router.get('/self-branches', async (_req, res) => {
+  // 2026-05-28 重构:实际扫描逻辑抽到 scanRemoteBranchesFromGit(),
+  // self-status-cache 也用同一个函数。/self-branches 端点改为"读 cache + 200 降级"。
+  async function scanRemoteBranchesFromGit(): Promise<RemoteBranchEntry[]> {
+    // Get current branch
+    let currentBranch = '';
     try {
-      // Get current branch
       const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
-      const currentBranch = currentResult.stdout.trim();
-
-      // Fetch latest (ignore errors if offline)
-      const auth = await gitAuthForRepo(config.repoRoot);
-      await shell.exec('git fetch --all --prune', { cwd: config.repoRoot, env: auth.env }).catch(() => {});
-
-      // 一次性拉所有 remote branch 的 metadata(refname + committerdate + commit hash)。
-      // for-each-ref 比 git branch -v 更稳定可解析,而且能直接 sort -committerdate。
-      // 用 ASCII Unit Separator(0x1F)分字段,避免分支名 / subject 里有空格干扰。
-      //
-      // Bugbot 第八轮 HIGH fix(2026-05-04):git for-each-ref 的 --format 语法
-      // 用 `%xx` 输出 16 进制字节(`%1f` = 0x1F);**不**支持 `\xXX` 转义。
-      // 上一版写 `'\\x1f'` JS 字面量是 4 个 ASCII 字符 `\x1f`,git 当 literal
-      // 输出 → JS split('\x1f') 永远找不到 0x1F 字节 → parts.length < 4 全跳过
-      // → 整个 branch list 返回空数组,self-update picker 完全 broken。
-      // 改为:format 用 `%1f`(git 输出 0x1F 字节)+ JS split 用 '\x1f'(真 0x1F)。
-      const SEP = '\x1f'; // JS 字面量 → 1 个真 0x1F 字节,用于 split
-      const refResult = await shell.exec(
-        `git for-each-ref --sort=-committerdate ` +
-        `--format='%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)' ` +
-        `refs/remotes/origin/`,
-        { cwd: config.repoRoot, timeout: 30_000 },
-      );
-
-      interface BranchMeta {
-        name: string;
-        committerDate: string;
-        commitHash: string;
-        subject: string;
-        cdsTouched: boolean;  // 与当前 HEAD 比较时,是否动了 cds/ 目录
-      }
-      const branches: BranchMeta[] = [];
-      const seen = new Set<string>();
-      for (const line of refResult.stdout.split('\n')) {
-        if (!line.trim()) continue;
-        // \x1f 在 shell echo 里要转义,用 String.fromCharCode 还原对比
-        const parts = line.split('\x1f');
-        if (parts.length < 4) continue;
-        let name = parts[0].trim();
-        if (name.startsWith('origin/')) name = name.slice('origin/'.length);
-        if (name === 'HEAD' || name.includes('HEAD ->')) continue;
-        if (seen.has(name)) continue;
-        seen.add(name);
-        branches.push({
-          name,
-          committerDate: parts[1].trim(),
-          commitHash: parts[2].trim(),
-          subject: parts[3].trim(),
-          cdsTouched: false,  // 下面批量算
-        });
-      }
-
-      // cdsTouched 计算:对每个分支检查 origin/<current>..origin/<branch>
-      // 是否含 cds/ 路径改动。只对 top 30 个分支做(避免慢),其它默认 false。
-      // 当前分支自己 cdsTouched=false(对自己无意义)。
-      const top = branches.slice(0, 30);
-      await Promise.all(
-        top.map(async (b) => {
-          if (b.name === currentBranch) return;
-          try {
-            const diff = await shell.exec(
-              `git log --format=%H -n 1 origin/${currentBranch}..origin/${b.name} -- cds/`,
-              { cwd: config.repoRoot, timeout: 5_000 },
-            );
-            b.cdsTouched = diff.stdout.trim().length > 0;
-          } catch {
-            // 分支已删 / ref 不存在 / 其他 git 错误 — 默认 false 不阻塞
-          }
-        }),
-      );
-
-      // 当前分支 commit hash + 时间(给 UI 顶部显示)。
-      // Bugbot 第九轮 fix(2026-05-04):合并成单 try block 内联调用,
-      // 去掉中间变量避免任何缩进歧义。两个 git 命令任一失败都 catch
-      // 兜底空字符串,响应不会因此 5xx。
-      let commitHash = '';
-      let currentCommitterDate = '';
-      try {
-        commitHash = (await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot })).stdout.trim();
-        currentCommitterDate = (await shell.exec('git log -1 --format=%cI HEAD', { cwd: config.repoRoot })).stdout.trim();
-      } catch { /* ignore */ }
-
-      res.json({
-        current: currentBranch,
-        commitHash,
-        currentCommitterDate,
-        // 新字段:每个分支带 metadata,按 committerDate 倒序
-        branchDetails: branches,
-        // 旧字段:仅 string[],按 committerDate 倒序(向后兼容老前端)
-        branches: branches.map((b) => b.name),
-      });
-    } catch (e) {
-      res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
+      currentBranch = currentResult.stdout.trim();
+    } catch {
+      // 拿不到 currentBranch 也不致命,cdsTouched 全部置 false
     }
+
+    // Fetch latest (ignore errors if offline) — 这是分支扫描场景,失败时尝试用 cached refs
+    const auth = await gitAuthForRepo(config.repoRoot);
+    await shell.exec('git fetch --all --prune', { cwd: config.repoRoot, env: auth.env }).catch(() => {});
+
+    // 一次性拉所有 remote branch 的 metadata。
+    // Bugbot 第八轮 fix(2026-05-04):用 `%1f` 让 git 输出真 0x1F 字节,
+    // 然后 JS 用 '\x1f'(单个真 0x1F)split。
+    const refResult = await shell.exec(
+      `git for-each-ref --sort=-committerdate ` +
+      `--format='%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)' ` +
+      `refs/remotes/origin/`,
+      { cwd: config.repoRoot, timeout: 30_000 },
+    );
+
+    const branches: RemoteBranchEntry[] = [];
+    const seen = new Set<string>();
+    for (const line of refResult.stdout.split('\n')) {
+      if (!line.trim()) continue;
+      const parts = line.split('\x1f');
+      if (parts.length < 4) continue;
+      let name = parts[0].trim();
+      if (name.startsWith('origin/')) name = name.slice('origin/'.length);
+      if (name === 'HEAD' || name.includes('HEAD ->')) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      branches.push({
+        name,
+        committerDate: parts[1].trim(),
+        commitHash: parts[2].trim(),
+        subject: parts[3].trim(),
+        cdsTouched: false,
+      });
+    }
+
+    // cdsTouched 只对 top 30 算,避免慢
+    const top = branches.slice(0, 30);
+    await Promise.all(
+      top.map(async (b) => {
+        if (!currentBranch || b.name === currentBranch) return;
+        try {
+          const diff = await shell.exec(
+            `git log --format=%H -n 1 origin/${currentBranch}..origin/${b.name} -- cds/`,
+            { cwd: config.repoRoot, timeout: 5_000 },
+          );
+          b.cdsTouched = diff.stdout.trim().length > 0;
+        } catch {
+          /* tolerate */
+        }
+      }),
+    );
+
+    return branches;
+  }
+
+  // GET /api/self-branches — 列出可切换的远端分支,供 MaintenanceTab 选择
+  //
+  // 2026-05-28 重构:不再每次直接扫 git,改读 selfStatusCache.getSnapshot().remoteBranches。
+  // 失败永远返 200 + degraded,不再 500。
+  router.get('/self-branches', async (_req, res) => {
+    const snapshot = selfStatusCache.getSnapshot();
+    const lastKnownGood = selfStatusCache.getLastKnownGood();
+    // 选数据源:优先当前 snapshot;空时回退到 lastKnownGood
+    const branchSource =
+      snapshot.remoteBranches.length > 0
+        ? snapshot.remoteBranches
+        : lastKnownGood?.remoteBranches ?? [];
+
+    const currentBranch = snapshot.currentBranch || lastKnownGood?.currentBranch || '';
+    const commitHash = snapshot.headSha || lastKnownGood?.headSha || '';
+    const currentCommitterDate = snapshot.headIso || lastKnownGood?.headIso || '';
+
+    const degraded = snapshot.degraded;
+    const usingLastKnownGood = snapshot.remoteBranches.length === 0 && (lastKnownGood?.remoteBranches.length ?? 0) > 0;
+
+    // 2026-05-28 目标第 6 节:"git fetch / branch scan 只能由后端任务触发"。
+    // 本端点只读 cache,不再触发 enqueueRefresh。cache 由 cds-events 订阅 +
+    // POST /api/self-refresh + GitHub webhook 三路触发,本端点纯被动消费。
+
+    res.json({
+      ok: !degraded && !usingLastKnownGood,
+      degraded: degraded ? true : false,
+      reason: degraded?.reason ?? null,
+      message: degraded?.message ?? null,
+      lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
+      // 主体数据:即使 degraded 也尽量给前端能用的字段(可能是空数组)
+      current: currentBranch,
+      commitHash,
+      currentCommitterDate,
+      branchDetails: branchSource,
+      branches: branchSource.map((b) => b.name),
+    });
   });
 
   // GET /api/loading-pages/cds-waiting-room/preview — system-settings preview
@@ -11883,60 +11881,67 @@ cdscli project list --human
     stateService,
     gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
   };
-  router.get('/self-status', async (_req, res) => {
-    // 2026-05-04 v2(用户反馈"GET /api/self-status → 400"):
-    // computeSelfStatusPayload 内部用 safeExec 逐条吞错,永远返结构完整的 JSON
-    // (各字段填默认/空值)+ 一个 `degraded: { reasons }` 字段告诉前端 "数据
-    // 有缺,但接口活着"。这样即使 CDS host 上 git 抽风、网络断、ref 损坏,
-    // UI 也不会显示 "读取自更新状态失败" 红色 banner,而是显示能读到的部分
-    // + 安全降级。
+
+  // 2026-05-28: 把 cache 与现有 computeSelfStatusPayload + scanRemoteBranchesFromGit
+  // 绑定,启动 bus → 旧 SSE 客户端池的桥接。后续所有 /api/self-status,
+  // /api/self-branches, GET /api/cds-events 都走 cache。
+  // 总是重新 init —— createBranchRouter 在测试环境会多次创建,
+  // 让每个新 router 拿到自己的 computeSnapshot / scanRemoteBranches 闭包。
+  // 生产环境 CDS 单进程单实例,init 在 server.ts startup 时只跑一次。
+  {
+    selfStatusCache.init({
+      computeSnapshot: async ({ skipFetch }) => {
+        const ctx = selfStatusContext;
+        if (!ctx) throw new Error('selfStatusContext missing');
+        const payload = await computeSelfStatusPayload(ctx, { skipFetch });
+        // computeSelfStatusPayload 返回宽松的 Record<string, unknown>;cache 期望
+        // 严格类型,这里走 unknown 中转 cast — 字段对齐由 computeSelfStatusPayload
+        // 内部保证(都是已知字段名集合)。
+        return payload as unknown as Awaited<
+          ReturnType<Parameters<typeof selfStatusCache.init>[0]['computeSnapshot']>
+        >;
+      },
+      scanRemoteBranches: scanRemoteBranchesFromGit,
+    });
+    installLegacyStreamBridge();
+    // 把 self-status snapshot 变化投影成 self.update.{started,step,done,failed}
+    // 事件,送进同一个 bus,供 /api/cds-events 订阅方使用。
+    installSelfUpdateEventProjector();
+    // 注意:cache 启动后**不**主动跑 readSnapshotWithFallback。
+    // 第一次 GET /api/cds-events 订阅时由 cache.enqueueRefresh('stream-subscribe')
+    // 触发,或者 webhook / POST /api/self-refresh 显式触发。
+    // 避免在没人订阅时白白扫 git + 干扰 vitest 里测无关端点的 mock.commands 期望。
+  }
+
+  router.get('/self-status', async (req, res) => {
+    // 2026-05-28 重构:本端点(挂在 /api router 内,server.ts 顶层未抢答的情况)
+    // 永远从 selfStatusCache 读快照 — 不再同步触发 git fetch。
     //
-    // 2026-05-05 改造(事件驱动):去掉 60s in-process 缓存,前端 GlobalUpdateBadge
-    // 改为订阅 /self-status/stream SSE,不再频繁轮询本端点。
-    try {
-      const payload = await computeSelfStatusPayload(
-        {
-          repoRoot: config.repoRoot,
-          shell,
-          stateService,
-          gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
-        },
-        { skipFetch: false },
-      );
-      res.json(payload);
-    } catch (err) {
-      // computeSelfStatusPayload 自身已尽量不抛;真抛了也返 200 + degraded
-      // 保证前端不会看到红色 banner。
-      // ⚠ Bugbot 50e705cf:把 activeSelfUpdate / systemdUnitDrift 也带回去 —
-      // 即使 git fetch 等数据组装失败,这两个 in-memory / fs-only 字段仍可读,
-      // 缺了就让 MaintenanceTab 跨 tab 同步 + drift banner 都失效。
-      let degradedActive: import('../types.js').ActiveSelfUpdate | null = null;
-      let degradedDrift: SystemdUnitDrift | null = null;
-      try { degradedActive = stateService.getActiveSelfUpdate(); } catch { /* tolerate */ }
-      try { degradedDrift = detectSystemdUnitDrift(config.repoRoot); } catch { /* tolerate */ }
-      res.json({
-        currentBranch: '',
-        headSha: '',
-        headIso: '',
-        fetchOk: false,
-        fetchError: (err as Error).message,
-        remoteAheadCount: 0,
-        localAheadCount: 0,
-        remoteAheadSubjects: [],
-        lastSelfUpdate: null,
-        selfUpdateHistory: [],
-        webBuildSha: '',
-        webBuildError: '',
-        bundleStale: false,
-        activeSelfUpdate: degradedActive,
-        systemdUnitDrift: degradedDrift,
-        runningPid: process.pid,
-        pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
-        restartStatus: degradedActive ? 'pending' : 'not_required',
-        degraded: { reasons: [(err as Error).message] },
-        cachedAt: new Date().toISOString(),
-      });
+    // 兼容 ?probe=remote=force 旧语义:触发后台 refresh job,但仍立刻返回当前快照
+    // (而不是阻塞等 git fetch)。前端如要实时观察 refresh 进度,订阅
+    // /api/cds-events 的 self.refresh.* 事件 + 最终 self.status snapshot。
+    //
+    // 永不抛 4xx/5xx;失败保留 lastKnownGood 兜底。
+    const wantsRemoteProbe = req.query.probe === 'remote';
+    if (wantsRemoteProbe) {
+      // 触发后台 refresh,不阻塞响应。dedupe 由 cache 自己处理(同 trigger 5s 内合并)。
+      selfStatusCache.enqueueRefresh('manual');
     }
+    const snapshot = selfStatusCache.getSnapshot();
+    const lastKnownGood = selfStatusCache.getLastKnownGood();
+    // 如果当前 snapshot 是 EMPTY(cache 还没跑过任何 refresh)+ 有 lastKnownGood,
+    // 优先返 lastKnownGood;否则返当前 snapshot(可能是空的兜底)。
+    const usingLastKnownGood = !snapshot.lastRefreshAt && !!lastKnownGood;
+    const payload = usingLastKnownGood ? lastKnownGood : snapshot;
+    res.json({
+      ...payload,
+      // 旧 client 还依赖 `degraded: { reasons: [...] }` 形状;cache 用 `degraded: {reason}`。
+      // 这里同时给两个,保持兼容。
+      degraded: payload.degraded
+        ? { degraded: true, reason: payload.degraded.reason, message: payload.degraded.message, reasons: [payload.degraded.message] }
+        : null,
+      lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
+    });
   });
 
   // GET /api/self-update-history — 完整历史(含每条 record 的完整 SSE 步骤序列)

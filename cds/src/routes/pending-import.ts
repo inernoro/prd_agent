@@ -228,22 +228,38 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
   });
 
   // GET /api/pending-imports — list all (pending first, then recent decided).
+  // 2026-05-28: 永不 5xx — 失败时返 200 + degraded(对齐自检接口降级契约)
   router.get('/pending-imports', (_req, res) => {
-    stateService.prunePendingImports(AUDIT_RETENTION_MS);
-    const all = stateService.getPendingImports();
-    // Pending first, then most recent decided.
-    const sorted = [...all].sort((a, b) => {
-      if (a.status === 'pending' && b.status !== 'pending') return -1;
-      if (a.status !== 'pending' && b.status === 'pending') return 1;
-      return b.submittedAt.localeCompare(a.submittedAt);
-    });
-    // Don't leak raw YAML in the list view — the dashboard fetches it
-    // lazily via GET /pending-imports/:id when the drawer opens.
-    const stripped = sorted.map(({ composeYaml: _yaml, ...rest }) => rest);
-    res.json({
-      imports: stripped,
-      pendingCount: sorted.filter((p) => p.status === 'pending').length,
-    });
+    try {
+      stateService.prunePendingImports(AUDIT_RETENTION_MS);
+      const all = stateService.getPendingImports();
+      // Pending first, then most recent decided.
+      const sorted = [...all].sort((a, b) => {
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (a.status !== 'pending' && b.status === 'pending') return 1;
+        return b.submittedAt.localeCompare(a.submittedAt);
+      });
+      // Don't leak raw YAML in the list view — the dashboard fetches it
+      // lazily via GET /pending-imports/:id when the drawer opens.
+      const stripped = sorted.map(({ composeYaml: _yaml, ...rest }) => rest);
+      res.json({
+        ok: true,
+        degraded: false,
+        imports: stripped,
+        pendingCount: sorted.filter((p) => p.status === 'pending').length,
+      });
+    } catch (err) {
+      res.json({
+        ok: false,
+        degraded: true,
+        reason: 'state_load_failed',
+        message: (err as Error).message.slice(0, 500),
+        data: null,
+        lastKnownGood: {},
+        imports: [],
+        pendingCount: 0,
+      });
+    }
   });
 
   // GET /api/pending-imports/:id — full record including raw YAML.

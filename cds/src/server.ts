@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
@@ -531,6 +532,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /self-branches': '获取自身分支',
     'GET /self-status': '获取自更新状态',
     'GET /self-status/stream': '订阅自更新状态',
+    'GET /cds-events': '订阅 CDS 事件流',
+    'POST /self-refresh': '触发自更新刷新',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
@@ -2922,6 +2925,11 @@ export function createServer(deps: ServerDeps): express.Express {
     serverEventLogStore: deps.serverEventLogStore,
     branchOperationCoordinator: deps.branchOperationCoordinator,
   }));
+
+  // 2026-05-28: 单一 SSE 通道 + 任务化刷新。
+  // 必须挂在 createBranchRouter 之后,因为 cache.init() 在 branches.ts 里执行,
+  // cds-events 路由要读已 init 好的 cache。
+  app.use('/api', createCdsEventsRouter());
 
   // ── GitHub App webhook + linking endpoints (P6) ──
   //
