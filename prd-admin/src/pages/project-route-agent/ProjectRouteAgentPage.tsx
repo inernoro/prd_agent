@@ -120,36 +120,49 @@ function AnalyzeView() {
   const [platform, setPlatform] = useState<string | null>(null);
 
   const [recent, setRecent] = useState<ProjectRoutePlan[]>([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  const [recentError, setRecentError] = useState<string | null>(null);
   const [streamUrl, setStreamUrl] = useState<string>('');
 
   useEffect(() => {
-    // 初次加载：拉最近方案 + 公共站点说明 + GitHub 状态；
-    // 然后把最新一条方案自动选中展示到右侧（避免进页面一片空白）。
-    void (async () => {
-      const res = await listMyPlans(1, 10);
-      if (res.success) {
-        const items = res.data!.items;
-        setRecent(items);
-        if (items.length > 0) {
-          const top = items[0];
-          setPlan(top);
-          setApps(top.extractedApps ?? []);
-          setModules(top.extractedModules ?? []);
-          setExtractedRepos(top.extractedRepos ?? []);
-          setResolutions(top.resolutions ?? []);
-          setRepos([]);
-          setModel(top.model ?? null);
-          setPlatform(top.modelPlatform ?? null);
-        }
-      }
-    })();
+    void refreshRecent({ autoSelectTop: true });
     void refreshSiteSpec();
     void refreshGhStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refreshRecent() {
-    const res = await listMyPlans(1, 10);
-    if (res.success) setRecent(res.data!.items);
+  // refreshRecent 兼具两个职责：拉列表 + （可选）把最新一条回灌到右侧分析视图。
+  // 把这两件事合到一处，避免初次加载和 push-to-refresh 各自维护一份回灌逻辑。
+  async function refreshRecent(options: { autoSelectTop?: boolean } = {}) {
+    setRecentLoading(true);
+    setRecentError(null);
+    try {
+      const res = await listMyPlans(1, 10);
+      if (!res.success) {
+        const msg = res.error?.message ?? '加载最近方案失败';
+        setRecentError(msg);
+        // 失败时也清空列表，免得 UI 看起来还在显示老缓存
+        setRecent([]);
+        return;
+      }
+      const items = res.data?.items ?? [];
+      setRecent(items);
+      if (options.autoSelectTop && items.length > 0) {
+        const top = items[0];
+        setPlan(top);
+        setApps(top.extractedApps ?? []);
+        setModules(top.extractedModules ?? []);
+        setExtractedRepos(top.extractedRepos ?? []);
+        setResolutions(top.resolutions ?? []);
+        setRepos([]);
+        setModel(top.model ?? null);
+        setPlatform(top.modelPlatform ?? null);
+      }
+    } catch (e) {
+      setRecentError(e instanceof Error ? e.message : '加载最近方案出错');
+    } finally {
+      setRecentLoading(false);
+    }
   }
 
   async function refreshSiteSpec() {
@@ -397,7 +410,24 @@ function AnalyzeView() {
               <RefreshCw className="w-3 h-3" />
             </button>
           </div>
-          {recent.length === 0 ? (
+          {recentLoading ? (
+            <div className="flex items-center gap-2 text-xs text-white/40">
+              <Loader2 className="w-3 h-3 animate-spin" /> 加载最近方案中…
+            </div>
+          ) : recentError ? (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2 space-y-1">
+              <p className="text-xs text-red-300 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" /> 加载最近方案失败
+              </p>
+              <p className="text-[10px] text-red-300/70 break-all">{recentError}</p>
+              <button
+                onClick={() => { void refreshRecent(); }}
+                className="text-[10px] text-sky-300 hover:text-sky-200 underline-offset-2 hover:underline"
+              >
+                重新加载
+              </button>
+            </div>
+          ) : recent.length === 0 ? (
             <p className="text-xs text-white/40">还没有提交过方案。</p>
           ) : (
             <ul className="space-y-1.5">
