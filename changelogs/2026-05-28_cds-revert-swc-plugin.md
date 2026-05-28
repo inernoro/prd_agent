@@ -1,0 +1,1 @@
+| revert | cds | 回滚 @vitejs/plugin-react-swc → @vitejs/plugin-react。prod CDS host 上 @swc/core postinstall 下载 native binary 失败,导致 web pnpm install exit=1,整个 self-update 中止。本地实测 SWC vs Babel 速度持平(6.8s 都一样),收益本来就是零,移除以免再次卡死 self-update。仍保留 build script 里"删重复 tsc"那行 |
