@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.Http;
 using System.Diagnostics;
@@ -150,9 +151,18 @@ public sealed class ChangelogReader : IChangelogReader
     private const string CacheKeyCurrentWeek = "changelog:current-week";
     private const string CacheKeyReleases = "changelog:releases";
     private const string CacheKeyGitHubLogs = "changelog:github-logs";
-    private static readonly TimeSpan LocalCacheTtl = TimeSpan.FromMinutes(5);
 
-    private static readonly TimeSpan GitHubLogsCacheTtl = TimeSpan.FromMinutes(2);
+    // serve-stale-while-revalidate（业界通行做法，见 web.dev / RFC 5861 / .NET HybridCache 防击穿）：
+    //  - 新鲜期（GetFreshWindow，默认 5 分钟）内：直接返回缓存，不刷新
+    //  - 新鲜期过后、保留期（StaleKeepWindow，24 小时）内：先返回旧值、再后台静默刷新（用户不等待）
+    //  - 保留期作为 IMemoryCache 绝对过期时间，超过才真正丢弃，下一次请求才同步拉取
+    // 这样除了「首次启动且尚未预热」这一种情况外，用户几乎永远不会卡在 GitHub/磁盘拉取上。
+    private static readonly TimeSpan StaleKeepWindow = TimeSpan.FromHours(24);
+
+    // 按 cacheKey 串行化「真实拉取」，避免缓存过期瞬间并发请求同时打满 GitHub（惊群/stampede）
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _fetchLocks = new();
+    // 标记某个 cacheKey 是否已有后台刷新在跑，避免重复刷新
+    private readonly ConcurrentDictionary<string, byte> _refreshing = new();
 
     // 文件名格式：YYYY-MM-DD_<short>.md
     private static readonly Regex FragmentFileNameRegex =
@@ -188,40 +198,138 @@ public sealed class ChangelogReader : IChangelogReader
         _logger = logger;
     }
 
-    // ── 公共 API ──────────────────────────────────────────────────────
+    // ── 公共 API（均走 serve-stale-while-revalidate） ─────────────────
 
-    public async Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false)
+    public Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false) =>
+        GetWithSwrAsync(CacheKeyCurrentWeek, force, FetchCurrentWeekAsync, v => v.DataSourceAvailable);
+
+    public Task<ReleasesView> GetReleasesAsync(int limit, bool force = false)
     {
-        if (!force && _cache.TryGetValue(CacheKeyCurrentWeek, out CurrentWeekView? cached) && cached != null)
+        var cacheKey = $"{CacheKeyReleases}:{limit}";
+        return GetWithSwrAsync(cacheKey, force, () => FetchReleasesAsync(limit), v => v.DataSourceAvailable);
+    }
+
+    public Task<GitHubLogsView> GetGitHubLogsAsync(int limit, bool force = false)
+    {
+        if (limit <= 0 || limit > 1000) limit = 1000;
+        var cacheKey = $"{CacheKeyGitHubLogs}:{limit}";
+        return GetWithSwrAsync(cacheKey, force, () => FetchGitHubLogsAsync(limit), v => v.DataSourceAvailable);
+    }
+
+    // ── serve-stale-while-revalidate 核心 ─────────────────────────────
+
+    private sealed class CacheEntry<T>
+    {
+        public required T Value { get; init; }
+        public required DateTime FetchedAt { get; init; }
+    }
+
+    /// <summary>
+    /// 通用 SWR 读取：新鲜直接返回；陈旧先返回旧值再后台刷新；无缓存则同步拉取（按 key 去重）。
+    /// </summary>
+    private async Task<T> GetWithSwrAsync<T>(
+        string cacheKey,
+        bool force,
+        Func<Task<T>> fetch,
+        Func<T, bool> usable) where T : class
+    {
+        if (!force && _cache.TryGetValue(cacheKey, out CacheEntry<T>? entry) && entry != null)
         {
-            return cached;
+            if (DateTime.UtcNow - entry.FetchedAt <= GetFreshWindow())
+            {
+                return entry.Value; // 新鲜：直接返回
+            }
+            TriggerBackgroundRefresh(cacheKey, fetch, usable); // 陈旧：先返回旧值 + 后台刷新
+            return entry.Value;
         }
 
-        // 1) 本地优先（dev 快路径）
-        // 注意：只要本地有 changelogs/ 目录就用本地（即使本周空），不向 GitHub 兜底
+        // 无缓存或强制刷新：必须同步拉取，按 key 串行去重避免惊群
+        return await FetchCoalescedAsync(cacheKey, force, fetch, usable).ConfigureAwait(false);
+    }
+
+    private async Task<T> FetchCoalescedAsync<T>(
+        string cacheKey,
+        bool force,
+        Func<Task<T>> fetch,
+        Func<T, bool> usable) where T : class
+    {
+        var gate = _fetchLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // double-check：等锁期间别的请求可能已填好新鲜缓存
+            if (!force && _cache.TryGetValue(cacheKey, out CacheEntry<T>? entry) && entry != null
+                && DateTime.UtcNow - entry.FetchedAt <= GetFreshWindow())
+            {
+                return entry.Value;
+            }
+
+            var fresh = await fetch().ConfigureAwait(false);
+            if (usable(fresh))
+            {
+                _cache.Set(cacheKey, new CacheEntry<T> { Value = fresh, FetchedAt = DateTime.UtcNow }, StaleKeepWindow);
+                return fresh;
+            }
+
+            // 拉取失败：保留期内若仍有旧值则继续用旧值，否则返回不可用结果（DataSourceAvailable=false）
+            if (_cache.TryGetValue(cacheKey, out CacheEntry<T>? stale) && stale != null)
+            {
+                return stale.Value;
+            }
+            return fresh;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private void TriggerBackgroundRefresh<T>(
+        string cacheKey,
+        Func<Task<T>> fetch,
+        Func<T, bool> usable) where T : class
+    {
+        if (!_refreshing.TryAdd(cacheKey, 1)) return; // 已有同 key 后台刷新在跑
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var fresh = await fetch().ConfigureAwait(false);
+                if (usable(fresh))
+                {
+                    _cache.Set(cacheKey, new CacheEntry<T> { Value = fresh, FetchedAt = DateTime.UtcNow }, StaleKeepWindow);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Changelog] 后台刷新失败 key={Key}（继续沿用旧值）", cacheKey);
+            }
+            finally
+            {
+                _refreshing.TryRemove(cacheKey, out _);
+            }
+        });
+    }
+
+    // ── 真实拉取（本地优先 → GitHub 兜底），供 SWR 包装调用 ─────────────
+
+    private async Task<CurrentWeekView> FetchCurrentWeekAsync()
+    {
+        // 本地优先：只要有 changelogs/ 目录就用本地（即使本周空），不向 GitHub 兜底
         var localView = BuildCurrentWeekViewFromLocal();
-        if (localView.DataSourceAvailable)
-        {
-            _cache.Set(CacheKeyCurrentWeek, localView, LocalCacheTtl);
-            return localView;
-        }
+        if (localView.DataSourceAvailable) return localView;
 
-        // 2) GitHub 兜底（生产 Docker 等无本地源场景）
+        // GitHub 兜底（生产 Docker 等无本地源场景）
         try
         {
             var githubView = await BuildCurrentWeekViewFromGitHubAsync().ConfigureAwait(false);
-            if (githubView.DataSourceAvailable)
-            {
-                _cache.Set(CacheKeyCurrentWeek, githubView, GetGitHubCacheTtl());
-                return githubView;
-            }
+            if (githubView.DataSourceAvailable) return githubView;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Changelog] GitHub 拉取本周更新失败");
         }
 
-        // 3) 都失败：返回空视图（不缓存，下次重试）
         return new CurrentWeekView
         {
             WeekStart = ComputeWeekStart(),
@@ -232,31 +340,15 @@ public sealed class ChangelogReader : IChangelogReader
         };
     }
 
-    public async Task<ReleasesView> GetReleasesAsync(int limit, bool force = false)
+    private async Task<ReleasesView> FetchReleasesAsync(int limit)
     {
-        var cacheKey = $"{CacheKeyReleases}:{limit}";
-        if (!force && _cache.TryGetValue(cacheKey, out ReleasesView? cached) && cached != null)
-        {
-            return cached;
-        }
-
-        // 1) 本地优先
         var localView = BuildReleasesViewFromLocal(limit);
-        if (localView.DataSourceAvailable)
-        {
-            _cache.Set(cacheKey, localView, LocalCacheTtl);
-            return localView;
-        }
+        if (localView.DataSourceAvailable) return localView;
 
-        // 2) GitHub 兜底
         try
         {
             var githubView = await BuildReleasesViewFromGitHubAsync(limit).ConfigureAwait(false);
-            if (githubView.DataSourceAvailable)
-            {
-                _cache.Set(cacheKey, githubView, GetGitHubCacheTtl());
-                return githubView;
-            }
+            if (githubView.DataSourceAvailable) return githubView;
         }
         catch (Exception ex)
         {
@@ -271,30 +363,15 @@ public sealed class ChangelogReader : IChangelogReader
         };
     }
 
-    public async Task<GitHubLogsView> GetGitHubLogsAsync(int limit, bool force = false)
+    private async Task<GitHubLogsView> FetchGitHubLogsAsync(int limit)
     {
-        if (limit <= 0 || limit > 1000) limit = 1000;
-        var cacheKey = $"{CacheKeyGitHubLogs}:{limit}";
-        if (!force && _cache.TryGetValue(cacheKey, out GitHubLogsView? cached) && cached != null)
-        {
-            return cached;
-        }
-
         var localView = await BuildGitHubLogsViewFromLocalAsync(limit).ConfigureAwait(false);
-        if (localView.DataSourceAvailable)
-        {
-            _cache.Set(cacheKey, localView, LocalCacheTtl);
-            return localView;
-        }
+        if (localView.DataSourceAvailable) return localView;
 
         try
         {
             var githubView = await BuildGitHubLogsViewFromGitHubAsync(limit).ConfigureAwait(false);
-            if (githubView.DataSourceAvailable)
-            {
-                _cache.Set(cacheKey, githubView, GetGitHubCacheTtl());
-                return githubView;
-            }
+            if (githubView.DataSourceAvailable) return githubView;
         }
         catch (Exception ex)
         {
@@ -486,7 +563,11 @@ public sealed class ChangelogReader : IChangelogReader
     private string GetGitHubRawBase() => (_config["Changelog:GitHubRawBase"] ?? "https://raw.githubusercontent.com").TrimEnd('/');
     private string? GetGitHubToken() => _config["Changelog:GitHubToken"];
 
-    private TimeSpan GetGitHubCacheTtl()
+    /// <summary>
+    /// 缓存「新鲜期」：此窗口内直接返回缓存、不触发刷新。可由 Changelog:CacheTtlMinutes /
+    /// CacheTtlHours 配置覆盖，默认 5 分钟。超过新鲜期后走 stale-while-revalidate（先旧值后台刷新）。
+    /// </summary>
+    private TimeSpan GetFreshWindow()
     {
         var minutes = _config.GetValue<int?>("Changelog:CacheTtlMinutes");
         if (minutes.HasValue && minutes.Value > 0)
