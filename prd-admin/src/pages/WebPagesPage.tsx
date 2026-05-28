@@ -2385,14 +2385,14 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
       maxWidth={900}
       content={
         <>
-          {/* 顶部 CTA：新建分享按钮 */}
+          {/* 顶部 CTA — P2-3 修复：长文案左侧给定宽 max-w，按钮组右侧定位防止挤压换行 */}
           <div
-            className="flex items-center justify-between gap-3 p-3 mb-3 rounded-lg"
+            className="flex items-start justify-between gap-3 p-3 mb-3 rounded-lg"
             style={{ background: 'var(--bg-elevated)', border: '1px dashed var(--border-default)' }}
           >
-            <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+            <div className="text-xs leading-relaxed min-w-0 flex-1" style={{ color: 'var(--text-secondary)' }}>
               {scopedSiteId
-                ? '每次创建都生成新链接（不会复用旧链接）；过期 7 天内仍可续期。'
+                ? '每次创建都生成新链接（不复用旧的）。过期 7 天内仍可续期。'
                 : '查看所有分享链接、续期、撤销，或查看访问日志。'}
             </div>
             {scopedSiteId && (

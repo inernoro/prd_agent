@@ -932,27 +932,23 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
     return result;
   }, [entryId, entryMap]);
 
-  // 标题用小灰字呈现（2026-05-28 用户反馈：和 markdown 正文 H1 重复显示像 bug）：
-  // 文件名只是个"我在哪"的位置提示，不该跟正文标题抢主角；走 text-[11px] muted
-  // 风格，类似 macOS 标题栏小字 / 浏览器标签的位置。
-  if (path.length <= 1) {
-    return (
-      <span
-        className="text-[11px] truncate"
-        style={{ color: 'var(--text-muted)' }}
-        title={path[0]?.title ?? ''}
-      >
-        {path[0]?.title ?? ''}
-      </span>
-    );
-  }
+  // 2026-05-28 用户两次反馈："标题重复显示像 bug"。
+  // 第一次修复改成小灰字字号(11px)，但文件名 + markdown H1 内容仍 99% 重合。
+  // 第二次彻底修：单级路径(就是文件本身,没有父文件夹)直接不渲染面包屑——
+  // 因为 markdown H1 已经是"我是什么文档"的清晰锚点，重复显示无收益。
+  // 仅在多级路径(有父文件夹层级)时才渲染面包屑，作为"我在哪"的位置指示。
+  if (path.length <= 1) return null;
 
+  // 多级路径：仍是小灰字，作为位置指示。最后一段(文件名本身)用 truncate +
+  // max-w 避免吃掉过多空间。
   return (
     <div className="flex items-center gap-1 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
       {path.map((entry, i) => (
         <span key={entry.id} className="flex items-center gap-1 min-w-0">
           {i > 0 && <ChevronRight size={10} className="flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.6 }} />}
-          <span className="truncate" title={entry.title}>{entry.title}</span>
+          <span className="truncate" title={entry.title} style={i === path.length - 1 ? { maxWidth: '320px' } : undefined}>
+            {entry.title}
+          </span>
         </span>
       ))}
     </div>

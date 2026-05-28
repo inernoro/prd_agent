@@ -63,12 +63,12 @@ export function ShareAnalyticsDrawer({
     if (!iso) return '';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    const now = new Date();
+    // 同年简短显示 MM-DD HH:mm；跨年显示 YYYY-MM-DD（避免 04/07 让人不知是哪年）
+    const opts: Intl.DateTimeFormatOptions = d.getFullYear() === now.getFullYear()
+      ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+      : { year: 'numeric', month: '2-digit', day: '2-digit' };
+    return d.toLocaleString('zh-CN', opts).replace(/\//g, '-');
   };
 
   const visibilityBadge = (v: string) => {
@@ -176,46 +176,94 @@ export function ShareAnalyticsDrawer({
             <div className="text-sm text-center py-8" style={{ color: 'var(--text-secondary)' }}>
               暂无数据
             </div>
+          ) : data.totalShares === 0 ? (
+            // P1-4 修复：完全没分享时不展示 4 个 0 让用户困惑，给清晰引导
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+              <Link2 size={36} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
+              <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                {scopedSiteId ? '此站点尚未创建分享' : '还没有创建任何分享'}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                创建第一个分享后,这里会显示访问统计 PV / 独立 IP / Top 链接 / 时间线
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="mt-2 px-4 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                style={{
+                  background: 'var(--bg-sunken)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-default)',
+                }}
+              >
+                关闭去创建分享
+              </button>
+            </div>
           ) : (
             <>
-              {/* 聚合卡 */}
+              {/* 聚合卡 — P1-2 修复："共 X"改为更清楚的"总 X 条" */}
               <div className="grid grid-cols-4 gap-3">
-                <StatCard icon={<Link2 size={14} />} label="活跃链接" value={data.activeShares} sub={`共 ${data.totalShares}`} />
+                <StatCard
+                  icon={<Link2 size={14} />}
+                  label="活跃链接"
+                  value={data.activeShares}
+                  sub={data.totalShares > data.activeShares ? `总计 ${data.totalShares} 条` : undefined}
+                />
                 <StatCard icon={<Eye size={14} />} label="时间窗 PV" value={data.totalViews} />
                 <StatCard icon={<Users size={14} />} label="独立 IP" value={data.uniqueIpCount} />
                 <StatCard icon={<Clock size={14} />} label="已过期" value={data.expiredShares} />
               </div>
 
-              {/* Top 链接 */}
+              {/* Top 链接 — P1-3 修复：补表头 / P2-2 修复：列宽固定 */}
               {data.topLinks.length > 0 && (
                 <div>
                   <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
                     <Link2 size={12} />
                     Top 链接 (按 PV 排序)
                   </div>
-                  <div className="flex flex-col rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}>
+                  <div
+                    className="flex flex-col rounded-lg overflow-hidden border"
+                    style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
+                  >
+                    {/* 列宽统一：标题 flex 自适应、可见性 chip 96px、PV/IP/时间各 88px */}
+                    <div
+                      className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+                      style={{
+                        gridTemplateColumns: 'minmax(0,1fr) 96px 80px 80px 96px',
+                        gap: 12,
+                        background: 'var(--bg-elevated)',
+                        color: 'var(--text-muted)',
+                        borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
+                      }}
+                    >
+                      <span>链接标题</span>
+                      <span>可见性</span>
+                      <span className="text-right">PV</span>
+                      <span className="text-right">独立 IP</span>
+                      <span className="text-right">最后访问</span>
+                    </div>
                     {data.topLinks.map((link) => (
                       <div
                         key={link.shareId}
-                        className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-3 items-center px-3 py-2 text-xs border-b last:border-b-0"
+                        className="grid items-center px-3 py-2 text-xs border-b last:border-b-0"
                         style={{
+                          gridTemplateColumns: 'minmax(0,1fr) 96px 80px 80px 96px',
+                          gap: 12,
                           background: 'var(--bg-sunken)',
                           borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
                         }}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="truncate" style={{ color: 'var(--text-primary)' }} title={link.title || link.token}>
-                            {link.title || link.token}
-                          </span>
-                          {visibilityBadge(link.visibility)}
-                        </div>
-                        <span style={{ color: 'var(--text-secondary)' }} title="总浏览量">
-                          {link.viewCount} PV
+                        <span className="truncate" style={{ color: 'var(--text-primary)' }} title={link.title || link.token}>
+                          {link.title || link.token}
                         </span>
-                        <span style={{ color: 'var(--text-secondary)' }} title="独立 IP">
-                          {link.uniqueIpCount} IP
+                        <div className="min-w-0">{visibilityBadge(link.visibility)}</div>
+                        <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                          {link.viewCount.toLocaleString()}
                         </span>
-                        <span style={{ color: 'var(--text-secondary)' }} title="最后访问">
+                        <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                          {link.uniqueIpCount.toLocaleString()}
+                        </span>
+                        <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
                           {link.lastViewedAt ? fmtTime(link.lastViewedAt) : '—'}
                         </span>
                       </div>
@@ -224,7 +272,7 @@ export function ShareAnalyticsDrawer({
                 </div>
               )}
 
-              {/* 时间线 */}
+              {/* 时间线 — 加表头 + 列宽统一 */}
               <div>
                 <div className="text-xs mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
                   <Clock size={12} />
@@ -235,20 +283,40 @@ export function ShareAnalyticsDrawer({
                     时间窗内暂无访问
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1">
+                  <div className="flex flex-col rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}>
+                    <div
+                      className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
+                      style={{
+                        gridTemplateColumns: '100px minmax(0,1fr) 100px 120px',
+                        gap: 12,
+                        background: 'var(--bg-elevated)',
+                        color: 'var(--text-muted)',
+                        borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
+                      }}
+                    >
+                      <span>时间</span>
+                      <span>分享链接</span>
+                      <span>访问者</span>
+                      <span>IP (脱敏)</span>
+                    </div>
                     {data.timeline.map((entry, idx) => (
                       <div
                         key={`${entry.shareToken}-${entry.viewedAt}-${idx}`}
-                        className="grid grid-cols-[80px_minmax(0,1fr)_auto_auto] gap-3 items-center px-3 py-1.5 rounded text-xs"
-                        style={{ background: 'var(--bg-sunken)' }}
+                        className="grid items-center px-3 py-1.5 text-xs border-b last:border-b-0"
+                        style={{
+                          gridTemplateColumns: '100px minmax(0,1fr) 100px 120px',
+                          gap: 12,
+                          background: 'var(--bg-sunken)',
+                          borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
+                        }}
                       >
                         <span className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
                           {fmtTime(entry.viewedAt)}
                         </span>
-                        <span className="truncate" style={{ color: 'var(--text-primary)' }}>
+                        <span className="truncate" style={{ color: 'var(--text-primary)' }} title={entry.shareTitle || entry.shareToken}>
                           {entry.shareTitle || entry.shareToken}
                         </span>
-                        <span style={{ color: 'var(--text-secondary)' }}>
+                        <span className="truncate" style={{ color: 'var(--text-secondary)' }}>
                           {entry.viewerName || '匿名'}
                         </span>
                         <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>
