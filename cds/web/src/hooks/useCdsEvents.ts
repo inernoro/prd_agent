@@ -267,17 +267,20 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
 }
 
 function onError(): void {
-  // EventSource 的 error 事件不带详细信息;只能凭 readyState 区分
+  // EventSource 的 error 事件不带 HTTP 状态码,只能凭 readyState 区分。
+  // 关键:浏览器内置在收到非 2xx(包括 Cloudflare 400)后会**自动**每 ~3s
+  // 重连。如果不主动 close,浏览器会无限重试,DevTools 中堆出大量 400 红条。
+  // 用户反馈 2026-05-28:快速切换左侧 Projects/Settings 时 cds-events 出现
+  // 大量 400 — 根因就是这条浏览器原生重试。修复:第一次 onerror 就 close,
+  // 切到我们自己控制的 exponential backoff。
   if (!eventSource) return;
-  if (eventSource.readyState === EventSource.CLOSED) {
-    // 已彻底关闭(浏览器内部退避了)
-    closeConnection();
-    scheduleReconnect();
-  } else if (eventSource.readyState === EventSource.CONNECTING) {
-    // 浏览器在自己重连。这里只更新状态显示。
-    setState({ consecutiveErrors: state.consecutiveErrors + 1 });
-    maybeFlagDisconnected();
-  }
+  const next = state.consecutiveErrors + 1;
+  setState({ consecutiveErrors: next });
+  maybeFlagDisconnected();
+  // 立刻 close 阻止浏览器内置重试 — 后续是否再连由 scheduleReconnect 决定。
+  // CLOSED 表示浏览器已经主动关了,这种情况也跟着清理 + 重连。
+  closeConnection();
+  scheduleReconnect();
 }
 
 function handleFatalError(err: Error): void {
@@ -306,12 +309,14 @@ function scheduleReconnect(): void {
   if (stopped) return;
   if (reconnectTimer != null) return;
   connectAttempt += 1;
-  // 5xx / 网络:指数退避 1s, 2s, 4s,最多 3 次后停
+  // 5xx / 网络:指数退避 5s, 10s, 20s,最多 3 次后停。
+  // 比之前的 1/2/4s 更长 — 因为 Cloudflare 偶发 400 + 浏览器内置 ~3s 重试时,
+  // 短退避会让 retry 风暴叠加,DevTools 堆 10+ 红条。给后端足够喘息时间。
   if (connectAttempt > 3) {
     setState({ connection: 'disconnected' });
     return;
   }
-  const delay = Math.min(4000, 1000 * Math.pow(2, connectAttempt - 1));
+  const delay = Math.min(20_000, 5_000 * Math.pow(2, connectAttempt - 1));
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null;
     openConnection();
@@ -340,8 +345,20 @@ function getSnapshot(): StoreState {
   return state;
 }
 
-/** 触发一次 refresh(POST /api/self-refresh,202 + jobId)。重复点击同时间窗口内复用同一 job */
+/** 触发一次 refresh(POST /api/self-refresh,202 + jobId)。重复点击同时间窗口内复用同一 job。
+ * 副作用:若当前 SSE 已 disconnected/error,顺手强制重连一次(用户点击 = 明确意图)。*/
 export async function requestRefresh(trigger: 'manual' | 'webhook' = 'manual'): Promise<void> {
+  // 如果 SSE 已挂了,趁用户点击的机会重置 backoff 计数器并重连
+  if (state.connection === 'disconnected' || state.connection === 'error') {
+    if (reconnectTimer != null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    connectAttempt = 0;
+    setState({ consecutiveErrors: 0, lastError: null });
+    closeConnection();
+    openConnection();
+  }
   try {
     const res = await fetch(apiUrl('/api/self-refresh'), {
       method: 'POST',
