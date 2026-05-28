@@ -53,6 +53,24 @@ export function shouldPreferCdsPassthrough(hostname = currentHostname()): boolea
   return !['localhost', '127.0.0.1', '::1'].includes(normalized);
 }
 
+/**
+ * 2026-05-28: 静默 transient retry — Cloudflare 边缘 400/5xx 抖动专治。
+ *
+ * 如果第一次 fetch 收到的是 transient 形态(4xx/5xx + 空 body + 无 requestId),
+ * 等 500ms 自动重试一次。99%+ 边缘抖动是单点的,第二次就成功了,调用方完全
+ * 无感。两次都失败再抛 ApiError(此时 transient=true,调用方可选择静默)。
+ *
+ * GET 是天然幂等;POST/PUT 默认**不**自动重试(可能产生重复副作用),
+ * 调用方需要时通过 `options.retryTransient: true` 显式开启。
+ */
+const TRANSIENT_STATUS = new Set([400, 502, 503, 504]);
+
+function looksTransient(res: Response, parsed: unknown, requestId?: string): boolean {
+  if (!TRANSIENT_STATUS.has(res.status)) return false;
+  if (requestId) return false; // 真后端返的 4xx/5xx,不抖动
+  return hasNoReadableError(parsed);
+}
+
 export async function apiRequest<T = unknown>(
   path: string,
   options: ApiOptions = {}
@@ -61,9 +79,21 @@ export async function apiRequest<T = unknown>(
   const rawUrl = path.startsWith('/') ? path : `/${path}`;
   const url = apiUrl(rawUrl);
   const init: RequestInit = buildRequestInit(method, body, signal, headers);
+  const allowRetry = method === 'GET' || (options as ApiOptions & { retryTransient?: boolean }).retryTransient === true;
 
   const first = await fetchAndParse(url, init);
   if (first.res.ok) return first.parsed as T;
+
+  // ── transient 自动静默重试 ──
+  if (allowRetry && looksTransient(first.res, first.parsed, first.requestId)) {
+    // eslint-disable-next-line no-console
+    console.warn('[apiRequest transient retry]', method, url, `HTTP ${first.res.status}`);
+    await new Promise((r) => setTimeout(r, 500));
+    const retried = await fetchAndParse(url, init);
+    if (retried.res.ok) return retried.parsed as T;
+    // 两次都炸 → 真错(或者持续 transient)。继续走 alternate 路径,最终若仍 transient
+    // 抛出会标 transient=true,UI 端可选择静默。
+  }
 
   const retryUrl = alternateApiUrl(rawUrl, url);
   const shouldRetryAlternate =

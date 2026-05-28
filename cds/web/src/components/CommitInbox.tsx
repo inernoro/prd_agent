@@ -160,7 +160,10 @@ export function CommitInbox(): JSX.Element | null {
       if (!cancelled) setConnected(true);
     };
     source.onerror = () => {
-      if (!cancelled) setConnected(false);
+      if (cancelled) return;
+      setConnected(false);
+      // 2026-05-28 阻断浏览器原生每 3s 重试,避免 Cloudflare 边缘 400 风暴
+      try { source.close(); } catch { /* tolerate */ }
     };
 
     const pushNotice = (notice: CommitNotice | null): void => {

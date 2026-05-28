@@ -6,3 +6,9 @@
 | fix | cds/web | RouteFallback 用 CdsLogoLoader 替换裸"加载中..."文本,跟品牌一致 |
 | fix | cds/web | DashboardErrorBoundary 改为右下角小 toast (createPortal + position:fixed z-99999),严禁占满主区;chunk-load 失败 5s 冷却内自动 reload(原 60s 过长) |
 | fix | cds/web | ApiError 增 transient 标志,Cloudflare 边缘 400/5xx + 空 body + 无 requestId 时识别为抖动,UI 文案精简为"网络抖动,稍后自动恢复"(完整诊断到 console);BranchListPage 三处 refresh 路径在 transient 时静默保留 lastKnownGood,不再弹横幅 |
+| fix | cds/web | apiRequest 加 transient 静默重试 — 检测到 4xx/5xx + 空 body + 无 requestId 自动 500ms 后重试一次,99%+ Cloudflare 边缘抖动用户无感(GET 自动,POST 需 retryTransient:true) |
+| feat | cds/web | 新增 useSseConnection hook(通用 SSE 长连接管理:onerror 立即 close + 5s/10s/20s 退避,3 次后停),作为后续 6 处 EventSource 迁移目标 |
+| fix | cds/web | 5 处 raw EventSource 加 close-on-error 阻断浏览器原生 3s 重试:CommitInbox / BranchTopologyPage / BranchDetailPage ×2 / BranchListPage ×2 |
+| fix | cds/web | ErrorBlock 加 transient 参数,transient=true 时完全不渲染(配合 ApiError.transient),为 20+ 处现有调用提供逃生通道 |
+| fix | cds | infra auto-restart crash loop 检测 — 跟踪 lastSuccessfulStart 时间戳,启动后 < 60s 又死的标软失败,N 次软失败后 svc.status=error 停止重试。修复 minio "docker start 永远成功但 5s 后死" 的 30s 死循环 |
+| fix | cds/web | App.tsx ErrorToastPortal 硬编码 #fff/#ef4444 改走 hsl(var(--destructive)) token,符合 cds-theme-tokens 双主题规则 |

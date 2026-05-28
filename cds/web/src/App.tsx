@@ -116,7 +116,7 @@ function ErrorToastPortal({
       role="alert"
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-        <strong style={{ color: '#ef4444' }}>
+        <strong style={{ color: 'hsl(var(--destructive))' }}>
           {isChunkLoad ? '前端代码已更新,正在刷新…' : '页面渲染异常'}
         </strong>
         <button
@@ -147,8 +147,9 @@ function ErrorToastPortal({
           type="button"
           onClick={() => window.location.reload()}
           style={{
-            background: '#ef4444',
-            color: '#fff',
+            // 2026-05-28: 改走 token 防止白天主题硬编码暗色违反 cds-theme-tokens 规则
+            background: 'hsl(var(--destructive))',
+            color: 'hsl(var(--destructive-foreground))',
             border: 'none',
             borderRadius: 6,
             padding: '6px 12px',

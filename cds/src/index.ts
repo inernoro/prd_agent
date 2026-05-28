@@ -1814,6 +1814,14 @@ janitorService.setRemoveFn(async (slug: string) => {
   // 核心场景:noHttp:true 之前没 fallback TCP 探测 → service 标 stopped 但 cds
   // 一直认为它该 running,需要人工干预。Bug G 同步修了 fallback,这里做兜底。
   const restartAttempts = new Map<string, { count: number; nextAtMs: number }>();
+  // 2026-05-28 追加:跟踪每个 service 上次成功启动的时间戳。
+  // 用于识别 "docker start 成功但容器内部立刻崩溃" 的 crash loop(minio 典型):
+  //   start 成功 → restartAttempts.delete → 5s 后容器死 → 下次 tick start 又成功
+  //   → 永远跑,占用 docker daemon + master event loop。
+  // 修法:start 后记 timestamp,下次该 service 再触发 auto-restart 时,
+  // 若距上次 < SOFT_FAIL_WINDOW_MS,计入 soft-fail 累加器,达到上限后标 error 停。
+  const lastSuccessfulStartMs = new Map<string, number>();
+  const SOFT_FAIL_WINDOW_MS = 60_000; // 启动后 60s 内再死 = 真在 crash loop
   let autoRestartHandle: NodeJS.Timeout | null = null;
   function startAutoRestartLoop(): void {
     if (autoRestartHandle) return;
@@ -2028,6 +2036,42 @@ janitorService.setRemoveFn(async (slug: string) => {
       const attemptKey = `infra:${svc.containerName}`;
       const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
       if (now < att.nextAtMs) continue;
+
+      // 2026-05-28 软失败检测:如果上次 docker start 成功了不到 SOFT_FAIL_WINDOW_MS
+      // 容器又死了,这是内部 crash loop(minio 凭密码 < 8 字符 / volume 权限 / 镜像
+      // 自杀等),docker start 永远会成功但马上又死。计入 att.count 防止 30s 一次
+      // 死循环占满 CPU。
+      const lastSuccess = lastSuccessfulStartMs.get(attemptKey);
+      if (lastSuccess && now - lastSuccess < SOFT_FAIL_WINDOW_MS) {
+        att.count += 1;
+        att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
+        restartAttempts.set(attemptKey, att);
+        console.warn(
+          `[auto-restart] infra ${svc.containerName} 检测到 crash loop ` +
+          `(启动后 ${Math.round((now - lastSuccess) / 1000)}s 内崩溃),` +
+          `软失败计数 ${att.count}/${MAX_RETRIES}`,
+        );
+        // 不立刻 docker start,下次 tick 再说(给 backoff 时间)
+        if (att.count >= MAX_RETRIES) {
+          svc.status = 'error';
+          svc.errorMessage = `auto-restart 检测到 crash loop:容器启动后短时间内反复崩溃,已停止重试。请检查容器日志(${svc.containerName}),常见原因:镜像 entrypoint 失败 / 环境变量缺失 / 卷权限错误`;
+          stateService.save();
+          lastSuccessfulStartMs.delete(attemptKey);
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'auto-restart',
+            action: 'infra.auto-restart.crash-loop-detected',
+            message: `infra ${svc.containerName} crash loop detected, auto-restart disabled`,
+            projectId: svc.projectId,
+            serviceId: svc.id,
+            containerName: svc.containerName,
+            details: { attempt: att.count, maxRetries: MAX_RETRIES, softFailWindowMs: SOFT_FAIL_WINDOW_MS },
+          });
+        }
+        continue;
+      }
+
       if (att.count >= MAX_RETRIES) {
         svc.status = 'error';
         svc.errorMessage = `auto-restart 已尝试 ${MAX_RETRIES} 次仍失败,请检查容器日志(${svc.containerName})`;
@@ -2055,6 +2099,8 @@ janitorService.setRemoveFn(async (slug: string) => {
       if (startRes.exitCode === 0) {
         console.log(`[auto-restart] infra ${svc.containerName} 已重启(attempt ${att.count + 1})`);
         restartAttempts.delete(attemptKey);
+        // 2026-05-28 记录启动成功时刻,用于检测 crash loop
+        lastSuccessfulStartMs.set(attemptKey, now);
       } else {
         att.count += 1;
         att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);

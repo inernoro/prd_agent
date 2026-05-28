@@ -1668,7 +1668,11 @@ export function BranchListPage(): JSX.Element {
     if (!projectId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
     source.onopen = () => setSseConnected(true);
-    source.onerror = () => setSseConnected(false);
+    source.onerror = () => {
+      setSseConnected(false);
+      // 2026-05-28 阻断浏览器原生 3s 重试。SSE 断开后由 manual refresh 按钮兜底重连
+      try { source.close(); } catch { /* tolerate */ }
+    };
     const applySseAction = (action: BranchListAction<BranchSummary>) => {
       let needsEmptyRecheck = false;
       setState((current) => {
@@ -1785,7 +1789,10 @@ export function BranchListPage(): JSX.Element {
       }
     };
     source.onerror = () => {
-      // Native EventSource will retry; do not surface transient disconnects as page errors.
+      // 2026-05-28 之前注释说 "let browser retry",但 Cloudflare 偶发 400 时
+      // 浏览器每 3s 重试会产生 400 风暴。改为单次 close 阻断,真断了由其他
+      // 拉取路径兜底(host-stats setInterval 还在跑)。
+      try { source.close(); } catch { /* tolerate */ }
     };
     return () => source.close();
   }, []);
