@@ -677,8 +677,16 @@
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项
 
+- [团队（网页托管 + 知识库）债务台账](debt.team-feature) `debt.team-feature`
+  > 团队 wave 1 已知边界：回收站未做 / KB 次要端点仍 owner-only / 公共团队仅留字段 / 邀请链接路由 / 旧条目头像兜底
+- [验收技能（create-visual-test-to-kb）债务台账](debt.visual-acceptance-skill) `debt.visual-acceptance-skill`
+  > 验收技能 wave 1 已落地强制必给地址 + ZZ 照做风 + 画框序号；待补自动 diff 画框 / 流程缩略图 / AI 文案 / AI 视觉判定；明确不做录屏 + 自动镜头
 - [小技巧与首页提醒过时机制债务台账](debt.daily-tips) `debt.daily-tips`
   > 小技巧/缺陷提醒 1 周过时机制的已知边界（历史数据不回填、存量环境需 seed 一次）
+- [殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账](debt.library-doc-reader) `debt.library-doc-reader`
+  > LibraryDocReader 720 行刻意做了米黄+圆体字+暖色调差异化品牌，融合需先做 DocBrowser 皮肤系统；记录重启评估的 4 个触发条件，避免下次重复调研
+- [周报详情页（异构数据）保留独立实现的债务台账](debt.report-detail) `debt.report-detail`
+  > ReportDetailPage 900 行业务实体（成员×周次矩阵 + 多 tabs + 计划对比 + 右栏面板），不是文档库语义；融合需先给 DocBrowser 加 leftSidebar/rightPanel/entryBadges 三 slot 系统
 
 ### 七、周报
 

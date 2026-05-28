@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import {
@@ -19,14 +19,15 @@ import type {
   ChangelogReportSource,
   ChangelogReportSourceUpsert,
 } from '@/services/real/changelog';
-import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { DocBrowser } from '@/components/doc-browser/DocBrowser';
+import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { useWeeklyReportSources } from './weeklyReportSourcesContext';
 
-/** 取条目对应的"最后修改时间"（优先 git commit time） */
-function getEntryTime(e: DocumentEntry): string {
+/** 取条目对应的"最后修改时间"（优先 git commit time）。接受 DocumentEntry 或 DocBrowserEntry */
+function getEntryTime(e: { metadata?: Record<string, string>; lastChangedAt?: string; updatedAt?: string; createdAt?: string }): string {
   return (
     e.metadata?.github_last_commit_at
     || e.lastChangedAt
@@ -103,8 +104,6 @@ export function WeeklyReportsTab() {
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [content, setContent] = useState<string | null>(null);
-  const [loadingContent, setLoadingContent] = useState(false);
   /** 文件列表展示用的"首行/H1 标题"缓存：entryId -> 抽出的标题（null = 正在加载；'' = 无法抽出，用文件名兜底） */
   const [titlePreviews, setTitlePreviews] = useState<Record<string, string>>({});
 
@@ -194,24 +193,16 @@ export function WeeklyReportsTab() {
     });
   }, [filtered]);
 
-  useEffect(() => {
-    if (!selectedId) { setContent(null); return; }
-    let alive = true;
-    setLoadingContent(true);
-    getDocumentContent(selectedId)
-      .then(res => {
-        if (!alive) return;
-        if (res.success) {
-          setContent(res.data.hasContent && res.data.content
-            ? res.data.content
-            : '（此文件暂无可直接渲染的文本内容）');
-        } else {
-          setContent(`加载失败：${res.error?.message || '未知错误'}`);
-        }
-      })
-      .finally(() => { if (alive) setLoadingContent(false); });
-    return () => { alive = false; };
-  }, [selectedId]);
+  // DocBrowser loadContent 适配器：把 getDocumentContent 的 ApiResponse 转为 EntryPreview
+  const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
+    const res = await getDocumentContent(entryId);
+    if (!res.success) return null;
+    return {
+      text: res.data.hasContent ? res.data.content : null,
+      fileUrl: res.data.fileUrl,
+      contentType: res.data.contentType,
+    };
+  }, []);
 
   // ── 空状态：没有任何来源 ──
   if (!loadingSources && sources && sources.length === 0) {
@@ -228,41 +219,29 @@ export function WeeklyReportsTab() {
   }
 
   const currentStore = stores.find(s => s.id === activeSource?.storeId);
+  // DocumentEntry 字段是 DocBrowserEntry 超集（id/title/parentId/isFolder/sourceType/contentType/fileSize/createdAt/updatedAt/lastChangedAt/tags/metadata 都齐），直接传入
+  const browserEntries = filtered as unknown as DocBrowserEntry[];
 
   return (
     <div className="flex flex-col flex-1 min-h-0" style={{ minHeight: '560px' }}>
-      {/* ── 主体：左右独立滚动 ── */}
-      <div
-        className="surface-raised text-crisp relative flex gap-3 rounded-2xl overflow-hidden"
-        style={{
-          flex: 1,
-          minHeight: 0,
-          padding: '12px',
-        }}
-      >
-        {/* 左：文件列表 */}
-        <aside
-          className="surface-reading text-crisp flex flex-col rounded-xl"
-          style={{
-            width: '308px',
-            flexShrink: 0,
-            minHeight: 0,
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            className="surface-reading-header px-4 py-3 flex items-center justify-between gap-2"
-            style={{ flexShrink: 0 }}
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className="text-[12px] font-semibold truncate"
-                style={{ color: 'var(--text-muted)' }}
-                title={currentStore ? `知识库：${currentStore.name}${activeSource?.prefix ? ' · 关键词：' + activeSource.prefix : ''}` : undefined}
-              >
-                周报列表 · 按最近提交
-              </span>
-            </div>
+      <DocBrowser
+        entries={browserEntries}
+        selectedEntryId={selectedId ?? undefined}
+        onSelectEntry={(id) => setSelectedId(id)}
+        loadContent={loadContent}
+        sortMode="created-desc"
+        appearance="cards"
+        loading={loadingEntries}
+        isEntryFresh={(e) => isAfterCutoff(getEntryTime(e), cutoff)}
+        sidebarHeader={
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className="text-[12px] font-semibold truncate"
+              style={{ color: 'var(--text-muted)' }}
+              title={currentStore ? `知识库：${currentStore.name}${activeSource?.prefix ? ' · 关键词：' + activeSource.prefix : ''}` : undefined}
+            >
+              周报列表 · 按最近提交
+            </span>
             <span
               className="text-[11px] px-2 py-0.5 rounded-md shrink-0"
               style={{
@@ -275,132 +254,17 @@ export function WeeklyReportsTab() {
               {filtered.length} 篇
             </span>
           </div>
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              overscrollBehavior: 'contain',
-            }}
-          >
-            {loadingEntries ? (
-              <div className="py-10"><MapSectionLoader text="正在加载…" /></div>
-            ) : filtered.length === 0 ? (
-              <div className="p-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                {entries.length === 0
-                  ? '该知识库暂无文件'
-                  : activeSource?.prefix
-                    ? `没有匹配「${activeSource.prefix}」的文件`
-                    : '暂无文件'}
-              </div>
-            ) : (
-              <ul className="py-2">
-                {filtered.map(e => {
-                  const active = selectedId === e.id;
-                  const time = getEntryTime(e);
-                  const date = time.slice(0, 10);
-                  const isGit = !!e.metadata?.github_last_commit_at;
-                  const fresh = isAfterCutoff(time, cutoff);
-                  return (
-                    <li key={e.id} className="px-2 py-0.5">
-                      <button
-                        onClick={() => setSelectedId(e.id)}
-                        className="surface-row w-full rounded-[12px] text-left px-3.5 py-3 transition-colors"
-                        data-active={active ? 'true' : 'false'}
-                        style={{
-                          color: active ? '#f3e8ff' : 'var(--text-secondary)',
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileText size={13} style={{ flexShrink: 0, opacity: 0.72 }} />
-                          <span
-                            className="text-[13px] font-medium truncate flex-1"
-                            title={`${e.title}${titlePreviews[e.id] ? '\n\n' + titlePreviews[e.id] : ''}`}
-                          >
-                            {titlePreviews[e.id] || e.title}
-                          </span>
-                          {fresh && (
-                            <span
-                              className="text-[9.5px] font-bold tracking-wider px-1.5 py-[1px] rounded"
-                              style={{
-                                background: 'rgba(34, 197, 94, 0.18)',
-                                color: '#86efac',
-                                border: '1px solid rgba(34, 197, 94, 0.35)',
-                                flexShrink: 0,
-                                lineHeight: '1.3',
-                              }}
-                              title="自上次查看更新中心以来有新提交"
-                            >
-                              NEW
-                            </span>
-                          )}
-                        </div>
-                        {date && (
-                          <div
-                            className="text-[11px] mt-1 flex items-center gap-1.5"
-                            style={{ paddingLeft: 21, color: 'var(--text-muted)' }}
-                            title={isGit ? '最近 git 提交时间' : '同步入库时间'}
-                          >
-                            <span>{date}</span>
-                            {isGit ? (
-                              <span style={{ opacity: 0.5 }}>· git</span>
-                            ) : (
-                              <span style={{ opacity: 0.4 }}>· 同步</span>
-                            )}
-                          </div>
-                        )}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+        }
+        emptyState={
+          <div className="p-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            {entries.length === 0
+              ? '该知识库暂无文件'
+              : activeSource?.prefix
+                ? `没有匹配「${activeSource.prefix}」的文件`
+                : '暂无文件'}
           </div>
-        </aside>
-
-        {/* 右：内容 */}
-        <section
-          className="surface-reading text-crisp flex flex-col rounded-xl"
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            className="surface-reading-header px-5 py-3.5 text-[15px] font-semibold truncate"
-            style={{ color: 'var(--text-primary)', flexShrink: 0 }}
-          >
-            {filtered.find(e => e.id === selectedId)?.title || '（未选中文件）'}
-          </div>
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              overscrollBehavior: 'contain',
-              padding: '32px 36px 48px',
-              scrollBehavior: 'smooth',
-            }}
-          >
-            {loadingContent ? (
-              <div className="py-10"><MapSectionLoader text="加载内容中…" /></div>
-            ) : content == null ? (
-              <div className="text-center text-[12px] py-10" style={{ color: 'var(--text-muted)' }}>
-                左侧点击一篇周报查看内容
-              </div>
-            ) : (
-              <MarkdownContent
-                content={content}
-                variant="reading"
-                className="text-crisp text-[14.5px] leading-[1.85]"
-              />
-            )}
-          </div>
-        </section>
-      </div>
+        }
+      />
     </div>
   );
 }

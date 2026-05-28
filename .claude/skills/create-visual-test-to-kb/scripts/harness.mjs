@@ -106,3 +106,52 @@ export function writeManifest(outDir) {
   require('fs').writeFileSync(`${outDir}/manifest.json`, JSON.stringify(shots, null, 2));
   return `${outDir}/manifest.json`;
 }
+
+// ── ZZ 照做：画框 + 步骤序号（核心：让"点哪到哪"一目了然）──
+// 在目标元素上注入红框 + 序号角标，截图前调用；截完用 clearBoxes 清掉。
+export async function box(page, locator, label) {
+  const el = await locator.first().elementHandle().catch(() => null);
+  if (!el) return false;
+  const rect = await el.boundingBox().catch(() => null);
+  if (!rect) return false;
+  await page.evaluate(({ r, label }) => {
+    const mk = (style) => {
+      const d = document.createElement('div');
+      d.className = '__acc_box';
+      Object.assign(d.style, { position: 'fixed', zIndex: 2147483647, pointerEvents: 'none' }, style);
+      document.body.appendChild(d);
+      return d;
+    };
+    mk({ left: (r.x - 4) + 'px', top: (r.y - 4) + 'px', width: (r.width + 8) + 'px', height: (r.height + 8) + 'px',
+         border: '3px solid #ff3b30', borderRadius: '8px', boxShadow: '0 0 0 3px rgba(255,59,48,.25)' });
+    if (label) {
+      const b = mk({ left: (r.x - 13) + 'px', top: (r.y - 13) + 'px', minWidth: '22px', height: '22px',
+        background: '#ff3b30', color: '#fff', borderRadius: '11px', textAlign: 'center', padding: '0 5px',
+        font: '700 13px/22px -apple-system,BlinkMacSystemFont,sans-serif' });
+      b.textContent = label;
+    }
+  }, { r: rect, label: String(label ?? '') });
+  return true;
+}
+
+export async function clearBoxes(page) {
+  await page.evaluate(() => document.querySelectorAll('.__acc_box').forEach((e) => e.remove())).catch(() => {});
+}
+
+// 一步「点击导航/按钮」：框住目标 + 标序号 → 截「点这里」图 → 清框 → 真点击。
+// locator 由调用方构造（getByRole/getByText/...），caption 写"点这里去哪"。
+export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000 } = {}) {
+  await locator.first().waitFor({ state: 'visible', timeout }).catch(() => {});
+  await box(page, locator, stepNo);
+  await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`);
+  await clearBoxes(page);
+  await locator.first().click({ timeout }).catch((e) => console.log('  stepClick 点击失败', name, e.message));
+  await page.waitForTimeout(1800);
+}
+
+// 结果/验证截图：可选框住"变化处"(toast/卡片/激活态)，序号入 caption。
+export async function stepShot(page, outDir, stepNo, name, caption, highlight) {
+  if (highlight) await box(page, highlight, stepNo);
+  await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`);
+  if (highlight) await clearBoxes(page);
+}

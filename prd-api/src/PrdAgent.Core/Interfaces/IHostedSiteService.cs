@@ -50,7 +50,11 @@ public interface IHostedSiteService
     Task<(List<HostedSite> Items, long Total)> ListAsync(
         string userId, string? keyword, string? folder,
         string? tag, string? sourceType, string sort,
-        int skip, int limit, CancellationToken ct = default);
+        int skip, int limit, string? scope = null, string? teamId = null,
+        CancellationToken ct = default);
+
+    /// <summary>设置站点分享到的团队（「分享到团队」操作，仅 owner 可调）。返回更新后的站点，无权或不存在返回 null</summary>
+    Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
     Task<List<string>> ListFoldersAsync(string userId, CancellationToken ct = default);
 

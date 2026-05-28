@@ -1695,7 +1695,35 @@ export {
   saveSharedSite,
   listShareViewLogs,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+
+// ── Team 团队（跨应用协作） ──
+export {
+  listMyTeams,
+  createTeam,
+  getTeam,
+  updateTeam,
+  deleteTeam,
+  addTeamMembers,
+  removeTeamMember,
+  updateTeamMemberRole,
+  regenerateInviteCode,
+  joinTeam,
+  listTeamActivity,
+  searchTeamUsers,
+  getUserCards,
+  setSiteTeams,
+  setStoreTeams,
+} from '@/services/real/teams';
+export type {
+  Team,
+  TeamMember,
+  TeamRole,
+  TeamVisibility,
+  TeamListItem,
+  TeamActivityItem,
+  UserCard,
+} from '@/services/real/teams';
 
 // ── 统一短链解析 + 管理 ──
 export {

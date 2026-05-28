@@ -4,6 +4,7 @@ using System.Text;
 using Markdig;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
@@ -36,9 +37,17 @@ public class WebPagesController : ControllerBase
         ".md", ".markdown",
     };
 
-    public WebPagesController(IHostedSiteService siteService)
+    private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
+    private readonly ITeamService _teams;
+
+    public WebPagesController(
+        IHostedSiteService siteService,
+        PrdAgent.Infrastructure.Database.MongoDbContext db,
+        ITeamService teams)
     {
         _siteService = siteService;
+        _db = db;
+        _teams = teams;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -320,7 +329,7 @@ public class WebPagesController : ControllerBase
     // CRUD
     // ─────────────────────────────────────────────
 
-    /// <summary>获取当前用户的站点列表</summary>
+    /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] string? keyword,
@@ -329,11 +338,57 @@ public class WebPagesController : ControllerBase
         [FromQuery] string? sourceType,
         [FromQuery] string sort = "newest",
         [FromQuery] int skip = 0,
-        [FromQuery] int limit = 50)
+        [FromQuery] int limit = 50,
+        [FromQuery] string? scope = null,
+        [FromQuery] string? teamId = null)
     {
+        var userId = GetUserId();
         var (items, total) = await _siteService.ListAsync(
-            GetUserId(), keyword, folder, tag, sourceType, sort, skip, limit);
+            userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
+
+        // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
+        //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        {
+            var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+            var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
+            var owners = items.Count > 0
+                ? await BuildUserCardsAsync(items.Select(s => s.OwnerUserId))
+                : new Dictionary<string, object>();
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+        }
+
         return Ok(ApiResponse<object>.Ok(new { items, total }));
+    }
+
+    /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>
+    [HttpPatch("{id}/teams")]
+    public async Task<IActionResult> SetTeams(string id, [FromBody] SetSiteTeamsRequest req)
+    {
+        var updated = await _siteService.SetSharedTeamsAsync(id, GetUserId(), req.TeamIds ?? new List<string>());
+        if (updated == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    /// <summary>批量加载用户展示卡（userId → 昵称 + 头像文件名），前端据此渲染头像</summary>
+    private async Task<Dictionary<string, object>> BuildUserCardsAsync(IEnumerable<string> userIds)
+    {
+        var ids = userIds.Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToList();
+        var map = new Dictionary<string, object>();
+        if (ids.Count == 0) return map;
+
+        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        foreach (var u in users)
+        {
+            map[u.UserId] = new
+            {
+                userId = u.UserId,
+                displayName = !string.IsNullOrWhiteSpace(u.DisplayName) ? u.DisplayName : u.Username,
+                avatarFileName = u.AvatarFileName,
+            };
+        }
+        return map;
     }
 
     /// <summary>获取站点详情</summary>
@@ -639,6 +694,12 @@ public class SetVisibilityRequest
 {
     /// <summary>public | private</summary>
     public string Visibility { get; set; } = "private";
+}
+
+public class SetSiteTeamsRequest
+{
+    /// <summary>站点要分享到的团队 ID 列表（空表示取消所有团队分享）</summary>
+    public List<string>? TeamIds { get; set; }
 }
 
 public class CreateWebPageShareRequest

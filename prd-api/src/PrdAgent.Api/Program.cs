@@ -202,6 +202,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+// 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
+// 网页访客痕迹审计 + 自定义分类自动生成
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteViewEventService, PrdAgent.Infrastructure.Services.SiteViewEventService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebFolderService, PrdAgent.Infrastructure.Services.WebFolderService>();
 // 统一短链路由（所有分享系统共用 /s/{seq}）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IShortLinkService, PrdAgent.Infrastructure.Services.ShortLinkService>();
 // 分享链接密码安全统一服务（PBKDF2 + FixedTimeEquals + 失败锁），网页/周报/知识库/工作流共用

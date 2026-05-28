@@ -33,8 +33,8 @@
     "apiBasePath": "/api/document-store",
     "storeName": "验收报告",
     "storeDescription": "标准化功能验收报告归档（MAP 验收标准 v2）",
-    "naming": "[{verdict_cn}] {target} · 验收报告 · {project} · {date}",
-    "_namingNote": "业界风格(状态前置)。可用占位符:{verdict_cn}{target}{project}{date}{datetime}。{verdict_cn}=通过/有条件通过/不通过。",
+    "naming": "{project} · {module} · {feature} · {type} · 验收报告",
+    "_namingNote": "固定结构(用户定 2026-05-27):项目·模块·功能·操作方式·验收报告。脚本按 --module/--feature/--type 直接拼装并自动跳过空段;状态(通过/不通过)不进标题——走 tags 标记(脚本自动写 [verdict_cn, type, tier])。操作方式如 新增功能/优化/修复。",
     "datetimeFormat": "%Y-%m-%d %H:%M",
     "localOutDir": "doc/acceptance"
   },

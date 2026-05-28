@@ -26,6 +26,7 @@ const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ 
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
@@ -384,6 +385,19 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'Library',
       section: 'infra',
       tags: ['文档', '知识', '知识库', 'docs'],
+    },
+  },
+  {
+    path: '/admin-web-pages',
+    permission: 'web-pages.viewAll',
+    element: shellGuarded('web-pages.viewAll', <AdminWebPagesPage />),
+    nav: {
+      label: '全部网页',
+      shortLabel: '全网页',
+      description: '高级权限：跨用户查看全部托管网页及阅读量、访客记录',
+      icon: 'Globe',
+      section: 'infra',
+      tags: ['网页', '审计', '全部', '阅读量', '访客'],
     },
   },
   {

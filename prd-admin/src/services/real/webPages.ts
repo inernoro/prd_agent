@@ -1,4 +1,5 @@
 import { apiRequest } from '@/services/real/apiClient';
+import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
@@ -29,6 +30,8 @@ export interface HostedSite {
   folder?: string;
   coverImageUrl?: string;
   ownerUserId: string;
+  /** 分享到的团队 ID 列表（仅网页托管消费） */
+  sharedTeamIds?: string[];
   viewCount: number;
   /** 可见性：private = 仅自己可见 | public = 出现在 /u/:username 公开页 */
   visibility?: 'private' | 'public';
@@ -140,6 +143,13 @@ export async function createFromContent(input: {
 
 // ─── CRUD ───
 
+/** 团队作用域下，后端附带的创建者展示卡（userId → 昵称 + 头像文件名） */
+export interface SiteOwnerCard {
+  userId: string;
+  displayName: string;
+  avatarFileName?: string;
+}
+
 export async function listSites(params?: {
   keyword?: string;
   folder?: string;
@@ -148,7 +158,18 @@ export async function listSites(params?: {
   sort?: string;
   skip?: number;
   limit?: number;
-}): Promise<ApiResponse<{ items: HostedSite[]; total: number }>> {
+  /** 'team' + teamId 返回团队共享站点，缺省返回我的 */
+  scope?: 'mine' | 'team';
+  teamId?: string | null;
+}): Promise<
+  ApiResponse<{
+    items: HostedSite[];
+    total: number;
+    owners?: Record<string, SiteOwnerCard>;
+    /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
+    myWebHostingRole?: WebHostingRole;
+  }>
+> {
   const sp = new URLSearchParams();
   if (params?.keyword) sp.set('keyword', params.keyword);
   if (params?.folder) sp.set('folder', params.folder);
@@ -157,6 +178,10 @@ export async function listSites(params?: {
   if (params?.sort) sp.set('sort', params.sort);
   if (params?.skip) sp.set('skip', String(params.skip));
   if (params?.limit) sp.set('limit', String(params.limit));
+  if (params?.scope === 'team' && params?.teamId) {
+    sp.set('scope', 'team');
+    sp.set('teamId', params.teamId);
+  }
   const q = sp.toString();
   return apiRequest(`${api.webPages.list()}${q ? `?${q}` : ''}`, { method: 'GET' });
 }

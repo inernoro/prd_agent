@@ -1,6 +1,6 @@
 ---
 name: create-visual-test-to-kb
-description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进知识库并出分享链。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）、报告归档（命名 状态前置，根治目录 `---`）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无文档空间的仓库退化为本地 md+截图。触发词："验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/验收"。
+description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进知识库并出分享链。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名 状态前置，根治目录 `---`，**每次归档强制输出可达地址**：分享短链优先、拿不到则给 owner 登录路径）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无文档空间的仓库退化为本地 md+截图。触发词："验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/验收"。
 ---
 
 # 验收归档 v2 — 工业级功能验收全流水线
@@ -37,10 +37,15 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 ## 工作流(四步)
 
 1. **定标准与档位**:读 `reference/standard-v2.md`,按改动定 L0/L1/L2(下限见 §3)。
-2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper(`launch/login/gotoByClick/click/type/setTheme/shot`)写一个本次验收的真人路径脚本。跨用户前置(如造分享链)走 API。每关键步骤 `shot(page,outDir,name,caption)`;核心页双主题各一张;结束 `writeManifest(outDir)`。
+2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/login/gotoByClick/click/type/setTheme/shot`。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。核心页双主题各一张;结束 `writeManifest(outDir)`。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
-3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填 `templates/report-template.md` 的速览卡 + 九段 + 用例表 + 缺陷,得出 Verdict。
-4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。正文里用 `{{EVIDENCE}}` 占位,脚本自动替换为内联截图。脚本输出 owner 自看路径 + 分享短链。
+3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填模板得出 Verdict。**默认用 `templates/zz-report.md`(ZZ 照做风:全大标题、一句话一步、`{{IMG:<name>}}` 逐步配图、文字在上图在下、变化处画框、分支顺序讲,见标准 §6.3)**;旧版九段集中证据用 `templates/report-template.md` + `{{EVIDENCE}}`。
+4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
+   - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
+   - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。
+   - **防断头报告**:建条目后强制校验正文真的落库(`GET /content` 的 `hasContent`);写不进(预览 524 等)会**自动删空壳条目 + 报错**,绝不留"有标题、点开空白"的半截条目。
+   - **必给地址**:收尾必打印「验收归档完成 · 必给地址」块(分享短链优先,拿不到则给 owner 登录路径)——每次归档都有一个可达地址交付,绝不静默。
+5. **归档后自查能否打开(强制,创建≠能看)**:拿到分享链后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <shareUrl> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
 
 ## 端到端示例(照抄即可)
 
@@ -68,23 +73,27 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
   --branch "$(git branch --show-current)" --commit "$(git rev-parse --short HEAD)"
 ```
 
-## 交付(可靠路径 + Verdict)
+## 交付(三条路径,殿堂≠分享,务必分清)
 
-- **owner 自看(唯一可靠,默认私有库恒可用)**:登录 MAP → 点击左侧「知识库」→ 打开「验收报告」库 → 本次报告(最新一篇)。走授权 DocBrowser,正文 + 内联截图完整渲染。**这是交给用户验收的主路径。**
-- **分享给登出第三方**:`/library/share/{token}`(脚本输出)当前**只渲染目录、不渲染 reference markdown 正文**(实测 LibraryShareReader 的已知缺陷,2026-05-26)。要给第三方看,二选一:① 让对方登录后走授权路径;② 把报告库设 `isPublic:true` 并走殿堂页(需文档空间侧支持)。**别直接把 share 链接当"点开即看正文"交付。**
+> **殿堂(发布到殿堂)和分享(共享给别人)是两码事**(用户 2026-05-27 强调):**殿堂 = 对所有人开放**(库 `isPublic=true` → 进 `/public/stores` 公开陈列,谁都能浏览);**分享 = 对部分人开放**(库可私有,生成 share token → `/s/lib/{token}`,只有拿到链接的人能看,**不靠公开**)。验收报告是内部产物,**默认私有 + 分享链**,**不进殿堂**。两者正交,绝不可拿"设 public 进殿堂"冒充"分享给某人"。
+
+- **① 分享链(对部分人,默认交付)**:`/s/lib/{token}`(脚本输出,2026-05-27 实测正确路由——旧 `/library/share/{token}` 不存在、会落到首页)。token 独立授权,**库私有也能看**(已实测:库 `isPublic=false` 时分享链仍渲染正文 + 4 张内联截图)。`LibraryShareViewPage` 渲染书册目录 + 正文 + 内联截图。分享是**库级**(整库一个 token、内含多篇),对方在左侧目录点具体报告阅读。
+- **② owner 登录自看(恒可靠)**:登录 MAP → 左侧「知识库」→ 「验收报告」库 → 最新一篇。走授权 DocBrowser,正文 + 截图完整渲染。给本人验收用。
+- **③ 殿堂(对所有人,仅当你确实要公开展示才用)**:把库设 `isPublic=true` → 进公开殿堂,任何人可浏览。**这不是分享,是公开**;验收报告默认不走这条。
 - **聊天内直给**:截图发给用户(authed 渲染图)是最稳的"立即可读"方式,不依赖任何链接。
-- 禁止把 `/library/{storeId}` 当私有库入口(会撞"未对外开放")。
 
-> 历史教训(2026-05-26):一次把 share 链接当"点开即看"交付,结果第三方看到空白正文——根因是分享阅读器不渲染 reference markdown。交付前必须自己用无头浏览器走一遍目标查看路径,确认正文 + 截图都渲染,避免"断头报告"。
+> 历史教训:(2026-05-26)曾把 share 链接当"点开即看"交付却空白——根因是用错路由/正文没落库。(2026-05-27)曾把验收报告库误设 `isPublic=true` 公开进殿堂,混淆了"分享给某人"与"公开给所有人"。交付前必须自己用无头浏览器走一遍目标查看路径,并确认库可见性(私有/公开)符合预期。
 
 ## 按需文件(渐进式披露)
 
 | 文件 | 内容 | 何时读 |
 |------|------|--------|
 | `reference/standard-v2.md` | 完整标准:命名/档位/浏览器操作/截图/报告结构/Verdict 规则/国际标准对照 | **必读**,动手前 |
-| `templates/report-template.md` | 报告骨架(frontmatter + 速览卡 + 九段 + 用例表) | 写报告时 |
-| `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题) | 写 driver 时 |
-| `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文/分享链) | 归档时 |
+| `templates/zz-report.md` | **默认** ZZ 照做风骨架(全大标题 + 一句话一步 + `{{IMG:}}` 逐步配图) | 写报告时(首选) |
+| `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
+| `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
+| `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
+| `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
 | `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
 
 ## 跨仓库复用
