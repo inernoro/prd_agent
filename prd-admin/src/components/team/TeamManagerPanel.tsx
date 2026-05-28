@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Copy, Plus, Search, Trash2, UserPlus, X } from 'lucide-react';
+import { Check, LogOut, Plus, Search, Trash2, UserPlus, X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { useAuthStore } from '@/stores/authStore';
 import {
   addTeamMembers,
   createTeam,
   deleteTeam,
   getTeam,
-  joinTeam,
   listMyTeams,
   listTeamActivity,
-  regenerateInviteCode,
   removeTeamMember,
   searchTeamUsers,
   updateMemberWebHostingRole,
@@ -50,6 +49,8 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
+  const myUserId = useAuthStore((s) => s.user?.userId ?? '');
+
   const [teams, setTeams] = useState<TeamListItem[]>([]);
   const [loadingTeams, setLoadingTeams] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -68,14 +69,18 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
   // 创建团队
   const [creating, setCreating] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
 
-  // 添加成员搜索
-  const [memberQuery, setMemberQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<UserCard[]>([]);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 多选邀请（invite tab）
+  const [inviteQuery, setInviteQuery] = useState('');
+  const [inviteResults, setInviteResults] = useState<UserCard[]>([]);
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const [pendingCards, setPendingCards] = useState<Map<string, UserCard>>(new Map());
+  const [inviting, setInviting] = useState(false);
+  const inviteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isAdmin = myRole === 'admin';
+  const isOwner = team != null && myUserId === team.ownerUserId;
+  const canLeave = !isOwner && myUserId != null && members.some((m) => m.userId === myUserId);
 
   const reloadTeams = useCallback(async () => {
     setLoadingTeams(true);
@@ -116,6 +121,14 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
     }
   }, [selectedId, tab]);
 
+  // 切换团队时重置邀请状态
+  useEffect(() => {
+    setInviteQuery('');
+    setInviteResults([]);
+    setPendingIds(new Set());
+    setPendingCards(new Map());
+  }, [selectedId]);
+
   // ESC 关闭
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -125,22 +138,22 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('keydown', h);
   }, [onClose]);
 
-  // 成员搜索（防抖）
+  // 邀请搜索（防抖）
   useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!memberQuery.trim()) {
-      setSearchResults([]);
+    if (inviteTimer.current) clearTimeout(inviteTimer.current);
+    if (!inviteQuery.trim()) {
+      setInviteResults([]);
       return;
     }
-    searchTimer.current = setTimeout(() => {
-      void searchTeamUsers(memberQuery.trim()).then((res) => {
+    inviteTimer.current = setTimeout(() => {
+      void searchTeamUsers(inviteQuery.trim()).then((res) => {
         if (res.success) {
           const existing = new Set(members.map((m) => m.userId));
-          setSearchResults(res.data.items.filter((u) => !existing.has(u.userId)));
+          setInviteResults(res.data.items.filter((u) => !existing.has(u.userId)));
         }
       });
     }, 300);
-  }, [memberQuery, members]);
+  }, [inviteQuery, members]);
 
   const handleCreate = async () => {
     if (!newTeamName.trim()) return;
@@ -155,24 +168,30 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const handleJoin = async () => {
-    if (!joinCode.trim()) return;
-    const res = await joinTeam(joinCode.trim());
-    if (res.success) {
-      setJoinCode('');
-      await reloadTeams();
-      setSelectedId(res.data.teamId);
+  const togglePending = (u: UserCard) => {
+    const next = new Set(pendingIds);
+    const nextCards = new Map(pendingCards);
+    if (next.has(u.userId)) {
+      next.delete(u.userId);
+      nextCards.delete(u.userId);
     } else {
-      alert(res.error?.message ?? '加入失败');
+      next.add(u.userId);
+      nextCards.set(u.userId, u);
     }
+    setPendingIds(next);
+    setPendingCards(nextCards);
   };
 
-  const handleAddMember = async (userId: string) => {
-    if (!selectedId) return;
-    const res = await addTeamMembers(selectedId, [userId]);
+  const handleConfirmInvite = async () => {
+    if (!selectedId || pendingIds.size === 0) return;
+    setInviting(true);
+    const res = await addTeamMembers(selectedId, [...pendingIds]);
+    setInviting(false);
     if (res.success) {
-      setMemberQuery('');
-      setSearchResults([]);
+      setPendingIds(new Set());
+      setPendingCards(new Map());
+      setInviteQuery('');
+      setInviteResults([]);
       await loadDetail(selectedId);
     } else {
       alert(res.error?.message ?? '添加失败');
@@ -184,6 +203,19 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
     const res = await removeTeamMember(selectedId, userId);
     if (res.success) await loadDetail(selectedId);
     else alert(res.error?.message ?? '移除失败');
+  };
+
+  const handleLeave = async () => {
+    if (!selectedId || !myUserId) return;
+    if (!confirm('确认退出该团队空间？退出后不再能查看团队共享内容。')) return;
+    const res = await removeTeamMember(selectedId, myUserId);
+    if (res.success) {
+      setSelectedId(null);
+      setTeam(null);
+      await reloadTeams();
+    } else {
+      alert(res.error?.message ?? '退出失败');
+    }
   };
 
   const handleRoleChange = async (userId: string, role: TeamRole) => {
@@ -202,32 +234,18 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
 
   const handleDeleteTeam = async () => {
     if (!selectedId || !team) return;
-    if (!confirm(`确认删除团队空间「${team.name}」？其中所有分享将解除。`)) return;
+    if (!confirm(
+      `确认解散团队空间「${team.name}」？\n\n` +
+      `你的托管站点将移入「${team.name} 团队解散文件夹」，其他成员的站点将回到各自的个人空间。此操作不可撤销。`
+    )) return;
     const res = await deleteTeam(selectedId);
     if (res.success) {
       setSelectedId(null);
       setTeam(null);
       await reloadTeams();
     } else {
-      alert(res.error?.message ?? '删除失败');
+      alert(res.error?.message ?? '解散失败');
     }
-  };
-
-  const handleRegenInvite = async () => {
-    if (!selectedId) return;
-    const res = await regenerateInviteCode(selectedId);
-    if (res.success && team) {
-      setTeam({ ...team, inviteCode: res.data.inviteCode, inviteExpireAt: res.data.inviteExpireAt });
-    }
-  };
-
-  const [copied, setCopied] = useState(false);
-  const copyInvite = () => {
-    if (!team) return;
-    void navigator.clipboard.writeText(team.inviteCode).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
   };
 
   const modal = (
@@ -272,7 +290,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                 <MapSectionLoader text="加载团队空间…" />
               ) : teams.length === 0 ? (
                 <div className="px-4 py-6 text-[12px] text-center" style={{ color: 'var(--text-muted)' }}>
-                  还没有团队空间，新建或凭邀请码加入
+                  还没有团队空间，新建或加入
                 </div>
               ) : (
                 teams.map((t) => (
@@ -295,8 +313,8 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
-            {/* 新建 / 加入 */}
-            <div className="shrink-0 p-3 space-y-2" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            {/* 新建 */}
+            <div className="shrink-0 p-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
               {creating ? (
                 <div className="space-y-1.5">
                   <input
@@ -327,19 +345,6 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                   <Plus size={13} /> 新建团队空间
                 </button>
               )}
-              <div className="flex gap-1.5">
-                <input
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value)}
-                  placeholder="邀请码加入"
-                  className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-                />
-                <button type="button" className="px-2.5 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }} onClick={handleJoin}>
-                  加入
-                </button>
-              </div>
             </div>
           </div>
 
@@ -363,44 +368,26 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                       style={tab === tk ? { background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}
                       onClick={() => setTab(tk)}
                     >
-                      {tk === 'members' ? '成员' : tk === 'invite' ? '邀请' : '活动日志'}
+                      {tk === 'members' ? '成员' : tk === 'invite' ? '添加成员' : '活动日志'}
                     </button>
                   ))}
-                  {isAdmin && (
-                    <button type="button" className="ml-auto px-2.5 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ color: 'var(--danger, #ef4444)' }} onClick={handleDeleteTeam}>
-                      <Trash2 size={12} /> 删除团队空间
-                    </button>
-                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    {canLeave && (
+                      <button type="button" className="px-2.5 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }} onClick={handleLeave}>
+                        <LogOut size={12} /> 退出
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button type="button" className="px-2.5 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ color: 'var(--danger, #ef4444)' }} onClick={handleDeleteTeam}>
+                        <Trash2 size={12} /> 解散团队
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-auto p-4" style={{ overscrollBehavior: 'contain' }}>
                   {tab === 'members' && (
-                    <div className="space-y-3">
-                      {isAdmin && (
-                        <div className="relative">
-                          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
-                          <input
-                            value={memberQuery}
-                            onChange={(e) => setMemberQuery(e.target.value)}
-                            placeholder="搜索用户昵称 / 用户名添加成员"
-                            className="w-full h-9 pl-8 pr-3 rounded-[8px] text-[13px] outline-none"
-                            style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                          />
-                          {searchResults.length > 0 && (
-                            <div className="mt-1 rounded-[8px] py-1 max-h-[200px] overflow-auto" style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)' }}>
-                              {searchResults.map((u) => (
-                                <button key={u.userId} type="button" className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/8 text-left" onClick={() => handleAddMember(u.userId)}>
-                                  <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-6 h-6 rounded-full" />
-                                  <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{u.displayName}</span>
-                                  <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>@{u.username}</span>
-                                  <UserPlus size={13} style={{ color: 'var(--accent-gold)' }} />
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
+                    <div className="space-y-1">
                       {members.map((m) => (
                         <div key={m.userId} className="flex items-center gap-3 py-1.5">
                           <UserAvatar src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-8 h-8 rounded-full" />
@@ -412,7 +399,6 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                               )}
                             </div>
                           </div>
-                          {/* 网页托管内容角色（owner/editor/viewer），仅网页托管生效 */}
                           {isAdmin && m.userId !== team.ownerUserId ? (
                             <select
                               value={webHostingRoles[m.userId] ?? 'editor'}
@@ -440,7 +426,7 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                             <select
                               value={m.role}
                               onChange={(e) => handleRoleChange(m.userId, e.target.value as TeamRole)}
-                              title="管理权限（管理员可改名/增删成员/改角色）"
+                              title="管理权限"
                               className="h-7 px-2 rounded-[6px] text-[12px] outline-none"
                               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                             >
@@ -463,26 +449,90 @@ export function TeamManagerPanel({ onClose }: { onClose: () => void }) {
                   )}
 
                   {tab === 'invite' && (
-                    <div className="space-y-3 max-w-[420px]">
-                      <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
-                        把邀请链接发给同事，对方打开并登录后自动加入；或发邀请码让其手动加入。
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="flex-1 h-10 px-3 rounded-[8px] flex items-center font-mono text-[14px]"
-                          style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
-                        >
-                          {team.inviteCode}
+                    <div className="space-y-3">
+                      {!isAdmin ? (
+                        <div className="text-[13px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                          只有管理员可以添加成员
                         </div>
-                        <button type="button" className="h-10 px-3 rounded-[8px] flex items-center gap-1.5 text-[13px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }} onClick={copyInvite}>
-                          {copied ? <Check size={14} style={{ color: '#22c55e' }} /> : <Copy size={14} />}
-                          {copied ? '已复制' : '复制'}
-                        </button>
-                      </div>
-                      {isAdmin && (
-                        <button type="button" className="text-[12px]" style={{ color: 'var(--accent-gold)' }} onClick={handleRegenInvite}>
-                          重新生成邀请码
-                        </button>
+                      ) : (
+                        <>
+                          {/* 搜索框 */}
+                          <div className="relative">
+                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                            <input
+                              value={inviteQuery}
+                              onChange={(e) => setInviteQuery(e.target.value)}
+                              placeholder="搜索用户昵称 / 用户名"
+                              className="w-full h-9 pl-8 pr-3 rounded-[8px] text-[13px] outline-none"
+                              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                            />
+                          </div>
+
+                          {/* 搜索结果（多选） */}
+                          {inviteResults.length > 0 && (
+                            <div className="rounded-[8px] py-1" style={{ background: 'var(--bg-base)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                              {inviteResults.map((u) => {
+                                const selected = pendingIds.has(u.userId);
+                                return (
+                                  <button
+                                    key={u.userId}
+                                    type="button"
+                                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
+                                    onClick={() => togglePending(u)}
+                                  >
+                                    <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-6 h-6 rounded-full shrink-0" />
+                                    <span className="text-[13px] flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</span>
+                                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>@{u.username}</span>
+                                    <div
+                                      className="w-5 h-5 rounded-[4px] flex items-center justify-center shrink-0"
+                                      style={selected
+                                        ? { background: 'var(--accent-gold, #d4af37)' }
+                                        : { border: '1px solid rgba(255,255,255,0.2)', background: 'transparent' }}
+                                    >
+                                      {selected && <Check size={12} color="#1a1a1a" />}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* 已选用户 */}
+                          {pendingIds.size > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已选 {pendingIds.size} 人</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {[...pendingCards.values()].map((u) => (
+                                  <div
+                                    key={u.userId}
+                                    className="flex items-center gap-1 h-7 pl-1.5 pr-1 rounded-full text-[12px]"
+                                    style={{ background: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.25)', color: 'var(--text-primary)' }}
+                                  >
+                                    <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-4 h-4 rounded-full" />
+                                    <span>{u.displayName}</span>
+                                    <button type="button" className="ml-0.5" onClick={() => togglePending(u)} style={{ color: 'var(--text-muted)' }}>
+                                      <X size={12} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 确认按钮 */}
+                          <button
+                            type="button"
+                            disabled={pendingIds.size === 0 || inviting}
+                            className="flex items-center gap-1.5 h-9 px-4 rounded-[8px] text-[13px]"
+                            style={pendingIds.size > 0
+                              ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a', cursor: 'pointer' }
+                              : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
+                            onClick={handleConfirmInvite}
+                          >
+                            <UserPlus size={14} />
+                            {inviting ? '添加中…' : `确认添加${pendingIds.size > 0 ? ` (${pendingIds.size}人)` : ''}`}
+                          </button>
+                        </>
                       )}
                     </div>
                   )}

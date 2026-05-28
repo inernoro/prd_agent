@@ -158,7 +158,7 @@ public class TeamController : ControllerBase
         return Ok(ApiResponse<object>.Ok(team!));
     }
 
-    /// <summary>删除团队（管理员）。反向清理所有内容的 SharedTeamIds，删除成员与活动日志</summary>
+    /// <summary>解散团队（管理员）。owner 的站点移入解散文件夹，其余仅移除团队引用</summary>
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)
     {
@@ -166,10 +166,26 @@ public class TeamController : ControllerBase
         if (!await _teams.IsAdminAsync(id, userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要管理员权限"));
 
-        // 反向路径：把团队 ID 从所有网页 / 知识库的 SharedTeamIds 里拉掉，干净回退到个人独占
+        var team = await _db.Teams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "团队不存在"));
+
+        var folderName = $"{team.Name} 团队解散文件夹";
+
+        // 网页托管：owner 的站点移入解散文件夹，其他成员站点仅移除引用
         await _db.HostedSites.UpdateManyAsync(
-            Builders<HostedSite>.Filter.AnyEq(x => x.SharedTeamIds, id),
+            Builders<HostedSite>.Filter.And(
+                Builders<HostedSite>.Filter.AnyEq(x => x.SharedTeamIds, id),
+                Builders<HostedSite>.Filter.Eq(x => x.OwnerUserId, team.OwnerUserId)),
+            Builders<HostedSite>.Update
+                .Pull(x => x.SharedTeamIds, id)
+                .Set(x => x.Folder, folderName));
+        await _db.HostedSites.UpdateManyAsync(
+            Builders<HostedSite>.Filter.And(
+                Builders<HostedSite>.Filter.AnyEq(x => x.SharedTeamIds, id),
+                Builders<HostedSite>.Filter.Ne(x => x.OwnerUserId, team.OwnerUserId)),
             Builders<HostedSite>.Update.Pull(x => x.SharedTeamIds, id));
+
+        // 知识库：仅移除团队引用
         await _db.DocumentStores.UpdateManyAsync(
             Builders<DocumentStore>.Filter.AnyEq(x => x.SharedTeamIds, id),
             Builders<DocumentStore>.Update.Pull(x => x.SharedTeamIds, id));

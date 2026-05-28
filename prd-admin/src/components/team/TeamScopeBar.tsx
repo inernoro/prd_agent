@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, Check, ChevronDown, Copy, FolderPlus, Link2, Plus, Settings, UserPlus, Users, X } from 'lucide-react';
+import { Activity, ChevronDown, FolderPlus, Plus, Search, Settings, UserPlus, Users, X } from 'lucide-react';
 import { useTeamStore } from '@/stores/teamStore';
 import { TeamManagerPanel } from '@/components/team/TeamManagerPanel';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -7,14 +7,16 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { toast } from '@/lib/toast';
 import { WEB_HOSTING_ROLE_LABEL } from '@/lib/webHostingRole';
 import {
+  addTeamMembers,
   createTeam,
   getTeam,
   joinTeam,
   listTeamActivity,
-  regenerateInviteCode,
+  searchTeamUsers,
   type TeamActivityItem,
   type TeamMember,
   type TeamRole,
+  type UserCard,
   type WebHostingRole,
 } from '@/services/real/teams';
 
@@ -67,7 +69,12 @@ export function TeamScopeBar({
   const [activity, setActivity] = useState<TeamActivityItem[]>([]);
   const [newName, setNewName] = useState('');
   const [joinCode, setJoinCode] = useState('');
-  const [copied, setCopied] = useState(false);
+
+  // 直接添加成员（邀请 popover 用）
+  const [inviteQuery, setInviteQuery] = useState('');
+  const [inviteResults, setInviteResults] = useState<UserCard[]>([]);
+  const [inviteAdding, setInviteAdding] = useState<string | null>(null);
+  const inviteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     void loadTeams();
@@ -88,9 +95,6 @@ export function TeamScopeBar({
 
   const selectedTeam = teams.find((t) => t.team.id === value.teamId);
   const isAdmin = myRole === 'admin';
-  const inviteLink = selectedTeam
-    ? `${window.location.origin}/join/${selectedTeam.team.inviteCode}`
-    : '';
 
   const applyMine = () => {
     setPanel(null);
@@ -128,10 +132,42 @@ export function TeamScopeBar({
   const openPanel = async (p: Exclude<Panel, null>) => {
     if (panel === p) { setPanel(null); return; }
     setPanel(p);
+    if (p === 'invite') {
+      setInviteQuery('');
+      setInviteResults([]);
+    }
     if ((p === 'members' || p === 'invite') && value.teamId) await loadDetail(value.teamId);
     if (p === 'activity' && value.teamId) {
       const res = await listTeamActivity(value.teamId, { limit: 50 });
       if (res.success) setActivity(res.data.items);
+    }
+  };
+
+  // 邀请搜索防抖
+  useEffect(() => {
+    if (inviteTimer.current) clearTimeout(inviteTimer.current);
+    if (!inviteQuery.trim()) { setInviteResults([]); return; }
+    inviteTimer.current = setTimeout(() => {
+      void searchTeamUsers(inviteQuery.trim()).then((res) => {
+        if (res.success) {
+          const existing = new Set(members.map((m) => m.userId));
+          setInviteResults(res.data.items.filter((u) => !existing.has(u.userId)));
+        }
+      });
+    }, 300);
+  }, [inviteQuery, members]);
+
+  const handleAddMember = async (u: UserCard) => {
+    if (!value.teamId) return;
+    setInviteAdding(u.userId);
+    const res = await addTeamMembers(value.teamId, [u.userId]);
+    setInviteAdding(null);
+    if (res.success) {
+      setInviteResults((prev) => prev.filter((x) => x.userId !== u.userId));
+      await loadDetail(value.teamId);
+      toast.success(`已添加 ${u.displayName}`);
+    } else {
+      toast.error('添加失败', res.error?.message);
     }
   };
 
@@ -158,23 +194,6 @@ export function TeamScopeBar({
       applyTeam(res.data.teamId);
     } else {
       toast.error('加入失败', res.error?.message);
-    }
-  };
-
-  const copyInvite = () => {
-    if (!inviteLink) return;
-    void navigator.clipboard.writeText(inviteLink).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  const handleRegen = async () => {
-    if (!value.teamId) return;
-    const res = await regenerateInviteCode(value.teamId);
-    if (res.success) {
-      await loadTeams(true);
-      toast.success('邀请链接已重置');
     }
   };
 
@@ -304,24 +323,50 @@ export function TeamScopeBar({
         )}
 
         {panel === 'invite' && (
-          <div className="absolute left-0 top-[40px] z-[130] w-[360px] rounded-[12px] p-3 space-y-2" style={popStyle}>
+          <div className="absolute left-0 top-[40px] z-[130] w-[340px] rounded-[12px] p-3 space-y-2" style={popStyle}>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>邀请链接</span>
+              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>添加成员</span>
               <button type="button" onClick={() => setPanel(null)} style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
             </div>
-            <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>对方打开链接、登录后自动加入该共享文件夹，无需填写任何内容。</p>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-9 px-2.5 rounded-[8px] flex items-center text-[12px] font-mono truncate" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }} title={inviteLink}>
-                {inviteLink}
-              </div>
-              <button type="button" className="h-9 px-3 rounded-[8px] flex items-center gap-1.5 text-[12px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }} onClick={copyInvite}>
-                {copied ? <Check size={13} style={{ color: '#22c55e' }} /> : <Copy size={13} />} {copied ? '已复制' : '复制'}
-              </button>
-            </div>
-            {isAdmin && (
-              <button type="button" className="text-[11px] flex items-center gap-1" style={{ color: 'var(--accent-gold)' }} onClick={handleRegen}>
-                <Link2 size={11} /> 重置链接（旧链接失效）
-              </button>
+            {!isAdmin ? (
+              <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>只有管理员可以添加成员</p>
+            ) : (
+              <>
+                <div className="relative">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    autoFocus
+                    value={inviteQuery}
+                    onChange={(e) => setInviteQuery(e.target.value)}
+                    placeholder="搜索用户昵称 / 用户名"
+                    className="w-full h-8 pl-8 pr-3 rounded-[8px] text-[13px] outline-none"
+                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  />
+                </div>
+                {inviteResults.length > 0 && (
+                  <div className="rounded-[8px] py-1 max-h-[220px] overflow-auto" style={{ background: 'var(--bg-base)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    {inviteResults.map((u) => (
+                      <button
+                        key={u.userId}
+                        type="button"
+                        disabled={inviteAdding === u.userId}
+                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
+                        onClick={() => handleAddMember(u)}
+                      >
+                        <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-6 h-6 rounded-full shrink-0" />
+                        <span className="text-[13px] flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</span>
+                        <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>@{u.username}</span>
+                        <span className="shrink-0 text-[11px]" style={{ color: 'var(--accent-gold)' }}>
+                          {inviteAdding === u.userId ? '添加中…' : '+ 添加'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {inviteQuery.trim() && inviteResults.length === 0 && (
+                  <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>未找到匹配用户</p>
+                )}
+              </>
             )}
           </div>
         )}
