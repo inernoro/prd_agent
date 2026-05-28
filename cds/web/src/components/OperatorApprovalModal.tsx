@@ -139,7 +139,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
           <p className="text-xs leading-5 text-muted-foreground">
             选择「<strong>允许本次</strong>」只放行这一次请求。<br />
-            选择「<strong>允许本 session</strong>」放行接下来 1 小时内同一发起方 + 同一 op 的所有请求(免重复点击)。
+            选择「<strong>授权 7 天</strong>」放行接下来 7 天内同一发起方(同一 access key)+ 同一 op 的所有请求,免重复点击。
           </p>
         </div>
 
@@ -156,7 +156,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
             onClick={() => approve('session')}
             disabled={busy}
           >
-            允许本 session(1 小时)
+            授权 7 天
           </Button>
         </DialogFooter>
       </DialogContent>

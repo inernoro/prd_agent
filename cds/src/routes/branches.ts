@@ -511,6 +511,16 @@ async function computeSelfStatusPayload(
       activeSelfUpdate = null;
       degradedReasons.push('active self-update marker was stale and has been cleared');
     }
+    // 2026-05-28 增加心跳超时清理:lastTickAt 超过 180s 没动 → sidecar 死了,
+    // 清掉 marker 防止前端永久显示"更新进行中"。
+    if (activeSelfUpdate?.lastTickAt) {
+      const lastTickMs = Date.parse(activeSelfUpdate.lastTickAt);
+      if (Number.isFinite(lastTickMs) && Date.now() - lastTickMs > 180_000) {
+        stateService.clearSelfUpdateActive();
+        activeSelfUpdate = null;
+        degradedReasons.push('active self-update marker had no heartbeat for >180s, cleared');
+      }
+    }
   }
 
   let webBuildSha = '';

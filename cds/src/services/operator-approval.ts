@@ -63,7 +63,7 @@ interface SessionApproval {
   expiresAt: number;
 }
 
-const SESSION_TTL_MS = 60 * 60 * 1000;    // 1 小时
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 天 — 用户授权后这个 access key 可用 7 天免重复确认
 const REQUEST_TTL_MS = 5 * 60 * 1000;     // 5 分钟未审批自动 expire
 const REQUEST_HISTORY_MAX = 200;
 
