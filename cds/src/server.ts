@@ -944,7 +944,6 @@ export function createServer(deps: ServerDeps): express.Express {
     const url = req.url || '';
     if (url === '/_cds/api' || url.startsWith('/_cds/api/')) {
       req.url = url.slice('/_cds'.length) || '/api';
-      req.headers['x-cds-internal'] = '1';
     }
     next();
   });
