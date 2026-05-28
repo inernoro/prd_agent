@@ -55,3 +55,26 @@
 ## 验证状态（交付时）
 - 前端：`pnpm tsc` 通过 / 新增文件 `eslint` 零告警 / `navCoverage` 测试通过。
 - 后端：本地无 dotnet SDK，C# 编译由 CDS 灰度环境验证（push 触发 webhook 自动构建）。push 后须确认 CDS 绿灯 + 预览域名端到端走通团队建/邀请/分享/编辑/活动日志，再视为完成。
+
+---
+
+## wave 2.5：直接添加成员 + 退出团队 + 解散移入文件夹（2026-05-28，PR #682）
+
+用户明确反馈「邀请就是直接同意就行，链接邀请不合适，应该用公共用户组件让用户多选点击邀请，然后自动同意进来；还有退出和解散，退出就是成员移除，解散就是托管会默认移动到 owner 的主分支的同名文件夹团队文件夹下」。本次落地，完整覆盖。
+
+### 已落地
+- **多选直接添加**：三处入口（`TeamScopeBar` banner / `SpaceBar.TeamSpaceHeader` / `TeamManagerPanel`「添加成员」tab）全部走「搜索 + 多选 + 确认添加」，调用 `POST /api/teams/{id}/members` 批量入组，自动同意无需对方确认。**完全移除邀请链接 UI**（旧 `inviteLink` / 复制按钮 / 重置链接全删）。
+- **退出团队**：`TeamManagerPanel` 右上角新增「退出」按钮，仅对非 owner 成员可见（owner 看到「解散团队」红字按钮）。逻辑：`DELETE /api/teams/{id}/members/{self}`；owner 自退被后端 `RemoveMember` 的 `if (memberUserId == team.OwnerUserId) return BadRequest("不能移除团队创建者")` 拦截。
+- **解散文件夹归属**：`DELETE /api/teams/{id}` 解散逻辑改造为按 `OwnerUserId` 分支：owner 的托管站点 `HostedSite.Folder = "{团队名} 团队解散文件夹"`（同时拉掉 `SharedTeamIds`），其他成员站点仅拉掉 `SharedTeamIds` 回各自个人空间。前端 confirm 文案明确告知文件夹归属。
+- **TeamManagerPanel 支持 initialTab/initialTeamId props**：外部入口（如 SpaceBar 邀请按钮）可指定打开后直接落「添加成员」tab。
+
+### 已知边界
+- **直接添加成员不通知对方**：无站内消息推送，对方下次刷新左侧 SpaceBar 才看到新团队 chip。未来若加站内通知系统补「你被添加进 {team}」消息。
+- **解散文件夹仅对 owner 站点生效**：其他成员的站点解散时仅移除团队引用，回到各自个人空间，不放进任何文件夹（设计如此——非 owner 没有"我的解散文件夹"概念）。文档化避免未来产生疑问。
+- **owner 不能"退出"自己的团队**：API 层拦截"创建者退出"，前端隐藏「退出」按钮。如需转让所有权，需先在 wave 3 加 `TransferOwnership` 端点。
+- **解散无回收站**：与 wave 1 边界 #1 同源（团队回收站未实现），解散后 owner 文件夹里的站点是真实站点（可恢复回团队），但活动日志/分享链记录会全部删除。
+
+### 验证证据
+完整验收报告归档：`https://dreamy-brahmagupta-mumfb-claude-prd-agent.miduo.org/s/lib/QLs14tp7PtH5`
+- 10/10 用例 PASS（创建/多选添加/退出拦截/非 owner 退出/解散文件夹 confirm 文案 等）
+- 截图存放 `/tmp/acc_team_shots/`，driver 脚本 `/tmp/team-driver.mjs`
