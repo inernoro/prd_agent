@@ -30,7 +30,12 @@ export function createCdsEventsRouter(): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      // 2026-05-28: Connection: close (原 keep-alive) — 跟 nginx 反代场景里
+      // upstream keepalive pool 的 stale-socket race 解耦。SSE 流自身的生命周期
+      // 跟 keep-alive 池无关:连接是为了流而不是为了复用。改 close 后 nginx
+      // 不会把这条 SSE socket 加进 cds_master upstream 池,根除"下条请求拿到
+      // 已 FIN 的 socket → recv RST → 400/502"的 root cause。
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
     if (typeof (res as { flushHeaders?: () => void }).flushHeaders === 'function') {

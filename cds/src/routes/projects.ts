@@ -2261,7 +2261,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
 

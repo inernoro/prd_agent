@@ -2198,7 +2198,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // GET /api/ai/pairing-stream — SSE for dashboard to receive pairing notifications
   app.get('/api/ai/pairing-stream', (_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     aiPairingClients.add(res);
     // Send existing pending requests
     for (const req of pendingAiRequests.values()) {
@@ -2217,7 +2217,7 @@ export function createServer(deps: ServerDeps): express.Express {
   let stateSeq = 0;
 
   app.get('/api/state-stream', (_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     stateClients.add(res);
     const heartbeat = setInterval(() => {
       try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
@@ -2290,7 +2290,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     activityClients.add(res);
     // Send buffered history
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
@@ -2330,7 +2330,7 @@ export function createServer(deps: ServerDeps): express.Express {
     res.json({ events: ordered, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
   });
   app.get('/api/proxy-log/stream', (req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     proxyLogClients.add(res);
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
     for (const evt of deps.proxyService.getProxyLog()) {

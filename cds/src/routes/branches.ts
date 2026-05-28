@@ -1929,7 +1929,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
 
@@ -2231,7 +2231,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
   }
@@ -2619,7 +2619,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
 
@@ -5791,7 +5791,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
     const safeSend = (event: string, data: unknown) => {
@@ -11981,7 +11981,7 @@ cdscli project list --human
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
     // 立刻 flush 头(部分代理需要)

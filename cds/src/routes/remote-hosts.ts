@@ -369,7 +369,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
+      Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
 
@@ -835,7 +835,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const afterSeq = Number(req.query.afterSeq || 0);
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Connection', 'close');
     const events = session.events.filter((event) => event.seq > afterSeq);
     for (const event of events) {
       res.write(`id: ${event.seq}\n`);
