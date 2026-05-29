@@ -253,6 +253,12 @@ public class ProjectRouteAgentController : ControllerBase
     {
         public string? Title { get; set; }
         public string? MarkdownContent { get; set; }
+        /// <summary>
+        /// 乐观锁：前端 load 时拿到的 UpdatedAt。提交时若与 DB 当前 UpdatedAt 不一致，
+        /// 说明在编辑期间被他人覆盖，返 409 让用户先 reload 再合并。
+        /// 兼容：缺省 / null 时跳过 check（向后兼容旧客户端）。
+        /// </summary>
+        public DateTime? ExpectedUpdatedAt { get; set; }
     }
 
     /// <summary>
@@ -273,12 +279,35 @@ public class ProjectRouteAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.MarkdownContent))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "公共站点说明 Markdown 不能为空"));
 
+        // 防御性大小校验：前端有 1MB 上限，这里加后端兜底（恶意客户端可绕过前端）。
+        // 2MB 余量留给压缩 / 二进制内联等罕见但合法的场景。
+        const int maxMarkdownBytes = 2 * 1024 * 1024;
+        var contentByteLen = Encoding.UTF8.GetByteCount(req.MarkdownContent);
+        if (contentByteLen > maxMarkdownBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE,
+                $"公共站点说明过大（{contentByteLen / 1024.0 / 1024.0:F2} MB），上限 2 MB"));
+
         var userId = GetUserId();
         var now = DateTime.UtcNow;
         var existing = await _db.ProjectRouteSiteSpecs.Find(x => x.IsActive).FirstOrDefaultAsync(ct);
 
         if (existing != null)
         {
+            // 乐观锁：客户端提交了 expectedUpdatedAt 时校验是否还是它编辑前看到的版本。
+            // 容差 100ms 兜底 Mongo BSON DateTime 序列化的毫秒级精度差异。
+            if (req.ExpectedUpdatedAt.HasValue)
+            {
+                var dbTime = existing.UpdatedAt;
+                var expected = req.ExpectedUpdatedAt.Value;
+                var driftMs = Math.Abs((dbTime - expected).TotalMilliseconds);
+                if (driftMs > 100)
+                {
+                    return Conflict(ApiResponse<object>.Fail(
+                        ErrorCodes.STALE_UPDATE,
+                        $"公共站点说明已被「{existing.UpdatedBy ?? existing.CreatedBy}」于 {dbTime:yyyy-MM-dd HH:mm:ss} 修改，请先点击「重新加载」拉取最新版本后再合并你的改动"));
+                }
+            }
+
             existing.Title = req.Title.Trim();
             existing.MarkdownContent = req.MarkdownContent;
             existing.UpdatedAt = now;

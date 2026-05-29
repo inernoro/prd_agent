@@ -87,6 +87,12 @@ export async function getActiveSiteSpec(): Promise<
 export async function upsertSiteSpec(payload: {
   title: string;
   markdownContent: string;
+  /**
+   * 乐观锁：前端 load 时拿到的 updatedAt（ISO 字符串）。
+   * 提交时后端校验是否仍是这个版本；不一致返 409 STALE_UPDATE，避免覆盖他人改动。
+   * 缺省时跳过校验，兼容旧客户端 / 首次创建场景。
+   */
+  expectedUpdatedAt?: string | null;
 }): Promise<ApiResponse<{ siteSpec: ProjectRouteSiteSpec; mode: 'created' | 'updated' }>> {
   return apiRequest('/api/project-route-agent/site-spec', {
     method: 'POST',

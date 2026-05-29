@@ -1133,7 +1133,9 @@ function AdminView() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void load();
+    // 首次加载强制覆盖（界面上还没草稿），避免 dirty 检查多余弹 confirm
+    void load({ force: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSiteMdUpload(file: File) {
@@ -1169,7 +1171,21 @@ function AdminView() {
     if (f) void handleSiteMdUpload(f);
   }
 
-  async function load() {
+  // 记录 load 时的服务端原文，用于 reload 时检测本地是否有未保存草稿。
+  const serverTitleRef = useRef<string>('');
+  const serverMarkdownRef = useRef<string>('');
+
+  async function load(options: { force?: boolean } = {}) {
+    // dirty 检测：当前 title/markdown 与上次 load 拿到的服务端原文不一致 = 有本地草稿。
+    // 非首次加载（已有 lastUpdatedAt）+ 有草稿 + 非 force → 弹 confirm 让用户决定是否丢弃。
+    const isDirty =
+      (title !== '' && title !== serverTitleRef.current) ||
+      (markdown !== '' && markdown !== serverMarkdownRef.current);
+    if (!options.force && lastUpdatedAt && isDirty) {
+      const ok = window.confirm('你有未保存的本地草稿，重新加载会用服务端最新内容覆盖。继续？');
+      if (!ok) return;
+    }
+
     setLoading(true);
     const res = await getActiveSiteSpec();
     if (res.success && res.data!.siteSpec) {
@@ -1178,6 +1194,8 @@ function AdminView() {
       setMarkdown(s.markdownContent);
       setLastUpdatedAt(s.updatedAt ?? null);
       setLastUpdatedBy(s.updatedBy ?? s.createdBy ?? null);
+      serverTitleRef.current = s.title;
+      serverMarkdownRef.current = s.markdownContent;
     }
     setLoading(false);
   }
@@ -1190,9 +1208,19 @@ function AdminView() {
 
     setSaving(true);
     try {
-      const res = await upsertSiteSpec({ title: title.trim(), markdownContent: markdown });
+      const res = await upsertSiteSpec({
+        title: title.trim(),
+        markdownContent: markdown,
+        // 乐观锁：把 load 时的 updatedAt 带回去；后端发现 DB 已被他人覆盖时返 409 STALE_UPDATE
+        expectedUpdatedAt: lastUpdatedAt,
+      });
       if (!res.success) {
-        setError(res.error?.message ?? '保存失败');
+        // 乐观锁冲突：除了显示后端的中文提示，再额外鼓励用户点「重新加载」
+        if (res.error?.code === 'STALE_UPDATE') {
+          setError(`${res.error.message}（你的本地草稿仍然保留在编辑器里）`);
+        } else {
+          setError(res.error?.message ?? '保存失败');
+        }
         return;
       }
       setOkMsg(res.data!.mode === 'created' ? '已创建公共站点说明' : '已更新公共站点说明');
@@ -1201,6 +1229,9 @@ function AdminView() {
       if (saved) {
         setLastUpdatedAt(saved.updatedAt ?? null);
         setLastUpdatedBy(saved.updatedBy ?? saved.createdBy ?? null);
+        // 同步 ref 为新的"服务端原文"，避免立刻点 reload 时被误判为有草稿
+        serverTitleRef.current = saved.title;
+        serverMarkdownRef.current = saved.markdownContent;
       }
     } finally {
       setSaving(false);
@@ -1221,18 +1252,29 @@ function AdminView() {
         <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
           <h2 className="text-sm font-semibold text-white">公共站点说明</h2>
           {lastUpdatedAt && (
-            <p className="text-[11px] text-white/40 inline-flex items-center gap-1.5">
-              <History className="w-3 h-3" />
-              最近由
-              <span className="text-white/70 font-mono">{lastUpdatedBy ?? '—'}</span>
-              于
-              <span className="text-white/70">{new Date(lastUpdatedAt).toLocaleString()}</span>
-              更新
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-[11px] text-white/40 inline-flex items-center gap-1.5">
+                <History className="w-3 h-3" />
+                最近由
+                <span className="text-white/70 font-mono">{lastUpdatedBy ?? '—'}</span>
+                于
+                <span className="text-white/70">{new Date(lastUpdatedAt).toLocaleString()}</span>
+                更新
+              </p>
+              <button
+                onClick={() => { void load(); }}
+                disabled={loading || saving}
+                className="text-[11px] text-sky-300/70 hover:text-sky-200 disabled:opacity-50 inline-flex items-center gap-1"
+                title="拉取最新公共站点说明（若有未保存的本地草稿会先弹确认）"
+              >
+                <RefreshCw className="w-3 h-3" />
+                重新加载
+              </button>
+            </div>
           )}
         </div>
         <p className="text-[11px] text-amber-300/60 mb-3 leading-relaxed">
-          注意：所有有项目路由智能体权限的用户都可编辑此文档，提交后会立即对全部用户生效。请避免与他人同时编辑以免互相覆盖。
+          注意：所有有项目路由智能体权限的用户都可编辑此文档，提交后会立即对全部用户生效。开始编辑前建议先点「重新加载」获取最新版本，避免提交时撞到他人改动（系统会在冲突时提示，不会静默覆盖）。
         </p>
         <div className="space-y-3">
           <div>
