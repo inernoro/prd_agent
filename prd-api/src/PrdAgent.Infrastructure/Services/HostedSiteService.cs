@@ -1124,8 +1124,14 @@ public class HostedSiteService : IHostedSiteService
     // 这种 2 文件普通 ZIP 误判为包装站（Codex P2 反复抓到，PR #612）。
     private string? TryBuildPdfAssetUrl(HostedSite site)
         => IsPdfWrapperSite(site, out var pdf)
-            ? AppendVersion(_storage.BuildUrlForKey(pdf!.CosKey), site.ContentVersion)
+            ? AppendVersion(_storage.BuildUrlForKey(pdf!.CosKey), EffectiveContentVersion(site))
             : null;
+
+    // 计算缓存指纹用的内容版本：老文档无 ContentVersion（default）时回退到 CreatedAt
+    // （创建后恒定不变）→ 保证 ?v 稳定、缓存命中。禁止回退到 UpdatedAt，那会被
+    // 改标题 / 改可见性等元数据操作顶变，导致没改内容却击穿缓存。
+    internal static DateTime EffectiveContentVersion(HostedSite site)
+        => site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
 
     public static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
     {

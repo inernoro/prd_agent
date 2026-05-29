@@ -1,3 +1,4 @@
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
 
@@ -59,5 +60,40 @@ public class HostedSiteVersionFingerprintTests
     {
         var result = HostedSiteService.AppendVersion(url!, DateTime.UtcNow);
         Assert.Equal(url, result);
+    }
+
+    // ── EffectiveContentVersion：老文档（无 ContentVersion）必须有确定且稳定的回退 ──
+    // 守护 Codex PR #686 P2：ContentVersion 不能带 = DateTime.UtcNow 初始化器，
+    // 否则反序列化老文档时每次读取都得到当前时间，?v 每次变 → 缓存被击穿。
+
+    [Fact]
+    public void EffectiveContentVersion_NewSite_UsesContentVersion()
+    {
+        var content = new DateTime(2026, 5, 26, 3, 0, 0, DateTimeKind.Utc);
+        var site = new HostedSite { CreatedAt = new DateTime(2026, 1, 1), ContentVersion = content };
+        Assert.Equal(content, HostedSiteService.EffectiveContentVersion(site));
+    }
+
+    [Fact]
+    public void EffectiveContentVersion_LegacySite_FallsBackToCreatedAt_AndIsStable()
+    {
+        var created = new DateTime(2026, 2, 2, 8, 0, 0, DateTimeKind.Utc);
+        // 模拟老文档：Mongo 反序列化后 ContentVersion 为 default(DateTime)
+        var site = new HostedSite { CreatedAt = created };
+        Assert.Equal(default, site.ContentVersion);
+
+        var v1 = HostedSiteService.EffectiveContentVersion(site);
+        var v2 = HostedSiteService.EffectiveContentVersion(site);
+        // 两次读取必须一致（稳定），且等于 CreatedAt（不是 UpdatedAt、不是当前时间）
+        Assert.Equal(created, v1);
+        Assert.Equal(v1, v2);
+    }
+
+    [Fact]
+    public void ContentVersion_HasNoUtcNowInitializer_SoDefaultIsDeterministic()
+    {
+        // 直接 new 出来不显式赋值 → 必须是 default(DateTime)，而非 DateTime.UtcNow。
+        // 这正是 Codex 评审要求：禁止给 ContentVersion 加 = DateTime.UtcNow 初始化器。
+        Assert.Equal(default, new HostedSite().ContentVersion);
     }
 }
