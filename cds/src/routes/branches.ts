@@ -11,7 +11,7 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
-import { classifyDeployRuntime } from '../services/deploy-runtime.js';
+import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-runtime.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -197,6 +197,29 @@ type BranchDeployRuntime = {
    * "运行现状"，杜绝设了 override 就亮绿的虚假徽章。
    */
   pendingPublish: boolean;
+  /**
+   * 2026-05-29 P0 止血：期望态 vs 实际态漂移检测。
+   *
+   * 病根（本次 openvisual 事故暴露）：branch.services 是"上次部署时的快照"，
+   * 项目新增 build profile 后已部署分支不会自动回灌 —— 于是 main 有 3 个
+   * 服务、PR 分支只有 2 个，卡片只显示数量、看不出"少了哪个 / 哪个挂了"。
+   *
+   * 这里把期望（项目所有 build profile）和实际（branch.services）做 diff：
+   *  - missingProfileIds: profile 存在但分支没有对应服务（= 漂移，需补部署）
+   *  - unhealthyProfileIds: 服务存在但不是 running（error / stopped）
+   *  - expectedCount / healthyCount: 卡片显示 "N/M 健康" 用
+   *  - hasDrift: 已部署过的分支才判（从未部署的 0 服务不算漂移，算"未部署"）
+   *
+   * 注意：这是**容器级**漂移（容器在不在 / 跑没跑）。"容器在跑但应用 503"
+   * 那层需要 live 探针，state 里没存，留作后续 reconcile 升级。
+   */
+  drift: {
+    expectedCount: number;
+    healthyCount: number;
+    missingProfileIds: string[];
+    unhealthyProfileIds: string[];
+    hasDrift: boolean;
+  };
 };
 
 // classifyDeployRuntime 已抽到 services/deploy-runtime.ts（SSOT，与
@@ -353,6 +376,8 @@ function summarizeBranchDeployRuntime(
     sourceProfiles,
     modes: modeLabels,
     pendingPublish,
+    // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
+    drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
 }
 

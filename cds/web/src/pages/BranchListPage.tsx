@@ -4,6 +4,7 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
   Bot,
   ChevronDown,
@@ -122,6 +123,14 @@ interface BranchSummary {
     sourceProfiles: number;
     modes: string[];
     pendingPublish?: boolean;
+    // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
+    drift?: {
+      expectedCount: number;
+      healthyCount: number;
+      missingProfileIds: string[];
+      unhealthyProfileIds: string[];
+      hasDrift: boolean;
+    };
   };
 }
 
@@ -3934,10 +3943,12 @@ function BranchCard({
   activityEvents = [],
   activeTagFilter,
   onPreview,
-  // 2026-05-04 重设计:部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
-  // onDeploy prop 保留是为了不打断父组件 ProjectListPage / 上层 BranchListPage
-  // 的现有 wiring(它们仍会 pass 这个回调)。卡片本身不再使用。
-  onDeploy: _onDeploy,
+  // 2026-05-04 重设计:常规部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
+  // 2026-05-29 P0 复活:onDeploy 重新被卡片使用 —— 漂移徽标「一键收敛」点击时
+  // 调它（= deployBranch → POST /deploy，读项目全部 build profile，补齐缺失服务）。
+  // 注意收敛必须走 /deploy 而非 force-rebuild：后者只 rebuild branch.services 快照
+  // 里已有的服务，补不回缺失的 profile（正是本次 openvisual 漂移的病根）。
+  onDeploy,
   onDetail,
   onPull,
   onStop,
@@ -4368,6 +4379,45 @@ function BranchCard({
             </span>
           ) : null
         )}
+        {/*
+          P0 止血(2026-05-29):期望态 vs 实际态漂移徽标 + 一键收敛。
+          病根:branch.services 是上次部署的快照,项目新增 build profile 后已部署
+          分支不回灌 → main 3 个服务、PR 分支 2 个,卡片只显示数量看不出少了谁。
+          后端 summarizeBranchDeployRuntime 已算好 drift,这里显式化:
+            - 文案点名"缺 N 个 / M 个异常",hover 看具体哪几个 profile
+            - 点击 = onDeploy(走 /deploy 读全部 profile 补齐),而非 force-rebuild
+              (后者只 rebuild 快照里已有的,补不回缺失服务,正是病根本身)
+        */}
+        {branch.deployRuntime?.drift?.hasDrift ? (() => {
+          const drift = branch.deployRuntime!.drift!;
+          const missing = drift.missingProfileIds;
+          const unhealthy = drift.unhealthyProfileIds;
+          const parts: string[] = [];
+          if (missing.length > 0) parts.push(`缺 ${missing.length} 个服务`);
+          if (unhealthy.length > 0) parts.push(`${unhealthy.length} 个异常`);
+          const detailLines = [
+            `期望 ${drift.expectedCount} 个服务，实际健康 ${drift.healthyCount} 个`,
+            missing.length > 0 ? `缺失（从未部署或被移除）: ${missing.join(', ')}` : '',
+            unhealthy.length > 0 ? `异常（停止/错误）: ${unhealthy.join(', ')}` : '',
+            '点击一键收敛：按项目最新构建配置重新部署，补齐缺失服务',
+          ].filter(Boolean);
+          return (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDeploy();
+              }}
+              disabled={busy || isInterim}
+              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-300"
+              title={detailLines.join('\n')}
+            >
+              <AlertTriangle className="h-3 w-3" aria-hidden />
+              <span>{parts.join(' · ')}</span>
+              <span className="text-amber-600/70 dark:text-amber-400/70">收敛</span>
+            </button>
+          );
+        })() : null}
         <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
           {timeBadge.label} {timeBadge.text}
         </span>
