@@ -2310,9 +2310,14 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
   const [renewingId, setRenewingId] = useState<string | null>(null);
   // 本站点统计 Drawer（scopedSiteId 模式下可用）
   const [showScopedAnalytics, setShowScopedAnalytics] = useState(false);
+  // fetchIdRef stale-response 守卫（PR #685 Bugbot Low）：连续创建分享触发多次
+  // refreshShares 时，慢响应不覆盖新结果。
+  const sharesFetchIdRef = useRef(0);
   const refreshShares = useCallback(async () => {
+    const myId = ++sharesFetchIdRef.current;
     setLoading(true);
     const res = await listSiteShares();
+    if (myId !== sharesFetchIdRef.current) return;
     if (res.success) setShares(res.data.items);
     setLoading(false);
   }, [setShares]);

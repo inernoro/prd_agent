@@ -2970,10 +2970,10 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentInlineComment>.Ok(comment));
     }
 
-    /// <summary>列出文档的划词评论（owner 和公开库访客都能读）</summary>
+    /// <summary>列出文档的划词评论（owner / 公开库 / 持有效分享 token 的访客可读）</summary>
     [HttpGet("entries/{entryId}/inline-comments")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListInlineComments(string entryId)
+    public async Task<IActionResult> ListInlineComments(string entryId, [FromQuery] string? shareToken = null)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
         if (entry == null)
@@ -2983,22 +2983,31 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 评论读权限（PR #685 Cursor Bugbot / Codex High-Severity 反馈后收紧）：
+        // 评论读权限（PR #685 Codex P1 二次反馈后收紧到 valid share context）：
         // - owner：可读 + 可写
         // - 公开库（IsPublic=true）：登录可读写、匿名只读
-        // - 私有库 + 有活跃分享链：仅作为分享访客可读（前端用 ListInlineComments 展示
-        //   评论气泡的"知情权"），但 canCreate=false —— 写权限只给 owner 和公开库用户。
-        //   这避免了"任何登录用户知 entryId 就能在私有库刷评论"的越权。
-        // - 私有库无分享：仅 owner
+        // - 私有库：仅当调用方带【有效的分享 token】（属于本 store + 未撤销 + 未过期）才可读
+        //   评论气泡。不再用"存在任意分享链"放行——那会让任何知 entryId 的登录用户、
+        //   甚至凭过期/无关的分享，枚举读取私有库评论。写权限始终只给 owner + 公开库。
+        // - 私有库无 token / token 无效：仅 owner
         string? currentUser = null;
         try { currentUser = this.GetRequiredUserId(); } catch { }
         var isOwner = currentUser != null && store.OwnerId == currentUser;
 
-        var hasActiveShare = await _db.DocumentStoreShareLinks
-            .Find(s => s.StoreId == store.Id && !s.IsRevoked)
-            .AnyAsync();
+        // 校验分享 token 是否真的授权访问本 store（scope 到具体 share context）
+        var hasValidShareContext = false;
+        if (!string.IsNullOrWhiteSpace(shareToken))
+        {
+            var nowUtc = DateTime.UtcNow;
+            hasValidShareContext = await _db.DocumentStoreShareLinks
+                .Find(s => s.Token == shareToken
+                    && s.StoreId == store.Id
+                    && !s.IsRevoked
+                    && (s.ExpiresAt == null || s.ExpiresAt > nowUtc))
+                .AnyAsync();
+        }
 
-        var canRead = isOwner || store.IsPublic || hasActiveShare;
+        var canRead = isOwner || store.IsPublic || hasValidShareContext;
         if (!canRead)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 

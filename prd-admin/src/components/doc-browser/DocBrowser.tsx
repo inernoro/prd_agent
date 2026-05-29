@@ -109,6 +109,12 @@ export type DocBrowserProps = {
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
   /**
+   * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
+   * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
+   * 私人编辑场景（DocumentStorePage）不需要传，走 owner 身份读评论。
+   */
+  inlineCommentShareToken?: string;
+  /**
    * 外观：
    * - 'inset'：默认，单容器无 gap（知识库 / 分享页，连续阅读体验）
    * - 'cards'：左右两个独立圆角卡片 + 12px gap（更新中心-周报，强分区视觉）
@@ -990,6 +996,7 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  inlineCommentShareToken,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -1082,12 +1089,12 @@ export function DocBrowser({
     let cancelled = false;
     (async () => {
       try {
-        const res = await listInlineComments(trackedEntryForComments.id);
+        const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
         if (!cancelled && res.success) setCommentCount(res.data.items.length);
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
     return () => { cancelled = true; };
-  }, [trackedEntryForComments]);
+  }, [trackedEntryForComments, inlineCommentShareToken]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
@@ -2111,6 +2118,7 @@ export function DocBrowser({
         <InlineCommentDrawer
           entryId={trackedEntryForComments.id}
           entryTitle={trackedEntryForComments.title}
+          shareToken={inlineCommentShareToken}
           pendingSelection={pendingSelection}
           onClearPending={() => setPendingSelection(null)}
           onLocate={(text) => {
@@ -2123,7 +2131,7 @@ export function DocBrowser({
             // 关闭时刷新评论计数（新建/删除/无变化都通用）
             if (trackedEntryForComments) {
               const entryId = trackedEntryForComments.id;
-              listInlineComments(entryId).then((res) => {
+              listInlineComments(entryId, inlineCommentShareToken).then((res) => {
                 if (res.success) setCommentCount(res.data.items.length);
               }).catch(() => {});
             }

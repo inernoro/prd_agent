@@ -903,7 +903,8 @@ public class HostedSiteService : IHostedSiteService
             if (viewerUserId == share.CreatedBy) return null;
 
             // 团队成员：每个目标站点都要单独验证（合集场景防跨团队越权）
-            var ownerCheckIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
+            // 复制成新 list 再 Insert，避免原地 mutate share.SiteIds 污染下游读取（PR #685 Bugbot Low）
+            var ownerCheckIds = new List<string>(share.SiteIds ?? new List<string>());
             if (share.SiteId != null && !ownerCheckIds.Contains(share.SiteId))
                 ownerCheckIds.Insert(0, share.SiteId);
             var targetSites = await _db.HostedSites.Find(x => ownerCheckIds.Contains(x.Id)).ToListAsync(ct);
