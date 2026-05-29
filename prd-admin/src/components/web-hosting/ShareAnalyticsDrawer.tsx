@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X, BarChart3, Eye, Users, Link2, Clock, Lock, Globe } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -34,11 +34,17 @@ export function ShareAnalyticsDrawer({
   const [rangeDays, setRangeDays] = useState<7 | 30 | 90>(7);
   const [data, setData] = useState<ShareAnalyticsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // PR #685 Cursor Bugbot 反馈：rangeDays 快速切换 7→30→90 时，慢响应可能覆盖新结果。
+  // fetchIdRef 守卫：每次发起请求递增 id，只有"我就是当前最新发出去的那个"才写 state。
+  const fetchIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const myId = ++fetchIdRef.current;
     setLoading(true);
     setError(null);
     const res = await getSiteShareAnalytics(rangeDays, scopedSiteId ?? undefined);
+    // stale 响应直接丢弃
+    if (myId !== fetchIdRef.current) return;
     if (res.success) {
       setData(res.data);
     } else {

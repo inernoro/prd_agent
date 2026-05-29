@@ -2916,19 +2916,12 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 权限放宽（2026-05-28 用户反馈"分享视图无法评论"）：
-        // - owner 总能评论
-        // - 公开库 (IsPublic=true) 的登录用户能评论
-        // - 私有库但有活跃（未撤销）分享链的登录用户也能评论（验收报告分享场景）
-        // 匿名访问仍然拒绝（防垃圾评论）。
+        // 评论写权限收紧（PR #685 Cursor Bugbot / Codex High-Severity 反馈）：
+        // 之前放宽到"私有库 + 有任何非撤销分享链 → 任何登录用户可写"是错误的，
+        // 因为没有验证调用方是否真的通过分享 token 访问，知道 entryId 就能越权评论。
+        // 现在只允许：owner 自己；公开库（IsPublic=true）的登录用户。
+        // 私有库即便有分享链，第三方也不能评论 —— 评论是创作者间的协作，不是访客功能。
         var allowed = store.OwnerId == userId || store.IsPublic;
-        if (!allowed)
-        {
-            var hasActiveShare = await _db.DocumentStoreShareLinks
-                .Find(s => s.StoreId == store.Id && !s.IsRevoked)
-                .AnyAsync();
-            if (hasActiveShare) allowed = true;
-        }
         if (!allowed)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
@@ -2990,11 +2983,13 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 权限分级（2026-05-28 用户反馈"分享视图无法看到/添加评论"）：
+        // 评论读权限（PR #685 Cursor Bugbot / Codex High-Severity 反馈后收紧）：
         // - owner：可读 + 可写
-        // - 公开库：登录用户可读 + 可写；匿名仅可读
-        // - 私有库 + 有活跃分享链：登录用户可读 + 可写；匿名拒绝（避免分享链泄露后被刷垃圾评论）
-        // - 私有库无分享链：仅 owner
+        // - 公开库（IsPublic=true）：登录可读写、匿名只读
+        // - 私有库 + 有活跃分享链：仅作为分享访客可读（前端用 ListInlineComments 展示
+        //   评论气泡的"知情权"），但 canCreate=false —— 写权限只给 owner 和公开库用户。
+        //   这避免了"任何登录用户知 entryId 就能在私有库刷评论"的越权。
+        // - 私有库无分享：仅 owner
         string? currentUser = null;
         try { currentUser = this.GetRequiredUserId(); } catch { }
         var isOwner = currentUser != null && store.OwnerId == currentUser;
@@ -3007,8 +3002,8 @@ public class DocumentStoreController : ControllerBase
         if (!canRead)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 匿名访问私有库分享时仅可读；登录用户在公开/分享库中可写
-        var canCreate = isOwner || (currentUser != null && (store.IsPublic || hasActiveShare));
+        // 写权限只给 owner 和公开库登录用户；分享访客仅可读评论气泡，不能写入。
+        var canCreate = isOwner || (currentUser != null && store.IsPublic);
 
         var comments = await _db.DocumentInlineComments
             .Find(c => c.EntryId == entryId)

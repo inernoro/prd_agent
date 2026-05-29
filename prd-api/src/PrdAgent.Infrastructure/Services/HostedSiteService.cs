@@ -883,6 +883,52 @@ public class HostedSiteService : IHostedSiteService
     }
 
     /// <summary>
+    /// 分享 Visibility 校验（防盗：owner-only / logged-in / public）。
+    /// 抽成独立方法供 ViewShareAsync + SaveSharedSiteAsync 共享，避免 /save 端点绕过 /view 防盗。
+    /// 返回 null 表示通过；返回 tuple 时调用方应 short-circuit。
+    /// owner-only 合集分享时按【每个目标站点】单独校验，避免跨团队成员越权拿到非己团队站点。
+    /// </summary>
+    private async Task<(string Error, int HttpStatus, string ErrorCode)?> EnforceShareVisibilityAsync(
+        WebPageShareLink share, string? viewerUserId, CancellationToken ct)
+    {
+        // 旧记录 / visit 链 / 默认 public 都识别为可公开访问（不阻断历史链路）
+        var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
+
+        if (effVisibility == "owner-only")
+        {
+            if (string.IsNullOrEmpty(viewerUserId))
+                return ("此链接仅限创建者访问，请登录后再试", 403, "visibility_denied");
+
+            // 创建者本人直接通过
+            if (viewerUserId == share.CreatedBy) return null;
+
+            // 团队成员：每个目标站点都要单独验证（合集场景防跨团队越权）
+            var ownerCheckIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
+            if (share.SiteId != null && !ownerCheckIds.Contains(share.SiteId))
+                ownerCheckIds.Insert(0, share.SiteId);
+            var targetSites = await _db.HostedSites.Find(x => ownerCheckIds.Contains(x.Id)).ToListAsync(ct);
+            var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(viewerUserId, ct);
+            var allAuthorized = targetSites.All(s =>
+                s.OwnerUserId == viewerUserId
+                || (s.SharedTeamIds ?? new List<string>()).Any(tid => myRoles.ContainsKey(tid)));
+
+            if (!allAuthorized)
+                return ("此链接含一个或多个你无权访问的站点", 403, "visibility_denied");
+            return null;
+        }
+
+        if (effVisibility == "logged-in")
+        {
+            if (string.IsNullOrEmpty(viewerUserId))
+                return ("此链接需要登录后访问", 403, "visibility_denied");
+            return null;
+        }
+
+        // "public": 任何人通过；密码校验由 EnforceShareAccessAsync 单独处理
+        return null;
+    }
+
+    /// <summary>
     /// 分享访问统一关卡：滑动窗口速率限制 + Hash 优先校验 + 持久化窗口状态。
     /// 返回 null 表示通过；返回 tuple 时调用方应直接 short-circuit 用对应 HttpStatus 回客户端。
     /// 不绑定 IP：容器反代下 IP 不可靠，NAT 局域网下会一锅端 —— 改按 shareLink 全局限速。
@@ -952,55 +998,13 @@ public class HostedSiteService : IHostedSiteService
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
             return new ShareViewResult { Error = "分享链接已过期", HttpStatus = 400, ErrorCode = "expired" };
 
-        // Visibility 校验（防盗：链接被复制后不能被任意第三方长期访问）
-        // - 空字符串 / null = 旧记录（本次发布前已存在，没有此字段）→ 按 public 兼容，保护历史公开链路
-        // - visit 便捷链恒为 public（站点访问短链）
-        // - 新建分享必显式赋值 owner-only / logged-in / public
-        var effVisibility = string.IsNullOrEmpty(share.Visibility) ? "public" : share.Visibility;
-        if (effVisibility == "owner-only")
-        {
-            // 未登录直接拒绝
-            if (string.IsNullOrEmpty(viewerUserId))
-                return new ShareViewResult
-                {
-                    Error = "此链接仅限创建者访问，请登录后再试",
-                    HttpStatus = 403,
-                    ErrorCode = "visibility_denied",
-                };
-
-            // 创建者本人 ✓
-            if (viewerUserId != share.CreatedBy)
-            {
-                // 团队成员：检查所有目标站点的 SharedTeamIds 与当前用户的团队成员关系
-                var ownerCheckIds = share.SiteIds.Count > 0 ? share.SiteIds : new List<string>();
-                if (share.SiteId != null && !ownerCheckIds.Contains(share.SiteId))
-                    ownerCheckIds.Insert(0, share.SiteId);
-
-                var targetSites = await _db.HostedSites.Find(x => ownerCheckIds.Contains(x.Id)).ToListAsync(ct);
-                var allTeamIds = targetSites.SelectMany(s => s.SharedTeamIds ?? new List<string>()).Distinct().ToList();
-                var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(viewerUserId, ct);
-                var inTeam = allTeamIds.Any(tid => myRoles.ContainsKey(tid));
-
-                if (!inTeam)
-                    return new ShareViewResult
-                    {
-                        Error = "此链接仅限创建者或团队成员访问",
-                        HttpStatus = 403,
-                        ErrorCode = "visibility_denied",
-                    };
-            }
-        }
-        else if (effVisibility == "logged-in")
-        {
-            if (string.IsNullOrEmpty(viewerUserId))
-                return new ShareViewResult
-                {
-                    Error = "此链接需要登录后访问",
-                    HttpStatus = 403,
-                    ErrorCode = "visibility_denied",
-                };
-        }
-        // "public": 任何人，下面 password gate 仍然生效
+        // Visibility 校验抽成共享方法 EnforceShareVisibilityAsync，
+        // SaveSharedSiteAsync 等其他访问入口也走同一关卡（PR #685 Codex P2 反馈：
+        // 不要让 /save 端点绕过 /view 的 owner-only 防盗）。
+        var visGate = await EnforceShareVisibilityAsync(share, viewerUserId, ct);
+        if (visGate is { } vg)
+            return new ShareViewResult { Error = vg.Error, HttpStatus = vg.HttpStatus, ErrorCode = vg.ErrorCode };
+        // "public" + 通过 visibility 校验后：下面 password gate 仍然生效
 
         var gate = await EnforceShareAccessAsync(share, password, ct);
         if (gate is { } g)
@@ -1443,6 +1447,11 @@ public class HostedSiteService : IHostedSiteService
 
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
             return new SaveSharedSiteResult { Error = "分享链接已过期", HttpStatus = 400 };
+
+        // Visibility 校验（PR #685 Codex P2 反馈：/save 不能绕过 /view 的 owner-only 防盗）
+        var visGate = await EnforceShareVisibilityAsync(share, userId, ct);
+        if (visGate is { } vg)
+            return new SaveSharedSiteResult { Error = vg.Error, HttpStatus = vg.HttpStatus };
 
         var gate = await EnforceShareAccessAsync(share, password, ct);
         if (gate is { } g)
