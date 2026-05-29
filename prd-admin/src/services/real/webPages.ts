@@ -384,11 +384,6 @@ export async function listShareViewLogs(shareToken?: string, limit = 100): Promi
   return apiRequest(`${api.webPages.viewLogs}${q ? `?${q}` : ''}`);
 }
 
-/** 列出某个站点下所有分享链接的访问日志（仅站点 owner 可查） */
-export async function listShareLogsForSite(siteId: string, limit = 50): Promise<ApiResponse<{ items: ShareViewLogItem[] }>> {
-  return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/share-logs?limit=${limit}`);
-}
-
 /** 续期某条分享链接（仅创建者，过期 ≤ 7 天宽限期内仍可续期） */
 export async function renewShare(shareId: string, extendDays: number): Promise<ApiResponse<{ newExpiresAt: string }>> {
   return apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}/renew`, {

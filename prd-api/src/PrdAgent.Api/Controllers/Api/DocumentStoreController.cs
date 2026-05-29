@@ -2994,7 +2994,10 @@ public class DocumentStoreController : ControllerBase
         try { currentUser = this.GetRequiredUserId(); } catch { }
         var isOwner = currentUser != null && store.OwnerId == currentUser;
 
-        // 校验分享 token 是否真的授权访问本 store（scope 到具体 share context）
+        // 校验分享 token 是否真的授权访问本 store + 本 entry（scope 到具体 share context）
+        // EntryId == null = 整库分享，能读库内任意 entry 的评论；
+        // EntryId == entryId = 单篇分享，只能读本篇；
+        // EntryId != entryId = 单篇分享但访问别篇 → 拒绝（PR #685 Codex P1：单文档 token 不能越权读整库评论）。
         var hasValidShareContext = false;
         if (!string.IsNullOrWhiteSpace(shareToken))
         {
@@ -3002,6 +3005,7 @@ public class DocumentStoreController : ControllerBase
             hasValidShareContext = await _db.DocumentStoreShareLinks
                 .Find(s => s.Token == shareToken
                     && s.StoreId == store.Id
+                    && (s.EntryId == null || s.EntryId == entryId)
                     && !s.IsRevoked
                     && (s.ExpiresAt == null || s.ExpiresAt > nowUtc))
                 .AnyAsync();

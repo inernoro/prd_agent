@@ -1694,7 +1694,6 @@ export {
   viewShare as viewSiteShare,
   saveSharedSite,
   listShareViewLogs,
-  listShareLogsForSite,
   renewShare as renewSiteShare,
   getShareAnalytics as getSiteShareAnalytics,
 } from '@/services/real/webPages';

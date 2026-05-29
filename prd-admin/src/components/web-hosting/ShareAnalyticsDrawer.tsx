@@ -42,15 +42,23 @@ export function ShareAnalyticsDrawer({
     const myId = ++fetchIdRef.current;
     setLoading(true);
     setError(null);
-    const res = await getSiteShareAnalytics(rangeDays, scopedSiteId ?? undefined);
-    // stale 响应直接丢弃
-    if (myId !== fetchIdRef.current) return;
-    if (res.success) {
-      setData(res.data);
-    } else {
-      setError(res.error?.message ?? '加载统计失败');
+    try {
+      const res = await getSiteShareAnalytics(rangeDays, scopedSiteId ?? undefined);
+      // stale 响应直接丢弃，但 finally 里还会清 loading 防卡死
+      if (myId !== fetchIdRef.current) return;
+      if (res.success) {
+        setData(res.data);
+      } else {
+        setError(res.error?.message ?? '加载统计失败');
+      }
+    } catch (e) {
+      if (myId !== fetchIdRef.current) return;
+      setError(e instanceof Error ? e.message : '加载统计失败');
+    } finally {
+      // 仅当我就是最新请求时才清 loading；stale 请求让位给后续 latest 请求自己清。
+      // (PR #685 Bugbot Medium：之前 stale 提前 return 不清 loading，遇 latest error 会卡死)
+      if (myId === fetchIdRef.current) setLoading(false);
     }
-    setLoading(false);
   }, [rangeDays, scopedSiteId]);
 
   useEffect(() => {

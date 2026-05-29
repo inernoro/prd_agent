@@ -2316,10 +2316,14 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
   const refreshShares = useCallback(async () => {
     const myId = ++sharesFetchIdRef.current;
     setLoading(true);
-    const res = await listSiteShares();
-    if (myId !== sharesFetchIdRef.current) return;
-    if (res.success) setShares(res.data.items);
-    setLoading(false);
+    try {
+      const res = await listSiteShares();
+      if (myId !== sharesFetchIdRef.current) return;
+      if (res.success) setShares(res.data.items);
+    } finally {
+      // 只有最新请求才清 loading；stale 请求让位（PR #685 Bugbot Medium）
+      if (myId === sharesFetchIdRef.current) setLoading(false);
+    }
   }, [setShares]);
 
   useEffect(() => { void refreshShares(); }, [refreshShares]);

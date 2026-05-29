@@ -7,3 +7,6 @@
 | fix | prd-admin | DocBrowser 新增 inlineCommentShareToken prop，分享视图透传分享 token 读私有库评论气泡；InlineCommentDrawer 同步透传 |
 | fix | prd-api | EnforceShareVisibilityAsync 复制 SiteIds 新 list 再 Insert，避免原地 mutate 实体污染下游（PR #685 Bugbot Low） |
 | fix | prd-admin | SharesPanel refreshShares 加 fetchIdRef stale-response 守卫（PR #685 Bugbot Low） |
+| fix | prd-api | ListInlineComments 的 shareToken 校验补 EntryId 匹配：单文档分享 token 不能越权读整 store 评论（PR #685 Codex P1） |
+| fix | prd-admin | fetchIdRef stale guard 改用 try/finally 保证 loading 清理：仅 latest 请求清，stale 让位避免 spinner 卡死（PR #685 Bugbot Medium）。SharesPanel + ShareAnalyticsDrawer 同步 |
+| chore | prd-admin | 删 dead code listShareLogsForSite（services/real + index.ts re-export），无 consumer（PR #685 Bugbot Low） |
