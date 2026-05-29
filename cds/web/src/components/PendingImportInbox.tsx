@@ -61,7 +61,23 @@ export function PendingImportInbox(): JSX.Element | null {
     try {
       const data = await apiRequest<PendingImportsResponse>('/api/pending-imports');
       const list = (data.imports || []).filter((i) => i.status === 'pending');
-      setPending(list);
+      // Codex review(PR #684, P2):/api/pending-imports 列表端点刻意 strip 掉
+      // composeYaml(防列表行过大),导致 item.composeYaml 永远 undefined、抽屉里
+      // 的 YAML 折叠预览永远不渲染 —— 操作员在看不到原始配置的情况下就批准了 agent
+      // 提交的 profile/infra/env。这里对每条拉单条 detail(/pending-imports/:id 返回
+      // 完整 item 含 composeYaml)补齐,审批前必须能看到真实 YAML。
+      const enriched = await Promise.all(list.map(async (it) => {
+        if (it.composeYaml) return it;
+        try {
+          const detail = await apiRequest<{ import?: PendingImport }>(
+            `/api/pending-imports/${encodeURIComponent(it.id)}`,
+          );
+          return detail.import?.composeYaml ? { ...it, composeYaml: detail.import.composeYaml } : it;
+        } catch {
+          return it;
+        }
+      }));
+      setPending(enriched);
     } catch {
       // 静默 — degraded / 401 之类不该让这个组件爆错
     }

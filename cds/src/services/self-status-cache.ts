@@ -148,6 +148,15 @@ class SelfStatusCache {
   /** 当前活跃 refresh job(null 表示没有在跑) */
   private activeJob: RefreshJobState | null = null;
 
+  /**
+   * Codex review(PR #684, P2):有 job 在跑时新来的 enqueueRefresh 被合并丢弃。
+   * self-update 收尾路径 fire-and-forget 调 broadcastSelfStatus(),若它撞在一次
+   * git-fetch refresh 进行中,那次"清除 active 标记"的最终状态变化就丢了 → 重启后
+   * 浏览器卡在 updating(再没有 activeSelfUpdate=null 的 self.status 发出)。这里记
+   * 一个 dirty 标志:运行中再被请求 → 标脏,当前 job 跑完后补跑一次,确保最终态不丢。
+   */
+  private pendingRefreshTrigger: RefreshTrigger | null = null;
+
   /** 给 ?probe=remote 用的轻量节流:同 trigger 在 5s 内不重复跑 */
   private lastRefreshAtByTrigger = new Map<RefreshTrigger, number>();
 
@@ -170,6 +179,7 @@ class SelfStatusCache {
     this.lastKnownGood = null;
     this.options = null;
     this.activeJob = null;
+    this.pendingRefreshTrigger = null;
     this.lastRefreshAtByTrigger.clear();
   }
 
@@ -220,6 +230,9 @@ class SelfStatusCache {
     }
 
     if (this.activeJob && (this.activeJob.status === 'queued' || this.activeJob.status === 'running')) {
+      // 运行中再被请求 → 标脏,当前 job 收尾时补跑一次(见 runRefreshJob 末尾)。
+      // 否则 self-update 收尾的最终状态变化会被静默丢弃,浏览器卡 updating。
+      this.pendingRefreshTrigger = trigger;
       return { ...this.activeJob };
     }
 
@@ -353,6 +366,16 @@ class SelfStatusCache {
       };
       cdsEventsBus.publish('self.refresh.failed', { trigger: job.trigger, jobId: job.jobId, error: msg, durationMs }, { jobId: job.jobId });
       cdsEventsBus.publish('self.status', this.snapshot);
+    }
+
+    // Codex review(PR #684, P2):本 job 跑的过程中若有 enqueueRefresh 被合并丢弃
+    // (pendingRefreshTrigger 被标脏),这里补跑一次,确保期间发生的最终状态变化
+    // (如 self-update 收尾清 activeSelfUpdate)不被吞掉。此时 activeJob 已是 done/
+    // failed,enqueueRefresh 不会再命中"运行中"合并分支,能正常起新 job。
+    if (this.pendingRefreshTrigger) {
+      const pending = this.pendingRefreshTrigger;
+      this.pendingRefreshTrigger = null;
+      this.enqueueRefresh(pending);
     }
   }
 

@@ -34,6 +34,13 @@ export type CdsEventType =
   | 'pending-import.created'
   | 'pending-import.decided'
   | 'pending-import.count'
+  // 2026-05-29:operator 审批请求事件(审批弹窗实时刷新)
+  | 'operator.request.created'
+  | 'operator.request.approved'
+  | 'operator.request.rejected'
+  | 'operator.request.log'
+  | 'operator.request.completed'
+  | 'operator.request.failed'
   | 'infra.flap.circuit-breaker'
   | 'heartbeat';
 
@@ -112,6 +119,12 @@ interface StoreState {
   lastPendingImportEvent: { type: 'created' | 'decided' | 'count'; ts: string; pendingCount?: number; importId?: string } | null;
   /** 2026-05-28:infra flap 熔断告警(组件展示右下角 toast) */
   lastFlapEvent: { containerName: string; restartCount: number; message: string; ts: string } | null;
+  /** 2026-05-29:operator 审批请求事件(审批弹窗据此实时刷新,不再等 25s heartbeat) */
+  lastOperatorRequestEvent: {
+    type: 'created' | 'approved' | 'rejected' | 'log' | 'completed' | 'failed';
+    ts: string;
+    requestId?: string;
+  } | null;
   /** 连续失败次数(用于退避 + 是否进 disconnected) */
   consecutiveErrors: number;
   /** 最近一次错误 */
@@ -127,6 +140,7 @@ const INITIAL_STATE: StoreState = {
   lastHeartbeatAt: null,
   lastPendingImportEvent: null,
   lastFlapEvent: null,
+  lastOperatorRequestEvent: null,
   consecutiveErrors: 0,
   lastError: null,
 };
@@ -208,6 +222,14 @@ function openConnection(): void {
     'pending-import.created',
     'pending-import.decided',
     'pending-import.count',
+    // Codex review(PR #684, P2):后端发 operator.request.* 时审批弹窗要实时反应,
+    // 此前只注册到 heartbeat → 审批请求最多隐身 25s。
+    'operator.request.created',
+    'operator.request.approved',
+    'operator.request.rejected',
+    'operator.request.log',
+    'operator.request.completed',
+    'operator.request.failed',
     'infra.flap.circuit-breaker',
     'heartbeat',
   ];
@@ -286,6 +308,24 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
           ts: envelope.ts,
           pendingCount: data.pendingCount,
           importId: data.importId,
+        },
+      });
+      break;
+    }
+    case 'operator.request.created':
+    case 'operator.request.approved':
+    case 'operator.request.rejected':
+    case 'operator.request.log':
+    case 'operator.request.completed':
+    case 'operator.request.failed': {
+      const data = (envelope.data || {}) as { requestId?: string; id?: string };
+      const evtType = type.slice('operator.request.'.length) as
+        'created' | 'approved' | 'rejected' | 'log' | 'completed' | 'failed';
+      setState({
+        lastOperatorRequestEvent: {
+          type: evtType,
+          ts: envelope.ts,
+          requestId: data.requestId ?? data.id,
         },
       });
       break;

@@ -68,6 +68,29 @@ describe('selfStatusCache', () => {
     expect(computeCalls).toBe(1);
   });
 
+  it('运行中再入队 → 当前 job 跑完后补跑一次(Codex P2:防丢 self-update 收尾状态)', async () => {
+    let computeCalls = 0;
+    selfStatusCache.init({
+      computeSnapshot: async () => {
+        computeCalls += 1;
+        await new Promise((r) => setTimeout(r, 20));
+        return baseSnapshot;
+      },
+      scanRemoteBranches: async () => [],
+    });
+
+    const job1 = selfStatusCache.enqueueRefresh('manual');
+    expect(job1.status).toBe('running');
+    // 趁第一个 job 还在 compute,再入队一次 → 被标脏(返回同 job)
+    const job2 = selfStatusCache.enqueueRefresh('webhook');
+    expect(job2.jobId).toBe(job1.jobId);
+
+    // 等足够久让 job1(20ms)+ 补跑(20ms)都完成
+    await new Promise((r) => setTimeout(r, 200));
+    // 关键:不是丢弃只跑 1 次,而是补跑 → 2 次
+    expect(computeCalls).toBe(2);
+  });
+
   it('refresh 成功 → snapshot.lastRefreshAt 更新 + 发 self.refresh.done + self.status', async () => {
     selfStatusCache.init({
       computeSnapshot: async () => baseSnapshot,

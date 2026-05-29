@@ -60,13 +60,13 @@ export function OperatorApprovalModal(): JSX.Element | null {
   // 初始进页面拉一次
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // 订阅 cds-events 总线:看到 operator.request.created/approved/rejected/completed
-  // 都触发一次 refresh(简单粗暴,反正请求列表小)
+  // 订阅 cds-events 总线:operator.request.* 事件一来立即 refresh(实时弹窗)。
+  // Codex review(PR #684, P2):此前只盯 lastHeartbeatAt → 新审批请求最多隐身 25s。
+  // 现在 useCdsEvents 单独路由 operator.request.* 到 lastOperatorRequestEvent,
+  // 这里观察它即可秒级反应;heartbeat 仍保留作兜底刷新。
   useEffect(() => {
-    // useCdsEvents 已经把所有事件流向 store;这里只观察 lastHeartbeatAt
-    // 等任意刷新 tick 都触发,稍有冗余但简单
     void refresh();
-  }, [events.lastHeartbeatAt, refresh]);
+  }, [events.lastOperatorRequestEvent, events.lastHeartbeatAt, refresh]);
 
   const approve = useCallback(async (scope: 'once' | 'session') => {
     if (!pending || busy) return;

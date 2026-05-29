@@ -24,10 +24,10 @@ infra resync / 服务漂移徽标 等)。两个自动 review bot 持续提 issue
 - [ ] project-compose diffChangedFieldPaths 覆盖顶层平台键(networks / x-cds-domain)
 - [ ] 递归嵌套平台字段(services.*.deploy.replicas),防权限绕过(D1/D2)
 
-### 批 3 — 前端/状态(P2×3)
-- [ ] PendingImportInbox 审批前加载 composeYaml(别盲批)(E1)
-- [ ] useCdsEvents 订阅 operator.request.* 事件(审批弹窗实时)(E2)
-- [ ] self-status-cache 刷新合并补一次队列(防卡 updating)(E3)
+### 批 3 — 前端/状态(P2×3)✅ 已完成
+- [x] PendingImportInbox 审批前加载 composeYaml(别盲批)(E1)
+- [x] useCdsEvents 订阅 operator.request.* 事件(审批弹窗实时)(E2)
+- [x] self-status-cache 刷新合并补一次队列(防卡 updating)(E3)
 
 ### 批 4 — supervisor 迁移(P1×2 + P2×2)
 - [ ] cds-supervisor.sh 启动子进程前 chdir 到 repo cds/ 目录(C3,P1)
