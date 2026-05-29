@@ -327,6 +327,10 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
         if (!current || !yamlSvc) continue;
         try { await containerService.stopInfraService(current.containerName); } catch { /* tolerate */ }
         // 更新字段:image/cmd/entrypoint/env/volumes/port,保留 hostPort + containerName
+        // Codex review(PR #684, P2):diffSignatures 把 restartPolicy 报成 update reason,
+        // 但执行路径以前不写 restartPolicy → startInfraService 回落旧/默认值,后续预览
+        // 永远报同一处漂移。这里把 restartPolicy 也落库(yaml 显式声明才写,未声明保留
+        // current,与 diffSignatures 的 `yaml ?? current` 判定一致)。
         stateService.updateInfraService(u.id, {
           dockerImage: yamlSvc.dockerImage,
           containerPort: yamlSvc.containerPort,
@@ -335,6 +339,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
           healthCheck: yamlSvc.healthCheck,
           ...(yamlSvc.command !== undefined ? { command: yamlSvc.command } : { command: undefined }),
           ...(yamlSvc.entrypoint !== undefined ? { entrypoint: yamlSvc.entrypoint } : { entrypoint: undefined }),
+          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: yamlSvc.restartPolicy } : {}),
           status: 'stopped',
           errorMessage: undefined,
         }, projectId);
@@ -376,6 +381,9 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
           healthCheck: yamlSvc.healthCheck,
           ...(yamlSvc.command !== undefined ? { command: yamlSvc.command } : {}),
           ...(yamlSvc.entrypoint !== undefined ? { entrypoint: yamlSvc.entrypoint } : {}),
+          // Codex review(PR #684, P2):新增 infra 也要带上 yaml 声明的 restartPolicy,
+          // 否则首次部署就回落默认,和 update 路径同病。
+          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: yamlSvc.restartPolicy } : {}),
           createdAt: new Date().toISOString(),
         };
         stateService.addInfraService(service);

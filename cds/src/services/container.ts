@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
+import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import {
@@ -1930,9 +1931,12 @@ export class ContainerService {
       }
     }
     const cmdParts = [...entrypointExtraArgs, ...explicitCmdParts];
-    const restartPolicy = (typeof service.restartPolicy === 'string' && service.restartPolicy.trim())
-      ? service.restartPolicy.trim()
-      : 'on-failure:3';
+    // Codex review(PR #684, P1 安全):restartPolicy 会被原样拼进经 shell 执行的
+    // docker run 字符串。新增的 POST /api/infra 把 body.restartPolicy 落库、yaml 的
+    // restart: 也会进来 —— 若值是 `no; touch /tmp/pwn` 之类,shell 会在 host 上执行
+    // 注入的后缀。这里按 Docker 合法 restart 策略白名单校验(no / always /
+    // unless-stopped / on-failure[:N]),非法值一律回落默认,杜绝命令注入。
+    const restartPolicy = sanitizeDockerRestartPolicy(service.restartPolicy);
 
     const cmd = [
       'docker run -d',
