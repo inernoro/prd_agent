@@ -17,6 +17,7 @@ import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
+import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrl } from './services/comment-template.js';
 import { computePreviewSlug, previewProjectSlug, previewSlugMatchPercent } from './services/preview-slug.js';
@@ -1174,6 +1175,19 @@ const janitorService = new JanitorService(
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+const infraFlapWatchdog = new InfraFlapWatchdog(
+  {
+    shell,
+    serverEventLogStore: activeServerEventLogStore,
+    stateService,
+  },
+  {
+    tickIntervalMs: Number(process.env.CDS_INFRA_FLAP_TICK_MS) || 60_000,
+    restartDeltaThreshold: Number(process.env.CDS_INFRA_FLAP_THRESHOLD) || 5,
+    windowMs: Number(process.env.CDS_INFRA_FLAP_WINDOW_MS) || 300_000,
+  },
+);
+
 const autoLifecycleService = new AutoLifecycleService(
   {
     stateService,
@@ -1814,6 +1828,14 @@ janitorService.setRemoveFn(async (slug: string) => {
   // 核心场景:noHttp:true 之前没 fallback TCP 探测 → service 标 stopped 但 cds
   // 一直认为它该 running,需要人工干预。Bug G 同步修了 fallback,这里做兜底。
   const restartAttempts = new Map<string, { count: number; nextAtMs: number }>();
+  // 2026-05-28 追加:跟踪每个 service 上次成功启动的时间戳。
+  // 用于识别 "docker start 成功但容器内部立刻崩溃" 的 crash loop(minio 典型):
+  //   start 成功 → restartAttempts.delete → 5s 后容器死 → 下次 tick start 又成功
+  //   → 永远跑,占用 docker daemon + master event loop。
+  // 修法:start 后记 timestamp,下次该 service 再触发 auto-restart 时,
+  // 若距上次 < SOFT_FAIL_WINDOW_MS,计入 soft-fail 累加器,达到上限后标 error 停。
+  const lastSuccessfulStartMs = new Map<string, number>();
+  const SOFT_FAIL_WINDOW_MS = 60_000; // 启动后 60s 内再死 = 真在 crash loop
   let autoRestartHandle: NodeJS.Timeout | null = null;
   function startAutoRestartLoop(): void {
     if (autoRestartHandle) return;
@@ -2022,12 +2044,62 @@ janitorService.setRemoveFn(async (slug: string) => {
     for (const svc of stateService.getInfraServices()) {
       if (svc.status !== 'running') continue;
       const found = infraContainers.get(svc.containerName);
-      if (found && found.running) continue;
+      if (found && found.running) {
+        // 2026-05-28 真恢复检测:容器活着 + 距离上次启动 >= SOFT_FAIL_WINDOW_MS
+        // 才视为真正恢复,清掉软失败计数。这之前一直保留 attempts,即使
+        // crash-loop 期间 docker start 偶尔成功也不会洗白。
+        const key = `infra:${svc.containerName}`;
+        const lastSuccess = lastSuccessfulStartMs.get(key);
+        if (lastSuccess && now - lastSuccess >= SOFT_FAIL_WINDOW_MS) {
+          if (restartAttempts.has(key)) {
+            console.log(`[auto-restart] infra ${svc.containerName} 已稳定存活 ${Math.round((now - lastSuccess) / 1000)}s,清除软失败计数`);
+            restartAttempts.delete(key);
+          }
+          lastSuccessfulStartMs.delete(key);
+        }
+        continue;
+      }
       if (!found) continue;
 
       const attemptKey = `infra:${svc.containerName}`;
       const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
       if (now < att.nextAtMs) continue;
+
+      // 2026-05-28 软失败检测:如果上次 docker start 成功了不到 SOFT_FAIL_WINDOW_MS
+      // 容器又死了,这是内部 crash loop(minio 凭密码 < 8 字符 / volume 权限 / 镜像
+      // 自杀等),docker start 永远会成功但马上又死。计入 att.count 防止 30s 一次
+      // 死循环占满 CPU。
+      const lastSuccess = lastSuccessfulStartMs.get(attemptKey);
+      if (lastSuccess && now - lastSuccess < SOFT_FAIL_WINDOW_MS) {
+        att.count += 1;
+        att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
+        restartAttempts.set(attemptKey, att);
+        console.warn(
+          `[auto-restart] infra ${svc.containerName} 检测到 crash loop ` +
+          `(启动后 ${Math.round((now - lastSuccess) / 1000)}s 内崩溃),` +
+          `软失败计数 ${att.count}/${MAX_RETRIES}`,
+        );
+        // 不立刻 docker start,下次 tick 再说(给 backoff 时间)
+        if (att.count >= MAX_RETRIES) {
+          svc.status = 'error';
+          svc.errorMessage = `auto-restart 检测到 crash loop:容器启动后短时间内反复崩溃,已停止重试。请检查容器日志(${svc.containerName}),常见原因:镜像 entrypoint 失败 / 环境变量缺失 / 卷权限错误`;
+          stateService.save();
+          lastSuccessfulStartMs.delete(attemptKey);
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'auto-restart',
+            action: 'infra.auto-restart.crash-loop-detected',
+            message: `infra ${svc.containerName} crash loop detected, auto-restart disabled`,
+            projectId: svc.projectId,
+            serviceId: svc.id,
+            containerName: svc.containerName,
+            details: { attempt: att.count, maxRetries: MAX_RETRIES, softFailWindowMs: SOFT_FAIL_WINDOW_MS },
+          });
+        }
+        continue;
+      }
+
       if (att.count >= MAX_RETRIES) {
         svc.status = 'error';
         svc.errorMessage = `auto-restart 已尝试 ${MAX_RETRIES} 次仍失败,请检查容器日志(${svc.containerName})`;
@@ -2054,7 +2126,11 @@ janitorService.setRemoveFn(async (slug: string) => {
       });
       if (startRes.exitCode === 0) {
         console.log(`[auto-restart] infra ${svc.containerName} 已重启(attempt ${att.count + 1})`);
-        restartAttempts.delete(attemptKey);
+        // 2026-05-28 修复:**不**清 restartAttempts。crash loop 场景下 docker start
+        // 永远会返 exit 0(容器先 spawn 再内部崩),不能因为 spawn 成功就清零软失败
+        // 计数 — 否则 soft-fail → start success → delete → soft-fail → ... 永远累积不到 MAX_RETRIES。
+        // 只在下一 tick 看到容器存活 >= SOFT_FAIL_WINDOW_MS 才视为真"恢复",到时统一清。
+        lastSuccessfulStartMs.set(attemptKey, now);
       } else {
         att.count += 1;
         att.nextAtMs = now + BASE_BACKOFF_MS * Math.pow(2, att.count - 1);
@@ -2093,6 +2169,12 @@ janitorService.setRemoveFn(async (slug: string) => {
       console.log('[auto-lifecycle] skipped on executor node (lifecycle decisions are coordinator-only)');
     }
     startAutoRestartLoop();
+    // 2026-05-28:infra 容器 flap 熔断守卫。每 60s 扫 RestartCount,5 分钟内
+    // delta ≥ 5 → 自动 docker stop 打破 unless-stopped 循环。openvisual minio
+    // 缺 cmd 灾难的根因防御。standalone / scheduler 角色启用,executor 跳过。
+    if (config.mode !== 'executor') {
+      infraFlapWatchdog.start();
+    }
   }
   function stopBackgroundServices(): void {
     dockerEventMonitor.stop();
@@ -2101,6 +2183,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     janitorService.stop();
     autoLifecycleService.stop();
     stopAutoRestartLoop();
+    infraFlapWatchdog.stop();
   }
 
   startBackgroundServices();
@@ -2838,6 +2921,29 @@ function listenWithRetry(
   onSuccess: () => void,
   opts: { force?: boolean; optional?: boolean; onServer?: (server: http.Server) => void } = {},
 ) {
+  // 2026-05-28 keepalive 匹配修复 — nginx upstream `keepalive_timeout` 默认 60s,
+  // Node `http.Server.keepAliveTimeout` 默认 **5s**。
+  //
+  // 场景:nginx 代理 → CDS,nginx 把 idle 连接保留进自己的 upstream 池(60s);
+  //   - 5 秒后 Node 主动 FIN 这条 idle TCP socket
+  //   - nginx 仍以为它能复用,把下条请求写过去 → recv() 返 ECONNRESET
+  //   - nginx 上抛 502/400(SSE 场景观测到 400 比例 ≈ 50%)
+  //
+  // SSH 现场诊断证据(2026-05-28):
+  //   - nginx upstream 单 backend,SSE 端点 200/400 严格交替 50%
+  //   - `docker logs cds_nginx`:upstream prematurely closed connection / recv() failed (104)
+  //   - 直连 master:9900 5/5 全 200(绕过 nginx pool 就好)
+  //
+  // 修复:Node keepAliveTimeout 必须**大于** nginx upstream idle timeout,
+  // 这样 socket 总是由 nginx 先回收(它知道自己不再用),Node 不会先主动 RST。
+  // Node 文档同时要求 headersTimeout >= keepAliveTimeout(否则 EBADF 风险)。
+  const applyKeepAliveTimings = (s: http.Server): void => {
+    // 65s > nginx 60s 上限,留 5s 余量
+    s.keepAliveTimeout = 65_000;
+    // 70s > keepAliveTimeout 5s,Node ≥ 18 文档要求
+    s.headersTimeout = 70_000;
+  };
+
   const MAX_ATTEMPTS = 5;
   // Track success so a late-arriving retry setTimeout doesn't call
   // `server.listen()` again on an already-bound socket and crash with
@@ -2854,6 +2960,9 @@ function listenWithRetry(
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
       onSuccess();
     });
+    // 2026-05-28: 给所有 listenWithRetry 的 server 统一应用 keepalive 超时,
+    // 解决 nginx idle pool 比 Node 长导致的 stale-socket 50% 失败。
+    applyKeepAliveTimings(s as http.Server);
     opts.onServer?.(s as http.Server);
     s.on('error', (err: Error & { code?: string }) => {
       if (listening) return; // same late-retry guard after listening flipped

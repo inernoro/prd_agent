@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import {
   Activity,
   Boxes,
@@ -80,6 +81,9 @@ const tabGroups: TabGroup[] = [
     label: '常用',
     items: [
       { value: 'maintenance', label: '更新与重启', icon: Wrench },
+      // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
+      // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
+      // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
       { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
       { value: 'overview', label: '概览', icon: Settings },
     ],
@@ -118,9 +122,10 @@ function getInitialTab(): TabValue {
 }
 
 function SettingsTabFallback(): JSX.Element {
+  // 2026-05-28:用品牌 loader 替换裸"加载设置..." 文本,跟 CDS 视觉调性一致。
   return (
-    <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4 text-sm text-muted-foreground">
-      加载设置...
+    <div className="flex min-h-[200px] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
+      <CdsLogoLoader size="lg" inline={false} label={<span className="text-sm text-muted-foreground">加载设置…</span>} />
     </div>
   );
 }

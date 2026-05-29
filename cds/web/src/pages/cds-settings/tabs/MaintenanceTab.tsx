@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 
 interface BranchMeta {
@@ -33,6 +34,30 @@ interface SelfBranchesResponse {
 }
 
 /** GET /api/self-status — CDS 自更新可见性面板用 */
+interface SelfUpdateTimings {
+  totalMs?: number;
+  fetchMs?: number;
+  checkoutMs?: number;
+  pullMs?: number;
+  resetMs?: number;
+  nginxRenderMs?: number;
+  analyzeMs?: number;
+  validateMs?: number;
+  validateInstallMs?: number;
+  validateTscMs?: number;
+  cacheMs?: number;
+  buildBackendMs?: number;
+  webBuildMs?: number;
+  webOnlyMs?: number;
+  docOnlyMs?: number;
+  noOpMs?: number;
+  restartMs?: number;
+  validate?: Record<string, number>;
+  webBuildSkipped?: boolean;
+  webBuildReason?: string;
+  [key: string]: number | boolean | string | Record<string, number> | undefined;
+}
+
 interface SelfUpdateRecord {
   ts: string;
   branch: string;
@@ -61,6 +86,9 @@ interface SelfUpdateRecord {
   /** /api/self-status slim 模式下返回:本 record 完整 SSE 步骤行数。前端
    *  据此显示「完整步骤(N 行)」按钮 + 用户点开时再 lazy fetch /api/self-update-history。 */
   stepsCount?: number;
+  /** 2026-05-28:阶段耗时分解。后端 `SelfUpdateTimingBreakdown`。
+   *  历史一直存在,但前端类型漏 → 渲染丢失。用户反馈"可观测性不强"的根因。 */
+  timings?: SelfUpdateTimings;
 }
 
 interface SystemdUnitDrift {
@@ -369,7 +397,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
-  const [historyOpen, setHistoryOpen] = useState(false);
+  // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
   // ⚠ 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
   // 检测到 backend 有 in-progress self-update(可能是别 session/webhook 触发),
@@ -485,92 +513,75 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     }
   }, [activeSelfUpdate, runState, isStale, isInterrupted, lastTickStaleMs, lastSelfUpdate, runStartedAt]);
 
+  // 2026-05-28 重构:/api/self-branches 永远返 200 + (可能 degraded)。
+  // 即使 degraded 也尽量给 branchDetails/branches/current 等字段。
   const loadBranches = useCallback(async () => {
     setBranchState({ status: 'loading' });
     try {
-      const data = await apiRequest<SelfBranchesResponse>('/api/self-branches');
+      const data = await apiRequest<SelfBranchesResponse & {
+        ok?: boolean;
+        degraded?: boolean;
+        reason?: string | null;
+        message?: string | null;
+      }>('/api/self-branches');
       setBranchState({ status: 'ok', data });
       setSelectedBranch((current) => current || data.current || data.branches?.[0] || '');
     } catch (err) {
-      setBranchState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      // /api/self-branches 现在永远 200,这里只在网络层失败(断网/CORS)才命中。
+      // 2026-05-28 用户反馈"主面板里不能出现红色提示":
+      //   即使本端点真失败了,也优先保留上次状态(loading→保持 loading 兜底),
+      //   绝不在主区里渲染红色 ErrorBlock。CDN/边缘抖动(transient)更要静默。
+      // eslint-disable-next-line no-console
+      console.warn('[MaintenanceTab] loadBranches failed:', err);
+      if (err instanceof ApiError && err.transient) {
+        // 抖动:保留 loading / 上次 ok 状态,不让用户看到红色横幅
+        setBranchState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
+        return;
+      }
+      // 持续真错也不再用 ErrorBlock 占主区,降级为 loading 状态(空 branch 选项)
+      setBranchState((prev) => prev.status === 'ok' ? prev : { status: 'loading' });
     }
   }, []);
 
-  // self-status 单独拉,fetch 远端比 self-branches 慢(网络),不阻塞 UI 主链路。
-  // 自更新历史顶部 chip 在数据回来前显示骨架占位。
-  //
-  // 2026-05-04 v3 fix(用户反馈"banner 一直显示 400"):
-  // 之前 loadSelfStatus 每次都先 setSelfStatus({status:'loading'}),失败后 status='error',
-  // useEffect 只在 mount 时跑一次,error 状态永远不自动清除。用户在 self-update
-  // 进程切换的 1-3s 窗口里 load 过一次拿到 4xx,banner 就卡死了。
-  //
-  // 现在:loadSelfStatus 不重置成 'loading'(保留上次的数据);成功 → status='ok'
-  // 自动覆盖 error。下方加 30s 轮询 + error 时 5s 快重试,banner 自动消失,
-  // 不需要手动按"重试"按钮。
-  const loadSelfStatus = useCallback(async () => {
-    try {
-      // 用户反馈 2026-05-06:面板永远显示 "fetch 失败 / 远端不可达 — top-level
-      // lightweight version"。根因:server.ts:1114 顶层 handler 抢答 /api/self-status,
-      // 默认走"轻量"分支(不调 git fetch),fetchOk 永远 false,remoteAheadCount 永远 0。
-      // 必须 ?probe=remote 才会 next() 流到 branches.ts:8116 的完整版,真实 fetch + 算 ahead。
-      const data = await apiRequest<SelfStatusResponse>('/api/self-status?probe=remote');
-      setSelfStatus({ status: 'ok', data });
-    } catch (err) {
-      setSelfStatus((prev) => {
-        // 之前已有数据 → 保留,只标记 error(banner 还是显示,但 chip 仍在)
-        // 还没数据 → 走 error-only(初次 load 失败)
-        const message = err instanceof ApiError ? err.message : String(err);
-        if (prev.status === 'ok') {
-          return { status: 'ok', data: prev.data };
-        }
-        return { status: 'error', message };
-      });
-    }
-  }, []);
+  // 2026-05-28 重构:不再独立轮询 /api/self-status?probe=remote。改为订阅
+  // useCdsEvents store 的 self.status 事件。任何 tab/webhook 触发的自更新都会
+  // 经由 cds-events bus 实时推过来,远比 30s 轮询新鲜。窗口事件
+  // 'cds:active-self-update' 不再需要(原本就是 GlobalUpdateBadge 转发的,
+  // 现在两边读同一个 store)。
+  const cdsEvents = useCdsEvents();
 
   useEffect(() => {
     void loadBranches();
-    void loadSelfStatus();
-    // 30s 轮询 + error 状态下加倍频率(5s)。banner 一旦后端恢复立即自动消失。
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = (delay: number): void => {
-      if (disposed) return;
-      timer = setTimeout(async () => {
-        await loadSelfStatus();
-        // 用 useState getter 拿最新 status 决定下次 delay
-        // 这里用 setSelfStatus 只读不写
-        setSelfStatus((prev) => {
-          tick(prev.status === 'error' ? 5000 : 30000);
-          return prev;
-        });
-      }, delay);
-    };
-    tick(30000);
+  }, [loadBranches]);
 
-    // ⚠ Bugbot 59568cb0:GlobalUpdateBadge 已订阅 /api/self-status/stream,
-    // 接收 SSE snapshot/update 事件后会 dispatch 'cds:active-self-update'。
-    // 这里监听该事件,把 activeSelfUpdate 立刻 patch 进本地 selfStatus,
-    // 不再等 30s 轮询周期 — 别 tab/webhook 触发的自更新进度实时跨 tab 同步。
-    const onActive = (e: Event): void => {
-      const detail = (e as CustomEvent<ActiveSelfUpdate | null>).detail ?? null;
-      setSelfStatus((prev) => {
-        if (prev.status !== 'ok') return prev;
-        // detail 与现状相等就不触发重渲染,避免 useEffect 噪音。
-        const cur = prev.data.activeSelfUpdate ?? null;
-        const same = (cur?.startedAt === detail?.startedAt) && (cur?.step === detail?.step) && (cur?.trigger === detail?.trigger);
-        if (same) return prev;
-        return { status: 'ok', data: { ...prev.data, activeSelfUpdate: detail } };
-      });
+  // snapshot → selfStatus 同步;degraded 时保留旧值显示
+  useEffect(() => {
+    const snap = cdsEvents.snapshot ?? cdsEvents.lastKnownGood;
+    if (!snap) return;
+    // 把 useCdsEvents 的 SelfStatusSnapshot 映射回 MaintenanceTab 的 SelfStatusResponse 形状
+    const mapped: SelfStatusResponse = {
+      currentBranch: snap.currentBranch ?? '',
+      headSha: snap.headSha ?? '',
+      headIso: snap.headIso ?? '',
+      fetchOk: snap.fetchOk ?? true,
+      fetchError: snap.fetchError ?? undefined,
+      remoteAheadCount: snap.remoteAheadCount ?? 0,
+      localAheadCount: snap.localAheadCount ?? 0,
+      remoteAheadSubjects: (snap.remoteAheadSubjects ?? []) as Array<{
+        sha: string;
+        subject: string;
+        date: string;
+      }>,
+      activeSelfUpdate: snap.activeSelfUpdate as ActiveSelfUpdate | null,
+      systemdUnitDrift: snap.systemdUnitDrift as SystemdUnitDrift | null,
+      runningPid: snap.runningPid,
+      pidStartedAt: snap.pidStartedAt ?? null,
+      restartStatus: snap.restartStatus,
+      lastSelfUpdate: (snap.lastSelfUpdate ?? null) as SelfUpdateRecord | null,
+      selfUpdateHistory: (snap.selfUpdateHistory ?? []) as SelfUpdateRecord[],
     };
-    window.addEventListener('cds:active-self-update', onActive);
-
-    return () => {
-      disposed = true;
-      if (timer) clearTimeout(timer);
-      window.removeEventListener('cds:active-self-update', onActive);
-    };
-  }, [loadBranches, loadSelfStatus]);
+    setSelfStatus({ status: 'ok', data: mapped });
+  }, [cdsEvents.snapshot, cdsEvents.lastKnownGood]);
 
   // 关闭 dropdown 当用户点外面
   useEffect(() => {
@@ -670,7 +681,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       });
       setRunState((current) => (current === 'error' ? 'error' : 'success'));
       onToast(`${label} 已提交，正在等待 CDS 验证`);
-      void loadSelfStatus();
+      // 2026-05-28: 旧的 loadSelfStatus() 已删,改为触发后端 refresh job。
+      // 状态变化通过 useCdsEvents 的 self.status / self.refresh.* 事件自动推送。
+      void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ });
       // 2026-05-04 fix(用户反馈"显示已提交重启,但实际未重启"):
       // SSE 'done' 只代表后端发起了 process.exit + spawn,不代表新进程**真起来了**。
       // 之前 UI 没有任何 verification,用户得手动 refresh 才能知道是否成功。
@@ -701,7 +714,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       setRunTitle(message);
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
-      void loadSelfStatus();
+      // 2026-05-28: 旧的 loadSelfStatus() 已删,改为触发后端 refresh job。
+      // 状态变化通过 useCdsEvents 的 self.status / self.refresh.* 事件自动推送。
+      void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ });
       setRunEndedAt(Date.now());
     }
   }
@@ -738,8 +753,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         <div className="space-y-5">
           <SelfUpdateStatusPanel
             state={selfStatus}
-            onRefresh={() => void loadSelfStatus()}
-            onOpenHistory={() => setHistoryOpen(true)}
+            onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
           />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
@@ -973,20 +987,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         </Dialog>
       </DisclosurePanel>
 
-      {/* 自更新历史抽屉 — 用 shadcn Dialog 自动满足布局 3 硬约束(createPortal /
-          inline 高度 / min-h-0),不会被外层 Section 的 overflow 裁切。
-          状态栏 chip 点击打开,显示最近 20 条流水。*/}
-      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>CDS 自更新历史</DialogTitle>
-            <DialogDescription>
-              最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。
-            </DialogDescription>
-          </DialogHeader>
-          <SelfUpdateHistoryList open={historyOpen} fallback={selfStatus} />
-        </DialogContent>
-      </Dialog>
+      {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
+          用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。 */}
+      <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
+        <SelfUpdateHistoryList />
+      </Section>
     </div>
   );
 }
@@ -1003,11 +1008,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 function SelfUpdateStatusPanel({
   state,
   onRefresh,
-  onOpenHistory,
 }: {
   state: SelfStatusState;
   onRefresh: () => void;
-  onOpenHistory: () => void;
 }): JSX.Element {
   if (state.status === 'loading') {
     return (
@@ -1066,15 +1069,13 @@ function SelfUpdateStatusPanel({
         ) : null}
 
         {data.lastSelfUpdate ? (
-          <button
-            type="button"
-            onClick={onOpenHistory}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs transition-colors hover:bg-[hsl(var(--surface-sunken))] ${selfUpdateStatusClass(data.lastSelfUpdate.status)}`}
-            title="点击查看完整历史"
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${selfUpdateStatusClass(data.lastSelfUpdate.status)}`}
+            title="完整历史见下方"
           >
             <RotateCw className="h-3.5 w-3.5" />
             上次更新 · {formatRelativeTime(data.lastSelfUpdate.ts)} · {selfUpdateStatusLabel(data.lastSelfUpdate.status)}
-          </button>
+          </span>
         ) : null}
 
         {data.restartStatus && data.restartStatus !== 'not_required' ? (
@@ -1094,9 +1095,7 @@ function SelfUpdateStatusPanel({
 
         <div className="ml-auto flex items-center gap-2">
           {selfUpdateHistory.length > 0 ? (
-            <Button type="button" size="sm" variant="ghost" onClick={onOpenHistory}>
-              历史 {Math.min(selfUpdateHistory.length, 20)}
-            </Button>
+            <span className="text-xs text-muted-foreground">下方有最近 {Math.min(selfUpdateHistory.length, 20)} 条历史</span>
           ) : null}
           <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
             <RefreshCw />
@@ -1170,23 +1169,34 @@ type HistoryFetchState =
   | { status: 'error'; message: string }
   | { status: 'ok'; records: SelfUpdateRecord[] };
 
-function SelfUpdateHistoryList({
-  open,
-  fallback,
-}: {
-  open: boolean;
-  fallback: SelfStatusState;
-}): JSX.Element {
+function SelfUpdateHistoryList(): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
 
-  // 只有当 dialog 打开时才拉完整版(含 steps)。/api/self-status 默认 slim
-  // payload 没有 steps,展开"完整步骤"也看不到东西;切到独立 endpoint 才有。
   const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const events = useCdsEvents();
+
+  // 2026-05-28 用户反馈"我还没看明白就被闪了一下":
+  // 不再用 snapshot.selfUpdateHistory(每次 self.status 都 re-render),
+  // 改用独立 endpoint /api/self-update-history,只在两个时刻 re-fetch:
+  //   1. 首次 mount(打开页面)
+  //   2. 自更新真正完成时(self.update.done / self.update.failed)
+  //   3. 用户点"刷新"按钮
+  // 中间的 status / heartbeat / step 事件全部忽略 — 列表内容不会变就不刷。
+  const updatingPrev = useRef<typeof events.updating>(null);
   useEffect(() => {
-    if (!open) return;
+    const wasUpdating = !!updatingPrev.current;
+    const isUpdating = !!events.updating;
+    updatingPrev.current = events.updating;
+    // updating: true → false 表示一次更新结束,这时候才有新历史可拉
+    if (wasUpdating && !isUpdating) {
+      setRefreshNonce((n) => n + 1);
+    }
+  }, [events.updating]);
+
+  useEffect(() => {
     let cancelled = false;
-    setHistoryState({ status: 'loading' });
     fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1198,22 +1208,21 @@ function SelfUpdateHistoryList({
       })
       .catch((err: Error) => {
         if (cancelled) return;
-        // 拉完整版失败 → 优雅降级到 selfStatus 里的 slim history(虽然没 steps
-        // 但元数据齐全),前端不至于一片空白。
-        const fallbackList =
-          fallback.status === 'ok' ? fallback.data.selfUpdateHistory ?? [] : [];
-        setHistoryState({
-          status: 'ok',
-          records: fallbackList,
-        });
         // 不强制 error 态;静默 console 给运维看
         // eslint-disable-next-line no-console
-        console.warn('[self-update-history] 拉取失败,回退到 slim 元数据:', err.message);
+        console.warn('[self-update-history] 拉取失败:', err.message);
+        // 保留当前状态不变,避免刷成空
+        if (historyState.status === 'loading') {
+          setHistoryState({ status: 'error', message: err.message });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [open, fallback]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
+
+  const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
 
   if (historyState.status === 'loading') {
     return (
@@ -1230,8 +1239,15 @@ function SelfUpdateHistoryList({
       <div className="py-8 text-center text-sm text-muted-foreground">尚无历史</div>
     );
   }
+  const stats = summariseHistory(historyState.records);
   return (
-    <div className="max-h-[60vh] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+    <div className="max-h-[70vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
+      <div className="flex items-center justify-end pb-2">
+        <Button type="button" variant="ghost" size="sm" onClick={manualRefresh}>
+          <RefreshCw className="h-3 w-3" /> 刷新
+        </Button>
+      </div>
+      <SelfUpdateHistoryStats stats={stats} />
       <ul className="divide-y divide-[hsl(var(--hairline))]">
         {historyState.records.map((rec, idx) => (
           <li key={`${rec.ts}-${idx}`} className="flex flex-col gap-1 py-3 text-sm">
@@ -1312,6 +1328,7 @@ function SelfUpdateHistoryList({
                 </span>
               ) : null}
             </div>
+            {rec.timings ? <SelfUpdateStageBar timings={rec.timings} totalMs={rec.durationMs} /> : null}
             {rec.error ? (
               <div className="mt-0.5 text-xs text-destructive/80" title={rec.error}>
                 {rec.error.length > 200 ? rec.error.slice(0, 200) + '…' : rec.error}
@@ -1388,4 +1405,168 @@ function selfUpdateTriggerLabel(trigger: SelfUpdateRecord['trigger']): string {
     case 'auto-poll':  return '自动轮询';
     case 'webhook':    return 'GitHub webhook';
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 2026-05-28 自更新可观测性加强
+// 用户反馈:"返回日志不正确" — 根因是前端类型缺 timings 字段,
+// 后端 SelfUpdateTimingBreakdown 数据全在但 UI 没渲染。下面三件:
+//   1. 聚合统计:成功率 / 平均/中位/p95 耗时 / 最长一条 + 阶段
+//   2. 单条阶段耗时条:fetch / install / tsc / build / web-build 各占多少
+//   3. 上述都按"实际有数据的字段"做,缺失字段不假装(以前没有就标 -)
+// ─────────────────────────────────────────────────────────────
+
+interface SelfUpdateHistoryStatsData {
+  total: number;
+  success: number;
+  failed: number;
+  deferred: number;
+  aborted: number;
+  avgMs: number | null;
+  medianMs: number | null;
+  p95Ms: number | null;
+  fastestMs: number | null;
+  slowestRec: SelfUpdateRecord | null;
+}
+
+function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsData {
+  const total = records.length;
+  let success = 0, failed = 0, deferred = 0, aborted = 0;
+  const durations: number[] = [];
+  let slowestRec: SelfUpdateRecord | null = null;
+  for (const r of records) {
+    if (r.status === 'success') success += 1;
+    else if (r.status === 'failed') failed += 1;
+    else if (r.status === 'deferred') deferred += 1;
+    else if (r.status === 'aborted') aborted += 1;
+    if (typeof r.durationMs === 'number' && r.durationMs > 0) {
+      durations.push(r.durationMs);
+      if (!slowestRec || (r.durationMs > (slowestRec.durationMs || 0))) slowestRec = r;
+    }
+  }
+  durations.sort((a, b) => a - b);
+  const sum = durations.reduce((s, v) => s + v, 0);
+  const avgMs = durations.length > 0 ? Math.round(sum / durations.length) : null;
+  const medianMs = durations.length > 0 ? durations[Math.floor(durations.length / 2)] : null;
+  const p95Idx = Math.max(0, Math.floor(durations.length * 0.95) - 1);
+  const p95Ms = durations.length > 0 ? durations[Math.min(p95Idx, durations.length - 1)] : null;
+  const fastestMs = durations.length > 0 ? durations[0] : null;
+  return { total, success, failed, deferred, aborted, avgMs, medianMs, p95Ms, fastestMs, slowestRec };
+}
+
+function fmtMs(ms: number | null | undefined): string {
+  if (ms == null) return '-';
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }): JSX.Element {
+  const successRate = stats.total > 0 ? Math.round((stats.success / stats.total) * 100) : 0;
+  return (
+    <div className="sticky top-0 z-10 mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span className="font-semibold">最近 {stats.total} 次:</span>
+        <span className="rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5">
+          成功 {stats.success}
+        </span>
+        {stats.failed > 0 ? (
+          <span className="rounded bg-red-500/10 text-red-700 dark:text-red-300 px-2 py-0.5">
+            失败 {stats.failed}
+          </span>
+        ) : null}
+        {stats.deferred > 0 ? (
+          <span className="rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5">
+            延后 {stats.deferred}
+          </span>
+        ) : null}
+        {stats.aborted > 0 ? (
+          <span className="rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2 py-0.5">
+            中止 {stats.aborted}
+          </span>
+        ) : null}
+        <span className="text-muted-foreground">成功率 {successRate}%</span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <div>
+          <div className="text-muted-foreground">最快</div>
+          <div className="font-mono">{fmtMs(stats.fastestMs)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">中位</div>
+          <div className="font-mono">{fmtMs(stats.medianMs)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">平均</div>
+          <div className="font-mono">{fmtMs(stats.avgMs)}</div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">P95</div>
+          <div className="font-mono">{fmtMs(stats.p95Ms)}</div>
+        </div>
+      </div>
+      {stats.slowestRec ? (
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          最长一次:{fmtMs(stats.slowestRec.durationMs)} ·{' '}
+          {selfUpdateStatusLabel(stats.slowestRec.status)} · {formatRelativeTime(stats.slowestRec.ts)}
+          {stats.slowestRec.timings?.webBuildMs && stats.slowestRec.timings.webBuildMs > 60_000
+            ? ` · web build 占 ${fmtMs(stats.slowestRec.timings.webBuildMs)}`
+            : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// 阶段耗时条:把 timings 里的各阶段按比例横向铺出来,鼠标悬停看每段名字 + 数值。
+// 之前用户看的只是 "X.Xs 流程" 一个数字,完全看不出 25s 是 tsc 还是 web build 占的。
+interface StageSeg { key: string; label: string; ms: number; color: string }
+
+function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; totalMs?: number }): JSX.Element | null {
+  const segments: StageSeg[] = [];
+  const push = (key: string, label: string, ms: number | undefined, color: string): void => {
+    if (typeof ms === 'number' && ms > 0) segments.push({ key, label, ms, color });
+  };
+  push('fetch', '拉取', (timings.fetchMs ?? 0) + (timings.pullMs ?? 0), 'bg-sky-500/70');
+  push('checkout', '切分支', (timings.checkoutMs ?? 0) + (timings.resetMs ?? 0), 'bg-cyan-500/70');
+  push('nginx', 'nginx 渲染', timings.nginxRenderMs, 'bg-violet-500/70');
+  push('install', 'pnpm install', timings.validateInstallMs, 'bg-indigo-500/70');
+  push('tsc', '类型校验', timings.validateTscMs, 'bg-amber-500/70');
+  push('cache', '清缓存', timings.cacheMs, 'bg-stone-500/70');
+  push('backend', '后端 esbuild', timings.buildBackendMs, 'bg-emerald-500/70');
+  push('web', 'web 重建', timings.webBuildMs, 'bg-rose-500/70');
+  push('restart', '重启', timings.restartMs, 'bg-fuchsia-500/70');
+
+  if (segments.length === 0) return null;
+
+  const totalSeg = segments.reduce((s, v) => s + v.ms, 0);
+  const total = Math.max(totalSeg, timings.totalMs ?? 0, totalMs ?? 0);
+  if (total === 0) return null;
+
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex h-2 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
+        {segments.map((seg) => (
+          <div
+            key={seg.key}
+            className={seg.color}
+            style={{ width: `${(seg.ms / total) * 100}%` }}
+            title={`${seg.label}: ${fmtMs(seg.ms)}`}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        {segments.map((seg) => (
+          <span key={seg.key}>
+            <span className={`inline-block h-2 w-2 align-middle ${seg.color}`} />{' '}
+            {seg.label} {fmtMs(seg.ms)}
+          </span>
+        ))}
+        {timings.webBuildSkipped ? (
+          <span className="text-emerald-700 dark:text-emerald-300">
+            (web 命中缓存 · {timings.webBuildReason})
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
 }

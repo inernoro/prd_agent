@@ -10,14 +10,27 @@
  */
 
 export class ApiError extends Error {
+  /**
+   * 2026-05-28 增:transient 标志。
+   *
+   * 当后端 / CDN 临时返非 2xx 但响应**没有可读错误体**(典型 Cloudflare 边缘
+   * 偶发 400/502/503,无 `error/message` 字段、无 x-cds-request-id)时打 true。
+   * 调用方可以据此选择"静默吞掉 + 保留 lastKnownGood"而非弹错。
+   *
+   * 注意:有 body 或有 request-id 的失败不算 transient(那是真实的业务/服务端错)。
+   */
+  transient: boolean;
+
   constructor(
     public status: number,
     public body: unknown,
     message: string,
-    public requestId?: string
+    public requestId?: string,
+    transient = false,
   ) {
     super(message);
     this.name = 'ApiError';
+    this.transient = transient;
   }
 }
 
@@ -40,6 +53,24 @@ export function shouldPreferCdsPassthrough(hostname = currentHostname()): boolea
   return !['localhost', '127.0.0.1', '::1'].includes(normalized);
 }
 
+/**
+ * 2026-05-28: 静默 transient retry — Cloudflare 边缘 400/5xx 抖动专治。
+ *
+ * 如果第一次 fetch 收到的是 transient 形态(4xx/5xx + 空 body + 无 requestId),
+ * 等 500ms 自动重试一次。99%+ 边缘抖动是单点的,第二次就成功了,调用方完全
+ * 无感。两次都失败再抛 ApiError(此时 transient=true,调用方可选择静默)。
+ *
+ * GET 是天然幂等;POST/PUT 默认**不**自动重试(可能产生重复副作用),
+ * 调用方需要时通过 `options.retryTransient: true` 显式开启。
+ */
+const TRANSIENT_STATUS = new Set([400, 502, 503, 504]);
+
+function looksTransient(res: Response, parsed: unknown, requestId?: string): boolean {
+  if (!TRANSIENT_STATUS.has(res.status)) return false;
+  if (requestId) return false; // 真后端返的 4xx/5xx,不抖动
+  return hasNoReadableError(parsed);
+}
+
 export async function apiRequest<T = unknown>(
   path: string,
   options: ApiOptions = {}
@@ -48,9 +79,21 @@ export async function apiRequest<T = unknown>(
   const rawUrl = path.startsWith('/') ? path : `/${path}`;
   const url = apiUrl(rawUrl);
   const init: RequestInit = buildRequestInit(method, body, signal, headers);
+  const allowRetry = method === 'GET' || (options as ApiOptions & { retryTransient?: boolean }).retryTransient === true;
 
   const first = await fetchAndParse(url, init);
   if (first.res.ok) return first.parsed as T;
+
+  // ── transient 自动静默重试 ──
+  if (allowRetry && looksTransient(first.res, first.parsed, first.requestId)) {
+    // eslint-disable-next-line no-console
+    console.warn('[apiRequest transient retry]', method, url, `HTTP ${first.res.status}`);
+    await new Promise((r) => setTimeout(r, 500));
+    const retried = await fetchAndParse(url, init);
+    if (retried.res.ok) return retried.parsed as T;
+    // 两次都炸 → 真错(或者持续 transient)。继续走 alternate 路径,最终若仍 transient
+    // 抛出会标 transient=true,UI 端可选择静默。
+  }
 
   const retryUrl = alternateApiUrl(rawUrl, url);
   const shouldRetryAlternate =
@@ -148,10 +191,28 @@ function throwApiError(
   } else if (typeof parsed === 'string' && parsed.trim()) {
     details.push(parsed.trim().slice(0, 240));
   }
-  const reason = details.length
-    ? details.join(' · ')
-    : '服务拒绝了请求，但没有返回可读错误原因；请在 HTTP 活动详情里用 requestId 追踪。';
-  const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
-  const message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
-  throw new ApiError(res.status, parsed, message, requestId);
+
+  // 2026-05-28 用户反馈"GET /_cds/api/branches?...失败 (HTTP 400)"太吓人:
+  // 当后端 / CDN 临时拒绝且**没给可读错误体也没 requestId**,几乎肯定是
+  // Cloudflare 边缘抖动 / 临时连接重置。这种情况标 transient,UI 端用一句
+  // 友好文案("网络抖动,已保留缓存"),完整诊断只去 console。
+  const isTransient = !details.length && !requestId && (
+    res.status === 400 || res.status === 502 || res.status === 503 || res.status === 504
+  );
+
+  let message: string;
+  if (isTransient) {
+    // 用户可见文案:短 + 友好,不带 URL / status / requestId
+    message = '网络抖动,稍后会自动恢复';
+    // 完整诊断到 console,方便 F12 复盘
+    // eslint-disable-next-line no-console
+    console.warn('[cds-api transient]', method, url, `HTTP ${res.status}`, parsed);
+  } else {
+    const reason = details.length
+      ? details.join(' · ')
+      : '服务拒绝了请求，但没有返回可读错误原因';
+    const requestSuffix = requestId ? ` · requestId=${requestId}` : '';
+    message = `${method} ${url} 失败：${reason} (HTTP ${res.status})${requestSuffix}`;
+  }
+  throw new ApiError(res.status, parsed, message, requestId, isTransient);
 }

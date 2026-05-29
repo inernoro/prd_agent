@@ -6,9 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { createCdsEventsRouter } from './routes/cds-events.js';
+import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
-import { createProjectsRouter } from './routes/projects.js';
+import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
+import { createProjectComposeRouter } from './routes/project-compose.js';
+import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
@@ -531,6 +536,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /self-branches': '获取自身分支',
     'GET /self-status': '获取自更新状态',
     'GET /self-status/stream': '订阅自更新状态',
+    'GET /cds-events': '订阅 CDS 事件流',
+    'POST /self-refresh': '触发自更新刷新',
+    'GET /cds-system/operator/ops': '列出运维控制台操作',
+    'POST /cds-system/operator/run': '执行运维控制台操作',
+    'POST /cds-system/operator/request': '发起运维操作审批请求',
+    'GET /cds-system/operator/requests': '列出运维审批请求',
     'POST /self-update': '自我更新',
     'POST /login': '用户登录',
     'POST /logout': '用户登出',
@@ -643,6 +654,9 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
+    [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
+    [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
     [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
     [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
     [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
@@ -718,6 +732,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/github\/link$/, '关联 GitHub 仓库'],
     [/^DELETE \/projects\/(.+)\/github\/link$/, '解除 GitHub 关联'],
     [/^POST \/projects\/(.+)\/clone$/, '克隆代码'],
+    [/^GET \/projects\/(.+)\/storage$/, '获取项目存储'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -725,6 +740,14 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    // 项目虚拟 cds-compose.yml
+    [/^GET \/projects\/(.+)\/compose\.yml$/, '下载项目配置'],
+    [/^GET \/projects\/(.+)\/compose$/, '获取项目配置'],
+    [/^PUT \/projects\/(.+)\/compose$/, '保存项目配置'],
+    // 项目基础设施重新同步
+    [/^GET \/projects\/(.+)\/infra\/resync\/sources$/, '列出同步配置来源'],
+    [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
+    [/^POST \/projects\/(.+)\/infra\/resync\/execute$/, '执行基础设施同步'],
     // 分支扩展
     [/^GET \/branches\/stream$/, '订阅分支状态流'],
     [/^POST \/branches\/(.+)\/checkout\/(.+)$/, '检出 Commit'],
@@ -2195,7 +2218,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // GET /api/ai/pairing-stream — SSE for dashboard to receive pairing notifications
   app.get('/api/ai/pairing-stream', (_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     aiPairingClients.add(res);
     // Send existing pending requests
     for (const req of pendingAiRequests.values()) {
@@ -2214,7 +2237,7 @@ export function createServer(deps: ServerDeps): express.Express {
   let stateSeq = 0;
 
   app.get('/api/state-stream', (_req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     stateClients.add(res);
     const heartbeat = setInterval(() => {
       try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
@@ -2287,7 +2310,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     activityClients.add(res);
     // Send buffered history
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
@@ -2327,7 +2350,7 @@ export function createServer(deps: ServerDeps): express.Express {
     res.json({ events: ordered, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
   });
   app.get('/api/proxy-log/stream', (req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
     proxyLogClients.add(res);
     const afterSeq = parseInt(req.query.afterSeq as string) || 0;
     for (const evt of deps.proxyService.getProxyLog()) {
@@ -2741,6 +2764,25 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
+  app.use('/api', createProjectInfraResyncRouter({
+    stateService: deps.stateService,
+    containerService: deps.containerService,
+    serverEventLogStore: deps.serverEventLogStore,
+    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
+  app.use('/api', createProjectComposeRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
+  app.use('/api', createProjectStorageRouter({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
@@ -2921,6 +2963,21 @@ export function createServer(deps: ServerDeps): express.Express {
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
     branchOperationCoordinator: deps.branchOperationCoordinator,
+  }));
+
+  // 2026-05-28: 单一 SSE 通道 + 任务化刷新。
+  // 必须挂在 createBranchRouter 之后,因为 cache.init() 在 branches.ts 里执行,
+  // cds-events 路由要读已 init 好的 cache。
+  app.use('/api', createCdsEventsRouter());
+
+  // 2026-05-28: 运维控制台 — 取代"需要 SSH 上服务器"的运维操作。
+  // 提供 nginx reload / 配置 dump / shell 等高级操作的 UI 一键执行入口。
+  // 所有 op 走 access key 鉴权 + 服务端注册表(不接受任意命令),destructive 需 confirm。
+  app.use('/api', createOperatorConsoleRouter({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    repoRoot: deps.config.repoRoot,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
 
   // ── GitHub App webhook + linking endpoints (P6) ──

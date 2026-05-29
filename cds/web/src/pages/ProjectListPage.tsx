@@ -450,6 +450,8 @@ export function ProjectListPage(): JSX.Element {
       setPendingImportError('');
       return data;
     } catch (err) {
+      // 2026-05-28 transient(Cloudflare 边缘抖动)静默保留缓存,不弹任何提示
+      if (err instanceof ApiError && err.transient) return null;
       const message = err instanceof ApiError ? err.message : String(err);
       setPendingImportError(message);
       return null;

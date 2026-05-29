@@ -820,7 +820,11 @@ def _check_blocking_pending_import(branch_id: str) -> dict[str, Any] | None:
             return {
                 "ok": False,
                 "error": "pending_import_not_applied",
-                "message": "项目存在未批准的 pending-import，必须先批准/拒绝才能 deploy",
+                "message": (
+                    "项目存在未批准的 pending-import，必须先批准/拒绝才能 deploy。"
+                    "CDS Dashboard 任意已登录页面右下角会自动弹出'Agent 导入 N'徽章,"
+                    "点击批准即可(2026-05-28 起);也可直接打开 approveUrl。"
+                ),
                 "importId": imp.get("id"),
                 "projectId": project_id,
                 "approveUrl": approve_url,

@@ -33,6 +33,9 @@ import { randomBytes } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
+import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 
 export interface PendingImportRouterDeps {
   stateService: StateService;
@@ -205,6 +208,27 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
           });
           return;
         }
+
+        // 2026-05-28:infra 容器 cmd 白名单校验。已知某些 image 必须显式
+        // 带子命令(minio 必须 `server /data` / elasticsearch 类似),否则
+        // 容器启动后立即 exit 0 引发 unless-stopped 无限重启。
+        // 历史灾难:openvisual 的 minio cmd 缺失导致 288 次重启拖垮 host。
+        // 白名单走 config/infra-cmd-whitelist.ts 的 SSOT(与 project-infra-resync 共用,
+        // 2026-05-29 Cursor Bugbot:此前两处各抄一份有漂移风险)。
+        const badInfra = findInfraCmdViolations(check.infraServices);
+        if (badInfra.length > 0) {
+          const hint = badInfra
+            .map((v) => `${v.id} (${v.dockerImage}) → ${v.example}`)
+            .join('; ');
+          res.status(400).json({
+            error: 'invalid_infra_cmd',
+            field: 'composeYaml',
+            message:
+              `以下 infra 服务的 image 必须在 yaml 里显式声明 command,否则容器启动后会立即退出导致无限重启:\n` +
+              hint,
+          });
+          return;
+        }
       }
     } catch { /* parser already succeeded once above */ }
 
@@ -220,6 +244,24 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     };
     stateService.addPendingImport(item);
 
+    // 2026-05-28:广播事件,前端全局徽章/抽屉实时弹起,无需用户主动开 URL
+    try {
+      const all = stateService.getPendingImports();
+      const pendingCount = all.filter((i) => i.status === 'pending').length;
+      // Cursor Bugbot(PR #684, Low):created 事件顺带把 pendingCount 带上,消费方
+      // 收到 created 即可直接更新角标数,不必等紧随其后的 count 事件(自包含)。
+      cdsEventsBus.publish('pending-import.created', {
+        importId: item.id,
+        projectId: item.projectId,
+        agentName: item.agentName,
+        purpose: item.purpose,
+        summary: item.summary,
+        submittedAt: item.submittedAt,
+        pendingCount,
+      });
+      cdsEventsBus.publish('pending-import.count', { pendingCount });
+    } catch { /* event publish 失败不影响主流程 */ }
+
     res.status(201).json({
       importId: item.id,
       approveUrl: `/project-list?pendingImport=${item.id}`,
@@ -228,22 +270,38 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
   });
 
   // GET /api/pending-imports — list all (pending first, then recent decided).
+  // 2026-05-28: 永不 5xx — 失败时返 200 + degraded(对齐自检接口降级契约)
   router.get('/pending-imports', (_req, res) => {
-    stateService.prunePendingImports(AUDIT_RETENTION_MS);
-    const all = stateService.getPendingImports();
-    // Pending first, then most recent decided.
-    const sorted = [...all].sort((a, b) => {
-      if (a.status === 'pending' && b.status !== 'pending') return -1;
-      if (a.status !== 'pending' && b.status === 'pending') return 1;
-      return b.submittedAt.localeCompare(a.submittedAt);
-    });
-    // Don't leak raw YAML in the list view — the dashboard fetches it
-    // lazily via GET /pending-imports/:id when the drawer opens.
-    const stripped = sorted.map(({ composeYaml: _yaml, ...rest }) => rest);
-    res.json({
-      imports: stripped,
-      pendingCount: sorted.filter((p) => p.status === 'pending').length,
-    });
+    try {
+      stateService.prunePendingImports(AUDIT_RETENTION_MS);
+      const all = stateService.getPendingImports();
+      // Pending first, then most recent decided.
+      const sorted = [...all].sort((a, b) => {
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (a.status !== 'pending' && b.status === 'pending') return 1;
+        return b.submittedAt.localeCompare(a.submittedAt);
+      });
+      // Don't leak raw YAML in the list view — the dashboard fetches it
+      // lazily via GET /pending-imports/:id when the drawer opens.
+      const stripped = sorted.map(({ composeYaml: _yaml, ...rest }) => rest);
+      res.json({
+        ok: true,
+        degraded: false,
+        imports: stripped,
+        pendingCount: sorted.filter((p) => p.status === 'pending').length,
+      });
+    } catch (err) {
+      res.json({
+        ok: false,
+        degraded: true,
+        reason: 'state_load_failed',
+        message: (err as Error).message.slice(0, 500),
+        data: null,
+        lastKnownGood: {},
+        imports: [],
+        pendingCount: 0,
+      });
+    }
   });
 
   // GET /api/pending-imports/:id — full record including raw YAML.
@@ -353,17 +411,53 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         volumes: def.volumes || [],
         env: def.env || {},
         healthCheck: def.healthCheck,
+        // 2026-05-28:命令/入口透传(修 minio 灾难)
+        ...(def.command !== undefined ? { command: def.command } : {}),
+        ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
+        // Cursor Bugbot(PR #684):parseCdsCompose 已从 yaml restart: 提取 restartPolicy,
+        // 但 approve 路径原来只透传 command/entrypoint,丢了 restartPolicy → 用户写
+        // restart: always 也会回落 on-failure:3。在存储边界 sanitize 后落库(纵深防御)。
+        ...(def.restartPolicy !== undefined ? { restartPolicy: sanitizeDockerRestartPolicy(def.restartPolicy) } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);
       appliedInfra.push(service.id);
     }
 
+    // 把批准的 yaml 落为项目的虚拟 cds-compose.yml（配置 SSOT）。过去这份
+    // 原始 yaml 在解析成 profile/infra 后被丢弃，导致后续无从读改一份权威
+    // 配置、也无从检测漂移。现在 approve 即固化。
+    const composeVersion = stateService.setProjectCompose(
+      project.id,
+      item.composeYaml,
+      'import-approved',
+    );
+
     stateService.updatePendingImport(item.id, {
       status: 'approved',
       decidedAt: new Date().toISOString(),
     });
     stateService.save();
+
+    try {
+      cdsEventsBus.publish('pending-import.decided', {
+        importId: item.id,
+        projectId: item.projectId,
+        decision: 'approved',
+        appliedProfiles,
+        appliedInfra,
+        appliedEnvKeys,
+      });
+      // 配置变更事件（E5 地基）：虚拟 compose 写入即广播，面板 SSE / 未来
+      // 的 agent 订阅流据此感知「配置已更新到 vN」。
+      cdsEventsBus.publish('project.config.changed', {
+        projectId: item.projectId,
+        composeVersion,
+        source: 'import-approved',
+      });
+      const pendingCount = stateService.getPendingImports().filter((i) => i.status === 'pending').length;
+      cdsEventsBus.publish('pending-import.count', { pendingCount });
+    } catch { /* ignore */ }
 
     res.json({
       applied: true,
@@ -385,11 +479,24 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       return;
     }
     const body = (req.body || {}) as { reason?: string };
+    const rejectReason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : undefined;
     stateService.updatePendingImport(item.id, {
       status: 'rejected',
-      rejectReason: typeof body.reason === 'string' ? body.reason.slice(0, 500) : undefined,
+      rejectReason,
       decidedAt: new Date().toISOString(),
     });
+
+    try {
+      cdsEventsBus.publish('pending-import.decided', {
+        importId: item.id,
+        projectId: item.projectId,
+        decision: 'rejected',
+        rejectReason,
+      });
+      const pendingCount = stateService.getPendingImports().filter((i) => i.status === 'pending').length;
+      cdsEventsBus.publish('pending-import.count', { pendingCount });
+    } catch { /* ignore */ }
+
     res.json({ rejected: true });
   });
 

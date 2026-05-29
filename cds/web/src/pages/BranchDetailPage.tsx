@@ -717,6 +717,8 @@ export function BranchDetailPage(): JSX.Element {
   useEffect(() => {
     if (!branchStreamProjectId || !branchStreamBranchId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(branchStreamProjectId)}`);
+    // 2026-05-28 阻断浏览器原生 3s 重试,避免 Cloudflare 边缘 400 风暴
+    source.onerror = () => { try { source.close(); } catch { /* tolerate */ } };
     source.addEventListener('branch.status', (ev) => {
       const data = parseSseJson<{ branchId?: string; projectId?: string; status?: BranchSummary['status'] }>(ev);
       if (!data || data.branchId !== branchStreamBranchId || !data.status) return;
@@ -743,6 +745,8 @@ export function BranchDetailPage(): JSX.Element {
     if (state.status !== 'ok') return;
     const labels = branchProxyLabels(state.branch, state.aliases);
     const source = new EventSource(apiUrl('/api/proxy-log/stream'));
+    // 2026-05-28 阻断浏览器原生 3s 重试,避免 Cloudflare 边缘 400 风暴
+    source.onerror = () => { try { source.close(); } catch { /* tolerate */ } };
     source.onmessage = (ev) => {
       try {
         const event = JSON.parse(ev.data) as ProxyLogEvent;

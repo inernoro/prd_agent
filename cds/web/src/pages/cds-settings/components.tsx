@@ -100,7 +100,23 @@ export function BranchDetailLoadingSkeleton({ className }: { className?: string 
   );
 }
 
-export function ErrorBlock({ message }: { message: string }): JSX.Element {
+export function ErrorBlock({ message, transient = false }: { message: string; transient?: boolean }): JSX.Element | null {
+  // 2026-05-28 新增 transient 参数。
+  // 用户反复反馈"主面板不能出现红色错误":Cloudflare 边缘 400 / CDN 抖动这类
+  // 临时性错误调用方传 transient=true,本组件**完全不渲染**任何东西,只在
+  // console 留诊断。真错误(认证、配置、依赖丢失)走原渲染。
+  //
+  // 调用方约定:
+  //   const transient = err instanceof ApiError && err.transient;
+  //   <ErrorBlock message={msg} transient={transient} />
+  //
+  // 这样 20+ 处现有 ErrorBlock 不用逐一改 catch 分支,只在传 ApiError.transient
+  // 时自动哑。下一步把 ApiError 透传到这里。
+  if (transient) {
+    // eslint-disable-next-line no-console
+    console.warn('[ErrorBlock transient hidden]', message);
+    return null;
+  }
   if (message.includes('未登录') || message.includes('401')) {
     return <AuthRequiredBlock />;
   }

@@ -25,6 +25,22 @@ export interface ComposeServiceDef {
   volumes: InfraVolume[];
   env: Record<string, string>;
   healthCheck?: InfraHealthCheck;
+  /**
+   * 2026-05-28:infra 容器的启动命令(yaml 里的 `command:` 字段)。可以是
+   * string 或 string[]。container.ts 的 docker run 会把它拼到 image 之后。
+   * 历史上漏掉这个字段,导致 minio 之类需要 `server /data` 子命令的 image
+   * 启动后立即 exit 0 → unless-stopped 无限重启的 prod 事故。
+   */
+  command?: string | string[];
+  /** Docker `--entrypoint` 覆盖,与 command 同时存在则一起传 */
+  entrypoint?: string | string[];
+  /**
+   * 2026-05-29:yaml 里的 `restart:` 字段(docker compose 标准:no /
+   * always / on-failure / unless-stopped 等)。仅在 yaml 显式声明时填充;
+   * 缺省时为 undefined,由下游(container.ts)按 on-failure:3 兜底。
+   * infra resync 的 diffSignatures 用它判定 restartPolicy 是否变化。
+   */
+  restartPolicy?: string;
 }
 
 /** Raw compose YAML structure */
@@ -76,6 +92,8 @@ interface ComposeServiceEntry {
   };
   container_name?: string;
   command?: string | string[];
+  /** docker compose 标准 `restart:` 重启策略(no/always/on-failure/unless-stopped) */
+  restart?: string;
   working_dir?: string;
   depends_on?: Record<string, { condition?: string }> | string[];
   labels?: Record<string, string> | string[];
@@ -254,6 +272,9 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
+      ...(entry.command !== undefined ? { command: entry.command } : {}),
+      ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
+      ...(entry.restart ? { restartPolicy: entry.restart } : {}),
     };
 
     results.push(parsed);
@@ -290,6 +311,9 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
+      ...(entry.command !== undefined ? { command: entry.command } : {}),
+      ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
+      ...(entry.restart ? { restartPolicy: entry.restart } : {}),
     });
   }
 
@@ -337,6 +361,15 @@ export function toComposeYaml(services: InfraService[]): string {
         interval: `${svc.healthCheck.interval}s`,
         retries: svc.healthCheck.retries,
       };
+    }
+
+    // 2026-05-28:command / entrypoint 必须随 InfraService 一起出回 yaml,
+    // 否则 export 后再 import 会丢失启动命令(minio 灾难复现路径)。
+    if (svc.command !== undefined) {
+      entry.command = svc.command;
+    }
+    if (svc.entrypoint !== undefined) {
+      entry.entrypoint = svc.entrypoint;
     }
 
     servicesMap[svc.id] = entry;
@@ -492,6 +525,9 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           env: extractEnv(entry.environment),
 
           healthCheck: extractHealthCheck(entry.healthcheck),
+          ...(entry.command !== undefined ? { command: entry.command } : {}),
+          ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
+          ...(entry.restart ? { restartPolicy: entry.restart } : {}),
         });
       }
     }
@@ -663,6 +699,20 @@ export function toCdsCompose(
       };
     }
 
+    // Codex review(PR #684, P2):infra 的 command / entrypoint / restartPolicy 必须
+    // 随 toCdsCompose 出回 yaml,否则 /api/export-config 导出再 import 会丢启动命令
+    // (minio/elasticsearch 崩溃循环复现路径)以及 restart 策略。与上面 standalone
+    // infra exporter 的修复对齐,这里是项目级全量导出路径,之前漏了。
+    if (svc.command !== undefined) {
+      entry.command = svc.command;
+    }
+    if (svc.entrypoint !== undefined) {
+      entry.entrypoint = svc.entrypoint;
+    }
+    if (svc.restartPolicy) {
+      entry.restart = svc.restartPolicy;
+    }
+
     servicesMap[svc.id] = entry;
   }
 
@@ -788,6 +838,28 @@ export function resolveEnvTemplates(
     result[key] = singlePassResolve(value, expandedVars);
   }
   return result;
+}
+
+/**
+ * Expand `${VAR}` references inside a yaml `command:` / `entrypoint:` value
+ * using the project's customEnv as lookup table. Mirrors what
+ * resolveEnvTemplates does for env, so a yaml line like
+ *   command: redis-server --requirepass ${CDS_REDIS_PASSWORD}
+ * doesn't reach `docker run` as a literal `${CDS_REDIS_PASSWORD}` (which
+ * the host shell then expands to empty because the CDS process env has no
+ * such variable, leaving redis with `--requirepass ` and no value).
+ *
+ * Returns the same shape as the input: undefined → undefined,
+ * string → string, string[] → string[].
+ */
+export function resolveCommandTemplate(
+  cmd: string | string[] | undefined,
+  cdsVars: Record<string, string> | undefined,
+): string | string[] | undefined {
+  if (cmd === undefined || !cdsVars) return cmd;
+  const expandedVars = expandVarsToFixedPoint(cdsVars);
+  if (Array.isArray(cmd)) return cmd.map((c) => singlePassResolve(c, expandedVars));
+  return singlePassResolve(cmd, expandedVars);
 }
 
 // ── Internal helpers ──

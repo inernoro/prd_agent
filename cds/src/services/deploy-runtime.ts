@@ -28,3 +28,57 @@ export function classifyDeployRuntime(
 ): 'source' | 'release' {
   return modeId && isReleaseDeployMode(modeId, modeLabel) ? 'release' : 'source';
 }
+
+/**
+ * P0 止血(2026-05-29):期望态 vs 实际态漂移检测(纯函数 SSOT)。
+ *
+ * 病根(openvisual 事故暴露):分支的 services 是"上次部署时的快照",项目新增
+ * build profile 后,已部署分支不会自动回灌 —— 于是同一项目下 main 有 3 个服务、
+ * PR 分支只有 2 个,UI 只显示数量,看不出"少了哪个 / 哪个挂了"。
+ *
+ * 这里把期望(项目所有 build profile)与实际(分支 services)做 diff:
+ *  - missingProfileIds:profile 存在但分支没有对应服务条目(需补部署)
+ *  - unhealthyProfileIds:服务存在但不是 running(error / stopped)
+ *  - healthyCount:running 的服务数;expectedCount:profile 总数
+ *  - hasDrift:仅对"部署过"(至少有一个服务条目)的分支判,从未部署的 0 服务
+ *    分支不算漂移(那是"未部署",由分支 status 表达,不重复报警)
+ *
+ * 注意:这是**容器级**漂移(容器在不在 / 跑没跑)。"容器在跑但应用 503"那层
+ * 需要 live 探针,state 里没存,留作后续 reconcile 升级。
+ */
+export interface ServiceDrift {
+  expectedCount: number;
+  healthyCount: number;
+  missingProfileIds: string[];
+  unhealthyProfileIds: string[];
+  hasDrift: boolean;
+}
+
+export function computeServiceDrift(
+  profileIds: string[],
+  services: Record<string, { status?: string } | undefined> | undefined,
+): ServiceDrift {
+  const svcMap = services || {};
+  const missingProfileIds: string[] = [];
+  const unhealthyProfileIds: string[] = [];
+  let healthyCount = 0;
+  let knownServiceCount = 0;
+  for (const profileId of profileIds) {
+    const svc = svcMap[profileId];
+    if (!svc) {
+      missingProfileIds.push(profileId);
+      continue;
+    }
+    knownServiceCount += 1;
+    if (svc.status === 'running') healthyCount += 1;
+    else if (svc.status === 'error' || svc.status === 'stopped') unhealthyProfileIds.push(profileId);
+  }
+  return {
+    expectedCount: profileIds.length,
+    healthyCount,
+    missingProfileIds,
+    unhealthyProfileIds,
+    hasDrift: knownServiceCount > 0
+      && (missingProfileIds.length > 0 || unhealthyProfileIds.length > 0),
+  };
+}

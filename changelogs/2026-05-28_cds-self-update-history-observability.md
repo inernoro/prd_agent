@@ -1,0 +1,1 @@
+| feat | cds | 自更新历史可观测性加强:`SelfUpdateHistoryList` 在维护面板增加顶部聚合统计条(成功率/最快/中位/平均/P95/最长一次原因)+ 每条记录新增「阶段耗时条」可视化(拉取/切分支/install/tsc/cache/后端esbuild/web 重建/重启 各段按比例铺色),并补全 `timings` 字段类型(后端 `SelfUpdateTimingBreakdown` 数据全在,前端类型漏了导致 UI 渲染丢失,用户反馈"返回日志不正确 + 可观测性不强"的根因) |
