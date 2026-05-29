@@ -2913,7 +2913,16 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
-        if (store == null || store.OwnerId != userId)
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 评论写权限收紧（PR #685 Cursor Bugbot / Codex High-Severity 反馈）：
+        // 之前放宽到"私有库 + 有任何非撤销分享链 → 任何登录用户可写"是错误的，
+        // 因为没有验证调用方是否真的通过分享 token 访问，知道 entryId 就能越权评论。
+        // 现在只允许：owner 自己；公开库（IsPublic=true）的登录用户。
+        // 私有库即便有分享链，第三方也不能评论 —— 评论是创作者间的协作，不是访客功能。
+        var allowed = store.OwnerId == userId || store.IsPublic;
+        if (!allowed)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         // B4：允许"不选中也能评论"——SelectedText 为空时视为对整篇文档的通用评论（无锚点）
@@ -2961,10 +2970,10 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentInlineComment>.Ok(comment));
     }
 
-    /// <summary>列出文档的划词评论（owner 和公开库访客都能读）</summary>
+    /// <summary>列出文档的划词评论（owner / 公开库 / 持有效分享 token 的访客可读）</summary>
     [HttpGet("entries/{entryId}/inline-comments")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListInlineComments(string entryId)
+    public async Task<IActionResult> ListInlineComments(string entryId, [FromQuery] string? shareToken = null)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
         if (entry == null)
@@ -2974,23 +2983,47 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 非 owner + 非公开 → 403
-        var isOwner = false;
-        try
+        // 评论读权限（PR #685 Codex P1 二次反馈后收紧到 valid share context）：
+        // - owner：可读 + 可写
+        // - 公开库（IsPublic=true）：登录可读写、匿名只读
+        // - 私有库：仅当调用方带【有效的分享 token】（属于本 store + 未撤销 + 未过期）才可读
+        //   评论气泡。不再用"存在任意分享链"放行——那会让任何知 entryId 的登录用户、
+        //   甚至凭过期/无关的分享，枚举读取私有库评论。写权限始终只给 owner + 公开库。
+        // - 私有库无 token / token 无效：仅 owner
+        string? currentUser = null;
+        try { currentUser = this.GetRequiredUserId(); } catch { }
+        var isOwner = currentUser != null && store.OwnerId == currentUser;
+
+        // 校验分享 token 是否真的授权访问本 store + 本 entry（scope 到具体 share context）
+        // EntryId == null = 整库分享，能读库内任意 entry 的评论；
+        // EntryId == entryId = 单篇分享，只能读本篇；
+        // EntryId != entryId = 单篇分享但访问别篇 → 拒绝（PR #685 Codex P1：单文档 token 不能越权读整库评论）。
+        var hasValidShareContext = false;
+        if (!string.IsNullOrWhiteSpace(shareToken))
         {
-            var currentUser = this.GetRequiredUserId();
-            isOwner = store.OwnerId == currentUser;
+            var nowUtc = DateTime.UtcNow;
+            hasValidShareContext = await _db.DocumentStoreShareLinks
+                .Find(s => s.Token == shareToken
+                    && s.StoreId == store.Id
+                    && (s.EntryId == null || s.EntryId == entryId)
+                    && !s.IsRevoked
+                    && (s.ExpiresAt == null || s.ExpiresAt > nowUtc))
+                .AnyAsync();
         }
-        catch { }
-        if (!isOwner && !store.IsPublic)
+
+        var canRead = isOwner || store.IsPublic || hasValidShareContext;
+        if (!canRead)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 写权限只给 owner 和公开库登录用户；分享访客仅可读评论气泡，不能写入。
+        var canCreate = isOwner || (currentUser != null && store.IsPublic);
 
         var comments = await _db.DocumentInlineComments
             .Find(c => c.EntryId == entryId)
             .SortBy(c => c.CreatedAt)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate = isOwner }));
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate }));
     }
 
     /// <summary>删除划词评论</summary>

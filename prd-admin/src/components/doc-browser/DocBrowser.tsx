@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2, ExternalLink, Copy,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -18,6 +19,7 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
 
 // ── 类型 ──
@@ -106,6 +108,12 @@ export type DocBrowserProps = {
   loading?: boolean;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
+  /**
+   * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
+   * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
+   * 私人编辑场景（DocumentStorePage）不需要传，走 owner 身份读评论。
+   */
+  inlineCommentShareToken?: string;
   /**
    * 外观：
    * - 'inset'：默认，单容器无 gap（知识库 / 分享页，连续阅读体验）
@@ -231,8 +239,47 @@ function ContextMenu({
   const showReprocess = canReprocess(entry) && !!onReprocess;
   const showShare = !entry.isFolder && !!onShareEntry;
 
-  return (
-    <div ref={menuRef} className="surface-popover fixed z-50 min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
+  // 只读项（即使所有写回调都为空也始终可用）：
+  // - 在新窗口打开（只有非文件夹有效）
+  // - 复制条目链接（带 ?entry=ID 高亮）
+  // 这两条在 share readonly 模式下也保证菜单有内容,不再是空壳。
+  const showOpenInNewWindow = !entry.isFolder;
+  const showCopyEntryLink = !entry.isFolder;
+
+  // createPortal 挂 body + z-[10000]：合规 frontend-modal 规则;
+  // 旧版 z-50 会被 modal/drawer (z-[100]~z-[10000]) 盖住;且祖先 overflow:hidden 会裁剪。
+  const menu = (
+    <div ref={menuRef} className="surface-popover fixed z-[10000] min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
+      {showOpenInNewWindow && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => {
+            // 当前页 URL 上换 ?entry={id}，方便对方/自己分享/记忆条目锚点
+            const u = new URL(window.location.href);
+            u.searchParams.set('entry', entry.id);
+            window.open(u.toString(), '_blank', 'noopener');
+            onClose();
+          }}>
+          <ExternalLink size={12} />
+          在新窗口打开
+        </button>
+      )}
+      {showCopyEntryLink && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          onClick={() => {
+            const u = new URL(window.location.href);
+            u.searchParams.set('entry', entry.id);
+            navigator.clipboard.writeText(u.toString()).catch(() => {});
+            onClose();
+          }}>
+          <Copy size={12} />
+          复制条目链接
+        </button>
+      )}
+      {(showOpenInNewWindow || showCopyEntryLink) && (showSubtitle || showReprocess || showShare || onRename || onTogglePin || onEditTags || onSetPrimary || onReplaceFile || onDelete) && (
+        <div className="my-1 border-t border-token-subtle" />
+      )}
       {showSubtitle && (
         <button
           className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
@@ -316,6 +363,9 @@ function ContextMenu({
       )}
     </div>
   );
+
+  // createPortal 到 document.body,避免被祖先 overflow:hidden 裁剪 / 被低 z-index 容器盖住
+  return createPortal(menu, document.body);
 }
 
 function EntryTagEditor({
@@ -888,22 +938,21 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
     return result;
   }, [entryId, entryMap]);
 
-  if (path.length <= 1) {
-    return (
-      <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-        {path[0]?.title ?? ''}
-      </span>
-    );
-  }
+  // 2026-05-28 用户两次反馈："标题重复显示像 bug"。
+  // 第一次修复改成小灰字字号(11px)，但文件名 + markdown H1 内容仍 99% 重合。
+  // 第二次彻底修：单级路径(就是文件本身,没有父文件夹)直接不渲染面包屑——
+  // 因为 markdown H1 已经是"我是什么文档"的清晰锚点，重复显示无收益。
+  // 仅在多级路径(有父文件夹层级)时才渲染面包屑，作为"我在哪"的位置指示。
+  if (path.length <= 1) return null;
 
+  // 多级路径：仍是小灰字，作为位置指示。最后一段(文件名本身)用 truncate +
+  // max-w 避免吃掉过多空间。
   return (
-    <div className="flex items-center gap-1 text-[13px] min-w-0">
+    <div className="flex items-center gap-1 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
       {path.map((entry, i) => (
         <span key={entry.id} className="flex items-center gap-1 min-w-0">
-          {i > 0 && <ChevronRight size={11} className="flex-shrink-0" style={{ color: 'var(--text-muted)' }} />}
-          <span
-            className={i === path.length - 1 ? 'font-medium truncate' : 'truncate'}
-            style={{ color: i === path.length - 1 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+          {i > 0 && <ChevronRight size={10} className="flex-shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.6 }} />}
+          <span className="truncate" title={entry.title} style={i === path.length - 1 ? { maxWidth: '320px' } : undefined}>
             {entry.title}
           </span>
         </span>
@@ -947,6 +996,7 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  inlineCommentShareToken,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -1001,6 +1051,14 @@ export function DocBrowser({
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  // 2026-05-28 用户反馈："看不到别人留在这里的评论气泡"。
+  // 进入条目时主动预拉评论计数，让正文上方常驻一颗 chip：
+  //   "💬 N 条评论" 点击打开 InlineCommentDrawer。
+  // 仅 best-effort：失败/无权（私有库无分享访问）默认 0，不影响主流程。
+  const [commentCount, setCommentCount] = useState(0);
+  // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
+  // 旧 entry 的慢响应不覆盖新 entry 已设的计数。
+  const commentCountFetchIdRef = useRef(0);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1024,6 +1082,21 @@ export function DocBrowser({
     const e = entries.find(x => x.id === selectedEntryId);
     return e && !e.isFolder ? e : null;
   }, [selectedEntryId, entries]);
+
+  // 进入条目时预拉评论计数，让正文上方常驻入口（共享视图也能看到他人评论的存在）
+  useEffect(() => {
+    if (!trackedEntryForComments) {
+      setCommentCount(0);
+      return;
+    }
+    const myId = ++commentCountFetchIdRef.current;
+    (async () => {
+      try {
+        const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
+        if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
+      } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
+    })();
+  }, [trackedEntryForComments, inlineCommentShareToken]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
@@ -1853,9 +1926,10 @@ export function DocBrowser({
                     border: '1px solid rgba(168,85,247,0.18)',
                     color: 'rgba(216,180,254,0.95)',
                   }}
-                  title="查看或添加划词评论"
+                  title={commentCount > 0 ? `已有 ${commentCount} 条评论 — 点击查看 / 添加` : '划词评论 — 选中文本后浮起「添加评论」'}
                 >
-                  <MessageSquareText size={11} /> 评论
+                  <MessageSquareText size={11} />
+                  {commentCount > 0 ? `${commentCount} 条评论` : '评论'}
                 </button>
               )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
@@ -2046,6 +2120,7 @@ export function DocBrowser({
         <InlineCommentDrawer
           entryId={trackedEntryForComments.id}
           entryTitle={trackedEntryForComments.title}
+          shareToken={inlineCommentShareToken}
           pendingSelection={pendingSelection}
           onClearPending={() => setPendingSelection(null)}
           onLocate={(text) => {
@@ -2055,6 +2130,15 @@ export function DocBrowser({
           onClose={() => {
             setInlineCommentsOpen(false);
             setPendingSelection(null);
+            // 关闭时刷新评论计数（新建/删除/无变化都通用）；带 fetchIdRef 守卫，
+            // 关闭后立刻切换条目时旧响应不覆盖新计数（PR #685 Bugbot Low）
+            if (trackedEntryForComments) {
+              const entryId = trackedEntryForComments.id;
+              const myId = ++commentCountFetchIdRef.current;
+              listInlineComments(entryId, inlineCommentShareToken).then((res) => {
+                if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
+              }).catch(() => {});
+            }
           }}
         />
       )}

@@ -504,13 +504,19 @@ export async function createInlineComment(entryId: string, input: {
   );
 }
 
-/** 列出文档的划词评论（owner 与公开库访客都能读） */
-export async function listInlineComments(entryId: string) {
+/**
+ * 列出文档的划词评论。
+ * owner / 公开库可直接读；私有库分享视图须传 shareToken（属于该 store + 未撤销 + 未过期）
+ * 才能读到评论气泡（PR #685 Codex P1：避免知 entryId 即可枚举私有库评论）。
+ */
+export async function listInlineComments(entryId: string, shareToken?: string) {
+  const base = api.documentStore.entries.inlineComments(entryId);
+  const url = shareToken ? `${base}?shareToken=${encodeURIComponent(shareToken)}` : base;
   return await apiRequest<{
     items: import('@/services/contracts/documentStore').DocumentInlineComment[];
     canCreate: boolean;
   }>(
-    api.documentStore.entries.inlineComments(entryId),
+    url,
     { method: 'GET' },
   );
 }

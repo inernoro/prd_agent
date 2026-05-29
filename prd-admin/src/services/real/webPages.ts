@@ -54,11 +54,53 @@ export interface ShareLinkItem {
   accessLevel: string;
   password?: string;
   viewCount: number;
+  /** 唯一 IP 数（基于访问日志 distinct IP 聚合缓存） */
+  uniqueIpCount?: number;
   lastViewedAt?: string;
   createdBy: string;
+  createdByName?: string;
   createdAt: string;
   expiresAt?: string;
   isRevoked: boolean;
+  /** 可见性：owner-only（默认 = 仅创建者/团队） / logged-in / public */
+  visibility?: 'owner-only' | 'logged-in' | 'public';
+  /** 是否已过期 */
+  isExpired?: boolean;
+  /** 是否处于过期 7 天宽限期内（仍可续期） */
+  inGracePeriod?: boolean;
+  /** 续期/修改历史次数 */
+  renewalCount?: number;
+}
+
+export interface ShareAnalyticsLinkSummary {
+  shareId: string;
+  token: string;
+  title?: string;
+  viewCount: number;
+  uniqueIpCount: number;
+  lastViewedAt?: string;
+  createdAt: string;
+  expiresAt?: string;
+  visibility: string;
+}
+
+export interface ShareAnalyticsTimelineEntry {
+  viewedAt: string;
+  shareToken: string;
+  shareTitle?: string;
+  viewerName?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export interface ShareAnalyticsResult {
+  totalShares: number;
+  activeShares: number;
+  expiredShares: number;
+  totalViews: number;
+  uniqueIpCount: number;
+  timeline: ShareAnalyticsTimelineEntry[];
+  topLinks: ShareAnalyticsLinkSummary[];
 }
 
 export interface TagCount {
@@ -238,6 +280,10 @@ export async function createShareLink(data: {
   expiresInDays?: number;
   /** 'visit' = 站点访问便捷链（公开永久、与用户分享互不复用/篡改）；缺省 = 用户分享 */
   purpose?: string;
+  /** 是否强制新建（默认 true，分享面板每次显式新建） */
+  forceNew?: boolean;
+  /** 访问可见性：owner-only（默认）/ logged-in / public */
+  visibility?: 'owner-only' | 'logged-in' | 'public';
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -336,4 +382,19 @@ export async function listShareViewLogs(shareToken?: string, limit = 100): Promi
   if (limit !== 100) params.set('limit', String(limit));
   const q = params.toString();
   return apiRequest(`${api.webPages.viewLogs}${q ? `?${q}` : ''}`);
+}
+
+/** 续期某条分享链接（仅创建者，过期 ≤ 7 天宽限期内仍可续期） */
+export async function renewShare(shareId: string, extendDays: number): Promise<ApiResponse<{ newExpiresAt: string }>> {
+  return apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}/renew`, {
+    method: 'POST',
+    body: { extendDays },
+  });
+}
+
+/** 用户分享统计聚合（参考 Cloudflare 简化版，含活跃链接 / 时间窗内访问 / 独立 IP / 时间线 / Top 链接） */
+export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise<ApiResponse<ShareAnalyticsResult>> {
+  const params = new URLSearchParams({ rangeDays: String(rangeDays) });
+  if (siteId) params.set('siteId', siteId);
+  return apiRequest(`/api/web-pages/shares/analytics?${params.toString()}`);
 }
